@@ -136,7 +136,7 @@ fn yaml_reference(text: &str) -> bool {
     false
 }
 
-fn local_base(base: &str) -> bool {
+pub(super) fn local_base(base: &str) -> bool {
     let Some(rest) = base
         .strip_prefix("http://")
         .or_else(|| base.strip_prefix("https://"))
@@ -366,6 +366,52 @@ pub(crate) fn approval_digest(flow: &Value) -> String {
         "sha256:{}",
         hex::encode(Sha256::digest(canonical(flow, true).as_bytes()))
     )
+}
+
+/// The exploration/healing writer uses the original schema, semantic checker,
+/// compiler and canonical renderer before publishing an unapproved memory snapshot.
+pub(super) fn draft_bytes(flow: &Value, project: &Path) -> Result<String, Vec<Finding>> {
+    let Some(schemas) = flow_schemas() else {
+        return Err(vec![Finding::new(
+            "flow.schema_invalid",
+            "",
+            "flow schema unavailable",
+        )]);
+    };
+    let mut findings: Vec<_> = schemas
+        .validate(FLOW_SCHEMA_ID, flow, "journey-flow")
+        .into_iter()
+        .map(|d| Finding::new("flow.schema_invalid", d.path, d.message))
+        .collect();
+    if !findings.is_empty() {
+        return Err(findings);
+    }
+    if flow["status"] != "draft" || !flow["approved"].is_null() {
+        return Err(vec![Finding::new(
+            "flow.approval_stale",
+            "/approved",
+            "only unapproved drafts may be published by the agent",
+        )]);
+    }
+    let file = project
+        .join(".graphhelm/journeys")
+        .join(format!("{}.journey.yaml", flow["id"].as_str().unwrap()));
+    findings.extend(semantic(&file, flow, project));
+    if let Err(finding) = compile(flow) {
+        findings.push(finding);
+    }
+    if findings.iter().any(|f| !f.is_warning()) {
+        return Err(findings);
+    }
+    let text = canonical(flow, false);
+    if text.len() as u64 > MAX_FLOW_BYTES {
+        return Err(vec![Finding::new(
+            "flow.too_large",
+            "",
+            "flow exceeds 32 KiB",
+        )]);
+    }
+    Ok(text)
 }
 
 pub(crate) fn check(file: &Path, project: &Path) -> Vec<Finding> {

@@ -31,7 +31,7 @@ beyond the task record.
 
 ### 1. Start from the card, then search on purpose
 
-Ask `code-contract` for the current card, or write one: scope as a **list of paths** (no globs, no
+Take the card from `task-plan`, or write one: scope as a **list of paths** (no globs, no
 `..`), the **exported symbols** the change will add, acceptance criteria each naming the **command**
 that decides it, and one refusal per failure mode. The card is bounded by `keel.yaml` `card`:
 paths, symbols and bytes. A glob or `..` in the scope is refused (`keel.card.scope_not_a_path`); a
@@ -123,7 +123,7 @@ promise. A fact not available there goes into the card as a gap.
 
 ## Produces
 
-A card (through `code-contract`), a diff that spends within its surface, a test that names its
+A card (through `task-plan`), a diff that spends within its surface, a test that names its
 criterion and defect, and a completion claim whose evidence is the instrument's output. Nothing
 else: no rule edits, no budget edits, no verdicts.
 
@@ -135,6 +135,6 @@ allowance or a split), or when no instrument can decide a criterion (`OBSERVER_M
 
 ## Hands off to
 
-`code-contract` for the card, `test-audit` to gate, audit or prune tests, `context-retrieval` for the cited symbols, `memory-curator` when a
+`task-plan` for the card, `test-audit` to gate, audit or prune tests, `implement` for the cited symbols, `memory-curator` when a
 refusal taught something worth keeping, and the JPD `journey-contract` skill when the promise is a
 user journey rather than a code contract.

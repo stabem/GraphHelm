@@ -1,5 +1,9 @@
 # Schema Changelog
 
+## graph-signal 1.2.0 - optional `task` (#393)
+
+A signal may name the task it belongs to (`issue-382`, `pr-384`): the `taskId` of the `task.*` records (journey-first spec §7–§8), so the Studio threads a conversation by task instead of by actor pair. Optional and additive: every 1.1.0 envelope stays valid, and a present value must match the task-id pattern. The Runtime's signal parser accepts it and refuses a malformed one.
+
 ## journey-replay-cache 1.0.0 (#347)
 
 Add the bounded, closed deterministic browser-replay cache wire contract. Exact semantic locators, nullable test-ID/context fields, canonical flow digest and viewport are separate from the unchanged journey-flow and frozen journey-contract. Runtime validation also binds screen/edge IDs and act counts to one approved flow; schema shape alone is not browser or privacy proof. Catalog hashing uses canonical JSON.

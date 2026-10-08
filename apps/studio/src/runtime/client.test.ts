@@ -400,6 +400,16 @@ describe("verified mutations", () => {
     expect(Object.keys(unsent)).not.toContain("replyTo");
     expect(unsent.type).toBe("operator_note");
 
+    // #396 (signal 1.2.0): a message spoken inside a task thread names its task; a malformed one
+    // is never sent (the Runtime would refuse the whole message).
+    const tagged = scriptedFetch(routes());
+    await new RuntimeClient("tok", { fetch: tagged.fetchImpl }).signal("demo", "rebase please", { task: "issue-384" });
+    expect((tagged.calls.find((call) => call.method === "POST")?.body as { signal: Record<string, unknown> }).signal.task).toBe("issue-384");
+    const bad = scriptedFetch(routes());
+    await new RuntimeClient("tok", { fetch: bad.fetchImpl }).signal("demo", "x", { task: "../etc" });
+    expect(Object.keys((bad.calls.find((call) => call.method === "POST")?.body as { signal: Record<string, unknown> }).signal)).not.toContain("task");
+    expect(Object.keys(unsent)).not.toContain("task");
+
     for (const kind of ["actor_alias", "owner_refusal"] as const) {
       const owned = scriptedFetch(routes());
       await new RuntimeClient("tok", { fetch: owned.fetchImpl }).signal("demo", "{}", { to: "kit-1", replyTo: "sig-q", kind });

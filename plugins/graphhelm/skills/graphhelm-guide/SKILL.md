@@ -1,15 +1,31 @@
 ---
 name: graphhelm-guide
-description: Use when the user asks how GraphHelm works, how Keel and Journey-Proven Development fit together, or how to start using its plugin, CLI, Runtime, and host setup.
+description: Use when the user asks how GraphHelm works, how journeys, Keel and the five task steps (plan, implement, prove, review, merge) fit together, or where to start with its plugin, CLI and Runtime.
 ---
 
 # GraphHelm guide
 
 Read the bundled [GraphHelm guide](../../README.md) and explain only the parts relevant to the user's question. Distinguish shipped behavior from product plans and host discovery from Runtime activation. When a claim depends on the current repository or a live execution, inspect that source before stating it as current.
 
-Use the guide's left-to-right flow to explain how a user promise becomes a scoped change and a proof. For concrete code work, choose the smallest adequate route: Keel for scope and total delivery cost; Journey-Proven Development when the journey, observer, or risk needs explicit treatment. An unavailable observer remains unresolved. Agents write journeys as flows in `.graphhelm/journeys/<id>.journey.yaml` (schema `graphhelm.journey-flow/1`: screens, edges and paths); `graphhelm journey compile` generates the frozen contracts in `.graphhelm/journeys/<contractId>.json` from them, and those generated files are never edited by hand. Each step can name a screen and its `scopePaths`. A flow stays `draft` until the owner approves it in the Studio's Journey tab or with `graphhelm journey approve <id>`; agents do not approve. To map journeys into an existing project from zero, use the `journey-map` skill; `graphhelm journey validate` checks flows and contracts, `graphhelm journey capture` and `graphhelm journey walked` record a screen and a transition, and the Studio's Journey tab shows each step's newest capture as fresh, stale or unknown. `graphhelm keel check` warns, without blocking, when a change touches a screen with no fresh capture. Skills advise; only GraphHelm's deterministic controls can validate and publish operational graph changes.
+## Journeys are the proof
 
-Installing this plugin exposes guidance. It does not install the CLI, start the Runtime, rewrite host customization, activate extension packages, or certify an execution. Explain the separate steps only when the user needs them.
+GraphHelm develops journey-first (design: `docs/specs/2026-10-07-journey-first-keel-design.md`). A user-visible promise is proven by replaying the journey it touches at the head and seeing its screens, not by a unit test or a status code. Tests are kept for invariants a user cannot see (schemas, digests, concurrency, security). An unavailable observer stays `OBSERVER_MISSING`.
+
+Journeys are flows in `.graphhelm/journeys/<id>.journey.yaml` (schema `graphhelm.journey-flow/1`: screens, edges, paths). `graphhelm journey compile` generates the frozen contracts `<contractId>.json`; never edit those by hand. A flow stays `draft` until the owner approves it in the Studio's Journey tab or with `graphhelm journey approve <id>`; agents do not approve. `graphhelm journey replay <id>` walks an approved flow headless with no model call and records sealed captures and walked transitions; `graphhelm journeys` and the Studio's Journey tab show each step as fresh, stale or unknown at the head. `graphhelm keel check` warns, without blocking, when a change touches a screen with no fresh capture. Step-by-step with real output: `docs/guides/journeys.md`.
+
+## One task, five steps
+
+Every task runs the same steps after its issue, in any agent host, each a skill that names the record it emits:
+
+1. `task-plan`: paths, promise, proof kind (`journey`, `tests`, `both`, `none`), review count and skills, as one `keel.plan` record.
+2. `implement`: the change inside the card under `keel`, with cited context; `test-audit` gates any test.
+3. `journey-prove` (arrives with #381): replay the touched journeys at the head, keep the first failure of every retry.
+4. `blind-review`: one assigned reviewer runs the reached tests and `keel check` on the pinned head and posts the verdict.
+5. `merge`: the approving reviewer merges the pinned head, reads back what landed, and releases the workspace.
+
+`journey-map` creates journeys for a project that has none; `journey-contract` adds one for a new behavior. `keel plan` is still being built (`task-plan` says how to write the plan by hand); the `task.*` records each step emits are live. Skills advise; only GraphHelm's deterministic controls validate and publish operational graph changes.
+
+Installing this plugin exposes guidance. It does not install the CLI, start the Runtime, rewrite host customization, activate extension packages, or certify an execution. The `graphhelm-setup` skill covers installing and starting.
 
 ## Prefer the GraphHelm MCP tools
 

@@ -841,3 +841,73 @@ fn issue178_native_explicit_output_cap_refuses_and_legacy_call_remains_supported
         ));
     }
 }
+
+/// #370: the Codex updater deletes `bin/<old-version>/codex.exe` and installs
+/// `bin/<new-version>/codex.exe`, so a route pinned to the old versioned path must still reach
+/// the current executable instead of failing every call as `ProviderUnavailable`.
+/// Observer: a real spawn of `fake_runtime` copied into the new versioned folder.
+/// Cost: one file copy and one subprocess; no network or credentials.
+#[test]
+fn a_route_pinned_to_a_replaced_versioned_codex_reaches_the_current_binary() {
+    let root = tempfile::tempdir().unwrap();
+    let name = if cfg!(windows) { "codex.exe" } else { "codex" };
+    let current = root.path().join("bin").join("b7e1c2d3a4f50617");
+    fs::create_dir_all(&current).unwrap();
+    fs::copy(fake_runtime_path(), current.join(name)).unwrap();
+    // The route still names the version the updater removed.
+    let pinned = root.path().join("bin").join("0a1b2c3d4e5f6071").join(name);
+    let json = serde_json::json!({
+        "manifestVersion": 1,
+        "routes": [{
+            "id": "test_native_route",
+            "provider": "openai",
+            "transport": "native_runtime",
+            "runtime": "codex",
+            "authentication": "account_subscription",
+            "billingMode": "subscription_quota",
+            "command": { "program": pinned, "args": ["--fixture-arg"] },
+            "profiles": ["software_execution"],
+            "enabled": true
+        }]
+    });
+    let manifest = RouteManifest::from_json(&json.to_string()).unwrap();
+    let adapter = RuntimeAdapter::new(&manifest.routes()[0], ok_env("codex"));
+
+    let reply = adapter
+        .call(&call("versioned-codex-prompt"))
+        .unwrap_or_else(|error| {
+            panic!("a replaced versioned Codex must still be reached: {error}")
+        });
+    assert!(
+        reply.text.contains("versioned-codex-prompt"),
+        "{}",
+        reply.text
+    );
+}
+
+/// #370 review: only the replaced-version shape `bin/<hex version>/<file>` falls back. A missing
+/// path of any other shape must stay missing even when its grandparent holds a same-named file
+/// elsewhere, so the call fails instead of starting an unrelated program.
+/// Cost: one file copy, no subprocess (the resolver is checked directly).
+#[test]
+fn a_missing_non_versioned_program_never_resolves_to_a_sibling() {
+    use graphhelm_model_gateway::runtime::resolve_program;
+    let root = tempfile::tempdir().unwrap();
+    let name = if cfg!(windows) { "codex.exe" } else { "codex" };
+    // Same-named files a looser search would pick up.
+    for sibling in ["other-tool", "b7e1c2d3a4f50617"] {
+        let folder = root.path().join("tools").join(sibling);
+        fs::create_dir_all(&folder).unwrap();
+        fs::copy(fake_runtime_path(), folder.join(name)).unwrap();
+    }
+    // Missing, and not under a `bin/<version>` folder.
+    let missing = root.path().join("tools").join("codex-install").join(name);
+    assert_eq!(resolve_program(&missing), missing);
+    // Missing, version-shaped folder but the grandparent is not `bin`.
+    let not_bin = root
+        .path()
+        .join("tools")
+        .join("0a1b2c3d4e5f6071")
+        .join(name);
+    assert_eq!(resolve_program(&not_bin), not_bin);
+}

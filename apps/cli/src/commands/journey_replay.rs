@@ -1447,8 +1447,7 @@ mod tests {
     /// busy page stops replaying. Cost: milliseconds, two fixed peer frames.
     #[test]
     fn a_replay_snapshot_accepts_a_real_page_and_a_discover_snapshot_keeps_the_model_budget() {
-        let aria = "- heading \"Journey flows\"
-".repeat(400);
+        let aria = "- heading \"Journey flows\"\n".repeat(400);
         assert!(aria.len() > SNAPSHOT_DISCOVER && aria.len() <= SNAPSHOT);
         let fingerprint = format!("sha256:{}", "a".repeat(64));
         for (request, accepted) in [

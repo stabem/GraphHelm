@@ -39,6 +39,7 @@ import { isSubagentLifecycleSignal } from "./runtime/subagents";
 import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
 import { isClaudeTaskSignal, isTaskEventSignal, readClaudeTasks, readTaskEvents, type ClaudeTaskReadModel, type TaskState } from "./runtime/team-tasks";
 import { TaskGraphs } from "./components/task-graphs";
+import { JEV_ABSENT_NOTE, jevAvailability } from "./runtime/jev";
 import type {
   Briefing,
   ClaimEvidence,
@@ -1859,10 +1860,11 @@ export default function App({
       setCurrentIssue("Checking the available model routes…");
       return;
     }
+    // #396: no judge route is a state, not an error. The chat shows no Jev card (there is
+    // nothing to retry); run details carries JEV_ABSENT_NOTE instead.
+    if (jevAvailability(judgeRoutes.length) === "absent") return;
     if (activeJudgeRoute === null) {
-      setCurrentIssue(judgeRoutes.length === 0
-        ? "Suggested replies aren't available because this Runtime has no Jev model set up. You can still send your own message."
-        : "Choose a Jev model to prepare suggested replies.");
+      setCurrentIssue("Choose a Jev model to prepare suggested replies.");
       return;
     }
     const client = clientRef.current;
@@ -2582,6 +2584,7 @@ export default function App({
           <details className="topbar-menu">
             <summary>Run details</summary>
             <div className="topbar-menu-body">
+            {routes !== null && jevAvailability(judgeRoutes.length) === "absent" && <p className="jev-absent-note">{JEV_ABSENT_NOTE}</p>}
             {effectiveVerdict && <span className={`tag ${recordedWorkBehindGraphWait || needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "calm" : status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : effectiveVerdict.key}`}>{recordedWorkBehindGraphWait ? "agent work recorded · graph step waiting" : status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "graph waiting; no request recorded" : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{effectiveVerdict.label}</>}</span>}
             {webmcp === "available" ? (
               <span className="toolchips">

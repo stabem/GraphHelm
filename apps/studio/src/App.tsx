@@ -90,7 +90,7 @@ import { JourneyFlows } from "./components/journey-flows";
 import { ChatColumn, NEEDS_YOU } from "./components/chat-column";
 import { botKeyOf, teamLinks, teamModel } from "./runtime/team";
 import { needsYou, type DraftItem, type QuestionItem, type StepItem } from "./runtime/needs-you";
-import { buildHandover, readLastSeen, shouldShowHandover, writeLastSeen } from "./runtime/handover";
+import { buildHandover, hiddenThisSession, hideThisSession, readLastSeen, shouldShowHandover, writeLastSeen } from "./runtime/handover";
 import { EVERYONE, autoThread, chatThreads, describeActivity, namesOf, sealedNotesPending, unreadCounts } from "./runtime/threads";
 import { ProjectRail } from "./components/rail";
 import { Composer, type RouteChoice } from "./components/compose";
@@ -2177,6 +2177,15 @@ export default function App({
     ? buildHandover({ events: eventList, bots: team.bots, model, claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null,
         openItems: needs.items, envelopes, fromSeq: seenSeq!, toSeq: head })
     : null, [status, selected, eventList, seenSeq, head, team, model, claudeTaskRead, needs, envelopes]);
+  // Hide puts the bar away for this browser session and this gap; it does not mark anything seen.
+  const [hiddenGap, setHiddenGap] = useState<string | null>(null);
+  const handoverHidden = handover !== null && (hiddenGap === `${selected}:${handover.fromSeq}`
+    || hiddenThisSession(projectKey, selected, handover.fromSeq));
+  const hideHandover = useCallback(() => {
+    if (handover === null) return;
+    hideThisSession(projectKey, selected, handover.fromSeq);
+    setHiddenGap(`${selected}:${handover.fromSeq}`);
+  }, [handover, projectKey, selected]);
   const markSeen = useCallback(() => {
     if (selected === "" || head === 0) return;
     writeLastSeen(projectKey, selected, head);
@@ -2946,6 +2955,9 @@ export default function App({
             )}
 
             <section className="canvas-column" aria-label="Canvas">
+            {handover !== null && !handoverHidden && (
+              <HandoverCard handover={handover} onOpen={openRecords} onDismiss={markSeen} onHide={hideHandover} />
+            )}
             <div className="canvas-tabs" role="tablist" aria-label="Canvas views">
               <button type="button" role="tab" aria-selected={canvasTab === "team"} onClick={() => chooseCanvas("team")}>Team (live)</button>
               <button type="button" role="tab" aria-selected={canvasTab === "journey"} onClick={() => chooseCanvas("journey")}>Journey</button>
@@ -2996,7 +3008,6 @@ export default function App({
                   emptyMessage="The cited records are not in the loaded history." />
               </section>
             )}
-            {handover !== null && <HandoverCard handover={handover} onOpen={openRecords} onDismiss={markSeen} />}
 
             {/* THE CREW STANDS ON THE BOARD ITSELF - draggable blobs the Board renders, so
               * agents and nodes share one scene. Selection still lives here. */}

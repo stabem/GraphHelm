@@ -470,24 +470,46 @@ describe("live team layout", () => {
   it("shows the handover after a long gap and advances only on Got it", async () => {
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
     await open(longGapClient());
-    const card = await screen.findByRole("dialog", { name: "While you were away" });
+    const card = await screen.findByRole("region", { name: "While you were away" });
     expect(card).toHaveTextContent("24 records");
     await userEvent.click(within(card).getByRole("button", { name: "Got it" }));
     expect(localStorage.getItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy")).toBe("43");
+    expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull();
+  });
+
+  // The owner: the card opened over the Journey tab on every load and covered the list and its
+  // Watch/Approve buttons. It is a bar in the canvas column's flow, before the canvas tabs, and Hide
+  // lasts the browser session without marking anything seen.
+  it("puts the handover in the canvas column before the tabs, and Hide lasts the session", async () => {
+    localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
+    await open(longGapClient());
+    const bar = await screen.findByRole("region", { name: "While you were away" });
     expect(screen.queryByRole("dialog", { name: "While you were away" })).toBeNull();
+    const column = screen.getByRole("region", { name: "Canvas" });
+    expect(column.contains(bar)).toBe(true);
+    const tabs = within(column).getByRole("tablist", { name: "Canvas views" });
+    expect(bar.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await userEvent.click(within(bar).getByRole("button", { name: "Hide for now" }));
+    expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull();
+    expect(localStorage.getItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy")).toBe("1");
+    cleanup();
+    await open(longGapClient());
+    await screen.findByRole("tablist", { name: "Canvas views" });
+    expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull();
+    sessionStorage.clear();
   });
 
   it("does not show run A's handover after switching to run B", async () => {
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-calm", "1");
     await open(longGapClient());
-    expect(await screen.findByRole("dialog", { name: "While you were away" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "While you were away" })).toBeInTheDocument();
     await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByText("demo-calm", { exact: true }).closest("button")!);
     // Immediately, before run B's own reads land: run B has a last-seen of its own, and run A's
     // events and status are still the ones in memory. select() clears status and events, which hides
     // A's card; the status.executionId guard is defence-in-depth behind it.
-    expect(screen.queryByRole("dialog", { name: "While you were away" })).toBeNull();
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "While you were away" })).toBeNull());
+    expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull());
     expect(screen.queryByText(/24 records/)).toBeNull();
   });
 
@@ -537,7 +559,8 @@ describe("live team layout", () => {
         : event) };
     }) as typeof client.getEvents;
     await open(client);
-    const card = await screen.findByRole("dialog", { name: "While you were away" });
+    const card = await screen.findByRole("region", { name: "While you were away" });
+    await userEvent.click(within(card).getByRole("button", { name: "Show details" }));
     await userEvent.click(within(card).getByRole("button", { name: "implementation succeeded" }));
     const records = await screen.findByRole("dialog", { name: "Cited records" });
     expect(within(records).getByRole("button", { name: "#20" })).toBeInTheDocument();

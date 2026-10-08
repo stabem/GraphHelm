@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GraphModel } from "../graph/model";
 import type { Bot } from "./team";
 import type { RuntimeEvent } from "./types";
-import { buildHandover, lastSeenKey, readLastSeen, shouldShowHandover, writeLastSeen } from "./handover";
+import { buildHandover, hiddenThisSession, hideThisSession, lastSeenKey, readLastSeen, shouldShowHandover, writeLastSeen } from "./handover";
 
 const T0 = Date.parse("2026-10-05T08:00:00Z");
 const at = (minutes: number) => new Date(T0 + minutes * 60_000).toISOString();
@@ -138,5 +138,23 @@ describe("buildHandover task.merged", () => {
   it("ignores a merge before the gap and a document naming another merger", () => {
     expect(shippedOf([merged(41, 100)], { 41: doc("kit-2") }, 41)).toEqual([]);
     expect(shippedOf([merged(41, 100, "kit-9")], { 41: doc("kit-2") })).toEqual([]);
+  });
+});
+
+
+// The owner's Hide on the handover bar lasts this browser session, for this gap only: a new gap
+// (a later last-seen position) shows the bar again. Storage that throws means "not hidden".
+describe("handover hidden this session", () => {
+  afterEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
+  it("remembers Hide per project, run and gap", () => {
+    expect(hiddenThisSession("p", "run-1", 10)).toBe(false);
+    hideThisSession("p", "run-1", 10);
+    expect(hiddenThisSession("p", "run-1", 10)).toBe(true);
+    expect(hiddenThisSession("p", "run-1", 40)).toBe(false);
+    expect(hiddenThisSession("p", "run-2", 10)).toBe(false);
+  });
+  it("treats unavailable storage as not hidden", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked"); });
+    expect(hiddenThisSession("p", "run-1", 10)).toBe(false);
   });
 });

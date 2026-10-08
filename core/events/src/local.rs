@@ -357,6 +357,9 @@ pub struct LocalEventRepository {
     shared_fast_open_count: Arc<AtomicU64>,
     #[cfg(test)]
     journal_sync_count: Arc<AtomicU64>,
+    /// #185: blob files `plan_reconcile` opened by handle, the cost that grew with the store.
+    #[cfg(test)]
+    reconcile_blob_opens: Arc<AtomicU64>,
     failpoint: Option<LocalFailpoint>,
     schemas: &'static graphhelm_schema::RepositorySchemaSet,
     /// Unbounded unless this handle came from `open_within` (#750). Checked inside the journal
@@ -695,6 +698,8 @@ impl LocalEventRepository {
             shared_fast_open_count: Arc::new(AtomicU64::new(0)),
             #[cfg(test)]
             journal_sync_count: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            reconcile_blob_opens: Arc::new(AtomicU64::new(0)),
             failpoint,
             schemas,
             read_budget,
@@ -2253,6 +2258,7 @@ impl LocalEventRepository {
             DirectoryBudget::with_limits(MAX_REPOSITORY_ENTRIES, MAX_REPOSITORY_NAME_BYTES);
         let mut delete_blobs = Vec::new();
         let mut metadata_bytes = 0_u64;
+        let listed = listed_plain_file_sizes(&self.root.join("blobs"));
         for_each_child_name(
             &self.blobs_handle,
             &self.root.join("blobs"),
@@ -2262,6 +2268,25 @@ impl LocalEventRepository {
                 if !is_digest_json_name(name) {
                     return Err(EventRepositoryError::UnsupportedFormat);
                 }
+                // A REACHABLE BLOB IS NOT OPENED (#185). Its bytes were verified when the journal
+                // was loaded, and the scan wants only its size here, for the metadata cap. Opening
+                // every blob by handle on every store open made each signal cost grow with the
+                // whole store (1,702 blobs: 57 ms per open, four opens per signal). The size comes
+                // from the directory listing instead, and only for an entry the listing calls a
+                // plain file that is no reparse point; anything else falls through to the open
+                // below, which validates and refuses exactly as before. Orphans always take the
+                // open: their CONTENT is validated before they are planned for deletion.
+                if state.reachable_evidence.contains(&path)
+                    && let Some(len) = listed.get(name)
+                {
+                    metadata_bytes = metadata_bytes
+                        .checked_add(*len)
+                        .ok_or(EventRepositoryError::LimitExceeded)?;
+                    ensure_inclusive_limit(metadata_bytes, MAX_REPOSITORY_METADATA_BYTES)?;
+                    return Ok(());
+                }
+                #[cfg(test)]
+                self.reconcile_blob_opens.fetch_add(1, Ordering::SeqCst);
                 // IN FLIGHT IS NOT ABANDONED. Reconcile exists to remove files nobody owns any
                 // more; a file another handle holds open is being written right now, and
                 // deleting it would be the bug this skip avoids. So contention here means "not
@@ -5798,6 +5823,33 @@ fn nt_open_child_directory(
     Ok((unsafe { File::from_raw_handle(handle) }, created))
 }
 
+/// Sizes of the plain files directly in `directory`, by name, from ONE directory listing (#185).
+/// On Windows the listing carries each entry's size and attributes, so no file is opened. An
+/// entry that is not a plain file, is a reparse point, or cannot be read is left out, and the
+/// caller then opens and validates it as before; so is everything when the listing fails. Other
+/// platforms answer empty, keeping their per-file open.
+fn listed_plain_file_sizes(directory: &Path) -> BTreeMap<String, u64> {
+    let mut sizes = BTreeMap::new();
+    if !cfg!(windows) {
+        return sizes;
+    }
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return sizes;
+    };
+    for entry in entries.flatten() {
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() || is_reparse_point(&metadata) {
+            continue;
+        }
+        if let Ok(name) = entry.file_name().into_string() {
+            sizes.insert(name, metadata.len());
+        }
+    }
+    sizes
+}
+
 #[cfg(windows)]
 fn validate_opened_regular(file: &File) -> Result<(), EventRepositoryError> {
     let metadata = file.metadata()?;
@@ -8552,6 +8604,38 @@ mod limit_tests {
         assert_eq!(
             reopened.next_sequence(&wake_scope(), "stream-1").unwrap(),
             2
+        );
+    }
+
+    /// #185: reopening a clean store does not open its REACHABLE blobs one by one. Each store
+    /// open (four per Runtime signal) opened every blob by handle just to read its size, so a
+    /// signal's cost grew with the whole store: 0.15 s per write at 5 signals, 1.2 s at 1,005,
+    /// and 1.15 s on a brand-new execution in a 1,702-blob store. Credible regression: the
+    /// per-blob open coming back on the shared fast path. Windows only: other platforms keep the
+    /// per-file open (`listed_plain_file_sizes` answers empty there). Cost: one temp store, one
+    /// graph publication, one reopen.
+    #[cfg(windows)]
+    #[test]
+    fn a_clean_reopen_does_not_open_its_reachable_blobs() {
+        let directory = tempfile::tempdir().unwrap();
+        {
+            let bootstrap = cache_repository(directory.path());
+            bootstrap.append_atomic(&valid_graph_request()).unwrap();
+        }
+        let blobs = std::fs::read_dir(directory.path().join("blobs"))
+            .unwrap()
+            .count();
+        assert!(blobs > 0, "the publication must store evidence blobs");
+        let reopened = cache_repository(directory.path());
+        assert_eq!(
+            reopened.shared_fast_open_count.load(Ordering::SeqCst),
+            1,
+            "a clean store still opens on the shared fast path"
+        );
+        assert_eq!(
+            reopened.reconcile_blob_opens.load(Ordering::SeqCst),
+            0,
+            "{blobs} reachable blobs were opened one by one by reconcile"
         );
     }
 

@@ -1,0 +1,6 @@
+# One linker for everyone on Windows (#361): rust-lld ships with the pinned toolchain and relinks
+# the CLI's many test binaries about 2.5x faster than MSVC link.exe (59 s -> 23 s after touching
+# apps/cli/tests). It is set here, not per run, because changing the linker invalidates every
+# crate: a lane that switched back and forth would rebuild the whole tree each time.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld"

@@ -63,6 +63,29 @@ describe("TaskGraphs", () => {
     expect(screen.queryByRole("link", { name: /blocked by/ })).toBeNull();
   });
 
+  it("names a verdict on a head that has no pr_opened record instead of dropping it (#457)", () => {
+    const tasks = foldTaskEvents([
+      record(1, "issue-439", "task.pr_opened", "gh-claude-2", { pr: 449, headSha: "8aeaef0e380e0eb487b810e994f1b9d8d01f077e", journeys: [], lane: "gh-claude-2", repo: "stabem/GraphHelm" }),
+      record(2, "issue-439", "task.review_assigned", "gh-claude-2", { pr: 449, headSha: "8aeaef0e380e0eb487b810e994f1b9d8d01f077e", reviewer: "gh-claude-6", ordinal: 1 }),
+      record(3, "issue-439", "task.review_verdict", "gh-claude-5", { pr: 449, headSha: "a09b9aa343ba80f78b437b7b38e873950ede2b37", reviewer: "gh-claude-5", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/449#issuecomment-6059525901" }),
+    ]);
+    render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} />);
+    const graph = screen.getByRole("group", { name: /PR #449/i });
+    expect(within(graph).getByText(/APPROVE by gh-claude-5 on a09b9aa3, a head with no pr_opened record/)).toBeInTheDocument();
+  });
+
+  it("prints the merge sha short and links it to the commit when the repository is known (#458)", () => {
+    const merge = "e6c910cfb63cd65cb6d89aea7c285b4037b2c797";
+    const tasks = foldTaskEvents([
+      record(1, "issue-439", "task.claimed", "gh-claude-2", { issue: 439, lane: "gh-claude-2", branch: "issue-439-x", repo: "stabem/GraphHelm" }),
+      record(2, "issue-439", "task.merged", "gh-claude-5", { pr: 449, mergeSha: merge, closes: [439], merger: "gh-claude-5" }),
+    ]);
+    render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} />);
+    const graph = screen.getByRole("group", { name: /issue #439/i });
+    expect(within(graph).queryByText(merge)).toBeNull();
+    expect(within(graph).getByRole("link", { name: "e6c910cf" })).toHaveAttribute("href", `https://github.com/stabem/GraphHelm/commit/${merge}`);
+  });
+
   it("renders nothing when no task has been recorded", () => {
     const { container } = render(<TaskGraphs tasks={[]} onOpenJourney={vi.fn()} />);
     expect(container).toBeEmptyDOMElement();

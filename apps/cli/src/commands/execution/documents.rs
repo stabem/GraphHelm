@@ -233,7 +233,9 @@ pub(crate) fn validate_task_event(
                 && (document.get("plan").is_none() || document["plan"].is_object())
                 && repo()
                 && words(),
-            &["issue", "lane", "branch", "plan", "repo", "title", "summary"],
+            &[
+                "issue", "lane", "branch", "plan", "repo", "title", "summary",
+            ],
         ),
         "task.pr_opened" => (
             count("pr")
@@ -242,7 +244,9 @@ pub(crate) fn validate_task_event(
                 && is_actor("lane")
                 && repo()
                 && words(),
-            &["pr", "headSha", "journeys", "lane", "repo", "title", "summary"],
+            &[
+                "pr", "headSha", "journeys", "lane", "repo", "title", "summary",
+            ],
         ),
         "task.review_assigned" => (
             count("pr")

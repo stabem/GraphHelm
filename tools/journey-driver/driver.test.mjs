@@ -28,6 +28,11 @@ test('closed protocol refuses malformed, secret, sequence and oversized frames',
     // #356: `survive` (a healing replay keeps its session at the broken edge) is boolean too.
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], survive: true }, 'driver.observer_missing'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], survive: 1 }, 'driver.protocol_invalid'],
+    // #491: `show` is boolean and only for a headed window; the `show` op needs such a session.
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], show: true }, 'driver.protocol_invalid'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], headed: true, show: 'yes' }, 'driver.protocol_invalid'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], headed: true, show: true }, 'driver.observer_missing'],
+    [{ protocol, requestId: 1, op: 'show', caption: 'Clicks "Checkout"', role: 'button', name: 'Checkout' }, 'driver.protocol_invalid'],
     ['x'.repeat(65537), 'driver.frame_too_large'],
     ['{"protocol":', 'driver.protocol_invalid'],
   ];

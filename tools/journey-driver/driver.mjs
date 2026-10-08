@@ -15,7 +15,8 @@ const SNAPSHOT = 32768, SNAPSHOT_DISCOVER = 6144;
 // TIMEOUT raced that deadline and surfaced as replay.timeout instead of expectation_failed (#398).
 const SCREEN_WAIT = TIMEOUT - 5000;
 const fields = {
-  open: ['base', 'viewport', 'allowOrigins', 'headed', 'survive'], snapshot: ['expect','discover'],
+  open: ['base', 'viewport', 'allowOrigins', 'headed', 'survive', 'show'], snapshot: ['expect','discover'],
+  show: ['caption', 'role', 'name'],
   act: ['kind', 'role', 'name', 'text', 'secretEnv', 'locator'],
   capture: ['path', 'maskSecrets'], close: [],
 };
@@ -23,7 +24,7 @@ const roles = new Set(['banner','complementary','contentinfo','form','main','nav
 const landmarks = new Set(['banner','complementary','contentinfo','form','main','navigation','region','search']);
 const secrets = Object.entries(process.env).filter(([key]) => /^GRAPHHELM_SECRET_[A-Za-z0-9_]+$/.test(key));
 let browser, context, page, baseOrigin, allowed = new Set(), hostRefused = false, networkFailure;
-let requestId = 0, opened = false, closed = false, headed = false, survive = false;
+let requestId = 0, opened = false, closed = false, headed = false, survive = false, showing = false;
 // A headed (live) session survives an observation failure so the owner sees where the journey
 // broke (#398); so does a healing replay's session, which repairs the broken edge in place
 // (#356). Protocol, privacy and host failures still end it.
@@ -63,6 +64,8 @@ function validate(r) {
   if (r.op === 'open') {
     if (Object.hasOwn(r,'headed') && typeof r.headed !== 'boolean') fail('driver.protocol_invalid');
     if (Object.hasOwn(r,'survive') && typeof r.survive !== 'boolean') fail('driver.protocol_invalid');
+    // #491: `show` (a watch) is a visible, maximized window for a person; never a headless one.
+    if (Object.hasOwn(r,'show') && (typeof r.show !== 'boolean' || (r.show && r.headed !== true))) fail('driver.protocol_invalid');
     if (!exactKeys(r.viewport,['width','height']) || ![r.viewport.width,r.viewport.height].every(n => Number.isInteger(n) && n > 0 && n <= 16384) || r.viewport.width*r.viewport.height > 16777216 || !Array.isArray(r.allowOrigins) || r.allowOrigins.length > 32) fail('driver.protocol_invalid');
     url(r.base,true); for (const origin of r.allowOrigins) url(origin,false,true);
   } else if (r.op === 'snapshot') {
@@ -80,6 +83,8 @@ function validate(r) {
       const l = r.locator;
       if (!exactKeys(l,['role','name','exact','testId','context','nth']) || l.role !== r.role || l.name !== r.name || l.exact !== true || l.nth !== null || !(l.testId === null || string(l.testId,128)) || !(l.context === null || string(l.context,512))) fail('driver.protocol_invalid');
     }
+  } else if (r.op === 'show') {
+    if (!showing || !string(r.caption,200) || !string(r.role,64) || !string(r.name,256)) fail('driver.protocol_invalid');
   } else if (r.op === 'capture') {
     if (!string(r.path,512) || r.maskSecrets !== true || isAbsolute(r.path) || r.path.includes('\\') || r.path.split('/').some(p => !p || p === '.' || p === '..') || !/\.png$/.test(r.path)) fail('driver.protocol_invalid');
   }
@@ -189,14 +194,18 @@ function skeleton(aria) {
 async function run(r) {
   if (r.op === 'open') {
     if (opened) fail('driver.protocol_invalid');
-    headed = r.headed === true; survive = headed || r.survive === true;
+    headed = r.headed === true; survive = headed || r.survive === true; showing = r.show === true;
     const parsed=url(r.base,true); baseOrigin=parsed.origin;
     allowed = new Set([baseOrigin,...r.allowOrigins.map(o=>url(o,false,true).origin)]);
     let chromium;
     try { chromium = createRequire(resolve(project,'package.json'))('@playwright/test').chromium; } catch { fail('driver.observer_missing'); }
     try {
-      browser=await chromium.launch({headless:r.headed !== true,timeout:TIMEOUT,args:['--host-resolver-rules=MAP *.test 127.0.0.1,MAP *.localhost 127.0.0.1,EXCLUDE localhost']});
-      context=await browser.newContext({viewport:r.viewport,serviceWorkers:'block',acceptDownloads:false});
+      // #491: a watch opens maximized and the page takes the real window size (viewport: null),
+      // so the owner can read it; every other session keeps its fixed, reproducible viewport.
+      const launchArgs=['--host-resolver-rules=MAP *.test 127.0.0.1,MAP *.localhost 127.0.0.1,EXCLUDE localhost'];
+      if (r.show === true) launchArgs.push('--start-maximized');
+      browser=await chromium.launch({headless:r.headed !== true,timeout:TIMEOUT,args:launchArgs});
+      context=await browser.newContext({viewport:r.show === true ? null : r.viewport,serviceWorkers:'block',acceptDownloads:false});
       context.setDefaultTimeout(TIMEOUT); context.setDefaultNavigationTimeout(TIMEOUT);
       if (typeof context.routeWebSocket !== 'function') fail('driver.observer_missing');
       await context.route('**/*',async route => {
@@ -288,6 +297,36 @@ async function run(r) {
     else await target.waitFor({state:'visible',timeout:TIMEOUT});
     checkHost();
     return {url:redacted(page.url()),locator};
+  }
+  if (r.op === 'show') {
+    // #491: name the coming step in a caption bar and outline the control it will touch. Both are
+    // hidden from the accessibility tree (aria-hidden; outline is style only), so no snapshot,
+    // expectation or locator sees them. A control that cannot be found is not an error here:
+    // the act that follows reports it.
+    let shown=false;
+    try {
+      await page.evaluate((caption)=>{
+        let bar=document.getElementById('graphhelm-watch-caption');
+        if(!bar){
+          bar=document.createElement('div');
+          bar.id='graphhelm-watch-caption';
+          bar.setAttribute('aria-hidden','true');
+          bar.style.cssText='position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:8px 16px;font:600 15px/1.4 system-ui,sans-serif;color:#fff;background:rgba(20,20,24,.92);border-bottom:3px solid #ff7a1a;pointer-events:none';
+          document.documentElement.appendChild(bar);
+        }
+        bar.textContent=caption;
+      }, r.caption);
+      const target=page.getByRole(r.role,{name:r.name,exact:true}).first();
+      if (await target.count()>0) {
+        await target.scrollIntoViewIfNeeded({timeout:2000}).catch(()=>{});
+        await target.evaluate(el=>{
+          el.style.outline='3px solid #ff7a1a'; el.style.outlineOffset='3px';
+          setTimeout(()=>{ el.style.outline=''; el.style.outlineOffset=''; },1500);
+        });
+        shown=true;
+      }
+    } catch { shown=false; }
+    return {shown};
   }
   if (r.op === 'capture') {
     const target=resolve(output,r.path);

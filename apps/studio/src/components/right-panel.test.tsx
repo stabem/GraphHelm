@@ -17,6 +17,15 @@ describe("RightPanel", () => {
     expect(screen.getByRole("region", { name: "What just happened" })).toHaveTextContent("Nothing recorded yet");
   });
 
+  // #446: while the journeys read or the capture envelopes are in flight, the panel says so; the
+  // #301 observer saw "No journeys mapped yet" for seconds on a run that had journeys.
+  it("says it is loading instead of claiming there is nothing", () => {
+    render(<RightPanel activity={[]} onOpenActivity={vi.fn()} journeysLoading pairsLoading />);
+    expect(screen.getByRole("region", { name: "Journeys" })).toHaveTextContent("Loading journeys…");
+    expect(screen.getByRole("region", { name: "Journeys" })).not.toHaveTextContent("No journeys mapped yet");
+    expect(screen.getByRole("region", { name: "Before and after" })).toHaveTextContent("Opening screenshots…");
+  });
+
   it("lists what just happened as bot verb object, each opening its record", async () => {
     const onOpen = vi.fn();
     render(<RightPanel activity={[{ sequence: 7, text: "loja kit 1 asked you “Merge now?”", at: null }]} onOpenActivity={onOpen} />);

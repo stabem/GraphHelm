@@ -57,8 +57,12 @@ describe("teamModel", () => {
   it("says what each bot is doing from the first line of its newest opened note", () => {
     const team = teamModel(input({ events: live, envelopes }));
     expect(team.bots.find((bot) => bot.key === "coordinator")!.doingNow).toBe("Splitting Leva 5 into three slices");
-    // kit-2's note is still sealed: it is a bot (counted from the log) with no words yet.
-    expect(team.bots.find((bot) => bot.key === "kit-2")!.doingNow).toBe("No note yet");
+    // #446: kit-2's note is still sealed. It exists, so the card says it is opening, never that
+    // there is no note (the #301 observer saw "No note yet" on every bot for ~5 s after a load).
+    expect(team.bots.find((bot) => bot.key === "kit-2")!.doingNow).toBe("Opening…");
+    // A bot whose records carry no note at all still says so.
+    const quiet = teamModel(input({ events: [record(200, "kit-4", minutesAgo(1), "agent_status")] }));
+    expect(quiet.bots.find((bot) => bot.key === "kit-4")!.doingNow).toBe("No note yet");
   });
 
   it("derives state from records only", () => {

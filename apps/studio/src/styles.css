@@ -2623,8 +2623,9 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .team-bot-doing { margin: 8px 0 4px; font-size: 13px; }
 .team-bot-details { font-size: 12px; }
 .team-bot-name-it { font-size: 12px; }
-.team-bot-name-form { display: flex; gap: 4px; margin-top: 4px; }
-.team-bot-name-form input { min-width: 0; flex: 1; font-size: 12px; }
+.team-bot-name-form { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+/* #448: the field has a row of its own, so its hint reads whole; Save and Cancel sit below it. */
+.team-bot-name-form input { min-width: 0; flex: 1 1 100%; font-size: 12px; padding: 4px 6px; }
 .team-tasks { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
 .team-tasks button { width: 100%; text-align: left; padding: 6px 8px; border: 1px solid var(--edge); border-radius: 8px; background: none; color: inherit; }
 .team-task-done button { text-decoration: line-through; color: var(--dim); }

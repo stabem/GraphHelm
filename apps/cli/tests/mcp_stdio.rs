@@ -613,8 +613,8 @@ const MCP_TOOL_NAMES: [&str; 43] = [
     "journey_approve",
     // #398: open a journey live at a step, act on it, close it (owner credential).
     "journey_open",
-    "journey_watch",
     "journey_act",
+    "journey_watch",
     "journey_close",
     "journey_sessions",
     "events",

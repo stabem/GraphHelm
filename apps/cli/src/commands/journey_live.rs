@@ -235,7 +235,7 @@ pub(super) fn open_in_runtime(args: &JourneyOpenArgs) -> Outcome {
     Outcome {
         output: CommandOutput {
             ok: envelope["ok"] == true,
-            command: OPEN,
+            command: if args.watch { WATCH } else { OPEN },
             data: Some(envelope["data"].clone()),
             diagnostics,
         },
@@ -435,7 +435,7 @@ fn spawn_host(args: &JourneyOpenArgs, data: Value) -> Outcome {
     Outcome {
         output: CommandOutput {
             ok,
-            command: OPEN,
+            command: if args.watch { WATCH } else { OPEN },
             data: Some(output["data"].clone()),
             diagnostics,
         },

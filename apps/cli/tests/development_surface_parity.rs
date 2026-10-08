@@ -172,8 +172,8 @@ const NON_DEVELOPMENT_TOOLS: [&str; 35] = [
     // #398. A journey opened live at a step, its acts and its close: owner verbs over the
     // Runtime's project, beside journey_approve.
     "journey_open",
-    "journey_watch",
     "journey_act",
+    "journey_watch",
     "journey_close",
     "journey_sessions",
     "events",

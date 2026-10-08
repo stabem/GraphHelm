@@ -272,6 +272,22 @@ fn watch_plays_a_draft_past_the_gates_that_refuse_open() {
 #[test]
 fn watch_starts_a_down_app_only_from_a_launcher_inside_the_project() {
     let dir = draft();
+    // The fixture flow's base is localhost:3000, which a developer box may well be serving.
+    // Point it at a port this test just reserved and released, so "down" is what it measures.
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let flow = dir.path().join(".graphhelm/journeys/checkout.journey.yaml");
+    let text = std::fs::read_to_string(&flow)
+        .unwrap()
+        .replace("http://localhost:3000", &format!("http://127.0.0.1:{port}"));
+    assert!(
+        text.contains(&format!("127.0.0.1:{port}")),
+        "ARRANGEMENT: the base was rewritten"
+    );
+    std::fs::write(&flow, text).unwrap();
     std::fs::write(
         dir.path().join(".graphhelm/observers/journey_driver.mjs"),
         include_bytes!("../../../tools/journey-driver/driver.mjs"),

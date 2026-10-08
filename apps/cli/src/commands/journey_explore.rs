@@ -1115,4 +1115,34 @@ mod tests {
         let used = BTreeSet::from(["order".to_owned()]);
         assert_eq!(screen_id("ORDER", &used).unwrap(), "order.2");
     }
+
+    /// Contract (#356 calibration, labelled pairs on a real marketplace app): a record id with a
+    /// short letter prefix (`MLB4000000001`) is an id, so two items are one screen, while word
+    /// segments stay literal so different pages stay different screens.
+    /// Regression: such ids stayed literal; every item became its own screen (false split).
+    /// Cost: microseconds, pure function.
+    #[test]
+    fn prefixed_record_ids_are_ids_and_word_segments_stay_literal() {
+        let pattern = |url: &str| path_pattern(&url.parse().unwrap());
+        for (a, b) in [
+            ("http://localhost/products/MLB4000000001/desempenho", "http://localhost/products/MLB4000000002/desempenho"),
+            ("http://localhost/creatives/MLB4000000001", "http://localhost/creatives/MLB4000000002"),
+            ("http://localhost/orders/ord_1234567", "http://localhost/orders/ord_7654321"),
+            ("http://localhost/items/A1234567", "http://localhost/items/B7654321"),
+        ] {
+            assert_eq!(pattern(a), pattern(b), "{a} and {b} are one screen");
+        }
+        assert_eq!(pattern("http://localhost/creatives/MLB4000000001"), "/creatives/:id");
+        for (a, b) in [
+            ("http://localhost/dashboard", "http://localhost/sales"),
+            ("http://localhost/settings", "http://localhost/settings/seguranca"),
+            ("http://localhost/products", "http://localhost/products/internos"),
+            ("http://localhost/dre", "http://localhost/graficos-anuais"),
+            ("http://localhost/entrar/cadastrar-2fa", "http://localhost/entrar/desafio"),
+            ("http://localhost/api/v2", "http://localhost/api/v3"),
+        ] {
+            assert_ne!(pattern(a), pattern(b), "{a} and {b} stay different screens");
+        }
+        assert_eq!(pattern("http://localhost/products/estoque-full"), "/products/estoque-full");
+    }
 }

@@ -646,25 +646,27 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     } else {
         None
     };
-    let mut driver = match Driver::start(&project, output.path(), &secrets) {
-        Ok(driver) => driver,
-        Err(failed) => {
-            if let Some(launched) = launched {
-                launched.stop();
-            }
-            return Err(failed);
-        }
-    };
+    let mut driver = Driver::start(&project, output.path(), &secrets)?;
     let entry = format!(
         "{}{}",
         base.trim_end_matches('/'),
         screens[&visited[0]]["url"].as_str().unwrap()
     );
-    driver.call(
-        "open",
-        json!({"base":entry,"viewport":cache["viewport"],"allowOrigins":args.allow_origin,"headed":true}),
-        "/entry",
-    )?;
+    let open = json!({"base":entry,"viewport":cache["viewport"],"allowOrigins":args.allow_origin,"headed":true});
+    match driver.call("open", open.clone(), "/entry") {
+        Ok(_) => {}
+        // A just-launched app (a dev server) builds its first page on the first request, which
+        // can outlast one request budget. The browser ended with that request; one fresh browser
+        // tries the now-built entry again. Only after a launch, and only once.
+        Err((code, _, _))
+            if launched.is_some() && matches!(code, "replay.timeout" | "driver.timeout") =>
+        {
+            data["entryRetried"] = true.into();
+            driver = Driver::start(&project, output.path(), &secrets)?;
+            driver.call("open", open, "/entry")?;
+        }
+        Err(failed) => return Err(failed),
+    }
     let recording = args.events.is_some().then(|| replay_args(args, &project));
     // A watch is visible to the Studio from its first act: the session record exists while it
     // plays (`state: playing`) and names the screen and the act it is at.
@@ -844,6 +846,15 @@ struct Launched {
 
 impl Launched {
     fn stop(self) {
+        drop(self);
+    }
+}
+
+impl Drop for Launched {
+    /// A launched app is stopped however the watch ends: the host's own end calls `stop`, and
+    /// any failure between the launch and the session drops it here (#462: a cold first page
+    /// that timed out left the app running).
+    fn drop(&mut self) {
         let _ = posix_shell()
             .arg(&self.script)
             .arg("down")

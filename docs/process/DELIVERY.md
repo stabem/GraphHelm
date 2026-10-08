@@ -182,7 +182,9 @@ python tools/task-record/task_record.py --lane <you> merged          --issue <N>
   serves; from a lane worktree pass `--token-file` with the Runtime checkout's absolute path. A Runtime mints it at start (D-058, #397); a Runtime started by an older binary
   has none until it restarts. Never use the owner's `events.token` for a lane record.
 - **Defaults.** `--url http://127.0.0.1:8793`, `--execution gh-team`, `--repo stabem/GraphHelm`;
-  `revision` is the step's position (claimed 1 … merged 5), `closes` defaults to `--issue`.
+  `revision` is the step's position (claimed 1 … merged 5). `closes` is exactly the `--closes`
+  numbers (the issues the squash closed, the intent `ci/closing-keywords.ps1` checked); with none
+  given it is empty, which is right for a `Refs` PR (#464).
   `--dry-run` prints the request without sending it. `--url` must be a loopback host
   (`127.0.0.1`, `localhost`, `::1`); any other is refused before the token is read.
 - **Every push is a `pr_opened`.** A verdict counts only on a head that has a `pr_opened`

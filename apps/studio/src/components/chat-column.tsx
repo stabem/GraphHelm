@@ -129,7 +129,11 @@ export function ChatColumn(props: ChatColumnProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const [unseen, setUnseen] = useState(false);
-  const messages = thread?.messages ?? [];
+  // #396: an agent filter on any thread; "" shows every line. Reset when the thread changes.
+  const [onlyFrom, setOnlyFrom] = useState("");
+  useEffect(() => { setOnlyFrom(""); }, [thread?.key]);
+  const speakers = [...new Set((thread?.messages ?? []).map((message) => message.sender))];
+  const messages = (thread?.messages ?? []).filter((message) => onlyFrom === "" || message.sender === onlyFrom);
   const lastId = messages.at(-1)?.id ?? "";
   const toBottom = useCallback((smooth: boolean) => {
     const el = scroller.current;
@@ -188,6 +192,14 @@ export function ChatColumn(props: ChatColumnProps) {
       </div>
       <div className="chat-principal-history" ref={setHistorySlot} hidden={!showPrincipal} />
       {thread?.kind === "task" && <p className="chat-recorded-note">Recorded messages about this task: what the agents recorded through the Runtime, not their native chats.</p>}
+      {speakers.length > 1 && (
+        <label className="chat-agent-filter">Lines from
+          <select value={onlyFrom} onChange={(event) => setOnlyFrom(event.target.value)}>
+            <option value="">everyone</option>
+            {speakers.map((sender) => <option key={sender} value={sender}>{props.names[sender] ?? (sender === "studio-operator" ? "You" : sender)}</option>)}
+          </select>
+        </label>
+      )}
       <ol className="chat-messages" role="tabpanel" aria-label={thread?.label ?? "Everyone"}>
         {thread?.key === EVERYONE && props.openingCount > 0 && <li className="chat-opening">Opening {props.openingCount} sealed records…</li>}
         {messages.map((message) => {

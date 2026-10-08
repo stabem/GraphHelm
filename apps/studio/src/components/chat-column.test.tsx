@@ -73,6 +73,18 @@ describe("ChatColumn", () => {
     expect(screen.getByRole("tab", { name: /^Issue #384/ })).toBeInTheDocument();
   });
 
+  // #396 (spec §8): an agent filter on any thread shows only one agent's lines.
+  it("filters a thread down to one agent's lines", async () => {
+    const threads = chatThreads([msg(1, "coordinator", null, "Plan ready"), msg(2, "kit-1", null, "Taking the cart"), msg(3, "coordinator", null, "Next")],
+      BOTS, "studio-operator");
+    render(<ChatColumn {...props({ threads })} />);
+    expect(screen.getByText("Taking the cart")).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Lines from" }), "coordinator");
+    expect(screen.queryByText("Taking the cart")).toBeNull();
+    expect(screen.getByText("Plan ready")).toBeInTheDocument();
+    expect(screen.getByText("Next")).toBeInTheDocument();
+  });
+
   it("keeps sealed records counted while they open", () => {
     render(<ChatColumn {...props({ openingCount: 3 })} />);
     expect(screen.getByText("Opening 3 sealed records…")).toBeInTheDocument();

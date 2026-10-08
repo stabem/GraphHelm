@@ -199,9 +199,77 @@ pub(crate) fn newest_plan(
             return None;
         }
         let text = reader.description(&store, &scope, event, record.signal_id.as_str(), 1)?;
-        let plan: serde_json::Value = serde_json::from_str(&text).ok()?;
-        (plan["schema"] == graphhelm_policy::keel_plan::PLAN_SCHEMA).then_some(plan)
+        trusted_plan(&event.actor, &text)
     })
+}
+
+const TASK_PLAN_SCHEMA_ID: &str = "https://p50.dev/schemas/task-plan.schema.json";
+
+fn task_plan_schemas() -> Option<&'static graphhelm_schema::OfflineSchemaSet> {
+    static SCHEMAS: OnceLock<Option<graphhelm_schema::OfflineSchemaSet>> = OnceLock::new();
+    SCHEMAS
+        .get_or_init(|| {
+            let document = serde_json::from_str(include_str!(
+                "../../../../extensions/builtin/graphhelm-development-contracts/schemas/task-plan.schema.json"
+            ))
+            .ok()?;
+            graphhelm_schema::OfflineSchemaSet::compile(BTreeMap::from([(
+                TASK_PLAN_SCHEMA_ID.to_owned(),
+                document,
+            )]))
+            .ok()
+        })
+        .as_ref()
+}
+
+/// A recorded `keel.plan` the briefing may hand on (#382, review of #405): recorded by the owner
+/// (`keel plan --events` records as the owner; any session can record a signal, so an agent could
+/// otherwise plant a plan with, say, fewer reviews), and valid against `task-plan.schema.json`.
+/// Anything else is skipped, so an older trusted plan still wins over a newer forged one.
+fn trusted_plan(
+    actor: &graphhelm_protocols::PersistedActor,
+    description: &str,
+) -> Option<serde_json::Value> {
+    if actor.actor_type() != graphhelm_protocols::PersistedActorType::Owner {
+        return None;
+    }
+    let plan: serde_json::Value = serde_json::from_str(description).ok()?;
+    task_plan_schemas()?
+        .validate(TASK_PLAN_SCHEMA_ID, &plan, "/plan")
+        .is_empty()
+        .then_some(plan)
+}
+
+#[cfg(test)]
+mod trusted_plan_tests {
+    use graphhelm_protocols::{ActorId, PersistedActor, PersistedActorType};
+
+    fn plan(reviews: u32) -> String {
+        serde_json::json!({
+            "schema": "graphhelm-task-plan-v1", "taskId": "issue-1", "revision": "",
+            "paths": ["src/lib.rs"], "classes": ["code"], "invariantClasses": [],
+            "journeys": [], "proof": "tests", "reviews": reviews, "skills": ["keel"],
+            "tools": [], "delegation": {"kind": "implementer", "tier": "standard",
+            "effort": "medium"}, "path": ["card", "change", "merge"], "decidedBy": "rules",
+            "jev": null
+        })
+        .to_string()
+    }
+
+    fn actor(kind: PersistedActorType) -> PersistedActor {
+        PersistedActor::new(kind, ActorId::parse("someone").unwrap())
+    }
+
+    /// Review of #405: an agent-recorded or schema-invalid plan never reaches the briefing.
+    /// Credible regression: the briefing trusting any `keel.plan`, so a session lowers its own
+    /// review count. Cost: pure, no I/O.
+    #[test]
+    fn only_an_owner_recorded_schema_valid_plan_is_trusted() {
+        assert!(super::trusted_plan(&actor(PersistedActorType::Owner), &plan(1)).is_some());
+        assert!(super::trusted_plan(&actor(PersistedActorType::Agent), &plan(1)).is_none());
+        assert!(super::trusted_plan(&actor(PersistedActorType::Owner), &plan(0)).is_none());
+        assert!(super::trusted_plan(&actor(PersistedActorType::Owner), "not json").is_none());
+    }
 }
 
 fn empty() -> Records {

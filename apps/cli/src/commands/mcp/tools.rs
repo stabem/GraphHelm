@@ -101,7 +101,8 @@ const TOOLS: [ToolSpec; 38] = [
                       `graphhelm keel plan`): classifies its paths (invariant class, user-visible \
                       screen, code, docs) and returns the graphhelm-task-plan-v1 record with the \
                       review count, proof type, skills, delegation and shortest path to done. \
-                      Read-only; record it with the signal tool as kind keel.plan.",
+                      Read-only. The briefing carries only a plan the owner \
+                      recorded (`graphhelm keel plan --events ...`).",
         schema: keel_plan_schema,
     },
     ToolSpec {

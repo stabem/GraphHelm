@@ -719,17 +719,27 @@ pub(crate) fn plan_value(
         ));
     }
     if let Some(bad) = paths.iter().position(|path| {
-        path.is_empty() || path.starts_with('/') || path.contains('\\') || path.split('/').any(|part| part == "..")
+        path.is_empty()
+            || path.starts_with('/')
+            || path.contains('\\')
+            || path.split('/').any(|part| part == "..")
     }) {
         return Err(input_error(
             "paths are repository-relative, forward slashes, without `..`",
             &format!("/paths/{bad}"),
         ));
     }
-    let policy: KeelPolicy = serde_yaml_ng::from_str(KEEL_POLICY)
-        .map_err(|error| Outcome::internal(PLAN_COMMAND, format!("shipped keel.yaml unreadable: {error}")))?;
+    let policy: KeelPolicy = serde_yaml_ng::from_str(KEEL_POLICY).map_err(|error| {
+        Outcome::internal(
+            PLAN_COMMAND,
+            format!("shipped keel.yaml unreadable: {error}"),
+        )
+    })?;
     let Some(rules) = policy.plan.clone() else {
-        return Err(Outcome::internal(PLAN_COMMAND, "shipped keel.yaml has no plan section"));
+        return Err(Outcome::internal(
+            PLAN_COMMAND,
+            "shipped keel.yaml has no plan section",
+        ));
     };
     let (contracts, _) = super::journeys::contracts(repo);
     let journeys = contracts

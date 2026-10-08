@@ -37,14 +37,10 @@ pub(crate) fn execute_within(
 ) -> Result<serde_json::Value, Failure> {
     let read = super::status::read_known_within(events, execution, budget)?;
     let answer = graphhelm_execution::attention(&read.projection, &read.inputs);
-    let mut briefing =
-        graphhelm_execution::briefing_view(&read.projection, &answer, &read.history);
-    if let Some(keyring) = keyring {
-        briefing.plan = crate::commands::journeys::newest_plan(
-            events,
-            read.projection.execution_id.as_str(),
-            keyring,
-        );
+    let mut briefing = graphhelm_execution::briefing_view(&read.projection, &answer, &read.history);
+    if let (Some(keyring), Some(execution_id)) = (keyring, read.projection.execution_id.as_deref())
+    {
+        briefing.plan = crate::commands::journeys::newest_plan(events, execution_id, keyring);
     }
     Ok(serde_json::to_value(briefing)
         .expect("a view built from already-serializable fold types serializes"))

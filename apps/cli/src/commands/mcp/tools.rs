@@ -1504,8 +1504,8 @@ pub(crate) fn call(
             Ok(api.request(
                 "POST",
                 &url::segment_path(&["v1", "keel", "plan"]),
-                None,
                 Some(&body),
+                None,
                 None,
             ))
         }

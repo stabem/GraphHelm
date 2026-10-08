@@ -250,7 +250,11 @@ pub fn decide(
     let [tier, effort] = rules.delegation.get(task).clone();
     let mut route = vec!["card".to_owned(), "change".to_owned()];
     if matches!(proof, "journey" | "both") {
-        route.extend(journeys.iter().map(|id| format!("graphhelm journey replay {id}")));
+        route.extend(
+            journeys
+                .iter()
+                .map(|id| format!("graphhelm journey replay {id}")),
+        );
     }
     if matches!(proof, "tests" | "both") {
         route.push("a test that names the defect and fails on the parent".to_owned());
@@ -268,8 +272,18 @@ pub fn decide(
             effort,
         },
         path: route,
+<<<<<<< HEAD
         decided_by: decided_by.to_owned(),
         jev,
         ..plan.clone()
+=======
+        decided_by: if ambiguous {
+            "fallback_strict"
+        } else {
+            "rules"
+        }
+        .to_owned(),
+        jev: None,
+>>>>>>> issue-382-phase-b-keel-plan
     }
 }

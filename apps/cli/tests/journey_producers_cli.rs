@@ -758,7 +758,16 @@ fn a_recorded_keel_plan_reaches_the_briefing() {
     }
     let harness = prepared();
     let output = graphhelm()
-        .args(["--json", "keel", "plan", "--task", "issue-7", "--paths", "web/cart/Line.tsx", "--repo"])
+        .args([
+            "--json",
+            "keel",
+            "plan",
+            "--task",
+            "issue-7",
+            "--paths",
+            "web/cart/Line.tsx",
+            "--repo",
+        ])
         .arg(&harness.project)
         .arg("--events")
         .arg(&harness.events)
@@ -769,7 +778,11 @@ fn a_recorded_keel_plan_reaches_the_briefing() {
         .unwrap();
     let recorded = envelope(&output);
     assert_eq!(output.status.code(), Some(0), "{recorded}");
-    assert_eq!(recorded["data"]["plan"]["journeys"], json!(["cart"]), "{recorded}");
+    assert_eq!(
+        recorded["data"]["plan"]["journeys"],
+        json!(["cart"]),
+        "{recorded}"
+    );
     assert_eq!(recorded["data"]["plan"]["proof"], "journey");
 
     let briefing = |with_keyring: bool| {

@@ -382,7 +382,8 @@ export interface TaskState {
   plan?: TaskPlan | null;
   /** The step that is lit. */
   step: TaskStep;
-  /** A BLOCK that no verdict on a newer head has answered: the red edge into the next step. */
+  /** A BLOCK on the current head that no newer head (#608) or verdict has answered: the red edge
+   * into the next step. */
   blockedBy: { reviewer: string; headSha: string; commentUrl: string } | null;
   reviewers: string[];
   mergeSha: string | null;
@@ -536,6 +537,9 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
             round.fixedAt = event.occurredAt ?? null;
           }
         }
+        // #608: the author answered the BLOCK with a newer head, so nothing is blocked now: the
+        // task waits on the re-review. The BLOCK itself stays in `rounds`, with its fixHead.
+        if (state.blockedBy !== null && event.headSha !== undefined && event.headSha !== state.blockedBy.headSha) state.blockedBy = null;
         if (event.headSha !== undefined && !state.recordedHeads.includes(event.headSha)) state.recordedHeads.push(event.headSha);
         // A verdict that arrived before this head's pr_opened (a back-fill) now speaks for it.
         for (const stray of state.strayVerdicts.filter((entry) => entry.reason === "unrecorded" && entry.headSha === state.headSha)) {

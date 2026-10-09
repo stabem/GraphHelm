@@ -5,9 +5,9 @@ import type { RuntimeEvent } from "./types";
 
 /* #386 (spec §7, §9 row F): the Team tab's per-task graph is folded from `task.*` records alone.
  * These cells observe the fold the spec names: a PR that is blocked, gets a new head and is then
- * approved and merged. They catch a fold that clears the red edge on a new head before a verdict
- * on that head, one that keeps a stale block after the approval, and records attributed to an
- * actor other than the one that recorded them. Cost: pure functions, no I/O, milliseconds. */
+ * approved and merged. They catch a fold that keeps a stale block after the author pushed an
+ * answer (#608) or after the approval, and records attributed to an actor other than the one that
+ * recorded them. Cost: pure functions, no I/O, milliseconds. */
 
 function record(sequence: number, kind: string, actorId: string, document: Record<string, unknown>): TaskEventRecord {
   const parsed = parseTaskEvent(kind, actorId, JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "pr-384", revision: sequence, at: "2026-10-07T20:00:00Z", ...document }));
@@ -28,13 +28,38 @@ describe("foldTaskEvents", () => {
     expect(states.map((state) => [state.step, state.blockedBy?.headSha ?? null])).toEqual([
       ["review", null],
       ["review", "aaaaaaaa"],
-      ["review", "aaaaaaaa"],
+      // #608: the pushed head answers the BLOCK; it is the re-review's head, no longer blocked.
+      ["review", null],
       ["merge", null],
       ["merged", null],
     ]);
     expect(states[1].blockedBy?.reviewer).toBe("gh-claude-1");
     expect(states[2].headSha).toBe("bbbbbbbb");
     expect(states[4]).toMatchObject({ taskId: "pr-384", pr: 384, lane: "gh-claude-4", mergeSha: "cccccccc" });
+  });
+
+  // #608 (found by gh-design in the Graph, issue-591): after a BLOCK at head A, the author's
+  // pr_opened at head B answers it. Every view (Team tab, Graph, Lanes) reads the fold, so the
+  // fold says it: no `blockedBy`, the round keeps the BLOCK with its fixHead, and the step is the
+  // re-review waiting on that reviewer. A pr_opened that repeats head A answers nothing. Catches
+  // `blockedBy` cleared only by a verdict, which drew a pushed fix as "blocked" everywhere.
+  it("a newer head after a BLOCK reads as the re-review, not as blocked (#608)", () => {
+    const opened = record(1, "task.pr_opened", "gh-claude-4", { pr: 608, headSha: "aaaaaaaa", journeys: [], lane: "gh-claude-4" });
+    const assigned = record(2, "task.review_assigned", "gh-claude-4", { pr: 608, headSha: "aaaaaaaa", reviewer: "gh-claude-5", lane: "gh-claude-4" });
+    const block = record(3, "task.review_verdict", "gh-claude-5", { pr: 608, headSha: "aaaaaaaa", reviewer: "gh-claude-5", verdict: "BLOCK", commentUrl: "https://github.com/stabem/GraphHelm/pull/608#c1" });
+    const same = record(4, "task.pr_opened", "gh-claude-4", { pr: 608, headSha: "aaaaaaaa", journeys: [], lane: "gh-claude-4" });
+    const fix = record(5, "task.pr_opened", "gh-claude-4", { pr: 608, headSha: "bbbbbbbb", journeys: [], lane: "gh-claude-4" });
+
+    expect(foldTaskEvents([opened, assigned, block])[0].blockedBy?.headSha).toBe("aaaaaaaa");
+    expect(foldTaskEvents([opened, assigned, block, same])[0].blockedBy?.headSha).toBe("aaaaaaaa");
+
+    const pushed = foldTaskEvents([opened, assigned, block, fix])[0];
+    expect(pushed.blockedBy).toBeNull();
+    expect(pushed.step).toBe("review");
+    expect(pushed.headSha).toBe("bbbbbbbb");
+    expect(pushed.reviewers).toEqual(["gh-claude-5"]);
+    expect(pushed.rounds).toHaveLength(1);
+    expect(pushed.rounds[0]).toMatchObject({ reviewer: "gh-claude-5", headSha: "aaaaaaaa", fixHead: "bbbbbbbb" });
   });
 
   it("links the task to the journeys its claim names, and an empty pr_opened list keeps them (#577)", () => {

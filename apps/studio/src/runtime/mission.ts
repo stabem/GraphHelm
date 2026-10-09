@@ -12,9 +12,17 @@ export interface Mission { contractId: string; title: string; steps: MissionStep
 
 const STEP_ORDER: Record<TaskState["step"], number> = { implement: 0, review: 1, merge: 2, merged: 3 };
 
+/** Run-edge keys are the flow's own edge ids (free-form; `graphhelm journey explore` writes
+ * `<from>.<to>`, fixtures use `<from>-><to>`), not a fixed "from->to". An edge leads into a step
+ * when the key is, or ends with `->` or `.` followed by, that step id. */
+export function skippedEdgeInto(run: JourneyRunView | null, stepId: string) {
+  return Object.entries(run?.edges ?? {}).find(([id, e]) =>
+    e.result === "skipped" && (id === stepId || id.endsWith(`->${stepId}`) || id.endsWith(`.${stepId}`)));
+}
+
 function stepStatus(stepId: string, run: JourneyRunView | null): { status: StepStatus; reason: string | null } {
   if (!run || run.state === "none") return { status: "not_run", reason: null };
-  const skipped = Object.entries(run.edges ?? {}).find(([id, e]) => e.result === "skipped" && id.split("->")[1] === stepId);
+  const skipped = skippedEdgeInto(run, stepId);
   if (skipped) return { status: "needs_you", reason: skipped[1].reason ?? null };
   const screen = run.screens?.[stepId];
   if (!screen?.result) return { status: "not_run", reason: null };

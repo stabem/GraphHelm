@@ -697,9 +697,24 @@ impl IdGenerator for UuidIds {
     }
 }
 
+/// #478: store opens per events directory, so a test can count a request's opens. Keyed by path:
+/// tests in parallel each use their own temp directory.
+#[cfg(test)]
+pub(crate) static STORE_OPENS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::BTreeMap<std::path::PathBuf, u64>>,
+> = std::sync::LazyLock::new(Default::default);
+
 pub(super) fn event_store(
     path: &std::path::Path,
 ) -> Result<LocalEventRepository, EventRepositoryError> {
+    #[cfg(test)]
+    {
+        *STORE_OPENS
+            .lock()
+            .unwrap()
+            .entry(path.to_path_buf())
+            .or_default() += 1;
+    }
     match shared_prefix_cache(path) {
         Some(cache) => LocalEventRepository::open_with_prefix_cache(
             path,

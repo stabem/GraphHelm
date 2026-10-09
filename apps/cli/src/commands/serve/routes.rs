@@ -46,7 +46,7 @@ use super::ports::{
 use super::{
     ExecutorWiring, MutationError, PausedUnderCaller, ServeState, execution_paused_under,
     parse_mutation_headers, respond, respond_failure, run_idempotent_mutation,
-    verify_agent_credential,
+    run_idempotent_mutation_with_store, verify_agent_credential,
 };
 use crate::commands::architect::{self, SynthesizeRequest};
 use crate::commands::execution::PreparedDrive;
@@ -2777,12 +2777,21 @@ pub(super) async fn signal(
     // and an owned `String`) so `async move` owns its copies while the outer call still borrows
     // `state.events`/`execution_id` directly.
     let sealing = state.sealing.clone();
-    let events = state.events.clone();
     let drive_execution_id = execution_id.clone();
     let scoped_agent_authenticated = identity.actor.actor_type() == PersistedActorType::Agent
         && verify_agent_credential(&state, &headers, &identity.actor);
+    // #478: the request's ONE store open. The mutation reads through this handle and the body
+    // below records through a clone of it (the clone shares the handle; it opens nothing).
+    let store = match event_store(&state.events) {
+        Ok(store) => store,
+        Err(error) => {
+            return respond_failure(SIGNAL_COMMAND, execution::repository_failure(&error));
+        }
+    };
+    let store_for_run = store.clone();
 
-    run_idempotent_mutation(
+    run_idempotent_mutation_with_store(
+        &store,
         &state.events,
         &execution_id,
         SIGNAL_COMMAND,
@@ -2803,8 +2812,8 @@ pub(super) async fn signal(
                 // one `sealing` is `None`, the seal never runs, and the panic never fires. That
                 // is why the defect outlived every earlier signal test: they all ran unsealed.
                 let recorded = tokio::task::spawn_blocking(move || {
-                    execution::signal::execute_authenticated(
-                        &events,
+                    execution::signal::execute_authenticated_on(
+                        &store_for_run,
                         Some(drive_execution_id.as_str()),
                         &signal_bytes,
                         evidence_out.as_deref(),

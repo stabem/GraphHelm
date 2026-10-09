@@ -96,8 +96,9 @@ fn as_actor(mut document: Value) -> Value {
             document[key] = json!(ACTOR);
         }
     }
-    // A verdict is signed by its reviewer; an assignment names someone else and stays as it is.
-    if document.get("verdict").is_some() {
+    // A review verdict is signed by its reviewer; an assignment names someone else and stays as it
+    // is, and a critic verdict (#467) has no reviewer at all.
+    if document.get("verdict").is_some() && document.get("reviewer").is_some() {
         document["reviewer"] = json!(ACTOR);
     }
     document

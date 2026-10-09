@@ -542,4 +542,57 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    /// #549: the launcher waits longer for a slow Runtime (measured: a loaded machine took 7.5 s, and
+    /// once not even 60 s), so a Runtime that DIED must not cost that whole wait. The stub exits at
+    /// once; the launcher says so within seconds instead of sitting out its deadline. Credible
+    /// regression: a fixed wait that only ever ends at its deadline. Cost: one PowerShell launch.
+    #[cfg(windows)]
+    #[test]
+    fn the_launcher_says_at_once_when_the_runtime_it_started_exits() {
+        use std::net::TcpListener;
+        let first = TcpListener::bind("127.0.0.1:0").unwrap();
+        let second = TcpListener::bind("127.0.0.1:0").unwrap();
+        let bind_port = first.local_addr().unwrap().port();
+        let studio_port = second.local_addr().unwrap().port();
+        drop((first, second));
+        let root = std::env::temp_dir().join(format!("gh studio exits {}", std::process::id()));
+        let events = root.join("events");
+        std::fs::create_dir_all(&events).unwrap();
+        std::fs::write(
+            root.join("dies.cmd"),
+            "@exit /b 3
+",
+        )
+        .unwrap();
+        let launcher = Path::new(env!("CARGO_MANIFEST_DIR")).join("../studio/tools/studio-up.ps1");
+        let started = std::time::Instant::now();
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+            .arg(&launcher)
+            .arg("-Events")
+            .arg(&events)
+            .args(["-Bind", &format!("127.0.0.1:{bind_port}")])
+            .args(["-StudioPort", &studio_port.to_string(), "-NoBrowser"])
+            .arg("-GraphHelm")
+            .arg(root.join("dies.cmd"))
+            .output()
+            .unwrap();
+        let elapsed = started.elapsed();
+        let said = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(!output.status.success(), "{said}");
+        assert!(
+            said.contains("exited"),
+            "the launcher must say the Runtime exited: {said}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(15),
+            "took {elapsed:?}: {said}"
+        );
+    }
 }

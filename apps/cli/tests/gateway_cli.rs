@@ -1236,3 +1236,44 @@ fn probe_names_the_missing_native_program() {
         "{value}"
     );
 }
+
+/// A copy of `tests/fixtures/slow-version.rs`, compiled once, whose `--version` answers after
+/// `delay_ms`. Returned path is absolute, as a manifest's `command.program` may be.
+fn slow_native_program(dir: &Path, delay_ms: u64) -> String {
+    static BINARY: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let built = BINARY.get_or_init(|| {
+        let temp = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new("rustc")
+            .args(["--edition=2024", "tests/fixtures/slow-version.rs", "-o"])
+            .arg(
+                temp.path()
+                    .join(format!("slow-version{}", std::env::consts::EXE_SUFFIX)),
+            )
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+        temp
+    });
+    let name = format!("slow-version{}", std::env::consts::EXE_SUFFIX);
+    let program = dir.join(&name);
+    std::fs::copy(built.path().join(&name), &program).unwrap();
+    std::fs::write(program.with_extension("delay"), delay_ms.to_string()).unwrap();
+    program.to_str().unwrap().to_owned()
+}
+
+/// #549 (measured under a loaded machine: `claude --version` took up to 20.9 s with 64 busy
+/// processes on 32 CPUs): a native runtime that answers `--version` slowly but cleanly is
+/// `available`, not `unavailable`. Credible regression: the old 10 s probe budget, which turned
+/// a busy machine into a "the runtime is broken" verdict. Cost: one child that sleeps 12 s.
+#[test]
+fn a_native_runtime_that_answers_slowly_on_a_busy_machine_is_still_available() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut manifest = valid_manifest_value();
+    manifest["routes"][1]["command"]["program"] =
+        serde_json::Value::String(slow_native_program(directory.path(), 12_000));
+    let manifest = write_manifest(directory.path(), &manifest);
+    let output = probe(&manifest, "native_probe", None, None, None, None);
+    let value = json(&output.stdout);
+    assert_eq!(value["data"]["health"], "available", "{value}");
+}

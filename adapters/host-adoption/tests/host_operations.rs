@@ -464,6 +464,53 @@ fn fake_host(dir: &Path, version: &str, help: &str) -> std::path::PathBuf {
     path
 }
 
+/// The fake host, answering each probe only after `delay_ms` (#549).
+fn slow_host(dir: &Path, version: &str, help: &str, delay_ms: u64) -> std::path::PathBuf {
+    let path = fake_host(dir, version, help);
+    std::fs::write(
+        path.with_extension("input"),
+        format!(
+            "{version}
+{help}
+
+
+{delay_ms}
+"
+        ),
+    )
+    .unwrap();
+    path
+}
+
+/// #549 (measured with 64 busy processes on 32 CPUs: a freshly written host's first `--version`
+/// took up to 17.3 s and `claude --help` up to 39.4 s): a host that answers both probes slowly but
+/// correctly is still adopted. Credible regression: the old 3 s probe budget, which read a busy
+/// machine as an unsupported host. Cost: two probes of 4 s each.
+#[test]
+#[cfg(windows)]
+fn a_host_that_answers_slowly_on_a_busy_machine_is_still_supported() {
+    let (p, h, s) = roots();
+    let executable = slow_host(
+        p.path(),
+        "2.1.265 (Claude Code)",
+        "--plugin-dir --help",
+        4000,
+    );
+    let plan = package_plan(p.path(), h.path(), &executable, "claude", "2.1.265");
+    let result = graphhelm_host_adoption::apply(
+        p.path(),
+        h.path(),
+        s.path(),
+        &plan,
+        plan["digest"].as_str().unwrap(),
+    );
+    assert!(
+        result.is_ok(),
+        "a slow but correct host was refused: {:?}",
+        result.err().map(|e| e.reason.pointer())
+    );
+}
+
 fn package_plan(
     p: &Path,
     h: &Path,

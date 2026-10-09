@@ -114,7 +114,8 @@ def document(args, now):
         need(args, "branch")
         doc.update(issue=args.issue, lane=args.lane, branch=args.branch)
     elif args.kind == "pr_opened":
-        need(args, "pr", "head")
+        # #508: the reviewer is part of opening the PR, so the Review step is never drawn unnamed.
+        need(args, "pr", "head", "reviewer")
         doc.update(pr=args.pr, headSha=args.head, journeys=args.journeys, lane=args.lane)
     elif args.kind == "review_assigned":
         need(args, "pr", "head", "reviewer")
@@ -138,6 +139,17 @@ def main(argv):
     args = parse(argv)
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     doc = document(args, now)
+    code, signal_id, reply = send_opening(args, doc, now)
+    outcome = report(code, signal_id, reply)
+    if args.kind == "pr_opened" and outcome == 0:
+        # #508: the assignment rides on the same call, the same head and PR, recorded as this lane.
+        assigned = argparse.Namespace(**{**vars(args), "kind": "review_assigned", "revision": None})
+        code, signal_id, reply = send(assigned, document(assigned, now), now)
+        return report(code, signal_id, reply)
+    return outcome
+
+
+def send_opening(args, doc, now):
     code, signal_id, reply = send(args, doc, now)
     errors = {d.get("code") for d in reply.get("diagnostics", []) if d.get("severity") == "error"}
     words = [key for key in ("title", "summary") if key in doc]
@@ -148,7 +160,7 @@ def main(argv):
               f"titles (#486), so the step is sent again without title/summary. Restart it on a current build.",
               file=sys.stderr)
         code, signal_id, reply = send(args, {k: v for k, v in doc.items() if k not in words}, now)
-    return report(code, signal_id, reply)
+    return code, signal_id, reply
 
 
 def send(args, doc, now):

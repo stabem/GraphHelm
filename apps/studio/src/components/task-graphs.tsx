@@ -80,6 +80,8 @@ function Node({ task, step, label }: { task: TaskState; step: Exclude<TaskStep, 
     <li className={`task-node task-node-${state}`} aria-current={state === "current" ? "step" : undefined}>
       <span className="task-node-label">{label}</span>
       {who !== null && <span className="task-node-agent">{who}</span>}
+      {/* #508 (owner): a review in progress with nobody named means a record is missing; say so. */}
+      {who === null && step === "review" && state === "current" && <span className="task-node-missing">no reviewer recorded</span>}
     </li>
   );
 }

@@ -210,8 +210,8 @@ with `tools/task-record/task_record.py` (Python 3 standard library), which POSTs
 
 ```sh
 python tools/task-record/task_record.py --lane <you> claimed         --issue <N> --branch <branch>
-python tools/task-record/task_record.py --lane <you> pr_opened       --issue <N> --pr <P> --head <sha>
-python tools/task-record/task_record.py --lane <you> review_assigned --issue <N> --pr <P> --head <sha> --reviewer <reviewer>
+python tools/task-record/task_record.py --lane <you> pr_opened       --issue <N> --pr <P> --head <sha> --reviewer <reviewer>
+python tools/task-record/task_record.py --lane <you> review_assigned --issue <N> --pr <P> --head <sha> --reviewer <other>   # only when the reviewer changes
 python tools/task-record/task_record.py --lane <you> review_verdict  --issue <N> --pr <P> --head <sha> --verdict APPROVE --comment-url <url>
 python tools/task-record/task_record.py --lane <you> merged          --issue <N> --pr <P> --merge-sha <sha>
 ```
@@ -229,7 +229,9 @@ python tools/task-record/task_record.py --lane <you> merged          --issue <N>
   (`127.0.0.1`, `localhost`, `::1`); any other is refused before the token is read.
 - **Every push is a `pr_opened`.** A verdict counts only on a head that has a `pr_opened`
   record; a fix head without one leaves its verdicts outside the graph (shown as a verdict on an
-  unrecorded head). Record `pr_opened` after each push, and `review_assigned` again when the
+  unrecorded head). Record `pr_opened` after each push; it requires `--reviewer` and records
+  `review_assigned` in the same call (#508), so Review is never drawn unnamed. Record
+  `review_assigned` on its own only when the
   reviewer changes.
 - **Repeated steps.** The record id and its `Idempotency-Key` end with a hash of the lane, the kind
   and the record without `at`. Any change is a new record: a new head in the fix loop, a second

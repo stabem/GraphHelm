@@ -228,3 +228,28 @@ describe("TaskGraphs titles (#477)", () => {
     expect(rows[1]).not.toHaveClass("task-graph-changed");
   });
 });
+
+/* #508 (owner: "tinha q ta o nome dele ali se n ta tem algo indo errado"): a lit Review with no
+ * reviewer recorded is a warning, never a blank; and a verdict from a lane nobody assigned still
+ * names that lane as the reviewer. Cost: jsdom only. */
+describe("TaskGraphs review names its reviewer (#508)", () => {
+  const head = "a".repeat(40);
+  it("warns on a lit Review with no reviewer recorded", () => {
+    const tasks = foldTaskEvents([record(1, "issue-9", "task.pr_opened", "gh-claude-2", { pr: 19, headSha: head, journeys: [], lane: "gh-claude-2" })]);
+    render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} />);
+    const lit = screen.getByRole("listitem", { current: "step" });
+    expect(lit).toHaveTextContent(/review/i);
+    expect(within(lit).getByText("no reviewer recorded")).toHaveClass("task-node-missing");
+  });
+
+  it("names the lane whose verdict arrived without an assignment", () => {
+    const tasks = foldTaskEvents([
+      record(1, "issue-9", "task.pr_opened", "gh-claude-2", { pr: 19, headSha: head, journeys: [], lane: "gh-claude-2" }),
+      record(2, "issue-9", "task.review_verdict", "gh-claude-5", { pr: 19, headSha: head, reviewer: "gh-claude-5", verdict: "BLOCK", commentUrl }),
+    ]);
+    render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} />);
+    const lit = screen.getByRole("listitem", { current: "step" });
+    expect(lit).toHaveTextContent("gh-claude-5");
+    expect(within(lit).queryByText("no reviewer recorded")).toBeNull();
+  });
+});

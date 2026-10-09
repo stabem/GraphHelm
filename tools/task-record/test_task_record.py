@@ -86,10 +86,10 @@ class TaskRecordTest(unittest.TestCase):
 
     def test_the_fix_loop_records_a_second_pr_opened_and_verdict_on_the_new_head(self):
         steps = [
-            ("--lane", "lane-a", "pr_opened", "--issue", "9", "--pr", "19", "--head", HEAD_A),
+            ("--lane", "lane-a", "pr_opened", "--issue", "9", "--pr", "19", "--head", HEAD_A, "--reviewer", "lane-b"),
             ("--lane", "lane-b", "review_verdict", "--issue", "9", "--pr", "19", "--head", HEAD_A,
              "--verdict", "BLOCK", "--comment-url", "https://github.com/o/r/pull/19#c1"),
-            ("--lane", "lane-a", "pr_opened", "--issue", "9", "--pr", "19", "--head", HEAD_B),
+            ("--lane", "lane-a", "pr_opened", "--issue", "9", "--pr", "19", "--head", HEAD_B, "--reviewer", "lane-b"),
             ("--lane", "lane-b", "review_verdict", "--issue", "9", "--pr", "19", "--head", HEAD_B,
              "--verdict", "APPROVE", "--comment-url", "https://github.com/o/r/pull/19#c2"),
         ]
@@ -97,7 +97,8 @@ class TaskRecordTest(unittest.TestCase):
             code, out = self.run_step(*step)
             self.assertEqual(code, 0, out)
             self.assertTrue(out.startswith("recorded "), out)
-        self.assertEqual(len({key for key, _ in FakeRuntime.seen}), 4)
+        # Each pr_opened also records its review_assignment (#508): 4 steps, 6 records.
+        self.assertEqual(len({key for key, _ in FakeRuntime.seen}), 6)
 
     def test_a_retry_of_a_recorded_step_reads_as_already_recorded(self):
         step = ("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "issue-9-x")
@@ -144,6 +145,23 @@ class TaskRecordTest(unittest.TestCase):
                                   "--head", HEAD_A, "--reviewer", "lane-b")
         self.assertEqual(code, 0, out)  # no title on this kind: the old Runtime accepts it as before
         self.assertEqual(len(FakeRuntime.seen), 1)
+
+    def test_pr_opened_records_the_review_assignment_in_the_same_call(self):
+        # #508 (owner): Review showed no name because review_assigned was a separate step to forget.
+        code, out = self.run_step("--lane", "lane-a", "pr_opened", "--issue", "9", "--pr", "19", "--head", HEAD_A,
+                                  "--reviewer", "lane-b", "--no-github")
+        self.assertEqual(code, 0, out)
+        kinds = [body["signal"]["type"] for _, body in FakeRuntime.seen]
+        self.assertEqual(kinds, ["task.pr_opened", "task.review_assigned"])
+        assigned = json.loads(FakeRuntime.seen[1][1]["signal"]["description"])
+        self.assertEqual((assigned["reviewer"], assigned["headSha"], assigned["pr"]), ("lane-b", HEAD_A, 19))
+        self.assertEqual(out.count("recorded "), 2, out)
+
+    def test_pr_opened_without_a_reviewer_is_refused_before_anything_is_sent(self):
+        with self.assertRaises(SystemExit) as refused:
+            self.run_step("--lane", "lane-a", "pr_opened", "--issue", "9", "--pr", "19", "--head", HEAD_A, "--no-github")
+        self.assertIn("--reviewer", str(refused.exception.code))
+        self.assertEqual(FakeRuntime.seen, [])
 
     def test_a_non_loopback_url_is_refused_before_the_token_is_read_or_sent(self):
         with self.assertRaises(SystemExit) as refused:
@@ -200,7 +218,7 @@ class TitleAndSummary(unittest.TestCase):
         self.assertEqual(err, "")
 
     def test_pr_opened_reads_the_pr_and_flags_win(self):
-        document, _ = self.doc("pr_opened", "--issue", "477", "--pr", "484", "--head", "a" * 40, "--title", "fix(studio): mine")
+        document, _ = self.doc("pr_opened", "--issue", "477", "--pr", "484", "--head", "a" * 40, "--reviewer", "gh-claude-5", "--title", "fix(studio): mine")
         self.assertEqual(document["title"], "fix(studio): mine")
         self.assertEqual(document["summary"], "The owner reads each task's title.")
         self.assertEqual(self.asked, [("pr_opened", 484, "stabem/GraphHelm")])

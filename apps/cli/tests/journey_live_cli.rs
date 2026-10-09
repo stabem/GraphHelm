@@ -371,3 +371,52 @@ fn watch_names_the_destructive_acts_of_a_draft_it_will_not_perform() {
     );
     assert_eq!(reply["data"]["guarded"], serde_json::json!([]), "{reply}");
 }
+
+/// #518 (`keel.invariant.permissions`): a watch plays a guarded act of a DRAFT only on an edge
+/// the owner marked safe, and only while the edge is the one that was marked. Defects named: the
+/// watch ignoring the mark (the owner's word does nothing), and the watch honouring a mark the
+/// edge outgrew - an agent rewrites the marked "Pay now" into "Delete account", or points the
+/// flow at another app, and the act is played under the old mark. Cost: seconds, offline, no
+/// browser (the tripwire observer never starts).
+#[test]
+fn watch_plays_a_guarded_act_only_under_a_mark_that_still_binds_its_edge() {
+    let dir = draft();
+    let path = dir.path().join(".graphhelm/journeys/checkout.journey.yaml");
+    let guarded = |project: &Path| {
+        refuses(
+            project,
+            &["watch", "checkout"],
+            "journey.watch",
+            3,
+            "replay.observer_missing",
+        )["data"]["guarded"]
+            .clone()
+    };
+    assert_eq!(guarded(dir.path()).as_array().map(Vec::len), Some(1));
+
+    let (code, reply) = cli(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(guarded(dir.path()), serde_json::json!([]));
+
+    // The marked act is rewritten under the mark: the mark is void and the act is guarded again.
+    let marked = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        marked.replace("name: Pay now", "name: Delete account"),
+    )
+    .unwrap();
+    assert_eq!(
+        guarded(dir.path()),
+        serde_json::json!([{"edge":"pay.submit","actIndex":1,"kind":"submit","role":"button","name":"Delete account","would":"delete"}])
+    );
+    // The same acts on another app: void as well.
+    std::fs::write(
+        &path,
+        marked.replace("base: http://localhost:3000", "base: http://localhost:9000"),
+    )
+    .unwrap();
+    assert_eq!(guarded(dir.path()).as_array().map(Vec::len), Some(1));
+    // Restored, the mark binds again.
+    std::fs::write(&path, &marked).unwrap();
+    assert_eq!(guarded(dir.path()), serde_json::json!([]));
+}

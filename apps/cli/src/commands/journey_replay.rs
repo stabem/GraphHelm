@@ -1950,7 +1950,7 @@ mod tests {
             return;
         }
         std::fs::write(&marker, b"entered").unwrap();
-        let ready = Instant::now() + Duration::from_secs(5);
+        let ready = Instant::now() + crate::test_time::scaled(Duration::from_secs(5));
         while !marker.with_extension("go").exists() {
             assert!(Instant::now() < ready, "fault gate was not released");
             std::thread::sleep(Duration::from_millis(5));
@@ -1999,7 +1999,8 @@ mod tests {
         marker: &Path,
         lock: Option<&Path>,
     ) -> (OwnedChild, Receiver<Result<Option<Vec<u8>>>>) {
-        let ready = Instant::now() + Duration::from_secs(5);
+        // #549: a hang catcher on a re-executed test binary starting, so it scales.
+        let ready = Instant::now() + crate::test_time::scaled(Duration::from_secs(5));
         let mut owned = spawn_owned(fault_command(mode, marker, lock), ready).unwrap();
         let child = owned.child.as_mut().unwrap();
         // libtest owns stdout; the fault's reply boundary is its otherwise silent
@@ -2109,8 +2110,13 @@ mod tests {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let (status, reply) =
-            child_output(healthy, Vec::new(), Duration::from_secs(5), 1024).unwrap();
+        let (status, reply) = child_output(
+            healthy,
+            Vec::new(),
+            crate::test_time::scaled(Duration::from_secs(5)),
+            1024,
+        )
+        .unwrap();
         assert_eq!(status, 0);
         assert!(reply.starts_with(b"git version "));
         let command = Command::new(dir.path().join("missing-executable"));

@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 mod support;
+use support::time_scale::scaled;
 use support::{RawResponse, parse_response, raw_request, split_url};
 
 // -------------------------------------------------------------------------------------------
@@ -64,18 +65,24 @@ fn serve_with(
     for (key, value) in env {
         command.env(key, value);
     }
-    let mut child = command.spawn().unwrap();
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    // #549: the guard owns the child BEFORE any wait that can panic. A panic between the spawn and
+    // the guard (a deadline, a refused GRAPHHELM_TEST_TIME_SCALE) used to leave the server running
+    // with this test's output pipe in its hands, and the whole run hung on it.
+    let mut server = ServerGuard {
+        child: command.spawn().unwrap(),
+    };
+    let mut stdout = BufReader::new(server.child.stdout.take().unwrap());
     let mut line = String::new();
     let read = stdout.read_line(&mut line).unwrap();
     if read == 0 {
         let mut stderr_text = String::new();
-        let _ = child
+        let _ = server
+            .child
             .stderr
             .take()
             .unwrap()
             .read_to_string(&mut stderr_text);
-        let status = child.wait().unwrap();
+        let status = server.child.wait().unwrap();
         panic!(
             "`graphhelm serve` produced no stdout before exiting (status: {status}); stderr:\n{stderr_text}"
         );
@@ -93,11 +100,11 @@ fn serve_with(
     let token = read_token(&token_path(events));
     let base = format!("http://{address}");
     wait_for_health(&base);
-    (ServerGuard { child }, base, token)
+    (server, base, token)
 }
 
 fn read_token(path: &Path) -> String {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     loop {
         if let Ok(contents) = std::fs::read_to_string(path)
             && !contents.is_empty()
@@ -112,7 +119,7 @@ fn read_token(path: &Path) -> String {
 }
 
 fn wait_for_health(base: &str) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     loop {
         if let Ok(response) = raw_request(&format!("{base}/health"), None)
             && response.status == 200

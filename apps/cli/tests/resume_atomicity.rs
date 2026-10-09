@@ -33,6 +33,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 mod support;
+use support::time_scale::scaled;
 use support::{RawResponse, parse_response, raw_request, split_url};
 struct ServerGuard {
     child: Child,
@@ -55,7 +56,7 @@ fn token_path(events: &Path) -> PathBuf {
 }
 
 fn read_token(path: &Path) -> String {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     loop {
         if let Ok(contents) = std::fs::read_to_string(path)
             && !contents.is_empty()
@@ -70,7 +71,7 @@ fn read_token(path: &Path) -> String {
 }
 
 fn wait_for_health(base: &str) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     loop {
         if let Ok(response) = raw_request(&format!("{base}/health"), None)
             && response.status == 200
@@ -203,23 +204,28 @@ fn serve_with_env(
         Some(value) => command.env("GRAPHHELM_EVENTS_KEY", value),
         None => command.env_remove("GRAPHHELM_EVENTS_KEY"),
     };
-    let mut child = command
+    // #549: the guard owns the child BEFORE any wait that can panic. A panic between the spawn and
+    // the guard (a deadline, a refused GRAPHHELM_TEST_TIME_SCALE) used to leave the server running
+    // with this test's output pipe in its hands, and the whole run hung on it.
+    let child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+    let mut server = ServerGuard { child };
 
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut stdout = BufReader::new(server.child.stdout.take().unwrap());
     let mut line = String::new();
     let read = stdout.read_line(&mut line).unwrap();
     if read == 0 {
         let mut stderr_text = String::new();
-        let _ = child
+        let _ = server
+            .child
             .stderr
             .take()
             .unwrap()
             .read_to_string(&mut stderr_text);
-        let status = child.wait().unwrap();
+        let status = server.child.wait().unwrap();
         panic!(
             "`graphhelm serve` produced no stdout before exiting (status: {status}); stderr:\n{stderr_text}"
         );
@@ -237,7 +243,7 @@ fn serve_with_env(
     let base = format!("http://{address}");
     let token = read_token(&token_path(events));
     wait_for_health(&base);
-    (ServerGuard { child }, base, token)
+    (server, base, token)
 }
 
 /// Every event strictly after `after`, read through the paged tail.

@@ -67,6 +67,10 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 
   Never use or export `D:\gh\target-shared` (`--shared-target`): cargo can treat another worktree's
   artifacts as fresh, so the run vouches for bytes it did not build (#361). No `cargo clean`.
+- The script also exports `GRAPHHELM_TEST_TIME_SCALE=3`: it multiplies the hang-catcher ceilings of
+  the CLI tests that wait on a child process (`apps/cli/tests/support/time_scale.rs`, #549), which
+  otherwise go red on a machine other lanes are building on. It scales test waits only, never a
+  product budget; a whole number from 1 to 20, anything else is refused.
 - Write Git Bash's full path in the slot command, as above. A bare `bash` or `sh` resolves to WSL.
 - A `cargo` run allowed outside the slot (`check`, `clippy`) uses
   `CARGO_TARGET_DIR=D:\gh\<lane>\target-check`.

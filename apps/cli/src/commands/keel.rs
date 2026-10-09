@@ -1017,7 +1017,7 @@ mod tests {
         thread::spawn(move || {
             let (mut connection, _) = listener.accept().unwrap();
             connection
-                .set_read_timeout(Some(Duration::from_secs(5)))
+                .set_read_timeout(Some(crate::test_time::scaled(Duration::from_secs(5))))
                 .unwrap();
             let mut ready = [0];
             let result = connection
@@ -1042,12 +1042,18 @@ mod tests {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let result = graphhelm_process_tree::run_bounded(command, Duration::from_secs(2)).unwrap();
+        // #549: the bound must expire AFTER the wrapper has spawned the holder. On a busy
+        // machine two seconds ended before that spawn, and the holder never reported ready.
+        let result = graphhelm_process_tree::run_bounded(
+            command,
+            crate::test_time::scaled(Duration::from_secs(2)),
+        )
+        .unwrap();
 
         assert!(result.is_none(), "inherited pipe bypassed the deadline");
         assert_eq!(
             observation
-                .recv_timeout(Duration::from_secs(5))
+                .recv_timeout(crate::test_time::scaled(Duration::from_secs(5)))
                 .expect("the descendant must report readiness and disconnect after cleanup")
                 .expect("the descendant connection must close after process-tree cleanup"),
             ([1], 0),

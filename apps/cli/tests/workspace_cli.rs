@@ -405,7 +405,21 @@ fn the_slot_serves_one_command_at_a_time_in_order_and_skips_dead_waiters() {
     std::fs::write(tickets.join(format!("{:024}-ghost-1.ticket", 1)), "").unwrap();
     let log = dir.path().join("log.txt");
     let first = slot(root_s, "lane-a", &marker_command(&log, "a", 1500));
-    std::thread::sleep(std::time::Duration::from_millis(400));
+    // #549: wait for lane-a's ticket itself, not 400 ms and a hope. Under load lane-a could
+    // still be starting when lane-b took the older ticket, and the order asserted below inverted.
+    let waited = std::time::Instant::now();
+    let ceiling = support::time_scale::scaled(std::time::Duration::from_secs(30));
+    while !std::fs::read_dir(&tickets)
+        .unwrap()
+        .flatten()
+        .any(|entry| entry.file_name().to_string_lossy().contains("-lane-a-"))
+    {
+        assert!(
+            waited.elapsed() < ceiling,
+            "lane-a never took a slot ticket within {ceiling:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     let second = slot(root_s, "lane-b", &marker_command(&log, "b", 100));
     let first = first.wait_with_output().unwrap();
     let second = second.wait_with_output().unwrap();

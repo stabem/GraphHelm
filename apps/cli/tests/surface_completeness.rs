@@ -198,7 +198,7 @@ const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 10] = [
     (
         "GET",
         "/v1/journeys/sessions/{id}/frame",
-        "a JPEG of a watch's page that the Studio canvas polls a few times a second for the          owner's eyes (#519); an MCP answer is text in a model's context, and the frame is a          view, never proof. An agent reads the same play, step by step, from journey_sessions",
+        "a JPEG of a watch's page that the Studio canvas polls a few times a second for the owner's eyes (#519); an MCP answer is text in a model's context, and the frame is a view, never proof. An agent reads the same play, step by step, from journey_sessions",
     ),
     (
         "PUT",

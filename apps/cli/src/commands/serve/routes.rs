@@ -5791,7 +5791,6 @@ fn served_image_type(media_type: &str) -> Option<&'static str> {
 /// Raw image bytes with exactly the four headers of #313 Ruling 8.
 fn image_response(media_type: &'static str, bytes: Vec<u8>) -> Response {
     use axum::http::header;
-    use axum::response::IntoResponse;
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, media_type)

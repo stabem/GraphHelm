@@ -65,10 +65,25 @@ function ordered(tasks: TaskState[]): { open: TaskState[]; delivered: TaskState[
  * is a row in the parent issue's card when that card exists, else its own card. */
 interface Card { issue: number | null; key: string; rows: TaskState[] }
 function cardsOf(tasks: TaskState[]): Card[] {
+  // A card's home follows the parent chain while the parent has rows here (a grandchild sits with
+  // its root, never in a card its parent's row left), stopping at a cycle (#524 review).
+  const parentOf = new Map<number, number>();
+  for (const task of tasks) if (task.issue !== null && task.parent !== null) parentOf.set(task.issue, task.parent);
   const issues = new Set(tasks.map((task) => task.issue).filter((issue): issue is number => issue !== null));
+  const root = (issue: number | null): number | null => {
+    const seen = new Set<number>();
+    let at = issue;
+    while (at !== null && !seen.has(at)) {
+      seen.add(at);
+      const up = parentOf.get(at);
+      if (up === undefined || !issues.has(up) || seen.has(up)) return at;
+      at = up;
+    }
+    return at;
+  };
   const cards = new Map<string, Card>();
   for (const task of tasks) {
-    const home = task.parent !== null && issues.has(task.parent) ? task.parent : task.issue;
+    const home = task.parent !== null && issues.has(task.parent) ? root(task.parent) : task.issue;
     const key = home !== null ? `issue-${home}` : task.key;
     const card = cards.get(key) ?? { issue: home, key, rows: [] };
     card.rows.push(task);

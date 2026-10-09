@@ -1153,10 +1153,6 @@ pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
                 snapshot_of(members.as_ref().map_or(&[][..], |m| &m.0))
             )
         });
-        if std::env::var_os("GRAPHHELM_PTREE_EXPERIMENT").is_some() {
-            let answer = raise_job_priority(group);
-            trace(|| format!("experiment: raise job priority {answer}"));
-        }
         let killed = unsafe { TerminateJobObject(group.0 as _, 1) } != 0;
         let kill_error = if killed {
             0
@@ -1179,7 +1175,32 @@ pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
                 members.0, members.1
             )
         });
-        return drain_terminated_job(&members);
+        let outcome = drain_terminated_job(&members);
+        // EXPERIMENT (#454, not for merge): when the job named fewer members than it counted, watch
+        // its counts for two seconds and trace every change.
+        if members.1 > 0 && std::env::var_os("GRAPHHELM_PTREE_EXPERIMENT").is_some() {
+            let started = std::time::Instant::now();
+            let mut last = None;
+            while started.elapsed() < std::time::Duration::from_secs(2) {
+                let now = job_member_ids(group);
+                if now != last {
+                    trace(|| {
+                        format!(
+                            "unlisted watch: +{} ms job now {:?}",
+                            started.elapsed().as_millis(),
+                            now
+                        )
+                    });
+                    last = now.clone();
+                }
+                if matches!(&now, Some((ids, 0)) if ids.is_empty()) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            trace(|| format!("unlisted watch: done after {} ms", started.elapsed().as_millis()));
+        }
+        return outcome;
     }
     let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
     if !handle.is_null() {
@@ -1327,6 +1348,7 @@ fn drain_terminated_job(members: &(Vec<u32>, usize)) -> TerminationOutcome {
                 let outcome = terminate_member(*id);
                 trace(|| format!("direct kill member={id} {outcome}"));
             }
+            trace(|| format!("after direct kill: {}", snapshot_of(&members.0)));
         }
         if started.elapsed() >= JOB_DRAIN_CEILING {
             trace(|| {
@@ -1368,50 +1390,6 @@ fn terminate_member(process_id: u32) -> String {
     format!("open=true accepted={accepted} error={error}")
 }
 
-/// EXPERIMENT (#454, not for merge): put every member of the job in the high priority class before
-/// the kill, so a member whose threads were starved at idle priority gets the CPU its exit needs.
-#[cfg(windows)]
-fn raise_job_priority(group: ProcessGroup) -> String {
-    use windows_sys::Win32::System::{
-        JobObjects::{
-            JOB_OBJECT_LIMIT_PRIORITY_CLASS, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
-        },
-        Threading::HIGH_PRIORITY_CLASS,
-    };
-    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-    let size = u32::try_from(std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()).unwrap();
-    let read = unsafe {
-        QueryInformationJobObject(
-            group.0 as _,
-            JobObjectExtendedLimitInformation,
-            std::ptr::from_mut(&mut limits).cast(),
-            size,
-            std::ptr::null_mut(),
-        )
-    } != 0;
-    if !read {
-        let error = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        return format!("query=false error={error}");
-    }
-    limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PRIORITY_CLASS;
-    limits.BasicLimitInformation.PriorityClass = HIGH_PRIORITY_CLASS;
-    let set = unsafe {
-        SetInformationJobObject(
-            group.0 as _,
-            JobObjectExtendedLimitInformation,
-            std::ptr::from_ref(&limits).cast(),
-            size,
-        )
-    } != 0;
-    let error = if set {
-        0
-    } else {
-        std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-    };
-    format!("query=true set={set} error={error}")
-}
-
 /// `GRAPHHELM_PTREE_TRACE=<file>` (#454 instrument): one line per observation while a job drains,
 /// appended to that file (the replay worker forwards the variable). Off by default; nothing here
 /// is read by code.
@@ -1426,8 +1404,35 @@ fn trace(line: impl FnOnce() -> String) {
         .append(true)
         .open(path)
     {
-        let _ = writeln!(file, "ptree-trace pid={} {}", std::process::id(), line());
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis());
+        let _ = writeln!(
+            file,
+            "ptree-trace at={at} pid={} {}",
+            std::process::id(),
+            line()
+        );
     }
+}
+
+/// The process's exit code as the system reports it (259 while it has none), or why it could not
+/// be read (#454 instrument).
+#[cfg(windows)]
+fn exit_code_of(process_id: u32) -> String {
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+    };
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+    if handle.is_null() {
+        let error = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        return format!("unopened:{error}");
+    }
+    let mut code = 0u32;
+    let read = unsafe { GetExitCodeProcess(handle, &mut code) } != 0;
+    unsafe { CloseHandle(handle) };
+    if read { code.to_string() } else { "unread".to_owned() }
 }
 
 /// Every process that is a pre-kill member or the child of one, from a toolhelp snapshot, with
@@ -1458,9 +1463,10 @@ fn snapshot_of(members: &[u32]) -> String {
             let name_len = entry.szExeFile.iter().position(|c| *c == 0).unwrap_or(0);
             let name = String::from_utf16_lossy(&entry.szExeFile[..name_len]);
             rows.push(format!(
-                "{{pid={pid} parent={parent} exe={name} threads={} base_priority={} running={}}}",
+                "{{pid={pid} parent={parent} exe={name} threads={} base_priority={} exit_code={} running={}}}",
                 entry.cntThreads,
                 entry.pcPriClassBase,
+                exit_code_of(pid),
                 process_is_running(pid)
             ));
         }

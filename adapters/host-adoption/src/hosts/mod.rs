@@ -31,6 +31,13 @@ pub struct HostReply {
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
 }
+/// #549: how long a host's `--version` and `--help` may take. Measured with 64 busy processes on
+/// 32 CPUs: a freshly written host's first `--version` took up to 17.3 s, `claude --version` up to
+/// 20.9 s and `claude --help` up to 39.4 s. The old 3 s read a busy machine as an unsupported host.
+/// Each is that worst case with margin, and bounded: a host that hangs is still killed.
+const VERSION_PROBE_MS: u64 = 30_000;
+const HELP_PROBE_MS: u64 = 60_000;
+
 fn invalid() -> AdoptionError {
     AdoptionError {
         reason: AdoptionReason::InvalidConfiguration,
@@ -90,7 +97,7 @@ pub(crate) fn preflight_host(plan: &serde_json::Value) -> Result<(), AdoptionErr
     let version = run_host(&HostOperation {
         program: program.clone(),
         args: vec!["--version".into()],
-        timeout_ms: 3000,
+        timeout_ms: VERSION_PROBE_MS,
     })?;
     let expected = host["version"].as_str().ok_or_else(invalid)?;
     let observed = std::str::from_utf8(&version.stdout).map_err(|_| invalid())?;
@@ -128,7 +135,7 @@ pub(crate) fn preflight_host(plan: &serde_json::Value) -> Result<(), AdoptionErr
     let help = run_host(&HostOperation {
         program,
         args: vec!["--help".into()],
-        timeout_ms: 3000,
+        timeout_ms: HELP_PROBE_MS,
     })?;
     let capabilities = serde_json::json!({"versionCompatible":compatible, "pluginDir":help.success && String::from_utf8_lossy(&help.stdout).split_whitespace().any(|word| word == "--plugin-dir")});
     match installation_capability(name, &capabilities) {

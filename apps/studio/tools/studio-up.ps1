@@ -141,16 +141,22 @@ if (-not $alive) {
     if ($KeyId) { $serveArgs += @("--key-id", $KeyId) }
     if ($Manifest -and $Broker -and $Route -and $Keyring -and $KeyId) { $serveArgs += @("--manifest", $Manifest, "--broker", $Broker, "--route", $Route) }
     Write-Host "[up] starting: $GraphHelm $($serveArgs -join ' ')"
-    Start-Process -FilePath $GraphHelm -ArgumentList $serveArgs -WindowStyle Hidden
-    $deadline = (Get-Date).AddSeconds(20)
+    $runtime = Start-Process -FilePath $GraphHelm -ArgumentList $serveArgs -WindowStyle Hidden -PassThru
+    # #549: a loaded machine took 7.5 s to answer, and once more than 60 s, so the wait is long
+    # (120 s) but never unbounded, and it ends AT ONCE when the Runtime it started has exited:
+    # a dead Runtime is said in seconds, not after the whole wait.
+    $deadline = (Get-Date).AddSeconds(120)
     while ((Get-Date) -lt $deadline) {
         try {
             $null = Invoke-WebRequest -Uri "$runtimeUrl/health" -TimeoutSec 2 -UseBasicParsing
             $alive = $true
             break
-        } catch { Start-Sleep -Milliseconds 400 }
+        } catch {
+            if ($runtime.HasExited) { throw "The Runtime '$GraphHelm' exited (code $($runtime.ExitCode)) before it answered at $runtimeUrl. Is '$GraphHelm' on PATH (or pass -GraphHelm)?" }
+            Start-Sleep -Milliseconds 400
+        }
     }
-    if (-not $alive) { throw "The Runtime did not answer at $runtimeUrl within 20s. Is '$GraphHelm' on PATH (or pass -GraphHelm)?" }
+    if (-not $alive) { throw "The Runtime did not answer at $runtimeUrl within 120s. Is '$GraphHelm' on PATH (or pass -GraphHelm)?" }
     Write-Host "[up] Runtime up at $runtimeUrl"
     if (-not $Keyring) {
         # Said HERE, not discovered at the first refused send: without sealing there is no

@@ -26,7 +26,10 @@ const COMMAND: &str = "gateway.probe";
 /// Fixed probe budget (plan Task 6): independent of `route.timeout_seconds()`, which bounds a real
 /// call — a health probe must stay fast regardless of how long the route's own calls are allowed
 /// to run.
-const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+/// #549: measured with 64 busy processes on 32 CPUs, `claude --version` took up to 20.9 s; 10 s
+/// turned a busy machine into `health: unavailable`. 30 s is that worst case with margin, and
+/// still bounded: a runtime that hangs is killed at the deadline.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 struct Check {

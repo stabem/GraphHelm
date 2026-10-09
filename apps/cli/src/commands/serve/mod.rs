@@ -647,6 +647,10 @@ fn build_router(state: ServeState) -> Router {
             "/v1/journey-flows/{id}/approve",
             post(routes::approve_journey_flow),
         )
+        .route(
+            "/v1/journey-flows/{id}/edges/{edge}/safe",
+            post(routes::mark_journey_edge_safe),
+        )
         .route("/v1/journeys/sessions", get(routes::journey_sessions))
         .route("/v1/journeys/{contractId}/open", post(routes::open_journey))
         .route(

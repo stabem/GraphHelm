@@ -611,3 +611,155 @@ fn journey_map_worked_example_validates_and_compiles() {
     assert_eq!(out.status.code(), Some(0), "{reply}");
     assert_eq!(reply["data"]["checked"], 2, "{reply}");
 }
+
+/// The fixture's last act line, without its indentation (the text before it keeps that).
+const PAY_NOW: &str = "- {kind: submit, role: button, name: Pay now}\n";
+
+/// That act line followed by the mark the canonical renderer writes under it.
+fn marked_line(digest: &str) -> String {
+    format!("{PAY_NOW}{}safe: {{digest: {digest}}}\n", " ".repeat(4))
+}
+
+/// #518 (`keel.invariant.permissions`, `.persistence`): the owner's safe mark on a draft edge.
+/// Defects named: a mark that survives an edit of the acts it covered (an agent rewrites
+/// "Pay now" into "Delete account" under the owner's mark); a mark that follows its edge to another
+/// screen or URL; a mark that blesses an act the owner was not shown; a mark written on a non-canonical, unknown or approved target; a mark that
+/// makes an approved flow's digest depend on it. Existing tests know no `safe` field. Cost: one
+/// tempdir, a dozen subprocesses, one git commit; no network or browser.
+#[test]
+fn the_owner_marks_a_draft_edge_safe_and_editing_its_acts_voids_the_mark() {
+    let dir = project(EXAMPLE);
+    let path = dir.path().join(".graphhelm/journeys/checkout.journey.yaml");
+    let text = || std::fs::read_to_string(&path).unwrap();
+    let stale = |reply: &Value| finding(reply, "flow.safe_stale");
+
+    // An unknown edge and a non-canonical flow are refused, and nothing is written.
+    let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.nope"]);
+    assert_eq!(out.status.code(), Some(2), "{reply}");
+    assert!(finding(&reply, "flow.edge_unknown"), "{reply}");
+    write_flow(dir.path(), &EXAMPLE.replace("drift: []\n", "drift: []\n\n"));
+    let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
+    assert_eq!(out.status.code(), Some(2), "{reply}");
+    write_flow(dir.path(), EXAMPLE);
+
+    // The mark names every act it covers and lands on that edge only, in canonical bytes.
+    let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert_eq!(
+        reply["data"]["acts"].as_array().map(Vec::len),
+        Some(2),
+        "{reply}"
+    );
+    let digest = reply["data"]["safe"]["digest"].as_str().unwrap().to_owned();
+    assert!(
+        digest.starts_with("sha256:") && digest.len() == 71,
+        "{digest}"
+    );
+    let marked = text();
+    assert_eq!(marked, EXAMPLE.replace(PAY_NOW, &marked_line(&digest),));
+    let (out, reply) = run(dir.path(), &["validate", "--all"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert!(!stale(&reply), "{reply}");
+
+    // Editing a covered act voids the mark: validate says so as a warning, never an error.
+    write_flow(
+        dir.path(),
+        &marked.replace("name: Pay now", "name: Delete account"),
+    );
+    let (out, reply) = run(dir.path(), &["validate", "--all"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert!(stale(&reply), "{reply}");
+    // So does adding an act beside the covered ones.
+    write_flow(
+        dir.path(),
+        &marked.replace(
+            PAY_NOW,
+            &format!(
+                "{PAY_NOW}{}- {{kind: activate, role: button, name: Delete account}}\n",
+                " ".repeat(6)
+            ),
+        ),
+    );
+    assert!(stale(&run(dir.path(), &["validate", "--all"]).1));
+    // So does playing the same acts somewhere else: the screen the edge leaves now opens another
+    // URL, the flow now opens another app, or the edge now reaches another screen. "Pay now" marked safe on /checkout is not
+    // "Pay now" on /account.
+    for moved in [
+        marked.replace("url: /checkout", "url: /account"),
+        // Another app on this machine: the mark was given for the one at port 3000.
+        marked.replace("base: http://localhost:3000", "base: http://localhost:9000"),
+        marked.replace("to: done", "to: cart"),
+    ] {
+        assert_ne!(moved, marked);
+        write_flow(dir.path(), &moved);
+        let (_, reply) = run(dir.path(), &["validate", "--all"]);
+        assert!(stale(&reply), "{reply}");
+    }
+    write_flow(
+        dir.path(),
+        &marked.replace(
+            PAY_NOW,
+            &format!(
+                "{PAY_NOW}{}- {{kind: activate, role: button, name: Delete account}}\n",
+                " ".repeat(6)
+            ),
+        ),
+    );
+    // Marking again binds the edge as it is now.
+    let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert_ne!(reply["data"]["safe"]["digest"], digest.as_str(), "{reply}");
+    assert_eq!(
+        reply["data"]["acts"].as_array().map(Vec::len),
+        Some(3),
+        "{reply}"
+    );
+    assert!(!stale(&run(dir.path(), &["validate", "--all"]).1));
+
+    // Approve drops the mark, so the approval binds no mark and is not stale.
+    write_flow(dir.path(), &marked);
+    for args in [
+        vec!["init", "-q", "--object-format=sha1"],
+        vec!["add", "-A"],
+        vec![
+            "-c",
+            "user.name=Flow Test",
+            "-c",
+            "user.email=flow@example.test",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
+    ] {
+        let out = Command::new("git")
+            .current_dir(dir.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let (out, reply) = run(dir.path(), &["approve", "checkout"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    let approved = text();
+    assert!(!approved.contains("safe:"), "{approved}");
+    let (out, reply) = run(dir.path(), &["validate", "--all"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+
+    // An approved flow takes no mark, by the door or by hand.
+    let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
+    assert_eq!(out.status.code(), Some(2), "{reply}");
+    assert!(finding(&reply, "flow.safe_not_draft"), "{reply}");
+    assert_eq!(text(), approved);
+    write_flow(
+        dir.path(),
+        &approved.replace(PAY_NOW, &marked_line(&digest)),
+    );
+    let (out, reply) = run(dir.path(), &["validate", "--all"]);
+    assert_eq!(out.status.code(), Some(2), "{reply}");
+    assert!(finding(&reply, "flow.safe_not_draft"), "{reply}");
+}

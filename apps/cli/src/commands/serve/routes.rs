@@ -1967,6 +1967,24 @@ pub(super) async fn approve_journey_flow(
     .await
 }
 
+/// `POST /v1/journey-flows/{id}/edges/{edge}/safe` (#518): exactly `graphhelm journey mark-safe
+/// <id> <edge>` on the Runtime's `--project` - the Studio's "Mark safe" on a skipped step.
+/// Findings refuse with 400 and write nothing. Owner credential only: the agent session token's
+/// allow-list (#380) names no `/v1/journey-flows` write.
+pub(super) async fn mark_journey_edge_safe(
+    State(state): State<ServeState>,
+    UrlPath((id, edge)): UrlPath<(String, String)>,
+) -> Response {
+    flow_command(state, "journey.mark_safe", move |project| {
+        crate::commands::journey_flow::run_mark_safe(&crate::args::JourneyMarkSafeArgs {
+            id,
+            edge,
+            project: Some(project),
+        })
+    })
+    .await
+}
+
 /// `POST /v1/journeys/{contractId}/open` (#398): exactly `graphhelm journey open` for the
 /// Runtime's `--project`. `contractId` is a flow id or `<flowId>.<path>`; the body names the
 /// step (`stepId`) and may name the path or an `executionId` to record the live capture into

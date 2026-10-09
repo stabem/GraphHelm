@@ -154,6 +154,9 @@ pub enum JourneyCommand {
     Compile(JourneyCompileArgs),
     /// Approve a canonical flow at the project's HEAD and write its generated contracts.
     Approve(JourneyApproveArgs),
+    /// Mark one edge of a DRAFT flow safe to watch although an act on it looks destructive
+    /// (#518). Owner only. The mark binds the edge's acts: editing them voids it.
+    MarkSafe(JourneyMarkSafeArgs),
     /// List every flow source for review: status, drift, validate findings, whether Approve
     /// would be accepted, and its screens, edges and paths.
     Flows(JourneyFlowsArgs),
@@ -383,6 +386,16 @@ pub struct JourneyCompileArgs {
 #[derive(Debug, Args)]
 pub struct JourneyApproveArgs {
     pub id: String,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct JourneyMarkSafeArgs {
+    /// The flow id.
+    pub id: String,
+    /// The edge whose acts are marked.
+    pub edge: String,
     #[arg(long)]
     pub project: Option<PathBuf>,
 }

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/journey-flow.schema.json",
-  "x-graphhelm-schema-version": "1.0.0",
+  "x-graphhelm-schema-version": "1.1.0",
   "title": "GraphHelm Journey Flow",
   "type": "object",
   "properties": {
@@ -334,6 +334,19 @@
           },
           "minItems": 1,
           "maxItems": 8
+        },
+        "safe": {
+          "type": "object",
+          "properties": {
+            "digest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "digest"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

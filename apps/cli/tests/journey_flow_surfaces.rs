@@ -541,6 +541,51 @@ fn an_agent_session_token_cannot_approve_whatever_type_it_declares() {
     assert_eq!(after["data"]["status"], run["data"]["status"], "{after}");
 }
 
+/// #518 (`keel.invariant.permissions`): marking an edge safe is the owner's. Defect named: the
+/// route added to the agent allow-list, or served without the owner check, so the agent that wrote
+/// a draft's destructive act also blesses it. The agent session token is refused before any
+/// handler and nothing is written; the owner credential writes the mark. Cost: one server, three
+/// requests.
+#[test]
+fn only_the_owner_credential_marks_an_edge_safe() {
+    let harness = prepared();
+    let (_server, base, owner) = harness.serve(true);
+    let agent_token = std::fs::read_to_string(harness.events.with_extension("agent.token"))
+        .expect("serve mints the agent session token beside the owner token");
+    let before = harness.flow_text("checkout");
+    const ROUTE: &str = "/v1/journey-flows/checkout/edges/pay.submit/safe";
+
+    let (status, refused) = http(&base, "POST", ROUTE, Some(agent_token.trim()));
+    assert_eq!(status, 403, "{refused}");
+    let (status, refused) = http(&base, "POST", ROUTE, Some(AGENT_CREDENTIAL));
+    assert_ne!(status, 200, "{refused}");
+    assert_eq!(harness.flow_text("checkout"), before);
+
+    let (status, marked) = http(&base, "POST", ROUTE, Some(&owner));
+    assert_eq!(status, 200, "{marked}");
+    let digest = marked["data"]["safe"]["digest"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(digest.starts_with("sha256:"), "{marked}");
+    assert!(
+        harness
+            .flow_text("checkout")
+            .contains(&format!("safe: {{digest: {digest}}}\n")),
+        "{}",
+        harness.flow_text("checkout")
+    );
+    // The review list carries the mark, so the Studio can show the step as marked.
+    let listed = flow(&harness.flows(), "checkout").clone();
+    assert!(
+        listed["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|edge| edge["id"] == "pay.submit" && edge["safe"]["digest"] == digest),
+        "{listed}"
+    );
+}
+
 #[test]
 fn the_flow_routes_without_a_project_refuse_naming_project() {
     let harness = prepared();

@@ -2195,30 +2195,42 @@ pub(super) async fn journey_sessions(State(state): State<ServeState>) -> Respons
     .await
 }
 
+/// The `force` a preview POST asks for, or `None` when its body is not `{force?, executionId?}`.
+/// The Studio also names the run it has open (`executionId`, #538); an approved flow's replay
+/// records into it (#519 slice 3), and a preview of a draft does not use it.
+fn preview_force(body: &[u8]) -> Option<bool> {
+    if body.is_empty() {
+        return Some(false);
+    }
+    let serde_json::Value::Object(map) = serde_json::from_slice::<serde_json::Value>(body).ok()?
+    else {
+        return None;
+    };
+    let known = map.keys().all(|key| key == "force" || key == "executionId");
+    let force = match map.get("force") {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::Bool(force)) => *force,
+        Some(_) => return None,
+    };
+    let execution = map.get("executionId").is_none_or(|value| {
+        value.is_null()
+            || value
+                .as_str()
+                .is_some_and(|id| !id.is_empty() && id.len() <= 128)
+    });
+    (known && execution).then_some(force)
+}
+
 /// `POST /v1/journey-flows/{id}/preview` (#519): exactly `graphhelm journey preview <id>`; body
-/// `{force?}`. 202 while the run goes, 200 with the kept result. Owner credential only.
+/// `{force?, executionId?}`. 202 while the run goes, 200 with the kept result. Owner credential only.
 pub(super) async fn start_journey_preview(
     State(state): State<ServeState>,
     UrlPath(id): UrlPath<String>,
     body: Bytes,
 ) -> Response {
     const COMMAND: &str = "journey.preview";
-    let force = if body.is_empty() {
-        false
-    } else {
-        match serde_json::from_slice::<serde_json::Value>(&body) {
-            Ok(serde_json::Value::Object(map))
-                if map.keys().all(|key| key == "force")
-                    && map
-                        .get("force")
-                        .is_none_or(|v| v.is_boolean() || v.is_null()) =>
-            {
-                map.get("force")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false)
-            }
-            _ => return bad_request(COMMAND, "the body must be {force?}", "/body"),
-        }
+    let Some(force) = preview_force(&body) else {
+        return bad_request(COMMAND, "the body must be {force?, executionId?}", "/body");
     };
     let response = flow_command(state, COMMAND, move |project| {
         crate::commands::journey_preview::start(&crate::args::JourneyPreviewArgs {
@@ -6114,6 +6126,34 @@ mod off_reactor_tests {
 
     /// The helper's own contract, with a closure that can observe its thread: the work runs
     /// somewhere that is not the reactor thread, and its value comes back.
+    /// #519 (gh-claude-9's real Studio check): the Studio names the run it has open in the preview
+    /// POST, so a body with `executionId` must start the preview, while any other key, a wrong
+    /// type or an empty id is still refused. Cost: microseconds.
+    #[test]
+    fn a_preview_post_accepts_the_studios_run_id_and_refuses_anything_else() {
+        assert_eq!(super::preview_force(b""), Some(false));
+        assert_eq!(super::preview_force(br#"{}"#), Some(false));
+        assert_eq!(super::preview_force(br#"{"force":true}"#), Some(true));
+        assert_eq!(
+            super::preview_force(br#"{"executionId":"gh-team"}"#),
+            Some(false)
+        );
+        assert_eq!(
+            super::preview_force(br#"{"force":true,"executionId":"gh-team"}"#),
+            Some(true)
+        );
+        for refused in [
+            &br#"{"force":"yes"}"#[..],
+            br#"{"executionId":""}"#,
+            br#"{"executionId":7}"#,
+            br#"{"path":"main"}"#,
+            br#"[]"#,
+            br#"not json"#,
+        ] {
+            assert_eq!(super::preview_force(refused), None, "{refused:?}");
+        }
+    }
+
     #[test]
     fn off_reactor_runs_the_work_on_another_thread_and_returns_its_value() {
         let _serial = SERIAL

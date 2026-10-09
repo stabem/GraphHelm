@@ -5027,6 +5027,54 @@ fn gateway_probe_over_http_is_quota_free_and_reports_the_cli_shape() {
     );
 }
 
+/// #549: a write the server refuses must still deliver its refusal. The auth layer answered 401
+/// from the headers alone and closed while the request's body was still on its way; the body then
+/// hit a closed socket, the reset destroyed the unread 401, and the client saw `os error 10053`
+/// instead of an answer (three cells of this file went red that way on a slow machine, and a real
+/// client on a slow link sees the same). The cell stages the order instead of hoping for it:
+/// headers, a pause long enough for the server to answer them, then the body. Credible defect: the
+/// refusal path closing with request bytes unread. Windows observes it; on Linux a reset does not
+/// discard the queued response, so this cell is green there with or without the fix. Cost: one
+/// server start and under a second.
+#[test]
+fn a_refused_write_delivers_its_401_even_when_the_body_arrives_after_the_headers() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, _token) = serve(&events);
+    let (host, port, path) = split_url(&format!("{base}/v1/gateway/routes"));
+    let address = (host.as_str(), port).to_socket_addrs().unwrap().next().unwrap();
+    let mut stream = connect_with_retry(&address).unwrap();
+    stream.set_read_timeout(Some(CLIENT_IO_HANG_GUARD)).unwrap();
+    stream.set_write_timeout(Some(CLIENT_IO_HANG_GUARD)).unwrap();
+    let payload = br#"{"id":"deepseek_official","provider":"openai"}"#;
+    let head = format!(
+        "PUT {path} HTTP/1.1
+Host: {host}
+Connection: close
+Authorization: Bearer not-the-token
+Content-Type: application/json
+Content-Length: {}
+
+",
+        payload.len()
+    );
+    stream.write_all(head.as_bytes()).unwrap();
+    stream.flush().unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    let body_written = stream.write_all(payload);
+    // Let a reset, if one is coming, arrive before the read: the read is the observation.
+    std::thread::sleep(Duration::from_millis(100));
+    let mut raw = Vec::new();
+    let read = stream.read_to_end(&mut raw);
+    assert!(
+        read.is_ok(),
+        "the refusal was lost to a connection reset (body write: {body_written:?}, read: {read:?}, bytes read: {})",
+        raw.len()
+    );
+    let response = parse_response(&String::from_utf8_lossy(&raw)).unwrap();
+    assert_eq!(response.status, 401, "{}", response.body);
+}
+
 /// The explicit auth assert (plan Step 1b): the 05a auth tests pinned only the routes that
 /// existed then — a router refactor leaving these two outside `require_token` would pass
 /// every older test. Both new endpoints answer 401 with no token and with a wrong one.

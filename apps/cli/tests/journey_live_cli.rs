@@ -313,3 +313,28 @@ fn watch_starts_a_down_app_only_from_a_launcher_inside_the_project() {
         "watch.launcher_invalid",
     );
 }
+
+/// #490: a generated contract left over from an earlier compile and now stale (the flow changed
+/// since) makes `validate` report `flow.contract_stale`, and must not stop `journey watch`, which
+/// never reads it: the draft still passes every gate up to the observer. Cost: seconds, no browser.
+#[test]
+fn a_stale_generated_contract_does_not_stop_watch() {
+    let dir = draft();
+    let flow = dir.path().join(".graphhelm/journeys/checkout.journey.yaml");
+    let text = std::fs::read_to_string(&flow).unwrap();
+    let edited = text.replacen("title: ", "title: Edited ", 1);
+    assert_ne!(text, edited, "ARRANGEMENT: the flow title was edited");
+    std::fs::write(&flow, edited).unwrap();
+    let (_, validated) = cli(dir.path(), &["validate", "--all"]);
+    assert!(
+        validated.to_string().contains("flow.contract_stale"),
+        "ARRANGEMENT: the generated contract is now stale: {validated}"
+    );
+    refuses(
+        dir.path(),
+        &["watch", "checkout"],
+        "journey.watch",
+        3,
+        "replay.observer_missing",
+    );
+}

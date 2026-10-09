@@ -425,7 +425,11 @@ pub(crate) fn check(file: &Path, project: &Path) -> Vec<Finding> {
 /// replay, without the approval requirement. Watching proves nothing and writes nothing.
 pub(crate) fn read_for_watch(file: &Path, project: &Path) -> Result<Value, Vec<Finding>> {
     let (text, value) = read(file)?;
-    let findings = check_snapshot(file, &text, &value, project);
+    let mut findings = check_snapshot(file, &text, &value, project);
+    // #490: watch plays the flow's own acts and never reads its generated contract, so a stale
+    // or absent `<id>.json` (git-ignored output, often left over from an earlier compile) is no
+    // reason to refuse it. `validate` still reports it.
+    findings.retain(|f| f.code != "flow.contract_stale");
     if findings.iter().any(|f| !f.is_warning()) {
         Err(findings)
     } else {

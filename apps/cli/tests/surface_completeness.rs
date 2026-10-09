@@ -199,8 +199,8 @@ const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 11] = [
         "GET",
         "/v1/journey-flows/{id}/screens/{screen}/frame",
         "a PNG of one screen from a journey's preview, drawn as a card in the Studio canvas for \
-         the owner's eyes (#519); an MCP answer is text in a model's context, and the frame is a \
-         view, never proof. An agent reads the same per-screen results from journey_preview",
+ the owner's eyes (#519); an MCP answer is text in a model's context, and the frame is a \
+ view, never proof. An agent reads the same per-screen results from journey_preview",
     ),
     (
         "GET",

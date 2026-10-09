@@ -15,6 +15,15 @@ use zeroize::Zeroizing;
 /// Default per-call timeout for every API request this client places.
 pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The optional parts of one API request (#600): the idempotency key of a mutation, the `If-Match`
+/// head pin, and how long to wait.
+#[derive(Clone, Copy)]
+struct Settings<'a> {
+    idempotency_key: Option<&'a str>,
+    if_match: Option<u64>,
+    timeout: Duration,
+}
+
 /// The direct-arm bound for [`derive_key`]: an rpc id that is already `[a-z0-9-]{1,32}` rides
 /// verbatim; anything longer (or wider) is digested. Proof by construction that the ≤64
 /// header cap can never be exceeded: `"mcp-" (4) + nonce (16 hex) + "-" (1) + marker (1) +
@@ -226,9 +235,11 @@ impl ApiClient {
             method,
             path,
             body,
-            idempotency_key,
-            if_match,
-            timeout,
+            Settings {
+                idempotency_key,
+                if_match,
+                timeout,
+            },
         );
         if !self.is_discovering() {
             return result;
@@ -247,9 +258,11 @@ impl ApiClient {
                     method,
                     path,
                     body,
-                    idempotency_key,
-                    if_match,
-                    timeout,
+                    Settings {
+                        idempotency_key,
+                        if_match,
+                        timeout,
+                    },
                 )
             }
             // A transport failure may have landed; never retried here, only re-resolved next time.
@@ -424,11 +437,14 @@ impl ApiClient {
         method: &'static str,
         path: &str,
         body: Option<&serde_json::Value>,
-        idempotency_key: Option<&str>,
-        if_match: Option<u64>,
-        timeout: Duration,
+        settings: Settings<'_>,
     ) -> Result<(u16, serde_json::Value), String> {
         use graphhelm_model_gateway::transport::{HttpTransport, TransportRequest};
+        let Settings {
+            idempotency_key,
+            if_match,
+            timeout,
+        } = settings;
         let mut headers = vec![(
             "Authorization".to_owned(),
             format!("Bearer {}", endpoint.token.as_str()),

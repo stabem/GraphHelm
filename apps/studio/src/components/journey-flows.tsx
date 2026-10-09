@@ -102,6 +102,7 @@ const RUN_REASON: Record<string, string> = {
   "driver.observer_missing": "the browser player isn't installed in this project yet",
   "preview.busy": "another run is still going",
   "preview.budget_exceeded": "it took longer than allowed",
+  "watch.launch_failed": "the app under test didn't start",
 };
 
 /** What a held step would do: every act of its edge in words, or the act's name when the flow no
@@ -271,6 +272,9 @@ function SkippedSteps({ flow, edges, onMarkSafe }: { flow: JourneyFlowView; edge
 function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void>; onWatch?: (flowId: string, path?: string) => Promise<void>; onMarkSafe?: (flowId: string, edgeId: string) => Promise<void>; session?: LiveSession; source?: JourneyRunSource }) {
   const { offered, run, frames, failure: runFailure, again, confirm } = useJourneyRun(flow.id, source);
   const liveFrame = useLiveFrame(session, source);
+  // The Run it click is in flight until the Runtime answers with the new run (or a failure).
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => setConfirming(false), [run, runFailure]);
   const [approving, setApproving] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -336,7 +340,7 @@ function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source }: { flo
       {offered && run?.state === "ready" && run.held && (
         <div className="journey-flow-held" role="group" aria-label="Step waiting for you">
           <p>The next step changes data at {run.held.base}: {heldWords(flow, run.held)}. Run it?</p>
-          <button type="button" onClick={confirm}>Run it</button>
+          <button type="button" disabled={confirming} onClick={() => { setConfirming(true); confirm(); }}>{confirming ? "Running…" : "Run it"}</button>
         </div>
       )}
       {paths.filter((path) => path !== "main").map((path) => (

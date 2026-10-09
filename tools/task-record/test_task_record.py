@@ -371,6 +371,16 @@ class Planned(unittest.TestCase):
         doc = self.planned("--summary", "s", "--proof", "both", "--critic-mode", "design", *self.offline())
         self.assertEqual((doc["proof"], doc["critic"]["mode"], doc["classes"]), ("both", "design", ["code"]))
 
+    def test_a_partial_explicit_set_still_plans_the_rest_and_says_so(self):
+        # #604 review: `--reviews 2` alone skipped the plan and defaulted the other fields silently.
+        err = io.StringIO()
+        with redirect_stderr(err):
+            doc = self.planned("--summary", "s", "--reviews", "2", *self.offline())
+        self.assertEqual(doc["reviews"], 2)
+        self.assertIn("default plan", err.getvalue())
+        doc = self.planned("--summary", "s", "--reviews", "2", "--plan-file", self.plan_file(self.PLAN))
+        self.assertEqual((doc["reviews"], doc["proof"], doc["critic"]["mode"]), (2, "both", "design"))
+
     def test_the_paths_come_from_git_when_none_are_given(self):
         repo = tempfile.mkdtemp()
         self.addCleanup(lambda: __import__("shutil").rmtree(repo, ignore_errors=True))

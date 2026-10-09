@@ -202,9 +202,10 @@ def keel_plan(args):
 
 
 def planned_fields(args):
-    # Explicit fields win (each one given replaces its part of the plan below).
-    explicit = args.classes or args.reviews is not None or args.proof or args.critic_mode
-    plan = None if explicit and not args.plan_file and not args.paths else keel_plan(args)
+    # Explicit fields win, each replacing only its own part (#604 review): a partial set still plans
+    # the rest. Only when all four are given is there nothing left to plan.
+    complete = args.classes and args.reviews is not None and args.proof and args.critic_mode
+    plan = None if complete and not args.plan_file else keel_plan(args)
     if plan is not None:
         # A plan recorded before #467 carries no critic: it asked for none.
         fields = {"classes": plan["classes"], "reviews": plan["reviews"], "proof": plan["proof"],

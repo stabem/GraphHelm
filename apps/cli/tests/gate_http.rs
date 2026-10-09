@@ -1039,3 +1039,68 @@ fn a_misspelled_key_in_the_gate_contract_refuses_instead_of_verdicting() {
         "the node was never gated, so the execution cannot have completed through it: {reply}"
     );
 }
+
+/// #549 (review of #571): a refused `GRAPHHELM_TEST_TIME_SCALE` must be a quick, named red, and
+/// must leave no server behind. The first version panicked inside `read_token`, after the server
+/// was spawned and before `ServerGuard` owned it: every server test leaked a `graphhelm serve`
+/// holding the run's output pipe, and a typo in the knob hung the whole run (12 servers, over an
+/// hour of a build slot). This cell runs itself as a child with a bad knob, starts a server there,
+/// and reads the child's output to its END: the end arrives only when nothing holds that pipe any
+/// more. Whatever happens, the child's whole process tree is ended before the cell returns.
+/// Windows observes the leak this way (a spawned process inherits the test's output handles); on
+/// Linux the pipe is not inherited, so there the cell proves the named red only. Cost: one
+/// server start, about two seconds.
+#[test]
+fn a_refused_time_scale_is_a_quick_named_red_that_leaves_no_server_behind() {
+    const CELL: &str = "a_refused_time_scale_is_a_quick_named_red_that_leaves_no_server_behind";
+    if std::env::var_os("GRAPHHELM_TEST_REFUSED_SCALE_CHILD").is_some() {
+        let directory = tempfile::tempdir().unwrap();
+        let extra = ServeExtra {
+            args: Vec::new(),
+            env: Vec::new(),
+        };
+        let _ = serve_with(&directory.path().join("events"), &extra);
+        return;
+    }
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", CELL, "--nocapture"])
+        .env("GRAPHHELM_TEST_REFUSED_SCALE_CHILD", "1")
+        .env("GRAPHHELM_TEST_TIME_SCALE", "fast")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    graphhelm_process_tree::configure(&mut command);
+    let mut child = command.spawn().unwrap();
+    let mut group = match graphhelm_process_tree::create(&child) {
+        Ok(group) => group,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("could not contain the child test process: {error:?}");
+        }
+    };
+    let process_id = child.id();
+    let (done, outcome) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(child.wait_with_output());
+    });
+    // A hang catcher: the child starts one server and panics. It does not scale with the knob
+    // under test, which is the child's, not this process's.
+    let waited = outcome.recv_timeout(Duration::from_secs(60));
+    let _ = graphhelm_process_tree::terminate(process_id, group);
+    graphhelm_process_tree::close(&mut group);
+    let output = waited
+        .expect("60 s after a refused knob something still held the child test's output: a server was left running")
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.status.success(), "a refused knob must fail the test: {text}");
+    assert!(
+        text.contains("GRAPHHELM_TEST_TIME_SCALE=\"fast\" is not a whole number from 1 to 20"),
+        "the red must name the knob and its value: {text}"
+    );
+}

@@ -109,6 +109,11 @@ fn read_state(dir: &Path) -> Option<Value> {
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
 }
 
+/// The stored state as a reader judges it (#586), from `read` (the state file).
+fn read_settled(mut read: impl FnMut() -> Option<Value>) -> Option<Value> {
+    read()
+}
+
 fn save_state(dir: &Path, state: &Value) {
     let mut bytes = serde_json::to_vec_pretty(state).unwrap();
     bytes.push(b'\n');
@@ -243,7 +248,7 @@ pub(crate) fn status(args: &JourneyPreviewArgs) -> Outcome {
     match flow_and_key(&project, &args.id) {
         Ok((flow, digest, commit)) => answer(
             body(
-                read_state(&dir_of(&project, &args.id)),
+                read_settled(|| read_state(&dir_of(&project, &args.id))),
                 &flow,
                 &digest,
                 &commit,
@@ -269,7 +274,7 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
         Err(failed) => return answer(json!({}), Some(failed)),
     };
     let dir = dir_of(&project, &args.id);
-    let stored = read_state(&dir);
+    let stored = read_settled(|| read_state(&dir));
     let running_now = stored
         .as_ref()
         .is_some_and(|state| state["state"] == "running" && runner_alive(state));
@@ -856,10 +861,10 @@ fn sha_of(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        Guard, JourneyPreviewArgs, body, plain_id, proof_args, read_state, runner_alive,
-        save_state, severity, step_reason, unsealed_proof, watch_budget,
+        Guard, JourneyPreviewArgs, body, failed_reason, plain_id, proof_args, read_settled,
+        read_state, runner_alive, save_state, severity, step_reason, unsealed_proof, watch_budget,
     };
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::path::Path;
 
     /// #519: a stored preview answers only for the flow and commit it ran on; a changed flow or a
@@ -1027,6 +1032,64 @@ mod tests {
             ..partial
         };
         assert!(!unsealed_proof(&no_execution, &approved));
+    }
+
+    /// #586 (the #585 sweep on main: five flows read `failed / internal` while their stored state
+    /// was `ready` seconds later): a reader that saw `running` and then finds the runner gone must
+    /// answer what the runner stored on its way out, never a failure. Catches the reader judging
+    /// a finished run by the state it read before the run finished. A runner that is really dead
+    /// still reads `failed / internal`, and a live one is read once. Cost: four process listings.
+    #[test]
+    fn a_reader_racing_a_finishing_runner_answers_what_the_runner_stored() {
+        let flow = json!({"status":"draft"});
+        let now = chrono::Utc::now().to_rfc3339();
+        let running = |pid: u32| {
+            json!({"preview":true,"digest":"sha256:aa","commit":"c1",
+            "state":"running","pid":pid,"startedAt":now,"screens":{},"edges":{}})
+        };
+        // No process has this pid, here or on Linux: the runner is gone.
+        let gone = running(u32::MAX);
+        let ready = json!({"preview":true,"digest":"sha256:aa","commit":"c1","state":"ready",
+            "result":"pass","pid":u32::MAX,"startedAt":now,"ranAt":now,"screens":{},"edges":{}});
+        let answer = |reads: Vec<Value>| {
+            let mut reads = reads.into_iter();
+            let mut count = 0;
+            let stored = read_settled(|| {
+                count += 1;
+                reads.next()
+            });
+            (body(stored, &flow, "sha256:aa", "c1"), count)
+        };
+
+        let (finished, _) = answer(vec![gone.clone(), ready]);
+        assert_eq!(finished["state"], "ready", "{finished}");
+        assert_eq!(finished["result"], "pass", "{finished}");
+
+        let (dead, _) = answer(vec![gone.clone(), gone]);
+        assert_eq!(dead["state"], "failed", "{dead}");
+        assert_eq!(dead["reason"], "internal", "{dead}");
+
+        let (live, reads) = answer(vec![running(std::process::id())]);
+        assert_eq!(live["state"], "running", "{live}");
+        assert_eq!(reads, 1, "a live runner's state is read once");
+    }
+
+    /// #586: a flow the preview refuses before any browser starts says why, in the refusal's own
+    /// code, so the owner reads "a secret is missing" instead of "something went wrong". Catches
+    /// a preflight code falling through to `internal` (seen: `studio-connect` without its
+    /// `studio_token`). Anything unknown stays `internal`. Cost: microseconds.
+    #[test]
+    fn a_preflight_refusal_keeps_its_own_reason() {
+        for code in [
+            "driver.secret_missing",
+            "driver.secret_literal",
+            "driver.unsupported_act",
+            "replay.act_value_missing",
+            "replay.entry_missing",
+        ] {
+            assert_eq!(failed_reason(code), code);
+        }
+        assert_eq!(failed_reason("anything.else"), "internal");
     }
 
     /// #519: ids become file names only within the schema's identifier characters, and step

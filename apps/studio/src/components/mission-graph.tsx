@@ -2,6 +2,7 @@ import "./mission-graph.css";
 import { useState, type CSSProperties } from "react";
 import { custodyRows, sha8, TRUST_LABELS, type Mission, type MissionStep, type MissionTask, type StepStatus } from "../runtime/mission";
 import { layoutMission, type PlacedTask } from "../runtime/mission-layout";
+import type { StageHealth } from "../runtime/stage-health";
 import { WORK_STAGES, type PrRow, type WorkGroup, type WorkStage } from "../runtime/work-groups";
 
 export const STATUS_LABEL: Record<StepStatus, string> = {
@@ -149,7 +150,7 @@ export function MissionGraph({ mission, selectedStepId, selectedTaskKey, onSelec
 
 /** The selected work: who touched it and the evidence on its head. `step` is the journey step the
  * task serves, when it serves one; without it the inspector offers no test. */
-export function TaskInspector({ task: t, step, onOpenTest }: { task: MissionTask; step: MissionStep | undefined; onOpenTest(stepId: string): void }) {
+export function TaskInspector({ task: t, step, onOpenTest, health = null }: { task: MissionTask; step: MissionStep | undefined; onOpenTest(stepId: string): void; health?: StageHealth | null }) {
   const st = nodeState(t, step);
   const note = t.blockedBy ? `BLOCK by ${t.blockedBy.reviewer || "a reviewer"} at ${sha8(t.blockedBy.headSha) ?? "an unrecorded head"}`
     : t.step === "merged" && step?.status !== "proven" ? "Merged, not proven yet" : null;
@@ -159,6 +160,7 @@ export function TaskInspector({ task: t, step, onOpenTest }: { task: MissionTask
       <div className="mg-ins-head">
         <span className="mg-kick"><span className="mg-dot" data-state={st} />{`${nodeLabel(t, step)} · ${prText(t)}`}</span>
         <h3>{t.title}</h3>
+        {health && <HealthFlag health={health} />}
         {step && <span className="mg-muted">{`Proves step ${step.index + 1} · `}<button type="button" className="mg-link" onClick={open}>open its test</button></span>}
       </div>
       <div className="mg-section">
@@ -237,11 +239,23 @@ interface IssueProps {
   onSelectTask(key: string): void;
   onSelectCol(col: number): void;
   onOpenTest(stepId: string): void;
+  /** #591: time in stage and the health flag of each open PR, by task key. */
+  health?: Record<string, StageHealth | null>;
+}
+
+/** #591: the plain health flag plus the time in stage, on the card and in the inspector header. */
+export function HealthFlag({ health }: { health: StageHealth }) {
+  return (
+    <span className="mg-health" data-flag={health.flag} data-tone={health.tone}>
+      <span className="mg-health-text">{health.text}</span>
+      {health.elapsed && <span className="mg-health-time">{health.elapsed}</span>}
+    </span>
+  );
 }
 
 /** #591: an issue's graph, one row per PR along the stage columns: the stages it passed as small
  * cells, the stage it is in as the full card, arrows only inside its own row. Merged rows fold below. */
-export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSelectTask, onSelectCol, onOpenTest }: IssueProps) {
+export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSelectTask, onSelectCol, onOpenTest, health = {} }: IssueProps) {
   const [showMerged, setShowMerged] = useState(false);
   const open = group.rows.filter((r) => r.open), merged = group.rows.filter((r) => !r.open);
   const shown = showMerged ? [...open, ...merged] : open;
@@ -302,6 +316,7 @@ export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSel
                           <span className="mg-node-pr">{prText(t)}</span>
                         </span>
                         <span className="mg-node-title">{t.title}</span>
+                        {health[t.key] && <HealthFlag health={health[t.key]!} />}
                         <span className="mg-node-who">{t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : "nobody yet"}</span>
                       </button>
                     ) : (
@@ -331,7 +346,7 @@ export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSel
             <span className="mg-legend-note">Merged is not done. Done = the replay proves the step.</span>
           </div>
         </section>
-        {selected ? <TaskInspector task={selected.task} step={stepFor(selected.key)} onOpenTest={onOpenTest} />
+        {selected ? <TaskInspector task={selected.task} step={stepFor(selected.key)} onOpenTest={onOpenTest} health={health[selected.key] ?? null} />
           : <aside className="mg-inspector" aria-label="Selected work"><p className="mg-muted">Pick a PR to see who touched it.</p></aside>}
       </div>
     </div>

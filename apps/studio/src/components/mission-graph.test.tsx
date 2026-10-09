@@ -142,4 +142,13 @@ describe("IssueGraph (#591)", () => {
     await userEvent.click(within(row as HTMLElement).getByRole("button", { name: "Row PR #12: Open one" }));
     expect(onSelectTask.mock.calls).toEqual([["o"], ["o"]]);
   });
+  it("the current card and the inspector header show the time in stage and the health flag", () => {
+    const health = { o: { flag: "blocked" as const, text: "Blocked by gh-claude-7", tone: "orange" as const, elapsedMs: 77 * 60_000, elapsed: "1h 17m" } };
+    const { container } = render(<IssueGraph group={group} stepFor={() => undefined} selectedTaskKey="o" selectedCol={null} onSelectTask={vi.fn()} onSelectCol={vi.fn()} onOpenTest={vi.fn()} health={health} />);
+    const card = container.querySelector('.mg-row[data-row="o"] .mg-node[data-current="true"]')!;
+    expect(within(card as HTMLElement).getByText("Blocked by gh-claude-7")).toBeInTheDocument();
+    expect(within(card as HTMLElement).getByText("1h 17m")).toBeInTheDocument();
+    const head = container.querySelector(".mg-ins-head")!;
+    expect(head.querySelector('.mg-health[data-flag="blocked"]')).toHaveTextContent("Blocked by gh-claude-71h 17m");
+  });
 });

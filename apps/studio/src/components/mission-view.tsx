@@ -6,6 +6,7 @@ import type { Lane } from "../runtime/lane-bars";
 import { buildMission, toMissionTask, unlinkedTasks, type Mission } from "../runtime/mission";
 import { layoutMission } from "../runtime/mission-layout";
 import { testFrames } from "../runtime/test-frames";
+import { stageHealth } from "../runtime/stage-health";
 import { buildWorkGroups, type WorkGroup } from "../runtime/work-groups";
 import { IssueGraph, MissionGraph, STATUS_LABEL, stageState } from "./mission-graph";
 import { ProofTable } from "./proof-table";
@@ -121,6 +122,9 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
     {sub === "lanes" ? <div className="mv-pad"><LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} /></div>
       : <p className="mv-none mv-pad">No journeys in this project yet</p>}</div>;
   const group: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
+  // #591: time in stage and the health flag of each PR card, from the same records the lanes read.
+  const groupRows = group ? tasks.filter((t) => group.rows.some((r) => r.key === t.key)) : [];
+  const health = Object.fromEntries(groupRows.map((t) => [t.key, stageHealth(t, lanes, groupRows, now)]));
   const knownIds = new Set(journeys.map((j) => j.contractId));
   // A group's Proof and Test follow its first linked journey; a journey selection is its own.
   const journey = sel.kind === "journey" ? journeys.find((j) => j.contractId === sel.id)!
@@ -290,7 +294,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
         )}
         <div className="mv-content">
           {sub === "graph" && group && <IssueGraph group={group} stepFor={stepFor} selectedTaskKey={shownTask} selectedCol={stageCol}
-            onSelectTask={(key) => { setTaskKey(key); setStageCol(null); }} onSelectCol={(c) => { setStageCol(c); setTaskKey(null); }} onOpenTest={openTest} />}
+            onSelectTask={(key) => { setTaskKey(key); setStageCol(null); }} onSelectCol={(c) => { setStageCol(c); setTaskKey(null); }} onOpenTest={openTest} health={health} />}
           {sub === "graph" && !group && mission && <MissionGraph mission={mission} selectedStepId={stepId} selectedTaskKey={taskKey ?? null}
             onSelectStep={(id) => { setStepId(id); setTaskKey(null); }} onSelectTask={pickTask} onOpenTest={openTest} />}
           {sub === "proof" && (mission && contractId ? <ProofTable mission={mission} onOpenTest={openTest} frameUrl={(id) => frameUrl(id, contractId)}

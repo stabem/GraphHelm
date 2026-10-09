@@ -112,3 +112,10 @@
 .mg-fold { position: absolute; left: 0; height: 28px; padding: 0 12px; border-radius: 8px; border: 1px solid #262930; background: #14151A; color: #C7CBD3;
   font-family: var(--mono); font-size: 11px; cursor: pointer; }
 .mg-fold[aria-expanded="true"] { color: #E9E7E2; border-color: #355C4B; }
+/* #591: the plain health flag and the time in stage. */
+.mg-health { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10.5px; line-height: 1.2; }
+.mg-health-text { font-weight: 600; color: #6FBF8E; }
+.mg-health[data-tone="red"] .mg-health-text { color: #F87171; }
+.mg-health[data-tone="orange"] .mg-health-text { color: #FB923C; }
+.mg-health[data-tone="amber"] .mg-health-text { color: #FBBF24; }
+.mg-health-time { color: #A9AEB8; }

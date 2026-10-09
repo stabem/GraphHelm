@@ -1511,6 +1511,9 @@ fn validated_arguments(
 
 /// One tool call: the secret guard first, then exactly one API request; the tool result is
 /// the API envelope verbatim as text content, `isError` mirroring the envelope's `ok`.
+/// How long the MCP `probe` tool waits for the gateway probe (#600 review).
+pub(crate) const PROBE_CALLER_WAIT: std::time::Duration = super::client::REQUEST_TIMEOUT;
+
 pub(crate) fn call(
     api: &ApiClient,
     nonce: &str,

@@ -895,3 +895,70 @@ fn an_approval_with_no_owner_store_cannot_be_verified() {
     std::fs::remove_dir_all(dir.path().join(".graphhelm/events")).unwrap();
     assert!(finding(&validate(dir.path()), "flow.approval_unverifiable"));
 }
+
+/// #534 slice 3: approvals made before the owner's record existed read as unsigned on the owner's
+/// machine. `sign-legacy` lists them (writing nothing), and with `--id` or `--all` records the
+/// owner's signature only for flows whose approval still matches their content; an edited flow
+/// is listed as not signable and is never signed. Credible defects: signing without the owner,
+/// signing a flow edited after its approval, a dry run that writes. Cost: tempdirs, seconds.
+fn legacy() -> (tempfile::TempDir, String) {
+    let source = committed(EXAMPLE);
+    let (out, reply) = approve(source.path());
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    let dir = committed(EXAMPLE);
+    let token = owner_token(dir.path());
+    for name in ["checkout.journey.yaml", "checkout.json"] {
+        std::fs::copy(
+            source.path().join(".graphhelm/journeys").join(name),
+            dir.path().join(".graphhelm/journeys").join(name),
+        )
+        .unwrap();
+    }
+    assert!(finding(&validate(dir.path()), "flow.approval_unsigned"));
+    (dir, token)
+}
+
+#[test]
+fn sign_legacy_lists_then_signs_only_with_the_owner_and_only_what_was_chosen() {
+    let (dir, token) = legacy();
+    let (out, refused) = run(dir.path(), &["sign-legacy", "--all"]);
+    assert_ne!(out.status.code(), Some(0), "{refused}");
+    let (out, listed) = run(dir.path(), &["sign-legacy", "--token-file", &token]);
+    assert_eq!(out.status.code(), Some(0), "{listed}");
+    assert_eq!(listed["data"]["unsigned"][0]["id"], "checkout", "{listed}");
+    assert_eq!(listed["data"]["signed"], serde_json::json!([]), "{listed}");
+    assert!(
+        finding(&validate(dir.path()), "flow.approval_unsigned"),
+        "a dry run signed"
+    );
+    let (out, signed) = run(
+        dir.path(),
+        &["sign-legacy", "--token-file", &token, "--id", "checkout"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{signed}");
+    assert_eq!(
+        signed["data"]["signed"],
+        serde_json::json!(["checkout"]),
+        "{signed}"
+    );
+    assert!(!finding(&validate(dir.path()), "flow.approval_unsigned"));
+    let (_, again) = run(dir.path(), &["sign-legacy", "--token-file", &token]);
+    assert_eq!(again["data"]["unsigned"], serde_json::json!([]), "{again}");
+}
+
+#[test]
+fn sign_legacy_never_signs_a_flow_edited_after_its_approval() {
+    let (dir, token) = legacy();
+    let path = dir.path().join(".graphhelm/journeys/checkout.journey.yaml");
+    let edited = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("title: ", "title: Edited ");
+    std::fs::write(&path, edited).unwrap();
+    let (out, reply) = run(
+        dir.path(),
+        &["sign-legacy", "--token-file", &token, "--all"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert_eq!(reply["data"]["signed"], serde_json::json!([]), "{reply}");
+    assert_eq!(reply["data"]["notSignable"][0]["id"], "checkout", "{reply}");
+}

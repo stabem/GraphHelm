@@ -169,6 +169,20 @@ The owner's store is local (`.graphhelm/` is not committed), so only the owner's
 a forged approval from a real one. A clone or CI reports the warning instead of refusing.
 `journey watch` plays drafts anyway, so neither stops a watch.
 
+**Approvals made before #534.** They carry no owner record, so on the owner's machine they read
+as `flow.approval_unsigned`. The owner lists them, then signs the ones to keep:
+
+```sh
+graphhelm journey sign-legacy --token-file .graphhelm/events.token          # lists; writes nothing
+graphhelm journey sign-legacy --token-file .graphhelm/events.token --id checkout
+graphhelm journey sign-legacy --token-file .graphhelm/events.token --all
+```
+
+Only a flow whose approval still matches its content can be signed. A flow edited after its
+approval (`flow.approval_stale`) or otherwise invalid is listed under `notSignable` and is never
+signed; it needs a fresh `journey approve`. The YAML is not changed: the record names the digest
+and revision already there.
+
 **What this does and does not stop.** It stops an agent that holds only the agent session token
 and can write the YAML: it cannot produce the owner's record. On one machine, as one OS user, a
 process that can read `.graphhelm/events.token` or write `.graphhelm/events` directly can still

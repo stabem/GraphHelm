@@ -154,6 +154,9 @@ pub enum JourneyCommand {
     Compile(JourneyCompileArgs),
     /// Approve a canonical flow at the project's HEAD and write its generated contracts.
     Approve(JourneyApproveArgs),
+    /// Record the owner's signature for approvals made before #534 (lists them; writes only with
+    /// `--id` or `--all`).
+    SignLegacy(JourneySignLegacyArgs),
     /// Mark one edge of a DRAFT flow safe to watch although an act on it looks destructive
     /// (#518). Owner only. The mark binds the edge's acts: editing them voids it.
     MarkSafe(JourneyMarkSafeArgs),
@@ -409,6 +412,21 @@ pub struct JourneyCompileArgs {
     /// Replace a differing handwritten contract. Generated contracts are projections.
     #[arg(long, conflicts_with = "check")]
     pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct JourneySignLegacyArgs {
+    /// A flow whose existing approval the owner signs; repeatable.
+    #[arg(long = "id")]
+    pub ids: Vec<String>,
+    /// Sign every flow whose approval still matches its content.
+    #[arg(long)]
+    pub all: bool,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    /// The project's owner token (`.graphhelm/events.token`).
+    #[arg(long = "token-file")]
+    pub token_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

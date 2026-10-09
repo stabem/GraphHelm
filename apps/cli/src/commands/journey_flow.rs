@@ -1156,19 +1156,99 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
 pub(crate) fn run_approve(args: &crate::args::JourneyApproveArgs) -> Outcome {
     const COMMAND: &str = "journey.approve";
     let project = args.project.clone().unwrap_or_else(|| ".".into());
-    let owner = super::secret_file::token_path(&super::journey_owner::store(&project));
-    let given = args
-        .token_file
-        .as_deref()
-        .and_then(|path| super::secret_file::read_existing(path, "bearer token").ok());
-    let expected = super::secret_file::read_existing(&owner, "bearer token").ok();
-    if given.is_none() || given != expected {
+    if !owner_token_matches(&project, args.token_file.as_deref()) {
         return input_error(
             COMMAND,
             "approving is the owner's: give --token-file with the project's owner token (.graphhelm/events.token)",
         );
     }
     approve_owned(&args.id, project)
+}
+
+/// Whether `token_file` holds the project's owner token (#534): the owner's doors ask for it.
+fn owner_token_matches(project: &Path, token_file: Option<&Path>) -> bool {
+    let owner = super::secret_file::token_path(&super::journey_owner::store(project));
+    let given =
+        token_file.and_then(|path| super::secret_file::read_existing(path, "bearer token").ok());
+    given.is_some() && given == super::secret_file::read_existing(&owner, "bearer token").ok()
+}
+
+/// `graphhelm journey sign-legacy` (#534 slice 3): approvals made before the owner's record
+/// existed read as `flow.approval_unsigned` on the owner's machine. This lists them, and with
+/// `--id` or `--all` records the owner's signature for each one whose approval still matches its
+/// content (an edited, stale or invalid flow is listed as not signable, never signed). The
+/// revision stays the one the YAML names; nothing in the YAML changes. Owner door: owner token.
+pub(crate) fn run_sign_legacy(args: &crate::args::JourneySignLegacyArgs) -> Outcome {
+    const COMMAND: &str = "journey.sign_legacy";
+    let project = args.project.clone().unwrap_or_else(|| ".".into());
+    if !owner_token_matches(&project, args.token_file.as_deref()) {
+        return input_error(
+            COMMAND,
+            "signing approvals is the owner's: give --token-file with the project's owner token (.graphhelm/events.token)",
+        );
+    }
+    let Some(files) = files(&project, &[]) else {
+        return input_error(COMMAND, "unsafe journeys directory");
+    };
+    let (mut unsigned, mut not_signable) = (Vec::new(), Vec::new());
+    for file in files {
+        let Ok((text, flow)) = read(&file) else {
+            continue;
+        };
+        if flow["status"] != "approved" {
+            continue;
+        }
+        let id = flow["id"].as_str().unwrap_or_default().to_owned();
+        let findings = check_snapshot(&file, &text, &flow, &project);
+        if !findings.iter().any(|f| f.code == "flow.approval_unsigned") {
+            continue;
+        }
+        let blocking: Vec<_> = findings
+            .iter()
+            .filter(|f| !f.is_warning() && f.code != "flow.approval_unsigned")
+            .map(|f| f.code)
+            .collect();
+        if blocking.is_empty() {
+            unsigned.push((
+                id,
+                flow["approved"]["digest"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                flow["approved"]["revision"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            ));
+        } else {
+            not_signable.push(json!({"id": id, "findings": blocking}));
+        }
+    }
+    let chosen: Vec<_> = unsigned
+        .iter()
+        .filter(|(id, _, _)| args.all || args.ids.contains(id))
+        .collect();
+    let unknown: Vec<_> = args
+        .ids
+        .iter()
+        .filter(|id| !unsigned.iter().any(|(candidate, _, _)| candidate == *id))
+        .collect();
+    let mut signed = Vec::new();
+    for (id, digest, revision) in chosen {
+        if let Err(message) = super::journey_owner::record(&project, id, digest, revision) {
+            return input_error(COMMAND, &message);
+        }
+        signed.push(id.clone());
+    }
+    Outcome::success(
+        COMMAND,
+        json!({
+            "unsigned": unsigned.iter().map(|(id, digest, revision)| json!({"id": id, "digest": digest, "revision": revision})).collect::<Vec<_>>(),
+            "signed": signed,
+            "notSignable": not_signable,
+            "notUnsigned": unknown,
+        }),
+    )
 }
 
 /// The approval itself, for a caller that has already authenticated the owner (#534).

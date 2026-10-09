@@ -18,23 +18,34 @@ function record(sequence: number, taskId: string, kind: string, actorId: string,
 
 const commentUrl = "https://github.com/stabem/GraphHelm/pull/388#issuecomment-1";
 
-function twoTasks() {
+/** `pushed`: the author answered the BLOCK with a newer head (#608: then it is no longer open). */
+function twoTasks(pushed = true) {
   return foldTaskEvents([
     record(1, "issue-386", "task.claimed", "gh-claude-4", { issue: 386, lane: "gh-claude-4", branch: "issue-386-task-events" }),
     record(2, "issue-386", "task.pr_opened", "gh-claude-4", { pr: 388, headSha: "aaaaaaaa", journeys: ["studio-see-team"], lane: "gh-claude-4" }),
     record(3, "issue-386", "task.review_verdict", "gh-claude-1", { pr: 388, headSha: "aaaaaaaa", reviewer: "gh-claude-1", verdict: "BLOCK", commentUrl }),
-    record(4, "issue-386", "task.pr_opened", "gh-claude-4", { pr: 388, headSha: "bbbbbbbb", journeys: ["studio-see-team"], lane: "gh-claude-4" }),
+    ...(pushed ? [record(4, "issue-386", "task.pr_opened", "gh-claude-4", { pr: 388, headSha: "bbbbbbbb", journeys: ["studio-see-team"], lane: "gh-claude-4" })] : []),
     record(5, "issue-380", "task.claimed", "gh-claude-2", { issue: 380, lane: "gh-claude-2", branch: "issue-380-owner-credential" }),
   ]);
 }
 
 describe("TaskGraphs", () => {
   it("lights the current step, names the agent on each node and draws an open BLOCK as a red edge", () => {
-    render(<TaskGraphs tasks={twoTasks()} onOpenJourney={vi.fn()} />);
+    const { unmount } = render(<TaskGraphs tasks={twoTasks(true)} onOpenJourney={vi.fn()} />);
+    // #608: once the author pushed a newer head, the BLOCK is answered: no red edge, and the lit
+    // step is the re-review, on the reviewer.
+    const pushed = screen.getByRole("group", { name: /issue #386/i });
+    expect(within(pushed).queryByRole("link", { name: /blocked by/i })).toBeNull();
+    const review = within(pushed).getByRole("listitem", { current: "step" });
+    expect(review).toHaveTextContent(/review/i);
+    expect(review).toHaveTextContent("gh-claude-1");
+    unmount();
+    render(<TaskGraphs tasks={twoTasks(false)} onOpenJourney={vi.fn()} />);
     const blocked = screen.getByRole("group", { name: /issue #386/i });
+    // An open BLOCK lights its Fix round, on the author.
     const lit = within(blocked).getByRole("listitem", { current: "step" });
-    expect(lit).toHaveTextContent(/review/i);
-    expect(lit).toHaveTextContent("gh-claude-1");
+    expect(lit).toHaveTextContent(/fix · round 1/i);
+    expect(lit).toHaveTextContent("gh-claude-4");
     // The author stands on Implement and, since #514, on the Fix of the BLOCK round.
     expect(within(blocked).getAllByText("gh-claude-4").length).toBeGreaterThanOrEqual(1);
     const edge = within(blocked).getByRole("link", { name: /blocked by gh-claude-1/i });

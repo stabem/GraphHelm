@@ -42,6 +42,31 @@ const FRAME: usize = 64 * 1024;
 /// Accessible names an act on a live session may not target unless the approved flow contains
 /// that act on an edge leaving the current screen (journey-explore design §11).
 const DESTRUCTIVE: [&str; 6] = ["delete", "remove", "pay", "purchase", "transfer", "send"];
+/// The deny-list word a watch will not act on for a DRAFT's act (#515), if any. A draft is written
+/// by agents and approved by nobody, so watching it must not delete, pay or send. Kinds that
+/// commit nothing (typing into a field, waiting, inspecting) are never guarded: `wait_for "Order
+/// sent"` only looks. `drop` is matched as a whole word, because as a substring it is every
+/// "Dropdown".
+pub(crate) fn would_destroy(act: &Value) -> Option<&'static str> {
+    if matches!(
+        act["kind"].as_str(),
+        Some("enter_text" | "wait_for" | "inspect")
+    ) {
+        return None;
+    }
+    let lower = act["name"].as_str().unwrap_or_default().to_lowercase();
+    DESTRUCTIVE
+        .iter()
+        .copied()
+        .find(|word| lower.contains(word))
+        .or_else(|| {
+            lower
+                .split(|c: char| !c.is_alphanumeric())
+                .any(|word| word == "drop")
+                .then_some("drop")
+        })
+}
+
 const ACT_KINDS: [&str; 6] = [
     "activate",
     "submit",
@@ -89,6 +114,9 @@ fn report(command: &'static str, data: Value, failed: Option<Failure>) -> Outcom
             "the play reached the run budget before its last act; the app it launched has been stopped"
         }
         "watch.path_unknown" => "the flow has no path with that name",
+        "watch.act_skipped_destructive" => {
+            "this draft's next act looks destructive, so the watch did not perform it and stopped there (data.skipped); it is played only on the app the project's launcher starts, or once the flow is approved"
+        }
         "live.recording_incomplete" => {
             "supply all of --events, --execution, --keyring and --key-id, or none"
         }
@@ -634,6 +662,24 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
             return Err(failure("watch.pace_too_slow", "/paceMs", 3));
         }
     }
+    // #515: the acts of a DRAFT this watch will not perform, named before any browser starts. An
+    // approved flow carries its owner's approval of every act (a stale approval never reaches
+    // here: `read_for_watch` refuses it), so it is played whole.
+    let mut guarded: Vec<Value> = Vec::new();
+    if args.watch {
+        if flow["status"] != "approved" {
+            for id in path_edges.as_array().unwrap() {
+                let id = id.as_str().unwrap();
+                for (act_index, act) in edges[id]["acts"].as_array().unwrap().iter().enumerate() {
+                    if let Some(word) = would_destroy(act) {
+                        guarded.push(json!({"edge":id,"actIndex":act_index,"kind":act["kind"],
+                            "role":act["role"],"name":act["name"],"would":word}));
+                    }
+                }
+            }
+        }
+        data["guarded"] = guarded.clone().into();
+    }
     data["path"] = name.as_str().into();
     let contract = if name == "main" {
         args.id.clone()
@@ -669,6 +715,13 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     } else {
         None
     };
+    // The app this watch started from the project's declared launcher is the disposable fixture,
+    // so every act is played there. An app that was already answering cannot be told from a real
+    // one by its address, and keeps the guard.
+    if launched.is_some() {
+        guarded.clear();
+        data["guarded"] = json!([]);
+    }
     let mut driver = Driver::start(&project, output.path(), &secrets)?;
     let entry = format!(
         "{}{}",
@@ -721,6 +774,38 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
             let edge = &edges[edge_id];
             for (act_index, act) in edge["acts"].as_array().unwrap().iter().enumerate() {
                 let at = format!("{edge_id}/{act_index}");
+                if let Some(skip) = guarded
+                    .iter()
+                    .find(|g| g["edge"] == edge_id && g["actIndex"] == act_index)
+                {
+                    // Not performed: the play stops here, on the screen before the act, and
+                    // says what it would have done. The browser stays open for the owner.
+                    progress.show(
+                        &visited[index - 1],
+                        index - 1,
+                        Some(edge_id),
+                        Some(act_index),
+                    );
+                    let caption = caption_bounded(format!(
+                        "{edge_id}: skipped: would {} \"{}\"",
+                        skip["would"].as_str().unwrap_or_default(),
+                        act["name"].as_str().unwrap_or_default()
+                    ));
+                    let _ = driver.call(
+                        "show",
+                        json!({"caption":caption,"role":act["role"],"name":act["name"]}),
+                        &format!("/edges/{at}/show"),
+                    );
+                    data["state"] = "skipped".into();
+                    data["at"] = at.clone().into();
+                    data["skipped"] = skip.clone();
+                    step_failure = Some(failure(
+                        "watch.act_skipped_destructive",
+                        format!("/edges/{at}"),
+                        1,
+                    ));
+                    break;
+                }
                 if args.watch {
                     if Instant::now() + pace >= play_deadline {
                         return Err(failure("watch.budget_exceeded", format!("/edges/{at}"), 1));
@@ -1104,7 +1189,7 @@ fn start_session(
     let record = json!({"sessionId":id,"contractId":contract,"flowId":args.id,"path":data["path"],
         "stepId":data["step"],"mode":if args.watch {"watch"} else {"open"},"proof":false,
         "stepIndex":visited.iter().position(|s| Some(s) == current.as_ref()),"stepCount":visited.len(),
-        "edge":null,"actIndex":null,
+        "edge":null,"actIndex":null,"skipped":data["skipped"],
         "state":data["state"],"code":data["code"],"at":data["at"],
         "screen":current,"since":chrono::Utc::now().to_rfc3339(),"lastActAt":null,"lastActState":null,"lastActCode":null,
         "expiresAt":expires_at.to_rfc3339(),"port":port,"pid":std::process::id()});
@@ -1463,6 +1548,31 @@ pub(super) fn close(args: &JourneyCloseArgs) -> Outcome {
         args.project.as_deref(),
         json!({"op":"close"}),
     )
+}
+
+#[cfg(test)]
+mod watch_guard_tests {
+    use serde_json::json;
+
+    /// #515: which acts of a draft a watch refuses to perform. Defects named: a guard that also
+    /// stops acts that commit nothing (typing a password, waiting for "Order sent"), one that
+    /// reads "Dropdown" as `drop`, and one that misses a deny word inside a longer name or in
+    /// another case. Cost: microseconds.
+    #[test]
+    fn only_committing_acts_with_a_deny_word_are_guarded() {
+        let would = |kind: &str, name: &str| {
+            super::would_destroy(&json!({"kind":kind,"role":"button","name":name}))
+        };
+        assert_eq!(would("submit", "Pay now"), Some("pay"));
+        assert_eq!(would("activate", "DELETE account"), Some("delete"));
+        assert_eq!(would("activate", "Resend invoice"), Some("send"));
+        assert_eq!(would("activate", "Drop table"), Some("drop"));
+        assert_eq!(would("activate", "Open dropdown"), None);
+        assert_eq!(would("activate", "Checkout"), None);
+        assert_eq!(would("enter_text", "Send to"), None);
+        assert_eq!(would("wait_for", "Order sent"), None);
+        assert_eq!(would("inspect", "Remove"), None);
+    }
 }
 
 #[cfg(test)]

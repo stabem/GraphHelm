@@ -19,7 +19,9 @@ export function nodeLabel(t: MissionTask, step: MissionStep | undefined): string
   if (t.blocked) return "Blocked";
   if (t.lane === null) return "Ready · unclaimed";
   if (t.step === "merged") return step?.status === "proven" ? "Proven" : "Merged · not proven";
-  return t.step === "implement" ? "Writing" : t.step === "review" ? "In review" : "Merging";
+  // #480: a task plans (and a design plan is critiqued) before it is written.
+  return t.step === "plan" ? "Planning" : t.step === "critic" ? "Design in review"
+    : t.step === "implement" ? "Writing" : t.step === "review" ? "In review" : "Merging";
 }
 const prText = (t: MissionTask) => (t.pr ? `#${t.pr}` : "no PR");
 

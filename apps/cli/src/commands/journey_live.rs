@@ -735,6 +735,9 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
         screens[&visited[0]]["url"].as_str().unwrap()
     );
     let streamed = args.watch && !args.window;
+    // #519: the reply says how this play is seen: frames for the Studio, or a window here.
+    data["headed"] = (!streamed).into();
+    data["frame"] = streamed.into();
     let mut open = json!({"base":entry,"viewport":cache["viewport"],"allowOrigins":args.allow_origin,"headed":!streamed});
     if args.watch {
         // #491: the caption and outline are drawn in the page. #519: by default the page streams

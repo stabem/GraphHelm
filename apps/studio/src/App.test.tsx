@@ -1119,6 +1119,9 @@ describe("the window", () => {
     // #549: the editor closes when the selection lands, a render later; checked at once, a loaded
     // machine read it still open (the known flake of this cell). Wait for the condition instead.
     await waitFor(() => expect(screen.queryByLabelText("Project document editor")).not.toBeInTheDocument());
+    // The saved file is not a draft: leaving it asks nothing. The prompt was the flake's cause
+    // (the App still held "draft" for a render after the save), and it answers "no" in jsdom.
+    expect(confirm).not.toHaveBeenCalled();
     confirm.mockRestore();
   });
 

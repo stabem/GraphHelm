@@ -86,6 +86,13 @@ function EditorSession({ document, readDocument, saveDocument, onClose, onAttent
       } else {
         setSnapshot({ content: request.content, contentSha256: response.contentSha256 });
       }
+      // The App guards navigation from what this editor last told it. `saving` is published in the
+      // `finally` below, in this same tick; attention used to follow only from the effect, a
+      // render later. In between the App saw "not saving" beside a stale "draft", and a click
+      // there was answered with the discard prompt for a file that was already saved (#549).
+      // The draft cannot have changed meanwhile: the textarea is disabled while saving.
+      const stillDirty = retrying && content !== request.content;
+      onAttentionChange?.(response.notification.status === "pending" ? "pending_notice" : stillDirty ? "draft" : "clean", stillDirty);
       setResult(response);
       setPendingNotice(response.notification.status === "pending" ? request : null);
       setUncertainSave(null);

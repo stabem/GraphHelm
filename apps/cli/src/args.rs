@@ -221,6 +221,9 @@ pub struct JourneyOpenArgs {
     /// Internal: milliseconds a `watch` waits before each act.
     #[arg(long, hide = true, default_value_t = 1500)]
     pub pace_ms: u64,
+    /// Internal: a `watch` in a visible window instead of streamed frames.
+    #[arg(long, hide = true)]
+    pub window: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -238,6 +241,10 @@ pub struct JourneyWatchArgs {
     /// Exact extra subresource origin; never permits navigation away from the local base.
     #[arg(long)]
     pub allow_origin: Vec<String>,
+    /// Play in a visible browser window on this machine. By default the browser is headless and
+    /// the page streams as frames the Studio shows (`GET /v1/journeys/sessions/{id}/frame`).
+    #[arg(long)]
+    pub window: bool,
 }
 
 #[derive(Debug, Args)]

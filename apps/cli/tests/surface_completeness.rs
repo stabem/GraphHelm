@@ -194,7 +194,12 @@ fn read_rust_string(text: &str) -> String {
 /// AN EXCEPTION LIST IS THE HONEST HALF OF A COMPLETENESS GUARD, and it earns its keep only if
 /// adding a row is harder than adding the tool. Each entry names WHY, so a future author who wants
 /// to silence this guard has to write a false sentence rather than paste a path.
-const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 9] = [
+const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 10] = [
+    (
+        "GET",
+        "/v1/journeys/sessions/{id}/frame",
+        "a JPEG of a watch's page that the Studio canvas polls a few times a second for the owner's eyes (#519); an MCP answer is text in a model's context, and the frame is a view, never proof. An agent reads the same play, step by step, from journey_sessions",
+    ),
     (
         "PUT",
         "/v1/gateway/credentials/{reference}",

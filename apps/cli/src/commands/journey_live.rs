@@ -191,6 +191,7 @@ pub(crate) fn watch_args(args: &JourneyWatchArgs) -> JourneyOpenArgs {
         live_host: false,
         watch: true,
         pace_ms: args.pace_ms,
+        window: args.window,
     }
 }
 
@@ -375,6 +376,11 @@ fn spawn_host(args: &JourneyOpenArgs, data: Value) -> Outcome {
                 "--pace-ms".to_owned(),
                 args.pace_ms.to_string(),
             ]
+        } else {
+            Vec::new()
+        })
+        .args(if args.window {
+            vec!["--window"]
         } else {
             Vec::new()
         })
@@ -690,7 +696,7 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     // An open is deterministic only through a current cache: absent or void, refuse. A watch
     // plays the flow's own role/name acts, so a draft that was never replayed can be watched.
     let cache = if args.watch {
-        json!({"viewport":{"width":1280,"height":720},"edges":{}})
+        json!({"viewport":{"width":WATCH_WIDTH,"height":WATCH_HEIGHT},"edges":{}})
     } else {
         let cache_file = project
             .join(".graphhelm/journey-cache")
@@ -728,10 +734,16 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
         base.trim_end_matches('/'),
         screens[&visited[0]]["url"].as_str().unwrap()
     );
-    let mut open = json!({"base":entry,"viewport":cache["viewport"],"allowOrigins":args.allow_origin,"headed":true});
+    let streamed = args.watch && !args.window;
+    // #519: the reply says how this play is seen: frames for the Studio, or a window here.
+    data["headed"] = (!streamed).into();
+    data["frame"] = streamed.into();
+    let mut open = json!({"base":entry,"viewport":cache["viewport"],"allowOrigins":args.allow_origin,"headed":!streamed});
     if args.watch {
-        // #491: maximized, real window size, for the owner to read.
+        // #491: the caption and outline are drawn in the page. #519: by default the page streams
+        // as frames the Studio shows; `--window` keeps the maximized window instead.
         open["show"] = true.into();
+        open["screencast"] = streamed.into();
     }
     match driver.call("open", open.clone(), "/entry") {
         Ok(_) => {}
@@ -757,6 +769,7 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
         base: json!({"sessionId":session_id,"contractId":contract,"flowId":args.id,"path":name,
             "stepId":step,"mode":"watch","proof":false,"state":"playing","code":null,"at":null,
             "since":chrono::Utc::now().to_rfc3339(),"stepCount":visited.len(),
+            "frame":streamed,"frameDir":frame_dir(&output, streamed),
             "expiresAt":(chrono::Utc::now() + chrono::Duration::seconds(RUN_BUDGET.as_secs() as i64)).to_rfc3339()}),
     };
     if args.watch {
@@ -781,7 +794,7 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
                     // Not performed: the play stops here, on the screen before the act, and
                     // says what it would have done. The browser stays open for the owner.
                     let caption = caption_bounded(format!(
-                        "{edge_id}: skipped: would {} \"{}\"",
+                        "Skipped: would {} \"{}\"",
                         skip["would"].as_str().unwrap_or_default(),
                         act["name"].as_str().unwrap_or_default()
                     ));
@@ -811,8 +824,10 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
                     if Instant::now() + pace >= play_deadline {
                         return Err(failure("watch.budget_exceeded", format!("/edges/{at}"), 1));
                     }
-                    // #491: caption the step and outline its control, then wait the pace.
-                    let caption = caption_bounded(format!("{edge_id}: {}", act_caption(act)));
+                    // #491: caption the step and outline its control, then wait the pace. #519: the
+                    // frames reach the owner in the Studio, so the caption says what the act does
+                    // without the edge id (#520 review).
+                    let caption = caption_bounded(act_caption(act));
                     progress.show(
                         &visited[index - 1],
                         index - 1,
@@ -1128,6 +1143,121 @@ fn caption_bounded(caption: String) -> String {
     format!("{}…", &caption[..end])
 }
 
+/// The page size a watch plays at (#519): the frames the Studio shows are this size.
+const WATCH_WIDTH: u32 = 1280;
+const WATCH_HEIGHT: u32 = 800;
+/// The largest frame `read_frame` serves; a JPEG of the watch page is far below it.
+const FRAME_LIMIT: u64 = 8 * 1024 * 1024;
+
+/// Where a streamed watch's driver writes its latest frame (#519), kept in the session record
+/// for the Runtime's frame route and never listed (`journey sessions` drops it).
+fn frame_dir(output: &TemporaryOutput, streamed: bool) -> Value {
+    if streamed {
+        Value::from(
+            output
+                .path()
+                .join("screencast")
+                .to_string_lossy()
+                .into_owned(),
+        )
+    } else {
+        Value::Null
+    }
+}
+
+/// What `GET /v1/journeys/sessions/{id}/frame` answers (#519).
+#[derive(Debug, PartialEq)]
+pub(crate) enum FrameRead {
+    /// No such session, or it ended (`live.session_gone`).
+    Gone,
+    /// The session exists but has no frame yet (or is a window watch, which never has one).
+    Pending,
+    Frame {
+        seq: u64,
+        width: u64,
+        height: u64,
+        jpeg: Vec<u8>,
+    },
+}
+
+/// The latest frame of a streamed watch. Only a `screencast` directory directly inside one of
+/// this machine's `graphhelm-replay-*` outputs is read, whatever the record says, so a record
+/// edited on disk cannot turn the route into a file reader. Never journaled, never proof: the
+/// frame goes when the host removes its output on close.
+pub(crate) fn read_frame(project: &Path, id: &str) -> FrameRead {
+    if !valid_session(id) {
+        return FrameRead::Gone;
+    }
+    let file = project.join(SESSIONS).join(format!("{id}.json"));
+    if !safe_node(&file) {
+        return FrameRead::Gone;
+    }
+    let Some(record) = std::fs::read(&file)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+    else {
+        return FrameRead::Gone;
+    };
+    let live = record["expiresAt"]
+        .as_str()
+        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+        .is_some_and(|at| at >= chrono::Utc::now());
+    if !live {
+        return FrameRead::Gone;
+    }
+    let Some(dir) = record["frameDir"].as_str().map(PathBuf::from) else {
+        return FrameRead::Pending;
+    };
+    let inside_an_output = std::env::temp_dir()
+        .canonicalize()
+        .ok()
+        .is_some_and(|temp| {
+            dir.file_name().is_some_and(|name| name == "screencast")
+                && dir.parent().is_some_and(|output| {
+                    output.parent() == Some(temp.as_path())
+                        && output
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.starts_with("graphhelm-replay-"))
+                })
+        });
+    // A junction or symlink named like an output (or its `screencast`) resolves elsewhere, so its
+    // canonical path differs from the one recorded; only a real directory is read (#559 review).
+    let real = |path: &Path| path.canonicalize().ok().as_deref() == Some(path);
+    if !inside_an_output || !real(&dir) || !dir.parent().is_some_and(real) {
+        return FrameRead::Pending;
+    }
+    let read = |name: &str, limit: u64| -> Option<Vec<u8>> {
+        let path = dir.join(name);
+        if !safe_node(&path) || std::fs::metadata(&path).ok()?.len() > limit {
+            return None;
+        }
+        std::fs::read(path).ok()
+    };
+    // The meta is written after its JPEG, so it never names a frame that is not on disk yet.
+    let Some(meta) =
+        read("frame.json", 1024).and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+    else {
+        return FrameRead::Pending;
+    };
+    let (Some(seq), Some(width), Some(height)) = (
+        meta["seq"].as_u64(),
+        meta["width"].as_u64(),
+        meta["height"].as_u64(),
+    ) else {
+        return FrameRead::Pending;
+    };
+    match read("frame.jpg", FRAME_LIMIT) {
+        Some(jpeg) if !jpeg.is_empty() => FrameRead::Frame {
+            seq,
+            width,
+            height,
+            jpeg,
+        },
+        _ => FrameRead::Pending,
+    }
+}
+
 /// The session record a `journey watch` keeps current while it plays (the Studio's "current
 /// step" signal, read through `journey sessions`). It has no port until the play ends and the
 /// host starts serving, so `act` and `close` answer `live.session_gone` during the play.
@@ -1182,6 +1312,7 @@ fn start_session(
     let dir = project.join(SESSIONS);
     safe_directory(&dir, true)?;
     sweep_expired(&dir);
+    let streamed = args.watch && !args.window;
     let (_, token) = crate::commands::secret_file::ensure(
         &dir.join(format!("{id}.token")),
         "live session token",
@@ -1203,6 +1334,7 @@ fn start_session(
         "edge":null,"actIndex":null,"skipped":data["skipped"],
         "state":data["state"],"code":data["code"],"at":data["at"],
         "screen":current,"since":chrono::Utc::now().to_rfc3339(),"lastActAt":null,"lastActState":null,"lastActCode":null,
+        "frame":streamed,"frameDir":frame_dir(&output, streamed),
         "expiresAt":expires_at.to_rfc3339(),"port":port,"pid":std::process::id()});
     save_record(&dir.join(format!("{id}.json")), &record)?;
     data["sessionId"] = id.clone().into();
@@ -1445,6 +1577,7 @@ pub(super) fn sessions(args: &JourneySessionsArgs) -> Outcome {
             let object = record.as_object_mut()?;
             object.remove("port");
             object.remove("pid");
+            object.remove("frameDir");
             Some(record)
         })
         .collect();
@@ -1631,5 +1764,115 @@ mod caption_tests {
         assert_eq!(row()["caption"], "run.details: Clicks \"Details\"");
         progress.show("bot", 1, None, None, None);
         assert_eq!(row()["caption"], serde_json::Value::Null);
+    }
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use super::{FrameRead, SESSIONS, TemporaryOutput, read_frame};
+    use serde_json::json;
+
+    const ID: &str = "live-0123456789abcdef";
+
+    fn session(project: &std::path::Path, frame_dir: serde_json::Value, minutes: i64) {
+        let dir = project.join(SESSIONS);
+        std::fs::create_dir_all(&dir).unwrap();
+        let expires = chrono::Utc::now() + chrono::Duration::minutes(minutes);
+        let record = json!({"sessionId":ID,"frame":!frame_dir.is_null(),"frameDir":frame_dir,
+            "expiresAt":expires.to_rfc3339()});
+        std::fs::write(dir.join(format!("{ID}.json")), record.to_string()).unwrap();
+    }
+
+    fn frame(dir: &std::path::Path, seq: u64) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("frame.jpg"), [0xFF, 0xD8, 0xFF, 0xD9]).unwrap();
+        std::fs::write(
+            dir.join("frame.json"),
+            json!({"seq":seq,"width":1280,"height":800}).to_string(),
+        )
+        .unwrap();
+    }
+
+    /// #519: the frame route serves the latest frame of a live streamed watch, nothing before
+    /// it exists, and nothing once the session is gone. Cost: milliseconds, temp files only.
+    #[test]
+    fn a_streamed_watch_serves_its_latest_frame_and_nothing_once_gone() {
+        let project = tempfile::tempdir().unwrap();
+        assert_eq!(read_frame(project.path(), ID), FrameRead::Gone);
+        assert_eq!(read_frame(project.path(), "../escape"), FrameRead::Gone);
+
+        let output = TemporaryOutput::create().unwrap();
+        let screencast = output.path().join("screencast");
+        session(project.path(), json!(screencast.to_string_lossy()), 5);
+        assert_eq!(read_frame(project.path(), ID), FrameRead::Pending);
+
+        frame(&screencast, 7);
+        assert_eq!(
+            read_frame(project.path(), ID),
+            FrameRead::Frame {
+                seq: 7,
+                width: 1280,
+                height: 800,
+                jpeg: vec![0xFF, 0xD8, 0xFF, 0xD9]
+            }
+        );
+
+        session(project.path(), json!(screencast.to_string_lossy()), -1);
+        assert_eq!(read_frame(project.path(), ID), FrameRead::Gone);
+
+        session(project.path(), serde_json::Value::Null, 5);
+        assert_eq!(read_frame(project.path(), ID), FrameRead::Pending);
+    }
+
+    /// #559 review: a junction in the temp directory named like a replay output, pointing at a
+    /// directory that holds a frame, is not read: its canonical path is not the recorded one.
+    /// Cost: milliseconds, temp files only. Windows only (junctions).
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_named_like_a_replay_output_reads_nothing() {
+        let project = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        frame(&target.path().join("screencast"), 1);
+        let temp = std::env::temp_dir().canonicalize().unwrap();
+        let link = temp.join(format!(
+            "graphhelm-replay-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link.to_string_lossy().trim_start_matches(r"\\?\"))
+            .arg(target.path())
+            .output()
+            .unwrap();
+        assert!(
+            made.status.success(),
+            "ARRANGEMENT: junction made: {made:?}"
+        );
+        session(
+            project.path(),
+            json!(link.join("screencast").to_string_lossy()),
+            5,
+        );
+        let read = read_frame(project.path(), ID);
+        let _ = std::fs::remove_dir(&link);
+        assert_eq!(read, FrameRead::Pending);
+    }
+
+    /// #519: the record names the frame directory, but only a `screencast` directly inside one of
+    /// this machine's replay outputs is read; a record edited to point anywhere else gets no
+    /// bytes. Cost: milliseconds, temp files only.
+    #[test]
+    fn a_record_pointing_outside_a_replay_output_reads_nothing() {
+        let project = tempfile::tempdir().unwrap();
+        let elsewhere = project.path().join("screencast");
+        frame(&elsewhere, 1);
+        session(project.path(), json!(elsewhere.to_string_lossy()), 5);
+        assert_eq!(read_frame(project.path(), ID), FrameRead::Pending);
+
+        let output = TemporaryOutput::create().unwrap();
+        let wrong_name = output.path().join("other");
+        frame(&wrong_name, 1);
+        session(project.path(), json!(wrong_name.to_string_lossy()), 5);
+        assert_eq!(read_frame(project.path(), ID), FrameRead::Pending);
     }
 }

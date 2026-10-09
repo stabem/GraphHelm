@@ -162,9 +162,10 @@ const TOOLS: [ToolSpec; 43] = [
     },
     ToolSpec {
         name: "journey_watch",
-        description: "Play a journey flow, draft or approved, in a visible browser on the Runtime \
-                      host, paced for a person to follow (POST /v1/journey-flows/{id}/watch; \
-                      exactly `graphhelm journey watch`). Optional path and paceMs. It answers \
+        description: "Play a journey flow, draft or approved, paced for a person to follow \
+                      (POST /v1/journey-flows/{id}/watch; exactly `graphhelm journey watch`). By \
+                      default the browser is headless and the Studio shows its frames; window: \
+                      true plays in a visible window instead. Optional path, paceMs. It answers \
                       when the play ends; journey_sessions shows it while it plays (mode watch, \
                       state playing, the screen and act it is at). Never proof and never an \
                       approval. Owner credential only.",
@@ -554,7 +555,8 @@ fn journey_watch_schema() -> serde_json::Value {
         serde_json::json!({
             "id": {"type": "string"},
             "path": {"type": "string"},
-            "paceMs": {"type": "integer", "minimum": 0, "maximum": 10000}
+            "paceMs": {"type": "integer", "minimum": 0, "maximum": 10000},
+            "window": {"type": "boolean"}
         }),
         &["id"],
     )
@@ -1706,6 +1708,9 @@ pub(crate) fn call(
             }
             if let Some(pace) = arguments.get("paceMs").and_then(serde_json::Value::as_u64) {
                 body["paceMs"] = pace.into();
+            }
+            if let Some(window) = arguments.get("window").and_then(serde_json::Value::as_bool) {
+                body["window"] = window.into();
             }
             api.request(
                 "POST",

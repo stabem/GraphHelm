@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ACTIVE_MS, EXPECTED_FALLBACK_MS, SLOW_FACTOR, SLOW_MIN_SAMPLES, activity, liveDuration, stageDuration, stageHealth, stageProgress, stageSince } from "./stage-health";
+import { ACTIVE_MS, EXPECTED_FALLBACK_MS, LIVENESS_MS, laneLiveness, ownerLane, SLOW_FACTOR, SLOW_MIN_SAMPLES, activity, liveDuration, stageDuration, stageHealth, stageProgress, stageSince } from "./stage-health";
 import { STALL_MS, type Lane } from "./lane-bars";
 import type { TaskState } from "./team-tasks";
 
@@ -42,10 +42,10 @@ describe("stageHealth", () => {
     const t = ts("a", { blockedBy: { reviewer: "r", headSha: "x", commentUrl: "" } });
     expect(stageHealth(t, [lane("gh-claude-1", NOW - 10 * H)], [], NOW, true)).toMatchObject({ flag: "needs_you", text: "Needs you", tone: "red" });
   });
-  it("Stuck at exactly STALL_MS without a record, not one ms before", () => {
+  it("Stalled at exactly LIVENESS_MS without a record from the owner lane, not one ms before", () => {
     const t = ts("a");
-    expect(stageHealth(t, [lane("other", NOW - 9 * H, "a", NOW - H)], [], NOW)).toMatchObject({ flag: "stuck", text: "Stuck · no record 9h", tone: "red" });
-    expect(stageHealth(t, [lane("gh-claude-1", NOW - STALL_MS)], [], NOW)?.flag).toBe("stuck");
+    expect(stageHealth(t, [lane("gh-claude-1", NOW - 9 * H)], [], NOW)).toMatchObject({ flag: "stalled", text: "gh-claude-1 silent 9h", tone: "red" });
+    expect(stageHealth(t, [lane("gh-claude-1", NOW - STALL_MS)], [], NOW)?.flag).toBe("stalled");
     expect(stageHealth(t, [lane("gh-claude-1", NOW - STALL_MS + 1)], [], NOW)?.flag).toBe("moving");
   });
   it("Blocked names the reviewer of the unanswered BLOCK", () => {
@@ -89,11 +89,40 @@ describe("stageProgress", () => {
 });
 
 describe("activity", () => {
-  it("green under 30m, amber to STALL_MS, red at it or with no lane", () => {
+  it("green under LIVENESS_MS, red at it or with no lane (the Stalled rule)", () => {
     expect(activity("l", [lane("l", NOW - ACTIVE_MS + 1)], NOW)).toEqual({ sinceMs: ACTIVE_MS - 1, tone: "green" });
-    expect(activity("l", [lane("l", NOW - ACTIVE_MS)], NOW).tone).toBe("amber");
-    expect(activity("l", [lane("l", NOW - STALL_MS + 1)], NOW).tone).toBe("amber");
-    expect(activity("l", [lane("l", NOW - STALL_MS)], NOW).tone).toBe("red");
+    expect(activity("l", [lane("l", NOW - ACTIVE_MS)], NOW).tone).toBe("red");
     expect(activity("z", [lane("l", NOW)], NOW)).toEqual({ sinceMs: null, tone: "red" });
+  });
+});
+
+describe("laneLiveness (#591)", () => {
+  it("29m59s since the lane's last record is live, 30m is stalled", () => {
+    expect(laneLiveness("l", [lane("l", NOW - LIVENESS_MS + 1000)], [], NOW)).toEqual({ live: true, sinceMs: LIVENESS_MS - 1000 });
+    expect(laneLiveness("l", [lane("l", NOW - LIVENESS_MS)], [], NOW)).toEqual({ live: false, sinceMs: LIVENESS_MS });
+    expect(LIVENESS_MS).toBe(30 * M);
+  });
+  it("a record the lane left on another task keeps it alive", () => {
+    const other = ts("other", { lane: "l", rounds: [{ reviewer: "r", headSha: "a", commentUrl: "", fixHead: "b", blockedAt: null, fixedAt: iso(NOW - 5 * M) }] });
+    expect(laneLiveness("l", [lane("l", NOW - 2 * H)], [ts("mine", { lane: "l" }), other], NOW)).toEqual({ live: true, sinceMs: 5 * M });
+  });
+  it("an implementing lane silent 1h 10m reads Stalled, red, naming the lane", () => {
+    const t = ts("a", { lane: "gh-claude-9" });
+    expect(stageHealth(t, [lane("gh-claude-9", NOW - 70 * M)], [t], NOW)).toMatchObject({ flag: "stalled", text: "gh-claude-9 silent 1h 10m", tone: "red" });
+    expect(activity("gh-claude-9", [lane("gh-claude-9", NOW - 70 * M)], NOW).tone).toBe("red");
+  });
+  it("a review waiting on a silent reviewer is stalled; the author's silence does not count there", () => {
+    const t = ts("a", { step: "review", lane: "gh-claude-1", reviewers: ["gh-claude-7"] });
+    const lanes = [lane("gh-claude-1", NOW - 5 * H), lane("gh-claude-7", NOW - 40 * M)];
+    expect(stageHealth(t, lanes, [t], NOW)).toMatchObject({ flag: "stalled", text: "gh-claude-7 silent 40m" });
+    expect(ownerLane(t)).toBe("gh-claude-7");
+  });
+  it("a pushed fix times its Re-review from the push, not from the BLOCK", () => {
+    const t = ts("a", { step: "review", headSha: "b", blockedBy: { reviewer: "gh-claude-8", headSha: "a", commentUrl: "" }, clock: { since: iso(NOW - 5 * H), spent: {} },
+      rounds: [{ reviewer: "gh-claude-8", headSha: "a", commentUrl: "", fixHead: "b", blockedAt: iso(NOW - 5 * H), fixedAt: iso(NOW - 3 * H) }] });
+    expect(stageSince(t, [])).toBe(NOW - 3 * H);
+    expect(stageProgress(t, [t], NOW)!.elapsedMs).toBe(3 * H);
+    expect(stageHealth(t, [lane("gh-claude-8", NOW - M)], [t], NOW)?.flag).not.toBe("blocked");
+    expect(ownerLane(t)).toBe("gh-claude-8");
   });
 });

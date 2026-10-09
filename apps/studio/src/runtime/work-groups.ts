@@ -1,6 +1,6 @@
 import type { JourneyRunView, JourneyView } from "./types";
 import type { TaskState } from "./team-tasks";
-import { buildMission, toMissionTask, type MissionTask } from "./mission";
+import { buildMission, openBlock, toMissionTask, type MissionTask } from "./mission";
 import { layoutMission } from "./mission-layout";
 import { duration, type TimedStep } from "./step-timing";
 
@@ -64,7 +64,7 @@ export interface PrRow { key: string; task: MissionTask; open: boolean; cells: P
 
 /** #591: blocked work first, then work in flight, then the newest record; ties keep PR order. */
 export function focusTask(rows: TaskState[]): string | null {
-  const rank = (t: TaskState) => (t.blockedBy !== null ? 0 : t.step !== "merged" ? 1 : 2);
+  const rank = (t: TaskState) => (openBlock(t) !== null ? 0 : t.step !== "merged" ? 1 : 2);
   const best = [...rows].sort(byPr).sort((a, b) => rank(a) - rank(b) || (b.lastSequence ?? 0) - (a.lastSequence ?? 0))[0];
   return best?.key ?? null;
 }
@@ -76,7 +76,7 @@ export function focusTask(rows: TaskState[]): string | null {
  */
 export function workStage(t: TaskState, proven: boolean): WorkStage {
   if (t.step === "merged") return proven ? "proven" : "merged";
-  if (t.blockedBy !== null) return "fix";
+  if (openBlock(t) !== null) return "fix";
   // #554: planning, and a design plan waiting on its critic, sit in the Plan column.
   return t.step === "critic" ? "plan" : t.step;
 }
@@ -155,18 +155,21 @@ export function prPath(t: TaskState, proven: boolean): Omit<PrRow, "task"> {
   const planned = Boolean(t.plan || t.critic || t.clock?.spent?.plan || t.clock?.spent?.critic);
   add("plan", { mark: cur > 0 ? (planned ? "✓" : "skipped") : null, time: spent(t, "plan", "critic"), who: t.critic ? `critic ${t.critic.score}/${t.critic.passScore}` : null });
   add("implement", { who: t.lane, time: spent(t, "implement") });
-  const reviews = rounds.length + (t.blockedBy ? 0 : approved || t.step === "review" ? 1 : 0);
-  const lastReviewer = t.blockedBy?.reviewer || (approved ? t.reviewers[t.reviewers.length - 1] : null) || rounds[rounds.length - 1]?.reviewer || null;
+  const block = openBlock(t);
+  const reviews = rounds.length + (block ? 0 : approved || t.step === "review" ? 1 : 0);
+  const lastRound = rounds[rounds.length - 1];
+  const lastReviewer = block?.reviewer || (approved ? t.reviewers[t.reviewers.length - 1] : null) || lastRound?.reviewer || null;
   // #591: the fix answering the last BLOCK is pushed and the re-review has not answered yet.
-  const fixPushed = !t.blockedBy && t.step === "review" && Boolean(rounds[rounds.length - 1]?.fixHead);
-  const blocker = t.blockedBy ? t.blockedBy.reviewer || "a reviewer" : null;
-  if (t.blockedBy) add("review", { state: "block", mark: "BLOCK", who: `by ${blocker}`, count: Math.max(1, reviews), label: counted("Review", reviews) });
-  else if (fixPushed) add("review", { who: t.reviewers.join(", ") || lastReviewer, count: reviews, label: counted("Re-review", rounds.length), title: counted("Re-review", rounds.length), time: spent(t, "review") });
+  const fixPushed = !block && t.step === "review" && Boolean(lastRound?.fixHead);
+  const blocker = block ? block.reviewer || "a reviewer" : null;
+  const reReviewer = lastRound?.reviewer || t.reviewers[t.reviewers.length - 1] || null;
+  if (block) add("review", { state: "block", mark: "BLOCK", who: `by ${blocker}`, count: Math.max(1, reviews), label: counted("Review", reviews) });
+  else if (fixPushed) add("review", { who: reReviewer, sub: reReviewer ? `waiting on ${reReviewer}` : null, count: reviews, label: counted("Re-review", rounds.length), title: counted("Re-review", rounds.length), time: spent(t, "review") });
   else add("review", { who: lastReviewer, count: Math.max(1, reviews), label: counted("Review", reviews), time: spent(t, "review") });
-  if (t.blockedBy) {
+  if (block) {
     add("fix", { title: "Fixing", sub: `after BLOCK by ${blocker}`, count: fixes + 1, label: counted("Fix", fixes + 1), who: t.lane });
   } else if (fixes > 0) {
-    add("fix", { state: "done", mark: fixPushed ? "fix pushed" : "✓", count: fixes, label: counted("Fix", fixes), who: t.lane });
+    add("fix", { state: "done", mark: fixPushed ? `fix pushed ${lastRound!.fixHead!.slice(0, 8)}` : "✓", count: fixes, label: counted("Fix", fixes), who: t.lane });
   } else if (cur > COL.fix) {
     // No BLOCK was ever recorded: the PR went straight past Fix; draw nothing there.
   } else add("fix", { state: "ahead" });
@@ -181,6 +184,6 @@ export function prPath(t: TaskState, proven: boolean): Omit<PrRow, "task"> {
 
 /** #591: open rows first by the `focusTask` rank, then merged rows; ties keep PR order. */
 export function orderRows(rows: TaskState[]): TaskState[] {
-  const rank = (t: TaskState) => (t.blockedBy !== null ? 0 : t.step !== "merged" ? 1 : 2);
+  const rank = (t: TaskState) => (openBlock(t) !== null ? 0 : t.step !== "merged" ? 1 : 2);
   return [...rows].sort(byPr).sort((a, b) => rank(a) - rank(b) || (b.lastSequence ?? 0) - (a.lastSequence ?? 0));
 }

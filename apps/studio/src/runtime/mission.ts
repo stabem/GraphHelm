@@ -45,12 +45,27 @@ function stepStatus(stepId: string, run: JourneyRunView | null, stepIds: string[
   return screen.result === "pass" ? { status: "proven", reason: null } : { status: "failed", reason: screen.reason ?? null };
 }
 
+/**
+ * #591: the BLOCK the author still owes a fix for. `TaskState.blockedBy` stays set until a verdict on
+ * a newer head arrives, but a newer `pr_opened` head (the task's `headSha` moved past the BLOCK's, or
+ * the last round recorded a `fixHead`) already says the author is done: the work waits on the re-review.
+ */
+export function openBlock(t: Pick<TaskState, "blockedBy" | "headSha" | "rounds">): TaskState["blockedBy"] {
+  const b = t.blockedBy;
+  if (!b) return null;
+  if (t.headSha && b.headSha && t.headSha !== b.headSha) return null;
+  const last = (t.rounds ?? []).at(-1);
+  if (last?.fixHead && last.headSha === b.headSha) return null;
+  return b;
+}
+
 export function toMissionTask(t: TaskState): MissionTask {
+  const block = openBlock(t);
   const trust: TrustLevel = t.step === "merged" ? 3 : t.step === "merge" ? 2 : 1;
   return {
     key: t.key, pr: t.pr, issue: t.issue, title: t.prTitle || t.title || t.taskId, lane: t.lane,
-    reviewers: t.reviewers, step: t.step, blocked: t.blockedBy !== null, trust,
-    blockedBy: t.blockedBy ? { reviewer: t.blockedBy.reviewer, headSha: t.blockedBy.headSha } : null,
+    reviewers: t.reviewers, step: t.step, blocked: block !== null, trust,
+    blockedBy: block ? { reviewer: block.reviewer, headSha: block.headSha } : null,
     rounds: (t.rounds ?? []).map((r) => ({ reviewer: r.reviewer, headSha: r.headSha, fixHead: r.fixHead })),
     headSha: t.headSha ?? null, mergeSha: t.mergeSha ?? null, repoUrl: t.repoUrl ?? null,
   };

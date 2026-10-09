@@ -69,7 +69,7 @@ describe("buildMission", () => {
   });
 
   it("blocked task keeps its flag", () => {
-    const m = buildMission(journey, null, [task({ blockedBy: { reviewer: "r", headSha: "h", commentUrl: "u" } })]);
+    const m = buildMission(journey, null, [task({ headSha: "h", blockedBy: { reviewer: "r", headSha: "h", commentUrl: "u" } })]);
     expect(m.tasks[0].blocked).toBe(true);
   });
 
@@ -102,7 +102,7 @@ describe("custodyRows", () => {
 
   it("an unanswered BLOCK ends the rows at the BLOCK, then the Fix the author owes (#591)", () => {
     const m = buildMission(journey, null, [task({
-      step: "review", reviewers: ["rev-b"], blockedBy: { reviewer: "rev-b", headSha: "cccccccc", commentUrl: "" },
+      step: "review", reviewers: ["rev-b"], headSha: "cccccccc", blockedBy: { reviewer: "rev-b", headSha: "cccccccc", commentUrl: "" },
       rounds: [{ reviewer: "rev-b", headSha: "cccccccc", commentUrl: "", fixHead: null, blockedAt: null, fixedAt: null }],
     })]);
     expect(custodyRows(m.tasks[0]!).map((r) => [r.stage, r.verdict])).toEqual([["Implement", "done"], ["Review", "BLOCK"], ["Fix", "pending"]]);

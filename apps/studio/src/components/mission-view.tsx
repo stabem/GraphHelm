@@ -6,7 +6,7 @@ import type { Lane } from "../runtime/lane-bars";
 import { buildMission, toMissionTask, unlinkedTasks, type Mission } from "../runtime/mission";
 import { layoutMission } from "../runtime/mission-layout";
 import { testFrames } from "../runtime/test-frames";
-import { activity, stageHealth, stageProgress } from "../runtime/stage-health";
+import { activity, ownerLane, stageHealth, stageProgress } from "../runtime/stage-health";
 import { buildWorkGroups, type WorkGroup } from "../runtime/work-groups";
 import { IssueGraph, MissionGraph, STATUS_LABEL, stageState } from "./mission-graph";
 import { ProofTable } from "./proof-table";
@@ -153,7 +153,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
   // #591: progress against the usual time, and the last record of whoever is on the card's stage.
   const pace = Object.fromEntries(groupRows.map((t) => [t.key, {
     progress: stageProgress(t, groupRows, live, lanes),
-    activity: activity(t.step === "review" && !t.blockedBy ? t.reviewers[0] ?? null : t.lane, lanes, live),
+    activity: activity(ownerLane(t), lanes, live, groupRows),
   }]));
   const knownIds = new Set(journeys.map((j) => j.contractId));
   // A group's Proof and Test follow its first linked journey; a journey selection is its own.
@@ -244,7 +244,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
                       <div className="mv-chips">
                         {g.tasks.map((t, i) => {
                           const stage = g.stages[t.key]!;
-                          const busy = t.step !== "merged", alert = t.blocked || health[t.key]?.flag === "stuck";
+                          const busy = t.step !== "merged", alert = t.blocked || health[t.key]?.flag === "stalled";
                           return (
                             <button key={t.key} type="button" className="mv-chip mv-pr-chip" data-state={stageState(stage, t)} data-stage={stage}
                               aria-pressed={t.key === shownTask} aria-label={`${t.pr ? `PR #${t.pr}` : "No PR"}: ${t.title}`}
@@ -259,7 +259,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
                             <span className="mv-tick" />
                             <span className="mv-step-n">{i + 1}</span>
                             <span className="mv-step-title">{t.title}</span>
-                            {t.step !== "merged" && <ProgressIcon alert={t.blocked || health[t.key]?.flag === "stuck"} />}
+                            {t.step !== "merged" && <ProgressIcon alert={t.blocked || health[t.key]?.flag === "stalled"} />}
                             <span className="mv-step-ids">{t.pr ? `PR #${t.pr}` : "no PR"}</span>
                           </button>
                         ))}

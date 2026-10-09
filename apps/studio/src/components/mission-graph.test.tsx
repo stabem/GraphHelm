@@ -157,13 +157,13 @@ describe("IssueGraph (#591)", () => {
     const head = container.querySelector(".mg-ins-head")!;
     expect(head.querySelector('.mg-health[data-flag="blocked"]')).toHaveTextContent("Blocked by gh-claude-71h 17m");
   });
-  it("a stuck card turns red and reads Stuck; the flag is its own truncated line with a tooltip", () => {
-    const text = "Stuck · no record 5h 57m";
-    const health = { o: { flag: "stuck" as const, text, tone: "red" as const, elapsedMs: 27 * 60_000, elapsed: "27m" } };
+  it("a stalled card turns red and reads Stalled; the flag is its own truncated line with a tooltip", () => {
+    const text = "gh-claude-6 silent 5h 57m";
+    const health = { o: { flag: "stalled" as const, text, tone: "red" as const, elapsedMs: 27 * 60_000, elapsed: "27m" } };
     const { container } = render(<IssueGraph group={group} stepFor={() => undefined} selectedTaskKey={null} selectedCol={null} onSelectTask={vi.fn()} onSelectCol={vi.fn()} onOpenTest={vi.fn()} health={health} />);
     const card = container.querySelector('.mg-row[data-row="o"] .mg-node[data-current="true"]')!;
     expect(card).toHaveAttribute("data-state", "stalled");
-    expect(card.querySelector(".mg-node-label")).toHaveTextContent("Stuck");
+    expect(card.querySelector(".mg-node-label")).toHaveTextContent("Stalled");
     const flag = card.querySelector(".mg-health")!;
     expect(flag.textContent).toBe(text);
     expect(flag.querySelector(".mg-health-text")).toHaveAttribute("title", text);
@@ -193,6 +193,43 @@ describe("IssueGraph live pace (#591)", () => {
       expect(screen.getAllByText("last activity 12m ago").length).toBe(2);
       act(() => { vi.advanceTimersByTime(1000); });
       expect(screen.getAllByText("1h 00m 05s").length).toBe(2);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("PR #581's shape on the Graph (#591)", () => {
+  it("a pushed fix reads Re-review waiting on the reviewer, timed from the push, with no Blocked by flag", async () => {
+    vi.useFakeTimers();
+    try {
+      const { MissionView } = await import("./mission-view");
+      const NOW = Date.parse("2026-10-09T12:00:00Z"), H = 3_600_000;
+      const task = ts("pr-581", { issue: 549, pr: 581, prTitle: "Fix the thing", step: "review", lane: "gh-claude-11", reviewers: ["gh-claude-8"],
+        headSha: "66613c95aa", blockedBy: { reviewer: "gh-claude-8", headSha: "1a1a1a1a00", commentUrl: "" },
+        rounds: [{ reviewer: "gh-claude-8", headSha: "1a1a1a1a00", commentUrl: "", fixHead: "66613c95aa", blockedAt: new Date(NOW - 5.5 * H).toISOString(), fixedAt: new Date(NOW - 3 * H).toISOString() }],
+        clock: { since: new Date(NOW - 5.5 * H).toISOString(), spent: {} } });
+      const lanes = [{ lane: "gh-claude-8", bars: [], silent: false, lastEventAt: NOW - 5 * 60_000 }];
+      const { container } = render(<MissionView journeys={[]} tasks={[task]} runFor={() => null} lanes={lanes} now={NOW} frameUrl={() => ""} onMarkSafe={vi.fn()} />);
+      const card = container.querySelector('.mg-node[data-current="true"]')!;
+      expect(card.querySelector(".mg-node-label")).toHaveTextContent("Re-review");
+      expect(card.querySelector(".mg-node-sub")).toHaveTextContent("waiting on gh-claude-8");
+      expect(card.querySelector(".mg-node-who")).toHaveTextContent("gh-claude-8");
+      expect(card).toHaveTextContent("3h 00m 00s");
+      expect(container).not.toHaveTextContent("Fixing");
+      expect(container).not.toHaveTextContent("Blocked by");
+      expect(screen.getByText("fix pushed 66613c95")).toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
+  });
+  it("a lane silent 1h 10m reads Stalled on the card and in the inspector, and the dot is red", async () => {
+    vi.useFakeTimers();
+    try {
+      const { MissionView } = await import("./mission-view");
+      const NOW = Date.parse("2026-10-09T12:00:00Z");
+      const task = ts("w", { pr: 9, prTitle: "Work", step: "implement", lane: "gh-claude-9", clock: { since: new Date(NOW - 7_200_000).toISOString(), spent: {} } });
+      const lanes = [{ lane: "gh-claude-9", bars: [], silent: true, lastEventAt: NOW - 70 * 60_000 }];
+      const { container } = render(<MissionView journeys={[]} tasks={[task]} runFor={() => null} lanes={lanes} now={NOW} frameUrl={() => ""} onMarkSafe={vi.fn()} />);
+      expect(container.querySelector('.mg-node[data-current="true"] .mg-node-label')).toHaveTextContent("Stalled");
+      expect(screen.getAllByText("gh-claude-9 silent 1h 10m").length).toBe(2);
+      expect(container.querySelector('.mg-act-dot[data-tone="green"]')).toBeNull();
     } finally { vi.useRealTimers(); }
   });
 });

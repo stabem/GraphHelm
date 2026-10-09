@@ -79,7 +79,7 @@ describe("prPath (#591)", () => {
     expect(open.edges).toEqual([{ row: "a", from: 0, to: 1, kind: "done" }, { row: "a", from: 1, to: 2, kind: "done" }, { row: "a", from: 2, to: 3, kind: "next" }]);
     const pushed = prPath(task("a", { ...base, step: "review", rounds: [r1] }), false);
     expect(pushed.cells.slice(2, 4).map((c) => [c.stage, c.state, c.label, c.mark, c.title])).toEqual([
-      ["review", "current", "Re-review", null, "Re-review"], ["fix", "done", "Fix", "fix pushed", null]]);
+      ["review", "current", "Re-review", null, "Re-review"], ["fix", "done", "Fix", "fix pushed b", null]]);
     expect(pushed.edges).toContainEqual({ row: "a", from: 3, to: 2, kind: "next" });
     expect(pushed.edges.filter((e) => e.kind === "next")).toHaveLength(1);
     const done = task("a", { ...base, step: "merged", mergeSha: "9a9a9a9a11", rounds: [r1] });
@@ -116,5 +116,26 @@ describe("prPath (#591)", () => {
       task("n", { issue: 1, pr: 3, step: "review", lastSequence: 9 }), task("b", { issue: 1, pr: 4, step: "review", blockedBy: blocked, lastSequence: 1 }),
     ], []);
     expect(g!.rows.map((r) => [r.key, r.open])).toEqual([["b", true], ["n", true], ["w", true], ["m", false]]);
+  });
+});
+
+describe("a pushed fix after a BLOCK (#591, PR #581's shape)", () => {
+  // The BLOCK on 1a1a1a1a stays in `blockedBy` until a verdict on the new head arrives; the newer
+  // pr_opened head (66613c95) already says the author is done.
+  const t581 = task("pr-581", {
+    issue: 549, pr: 581, lane: "gh-claude-11", step: "review", reviewers: ["gh-claude-8"], headSha: "66613c95aa",
+    blockedBy: { reviewer: "gh-claude-8", headSha: "1a1a1a1a00", commentUrl: "" }, recordedHeads: ["1a1a1a1a00", "66613c95aa"],
+    rounds: [{ reviewer: "gh-claude-8", headSha: "1a1a1a1a00", commentUrl: "", fixHead: "66613c95aa", blockedAt: "2026-10-09T06:30:00Z", fixedAt: "2026-10-09T09:00:00Z" }],
+  });
+  it("sits in Review, not Fix", () => expect(workStage(t581, false)).toBe("review"));
+  it("draws BLOCK by the reviewer, a done Fix with the pushed sha, and a current Re-review waiting on the reviewer", () => {
+    const p = prPath(t581, false);
+    const review = p.cells.find((c) => c.stage === "review")!, fix = p.cells.find((c) => c.stage === "fix")!;
+    expect(review).toMatchObject({ state: "current", title: "Re-review", who: "gh-claude-8", sub: "waiting on gh-claude-8", mark: null });
+    expect(fix).toMatchObject({ state: "done", mark: "fix pushed 66613c95" });
+    expect(p.cells.some((c) => c.title === "Fixing")).toBe(false);
+  });
+  it("an unchanged head keeps the Fixing card", () => {
+    expect(workStage({ ...t581, headSha: "1a1a1a1a00", rounds: [{ ...t581.rounds[0]!, fixHead: null }] }, false)).toBe("fix");
   });
 });

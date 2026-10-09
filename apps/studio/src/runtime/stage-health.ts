@@ -1,10 +1,12 @@
 /* #591 (owner): each PR card on the Graph says how long the agent has been in its stage and, in
  * plain words, whether it needs help. Pure: the view passes the lanes and the clock it already has. */
 import type { TaskState } from "./team-tasks";
-import { STALL_MS, type Lane } from "./lane-bars";
+import { LIVENESS_MS, type Lane } from "./lane-bars";
+import { openBlock } from "./mission";
+export { LIVENESS_MS };
 import type { TimedStep } from "./step-timing";
 
-export type HealthFlag = "needs_you" | "stuck" | "blocked" | "slow" | "moving";
+export type HealthFlag = "needs_you" | "stalled" | "blocked" | "slow" | "moving";
 export interface StageHealth { flag: HealthFlag; text: string; tone: "red" | "orange" | "amber" | "green"; elapsedMs: number | null; elapsed: string | null }
 
 /** Slow: more than this many times the median time the group's other PRs spent in the same stage. */
@@ -29,9 +31,42 @@ const openBar = (t: TaskState, lanes: Lane[]) => {
   return null;
 };
 
-/** When the task entered its stage: the Runtime's step clock (what the Team view times), else the
- * unclipped start of the lane bar working it. */
+/** The fix pushed after the last BLOCK, while the re-review has not answered (#591). */
+const pushedFix = (t: TaskState) => {
+  const last = (t.rounds ?? []).at(-1);
+  return t.step === "review" && !openBlock(t) && last?.fixHead ? last : null;
+};
+
+/** #591: whose silence stalls the step: the author for Implement/Fix/Merge (and Plan), the reviewer
+ * for Review and Re-review (the BLOCKing reviewer re-reviews). `null` when no reviewer is named yet. */
+export function ownerLane(t: TaskState): string | null {
+  if (t.step !== "review" || openBlock(t)) return t.lane;
+  return pushedFix(t)?.reviewer || t.reviewers[t.reviewers.length - 1] || null;
+}
+
+export interface Liveness { live: boolean; sinceMs: number | null }
+/** #591: a lane is live while its newest record of any kind, on any task, is under LIVENESS_MS old:
+ * the lane bars' last event (claims, PRs, assignments, verdicts, merges) and the times the task
+ * records carry for it (a pushed fix, a BLOCK). No record at all says nothing: live, `sinceMs` null. */
+export function laneLiveness(name: string | null | undefined, lanes: Lane[], records: TaskState[], now: number): Liveness {
+  if (!name) return { live: true, sinceMs: null };
+  let last = lanes.find((l) => l.lane === name)?.lastEventAt ?? 0;
+  const at = (iso: string | null | undefined) => { const ms = iso ? Date.parse(iso) : NaN; if (Number.isFinite(ms)) last = Math.max(last, ms); };
+  for (const r of records) for (const round of r.rounds ?? []) {
+    if (r.lane === name) at(round.fixedAt);
+    if (round.reviewer === name) at(round.blockedAt);
+  }
+  if (!(last > 0)) return { live: true, sinceMs: null };
+  const sinceMs = Math.max(0, now - last);
+  return { live: sinceMs < LIVENESS_MS, sinceMs };
+}
+
+/** When the task entered its stage: a pushed fix's time for the re-review (#591), else the Runtime's
+ * step clock (what the Team view times), else the unclipped start of the lane bar working it. */
 export function stageSince(t: TaskState, lanes: Lane[]): number | null {
+  const fixed = pushedFix(t)?.fixedAt;
+  const fixedAt = fixed ? Date.parse(fixed) : NaN;
+  if (Number.isFinite(fixedAt)) return fixedAt;
   const at = t.clock?.since ? Date.parse(t.clock.since) : NaN;
   if (Number.isFinite(at)) return at;
   return openBar(t, lanes)?.bar.since ?? null;
@@ -42,7 +77,7 @@ const median = (xs: number[]) => {
   return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
 };
 
-/** Merged work has no health (null). Order: Needs you, Stuck, Blocked, Slow, Moving. `needsYou` is the
+/** Merged work has no health (null). Order: Needs you, Stalled (the owner lane silent LIVENESS_MS), Blocked, Slow, Moving. `needsYou` is the
  * caller's owner-wait fact for this task (a held destructive step or the summary's need-you rule). */
 export function stageHealth(t: TaskState, lanes: Lane[], groupTasks: TaskState[], now: number, needsYou = false): StageHealth | null {
   if (t.step === "merged") return null;
@@ -50,11 +85,13 @@ export function stageHealth(t: TaskState, lanes: Lane[], groupTasks: TaskState[]
   const elapsedMs = since === null ? null : Math.max(0, now - since);
   const base = { elapsedMs, elapsed: elapsedMs === null ? null : stageDuration(elapsedMs) };
   if (needsYou) return { ...base, flag: "needs_you", text: "Needs you", tone: "red" };
-  const working = openBar(t, lanes)?.lane ?? lanes.find((l) => l.lane === t.lane) ?? null;
-  if (working && working.lastEventAt > 0 && now - working.lastEventAt >= STALL_MS) {
-    return { ...base, flag: "stuck", text: `Stuck · no record ${stageDuration(now - working.lastEventAt)}`, tone: "red" };
+  const owner = ownerLane(t);
+  const live = laneLiveness(owner, lanes, groupTasks, now);
+  if (!live.live && live.sinceMs !== null) {
+    return { ...base, flag: "stalled", text: `${owner} silent ${stageDuration(live.sinceMs)}`, tone: "red" };
   }
-  if (t.blockedBy) return { ...base, flag: "blocked", text: `Blocked by ${t.blockedBy.reviewer || "a reviewer"}`, tone: "orange" };
+  const block = openBlock(t);
+  if (block) return { ...base, flag: "blocked", text: `Blocked by ${block.reviewer || "a reviewer"}`, tone: "orange" };
   const steps = timed(t);
   const samples = groupTasks.filter((o) => o.key !== t.key)
     .map((o) => steps.reduce((sum, s) => sum + (o.clock?.spent?.[s] ?? 0), 0)).filter((ms) => ms > 0);
@@ -85,7 +122,7 @@ export type PaceTone = "green" | "amber" | "red";
 export interface StageProgress { elapsedMs: number; expectedMs: number; ratio: number; tone: PaceTone }
 
 export const paceStage = (t: TaskState): PaceStage | null =>
-  t.step === "merged" ? null : t.blockedBy ? "fix" : t.step === "critic" ? "plan" : t.step;
+  t.step === "merged" ? null : openBlock(t) ? "fix" : t.step === "critic" ? "plan" : t.step;
 
 /** Elapsed in the stage against the usual time for it: the median the group's other PRs spent in
  * the same stage, else the stage's named fallback. `ratio` is capped at 1 (the bar's fill). */
@@ -103,13 +140,13 @@ export function stageProgress(t: TaskState, groupTasks: TaskState[], now: number
   return { elapsedMs, expectedMs, ratio: Math.min(1, raw), tone: raw >= 1 ? "red" : raw >= PACE_AMBER ? "amber" : "green" };
 }
 
-/** Under this the lane counts as active right now (pulsing green dot). */
-export const ACTIVE_MS = 30 * 60_000;
+/** Under this the lane counts as active right now (pulsing green dot): the one liveness rule. */
+export const ACTIVE_MS = LIVENESS_MS;
 export interface Activity { sinceMs: number | null; tone: PaceTone }
-/** How long since the lane's latest record: green under ACTIVE_MS, amber under STALL_MS, red at or over. */
-export function activity(lane: string | null | undefined, lanes: Lane[], now: number): Activity {
-  const l = lane ? lanes.find((x) => x.lane === lane) : undefined;
-  if (!l || !(l.lastEventAt > 0)) return { sinceMs: null, tone: "red" };
-  const sinceMs = Math.max(0, now - l.lastEventAt);
-  return { sinceMs, tone: sinceMs < ACTIVE_MS ? "green" : sinceMs < STALL_MS ? "amber" : "red" };
+/** How long since the lane's latest record: green while `laneLiveness` says live, red once it is
+ * stalled, so the dot always agrees with the card's Stalled flag. No record at all is red. */
+export function activity(lane: string | null | undefined, lanes: Lane[], now: number, records: TaskState[] = []): Activity {
+  const l = laneLiveness(lane, lanes, records, now);
+  if (l.sinceMs === null) return { sinceMs: null, tone: "red" };
+  return { sinceMs: l.sinceMs, tone: l.live ? "green" : "red" };
 }

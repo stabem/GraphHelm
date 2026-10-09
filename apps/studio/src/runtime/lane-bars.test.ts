@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { agentBoard } from "./agent-board";
-import { laneBars, packBars, placeholderLane, STALL_MS, type TimedTaskEvent } from "./lane-bars";
+import { LIVENESS_MS, laneBars, packBars, placeholderLane, STALL_MS, type TimedTaskEvent } from "./lane-bars";
 
 const T0 = Date.parse("2026-10-09T00:00:00Z");
 const at = (ms: number) => new Date(T0 + ms).toISOString();
@@ -32,9 +32,9 @@ describe("laneBars", () => {
     expect(laneBars(events, T0 + STALL_MS, STALL_MS * 2)[0].silent).toBe(true);
   });
 
-  it("an open implement bar is never silent", () => {
-    const [lane] = laneBars([ev({ kind: "task.claimed", lane: "dev", at: at(0) })], T0 + STALL_MS * 3, STALL_MS * 4);
-    expect(lane.silent).toBe(false);
+  it("an open implement bar goes silent after LIVENESS_MS too (#591: an offline author is not working)", () => {
+    expect(laneBars([ev({ kind: "task.claimed", lane: "dev", at: at(0) })], T0 + LIVENESS_MS - 1, LIVENESS_MS * 4)[0].silent).toBe(false);
+    expect(laneBars([ev({ kind: "task.claimed", lane: "dev", at: at(0) })], T0 + LIVENESS_MS, LIVENESS_MS * 4)[0].silent).toBe(true);
   });
 
   it("window clamps and drops", () => {

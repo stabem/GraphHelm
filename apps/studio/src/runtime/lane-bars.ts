@@ -6,7 +6,11 @@ export type BarKind = "implement" | "review" | "merge";
 export interface LaneBar { kind: BarKind; label: string; start: number; end: number; open: boolean; taskId?: string; since?: number }
 export interface Lane { lane: string; bars: LaneBar[]; silent: boolean; lastEventAt: number }
 
-export const STALL_MS = 2 * 60 * 60 * 1000;
+/** #591: a lane with no record of any kind for this long is silent; a step it owns reads Stalled.
+ * One rule for the Graph cards, the pace dot and the Lanes agent board. */
+export const LIVENESS_MS = 30 * 60 * 1000;
+/** @deprecated the old 2h stall rule, now the one liveness rule. */
+export const STALL_MS = LIVENESS_MS;
 
 export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number): Lane[] {
   const lanes = new Map<string, { bars: LaneBar[]; last: number }>();
@@ -75,8 +79,8 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
     const t = Date.parse(e.at);
     if (!Number.isFinite(t)) continue;
     const slice = sliceOf(e);
-    const actor = e.kind === "task.claimed" ? e.lane : e.reviewer;
-    if (actor) laneOf(actor).last = Math.max(laneOf(actor).last, t);
+    // #591: any record a lane leaves (claim, plan, pr_opened, assignment, verdict, merge) is a sign of life.
+    for (const actor of new Set([e.lane, e.reviewer])) if (actor) laneOf(actor).last = Math.max(laneOf(actor).last, t);
     switch (e.kind) {
       case "task.claimed": if (e.lane) start(e.lane, "implement", e.taskId, slice, t); break;
       case "task.review_assigned": close("implement", slice, t); if (e.reviewer) start(e.reviewer, "review", e.taskId, slice, t); break;
@@ -92,8 +96,8 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
   return [...lanes.entries()]
     .map(([lane, l]) => {
       const bars = l.bars.filter((b) => b.end >= from).map((b) => ({ ...b, start: Math.max(b.start, from) }));
-      const waiting = l.bars.some((b) => b.open && b.kind !== "implement");
-      return { lane, bars, lastEventAt: l.last, silent: waiting && now - l.last >= STALL_MS };
+      const owes = l.bars.some((b) => b.open);
+      return { lane, bars, lastEventAt: l.last, silent: owes && now - l.last >= LIVENESS_MS };
     })
     .sort((a, b) => a.lane.localeCompare(b.lane));
 }

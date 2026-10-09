@@ -163,7 +163,7 @@ export function TaskInspector({ task: t, step, onOpenTest, health = null, pace =
         <span className="mg-kick"><span className="mg-dot" data-state={st} />{`${nodeLabel(t, step)} · ${prText(t)}`}</span>
         <h3>{t.title}</h3>
         {health && <HealthFlag health={health} />}
-        {pace && <PaceBlock pace={pace} label={paceLabel} stuck={health?.flag === "stuck"} size="large" />}
+        {pace && <PaceBlock pace={pace} label={paceLabel} stuck={health?.flag === "stalled"} size="large" />}
         {step && <span className="mg-muted">{`Proves step ${step.index + 1} · `}<button type="button" className="mg-link" onClick={open}>open its test</button></span>}
       </div>
       <div className="mg-section">
@@ -283,15 +283,17 @@ export function HealthFlag({ health, time = true }: { health: StageHealth; time?
 }
 
 /** #591: the current card. A BLOCK opens a Fixing card for the author (amber, red only when the
- * stall rule trips); the health flag gets its own line and the time in stage sits right on the who line. */
+ * owner lane is silent past LIVENESS_MS: Stalled); the health flag gets its own line and the time in stage sits right on the who line. */
 function CurrentCard({ cell: c, stage, task: t, health, pace, selected, left, top, onSelect }: {
   cell: PrRow["cells"][number]; stage: WorkStage; task: MissionTask; health: StageHealth | null; pace: Pace | null; selected: boolean; left: number; top: number; onSelect(): void;
 }) {
-  const stuck = health?.flag === "stuck";
+  const stuck = health?.flag === "stalled";
   const fixing = stage === "fix" && t.blocked;
   const st: NodeState = stuck ? "stalled" : fixing ? "work" : stageState(stage, t);
-  const base = stuck ? "Stuck" : c.title ?? stageLabel(stage, t);
-  const who = fixing ? t.lane ?? "nobody yet" : t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : "nobody yet";
+  const base = stuck ? "Stalled" : c.title ?? stageLabel(stage, t);
+  // #591: a re-review is the reviewer's to answer; the cell names them.
+  const reReview = stage === "review" && Boolean(c.title?.startsWith("Re-review"));
+  const who = fixing ? t.lane ?? "nobody yet" : reReview && c.who ? c.who : t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : "nobody yet";
   // The Fixing card's sub-line already names the BLOCK; its "Blocked by" flag would say it twice.
   const flag = health && !(fixing && health.flag === "blocked") ? health : null;
   return (
@@ -378,7 +380,7 @@ export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSel
                         {c.state !== "ahead" && <>
                           <span className="mg-cell-line">
                             <span className="mg-cell-label">{c.label}</span>
-                            {c.mark && <span className="mg-cell-mark" data-tone={c.mark === "BLOCK" ? "block" : c.mark === "✓" || c.mark === "fix pushed" ? "ok" : "skip"}>{c.mark}</span>}
+                            {c.mark && <span className="mg-cell-mark" data-tone={c.mark === "BLOCK" ? "block" : c.mark === "✓" || c.mark.startsWith("fix pushed") ? "ok" : "skip"}>{c.mark}</span>}
                           </span>
                           <span className="mg-cell-line mg-cell-sub">{[c.who, c.time].filter(Boolean).join(" · ")}</span>
                         </>}

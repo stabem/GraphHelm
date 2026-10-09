@@ -1179,7 +1179,7 @@ pub fn terminate_with_allowance(
         // means "every member THIS enumeration named has been observed gone", not "the whole job is
         // empty" -- see `drain_terminated_job`'s own doc for the open window this leaves and issue
         // #846 for the measurement.
-        let members = job_member_ids(group);
+        let members = job_member_ids(group).map(|members| name_unlisted_members(group, members));
         let killed = unsafe { TerminateJobObject(group.0 as _, 1) } != 0;
         let kill_error = if killed {
             0
@@ -1366,6 +1366,106 @@ fn drain_terminated_job(
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
+}
+
+/// How often [`name_unlisted_members`] looks again before it gives the count back as it is.
+#[cfg(windows)]
+const UNLISTED_NAMING_ROUNDS: usize = 5;
+
+/// Names the members a job COUNTS and does not LIST, before the kill (#454).
+///
+/// Measured: a member that is dying is counted by the job (`NumberOfAssignedProcesses`) and left
+/// out of its id list for an instant: 49 times in 600 direct kills of a job member, lasting
+/// microseconds on a quiet box. A cleanup that enumerates at that instant got "one member, no
+/// name", and the drain, which waits on names, answered `BoundReached` on its first pass with
+/// nothing waited for. That was `replay.cleanup_uncertain` with `passes: 1`.
+///
+/// Such a member is usually still a process (43 of those 49 could still be opened by id), so it
+/// can be found the other way round: every process the system lists is asked whether it is in
+/// THIS job. What is found joins the list and is waited for like any other member. When the job
+/// still counts more than were found, the same question is asked again a millisecond later, at
+/// most [`UNLISTED_NAMING_ROUNDS`] times; what is left after that stays in the count, and the
+/// drain reports it as before.
+///
+/// Only the `unlisted > 0` case pays for the sweep. A list cut at [`JOB_MEMBER_LIST_CAP`] is a
+/// different matter (the members are alive and too many) and is returned untouched. After the
+/// kill none of this is possible: the job reads empty at once while its members are still
+/// running (300 of 300), which is why it happens here, before `TerminateJobObject`.
+#[cfg(windows)]
+fn name_unlisted_members(group: ProcessGroup, members: (Vec<u32>, usize)) -> (Vec<u32>, usize) {
+    let (mut ids, mut unlisted) = members;
+    if unlisted == 0 || ids.len() >= JOB_MEMBER_LIST_CAP {
+        return (ids, unlisted);
+    }
+    for round in 0..UNLISTED_NAMING_ROUNDS {
+        if round > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            let Some(again) = job_member_ids(group) else {
+                break;
+            };
+            for id in again.0 {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+            unlisted = again.1;
+            if unlisted == 0 {
+                break;
+            }
+        }
+        let named = job_members_not_listed(group, &ids);
+        trace(|| format!("unlisted={unlisted} round={round} named={named:?}"));
+        unlisted = unlisted.saturating_sub(named.len());
+        ids.extend(named);
+        if unlisted == 0 {
+            break;
+        }
+    }
+    (ids, unlisted)
+}
+
+/// Every process the system lists that is in this job and is not in `listed` (#454): the job is
+/// not asked for names (it leaves a dying member out), each process is asked for its job.
+#[cfg(windows)]
+fn job_members_not_listed(group: ProcessGroup, listed: &[u32]) -> Vec<u32> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        System::{
+            Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+                TH32CS_SNAPPROCESS,
+            },
+            JobObjects::IsProcessInJob,
+            Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+        },
+    };
+    let mut found = Vec::new();
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return found;
+    }
+    let mut entry = PROCESSENTRY32W {
+        dwSize: u32::try_from(std::mem::size_of::<PROCESSENTRY32W>()).unwrap(),
+        ..unsafe { std::mem::zeroed() }
+    };
+    let mut more = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+    while more {
+        let id = entry.th32ProcessID;
+        if id != 0 && !listed.contains(&id) && !found.contains(&id) {
+            let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, id) };
+            if !process.is_null() {
+                let mut in_job = 0;
+                let asked = unsafe { IsProcessInJob(process, group.0 as _, &mut in_job) } != 0;
+                unsafe { CloseHandle(process) };
+                if asked && in_job != 0 {
+                    found.push(id);
+                }
+            }
+        }
+        more = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+    }
+    unsafe { CloseHandle(snapshot) };
+    found
 }
 
 /// What the drain does with the members still running after `elapsed` (#454).
@@ -1678,6 +1778,38 @@ mod post_enumeration_join_window {
         let after = super::exit_status(id);
         assert_eq!(before, None, "a live (suspended) member has no exit status");
         assert_eq!(after, Some(1), "`terminate_directly` ends it with status 1");
+    }
+
+    /// #454: a member the job counts and does not list is found by asking each process for its
+    /// job. Two real members, the list given names only the first: the sweep names the second and
+    /// nothing outside the job (a third process that was never assigned). Defect named: with the
+    /// unlisted member unnamed, the drain answered `BoundReached` on its first pass and
+    /// `journey replay` failed `replay.cleanup_uncertain` with nothing waited for. Cost: three
+    /// suspended child processes.
+    #[test]
+    fn a_member_the_job_does_not_list_is_named_by_asking_each_process() {
+        let job = OwnedKillOnCloseJob::new();
+        let mut first = Some(spawn_suspended_member());
+        let mut second = Some(spawn_suspended_member());
+        let mut outsider = Some(spawn_suspended_member());
+        let first_id = first.as_ref().unwrap().id();
+        let second_id = second.as_ref().unwrap().id();
+        let outsider_id = outsider.as_ref().unwrap().id();
+        assign_to_job(job.group(), first_id);
+        assign_to_job(job.group(), second_id);
+        let swept = super::job_members_not_listed(job.group(), &[first_id]);
+        let named = super::name_unlisted_members(job.group(), (vec![first_id], 1));
+        let untouched = super::name_unlisted_members(job.group(), (vec![first_id], 0));
+        cleanup_child(&mut first);
+        cleanup_child(&mut second);
+        cleanup_child(&mut outsider);
+        assert_eq!(swept, vec![second_id], "the outsider was {outsider_id}");
+        assert_eq!(named, (vec![first_id, second_id], 0));
+        assert_eq!(
+            untouched,
+            (vec![first_id], 0),
+            "a job that lists everyone it counts is not swept"
+        );
     }
 
     #[test]

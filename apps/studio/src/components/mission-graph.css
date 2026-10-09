@@ -31,8 +31,8 @@
 .mg-seg[data-dir="down"][data-done="true"] { border-top-color: #355C4B; }
 .mg-seg[data-dir="up"][data-done="true"] { border-bottom-color: #355C4B; }
 
-.mg-node { position: absolute; width: 150px; height: 88px; box-sizing: border-box; padding: 9px 10px; border-radius: 10px; cursor: pointer;
-  display: flex; flex-direction: column; justify-content: space-between; align-items: flex-start; font: inherit; color: #E9E7E2; text-align: left;
+.mg-node { position: absolute; width: 150px; min-height: 88px; box-sizing: border-box; padding: 9px 10px; border-radius: 10px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 3px; justify-content: flex-start; align-items: flex-start; font: inherit; color: #E9E7E2; text-align: left;
   background: var(--mv-tint); border: 1px solid #262930; }
 .mg-node[data-state="ready"] { background: #0F1013; border-style: dashed; border-color: #3E4466; }
 .mg-node[aria-pressed="true"] { background: #181A20; border-color: var(--mv-tone); box-shadow: 0 0 0 3px var(--mv-ring); }
@@ -42,7 +42,7 @@
 .mg-node-label { flex: 1 1 auto; min-width: 0; font-family: var(--mono); font-size: 10.5px; color: #C7CBD3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mg-node-pr { font-family: var(--mono); font-size: 10.5px; color: #8D929C; }
 .mg-node-title { font-size: 12px; line-height: 1.3; font-weight: 500; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.mg-node-who { width: 100%; font-family: var(--mono); font-size: 10.5px; color: #A9AEB8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mg-node-who { width: 100%; font-family: var(--mono); font-size: 10.5px; line-height: 14px; color: #A9AEB8; white-space: normal; overflow-wrap: anywhere; }
 
 .mg-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; color: #A9AEB8; font-size: 12px; }
 .mg-key { display: inline-flex; align-items: center; gap: 6px; }
@@ -51,7 +51,7 @@
 .mg-legend-note { margin-left: auto; }
 
 /* Inspector */
-.mg-inspector { flex: 1 1 300px; max-width: 380px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px; padding: 18px;
+.mg-inspector { flex: 1 1 320px; max-width: 380px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px; padding: 18px;
   background: #111216; border: 1px solid #1E2026; border-radius: 14px; }
 .mg-inspector h3 { margin: 0; font-size: 17px; font-weight: 600; line-height: 1.3; }
 .mg-ins-head { display: flex; flex-direction: column; gap: 6px; }
@@ -69,7 +69,7 @@
 .mg-custody { list-style: none; margin: 0; padding: 0; }
 .mg-custody-row { display: grid; grid-template-columns: 74px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid #1B1D22; }
 .mg-stage { color: #A9AEB8; }
-.mg-who { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mg-who { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
 .mg-verdict { font-family: var(--mono); font-size: 11px; color: #A9AEB8; }
 .mg-verdict[data-tone="ok"] { color: var(--mv-proven); }
 .mg-verdict[data-tone="block"] { color: #FF8A7E; }
@@ -83,4 +83,90 @@
 .mg-secondary { border: 1px solid #2A2D34; background: transparent; color: #E9E7E2; font-weight: 500; }
 
 /* #583: an issue's graph carries its title above the canvas. */
+.mg-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
 .mg-title h1 { margin: 0; font-size: 19px; font-weight: 600; }
+.mg-desc { color: #A9AEB8; }
+
+/* #591: one row per PR. Done stages are small cells, the current one the full card (pulsing dot),
+ * stages ahead a dashed outline; merged rows fold below a "Merged · N" button. */
+.mg-row { display: contents; }
+.mg-rowhead { position: absolute; left: 0; width: 120px; min-height: 88px; box-sizing: border-box; padding: 8px 6px 8px 0; display: flex; flex-direction: column; gap: 4px; justify-content: flex-start;
+  align-items: flex-start; border: 0; background: transparent; color: #E9E7E2; font: inherit; text-align: left; cursor: pointer; }
+.mg-rowhead-pr { font-family: var(--mono); font-size: 11px; color: #C7CBD3; }
+/* #591: the whole description wraps onto as many lines as it needs; the row grows to fit (rowBand). */
+.mg-rowhead-title { width: 100%; font-size: 12px; line-height: 16px; color: #A9AEB8; white-space: normal; overflow-wrap: anywhere; }
+.mg-rowhead[aria-pressed="true"] .mg-rowhead-pr { color: #E9E7E2; }
+.mg-cell { position: absolute; width: 150px; height: 40px; box-sizing: border-box; padding: 5px 8px; border-radius: 8px; display: flex; flex-direction: column;
+  justify-content: center; gap: 2px; font-family: var(--mono); font-size: 10.5px; color: #C7CBD3; text-align: left; cursor: pointer;
+  background: #14151A; border: 1px solid #262930; }
+.mg-cell[data-cell="ahead"] { background: transparent; border-style: dashed; border-color: #23262D; cursor: default; }
+.mg-cell[data-cell="block"] { border-color: #5A2F2B; }
+.mg-cell:focus-visible, .mg-rowhead:focus-visible, .mg-fold:focus-visible { outline: 2px solid #9AB8FF; outline-offset: 2px; }
+.mg-cell-line { display: flex; gap: 6px; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mg-cell-label { overflow: hidden; text-overflow: ellipsis; }
+.mg-cell-sub { color: #8D929C; }
+.mg-cell-mark { margin-left: auto; color: #8D929C; }
+.mg-cell-mark[data-tone="ok"] { color: var(--mv-proven); }
+.mg-cell-mark[data-tone="block"] { color: #FF8A7E; }
+.mg-node[data-current="true"] .mg-dot { animation: mg-pulse 1.8s infinite; }
+@keyframes mg-pulse { 0% { box-shadow: 0 0 0 0 rgba(233, 231, 226, .35); } 70% { box-shadow: 0 0 0 6px rgba(233, 231, 226, 0); } 100% { box-shadow: 0 0 0 0 rgba(233, 231, 226, 0); } }
+.mg-fold { position: absolute; left: 0; height: 28px; padding: 0 12px; border-radius: 8px; border: 1px solid #262930; background: #14151A; color: #C7CBD3;
+  font-family: var(--mono); font-size: 11px; cursor: pointer; }
+.mg-fold[aria-expanded="true"] { color: #E9E7E2; border-color: #355C4B; }
+/* #591: the plain health flag and the time in stage. */
+.mg-health { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10.5px; line-height: 1.2; }
+.mg-health-text { font-weight: 600; color: #6FBF8E; }
+.mg-health[data-tone="red"] .mg-health-text { color: #F87171; }
+.mg-health[data-tone="orange"] .mg-health-text { color: #FB923C; }
+.mg-health[data-tone="amber"] .mg-health-text { color: #FBBF24; }
+.mg-health-time { color: #A9AEB8; }
+/* #591: the current card never overlaps: flag and sub-line on their own lines (ellipsis), the time in
+ * stage right-aligned on the who line; a dense card clamps its title to one line to fit 150x88. */
+.mg-node[data-dense="true"] .mg-node-title { -webkit-line-clamp: 1; }
+.mg-node .mg-health { width: 100%; min-width: 0; }
+.mg-node .mg-health-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mg-node-sub { width: 100%; font-family: var(--mono); font-size: 10px; color: #FF8A7E; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mg-node-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; width: 100%; min-width: 0; }
+.mg-node-foot .mg-node-who { flex: 1 1 auto; min-width: 0; width: auto; }
+.mg-node-time { flex: none; margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: #A9AEB8; }
+
+/* #591: live timer, progress against the usual stage time, last activity. */
+.mg-node[data-pace="true"] { padding-bottom: 12px; overflow: hidden; }
+.mg-pace { display: flex; flex-direction: column; gap: 6px; width: 100%; min-width: 0; }
+.mg-pace-line { display: flex; align-items: center; gap: 5px; width: 100%; min-width: 0; font-family: var(--mono); font-size: 10px; }
+.mg-act { flex: 1 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; color: #A9AEB8; }
+.mg-act[data-tone="red"] { color: #FF8A7E; }
+.mg-act-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: #4ADE9B; }
+.mg-act-dot[data-tone="green"] { animation: mg-act-pulse 1.6s ease-in-out infinite; }
+.mg-act-dot[data-tone="amber"] { background: #F5A524; }
+.mg-act-dot[data-tone="red"] { background: #FF6B5E; }
+.mg-pace-time { display: block; width: 100%; font-family: var(--mono); font-size: 10px; color: #A9AEB8; font-variant-numeric: tabular-nums; }
+.mg-timer { color: #E9E7E2; font-variant-numeric: tabular-nums; }
+.mg-bar { display: block; height: 4px; width: 100%; background: #23262D; overflow: hidden; }
+.mg-node .mg-bar { position: absolute; left: 0; right: 0; bottom: 0; }
+.mg-bar-fill { display: block; height: 100%; background: #4ADE9B; }
+.mg-bar[data-tone="amber"] .mg-bar-fill { background: #F5A524; }
+.mg-bar[data-tone="red"] .mg-bar-fill { background: #FF6B5E; }
+.mg-pace-x { color: #A9AEB8; }
+.mg-pace[data-size="large"] { gap: 8px; margin: 4px 0; }
+.mg-pace[data-size="large"] .mg-pace-line { font-size: 12px; gap: 7px; }
+.mg-pace[data-size="large"] .mg-act-dot { width: 8px; height: 8px; }
+.mg-pace[data-size="large"] .mg-pace-time { font-size: 12px; }
+.mg-pace[data-size="large"] .mg-timer { font-size: 14px; }
+.mg-pace[data-size="large"] .mg-bar { height: 6px; border-radius: 3px; }
+@keyframes mg-act-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) {
+  .mg-act-dot[data-tone="green"] { animation: none; }
+}
+/* #591: the owner's Nudge / Reassign controls in the inspector. */
+.mg-lane-actions { gap: 10px; }
+.mg-primary:focus-visible, .mg-secondary:focus-visible, .mg-menu-item:focus-visible { outline: 2px solid #9AB8FF; outline-offset: 2px; }
+.mg-primary:disabled, .mg-secondary:disabled { opacity: .5; cursor: default; }
+.mg-menu-anchor { position: relative; display: inline-flex; }
+.mg-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; min-width: 200px; display: flex; flex-direction: column; padding: 4px;
+  background: #15171B; border: 1px solid #2A2D34; border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, .4); }
+.mg-menu-item { display: flex; align-items: center; min-height: 32px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: #E9E7E2;
+  font: 500 13px var(--sans); text-align: left; cursor: pointer; }
+.mg-menu-item:hover, .mg-menu-item:focus { background: #22252C; }
+.mg-menu-flag { color: #FF8A7E; }
+.mg-confirm { display: flex; flex-direction: column; gap: 8px; color: #E9E7E2; font-size: 13px; }

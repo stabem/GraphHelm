@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildMission, custodyRows, unlinkedTasks, TRUST_LABELS } from "./mission";
+import { buildMission, custodyRows, unlinkedTasks, withCurrentReviewer, TRUST_LABELS, type MissionTask } from "./mission";
+import { laneBars, type TimedTaskEvent } from "./lane-bars";
 import type { JourneyView, JourneyRunView } from "./types";
 import { foldTaskEvents, parseTaskEvent, type TaskState } from "./team-tasks";
 
@@ -69,7 +70,7 @@ describe("buildMission", () => {
   });
 
   it("blocked task keeps its flag", () => {
-    const m = buildMission(journey, null, [task({ blockedBy: { reviewer: "r", headSha: "h", commentUrl: "u" } })]);
+    const m = buildMission(journey, null, [task({ headSha: "h", blockedBy: { reviewer: "r", headSha: "h", commentUrl: "u" } })]);
     expect(m.tasks[0].blocked).toBe(true);
   });
 
@@ -100,17 +101,46 @@ describe("custodyRows", () => {
     ]);
   });
 
-  it("an unanswered BLOCK ends the rows at the BLOCK", () => {
+  it("an unanswered BLOCK ends the rows at the BLOCK, then the Fix the author owes (#591)", () => {
     const m = buildMission(journey, null, [task({
-      step: "review", reviewers: ["rev-b"], blockedBy: { reviewer: "rev-b", headSha: "cccccccc", commentUrl: "" },
+      step: "review", reviewers: ["rev-b"], headSha: "cccccccc", blockedBy: { reviewer: "rev-b", headSha: "cccccccc", commentUrl: "" },
       rounds: [{ reviewer: "rev-b", headSha: "cccccccc", commentUrl: "", fixHead: null, blockedAt: null, fixedAt: null }],
     })]);
-    expect(custodyRows(m.tasks[0]!).map((r) => r.verdict)).toEqual(["done", "BLOCK"]);
+    expect(custodyRows(m.tasks[0]!).map((r) => [r.stage, r.verdict])).toEqual([["Implement", "done"], ["Review", "BLOCK"], ["Fix", "pending"]]);
     expect(m.tasks[0]!.blockedBy).toEqual({ reviewer: "rev-b", headSha: "cccccccc" });
   });
 
   it("a task with no records past its claim reads one Implement row", () => {
     const m = buildMission(journey, null, [task({ step: "implement" })]);
     expect(custodyRows(m.tasks[0]!)).toEqual([{ stage: "Implement", who: "gh-claude-1", verdict: "working", tone: "run" }]);
+  });
+});
+
+describe("withCurrentReviewer (#591)", () => {
+  const T0 = Date.parse("2026-10-09T00:00:00Z");
+  let seq = 0;
+  const ev = (e: Partial<TimedTaskEvent>): TimedTaskEvent => ({ actorId: "rt", sequence: seq++, taskId: "issue-600", ...e }) as TimedTaskEvent;
+  const at = (m: number) => new Date(T0 + m * 60_000).toISOString();
+  const base: MissionTask = { key: "issue-600#pr-609", pr: 609, issue: 600, title: "t", lane: "gh-claude-1", reviewers: ["gh-claude-3", "gh-claude-7"],
+    step: "review", blocked: false, trust: 1, blockedBy: null, rounds: [], headSha: "bbb", mergeSha: null, repoUrl: null };
+  const events = [
+    ev({ kind: "task.claimed", lane: "gh-claude-1", issue: 600, at: at(0) }),
+    ev({ kind: "task.pr_opened", lane: "gh-claude-1", pr: 609, headSha: "aaa", at: at(1) }),
+    ev({ kind: "task.review_assigned", reviewer: "gh-claude-3", pr: 609, at: at(2) }),
+    ev({ kind: "task.review_verdict", reviewer: "gh-claude-3", verdict: "BLOCK" as never, pr: 609, headSha: "aaa", at: at(3) }),
+    ev({ kind: "task.pr_opened", lane: "gh-claude-1", pr: 609, headSha: "bbb", at: at(4) }),
+    ev({ kind: "task.review_assigned", reviewer: "gh-claude-7", pr: 609, at: at(5) }),
+  ];
+  it("the live reviewer is the latest assignment on the current head; earlier ones are history", () => {
+    const t = withCurrentReviewer(base, laneBars(events, T0 + 10 * 60_000, 3_600_000));
+    expect(t.reviewers).toEqual(["gh-claude-7"]);
+    expect(t.reviewerHistory).toEqual(["gh-claude-3"]);
+    expect(custodyRows(t).at(-1)).toMatchObject({ stage: "Review", who: "gh-claude-7", verdict: "pending" });
+  });
+  it("a reviewer handed the review back on the new head is live again", () => {
+    const back = [...events, ev({ kind: "task.review_assigned", reviewer: "gh-claude-3", pr: 609, at: at(6) })];
+    const t = withCurrentReviewer(base, laneBars(back, T0 + 10 * 60_000, 3_600_000));
+    expect(t.reviewers).toEqual(["gh-claude-3"]);
+    expect(t.reviewerHistory).toEqual(["gh-claude-7"]);
   });
 });

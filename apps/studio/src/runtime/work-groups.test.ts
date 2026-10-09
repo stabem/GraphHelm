@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildWorkGroups, layoutWorkGroup, workStage } from "./work-groups";
+import { buildWorkGroups, prPath, workStage } from "./work-groups";
 import type { TaskState } from "./team-tasks";
 import type { JourneyRunView, JourneyView } from "./types";
 
@@ -20,9 +20,9 @@ describe("workStage", () => {
     expect(workStage(task("a", { step: "merged" }), false)).toBe("merged");
     expect(workStage(task("a", { step: "merged" }), true)).toBe("proven");
   });
-  it("Fix: an unanswered BLOCK, or a fix pushed after a BLOCK awaiting re-review", () => {
+  it("Fix: an unanswered BLOCK; once the fix is pushed the work waits in Review (#591)", () => {
     expect(workStage(task("a", { step: "review", blockedBy: { reviewer: "r", headSha: "a", commentUrl: "" }, rounds: [round(null)] }), false)).toBe("fix");
-    expect(workStage(task("a", { step: "review", rounds: [round("b")] }), false)).toBe("fix");
+    expect(workStage(task("a", { step: "review", rounds: [round("b")] }), false)).toBe("review");
     expect(workStage(task("a", { step: "merge", rounds: [round("b")] }), false)).toBe("merge");
   });
 });
@@ -63,14 +63,79 @@ describe("buildWorkGroups", () => {
   });
 });
 
-describe("layoutWorkGroup", () => {
-  it("stacks rows within a column and joins tasks in PR order", () => {
+describe("prPath (#591)", () => {
+  const blocked = { reviewer: "gh-claude-7", headSha: "a", commentUrl: "" };
+  const r1 = { reviewer: "gh-claude-7", headSha: "a", commentUrl: "", fixHead: "b", blockedAt: null, fixedAt: null };
+  const cells = (t: TaskState, proven = false) => prPath(t, proven).cells.map((c) => [c.stage, c.state, c.label, c.mark]);
+  it("BLOCK -> fix -> re-review -> approve -> merged, done stages included", () => {
+    const base = { pr: 7, plan: { summary: "p" } as TaskState["plan"], reviewers: ["gh-claude-7"] };
+    expect(cells(task("a", { ...base, step: "review", blockedBy: blocked, rounds: [{ ...r1, fixHead: null }] }))).toEqual([
+      ["plan", "done", "Plan", "✓"], ["implement", "done", "Implement", "✓"], ["review", "block", "Review", "BLOCK"], ["fix", "current", "Fix", null],
+      ["merge", "ahead", "Merge", null], ["merged", "ahead", "Merged", null], ["proven", "ahead", "Proven", null],
+    ]);
+    const open = prPath(task("a", { ...base, lane: "gh-claude-1", step: "review", blockedBy: blocked, rounds: [{ ...r1, fixHead: null }] }), false);
+    expect(open.cells[2]).toMatchObject({ who: "by gh-claude-7", mark: "BLOCK" });
+    expect(open.cells[3]).toMatchObject({ state: "current", title: "Fixing", who: "gh-claude-1", sub: "after BLOCK by gh-claude-7" });
+    expect(open.edges).toEqual([{ row: "a", from: 0, to: 1, kind: "done" }, { row: "a", from: 1, to: 2, kind: "done" }, { row: "a", from: 2, to: 3, kind: "next" }]);
+    const pushed = prPath(task("a", { ...base, step: "review", rounds: [r1] }), false);
+    expect(pushed.cells.slice(2, 4).map((c) => [c.stage, c.state, c.label, c.mark, c.title])).toEqual([
+      ["review", "current", "Re-review", null, "Re-review"], ["fix", "done", "Fix", "fix pushed b", null]]);
+    expect(pushed.edges).toContainEqual({ row: "a", from: 3, to: 2, kind: "next" });
+    expect(pushed.edges.filter((e) => e.kind === "next")).toHaveLength(1);
+    const done = task("a", { ...base, step: "merged", mergeSha: "9a9a9a9a11", rounds: [r1] });
+    expect(cells(done)).toEqual([
+      ["plan", "done", "Plan", "✓"], ["implement", "done", "Implement", "✓"], ["review", "done", "Review ×2", "✓"], ["fix", "done", "Fix", "✓"],
+      ["merge", "done", "Merge", "✓"], ["merged", "current", "Merged", "✓"], ["proven", "ahead", "Proven", null],
+    ]);
+    expect(prPath(done, false).edges).toContainEqual({ row: "a", from: 3, to: 2, kind: "done" });
+    expect(cells(done, true).slice(-1)).toEqual([["proven", "current", "Proven", "✓"]]);
+  });
+  it("an unrecorded plan the work moved past reads skipped; no BLOCK draws no Fix cell", () => {
+    const c = cells(task("a", { step: "merge", reviewers: ["r"] }));
+    expect(c[0]).toEqual(["plan", "done", "Plan", "skipped"]);
+    expect(c.map((x) => x[0])).not.toContain("fix");
+  });
+  it("arrows stay inside their row, left to right except the Fix loop back to Review", () => {
     const [g] = buildWorkGroups([
-      task("c", { issue: 1, pr: 30, step: "review" }), task("a", { issue: 1, pr: 10, step: "merged" }), task("b", { issue: 1, pr: 20, step: "review" }),
+      task("x", { issue: 1, pr: 1, step: "merged", rounds: [r1], mergeSha: "m" }), task("y", { issue: 1, pr: 2, step: "review", blockedBy: blocked, rounds: [r1] }),
+      task("z", { issue: 1, pr: 3, step: "implement" }),
     ], []);
-    const l = layoutWorkGroup(g!);
-    expect(Object.fromEntries(l.placed.map((p) => [p.task.key, [p.col, p.row]]))).toEqual({ a: [5, 0], b: [2, 0], c: [2, 1] });
-    expect(l.edges).toEqual([{ from: "a", to: "b", done: true }, { from: "b", to: "c", done: false }]);
-    expect(l.rows).toBe(2);
+    for (const row of g!.rows) {
+      const cols = new Set(row.cells.map((c) => c.col));
+      for (const e of row.edges) {
+        expect(e.row).toBe(row.key);
+        expect(cols.has(e.from) && cols.has(e.to)).toBe(true);
+        if (e.to < e.from) expect([e.from, e.to]).toEqual([3, 2]);
+      }
+    }
+    expect(g!.rows.flatMap((r) => r.edges).some((e) => !g!.rows.find((r) => r.key === e.row)!.edges.includes(e))).toBe(false);
+  });
+  it("rows: open work first, most urgent first, merged last", () => {
+    const [g] = buildWorkGroups([
+      task("m", { issue: 1, pr: 1, step: "merged", lastSequence: 99 }), task("w", { issue: 1, pr: 2, step: "implement", lastSequence: 5 }),
+      task("n", { issue: 1, pr: 3, step: "review", lastSequence: 9 }), task("b", { issue: 1, pr: 4, step: "review", blockedBy: blocked, lastSequence: 1 }),
+    ], []);
+    expect(g!.rows.map((r) => [r.key, r.open])).toEqual([["b", true], ["n", true], ["w", true], ["m", false]]);
+  });
+});
+
+describe("a pushed fix after a BLOCK (#591, PR #581's shape)", () => {
+  // The newer pr_opened head (66613c95) answers the BLOCK on 1a1a1a1a: since #613 the fold clears
+  // `blockedBy`, and the BLOCK lives on in `rounds` with its fixHead.
+  const t581 = task("pr-581", {
+    issue: 549, pr: 581, lane: "gh-claude-11", step: "review", reviewers: ["gh-claude-8"], headSha: "66613c95aa",
+    blockedBy: null, recordedHeads: ["1a1a1a1a00", "66613c95aa"],
+    rounds: [{ reviewer: "gh-claude-8", headSha: "1a1a1a1a00", commentUrl: "", fixHead: "66613c95aa", blockedAt: "2026-10-09T06:30:00Z", fixedAt: "2026-10-09T09:00:00Z" }],
+  });
+  it("sits in Review, not Fix", () => expect(workStage(t581, false)).toBe("review"));
+  it("draws BLOCK by the reviewer, a done Fix with the pushed sha, and a current Re-review waiting on the reviewer", () => {
+    const p = prPath(t581, false);
+    const review = p.cells.find((c) => c.stage === "review")!, fix = p.cells.find((c) => c.stage === "fix")!;
+    expect(review).toMatchObject({ state: "current", title: "Re-review", who: "gh-claude-8", sub: "waiting on gh-claude-8", mark: null });
+    expect(fix).toMatchObject({ state: "done", mark: "fix pushed 66613c95" });
+    expect(p.cells.some((c) => c.title === "Fixing")).toBe(false);
+  });
+  it("an unchanged head keeps the Fixing card", () => {
+    expect(workStage({ ...t581, headSha: "1a1a1a1a00", blockedBy: { reviewer: "gh-claude-8", headSha: "1a1a1a1a00", commentUrl: "" }, rounds: [{ ...t581.rounds[0]!, fixHead: null }] }, false)).toBe("fix");
   });
 });

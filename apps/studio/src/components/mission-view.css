@@ -39,10 +39,16 @@
   --mv-tone: var(--mv-ready); --mv-tint: rgba(154, 167, 255, 0.08); --mv-ring: rgba(154, 167, 255, 0.4);
 }
 
-/* The Graph tab takes the whole main area: the chat column and right panel step aside. */
-.studio-columns:has(.mv[data-wide="true"]) > .chat-column,
+/* The Graph tab takes the whole main area: the chat column and right panel step aside.
+   #591: only above the phone breakpoint. On a phone the Chat tab already hides the canvas column,
+   so hiding the chat column there too left an empty page; the phone tabs pick one column instead. */
 .studio-columns:has(.mv[data-wide="true"]) > .right-panel {
   display: none;
+}
+@media (min-width: 769px) {
+  .studio-columns:has(.mv[data-wide="true"]) > :is(.chat-column) {
+    display: none;
+  }
 }
 
 /* Header: the sub-tabs as the design's segmented nav. */
@@ -55,7 +61,10 @@
 .mv-body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 20px; min-width: 0; }
 
 /* Journey rail */
-.mv-journeys { flex: 1 1 250px; max-width: 290px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mv-journeys { flex: 1 1 250px; max-width: 290px; display: flex; flex-direction: column; gap: 6px; min-width: 0;
+  /* The rail scrolls on its own: the Studio main area does not scroll, so a long list was cut off.
+   * Bottom padding clears the floating Run actions dock. */
+  max-height: calc(100vh - 170px); overflow-y: auto; overscroll-behavior: contain; padding-bottom: 72px; scrollbar-width: thin; }
 .mv-cap { padding: 0 2px 6px; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #8D929C; }
 .mv-jcard { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 10px; border: 1px solid transparent; }
 .mv-jcard[data-selected="true"] { gap: 10px; padding: 12px; background: #121318; border-color: #23262D; }
@@ -82,22 +91,24 @@
 .mv-fold { padding: 0; border: 0; background: none; color: #A9AEB8; font: 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
 .mv-unlinked ul { margin: 0.5rem 0 0; padding-left: 1rem; color: #A9AEB8; font-size: 12px; }
 
-.mv-content { display: flex; flex-direction: column; flex: 999 1 640px; min-width: 0; gap: 12px; }
+.mv-content { display: flex; flex-direction: column; flex: 999 1 640px; min-width: 0; gap: 12px;
+  /* Same as the rail: the Studio main area does not scroll, so the graph column scrolls itself. */
+  max-height: calc(100vh - 170px); overflow-y: auto; overscroll-behavior: contain; padding-bottom: 72px; scrollbar-width: thin; }
 
 /* Phone width (design: Glance): the rail stacks on top, the graph scrolls, the inspector goes below. */
 @media (max-width: 700px) {
   .mv-body { flex-direction: column; align-items: stretch; }
-  .mv-journeys { max-width: none; flex: none; }
-  .mv-content { flex: none; width: 100%; }
+  .mv-journeys { max-width: none; flex: none; max-height: none; overflow: visible; padding-bottom: 0; }
+  .mv-content { flex: none; width: 100%; max-height: none; overflow: visible; padding-bottom: 0; }
   .mv .mg-body { flex-direction: column; align-items: stretch; }
   .mv .mg-graph { flex: none; }
   .mv .mg-inspector { max-width: none; flex: none; }
 }
 
 /* #583: the full page. Top bar: breadcrumb, segmented nav, live indicator (design: Main header). */
-.mv[data-page="full"] { min-height: 100%; padding: 0 0 24px; gap: 0; }
+.mv[data-page="full"] { min-height: 100%; padding: 0; gap: 0; }
 .mv[data-page="full"] > .mv-head { padding: 14px 24px; gap: 16px; border-bottom: 1px solid #1E2026; }
-.mv[data-page="full"] > .mv-body { padding: 18px 24px 0; }
+.mv[data-page="full"] > .mv-body { padding: 18px 24px 24px; }
 .mv-crumbs { display: flex; align-items: center; gap: 10px; }
 .mv-logo { width: 26px; height: 26px; border-radius: 7px; background: #E9E7E2; color: #0B0C0F; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; }
 .mv-brand { font-weight: 600; font-size: 14px; }
@@ -109,9 +120,33 @@
 .mv-summary { gap: 6px 22px; margin: 0; padding: 10px 24px; }
 .mv:not([data-page="full"]) .mv-summary { padding: 0 0 10px; }
 .mv-groups { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
-.mv-pr-chip { flex: 0 1 auto; min-width: 34px; padding: 0 5px; opacity: .85; }
+.mv-pr-chip { flex: 1 1 0; min-width: 0; padding: 0; opacity: .6; }
+.mv-pr-chip[aria-pressed="true"] { opacity: 1; }
 .mv-pr-chip[data-state="ready"] { background: transparent; border: 1px dashed var(--mv-tone); color: var(--mv-tone); opacity: 1; }
 .mv-none, .mv-empty { margin: 0; color: #A9AEB8; font-size: 12.5px; }
 .mv-empty { padding: 18px; background: #111216; border: 1px solid #1E2026; border-radius: 14px; }
 .mv-group { width: 100%; }
 .mv[data-page="full"] > .mv-pad { padding: 18px 24px; }
+
+/* #591: the other cards are a plain row and a 4px segment bar; then the agents right now. */
+.mv-segs { display: flex; gap: 3px; }
+.mv-seg { flex: 1 1 0; height: 4px; border-radius: 2px; }
+.mv-jcard[data-selected="false"] { gap: 7px; }
+.mv-sum-fill { flex: 1 1 auto; }
+.mv-away { font-family: var(--mono); font-size: 11.5px; }
+.mv-agents { border-top: 1px solid #1E2026; margin-top: 8px; padding-top: 14px; display: flex; flex-direction: column; gap: 9px; }
+.mv-agents > .mv-cap { padding: 0; }
+.mv-agent { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mv-agent-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: #5C6170; }
+.mv-agent-dot[data-tone="work"] { background: #F5A524; }
+.mv-agent-dot[data-tone="stalled"] { background: #FF6B5E; }
+.mv-agent-name { width: 92px; flex: none; font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mv-agent-doing { min-width: 0; color: #A9AEB8; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* #591: the work rail's in-progress spinner and the static red "!" for blocked or stuck work. */
+.mv-prog { flex: none; width: 12px; height: 12px; color: var(--mv-work); vertical-align: middle; }
+.mv-prog[data-kind="spin"] { animation: mv-spin 1s linear infinite; }
+.mv-prog[data-kind="alert"] { color: var(--mv-stalled); }
+.mv-chip .mv-prog { width: 10px; height: 10px; margin-left: 2px; color: #0B0C0F; }
+.mv-chip .mv-prog[data-kind="alert"] { color: #3A1E1A; }
+@keyframes mv-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .mv-prog[data-kind="spin"] { animation: none; } }

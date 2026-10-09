@@ -504,7 +504,7 @@ describe("live team layout", () => {
     sessionStorage.clear();
   });
 
-  it("#583: with nothing saved, Graph is the whole page: no handover, no tab strip; Team returns", async () => {
+  it("#583: with nothing saved, Graph is the whole page: no handover, no tab strip, no Team tab", async () => {
     sessionStorage.clear();
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
     await open(longGapClient());
@@ -513,11 +513,8 @@ describe("live team layout", () => {
     expect(screen.getByText("Run demo-deploy")).toBeInTheDocument();
     expect(screen.queryByRole("tablist", { name: "Canvas views" })).toBeNull();
     expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull();
-    await userEvent.click(within(nav).getByRole("tab", { name: "Team" }));
-    expect(await screen.findByRole("tablist", { name: "Canvas views" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Team (live)" })).toHaveAttribute("aria-selected", "true");
-    expect(await screen.findByRole("region", { name: "While you were away" })).toBeInTheDocument();
-    expect(sessionStorage.getItem("graphhelm.studio.canvas-tab")).toBe("team");
+    expect(within(nav).queryByRole("tab", { name: "Team" })).toBeNull();
+    expect(within(nav).getAllByRole("tab").map((t) => t.textContent)).toEqual(["Graph", "Lanes", "Proof"]);
   });
 
   it("does not show run A's handover after switching to run B", async () => {

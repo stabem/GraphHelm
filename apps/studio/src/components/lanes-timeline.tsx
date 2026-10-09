@@ -1,6 +1,10 @@
 import "./lanes-timeline.css";
-import type { Lane } from "../runtime/lane-bars";
+import { packBars, placeholderLane, type Lane } from "../runtime/lane-bars";
+import { stageDuration } from "../runtime/stage-health";
 import type { MissionTask } from "../runtime/mission";
+import type { Bot } from "../runtime/team";
+import { useEffect, useRef, useState, type RefObject } from "react";
+import { agentBoard, type AgentRow, type AgentStatus } from "../runtime/agent-board";
 
 const pct = (n: number) => `${Math.round(n * 10000) / 100}%`;
 
@@ -21,19 +25,88 @@ function lastDelivered(tasks: MissionTask[]) {
   return out;
 }
 
-interface Props { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[] }
+interface Props { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[]; agents?: Bot[] }
 
-export function LanesTimeline({ lanes, now, windowMs, tasks = [] }: Props) {
-  if (lanes.length === 0) return <p className="lt-empty">No agent has recorded work in this window</p>;
+const PILL: Record<AgentStatus, string> = { silent: "Silent", stale: "Stale claim", working: "Working", awaiting: "Awaiting review", waiting: "Waiting", free: "Free" };
+const STAGE: Record<string, string> = { implement: "implementing", review: "reviewing", merge: "merging" };
+type Filter = "all" | "working" | "free" | "silent";
+
+function AgentBoard({ rows }: { rows: AgentRow[] }) {
+  const [filter, setFilter] = useState<Filter>("all");
+  const count = (f: Filter) => (f === "all" ? rows.length : rows.filter((r) => r.status === f).length);
+  const shown = filter === "all" ? rows : rows.filter((r) => r.status === filter);
+  return (
+    <section className="ab" aria-label="Agents">
+      <div className="ab-head">
+        <h2>Agents</h2>
+        <div className="ab-chips" role="group" aria-label="Filter agents">
+          {(["all", "working", "free", "silent"] as const).map((f) => (
+            <button key={f} type="button" className="ab-chip" aria-pressed={filter === f} onClick={() => setFilter(f)}>
+              {`${f === "all" ? "All" : PILL[f]} ${count(f)}`}
+            </button>
+          ))}
+        </div>
+      </div>
+      <ul className="ab-rows" aria-label="Agent board">
+        {shown.map((r) => {
+          const what = r.doing ? r.doing : r.stage ? `${STAGE[r.stage]}${r.pr ? ` PR #${r.pr}` : ""}${r.title ? ` ${r.title}` : ""}` : "—";
+          return (
+            <li key={r.name} className="ab-row">
+              <span className="ab-pill" data-status={r.status}>{r.label ?? PILL[r.status]}</span>
+              <span className="ab-name">{r.name}</span>
+              <span className="ab-what">{r.href ? <a href={r.href} target="_blank" rel="noreferrer">{what}</a> : what}</span>
+              <span className="ab-for">{r.latest ?? "—"}</span>
+              <span className="ab-last">{r.lastDelivered ? `last delivered ${r.lastDelivered}` : "nothing delivered yet"}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/** #591: sub-row geometry; a bar narrower than MIN_LABEL_PX on a 1000px track draws no text. */
+export const SUB_H = 18, SUB_GAP = 2, MIN_LABEL_PX = 44;
+const TRACK_PAD = 3;
+
+/** The drawn width of a lane track, so a bar knows whether its label fits; 1000px until measured. */
+function useTrackWidth(ref: RefObject<HTMLElement | null>): number {
+  const [w, setW] = useState(1000);
+  useEffect(() => {
+    const track = ref.current?.querySelector(".lt-track");
+    if (!track || typeof ResizeObserver === "undefined") return;
+    const measure = () => { const x = track.getBoundingClientRect().width; if (x > 0) setW(x); };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(track);
+    return () => ro.disconnect();
+  }, [ref]);
+  return w;
+}
+
+export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [] }: Props) {
+  const listRef = useRef<HTMLUListElement>(null);
+  const trackW = useTrackWidth(listRef);
+  lanes = lanes.filter((l) => !placeholderLane(l.lane));
+  if (lanes.length === 0 && agents.length === 0) return <p className="lt-empty">No agent has recorded work in this window</p>;
+  const board = agentBoard(agents, lanes, tasks, now);
+  const rank = new Map<string, number>();
+  board.forEach((r, i) => rank.set(r.name, i));
+  const botOf = (l: Lane) => agents.find((b) => b.actorId === l.lane || b.key === l.lane)?.name;
+  const at = (l: Lane) => rank.get(l.lane) ?? rank.get(botOf(l) ?? "") ?? board.length;
+  lanes = [...lanes].sort((a, b) => at(a) - at(b));
   const from = now - windowMs;
   const hours = Math.round(windowMs / 3_600_000);
   const step = hours > 8 ? 2 : 1;
   const ticks: string[] = [];
   for (let h = hours; h > 0; h -= step) ticks.push(`−${h}h`);
   const delivered = lastDelivered(tasks);
-  const cards = laneCards(lanes, tasks);
+  // #591: free hands are the board's Free rows: no open slice, no PR awaiting review, no review owed.
+  const cards = { ...laneCards(lanes, tasks), free: board.filter((r) => r.status === "free").map((r) => r.name) };
   const card = (items: string[]) => (items.length ? items.join(", ") : "none right now");
   return (
+    <div className="lt-wrap">
+    <AgentBoard rows={board} />
     <section className="lt" aria-label="Lanes">
       <div className="lt-head">
         <div className="lt-title">
@@ -52,23 +125,31 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [] }: Props) {
         <span className="lt-ticks">{ticks.map((t) => <span key={t}>{t}</span>)}<span className="lt-now">now</span></span>
         <span>LAST DELIVERED</span>
       </div>
-      <ul className="lt-lanes" aria-label="Agent lanes">
+      <ul className="lt-lanes" aria-label="Agent lanes" ref={listRef}>
         {lanes.map((l) => {
           const open = l.bars.some((b) => b.open);
+          const pack = packBars(l.bars);
+          const trackH = pack.rows * SUB_H + (pack.rows - 1) * SUB_GAP + TRACK_PAD * 2;
           return (
-            <li key={l.lane} className="lt-row lt-lane">
+            <li key={l.lane} className="lt-row lt-lane" style={{ height: Math.max(44, trackH + 14) }}>
               <span className="lt-who">
                 <span className="lt-dot" data-state={l.silent ? "silent" : open ? "busy" : "idle"} />
                 <span className="lt-name">{l.lane}</span>
                 {l.silent ? <span className="lt-flag" data-flag="silent">silent</span> : !open && <span className="lt-flag" data-flag="free">free</span>}
               </span>
-              <div className="lt-track">
-                {l.bars.map((b, i) => (
-                  <div key={i} className="lt-bar" data-kind={b.kind} data-silent={l.silent && b.open}
-                    style={{ left: pct((b.start - from) / windowMs), width: pct((b.end - b.start) / windowMs) }}>
-                    <span>{`${b.label} ${b.kind}`}</span>
-                  </div>
-                ))}
+              <div className="lt-track" style={{ height: trackH }} data-subrows={pack.rows}>
+                <span className="lt-nowline" aria-hidden="true" />
+                {l.bars.map((b, i) => {
+                  const text = `${b.label} ${b.kind}`;
+                  const frac = (b.end - b.start) / windowMs;
+                  return (
+                    <div key={i} className="lt-bar" data-kind={b.kind} data-silent={l.silent && b.open} data-subrow={pack.row[i]}
+                      title={`${text} · ${stageDuration(b.end - b.start)}${b.open ? " so far" : ""}`}
+                      style={{ left: pct((b.start - from) / windowMs), width: pct(frac), top: TRACK_PAD + pack.row[i]! * (SUB_H + SUB_GAP), height: SUB_H }}>
+                      {frac * trackW >= MIN_LABEL_PX && <span>{text}</span>}
+                    </div>
+                  );
+                })}
               </div>
               <span className="lt-last">{delivered.get(l.lane) ?? "—"}</span>
             </li>
@@ -81,5 +162,6 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [] }: Props) {
         <div className="lt-card" data-kind="free"><span className="lt-card-cap">FREE HANDS</span><span>{card(cards.free)}</span></div>
       </div>
     </section>
+    </div>
   );
 }

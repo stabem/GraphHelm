@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { laneBars, STALL_MS, type TimedTaskEvent } from "./lane-bars";
+import { agentBoard } from "./agent-board";
+import { LIVENESS_MS, laneBars, packBars, placeholderLane, STALL_MS, type TimedTaskEvent } from "./lane-bars";
 
 const T0 = Date.parse("2026-10-09T00:00:00Z");
 const at = (ms: number) => new Date(T0 + ms).toISOString();
@@ -16,7 +17,7 @@ describe("laneBars", () => {
     ], T0 + 400, 1000);
     const dev = lanes.find((l) => l.lane === "dev")!;
     const rev = lanes.find((l) => l.lane === "rev")!;
-    expect(dev.bars).toEqual([{ kind: "implement", label: "#9", start: T0, end: T0 + 100, open: false }]);
+    expect(dev.bars).toEqual([{ kind: "implement", label: "#9", start: T0, end: T0 + 100, open: false, taskId: "t1", since: T0 }]);
     expect(rev.bars.map((b) => [b.kind, b.start - T0, b.end - T0, b.open])).toEqual([["review", 100, 200, false], ["merge", 200, 300, false]]);
   });
 
@@ -31,9 +32,9 @@ describe("laneBars", () => {
     expect(laneBars(events, T0 + STALL_MS, STALL_MS * 2)[0].silent).toBe(true);
   });
 
-  it("an open implement bar is never silent", () => {
-    const [lane] = laneBars([ev({ kind: "task.claimed", lane: "dev", at: at(0) })], T0 + STALL_MS * 3, STALL_MS * 4);
-    expect(lane.silent).toBe(false);
+  it("an open implement bar goes silent after LIVENESS_MS too (#591: an offline author is not working)", () => {
+    expect(laneBars([ev({ kind: "task.claimed", lane: "dev", at: at(0) })], T0 + LIVENESS_MS - 1, LIVENESS_MS * 4)[0].silent).toBe(false);
+    expect(laneBars([ev({ kind: "task.claimed", lane: "dev", at: at(0) })], T0 + LIVENESS_MS, LIVENESS_MS * 4)[0].silent).toBe(true);
   });
 
   it("window clamps and drops", () => {
@@ -77,5 +78,47 @@ describe("laneBars", () => {
   it("skips events with an invalid timestamp", () => {
     const lanes = laneBars([ev({ kind: "task.claimed", lane: "dev", at: "garbage" })], T0, 1000);
     expect(lanes).toEqual([]);
+  });
+
+  it("#549: bars are kept per PR, so another slice's merge or claim never closes #581's review", () => {
+    const t = "issue-549";
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "author", taskId: t, branch: "s1", at: at(0) } as never),
+      ev({ kind: "task.pr_opened", lane: "author", taskId: t, pr: 571, headSha: "aaaa1111", at: at(10) } as never),
+      ev({ kind: "task.claimed", lane: "author", taskId: t, branch: "s2", at: at(20) } as never),
+      ev({ kind: "task.pr_opened", lane: "author", taskId: t, pr: 581, headSha: "66613c95", at: at(30) } as never),
+      ev({ kind: "task.review_assigned", reviewer: "gh-claude-8", taskId: t, pr: 581, headSha: "66613c95", at: at(40) } as never),
+      ev({ kind: "task.merged", taskId: t, pr: 571, at: at(50) }),
+      ev({ kind: "task.claimed", lane: "author", taskId: t, branch: "s3", at: at(60) } as never),
+    ], T0 + 100, 1000);
+    const rev = lanes.find((l) => l.lane === "gh-claude-8")!;
+    expect(rev.bars).toEqual([expect.objectContaining({ kind: "review", label: "#581", open: true })]);
+    const author = lanes.find((l) => l.lane === "author")!;
+    expect(author.bars.filter((b) => b.open).map((b) => b.label)).toEqual([t]);
+    const row = agentBoard([{ name: "gh-claude-8" } as never], lanes, [], T0 + 100).find((r) => r.name === "gh-claude-8")!;
+    expect(row).toMatchObject({ stage: "review", pr: 581 });
+    expect(row.status).not.toBe("free");
+  });
+});
+
+describe("packBars (#591)", () => {
+  const bars = [
+    { start: 0, end: 100 }, { start: 10, end: 50 }, { start: 20, end: 30 }, { start: 50, end: 90 }, { start: 100, end: 120 }, { start: 30, end: 60 },
+  ];
+  it("no two bars in one sub-row overlap", () => {
+    const { row } = packBars(bars);
+    for (let i = 0; i < bars.length; i++) for (let j = i + 1; j < bars.length; j++) {
+      if (row[i] === row[j]) expect(bars[i]!.end <= bars[j]!.start || bars[j]!.end <= bars[i]!.start).toBe(true);
+    }
+  });
+  it("uses the minimum number of sub-rows (the most bars open at one instant)", () => {
+    // At t=25 three bars are open (0-100, 10-50, 20-30); at t=55, three (0-100, 50-90, 30-60).
+    expect(packBars(bars).rows).toBe(3);
+    expect(packBars([{ start: 0, end: 10 }, { start: 10, end: 20 }]).rows).toBe(1);
+    expect(packBars([]).rows).toBe(1);
+  });
+  it("a lane named TBD or nothing is a placeholder", () => {
+    expect(["TBD", "tbd ", "", "  "].map(placeholderLane)).toEqual([true, true, true, true]);
+    expect(placeholderLane("gh-claude-5")).toBe(false);
   });
 });

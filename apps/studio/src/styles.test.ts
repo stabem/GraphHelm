@@ -293,3 +293,15 @@ describe("the journey map keeps its cards readable in a narrow column (#443)", (
     expect(step).not.toMatch(/max-width:\s*264px/);
   });
 });
+
+describe("Graph tab on a phone (#591)", () => {
+  it("hides the chat column for the wide Graph tab only above the phone breakpoint", () => {
+    const sheet = STYLESHEETS["./components/mission-view.css"].replace(/\/\*[\s\S]*?\*\//g, "");
+    const hide = /([^{}]*\.chat-column[^{}]*)\{[^}]*display:\s*none/.exec(sheet.replace(/@media[^{]*\{/g, (m) => `${m}\n`));
+    expect(hide).not.toBeNull();
+    const before = sheet.slice(0, sheet.indexOf(hide![1].trim()));
+    const media = before.lastIndexOf("@media");
+    expect(media).toBeGreaterThanOrEqual(0);
+    expect(before.slice(media)).toMatch(/^@media\s*\(min-width:\s*769px\)\s*\{[^}]*$/);
+  });
+});

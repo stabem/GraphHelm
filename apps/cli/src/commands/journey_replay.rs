@@ -2111,7 +2111,13 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let (status, reply) =
-            child_output(healthy, Vec::new(), Duration::from_secs(5), 1024).unwrap();
+            child_output(
+                healthy,
+                Vec::new(),
+                crate::test_time::scaled(Duration::from_secs(5)),
+                1024,
+            )
+            .unwrap();
         assert_eq!(status, 0);
         assert!(reply.starts_with(b"git version "));
         let command = Command::new(dir.path().join("missing-executable"));

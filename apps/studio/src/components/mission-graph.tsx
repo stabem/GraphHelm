@@ -2,6 +2,7 @@ import "./mission-graph.css";
 import type { CSSProperties } from "react";
 import { custodyRows, sha8, TRUST_LABELS, type Mission, type MissionStep, type MissionTask, type StepStatus } from "../runtime/mission";
 import { layoutMission, type PlacedTask } from "../runtime/mission-layout";
+import { layoutWorkGroup, WORK_STAGES, type WorkGroup, type WorkStage } from "../runtime/work-groups";
 
 export const STATUS_LABEL: Record<StepStatus, string> = {
   proven: "Proven", failed: "Failed", needs_you: "Needs you", preview_only: "Preview only", not_run: "Not run",
@@ -23,10 +24,10 @@ export function nodeLabel(t: MissionTask, step: MissionStep | undefined): string
   return t.step === "plan" ? "Planning" : t.step === "critic" ? "Design in review"
     : t.step === "implement" ? "Writing" : t.step === "review" ? "In review" : "Merging";
 }
-const prText = (t: MissionTask) => (t.pr ? `#${t.pr}` : "no PR");
+export const prText = (t: MissionTask) => (t.pr ? `#${t.pr}` : "no PR");
 
 // Geometry of the design's artboard: 150px columns 18px apart, 64px of column head, 104px a row.
-const COL_W = 150, PITCH = 168, HEAD = 64, NODE_H = 88, ROW = 104;
+export const COL_W = 150, PITCH = 168, HEAD = 64, NODE_H = 88, ROW = 104;
 
 interface Seg { style: CSSProperties; dir: "h" | "v" | "right" | "down" | "up"; done: boolean }
 function line(x1: number, y1: number, x2: number, y2: number, done: boolean): Seg {
@@ -37,7 +38,7 @@ function line(x1: number, y1: number, x2: number, y2: number, done: boolean): Se
 
 /** Orthogonal route from a to b: a forward edge elbows through the gap between columns; within one
  * column it drops straight down; a backward edge loops under both nodes. Each route ends in an arrow. */
-function route(a: PlacedTask, b: PlacedTask, done: boolean): Seg[] {
+export function route(a: PlacedTask, b: PlacedTask, done: boolean): Seg[] {
   const ax = a.col * PITCH, ay = HEAD + a.row * ROW, bx = b.col * PITCH, by = HEAD + b.row * ROW;
   if (b.col > a.col) {
     const sx = ax + COL_W, sy = ay + NODE_H / 2, dx = bx - 6, dy = by + NODE_H / 2, ex = Math.round((sx + dx) / 2);
@@ -129,7 +130,7 @@ export function MissionGraph({ mission, selectedStepId, selectedTaskKey, onSelec
             <span className="mg-legend-note">Merged is not done. Done = the replay proves the step.</span>
           </div>
         </section>
-        {placed ? <TaskInspector placed={placed} mission={mission} onOpenTest={onOpenTest} />
+        {placed ? <TaskInspector task={placed.task} step={mission.steps[placed.col]} onOpenTest={onOpenTest} />
           : step ? (
             <aside className="mg-inspector" aria-label="Selected step">
               <span className="mg-kick"><span className="mg-dot" data-status={step.status} />{`STEP ${step.index + 1} · ${STATUS_LABEL[step.status]}`}</span>
@@ -146,9 +147,9 @@ export function MissionGraph({ mission, selectedStepId, selectedTaskKey, onSelec
   );
 }
 
-function TaskInspector({ placed, mission, onOpenTest }: { placed: PlacedTask; mission: Mission; onOpenTest(stepId: string): void }) {
-  const t = placed.task;
-  const step = mission.steps[placed.col];
+/** The selected work: who touched it and the evidence on its head. `step` is the journey step the
+ * task serves, when it serves one; without it the inspector offers no test. */
+export function TaskInspector({ task: t, step, onOpenTest }: { task: MissionTask; step: MissionStep | undefined; onOpenTest(stepId: string): void }) {
   const st = nodeState(t, step);
   const note = t.blockedBy ? `BLOCK by ${t.blockedBy.reviewer || "a reviewer"} at ${sha8(t.blockedBy.headSha) ?? "an unrecorded head"}`
     : t.step === "merged" && step?.status !== "proven" ? "Merged, not proven yet" : null;
@@ -158,7 +159,7 @@ function TaskInspector({ placed, mission, onOpenTest }: { placed: PlacedTask; mi
       <div className="mg-ins-head">
         <span className="mg-kick"><span className="mg-dot" data-state={st} />{`${nodeLabel(t, step)} · ${prText(t)}`}</span>
         <h3>{t.title}</h3>
-        {step && <span className="mg-muted">{`Proves step ${placed.col + 1} · `}<button type="button" className="mg-link" onClick={open}>open its test</button></span>}
+        {step && <span className="mg-muted">{`Proves step ${step.index + 1} · `}<button type="button" className="mg-link" onClick={open}>open its test</button></span>}
       </div>
       <div className="mg-section">
         <span className="mg-cap">How far it got</span>
@@ -191,5 +192,96 @@ function TaskInspector({ placed, mission, onOpenTest }: { placed: PlacedTask; mi
         {step && <button type="button" className="mg-secondary" onClick={open}>Open its test</button>}
       </div>
     </aside>
+  );
+}
+
+/** #583: the colour family and the label of a PR node on an issue's graph, read off its stage. */
+export function stageState(stage: WorkStage, t: MissionTask): NodeState {
+  if (stage === "proven") return "proven";
+  if (stage === "merged") return "merged";
+  if (t.blocked) return "stalled";
+  if (t.lane === null) return "ready";
+  return "work";
+}
+const STAGE_LABEL: Record<WorkStage, string> = {
+  plan: "Planning", implement: "Writing", review: "In review", fix: "Fix pushed · re-review", merge: "Merging", merged: "Merged · not proven", proven: "Proven",
+};
+export const stageLabel = (stage: WorkStage, t: MissionTask) => (stage === "fix" && t.blocked ? "Blocked" : t.step === "critic" ? "Design in review" : STAGE_LABEL[stage]);
+
+interface IssueProps {
+  group: WorkGroup;
+  /** The journey step a task serves, when one of the group's journeys places it. */
+  stepFor(taskKey: string): MissionStep | undefined;
+  selectedTaskKey: string | null;
+  selectedCol: number | null;
+  onSelectTask(key: string): void;
+  onSelectCol(col: number): void;
+  onOpenTest(stepId: string): void;
+}
+
+/** #583: an issue's PRs as nodes in the six stage columns, edges in PR order, the same inspector. */
+export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSelectTask, onSelectCol, onOpenTest }: IssueProps) {
+  const layout = layoutWorkGroup(group);
+  const at = new Map(layout.placed.map((p) => [p.task.key, p]));
+  const placed = selectedTaskKey ? at.get(selectedTaskKey) ?? null : null;
+  const col = placed ? placed.col : selectedCol;
+  const width = WORK_STAGES.length * PITCH - 18;
+  const height = HEAD + layout.rows * ROW + 16;
+  return (
+    <div className="mg">
+      <div className="mg-title"><h1>{group.label}</h1></div>
+      <div className="mg-body">
+        <section className="mg-graph" aria-label="Work graph">
+          <div className="mg-scroll">
+            <div className="mg-canvas" style={{ width, height }}>
+              {col !== null && col >= 0 && <div className="mg-colhi" style={{ left: col * PITCH - 8, height: height + 12 }} />}
+              <div className="mg-cols" style={{ gridTemplateColumns: `repeat(${WORK_STAGES.length}, ${COL_W}px)` }}>
+                {WORK_STAGES.map((s, i) => {
+                  const n = layout.placed.filter((p) => p.col === i).length;
+                  return (
+                    <button key={s.id} type="button" className="mg-col" data-stage={s.id} data-selected={i === col}
+                      aria-label={`Column ${s.label}: ${n}`} onClick={() => onSelectCol(i)}>
+                      <span className="mg-col-head">{`${s.label.toUpperCase()} · ${n}`}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {layout.edges.flatMap((e) => {
+                const a = at.get(e.from), b = at.get(e.to);
+                return a && b ? route(a, b, e.done).map((sg, i) => (
+                  <div key={`${e.from}-${e.to}-${i}`} className="mg-seg" data-dir={sg.dir} data-done={sg.done} style={sg.style} aria-hidden="true" />
+                )) : [];
+              })}
+              {layout.placed.map(({ task: t, col: c, row }) => {
+                const stage = group.stages[t.key]!;
+                const st = stageState(stage, t);
+                return (
+                  <button key={t.key} type="button" className="mg-node" data-state={st} data-stage={stage} data-blocked={t.blocked}
+                    aria-pressed={t.key === selectedTaskKey} style={{ left: c * PITCH, top: HEAD + row * ROW }} onClick={() => onSelectTask(t.key)}>
+                    <span className="mg-node-head">
+                      <span className="mg-dot" data-state={st} />
+                      <span className="mg-node-label">{stageLabel(stage, t)}</span>
+                      <span className="mg-node-pr">{prText(t)}</span>
+                    </span>
+                    <span className="mg-node-title">{t.title}</span>
+                    <span className="mg-node-who">{t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : "nobody yet"}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="mg-legend">
+            <span className="mg-key" data-state="ready">Ready</span>
+            <span className="mg-key" data-state="work">In work</span>
+            <span className="mg-key" data-state="stalled">Stalled</span>
+            <span className="mg-key" data-state="merged">Merged, not proven</span>
+            <span className="mg-key" data-state="proven">Proven by the journey</span>
+            <span className="mg-legend-note">Merged is not done. Done = the replay proves the step.</span>
+          </div>
+        </section>
+        {placed ? <TaskInspector task={placed.task} step={stepFor(placed.task.key)} onOpenTest={onOpenTest} />
+          : <aside className="mg-inspector" aria-label="Selected work"><p className="mg-muted">Pick a PR to see who touched it.</p></aside>}
+      </div>
+    </div>
   );
 }

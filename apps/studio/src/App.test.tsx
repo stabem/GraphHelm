@@ -198,6 +198,9 @@ function fakeModelContext() {
 
 // Module state surviving a remount is the feature; surviving into the NEXT TEST is pollution.
 beforeEach(() => resetPanelCaches());
+// #583: Graph is the default canvas tab. These suites were written against the Team canvas, so each
+// test starts as if the owner had chosen Team this session; the Graph default has its own test.
+beforeEach(() => sessionStorage.setItem("graphhelm.studio.canvas-tab", "team"));
 
 describe("Studio organization and responsive navigation", () => {
   beforeEach(() => localStorage.clear());
@@ -498,6 +501,22 @@ describe("live team layout", () => {
     await screen.findByRole("tablist", { name: "Canvas views" });
     expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull();
     sessionStorage.clear();
+  });
+
+  it("#583: with nothing saved, Graph is the whole page: no handover, no tab strip; Team returns", async () => {
+    sessionStorage.clear();
+    localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
+    await open(longGapClient());
+    const nav = await screen.findByRole("tablist", { name: "Mission views" });
+    expect(screen.getByText("Mission graph")).toBeInTheDocument();
+    expect(screen.getByText("Run demo-deploy")).toBeInTheDocument();
+    expect(screen.queryByRole("tablist", { name: "Canvas views" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull();
+    await userEvent.click(within(nav).getByRole("tab", { name: "Team" }));
+    expect(await screen.findByRole("tablist", { name: "Canvas views" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Team (live)" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("region", { name: "While you were away" })).toBeInTheDocument();
+    expect(sessionStorage.getItem("graphhelm.studio.canvas-tab")).toBe("team");
   });
 
   it("does not show run A's handover after switching to run B", async () => {

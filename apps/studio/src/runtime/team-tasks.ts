@@ -383,6 +383,12 @@ function applyVerdict(state: TaskState, event: TaskEventRecord): void {
  * rest. A claim on a branch no slice holds opens a slice, which that lane's next `pr_opened` joins;
  * every later record names its PR (admission requires `pr`) and lands in that PR's slice, so a
  * merge ends only its own. */
+/** #562: a design critic round whose task nobody has claimed. It holds no issue, PR or branch, so
+ * it is not a task card: the Team tab lists it in a "No task" row until a claim adopts it. */
+export function isUnclaimedCritic(task: TaskState): boolean {
+  return task.critic !== null && task.issue === null && task.pr === null && task.branch === null;
+}
+
 function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
   const group = slices.filter((slice) => slice.taskId === event.taskId);
   const open = (slice: TaskState) => slice.pr === null && slice.step !== "merged"
@@ -398,7 +404,9 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
   };
   // A claim names its branch: the same branch is the same slice (a re-claim), any other opens one.
   if (event.kind === "task.claimed") {
-    return group.find((slice) => slice.branch !== null && slice.branch === event.branch) ?? add();
+    // A critic round recorded before the claim belongs to this task: the claim adopts it (#562).
+    return group.find((slice) => slice.branch !== null && slice.branch === event.branch)
+      ?? group.find(isUnclaimedCritic) ?? add();
   }
   const own = event.pr === undefined ? undefined : group.find((slice) => slice.pr === event.pr);
   if (own !== undefined) return own;
@@ -476,6 +484,8 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         break;
       case "task.critic_verdict":
         state.critic = event.critic ?? state.critic;
+        // The round names who recorded it; an unclaimed task has no other source for it (#562).
+        state.lane ??= event.lane ?? null;
         break;
       case "task.merged":
         state.pr = event.pr ?? state.pr;

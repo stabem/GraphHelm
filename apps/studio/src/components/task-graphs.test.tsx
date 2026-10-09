@@ -489,4 +489,28 @@ describe("TaskGraphs keeps drawing when one graph throws (#544)", () => {
       quiet.mockRestore();
     }
   });
+
+});
+
+describe("TaskGraphs critic rounds without a task (#562)", () => {
+  // #562: a critic round recorded for a task nobody claimed drew a task card with no lane and no
+  // issue, reading as a task in "Implement" that nobody holds. It is one line in a "No task" row,
+  // naming the task id and who recorded it; a later claim adopts it into the task's own card.
+  // Catches the lane-less card coming back, and a round lost when its task is claimed. Cost: jsdom.
+  it("lists a critic round for an unclaimed task in a No task row until the task is claimed", () => {
+    const round = record(1, "issue-900", "task.critic_verdict", "gh-claude-3", { designRef: "d.md", lane: "gh-claude-3",
+      passScore: 8, maxRounds: 3, reasons: ["names the promise"], round: 1, score: 9, verdict: "pass" });
+    const { rerender } = render(<TaskGraphs tasks={foldTaskEvents([round])} onOpenJourney={vi.fn()} />);
+    const groups = screen.getAllByRole("group");
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toHaveAttribute("aria-label", "No task");
+    expect(within(groups[0]).getByText("issue-900 · gh-claude-3 · design approved in round 1, 9/10")).toBeInTheDocument();
+    expect(screen.queryByText("Implement")).toBeNull();
+
+    const claimed = record(2, "issue-900", "task.claimed", "gh-claude-3", { issue: 900, lane: "gh-claude-3", branch: "issue-900-x" });
+    rerender(<TaskGraphs tasks={foldTaskEvents([round, claimed])} onOpenJourney={vi.fn()} />);
+    expect(screen.queryByRole("group", { name: "No task" })).toBeNull();
+    expect(screen.getByText("design approved in round 1, 9/10")).toBeInTheDocument();
+    expect(screen.getAllByRole("group").some((group) => /#900$/.test(group.getAttribute("aria-label") ?? ""))).toBe(true);
+  });
 });

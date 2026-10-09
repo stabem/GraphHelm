@@ -1,7 +1,7 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { duration, pace, typicalStep, type TimedStep } from "../runtime/step-timing";
-import type { TaskState } from "../runtime/team-tasks";
+import { isUnclaimedCritic, type CriticRound, type TaskState } from "../runtime/team-tasks";
 
 /* #391 (journey-first spec §7, Rule 5): one small graph per task, folded from the `task.*` records
  * alone. GitHub is linked, never polled: the view works offline and the records are the audit
@@ -213,6 +213,12 @@ function Node({ task, node, timing }: { task: TaskState; node: StepNode; timing:
   );
 }
 
+function criticLine(critic: CriticRound): string {
+  return critic.verdict === "pass" ? `design approved in round ${critic.round}, ${critic.score}/10`
+    : critic.verdict === "revise" ? `design in revision: round ${critic.round} of ${critic.maxRounds}, ${critic.score}/10`
+    : `design not approved after ${critic.maxRounds} rounds, ${critic.score}/10: needs a person`;
+}
+
 function Graph({ task, changed, onOpenJourney, timing }: { task: TaskState; changed: boolean; onOpenJourney: (contractId: string) => void; timing: Timing }) {
   return (
     <div className={changed ? "task-graph task-graph-changed" : "task-graph"} role="group" aria-label={title(task)}>
@@ -241,13 +247,7 @@ function Graph({ task, changed, onOpenJourney, timing }: { task: TaskState; chan
       <ol className="task-graph-steps">
         {nodesOf(task).map((node) => <Node key={node.key} task={task} node={node} timing={timing} />)}
       </ol>
-      {task.critic !== null && (
-        <p className="task-graph-summary">
-          {task.critic.verdict === "pass" ? `design approved in round ${task.critic.round}, ${task.critic.score}/10`
-            : task.critic.verdict === "revise" ? `design in revision: round ${task.critic.round} of ${task.critic.maxRounds}, ${task.critic.score}/10`
-            : `design not approved after ${task.critic.maxRounds} rounds, ${task.critic.score}/10: needs a person`}
-        </p>
-      )}
+      {task.critic !== null && <p className="task-graph-summary">{criticLine(task.critic)}</p>}
       {task.blockedBy !== null && (GITHUB_URL.test(task.blockedBy.commentUrl)
         ? <a className="task-graph-blocked" href={task.blockedBy.commentUrl} target="_blank" rel="noreferrer">
             blocked by {task.blockedBy.reviewer} at {task.blockedBy.headSha.slice(0, 8)}
@@ -316,7 +316,9 @@ export function TaskGraphs({ tasks, onOpenJourney, now: fixedNow }: TaskGraphsPr
   const changed = useChanged(tasks);
   const now = useNow(fixedNow);
   if (tasks.length === 0) return null;
-  const { open, delivered } = orderedCards(tasks);
+  // #562: a critic round for a task nobody claimed is not a task card.
+  const unclaimed = tasks.filter(isUnclaimedCritic);
+  const { open, delivered } = orderedCards(tasks.filter((task) => !isUnclaimedCritic(task)));
   const clocks = tasks.filter((task) => task.step === "merged").map((task) => task.clock);
   const steps: TimedStep[] = ["implement", "review", "merge"];
   const timing: Timing = {
@@ -327,6 +329,16 @@ export function TaskGraphs({ tasks, onOpenJourney, now: fixedNow }: TaskGraphsPr
   return (
     <section className="task-graphs" aria-label="Tasks">
       {open.map((card) => <CardView key={card.key} card={card} changed={changed} onOpenJourney={onOpenJourney} timing={timing} />)}
+      {unclaimed.length > 0 && (
+        <div className="task-graph" role="group" aria-label="No task">
+          <div className="task-graph-head"><strong>No task</strong></div>
+          {unclaimed.map((task) => (
+            <p key={task.key} className="task-graph-summary">
+              {task.taskId}{task.lane !== null ? ` · ${task.lane}` : ""} · {task.critic !== null ? criticLine(task.critic) : ""}
+            </p>
+          ))}
+        </div>
+      )}
       {delivered.length > 0 && (
         <details className="task-graphs-delivered">
           <summary>Delivered ({delivered.length})</summary>

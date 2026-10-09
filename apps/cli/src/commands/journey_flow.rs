@@ -1560,7 +1560,13 @@ mod tests {
         flow["storage"] = json!([{"key": "graphhelm.handover.last-seen:demo:demo", "value": "1"}]);
 
         let written = draft_bytes(&flow, project.path()).unwrap_or_else(|findings| {
-            panic!("a bounded declaration is valid: {:?}", findings.iter().map(|f| (&f.code, &f.pointer)).collect::<Vec<_>>())
+            panic!(
+                "a bounded declaration is valid: {:?}",
+                findings
+                    .iter()
+                    .map(|f| (&f.code, &f.pointer))
+                    .collect::<Vec<_>>()
+            )
         });
         let reread: Value = serde_yaml_ng::from_str(&written).unwrap();
         assert_eq!(reread["viewport"], flow["viewport"], "{written}");
@@ -1591,7 +1597,10 @@ mod tests {
                 refused.iter().any(|f| f.code == "flow.schema_invalid"
                     && f.pointer.starts_with(&format!("/{field}"))),
                 "{field}={value}: {:?}",
-                refused.iter().map(|f| (&f.code, &f.pointer)).collect::<Vec<_>>()
+                refused
+                    .iter()
+                    .map(|f| (&f.code, &f.pointer))
+                    .collect::<Vec<_>>()
             );
         }
     }

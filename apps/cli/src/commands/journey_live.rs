@@ -996,15 +996,72 @@ fn caller_wait(args: &JourneyOpenArgs) -> Duration {
     }
 }
 
-struct Launched {
+pub(super) struct Launched {
     project: PathBuf,
     script: String,
     dir: PathBuf,
 }
 
+/// What it takes to stop a launched app, apart from the `Launched` that owns it: the preview's
+/// budget watchdog (#560 review) stops the app from its own thread before ending the runner.
+#[derive(Clone)]
+pub(super) struct LaunchedStop {
+    project: PathBuf,
+    script: String,
+    dir: PathBuf,
+}
+
+impl LaunchedStop {
+    /// Runs the launcher's `down`, bounded, then removes the fixture directory.
+    pub(super) fn stop(&self) {
+        let mut command = posix_shell();
+        command
+            .arg(&self.script)
+            .arg("down")
+            .arg(&self.dir)
+            .current_dir(&self.project)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let _ = run_within(command, LAUNCH_DOWN);
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// How long a launcher's `down` may take.
+const LAUNCH_DOWN: Duration = Duration::from_secs(30);
+
+/// Runs `command` to its end, or kills it at `limit` (#560 review: an `up` that hung, a missing
+/// dependency in the fixture, kept the preview runner waiting for ever). `Some(success)` when it
+/// ended, `None` when it was killed or could not start.
+pub(super) fn run_within(mut command: Command, limit: Duration) -> Option<bool> {
+    let mut child = command.spawn().ok()?;
+    let deadline = Instant::now() + limit;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status.success()),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(100)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
 impl Launched {
     fn stop(self) {
         drop(self);
+    }
+
+    /// A handle another thread can stop this app with.
+    pub(super) fn stopper(&self) -> LaunchedStop {
+        LaunchedStop {
+            project: self.project.clone(),
+            script: self.script.clone(),
+            dir: self.dir.clone(),
+        }
     }
 }
 
@@ -1013,16 +1070,7 @@ impl Drop for Launched {
     /// any failure between the launch and the session drops it here (#462: a cold first page
     /// that timed out left the app running).
     fn drop(&mut self) {
-        let _ = posix_shell()
-            .arg(&self.script)
-            .arg("down")
-            .arg(&self.dir)
-            .current_dir(&self.project)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        let _ = std::fs::remove_dir_all(&self.dir);
+        self.stopper().stop();
     }
 }
 
@@ -1040,7 +1088,7 @@ fn base_address(base: &str) -> Option<String> {
     })
 }
 
-fn base_reachable(base: &str) -> bool {
+pub(super) fn base_reachable(base: &str) -> bool {
     use std::net::ToSocketAddrs;
     base_address(base)
         .and_then(|address| address.to_socket_addrs().ok())
@@ -1065,7 +1113,13 @@ fn posix_shell() -> Command {
 }
 
 /// Starts the declared app under test and waits until the flow's base answers.
-fn launch(project: &Path, base: &str) -> Result<Launched> {
+pub(super) fn launch(project: &Path, base: &str) -> Result<Launched> {
+    launch_within(project, base, LAUNCH_READY)
+}
+
+/// [`launch`] with its readiness bound as a parameter, so the bound itself is testable: the
+/// launcher's `up` and the wait for the base together end within `ready`.
+pub(super) fn launch_within(project: &Path, base: &str, ready: Duration) -> Result<Launched> {
     let declared = project.join(FIXTURE_FILE);
     if !safe_node(&declared) {
         return Err(failure("watch.app_down", "/base", 2));
@@ -1107,12 +1161,14 @@ fn launch(project: &Path, base: &str) -> Result<Launched> {
         script,
         dir,
     };
-    let started = command.status().map(|status| status.success());
-    let ready = Instant::now() + LAUNCH_READY;
-    while started.as_ref().is_ok_and(|ok| *ok) && !base_reachable(base) && Instant::now() < ready {
+    let deadline = Instant::now() + ready;
+    // The `up` script is bounded too: one that hangs is killed at `ready` and reads as a failed
+    // launch, never as a run that waits for ever.
+    let started = run_within(command, ready).unwrap_or(false);
+    while started && !base_reachable(base) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(250));
     }
-    if !started.is_ok_and(|ok| ok) || !base_reachable(base) {
+    if !started || !base_reachable(base) {
         launched.stop();
         return Err(failure("watch.launch_failed", "/launcher", 1));
     }
@@ -1770,6 +1826,47 @@ mod caption_tests {
         assert_eq!(row()["caption"], "run.details: Clicks \"Details\"");
         progress.show("bot", 1, None, None, None);
         assert_eq!(row()["caption"], serde_json::Value::Null);
+    }
+}
+
+#[cfg(test)]
+mod launch_tests {
+    /// #560 review (gh-claude-3's real run): a launcher whose `up` never returns is killed at the
+    /// readiness bound and reads as `watch.launch_failed`, instead of holding its caller for ever.
+    /// Cost: about two seconds; a POSIX shell (Git Bash on Windows), temp files only.
+    #[test]
+    fn a_launcher_that_hangs_is_killed_at_its_bound() {
+        use std::time::{Duration, Instant};
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join(".graphhelm")).unwrap();
+        std::fs::write(
+            project.path().join(".graphhelm/journey-fixture.json"),
+            r#"{"schema":"graphhelm-journey-fixture/1","script":"hang.sh"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join("hang.sh"),
+            "#!/usr/bin/env bash\nif [ \"$1\" = up ]; then sleep 120; fi\n",
+        )
+        .unwrap();
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let started = Instant::now();
+        let outcome = super::launch_within(
+            project.path(),
+            &format!("http://127.0.0.1:{port}"),
+            Duration::from_secs(2),
+        );
+        let took = started.elapsed();
+        let code = outcome.err().map(|(code, _, _)| code);
+        assert_eq!(code, Some("watch.launch_failed"));
+        assert!(
+            took < Duration::from_secs(40),
+            "the launcher held its caller for {took:?}"
+        );
     }
 }
 

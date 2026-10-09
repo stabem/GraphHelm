@@ -179,8 +179,29 @@ pub enum JourneyCommand {
     Close(JourneyCloseArgs),
     /// List the project's open live sessions and their current state.
     Sessions(JourneySessionsArgs),
+    /// Run a flow, draft or approved, headless along every path and keep, per screen, whether it
+    /// passed and a masked frame of it (#519). Answers the kept result when it is for this flow
+    /// and commit; otherwise starts a run in the background and answers `running`. Never proof.
+    Preview(JourneyPreviewArgs),
     /// Observe a local app through a selected model route and publish an unapproved draft flow.
     Explore(JourneyExploreArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct JourneyPreviewArgs {
+    /// The flow id (`<id>.journey.yaml`); a draft is accepted.
+    pub id: String,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    /// Run anew even when a current result is kept (the Studio's Run again).
+    #[arg(long)]
+    pub force: bool,
+    /// Answer the kept result without starting a run.
+    #[arg(long, conflicts_with = "force")]
+    pub read: bool,
+    /// Internal: this process is the background run.
+    #[arg(long, hide = true)]
+    pub run: bool,
 }
 
 #[derive(Debug, Args)]

@@ -666,6 +666,14 @@ fn build_router(state: ServeState) -> Router {
             "/v1/journeys/sessions/{id}/frame",
             get(routes::journey_frame),
         )
+        .route(
+            "/v1/journey-flows/{id}/preview",
+            post(routes::start_journey_preview).get(routes::journey_preview),
+        )
+        .route(
+            "/v1/journey-flows/{id}/screens/{screen}/frame",
+            get(routes::journey_screen_frame),
+        )
         .route("/v1/executions/{id}/events", get(routes::events))
         .route(
             "/v1/executions/{id}/evidence/{evidenceId}",

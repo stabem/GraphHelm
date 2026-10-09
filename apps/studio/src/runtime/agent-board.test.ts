@@ -48,4 +48,39 @@ describe("agentBoard", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.lastDelivered).toBe("#6 New");
   });
+  describe("reviewing", () => {
+    const pr = (over: Partial<MissionTask>) => task({ key: "t9", pr: 9, title: "Fix it", lane: "a", step: "review", headSha: "h2", ...over });
+    it("a lane assigned as reviewer on an open PR is Reviewing, not Free", () => {
+      const [r] = agentBoard([bot("rev")], [lane("rev", [])], [pr({ reviewers: ["rev"] })], now);
+      expect(r).toMatchObject({ status: "waiting", label: "Reviewing", doing: "reviewing #9 Fix it", pr: 9, forMs: null });
+    });
+    it("duration is since the open review bar started", () => {
+      const [r] = agentBoard([bot("rev")], [lane("rev", [bar("review", now - 12 * M, true, now, "#9")])], [pr({ reviewers: ["rev"] })], now);
+      expect(r).toMatchObject({ status: "waiting", label: "Reviewing", forMs: 12 * M });
+    });
+    it("Working wins when the lane also implements", () => {
+      const [r] = agentBoard([bot("a")], [lane("a", [bar("implement", now - 5 * M)])], [pr({ reviewers: ["a"] })], now);
+      expect(r!.status).toBe("working");
+      expect(r!.label ?? null).toBeNull();
+    });
+    it("a merged PR does not keep the reviewer busy", () => {
+      const [r] = agentBoard([bot("rev")], [lane("rev", [])], [pr({ reviewers: ["rev"], step: "merged" })], now);
+      expect(r!.status).toBe("free");
+    });
+    it("a verdict on the current head makes the lane Free again; a new head reopens it", () => {
+      const round = { reviewer: "rev", headSha: "h2", fixHead: null };
+      const [done] = agentBoard([bot("rev")], [lane("rev", [])], [pr({ reviewers: ["rev"], rounds: [round] })], now);
+      expect(done!.status).toBe("free");
+      const [blocked] = agentBoard([bot("rev")], [lane("rev", [])], [pr({ reviewers: ["rev"], blocked: true, blockedBy: { reviewer: "rev", headSha: "h2" } })], now);
+      expect(blocked!.status).toBe("free");
+      const [again] = agentBoard([bot("rev")], [lane("rev", [])], [pr({ reviewers: ["rev"], headSha: "h3", rounds: [round] })], now);
+      expect(again!.status).toBe("waiting");
+    });
+  });
+
+  it("never lists TBD or empty names", () => {
+    const rows = agentBoard([bot("TBD"), bot("tbd"), bot(""), bot("ok")], [lane("Tbd", []), lane(" ", []), lane("real", [])],
+      [task({ reviewers: ["TBD"], step: "review" })], now);
+    expect(rows.map((r) => r.name).sort()).toEqual(["ok", "real"]);
+  });
 });

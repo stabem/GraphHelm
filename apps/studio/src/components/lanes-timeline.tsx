@@ -48,10 +48,10 @@ function AgentBoard({ rows }: { rows: AgentRow[] }) {
       </div>
       <ul className="ab-rows" aria-label="Agent board">
         {shown.map((r) => {
-          const what = r.stage ? `${STAGE[r.stage]}${r.pr ? ` PR #${r.pr}` : ""}${r.title ? ` ${r.title}` : ""}` : "—";
+          const what = r.doing ? r.doing : r.stage ? `${STAGE[r.stage]}${r.pr ? ` PR #${r.pr}` : ""}${r.title ? ` ${r.title}` : ""}` : "—";
           return (
             <li key={r.name} className="ab-row">
-              <span className="ab-pill" data-status={r.status}>{PILL[r.status]}</span>
+              <span className="ab-pill" data-status={r.status}>{r.label ?? PILL[r.status]}</span>
               <span className="ab-name">{r.name}</span>
               <span className="ab-what">{r.href ? <a href={r.href} target="_blank" rel="noreferrer">{what}</a> : what}</span>
               <span className="ab-for">{r.forMs === null ? "—" : r.status === "free" ? `free for ${span(r.forMs)}` : `for ${span(r.forMs)}`}</span>

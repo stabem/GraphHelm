@@ -181,7 +181,7 @@ fn an_approved_journey_holds_before_its_destructive_act_and_plays_it_only_when_c
         "base": base,
         "actors": ["owner"],
         "secrets": [],
-        "risks": ["data_loss"],
+        "risks": ["irreversible_effect"],
         "screens": [
             {"id":"account","url":"/account","state":"stable",
              "expect":[{"role":"heading","name":"Account"}],"scope":["fixture-server.mjs"]},

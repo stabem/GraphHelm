@@ -13,7 +13,7 @@ describe("PlayerSetup (#519)", () => {
     expect(screen.getByText(/Adds @playwright\/test to package\.json .* downloads Chromium, ~150 MB/)).toBeTruthy();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Install" })); });
     expect(setup).toHaveBeenCalledTimes(1);
-    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(onDone).toHaveBeenCalledWith("Journey player installed. Changed: package.json (created), .graphhelm/observers/journey_driver.mjs (created).");
     expect(screen.getByRole("status").textContent).toContain("Changed: package.json (created), .graphhelm/observers/journey_driver.mjs (created).");
   });
 

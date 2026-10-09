@@ -15,6 +15,8 @@ export interface NativeChatsProps {
   boundChat?: NativeChatSummary;
   personaCharter?: string;
   onLinkPersona?: (chat: NativeChatSummary, charter: string) => Promise<void>;
+  /** #585: opened from Main chat's "Connect existing chat", the picker starts open. */
+  startOpen?: boolean;
 }
 
 function sortChats(chats: NativeChatSummary[]): NativeChatSummary[] {
@@ -36,7 +38,7 @@ function statusLabel(request: NativeChatRequest): string {
   }
 }
 
-export function NativeChats({ client, executionId, nodeId, refreshSequence = 0, boundChat, personaCharter = "", onLinkPersona }: NativeChatsProps) {
+export function NativeChats({ client, executionId, nodeId, refreshSequence = 0, boundChat, personaCharter = "", onLinkPersona, startOpen = false }: NativeChatsProps) {
   const [chats, setChats] = useState<NativeChatSummary[]>([]);
   const [requests, setRequests] = useState<NativeChatRequest[]>([]);
   const [selectedChatId, setSelectedChatId] = useState(boundChat?.id ?? "");
@@ -50,7 +52,7 @@ export function NativeChats({ client, executionId, nodeId, refreshSequence = 0, 
   const [localRequest, setLocalRequest] = useState<NativeChatRequest | null>(null);
   const [catalogCursor, setCatalogCursor] = useState<string | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(false);
-  const [open, setOpen] = useState(Boolean(boundChat));
+  const [open, setOpen] = useState(Boolean(boundChat) || startOpen);
   const [role, setRole] = useState("");
   const [personality, setPersonality] = useState("");
   const [linkingPersona, setLinkingPersona] = useState(false);

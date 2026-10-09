@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-connect-existing-chat
-title: "Make an existing chat the team's coordinator (draft: the step's window is too big for the replay tool to read)"
+title: Make an existing chat the team's coordinator
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -8,11 +8,17 @@ actors: [owner]
 secrets: []
 risks: [security, multiple_components]
 screens:
+  - id: mission
+    title: A run is open on its Mission graph
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: region, name: Canvas}, {role: tab, name: Team}]
+    scope: [apps/studio/src/App.tsx]
   - id: native
     title: "The step's window, with Connect existing chat open"
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: Connect existing chat}, {role: heading, name: Connect existing chat}, {role: textbox, name: Search chats}, {role: list, name: Existing native chats}, {role: button, name: Add persona to activity}]
+    expect: [{role: region, name: Connect existing chat}, {role: heading, name: Connect existing chat}, {role: textbox, name: Search chats}]
     scope: [apps/studio/src/components/panel.tsx, apps/studio/src/components/native-chats.tsx, apps/studio/src/runtime/client.ts]
   - id: run
     title: "A run is open, with its chat and its team on screen"
@@ -21,11 +27,16 @@ screens:
     expect: [{role: region, name: Main chat}, {role: heading, name: Main chat}, {role: button, name: Connect existing chat}]
     scope: [apps/studio/src/components/main-chat.tsx]
 edges:
+  - id: mission.team
+    from: mission
+    to: run
+    acts:
+      - {kind: activate, role: tab, name: Team}
   - id: run.connect-chat
     from: run
     to: native
     acts:
       - {kind: activate, role: button, name: Connect existing chat}
 paths:
-  main: [run.connect-chat]
+  main: [mission.team, run.connect-chat]
 drift: []

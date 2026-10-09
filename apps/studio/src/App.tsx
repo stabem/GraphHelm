@@ -196,6 +196,8 @@ export default function App({
   const toolsRef = useRef<RegisteredTools | null>(null);
 
   const [runActionsOpen, setRunActionsOpen] = useState(false);
+  /** #585: the step whose chat picker Main chat's "Connect existing chat" opened. */
+  const [connectingNode, setConnectingNode] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   /** What the rail calls this folder. Named by the operator; absent, the rail says what it can. */
   const [project, setProject] = useState<string | null>(null);
@@ -3001,7 +3003,12 @@ export default function App({
                   seed={mainChatSeed} refreshNonce={nativeRefresh} onRequestsChange={onRequestsChange}
                   onConnect={() => {
                     const first = model.nodes[0];
-                    if (first) setFocus({ kind: "node", id: first.id });
+                    if (first) {
+                      // #585: the step's window opens with its chat picker open, not one more
+                      // "Connect existing chat" to press.
+                      setConnectingNode(first.id);
+                      setFocus({ kind: "node", id: first.id });
+                    }
                   }} />
               </aside>}
               onSend={async (text, to, replyTo, task) => {
@@ -3574,10 +3581,11 @@ export default function App({
                   }
                   nativeChats={
                     <NativeChats
-                      key={`native-${selected}-${node.id}`}
+                      key={`native-${selected}-${node.id}-${connectingNode === node.id}`}
                       client={clientRef.current}
                       executionId={selected}
                       nodeId={node.id}
+                      startOpen={connectingNode === node.id}
                       refreshSequence={status?.headSequence ?? 0}
                       onLinkPersona={(chat, charter) => linkNativePersona(node.id, chat, charter)}
                     />

@@ -940,6 +940,31 @@ pub(super) fn url_matches(base: &str, pattern: &str, observed: &str) -> bool {
 }
 
 /// The installed observer must be byte-identical to this binary's bundled driver.
+/// #585: the browser a flow declares for its runs: its `viewport` (else `default`), and the
+/// `storage` the driver seeds once for the base origin. Every runner that opens a flow (replay,
+/// preview, watch, open) adds both to its `open` request, so a declared phone size or a
+/// remembered visit holds on every path.
+pub(super) fn declared_browser(flow: &Value, default: Value) -> (Value, Option<Value>) {
+    let viewport = if flow["viewport"].is_object() {
+        flow["viewport"].clone()
+    } else {
+        default
+    };
+    let storage = flow["storage"]
+        .as_array()
+        .filter(|entries| !entries.is_empty())
+        .map(|entries| Value::from(entries.clone()));
+    (viewport, storage)
+}
+
+/// `open`'s request with the flow's declared storage added, when it declares any.
+pub(super) fn with_storage(mut open: Value, storage: Option<&Value>) -> Value {
+    if let Some(storage) = storage {
+        open["storage"] = storage.clone();
+    }
+    open
+}
+
 pub(super) fn observer_ready(project: &Path) -> Result<()> {
     let installed = project.join(".graphhelm/observers/journey_driver.mjs");
     let expected = include_bytes!("../../../../tools/journey-driver/driver.mjs");
@@ -1304,10 +1329,12 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
     let reused = previous
         .as_ref()
         .filter(|cache| cache["flowDigest"] == digest);
-    let viewport = previous
+    // #585: a declared viewport wins; a changed one changes the digest, so no cache is reused.
+    let fallback = previous
         .as_ref()
         .map(|cache| cache["viewport"].clone())
         .unwrap_or(json!({"width":1280,"height":720}));
+    let (viewport, storage) = declared_browser(&flow, fallback);
     data["flowDigest"] = digest.clone().into();
     data["viewport"] = viewport.clone();
     data["cacheReused"] = reused.is_some().into();
@@ -1379,7 +1406,7 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
         data["paths"][index] = path_data.clone();
         let mut driver = Driver::start(&project, temporary.path(), &secrets)?;
         let base = flow["base"].as_str().unwrap();
-        driver.call("open",json!({"base":format!("{}{}",base.trim_end_matches('/'),screens[first]["url"].as_str().unwrap()),"viewport":viewport,"allowOrigins":args.allow_origin,"survive":args.heal}),&format!("/paths/{name}/entry"))?;
+        driver.call("open",with_storage(json!({"base":format!("{}{}",base.trim_end_matches('/'),screens[first]["url"].as_str().unwrap()),"viewport":viewport,"allowOrigins":args.allow_origin,"survive":args.heal}),storage.as_ref()),&format!("/paths/{name}/entry"))?;
         let mut last_capture: Option<String> = None;
         for (step_index, screen_id) in visited.iter().enumerate() {
             if step_index > 0 {
@@ -1840,6 +1867,32 @@ fn supervise(args: &JourneyReplayArgs, deadline: Instant) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #585: every runner opens a flow's browser as the flow declares: its viewport (else the
+    /// runner's default) and its storage, which `open` carries only when there is some.
+    /// Defects named: a declared viewport ignored, or an empty/absent storage sent as a key the
+    /// driver would have to accept. Cost: microseconds.
+    #[test]
+    fn a_runner_opens_the_browser_the_flow_declares() {
+        let default = json!({"width": 1280, "height": 720});
+        let (viewport, storage) = declared_browser(&json!({}), default.clone());
+        assert_eq!(viewport, default);
+        assert!(storage.is_none());
+        let open = with_storage(json!({"base": "http://localhost/"}), storage.as_ref());
+        assert!(open.get("storage").is_none());
+
+        let flow = json!({"viewport": {"width": 390, "height": 844},
+            "storage": [{"key": "seen", "value": "1"}]});
+        let (viewport, storage) = declared_browser(&flow, default.clone());
+        assert_eq!(viewport, json!({"width": 390, "height": 844}));
+        let open = with_storage(json!({"base": "http://localhost/"}), storage.as_ref());
+        assert_eq!(open["storage"], json!([{"key": "seen", "value": "1"}]));
+        assert!(
+            declared_browser(&json!({"storage": []}), default)
+                .1
+                .is_none()
+        );
+    }
 
     /// Contract: successful replies are closed typed frames, not trusted arbitrary JSON.
     /// Regression: unknown nested fields, a non-exact locator or false masking silently passes.

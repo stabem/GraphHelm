@@ -28,6 +28,13 @@ test('closed protocol refuses malformed, secret, sequence and oversized frames',
     // #356: `survive` (a healing replay keeps its session at the broken edge) is boolean too.
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], survive: true }, 'driver.observer_missing'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], survive: 1 }, 'driver.protocol_invalid'],
+    // #585: `storage` is the flow's localStorage for the base origin: at most 16 {key, value} strings.
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], storage: [{key:'seen',value:'1'}] }, 'driver.observer_missing'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], storage: {seen:'1'} }, 'driver.protocol_invalid'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], storage: [{key:'seen'}] }, 'driver.protocol_invalid'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], storage: [{key:'',value:'1'}] }, 'driver.protocol_invalid'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], storage: [{key:'seen',value:7}] }, 'driver.protocol_invalid'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], storage: Array.from({length:17},(_,i)=>({key:`k${i}`,value:''})) }, 'driver.protocol_invalid'],
     // #491: `show` is boolean and only for a headed window; the `show` op needs such a session.
     // #519: a headless watch shows in the page and may stream frames; a headed one may not stream.
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], show: true, screencast: true }, 'driver.observer_missing'],

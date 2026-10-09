@@ -1,12 +1,13 @@
 schema: graphhelm.journey-flow/1
 id: studio-handover
-title: "Read While you were away and dismiss it (draft: the replay cannot set when you were last here)"
+title: Read While you were away and dismiss it
 status: draft
 approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux]
+storage: [{key: graphhelm.handover.last-seen:demo:demo, value: "1"}]
 screens:
   - id: handover
     title: The While you were away card (shows after 15+ minutes and 20+ events away)

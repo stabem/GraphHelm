@@ -1,12 +1,13 @@
 schema: graphhelm.journey-flow/1
 id: studio-mobile
-title: "On a phone, switch between Chat, Team and Journeys (draft: the journey cannot ask for a phone-sized screen)"
+title: "On a phone, switch between Chat, Team and Journeys"
 status: draft
 approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [accessibility, critical_ux]
+viewport: {width: 390, height: 844}
 screens:
   - id: chat
     title: "On a phone: the Chat tab"
@@ -24,7 +25,7 @@ screens:
     title: "On a phone: the Team tab (shown first)"
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: tablist, name: Studio columns}, {role: tab, name: Chat}, {role: tab, name: Team}, {role: tab, name: Journeys}, {role: region, name: Team}]
+    expect: [{role: tablist, name: Studio columns}, {role: tab, name: Chat}, {role: tab, name: Journeys}, {role: region, name: Canvas}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/styles.css, apps/studio/src/dock-reserve.ts, apps/studio/src/components/team-canvas.tsx]
 edges:
   - id: chat.journeys

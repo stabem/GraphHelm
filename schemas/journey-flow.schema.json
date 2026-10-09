@@ -78,6 +78,51 @@
         ]
       }
     },
+    "viewport": {
+      "description": "The page size every run of this flow opens at (#585). Absent: the runner's default.",
+      "type": "object",
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 320,
+          "maximum": 3840
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 320,
+          "maximum": 2160
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "additionalProperties": false
+    },
+    "storage": {
+      "description": "localStorage entries for the base origin, seeded once when a run opens its browser; they survive reloads and the app may overwrite them (#585). Never a secret.",
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
     "screens": {
       "type": "array",
       "items": {

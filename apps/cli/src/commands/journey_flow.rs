@@ -1584,15 +1584,19 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
     let mut out = String::new();
     for field in [
         "schema", "id", "title", "status", "approved", "base", "actors", "secrets", "risks",
+        "viewport", "storage",
     ] {
         if approval_projection && matches!(field, "status" | "approved") {
             continue;
         }
+        // #585: how a run opens its browser is part of what the owner approves.
+        let order: &[&str] = match field {
+            "viewport" => &["width", "height"],
+            "storage" => &["key", "value"],
+            _ => &["revision", "digest"],
+        };
         if let Some(v) = value.get(field) {
-            out.push_str(&format!(
-                "{field}: {}\n",
-                inline(v, &["revision", "digest"])
-            ));
+            out.push_str(&format!("{field}: {}\n", inline(v, order)));
         }
     }
     for (group, fields) in [
@@ -1700,5 +1704,77 @@ mod tests {
         let refused = draft_bytes(&flow, project.path()).unwrap_err();
         assert_eq!(refused[0].code, "flow.safe_owner_only");
         assert_eq!(refused[0].pointer, "/edges/1/safe");
+    }
+
+    /// #585: a flow may declare the page size its runs open at and the localStorage they start
+    /// with. Both are part of what the owner approves (a phone-sized run, or one that "remembers"
+    /// a visit, is a different journey), both survive the canonical writer, and both are bounded.
+    /// Defects named: either field dropped by `canonical` (a `--fmt` or an agent write would erase
+    /// it), left out of the approval digest (changing it would keep an approval), or unbounded.
+    /// Cost: one tempdir, no I/O beyond it.
+    #[test]
+    fn a_declared_viewport_and_storage_are_written_approved_and_bounded() {
+        let project = tempfile::tempdir().unwrap();
+        for file in [
+            "app/cart/page.tsx",
+            "app/checkout/page.tsx",
+            "app/api/pay/route.ts",
+        ] {
+            let path = project.path().join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "export {}").unwrap();
+        }
+        let plain: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_flow/checkout.journey.yaml"
+        ))
+        .unwrap();
+        let mut flow = plain.clone();
+        flow["viewport"] = json!({"width": 390, "height": 844});
+        flow["storage"] = json!([{"key": "graphhelm.handover.last-seen:demo:demo", "value": "1"}]);
+
+        let written = draft_bytes(&flow, project.path()).unwrap_or_else(|findings| {
+            panic!(
+                "a bounded declaration is valid: {:?}",
+                findings
+                    .iter()
+                    .map(|f| (&f.code, &f.pointer))
+                    .collect::<Vec<_>>()
+            )
+        });
+        let reread: Value = serde_yaml_ng::from_str(&written).unwrap();
+        assert_eq!(reread["viewport"], flow["viewport"], "{written}");
+        assert_eq!(reread["storage"], flow["storage"], "{written}");
+
+        let digest = approval_digest(&flow);
+        assert_ne!(digest, approval_digest(&plain));
+        let mut wider = flow.clone();
+        wider["viewport"]["width"] = 391.into();
+        assert_ne!(digest, approval_digest(&wider));
+        let mut other = flow.clone();
+        other["storage"][0]["value"] = "2".into();
+        assert_ne!(digest, approval_digest(&other));
+
+        for (field, value) in [
+            ("viewport", json!({"width": 100, "height": 844})),
+            ("viewport", json!({"width": 390})),
+            ("storage", json!([{"key": "", "value": "1"}])),
+            (
+                "storage",
+                Value::from(vec![json!({"key": "k", "value": ""}); 17]),
+            ),
+        ] {
+            let mut bad = plain.clone();
+            bad[field] = value.clone();
+            let refused = draft_bytes(&bad, project.path()).unwrap_err();
+            assert!(
+                refused.iter().any(|f| f.code == "flow.schema_invalid"
+                    && f.pointer.starts_with(&format!("/{field}"))),
+                "{field}={value}: {:?}",
+                refused
+                    .iter()
+                    .map(|f| (&f.code, &f.pointer))
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 }

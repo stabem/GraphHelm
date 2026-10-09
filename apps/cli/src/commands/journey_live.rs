@@ -702,7 +702,8 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     // An open is deterministic only through a current cache: absent or void, refuse. A watch
     // plays the flow's own role/name acts, so a draft that was never replayed can be watched.
     let cache = if args.watch {
-        json!({"viewport":{"width":WATCH_WIDTH,"height":WATCH_HEIGHT},"edges":{}})
+        // #585: a flow that declares its viewport is watched at that size.
+        json!({"viewport":super::journey_replay::declared_browser(&flow, json!({"width":WATCH_WIDTH,"height":WATCH_HEIGHT})).0,"edges":{}})
     } else {
         let cache_file = project
             .join(".graphhelm/journey-cache")
@@ -744,7 +745,12 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     // #519: the reply says how this play is seen: frames for the Studio, or a window here.
     data["headed"] = (!streamed).into();
     data["frame"] = streamed.into();
-    let mut open = json!({"base":entry,"viewport":cache["viewport"],"allowOrigins":args.allow_origin,"headed":!streamed});
+    let mut open = super::journey_replay::with_storage(
+        json!({"base":entry,"viewport":cache["viewport"],"allowOrigins":args.allow_origin,"headed":!streamed}),
+        super::journey_replay::declared_browser(&flow, Value::Null)
+            .1
+            .as_ref(),
+    );
     if args.watch {
         // #491: the caption and outline are drawn in the page. #519: by default the page streams
         // as frames the Studio shows; `--window` keeps the maximized window instead.

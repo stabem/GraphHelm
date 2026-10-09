@@ -22,6 +22,8 @@ export interface NeedsYouInput {
   pendingDraftIds: string[];
   nodeNames: Record<string, string>;
   operatorId: string;
+  /** An agent's recorded work stands in this run's log (the same fact the run tag reads). */
+  agentWorkRecorded?: boolean;
 }
 
 export function needsYou(input: NeedsYouInput): { state: BeaconState; items: NeedsYouItem[] } {
@@ -45,6 +47,11 @@ export function needsYou(input: NeedsYouInput): { state: BeaconState; items: Nee
     if (step === null) continue;
     items.push({ kind: step, key: `${kind}:${node}`, nodeId: node, name: input.nodeNames[node] ?? node, reason: kind });
   }
+  // A running graph step that waits while agents record work and nothing else is open is a technical
+  // fact, not an owner request (#511): the run tag already reads it as calm, so the beacon does too.
+  const graphWaitOnly = input.status?.status === "running" && input.agentWorkRecorded === true
+    && items.length > 0 && items.every((item) => item.kind === "waiting_step");
+  if (graphWaitOnly) items.length = 0;
   const state: BeaconState = input.status === null || input.stale || input.nativeRequests === null
     ? { kind: "unknown", reason: RUNTIME_SILENT }
     : items.length > 0 ? { kind: "lit", count: items.length } : { kind: "dark" };

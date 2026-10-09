@@ -1988,8 +1988,9 @@ export default function App({
   useEffect(() => { setNativeRequests(null); }, [selected]);
   const nodeNames = useMemo(() => Object.fromEntries(model.nodes.flatMap((node) => node.declaredName ? [[node.id, node.declaredName] as const] : [])), [model]);
   const needs = useMemo(() => needsYou({ status, stale, events: eventList, envelopes, nativeRequests,
-    pendingDraftIds: durableProposals.map((proposal) => proposal.draftId), nodeNames, operatorId: OPERATOR_ACTOR.id }),
-    [status, stale, eventList, envelopes, nativeRequests, durableProposals, nodeNames]);
+    pendingDraftIds: durableProposals.map((proposal) => proposal.draftId), nodeNames, operatorId: OPERATOR_ACTOR.id,
+    agentWorkRecorded: hasRecordedAgentWork }),
+    [status, stale, eventList, envelopes, nativeRequests, durableProposals, nodeNames, hasRecordedAgentWork]);
   const waitingAskers = useMemo(() => new Set(needs.items.flatMap((item) => item.kind === "question" ? [item.asker] : [])), [needs]);
   const team = useMemo(() => teamModel({ events: eventList, envelopes, personas, nativeLinks: nativePersonaLinks, aliases: actorAliases, model,
     claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null, waitingAskers, now: clock }),

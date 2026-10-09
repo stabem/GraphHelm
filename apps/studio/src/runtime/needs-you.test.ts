@@ -85,6 +85,15 @@ describe("needsYou", () => {
     expect(items.map((item) => item.key)).toEqual(["native:r-unobserved", "native:r-blocked"]);
   });
 
+  // #511: a run used only as the team's bus showed "1 decision needs you" for a graph step nobody asked about.
+  it("does not count a waiting graph step as a decision while agents record work and nothing else is open", () => {
+    const status = { ...STATUS, attention: "needs_you" as const, attentionReasons: [{ kind: "waiting_input_node", node: "implementation" }] };
+    expect(needsYou(base({ status, agentWorkRecorded: true }))).toEqual({ state: { kind: "dark" }, items: [] });
+    expect(needsYou(base({ status })).state).toEqual({ kind: "lit", count: 1 });
+    expect(needsYou(base({ status, agentWorkRecorded: true, events: question, envelopes: asked })).items.map((item) => item.kind)).toEqual(["question", "waiting_step"]);
+    expect(needsYou(base({ status: { ...status, status: "paused" }, agentWorkRecorded: true })).state).toEqual({ kind: "lit", count: 1 });
+  });
+
   it("lists waiting and blocked steps by name, and pending drafts", () => {
     const status = { ...STATUS, attentionReasons: [{ kind: "waiting_input_node", node: "start" }, { kind: "blocked_node", node: "cart" }, { kind: "untriaged_interruption", node: "pay" }] };
     const items = needsYou(base({ status, nodeNames: { cart: "Cart page" }, pendingDraftIds: ["d-1"] })).items;

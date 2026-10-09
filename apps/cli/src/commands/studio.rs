@@ -591,7 +591,8 @@ mod tests {
             "the launcher must say the Runtime exited: {said}"
         );
         assert!(
-            elapsed < std::time::Duration::from_secs(15),
+            // Scaled like the repository's other test deadlines (#549): a loaded machine is slower.
+            elapsed < crate::test_time::scaled(std::time::Duration::from_secs(15)),
             "took {elapsed:?}: {said}"
         );
     }

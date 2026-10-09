@@ -1156,7 +1156,8 @@ fn the_slot_builds_on_the_owners_target_root_caps_a_lane_and_reclaims_orphans() 
     std::fs::remove_dir_all(&two).unwrap();
     std::fs::remove_dir_all(&three).unwrap();
     std::fs::remove_dir_all(fast.join("lane-a/wt-three")).unwrap();
-    link_dir(&fast.join("lane-a/wt-three"), &outside);
+    // `mklink` reads a forward slash as a switch: the link path is joined part by part.
+    link_dir(&fast.join("lane-a").join("wt-three"), &outside);
     let sweep = |apply: bool| {
         let mut args = vec!["sweep", "--root", root.to_str().unwrap()];
         if apply {

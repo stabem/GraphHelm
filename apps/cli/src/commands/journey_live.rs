@@ -1068,6 +1068,41 @@ pub(super) struct LaunchedStop {
 }
 
 impl LaunchedStop {
+    /// What a reader needs to stop this app after its runner is gone (#593 review): the launcher
+    /// script and the fixture directory. The project is the reader's own.
+    pub(super) fn record(&self) -> Value {
+        json!({"script": self.script, "dir": self.dir.to_string_lossy()})
+    }
+
+    /// The stop handle a record names, only when it still names this project's declared launcher
+    /// and a `graphhelm-watch-*` directory directly in this machine's temp directory: an edited
+    /// state file cannot make a reader run another script or remove another directory.
+    pub(super) fn from_record(project: &Path, record: &Value) -> Option<Self> {
+        let script = record["script"].as_str()?;
+        let declared: Value = std::fs::read(project.join(FIXTURE_FILE))
+            .ok()
+            .filter(|bytes| bytes.len() <= FRAME)
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())?;
+        if declared["script"].as_str() != Some(script) {
+            return None;
+        }
+        let dir = PathBuf::from(record["dir"].as_str()?);
+        let temp = std::env::temp_dir();
+        let in_temp = dir.parent().is_some_and(|parent| {
+            parent == temp
+                || parent.canonicalize().ok().as_deref() == temp.canonicalize().ok().as_deref()
+        });
+        let named = dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("graphhelm-watch-"));
+        (in_temp && named).then(|| LaunchedStop {
+            project: project.to_path_buf(),
+            script: script.to_owned(),
+            dir,
+        })
+    }
+
     /// Runs the launcher's `down`, bounded, then removes the fixture directory.
     pub(super) fn stop(&self) {
         let mut command = posix_shell();

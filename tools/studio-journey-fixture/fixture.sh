@@ -43,7 +43,7 @@ up)
     --keyring "$dir/.graphhelm/keyring" --key-id studio --gateway-manifest "$dir/.graphhelm/routes.json" \
     > "$dir/.graphhelm/serve.out" 2> "$dir/.graphhelm/serve.err" &
   echo "ports $rport $sport" > "$pids"
-  echo "serve $!" >> "$pids"
+  echo "serve $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
   for _ in $(seq 1 30); do curl -sf --max-time 10 "http://127.0.0.1:$rport/health" > /dev/null && break; sleep 1; done
   curl -sf --max-time 10 "http://127.0.0.1:$rport/health" > /dev/null || { echo "runtime did not answer on $rport"; cat "$dir/.graphhelm/serve.err"; exit 1; }
   # The seeded run: the manual-override example, one blocked node, one ready node.
@@ -72,25 +72,31 @@ up)
   export GRAPHHELM_EVENTS="$dir/.graphhelm/events" GRAPHHELM_RUNTIME_URL="http://127.0.0.1:$rport" \
     GRAPHHELM_STUDIO_SESSION_NONCE=studio-fixture GRAPHHELM_PROJECT=demo
   nohup npm --prefix "$repo/apps/studio" run dev -- --port "$sport" --strictPort > "$dir/.graphhelm/studio.out" 2>&1 &
-  echo "studio $!" >> "$pids"
+  echo "studio $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
   for _ in $(seq 1 60); do curl -sf --max-time 10 -o /dev/null "http://127.0.0.1:$sport/__studio/session?nonce=studio-fixture" && break; sleep 1; done
   curl -sf --max-time 10 -o /dev/null "http://127.0.0.1:$sport/__studio/session?nonce=studio-fixture" || { echo "studio did not answer on $sport"; tail -20 "$dir/.graphhelm/studio.out"; exit 1; }
   echo "fixture up: runtime http://127.0.0.1:$rport, studio http://127.0.0.1:$sport/?session=studio-fixture"
   echo "replay secret: export GRAPHHELM_SECRET_STUDIO_TOKEN=\"\$(head -1 '$dir/.graphhelm/events.token')\""
   ;;
 down)
-  # The recorded pids are the shell's; on Windows (Git Bash) they are MSYS pids, not the ones the
-  # OS knows, so the listeners are found by port instead. Only the fixture's two ports are touched.
+  # Each record is `<name> <shell pid> [<OS pid>]`. On Windows (Git Bash) the shell pid is an MSYS
+  # pid the OS does not know, so the OS pid taken from /proc/<pid>/winpid at start is used.
   [ -f "$pids" ] || { echo "nothing recorded in $pids"; exit 0; }
   ports=$(sed -n 's/^ports //p' "$pids")
   if [ "$(uname -s | cut -c1-5)" = "MINGW" ] || [ "$(uname -s | cut -c1-6)" = "CYGWIN" ]; then
-    for port in $ports; do
+    # #593 review: the OS pid recorded at start is killed with its tree; a port is only the
+    # fallback for a record without one, since after a crash another lane may own that port.
+    winpids=$(awk '$1 != "ports" && $3 != "" {print $3}' "$pids")
+    for pid in $winpids; do
+      taskkill //PID "$pid" //T //F > /dev/null 2>&1 && echo "stopped pid $pid"
+    done
+    [ -n "$winpids" ] || for port in $ports; do
       for pid in $(netstat -ano | grep LISTENING | grep -E "127\.0\.0\.1:$port " | awk '{print $NF}' | sort -u); do
         taskkill //PID "$pid" //T //F > /dev/null 2>&1 && echo "stopped port $port (pid $pid)"
       done
     done
   else
-    while read -r name pid; do [ "$name" = ports ] && continue; kill "$pid" 2> /dev/null && echo "stopped $name ($pid)"; done < "$pids"
+    while read -r name pid _; do [ "$name" = ports ] && continue; kill "$pid" 2> /dev/null && echo "stopped $name ($pid)"; done < "$pids"
   fi
   rm -f "$pids"
   ;;

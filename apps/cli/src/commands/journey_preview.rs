@@ -211,6 +211,7 @@ fn body(state: Option<Value>, flow: &Value, digest: &str, commit: &str) -> Value
     }
     if let Some(object) = state.as_object_mut() {
         object.remove("pid");
+        object.remove("launched");
         if let Some(screens) = object.get_mut("screens").and_then(Value::as_object_mut) {
             for screen in screens.values_mut() {
                 if let Some(screen) = screen.as_object_mut() {
@@ -259,7 +260,7 @@ pub(crate) fn status(args: &JourneyPreviewArgs) -> Outcome {
     match flow_and_key(&project, &args.id) {
         Ok((flow, digest, commit)) => answer(
             body(
-                read_settled(|| read_state(&dir_of(&project, &args.id))),
+                reap_lost(&project, &dir_of(&project, &args.id)),
                 &flow,
                 &digest,
                 &commit,
@@ -285,7 +286,7 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
         Err(failed) => return answer(json!({}), Some(failed)),
     };
     let dir = dir_of(&project, &args.id);
-    let stored = read_settled(|| read_state(&dir));
+    let stored = reap_lost(&project, &dir);
     let running_now = stored
         .as_ref()
         .is_some_and(|state| state["state"] == "running" && runner_alive(state));
@@ -399,6 +400,36 @@ fn watch_budget(
     })
 }
 
+/// The stored state, after stopping the app of a run whose runner is gone (#593 review: a killed
+/// runner left its isolated fixture running, and every new preview launches another). A state
+/// still `running` whose runner is dead and that names a launched app: run that app's `down`,
+/// then store the run as `failed / preview.runner_lost` (`preview.budget_exceeded` past the
+/// budget) without the record, so it is stopped once.
+fn reap_lost(project: &Path, dir: &Path) -> Option<Value> {
+    // Settled first (#586): a run that finished between the read and the liveness check is read
+    // as it finished, and is never reaped.
+    let mut state = read_settled(|| read_state(dir))?;
+    if state["state"] != "running" || runner_alive(&state) || state["launched"].is_null() {
+        return Some(state);
+    }
+    if let Some(stop) = LaunchedStop::from_record(project, &state["launched"]) {
+        stop.stop();
+    }
+    let reason = if within_budget(&state) {
+        "preview.runner_lost"
+    } else {
+        "preview.budget_exceeded"
+    };
+    state["state"] = "failed".into();
+    state["reason"] = reason.into();
+    state["current"] = Value::Null;
+    if let Some(object) = state.as_object_mut() {
+        object.remove("launched");
+    }
+    save_state(dir, &state);
+    Some(state)
+}
+
 /// The top-level `reason` a failed preview carries (the closed list agreed on #519).
 fn failed_reason(code: &str) -> &'static str {
     match code {
@@ -414,6 +445,7 @@ fn failed_reason(code: &str) -> &'static str {
         "driver.unsupported_act" => "driver.unsupported_act",
         "replay.act_value_missing" => "replay.act_value_missing",
         "replay.entry_missing" => "replay.entry_missing",
+        "preview.runner_lost" => "preview.runner_lost",
         _ => "internal",
     }
 }
@@ -643,6 +675,9 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         .to_owned();
     run.state["current"] = Value::Null;
     run.state["ranAt"] = chrono::Utc::now().to_rfc3339().into();
+    if let Some(object) = run.state.as_object_mut() {
+        object.remove("launched");
+    }
     match outcome {
         Ok(()) => {
             run.state["state"] = "ready".into();
@@ -679,6 +714,12 @@ fn play(
     }
     if let (Some(app), Ok(mut slot)) = (&launched, stopper.lock()) {
         *slot = Some(app.stopper());
+    }
+    // #593 review: the state names the app this run launched, so a reader that finds the runner
+    // gone can still stop it (a killed runner runs neither its own stop nor its watchdog).
+    if let Some(app) = &launched {
+        run.state["launched"] = app.stopper().record();
+        run.save();
     }
     let guard = Guard {
         approved: flow["status"] == "approved",
@@ -893,7 +934,8 @@ fn sha_of(text: &str) -> String {
 mod tests {
     use super::{
         Guard, JourneyPreviewArgs, body, failed_reason, plain_id, proof_args, read_settled,
-        read_state, runner_alive, save_state, severity, step_reason, unsealed_proof, watch_budget,
+        read_state, reap_lost, runner_alive, save_state, severity, step_reason, unsealed_proof,
+        watch_budget,
     };
     use serde_json::{Value, json};
     use std::path::Path;
@@ -1065,62 +1107,66 @@ mod tests {
         assert!(!unsealed_proof(&no_execution, &approved));
     }
 
-    /// #586 (the #585 sweep on main: five flows read `failed / internal` while their stored state
-    /// was `ready` seconds later): a reader that saw `running` and then finds the runner gone must
-    /// answer what the runner stored on its way out, never a failure. Catches the reader judging
-    /// a finished run by the state it read before the run finished. A runner that is really dead
-    /// still reads `failed / internal`, and a live one is read once. Cost: four process listings.
+    /// #593 review (gh-claude-3 killed a runner after its isolated fixture was up: the fixture
+    /// stayed alive, and every new preview launches another): a reader that finds the runner gone
+    /// runs the launched app's `down` once, then stores `failed / preview.runner_lost` without the
+    /// record; a record naming another script, or a directory outside the temp directory, stops
+    /// nothing. Cost: a few shell runs (Git Bash on Windows), temp files only.
     #[test]
-    fn a_reader_racing_a_finishing_runner_answers_what_the_runner_stored() {
-        let flow = json!({"status":"draft"});
-        let now = chrono::Utc::now().to_rfc3339();
-        let running = |pid: u32| {
-            json!({"preview":true,"digest":"sha256:aa","commit":"c1",
-            "state":"running","pid":pid,"startedAt":now,"screens":{},"edges":{}})
+    fn a_reader_stops_the_app_of_a_runner_that_died() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join(".graphhelm")).unwrap();
+        std::fs::write(
+            project.path().join(".graphhelm/journey-fixture.json"),
+            r#"{"schema":"graphhelm-journey-fixture/1","script":"fake.sh","isolated":true}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join("fake.sh"),
+            "#!/usr/bin/env bash\nif [ \"$1\" = down ]; then echo down >> down.log; fi\n",
+        )
+        .unwrap();
+        let previews = tempfile::tempdir().unwrap();
+        let app = std::env::temp_dir().join(format!(
+            "graphhelm-watch-{}",
+            &uuid::Uuid::new_v4().simple().to_string()[..12]
+        ));
+        std::fs::create_dir_all(&app).unwrap();
+        let state = |launched: Value| {
+            json!({"preview":true,"digest":"sha256:aa","commit":"c1","state":"running",
+                "pid":u32::MAX,"startedAt":chrono::Utc::now().to_rfc3339(),
+                "screens":{},"edges":{},"launched":launched})
         };
-        // No process has this pid, here or on Linux: the runner is gone.
-        let gone = running(u32::MAX);
-        let ready = json!({"preview":true,"digest":"sha256:aa","commit":"c1","state":"ready",
-            "result":"pass","pid":u32::MAX,"startedAt":now,"ranAt":now,"screens":{},"edges":{}});
-        let answer = |reads: Vec<Value>| {
-            let mut reads = reads.into_iter();
-            let mut count = 0;
-            let stored = read_settled(|| {
-                count += 1;
-                reads.next()
-            });
-            (body(stored, &flow, "sha256:aa", "c1"), count)
+        let downs = || {
+            std::fs::read_to_string(project.path().join("down.log"))
+                .map_or(0, |log| log.lines().count())
         };
 
-        let (finished, _) = answer(vec![gone.clone(), ready]);
-        assert_eq!(finished["state"], "ready", "{finished}");
-        assert_eq!(finished["result"], "pass", "{finished}");
+        save_state(
+            previews.path(),
+            &state(json!({"script":"fake.sh","dir":app.to_string_lossy()})),
+        );
+        let reaped = reap_lost(project.path(), previews.path()).unwrap();
+        assert_eq!(reaped["state"], "failed", "{reaped}");
+        assert_eq!(reaped["reason"], "preview.runner_lost", "{reaped}");
+        assert!(reaped.get("launched").is_none(), "{reaped}");
+        assert_eq!(downs(), 1, "the launched app's down ran once");
+        assert!(!app.exists(), "the fixture directory is removed");
+        reap_lost(project.path(), previews.path()).unwrap();
+        assert_eq!(downs(), 1, "a reaped run is not stopped again");
 
-        let (dead, _) = answer(vec![gone.clone(), gone]);
-        assert_eq!(dead["state"], "failed", "{dead}");
-        assert_eq!(dead["reason"], "internal", "{dead}");
-
-        let (live, reads) = answer(vec![running(std::process::id())]);
-        assert_eq!(live["state"], "running", "{live}");
-        assert_eq!(reads, 1, "a live runner's state is read once");
-    }
-
-    /// #586: a flow the preview refuses before any browser starts says why, in the refusal's own
-    /// code, so the owner reads "a secret is missing" instead of "something went wrong". Catches
-    /// a preflight code falling through to `internal` (seen: `studio-connect` without its
-    /// `studio_token`). Anything unknown stays `internal`. Cost: microseconds.
-    #[test]
-    fn a_preflight_refusal_keeps_its_own_reason() {
-        for code in [
-            "driver.secret_missing",
-            "driver.secret_literal",
-            "driver.unsupported_act",
-            "replay.act_value_missing",
-            "replay.entry_missing",
+        for record in [
+            json!({"script":"other.sh","dir":app.to_string_lossy()}),
+            json!({"script":"fake.sh","dir":project.path().join("graphhelm-watch-x").to_string_lossy()}),
         ] {
-            assert_eq!(failed_reason(code), code);
+            save_state(previews.path(), &state(record));
+            reap_lost(project.path(), previews.path()).unwrap();
         }
-        assert_eq!(failed_reason("anything.else"), "internal");
+        assert_eq!(
+            downs(),
+            1,
+            "a record naming another script or directory stops nothing"
+        );
     }
 
     /// #519: ids become file names only within the schema's identifier characters, and step

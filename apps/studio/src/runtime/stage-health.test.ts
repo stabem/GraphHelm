@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ACTIVE_MS, EXPECTED_FALLBACK_MS, LIVENESS_MS, laneLiveness, ownerLane, SLOW_FACTOR, SLOW_MIN_SAMPLES, activity, liveDuration, stageDuration, stageHealth, stageProgress, stageSince } from "./stage-health";
+import { ACTIVE_MS, STAGE_ALLOWANCE_MS, ownerRole, LIVENESS_MS, laneLiveness, ownerLane, SLOW_FACTOR, SLOW_MIN_SAMPLES, activity, liveDuration, stageDuration, stageHealth, stageProgress, stageSince } from "./stage-health";
 import { STALL_MS, type Lane } from "./lane-bars";
 import type { TaskState } from "./team-tasks";
 
@@ -52,12 +52,37 @@ describe("stageHealth", () => {
     const t = ts("a", { step: "review", blockedBy: { reviewer: "gh-claude-7", headSha: "x", commentUrl: "" } });
     expect(stageHealth(t, [], [], NOW)).toMatchObject({ flag: "blocked", text: "Blocked by gh-claude-7", tone: "orange" });
   });
-  it(`Slow past ${SLOW_FACTOR}x the group's median for the stage, with at least ${SLOW_MIN_SAMPLES} samples`, () => {
-    const others = [done("o1", 20 * M), done("o2", 40 * M)]; // median 30m, limit 60m
+  it(`Slow past ${SLOW_FACTOR}x the expected time: max(stage allowance, median of ${SLOW_MIN_SAMPLES}+ samples)`, () => {
+    expect(SLOW_MIN_SAMPLES).toBe(3);
+    expect(STAGE_ALLOWANCE_MS).toEqual({ plan: 30 * M, implement: 3 * H, fix: 2 * H, review: H, merge: 15 * M });
+    const others = [done("o1", 4 * H), done("o2", 5 * H), done("o3", 6 * H)]; // median 5h > 3h allowance
     const at = (ms: number) => ts("a", { clock: { since: iso(NOW - ms), spent: {} } });
-    expect(stageHealth(at(H), [], [at(H), ...others], NOW)?.flag).toBe("moving");
-    expect(stageHealth(at(H + 1000), [], [at(H + 1000), ...others], NOW)).toMatchObject({ flag: "slow", text: "Slow", tone: "amber" });
-    expect(stageHealth(at(10 * H), [], [others[0]!], NOW)?.flag).toBe("moving");
+    expect(stageHealth(at(10 * H), [], [at(10 * H), ...others], NOW)?.flag).toBe("moving");
+    expect(stageHealth(at(10 * H + 1000), [], [at(10 * H + 1000), ...others], NOW)?.flag).toBe("slow");
+    // allowance wins over a small median
+    const quick = [done("q1", M), done("q2", M), done("q3", M)];
+    expect(stageHealth(at(6 * H), [], [at(6 * H), ...quick], NOW)?.flag).toBe("moving");
+    expect(stageHealth(at(6 * H + 1000), [], [at(6 * H + 1000), ...quick], NOW)?.flag).toBe("slow");
+    expect(stageHealth(at(10 * H), [], [others[0]!, others[1]!], NOW)?.flag).toBe("moving");
+  });
+  it("Plan: 43s and 11m are not slow against a 1s median; 61m with no samples is not slow", () => {
+    const planDone = (k: string) => ts(k, { step: "merged", clock: { since: null, spent: { plan: 1000 } } });
+    const plan = (ms: number) => ts("p", { step: "plan", clock: { since: iso(NOW - ms), spent: {} } });
+    const g = [planDone("a"), planDone("b"), planDone("c")];
+    expect(stageHealth(plan(43_000), [], g, NOW)?.flag).toBe("moving");
+    expect(stageHealth(plan(11 * M), [], g, NOW)?.flag).toBe("moving");
+    expect(stageHealth(plan(61 * M), [], [], NOW)?.flag).toBe("moving");
+    expect(stageHealth(plan(60 * M + 1000), [], g, NOW)?.flag).toBe("slow");
+  });
+  it("Slow with a live owner names who is active", () => {
+    const others = [done("o1", H), done("o2", H), done("o3", H)];
+    const t = ts("a", { clock: { since: iso(NOW - 7 * H), spent: {} } });
+    expect(stageHealth(t, [lane("gh-claude-1", NOW - 12 * M)], [t, ...others], NOW)).toMatchObject({ flag: "slow", text: "Slow · author active 12m ago", tone: "amber" });
+    const r = ts("r", { step: "review", reviewers: ["gh-claude-7"], clock: { since: iso(NOW - 3 * H), spent: {} } });
+    const rs = ["r1", "r2", "r3"].map((k) => ts(k, { step: "merged", clock: { since: null, spent: { review: M } } }));
+    expect(stageHealth(r, [lane("gh-claude-7", NOW - 4 * M)], [r, ...rs], NOW)).toMatchObject({ flag: "slow", text: "Slow · reviewer active 4m ago" });
+    expect(ownerRole(r)).toBe("reviewer");
+    expect(ownerRole(t)).toBe("author");
   });
   it("Moving otherwise, in muted green", () => expect(stageHealth(ts("a"), [], [], NOW)).toMatchObject({ flag: "moving", text: "Moving", tone: "green" }));
 });
@@ -71,20 +96,19 @@ describe("liveDuration", () => {
 });
 
 describe("stageProgress", () => {
-  it("falls back to the named stage constant under two samples, and caps the fill", () => {
+  it("uses the stage allowance with no samples, caps the fill, keeps the raw pace", () => {
     const fix = ts("f", { step: "review", blockedBy: { reviewer: "r", headSha: "a", commentUrl: "" } });
     const p = stageProgress(fix, [fix, done("x", H)], NOW)!;
-    expect(p).toEqual({ elapsedMs: H, expectedMs: EXPECTED_FALLBACK_MS.fix, ratio: 0.5, tone: "green" });
-    expect(stageProgress(ts("m", { step: "merge" }), [], NOW)).toMatchObject({ ratio: 1, tone: "red" });
+    expect(p).toEqual({ elapsedMs: H, expectedMs: STAGE_ALLOWANCE_MS.fix, ratio: 0.5, pace: 0.5, tone: "green" });
+    expect(stageProgress(ts("m", { step: "merge" }), [], NOW)).toMatchObject({ ratio: 1, pace: 4, tone: "amber" });
     expect(stageProgress(done("d", H), [], NOW)).toBeNull();
   });
-  it("uses the group median: green under 75%, amber to 100%, red at 100%", () => {
+  it("green up to 1x, amber past it, never red", () => {
     const g = (since: number) => ts("a", { clock: { since: iso(NOW - since), spent: {} } });
-    const group = [done("x", 4 * H), done("y", 4 * H)];
-    expect(stageProgress(g(2.99 * H), group, NOW)!.tone).toBe("green");
-    expect(stageProgress(g(3 * H), group, NOW)!.tone).toBe("amber");
-    expect(stageProgress(g(4 * H - 1), group, NOW)!.tone).toBe("amber");
-    expect(stageProgress(g(4 * H), group, NOW)).toMatchObject({ expectedMs: 4 * H, ratio: 1, tone: "red" });
+    const group = [done("x", 4 * H), done("y", 4 * H), done("z", 4 * H)];
+    expect(stageProgress(g(4 * H), group, NOW)).toMatchObject({ expectedMs: 4 * H, ratio: 1, tone: "green" });
+    expect(stageProgress(g(4 * H + 1), group, NOW)!.tone).toBe("amber");
+    for (const ms of [0, H, 4 * H, 40 * H, 400 * H]) expect(stageProgress(g(ms), group, NOW)!.tone).not.toBe("red");
   });
 });
 

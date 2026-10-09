@@ -188,12 +188,36 @@ describe("IssueGraph live pace (#591)", () => {
       expect(bars.length).toBe(2); // the card and the inspector header
       const bar = bars[0]!;
       expect(bar).toHaveAttribute("aria-valuenow", "50");
-      expect(bar).toHaveAttribute("aria-label", "Fixing for 1h, expected about 2h");
+      expect(bar).toHaveAttribute("aria-label", "Fixing for 1h, 0.5 times the usual time");
+      expect(bar).toHaveAttribute("data-tone", "green");
+      expect(screen.getAllByText("0.5× typical").length).toBe(2);
       expect(screen.getAllByText("1h 00m 04s").length).toBe(2);
-      expect(screen.getAllByText("last activity 12m ago").length).toBe(2);
+      expect(screen.getAllByText("author active 12m ago").length).toBe(2);
       act(() => { vi.advanceTimersByTime(1000); });
       expect(screen.getAllByText("1h 00m 05s").length).toBe(2);
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("PaceBlock colour (#591)", () => {
+  const prog = (pace: number) => ({ elapsedMs: pace * 3_600_000, expectedMs: 3_600_000, ratio: Math.min(1, pace), pace, tone: (pace > 1 ? "amber" : "green") as "amber" | "green" });
+  const act = { sinceMs: 4 * 60_000, tone: "green" as const, role: "reviewer" as const };
+  it("green at pace, amber over, red only when Stalled, no overdue stripes, label one decimal", async () => {
+    const { PaceBlock } = await import("./mission-graph");
+    const { container, rerender } = render(<PaceBlock pace={{ progress: prog(0.4), activity: act }} label="In review" stuck={false} />);
+    const bar = () => container.querySelector(".mg-bar")!;
+    expect(bar()).toHaveAttribute("data-tone", "green");
+    expect(container).toHaveTextContent("0.4× typical");
+    expect(container).toHaveTextContent("reviewer active 4m ago");
+    rerender(<PaceBlock pace={{ progress: prog(2.4), activity: act }} label="In review" stuck={false} />);
+    expect(bar()).toHaveAttribute("data-tone", "amber");
+    expect(bar()).toHaveAttribute("aria-valuenow", "100");
+    expect(bar()).toHaveAttribute("aria-label", "In review for 2h 24m, 2.4 times the usual time");
+    expect(bar()).not.toHaveAttribute("data-overdue");
+    expect(container).toHaveTextContent("2.4× typical");
+    expect(container.querySelector('[data-tone="red"]')).toBeNull();
+    rerender(<PaceBlock pace={{ progress: prog(2.4), activity: { sinceMs: 40 * 60_000, tone: "red", role: "reviewer" } }} label="In review" stuck />);
+    expect(bar()).toHaveAttribute("data-tone", "red");
   });
 });
 

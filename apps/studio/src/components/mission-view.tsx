@@ -6,7 +6,7 @@ import type { Lane } from "../runtime/lane-bars";
 import { buildMission, toMissionTask, unlinkedTasks, type Mission } from "../runtime/mission";
 import { layoutMission } from "../runtime/mission-layout";
 import { testFrames } from "../runtime/test-frames";
-import { activity, ownerLane, stageHealth, stageProgress } from "../runtime/stage-health";
+import { activity, ownerLane, ownerRole, stageHealth, stageProgress } from "../runtime/stage-health";
 import { buildWorkGroups, type WorkGroup } from "../runtime/work-groups";
 import { IssueGraph, MissionGraph, STATUS_LABEL, stageState } from "./mission-graph";
 import { ProofTable } from "./proof-table";
@@ -153,7 +153,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
   // #591: progress against the usual time, and the last record of whoever is on the card's stage.
   const pace = Object.fromEntries(groupRows.map((t) => [t.key, {
     progress: stageProgress(t, groupRows, live, lanes),
-    activity: activity(ownerLane(t), lanes, live, groupRows),
+    activity: activity(ownerLane(t), lanes, live, groupRows, ownerRole(t)),
   }]));
   const knownIds = new Set(journeys.map((j) => j.contractId));
   // A group's Proof and Test follow its first linked journey; a journey selection is its own.

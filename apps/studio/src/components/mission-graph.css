@@ -145,16 +145,14 @@
 .mg-bar-fill { display: block; height: 100%; background: #4ADE9B; }
 .mg-bar[data-tone="amber"] .mg-bar-fill { background: #F5A524; }
 .mg-bar[data-tone="red"] .mg-bar-fill { background: #FF6B5E; }
-.mg-bar[data-overdue="true"] .mg-bar-fill {
-  background-image: repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.28) 0 4px, transparent 4px 8px); background-size: 16px 4px;
-  animation: mg-overdue 1.6s linear infinite; }
+.mg-pace-x { align-self: flex-end; font-family: var(--mono); font-size: 9.5px; color: #A9AEB8; font-variant-numeric: tabular-nums; }
+.mg-node .mg-pace-x { position: absolute; right: 8px; bottom: 6px; }
 .mg-pace[data-size="large"] { gap: 8px; margin: 4px 0; }
 .mg-pace[data-size="large"] .mg-pace-line { font-size: 12px; gap: 7px; }
 .mg-pace[data-size="large"] .mg-act-dot { width: 8px; height: 8px; }
 .mg-pace[data-size="large"] .mg-timer { font-size: 14px; }
 .mg-pace[data-size="large"] .mg-bar { height: 6px; border-radius: 3px; }
 @keyframes mg-act-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-@keyframes mg-overdue { from { background-position: 0 0; } to { background-position: 16px 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .mg-act-dot[data-tone="green"], .mg-bar[data-overdue="true"] .mg-bar-fill { animation: none; }
+  .mg-act-dot[data-tone="green"] { animation: none; }
 }

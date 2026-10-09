@@ -253,7 +253,9 @@ export interface Pace { progress: StageProgress | null; activity: Activity }
 export function PaceBlock({ pace, label, stuck, size = "card" }: { pace: Pace; label: string; stuck: boolean; size?: "card" | "large" }) {
   const p = pace.progress, a = pace.activity;
   const tone = p ? (stuck ? "red" : p.tone) : null;
-  const act = a.sinceMs === null ? "no activity recorded" : a.tone === "red" ? `no activity ${stageDuration(a.sinceMs)}` : `last activity ${stageDuration(a.sinceMs)} ago`;
+  const act = a.sinceMs === null ? "no activity recorded" : a.tone === "red" ? `no activity ${stageDuration(a.sinceMs)}`
+    : `${a.role ? `${a.role} active` : "last activity"} ${stageDuration(a.sinceMs)} ago`;
+  const x = p ? p.pace.toFixed(1) : "";
   return (
     <span className="mg-pace" data-size={size}>
       <span className="mg-pace-line">
@@ -263,10 +265,12 @@ export function PaceBlock({ pace, label, stuck, size = "card" }: { pace: Pace; l
       </span>
       {p && tone && (
         <span className="mg-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(p.ratio * 100)}
-          aria-label={`${label} for ${stageDuration(p.elapsedMs)}, expected about ${stageDuration(p.expectedMs)}`}
-          data-tone={tone} data-overdue={p.elapsedMs >= p.expectedMs}>
+          aria-label={`${label} for ${stageDuration(p.elapsedMs)}, ${x} times the usual time`} data-tone={tone}>
           <span className="mg-bar-fill" style={{ width: `${Math.round(p.ratio * 100)}%` }} />
         </span>
+      )}
+      {p && tone && (
+        <span className="mg-pace-x" aria-hidden="true">{`${x}× typical`}</span>
       )}
     </span>
   );

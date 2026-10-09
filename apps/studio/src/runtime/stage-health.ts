@@ -9,10 +9,11 @@ import type { TimedStep } from "./step-timing";
 export type HealthFlag = "needs_you" | "stalled" | "blocked" | "slow" | "moving";
 export interface StageHealth { flag: HealthFlag; text: string; tone: "red" | "orange" | "amber" | "green"; elapsedMs: number | null; elapsed: string | null }
 
-/** Slow: more than this many times the median time the group's other PRs spent in the same stage. */
+/** Slow: elapsed more than this many times the stage's expected time (`expectedTime`). */
 export const SLOW_FACTOR = 2;
-/** Fewer finished samples than this is no median: the card says Moving rather than invent a target. */
-export const SLOW_MIN_SAMPLES = 2;
+/** Fewer finished samples than this is no median: the expected time is the stage allowance alone,
+ * and the card says Moving rather than call a step Slow against no history. */
+export const SLOW_MIN_SAMPLES = 3;
 
 /** "45s", "17m", "1h 17m", "2d 4h". */
 export function stageDuration(ms: number): string {
@@ -39,6 +40,10 @@ const pushedFix = (t: TaskState) => {
 
 /** #591: whose silence stalls the step: the author for Implement/Fix/Merge (and Plan), the reviewer
  * for Review and Re-review (the BLOCKing reviewer re-reviews). `null` when no reviewer is named yet. */
+export type OwnerRole = "author" | "reviewer";
+/** #591: the role of the owner lane: the reviewer on a Review/Re-review, else the author. */
+export const ownerRole = (t: TaskState): OwnerRole => (t.step === "review" && !openBlock(t) ? "reviewer" : "author");
+
 export function ownerLane(t: TaskState): string | null {
   if (t.step !== "review" || openBlock(t)) return t.lane;
   return pushedFix(t)?.reviewer || t.reviewers[t.reviewers.length - 1] || null;
@@ -77,6 +82,27 @@ const median = (xs: number[]) => {
   return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
 };
 
+export type PaceStage = "plan" | "implement" | "review" | "fix" | "merge";
+/** #591: each stage's named minimum allowance. Lanes record `planned` right after `claimed`, so a
+ * group median can be ~1s; the expected time never drops under this. */
+export const STAGE_ALLOWANCE_MS: Record<PaceStage, number> = {
+  plan: 30 * 60_000, implement: 3 * 60 * 60_000, fix: 2 * 60 * 60_000, review: 60 * 60_000, merge: 15 * 60_000,
+};
+export const paceStage = (t: TaskState): PaceStage | null =>
+  t.step === "merged" ? null : openBlock(t) ? "fix" : t.step === "critic" ? "plan" : t.step;
+
+/** Expected time in the stage: max(allowance, median of the group's other PRs), the median only
+ * from SLOW_MIN_SAMPLES samples up. `samples` is how many finished samples there were. */
+export function expectedTime(t: TaskState, groupTasks: TaskState[]): { expectedMs: number; samples: number } | null {
+  const stage = paceStage(t);
+  if (!stage) return null;
+  const steps = timed(t);
+  const xs = groupTasks.filter((o) => o.key !== t.key)
+    .map((o) => steps.reduce((sum, s) => sum + (o.clock?.spent?.[s] ?? 0), 0)).filter((ms) => ms > 0);
+  const med = xs.length >= SLOW_MIN_SAMPLES ? median(xs) : 0;
+  return { expectedMs: Math.max(STAGE_ALLOWANCE_MS[stage], med), samples: xs.length };
+}
+
 /** Merged work has no health (null). Order: Needs you, Stalled (the owner lane silent LIVENESS_MS), Blocked, Slow, Moving. `needsYou` is the
  * caller's owner-wait fact for this task (a held destructive step or the summary's need-you rule). */
 export function stageHealth(t: TaskState, lanes: Lane[], groupTasks: TaskState[], now: number, needsYou = false): StageHealth | null {
@@ -92,11 +118,10 @@ export function stageHealth(t: TaskState, lanes: Lane[], groupTasks: TaskState[]
   }
   const block = openBlock(t);
   if (block) return { ...base, flag: "blocked", text: `Blocked by ${block.reviewer || "a reviewer"}`, tone: "orange" };
-  const steps = timed(t);
-  const samples = groupTasks.filter((o) => o.key !== t.key)
-    .map((o) => steps.reduce((sum, s) => sum + (o.clock?.spent?.[s] ?? 0), 0)).filter((ms) => ms > 0);
-  if (elapsedMs !== null && samples.length >= SLOW_MIN_SAMPLES && elapsedMs > SLOW_FACTOR * median(samples)) {
-    return { ...base, flag: "slow", text: "Slow", tone: "amber" };
+  const exp = expectedTime(t, groupTasks);
+  if (elapsedMs !== null && exp && exp.samples >= SLOW_MIN_SAMPLES && elapsedMs > SLOW_FACTOR * exp.expectedMs) {
+    const who = live.sinceMs !== null ? ` · ${ownerRole(t)} active ${stageDuration(live.sinceMs)} ago` : "";
+    return { ...base, flag: "slow", text: `Slow${who}`, tone: "amber" };
   }
   return { ...base, flag: "moving", text: "Moving", tone: "green" };
 }
@@ -111,42 +136,31 @@ export function liveDuration(ms: number): string {
   return `${r}s`;
 }
 
-export type PaceStage = "plan" | "implement" | "review" | "fix" | "merge";
-/** The usual time of a stage when the group has fewer than SLOW_MIN_SAMPLES finished samples. */
-export const EXPECTED_FALLBACK_MS: Record<PaceStage, number> = {
-  plan: 60 * 60_000, implement: 3 * 60 * 60_000, review: 60 * 60_000, fix: 2 * 60 * 60_000, merge: 15 * 60_000,
-};
-/** Under this share of the usual time the bar is green; up to 1 it is amber; at or over 1 red. */
-export const PACE_AMBER = 0.75;
+/** Red belongs to Stalled alone (the liveness rule), which the view applies; pace never paints red. */
 export type PaceTone = "green" | "amber" | "red";
-export interface StageProgress { elapsedMs: number; expectedMs: number; ratio: number; tone: PaceTone }
+/** `tone`: green up to the expected time, amber past it. */
+export interface StageProgress { elapsedMs: number; expectedMs: number; ratio: number; pace: number; tone: "green" | "amber" }
 
-export const paceStage = (t: TaskState): PaceStage | null =>
-  t.step === "merged" ? null : openBlock(t) ? "fix" : t.step === "critic" ? "plan" : t.step;
-
-/** Elapsed in the stage against the usual time for it: the median the group's other PRs spent in
- * the same stage, else the stage's named fallback. `ratio` is capped at 1 (the bar's fill). */
+/** Elapsed in the stage against its expected time (`expectedTime`). `ratio` is capped at 1 (the
+ * bar's fill); `pace` is the uncapped multiple of the usual time. */
 export function stageProgress(t: TaskState, groupTasks: TaskState[], now: number, lanes: Lane[] = []): StageProgress | null {
-  const stage = paceStage(t);
-  if (!stage) return null;
+  const exp = expectedTime(t, groupTasks);
+  if (!exp) return null;
   const since = stageSince(t, lanes);
   if (since === null) return null;
   const elapsedMs = Math.max(0, now - since);
-  const steps = timed(t);
-  const samples = groupTasks.filter((o) => o.key !== t.key)
-    .map((o) => steps.reduce((sum, s) => sum + (o.clock?.spent?.[s] ?? 0), 0)).filter((ms) => ms > 0);
-  const expectedMs = samples.length >= SLOW_MIN_SAMPLES ? median(samples) : EXPECTED_FALLBACK_MS[stage];
-  const raw = expectedMs > 0 ? elapsedMs / expectedMs : 1;
-  return { elapsedMs, expectedMs, ratio: Math.min(1, raw), tone: raw >= 1 ? "red" : raw >= PACE_AMBER ? "amber" : "green" };
+  const pace = elapsedMs / exp.expectedMs;
+  return { elapsedMs, expectedMs: exp.expectedMs, ratio: Math.min(1, pace), pace, tone: pace > 1 ? "amber" : "green" };
 }
 
 /** Under this the lane counts as active right now (pulsing green dot): the one liveness rule. */
 export const ACTIVE_MS = LIVENESS_MS;
-export interface Activity { sinceMs: number | null; tone: PaceTone }
+export interface Activity { sinceMs: number | null; tone: PaceTone; role?: OwnerRole }
 /** How long since the lane's latest record: green while `laneLiveness` says live, red once it is
  * stalled, so the dot always agrees with the card's Stalled flag. No record at all is red. */
-export function activity(lane: string | null | undefined, lanes: Lane[], now: number, records: TaskState[] = []): Activity {
+export function activity(lane: string | null | undefined, lanes: Lane[], now: number, records: TaskState[] = [], role?: OwnerRole): Activity {
   const l = laneLiveness(lane, lanes, records, now);
-  if (l.sinceMs === null) return { sinceMs: null, tone: "red" };
-  return { sinceMs: l.sinceMs, tone: l.live ? "green" : "red" };
+  const r = role ? { role } : {};
+  if (l.sinceMs === null) return { sinceMs: null, tone: "red", ...r };
+  return { sinceMs: l.sinceMs, tone: l.live ? "green" : "red", ...r };
 }

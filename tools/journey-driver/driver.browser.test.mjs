@@ -194,3 +194,14 @@ test('a discover snapshot over the model budget returns the outline and keeps wh
   assert.ok(!outline.includes('Long paragraph text'),'paragraph text is left out');
   assert.equal(discovery.result.fingerprint,full.result.fingerprint,'identity reads the whole page');
 });
+
+// #356 calibration: an open dialog is part of a screen's identity, so the driver must report it.
+// Regression: dialog was not in the driver's role set, so a modal changed nothing it saw.
+// Cost: one real browser page, seconds.
+test('an open dialog is reported among the controls',async t=>{
+  const f=await startFixture();t.after(()=>f.close());
+  const c=await client(t);await open(c,f.base+'/dialog');
+  const snap=await c.send('snapshot',{expect:[]});
+  assert.equal(snap.ok,true,JSON.stringify(snap).slice(0,300));
+  assert.ok(snap.result.controls.some(x=>x.role==='dialog'&&x.name==='Rename item'),JSON.stringify(snap.result.controls));
+});

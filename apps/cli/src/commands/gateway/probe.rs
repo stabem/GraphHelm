@@ -1,7 +1,8 @@
 //! `graphhelm gateway probe --manifest <file> --route <id> [--broker <dir> --keyring <dir>
 //! --key-id <id>]`: a quota-free health check (§18) — never a real model call. A `direct_api`
 //! route proves its credential leases from the broker; a `native_runtime` route proves its CLI
-//! spawns and exits `0` on `--version` within a fixed 10s budget. Never prints a credential value:
+//! spawns and exits `0` on `--version` within [`PROBE_TIMEOUT`] (30 s, #549); every caller
+//! of the probe waits longer than that (#600 review). Never prints a credential value:
 //! the `direct_api` check only ever records whether `CredentialBroker::lease` succeeded, never the
 //! bytes it returned.
 
@@ -26,7 +27,10 @@ const COMMAND: &str = "gateway.probe";
 /// Fixed probe budget (plan Task 6): independent of `route.timeout_seconds()`, which bounds a real
 /// call — a health probe must stay fast regardless of how long the route's own calls are allowed
 /// to run.
-const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+/// #549: measured with 64 busy processes on 32 CPUs, `claude --version` took up to 20.9 s; 10 s
+/// turned a busy machine into `health: unavailable`. 30 s is that worst case with margin, and
+/// still bounded: a runtime that hangs is killed at the deadline.
+pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 struct Check {
@@ -294,4 +298,46 @@ pub(super) fn render(result: ProbeResult) -> serde_json::Value {
             .collect::<Vec<_>>(),
         "health": result.health,
     })
+}
+
+/// #600 review: how long the Studio waits for this probe, read from its client so the two cannot
+/// drift apart silently. `None` when the client names no such constant.
+#[cfg(test)]
+fn studio_probe_wait() -> Option<Duration> {
+    let client = include_str!("../../../../studio/src/runtime/client.ts");
+    let line = client
+        .lines()
+        .find(|line| line.contains("export const GATEWAY_PROBE_WAIT_MS"))?;
+    let digits: String = line
+        .split('=')
+        .nth(1)?
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok().map(Duration::from_millis)
+}
+
+#[cfg(test)]
+mod caller_waits {
+    use super::{PROBE_TIMEOUT, studio_probe_wait};
+
+    /// #600 review (gh-claude-11): a caller that gives up before the probe's own bound turns a
+    /// slow but alive runtime into "refused", and leaves the probe child running after it left.
+    /// Each door's wait must exceed `PROBE_TIMEOUT` by a margin for the round trip. The CLI door
+    /// has no caller deadline. Credible regression: raising the probe bound without its callers
+    /// (this PR's first head). Cost: microseconds.
+    #[test]
+    fn every_caller_of_the_probe_waits_longer_than_the_probe() {
+        let margin = std::time::Duration::from_secs(5);
+        let studio = studio_probe_wait();
+        assert!(
+            studio.is_some_and(|wait| wait >= PROBE_TIMEOUT + margin),
+            "the Studio waits {studio:?} for a probe that may take {PROBE_TIMEOUT:?}"
+        );
+        let mcp = crate::commands::mcp::tools::PROBE_CALLER_WAIT;
+        assert!(
+            mcp >= PROBE_TIMEOUT + margin,
+            "MCP waits {mcp:?} for a probe that may take {PROBE_TIMEOUT:?}"
+        );
+    }
 }

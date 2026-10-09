@@ -147,6 +147,27 @@ describe("RuntimeClient reads", () => {
     }
   });
 
+  it("waits for a slow gateway probe past the Runtime's own 30 s probe bound (#600 review)", async () => {
+    // #549 measured a slow but alive runtime answering --version after 20.9 s; the Runtime probes
+    // for up to 30 s. A Studio that gives up first reads that runtime as refused.
+    vi.useFakeTimers();
+    try {
+      let resolveBody!: (value: unknown) => void;
+      const fetchImpl = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: () => new Promise<unknown>((resolve) => { resolveBody = resolve; }),
+      }) as Response) as unknown as typeof fetch;
+      const client = new RuntimeClient("tok", { fetch: fetchImpl });
+      const probe = client.probeRoute("native_probe").then((value) => value, (error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(31_000);
+      resolveBody({ ok: true, command: "gateway.probe", data: { route: "native_probe", health: "available" }, diagnostics: [] });
+      expect(await probe).toEqual({ health: "available" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("uses the capped reply suggestions deadline and keeps replay reads at sixty seconds", async () => {
     vi.useFakeTimers();
     try {

@@ -2096,7 +2096,13 @@ pub(super) async fn watch_journey_flow(
     } else {
         match serde_json::from_slice(&body) {
             Ok(value @ serde_json::Value::Object(_)) => value,
-            _ => return bad_request(COMMAND, "the body must be {path?, paceMs?, window?}", "/body"),
+            _ => {
+                return bad_request(
+                    COMMAND,
+                    "the body must be {path?, paceMs?, window?}",
+                    "/body",
+                );
+            }
         }
     };
     if let Some(key) = payload

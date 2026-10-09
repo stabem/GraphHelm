@@ -379,7 +379,11 @@ fn spawn_host(args: &JourneyOpenArgs, data: Value) -> Outcome {
         } else {
             Vec::new()
         })
-        .args(if args.window { vec!["--window"] } else { Vec::new() })
+        .args(if args.window {
+            vec!["--window"]
+        } else {
+            Vec::new()
+        })
         .arg("--project")
         .arg(args.project.as_deref().unwrap_or(Path::new(".")))
         .stdin(Stdio::piped())
@@ -1146,7 +1150,13 @@ const FRAME_LIMIT: u64 = 8 * 1024 * 1024;
 /// for the Runtime's frame route and never listed (`journey sessions` drops it).
 fn frame_dir(output: &TemporaryOutput, streamed: bool) -> Value {
     if streamed {
-        Value::from(output.path().join("screencast").to_string_lossy().into_owned())
+        Value::from(
+            output
+                .path()
+                .join("screencast")
+                .to_string_lossy()
+                .into_owned(),
+        )
     } else {
         Value::Null
     }
@@ -1195,16 +1205,19 @@ pub(crate) fn read_frame(project: &Path, id: &str) -> FrameRead {
     let Some(dir) = record["frameDir"].as_str().map(PathBuf::from) else {
         return FrameRead::Pending;
     };
-    let inside_an_output = std::env::temp_dir().canonicalize().ok().is_some_and(|temp| {
-        dir.file_name().is_some_and(|name| name == "screencast")
-            && dir.parent().is_some_and(|output| {
-                output.parent() == Some(temp.as_path())
-                    && output
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(|name| name.starts_with("graphhelm-replay-"))
-            })
-    });
+    let inside_an_output = std::env::temp_dir()
+        .canonicalize()
+        .ok()
+        .is_some_and(|temp| {
+            dir.file_name().is_some_and(|name| name == "screencast")
+                && dir.parent().is_some_and(|output| {
+                    output.parent() == Some(temp.as_path())
+                        && output
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.starts_with("graphhelm-replay-"))
+                })
+        });
     if !inside_an_output {
         return FrameRead::Pending;
     }
@@ -1216,7 +1229,8 @@ pub(crate) fn read_frame(project: &Path, id: &str) -> FrameRead {
         std::fs::read(path).ok()
     };
     // The meta is written after its JPEG, so it never names a frame that is not on disk yet.
-    let Some(meta) = read("frame.json", 1024).and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+    let Some(meta) =
+        read("frame.json", 1024).and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
     else {
         return FrameRead::Pending;
     };

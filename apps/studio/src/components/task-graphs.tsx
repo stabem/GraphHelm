@@ -44,7 +44,7 @@ function title(task: TaskState): string {
 
 /** #477: a PR title reads as what changes for the user; its conventional `type(area):` prefix is
  * for the squash commit, not for the owner. */
-function plainTitle(text: string): string {
+export function plainTitle(text: string): string {
   return text.replace(/^[a-z]+(\([^)]*\))?!?:\s*/, "");
 }
 
@@ -63,7 +63,7 @@ function ordered(tasks: TaskState[]): { open: TaskState[]; delivered: TaskState[
 
 /** #514 (owner): one card per issue. Each PR of the issue is a row; a task claimed with a `parent`
  * is a row in the parent issue's card when that card exists, else its own card. */
-interface Card { issue: number | null; key: string; rows: TaskState[] }
+export interface Card { issue: number | null; key: string; rows: TaskState[] }
 function cardsOf(tasks: TaskState[]): Card[] {
   // A card's home follows the parent chain while the parent has rows here (a grandchild sits with
   // its root, never in a card its parent's row left), stopping at a cycle (#524 review).
@@ -92,7 +92,7 @@ function cardsOf(tasks: TaskState[]): Card[] {
   return [...cards.values()];
 }
 /** A card sits where its worst open row would; it is delivered only when every row is merged. */
-function orderedCards(tasks: TaskState[]): { open: Card[]; delivered: Card[] } {
+export function orderedCards(tasks: TaskState[]): { open: Card[]; delivered: Card[] } {
   const all = cardsOf(tasks).map((card) => ({ card, ...ordered(card.rows) }));
   const latest = (rows: TaskState[]) => Math.max(...rows.map((row) => row.lastSequence));
   const open = all.filter((entry) => entry.open.length > 0)

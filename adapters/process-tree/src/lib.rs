@@ -1147,6 +1147,16 @@ pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
         // empty" -- see `drain_terminated_job`'s own doc for the open window this leaves and issue
         // #846 for the measurement.
         let members = job_member_ids(group);
+        trace(|| {
+            format!(
+                "before kill: {}",
+                snapshot_of(members.as_ref().map_or(&[][..], |m| &m.0))
+            )
+        });
+        if std::env::var_os("GRAPHHELM_PTREE_EXPERIMENT").is_some() {
+            let answer = raise_job_priority(group);
+            trace(|| format!("experiment: raise job priority {answer}"));
+        }
         let killed = unsafe { TerminateJobObject(group.0 as _, 1) } != 0;
         let kill_error = if killed {
             0
@@ -1294,6 +1304,12 @@ fn drain_terminated_job(members: &(Vec<u32>, usize)) -> TerminationOutcome {
         ids.retain(|id| process_is_running(*id));
         if ids.is_empty() {
             if unlisted == 0 {
+                trace(|| {
+                    format!(
+                        "complete: passes={passes} after {} ms",
+                        started.elapsed().as_millis()
+                    )
+                });
                 return TerminationOutcome::Complete;
             }
             trace(|| format!("bound: unlisted={unlisted}; {}", snapshot_of(&members.0)));
@@ -1352,6 +1368,50 @@ fn terminate_member(process_id: u32) -> String {
     format!("open=true accepted={accepted} error={error}")
 }
 
+/// EXPERIMENT (#454, not for merge): put every member of the job in the high priority class before
+/// the kill, so a member whose threads were starved at idle priority gets the CPU its exit needs.
+#[cfg(windows)]
+fn raise_job_priority(group: ProcessGroup) -> String {
+    use windows_sys::Win32::System::{
+        JobObjects::{
+            JOB_OBJECT_LIMIT_PRIORITY_CLASS, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+        },
+        Threading::HIGH_PRIORITY_CLASS,
+    };
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    let size = u32::try_from(std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()).unwrap();
+    let read = unsafe {
+        QueryInformationJobObject(
+            group.0 as _,
+            JobObjectExtendedLimitInformation,
+            std::ptr::from_mut(&mut limits).cast(),
+            size,
+            std::ptr::null_mut(),
+        )
+    } != 0;
+    if !read {
+        let error = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        return format!("query=false error={error}");
+    }
+    limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PRIORITY_CLASS;
+    limits.BasicLimitInformation.PriorityClass = HIGH_PRIORITY_CLASS;
+    let set = unsafe {
+        SetInformationJobObject(
+            group.0 as _,
+            JobObjectExtendedLimitInformation,
+            std::ptr::from_ref(&limits).cast(),
+            size,
+        )
+    } != 0;
+    let error = if set {
+        0
+    } else {
+        std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+    };
+    format!("query=true set={set} error={error}")
+}
+
 /// `GRAPHHELM_PTREE_TRACE=<file>` (#454 instrument): one line per observation while a job drains,
 /// appended to that file (the replay worker forwards the variable). Off by default; nothing here
 /// is read by code.
@@ -1398,7 +1458,9 @@ fn snapshot_of(members: &[u32]) -> String {
             let name_len = entry.szExeFile.iter().position(|c| *c == 0).unwrap_or(0);
             let name = String::from_utf16_lossy(&entry.szExeFile[..name_len]);
             rows.push(format!(
-                "{{pid={pid} parent={parent} exe={name} running={}}}",
+                "{{pid={pid} parent={parent} exe={name} threads={} base_priority={} running={}}}",
+                entry.cntThreads,
+                entry.pcPriClassBase,
                 process_is_running(pid)
             ));
         }

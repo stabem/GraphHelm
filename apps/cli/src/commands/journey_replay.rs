@@ -1729,6 +1729,9 @@ fn supervise(args: &JourneyReplayArgs, deadline: Instant) -> Outcome {
     if let Some(trace) = std::env::var_os("GRAPHHELM_PTREE_TRACE") {
         command.env("GRAPHHELM_PTREE_TRACE", trace);
     }
+    if let Some(experiment) = std::env::var_os("GRAPHHELM_PTREE_EXPERIMENT") {
+        command.env("GRAPHHELM_PTREE_EXPERIMENT", experiment);
+    }
     let mut secrets = Vec::new();
     for (key, value) in std::env::vars_os()
         .filter(|(key, _)| key.to_string_lossy().starts_with("GRAPHHELM_SECRET_"))

@@ -230,6 +230,14 @@ fn cleanup_bounded(
     }
 }
 
+// A local reap allowance, separate from execution and tree termination. The staged #549
+// observer exits after 1.5s: the former 1s window rejects it. Five seconds leaves 3.5s
+// of margin without retrying or restarting the child. This is not a measured starvation
+// maximum, and GRAPHHELM_TEST_TIME_SCALE must not change a product budget.
+// ADVISORY wall time: OS scheduling (and Unix waitid's EINTR retries) can delay a poll.
+// The deadline bounds polling; wait() is called only after the exit was observed.
+const REAP_CEILING: std::time::Duration = std::time::Duration::from_secs(5);
+
 fn reap_bounded(
     child: &mut std::process::Child,
     leader_already_exited: bool,
@@ -243,7 +251,7 @@ fn reap_bounded(
             .map(|status| status.success())
             .map_err(|error| format!("reaping cargo failed: {error}"));
     }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let deadline = std::time::Instant::now() + REAP_CEILING;
     loop {
         if leader_exited(child).map_err(|error| format!("reaping cargo failed: {error}"))? {
             #[cfg(unix)]
@@ -258,7 +266,10 @@ fn reap_bounded(
                 .map_err(|error| format!("reaping cargo failed: {error}"));
         }
         if std::time::Instant::now() >= deadline {
-            return Err("process-tree cleanup could not reap cargo within 1s".into());
+            return Err(format!(
+                "process-tree cleanup could not reap cargo within {}s",
+                REAP_CEILING.as_secs()
+            ));
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
@@ -2078,11 +2089,22 @@ mod tests {
             let status = child.wait().unwrap();
             eprintln!("reap fixture delay={delay}ms elapsed={elapsed:?} result={result:?}");
             if should_exit {
-                assert_eq!(result, Ok(false), "a delayed exit was reported as a stuck process");
-                assert_eq!(status.code(), Some(7), "the child's real exit was not reaped");
+                assert_eq!(
+                    result,
+                    Ok(false),
+                    "a delayed exit was reported as a stuck process"
+                );
+                assert_eq!(
+                    status.code(),
+                    Some(7),
+                    "the child's real exit was not reaped"
+                );
             } else {
                 assert!(result.unwrap_err().contains("could not reap cargo within"));
-                assert!(elapsed < Duration::from_secs(15), "the reap ceiling did not end the wait");
+                assert!(
+                    elapsed < Duration::from_secs(15),
+                    "the reap ceiling did not end the wait"
+                );
             }
         }
     }

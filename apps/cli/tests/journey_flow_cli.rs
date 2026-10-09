@@ -611,3 +611,98 @@ fn journey_map_worked_example_validates_and_compiles() {
     assert_eq!(out.status.code(), Some(0), "{reply}");
     assert_eq!(reply["data"]["checked"], 2, "{reply}");
 }
+
+/// #518 (`keel.invariant.permissions`, `.persistence`): the owner's safe mark on a draft edge.
+/// Defects named: a mark that survives an edit of the acts it covered (an agent rewrites
+/// "Pay now" into "Delete account" under the owner's mark); a mark that blesses an act the owner
+/// was not shown; a mark written on a non-canonical, unknown or approved target; a mark that
+/// makes an approved flow's digest depend on it. Existing tests know no `safe` field. Cost: one
+/// tempdir, a dozen subprocesses, one git commit; no network or browser.
+#[test]
+fn the_owner_marks_a_draft_edge_safe_and_editing_its_acts_voids_the_mark() {
+    let dir = project(EXAMPLE);
+    let path = dir.path().join(".graphhelm/journeys/checkout.journey.yaml");
+    let text = || std::fs::read_to_string(&path).unwrap();
+    let stale = |reply: &Value| finding(reply, "flow.safe_stale");
+
+    // An unknown edge and a non-canonical flow are refused, and nothing is written.
+    let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.nope"]);
+    assert_eq!(out.status.code(), Some(2), "{reply}");
+    assert!(finding(&reply, "flow.edge_unknown"), "{reply}");
+    write_flow(dir.path(), &EXAMPLE.replace("drift: []\n", "drift: []\n\n"));
+    let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
+    assert_eq!(out.status.code(), Some(2), "{reply}");
+    write_flow(dir.path(), EXAMPLE);
+
+    // The mark names every act it covers and lands on that edge only, in canonical bytes.
+    let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert_eq!(reply["data"]["acts"].as_array().map(Vec::len), Some(2), "{reply}");
+    let digest = reply["data"]["safe"]["acts"].as_str().unwrap().to_owned();
+    assert!(digest.starts_with("sha256:") && digest.len() == 71, "{digest}");
+    let marked = text();
+    assert_eq!(
+        marked,
+        EXAMPLE.replace(
+            "      - {kind: submit, role: button, name: Pay now}\n",
+            &format!("      - {{kind: submit, role: button, name: Pay now}}\n    safe: {{acts: {digest}}}\n"),
+        )
+    );
+    let (out, reply) = run(dir.path(), &["validate", "--all"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert!(!stale(&reply), "{reply}");
+
+    // Editing a covered act voids the mark: validate says so as a warning, never an error.
+    write_flow(dir.path(), &marked.replace("name: Pay now", "name: Delete account"));
+    let (out, reply) = run(dir.path(), &["validate", "--all"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert!(stale(&reply), "{reply}");
+    // So does adding an act beside the covered ones.
+    write_flow(
+        dir.path(),
+        &marked.replace(
+            "      - {kind: submit, role: button, name: Pay now}\n",
+            "      - {kind: submit, role: button, name: Pay now}\n      - {kind: activate, role: button, name: Delete account}\n",
+        ),
+    );
+    assert!(stale(&run(dir.path(), &["validate", "--all"]).1));
+    // Marking again binds the acts as they are now.
+    let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert_ne!(reply["data"]["safe"]["acts"], digest.as_str(), "{reply}");
+    assert_eq!(reply["data"]["acts"].as_array().map(Vec::len), Some(3), "{reply}");
+    assert!(!stale(&run(dir.path(), &["validate", "--all"]).1));
+
+    // Approve drops the mark, so the approval binds no mark and is not stale.
+    write_flow(dir.path(), &marked);
+    for args in [
+        vec!["init", "-q", "--object-format=sha1"],
+        vec!["add", "-A"],
+        vec!["-c", "user.name=Flow Test", "-c", "user.email=flow@example.test", "commit", "-q", "-m", "fixture"],
+    ] {
+        let out = Command::new("git").current_dir(dir.path()).args(args).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+    let (out, reply) = run(dir.path(), &["approve", "checkout"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    let approved = text();
+    assert!(!approved.contains("safe:"), "{approved}");
+    let (out, reply) = run(dir.path(), &["validate", "--all"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+
+    // An approved flow takes no mark, by the door or by hand.
+    let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
+    assert_eq!(out.status.code(), Some(2), "{reply}");
+    assert!(finding(&reply, "flow.safe_not_draft"), "{reply}");
+    assert_eq!(text(), approved);
+    write_flow(
+        dir.path(),
+        &approved.replace(
+            "      - {kind: submit, role: button, name: Pay now}\n",
+            &format!("      - {{kind: submit, role: button, name: Pay now}}\n    safe: {{acts: {digest}}}\n"),
+        ),
+    );
+    let (out, reply) = run(dir.path(), &["validate", "--all"]);
+    assert_eq!(out.status.code(), Some(2), "{reply}");
+    assert!(finding(&reply, "flow.safe_not_draft"), "{reply}");
+}

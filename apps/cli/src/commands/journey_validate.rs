@@ -32,7 +32,8 @@ pub(crate) struct Finding {
 
 impl Finding {
     pub(crate) fn is_warning(&self) -> bool {
-        self.code == "flow.unreachable_screen"
+        // A stale safe mark (#518) is void, not wrong: the guard simply applies again.
+        matches!(self.code, "flow.unreachable_screen" | "flow.safe_stale")
     }
     pub(crate) fn new(
         code: &'static str,

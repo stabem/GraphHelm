@@ -225,6 +225,21 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
                 ));
             }
         }
+        if !edge["safe"].is_null() {
+            if value["status"] != "draft" {
+                findings.push(Finding::new(
+                    "flow.safe_not_draft",
+                    format!("/edges/{i}/safe"),
+                    "only a draft carries a safe mark; an approved flow is not guarded",
+                ));
+            } else if !edge_marked_safe(edge) {
+                findings.push(Finding::new(
+                    "flow.safe_stale",
+                    format!("/edges/{i}/safe"),
+                    "the edge's acts changed since the owner marked them safe; the mark is void",
+                ));
+            }
+        }
         for (a, act) in edge["acts"].as_array().unwrap().iter().enumerate() {
             if let Some(secret) = act["secret"].as_str()
                 && !secrets.contains(secret)
@@ -361,6 +376,30 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
     findings
 }
 
+/// What a safe mark binds (#518): the edge's acts exactly as the canonical flow writes them, so
+/// any edit to an act (kind, role, name, text, secret, order, count) voids the mark.
+fn acts_digest(edge: &Value) -> String {
+    let acts: Vec<String> = edge["acts"]
+        .as_array()
+        .map(|acts| acts.iter().map(|act| inline(act, ACT_FIELDS)).collect())
+        .unwrap_or_default();
+    format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(acts.join("\n").as_bytes()))
+    )
+}
+
+/// The owner marked this edge's acts safe to watch on a draft, and they are still those acts.
+///
+/// WHAT IT PROVES, AND WHAT IT DOES NOT. The digest proves the acts are unchanged since the mark
+/// was written. It does not prove WHO wrote it: the mark lives in the flow file, like
+/// `approved: {revision, digest}`, and whoever can write that file can compute a digest. The
+/// doors are what make it the owner's: `journey mark-safe` and its route take the owner
+/// credential, and the agent's own writer (`draft_bytes`) refuses a flow that carries a mark.
+pub(crate) fn edge_marked_safe(edge: &Value) -> bool {
+    edge["safe"]["acts"].as_str() == Some(acts_digest(edge).as_str())
+}
+
 pub(crate) fn approval_digest(flow: &Value) -> String {
     format!(
         "sha256:{}",
@@ -391,6 +430,18 @@ pub(super) fn draft_bytes(flow: &Value, project: &Path) -> Result<String, Vec<Fi
             "flow.approval_stale",
             "/approved",
             "only unapproved drafts may be published by the agent",
+        )]);
+    }
+    // #518: a safe mark is the owner's. Every flow that reaches this writer is the agent's own
+    // draft or an approved flow demoted by drift (approve drops marks), so none is legitimate.
+    if let Some(i) = flow["edges"]
+        .as_array()
+        .and_then(|edges| edges.iter().position(|edge| !edge["safe"].is_null()))
+    {
+        return Err(vec![Finding::new(
+            "flow.safe_owner_only",
+            format!("/edges/{i}/safe"),
+            "only the owner marks an act safe (graphhelm journey mark-safe)",
         )]);
     }
     let file = project
@@ -1083,6 +1134,12 @@ pub(crate) fn run_approve(args: &crate::args::JourneyApproveArgs) -> Outcome {
     };
     flow["status"] = json!("approved");
     flow["drift"] = json!([]);
+    // #518: an approved flow is not guarded in watch, so its marks have nothing left to say.
+    for edge in flow["edges"].as_array_mut().unwrap() {
+        if let Some(edge) = edge.as_object_mut() {
+            edge.remove("safe");
+        }
+    }
     flow["approved"] = json!({"revision":revision,"digest":approval_digest(&flow)});
     let mut writes = BTreeMap::new();
     let contracts = match compile(&flow) {
@@ -1147,6 +1204,69 @@ pub(crate) fn run_approve(args: &crate::args::JourneyApproveArgs) -> Outcome {
     )
 }
 
+/// `graphhelm journey mark-safe <flow> <edge>` (#518): the owner says "this draft's edge may be
+/// played in a watch although an act on it looks destructive". Writes `safe: {acts: <digest>}`
+/// on that edge of a canonical DRAFT and nothing else; the reply lists every act the mark covers,
+/// so one mark never blesses an act the owner was not shown. Owner door: the CLI on the owner's
+/// machine, or the Runtime route with the owner credential.
+pub(crate) fn run_mark_safe(args: &crate::args::JourneyMarkSafeArgs) -> Outcome {
+    const COMMAND: &str = "journey.mark_safe";
+    let project = args.project.clone().unwrap_or_else(|| ".".into());
+    let Some(files) = files(&project, std::slice::from_ref(&args.id)) else {
+        return input_error(COMMAND, "invalid flow id or unsafe journeys directory");
+    };
+    let Ok(_lock) = write_lock(&project) else {
+        return input_error(COMMAND, "journey-flow write lock unavailable or unsafe");
+    };
+    let file = &files[0];
+    let (text, mut flow) = match read(file) {
+        Ok(value) => value,
+        Err(findings) => return report(COMMAND, vec![], findings, json!({})),
+    };
+    let mut findings = approval_findings(file, &text, &flow, &project);
+    // A stale mark is what a new mark replaces.
+    findings.retain(|f| f.code != "flow.safe_stale");
+    if flow["status"] != "draft" {
+        findings.push(Finding::new(
+            "flow.safe_not_draft",
+            "/status",
+            "only a draft's act is marked safe; an approved flow is not guarded",
+        ));
+    }
+    let index = flow["edges"]
+        .as_array()
+        .and_then(|edges| edges.iter().position(|edge| edge["id"] == args.edge.as_str()));
+    if index.is_none() {
+        findings.push(Finding::new(
+            "flow.edge_unknown",
+            "/edges",
+            "the flow has no edge with that id",
+        ));
+    }
+    let (Some(index), true) = (index, findings.iter().all(Finding::is_warning)) else {
+        return report(
+            COMMAND,
+            vec![
+                json!({"findings":findings.iter().map(|f|json!({"code":f.code,"pointer":f.pointer,"message":f.message})).collect::<Vec<_>>()}),
+            ],
+            findings,
+            json!({}),
+        );
+    };
+    let digest = acts_digest(&flow["edges"][index]);
+    flow["edges"][index]["safe"] = json!({"acts": digest});
+    if atomic_write(file, canonical(&flow, false).as_bytes()).is_err() {
+        return input_error(COMMAND, "the flow could not be written; nothing changed");
+    }
+    Outcome::success(
+        COMMAND,
+        json!({"id": args.id, "edge": args.edge, "safe": flow["edges"][index]["safe"],
+            "acts": flow["edges"][index]["acts"], "written": 1}),
+    )
+}
+
+const ACT_FIELDS: &[&str] = &["kind", "role", "name", "text", "secret"];
+
 // Emit the schema's reading order, not map insertion order or a serializer's incidental style.
 fn scalar(value: &Value) -> String {
     let Some(text) = value.as_str() else {
@@ -1210,7 +1330,7 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
             "screens",
             &["id", "title", "url", "state", "expect", "scope"][..],
         ),
-        ("edges", &["id", "from", "to", "acts"][..]),
+        ("edges", &["id", "from", "to", "acts", "safe"][..]),
     ] {
         out.push_str(&format!("{group}:\n"));
         let mut entries = value[group].as_array().unwrap().iter().collect::<Vec<_>>();
@@ -1232,13 +1352,13 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
                         out.push_str(&format!(
                             "{:6}- {}\n",
                             "",
-                            inline(act, &["kind", "role", "name", "text", "secret"])
+                            inline(act, ACT_FIELDS)
                         ));
                     }
                 } else {
                     out.push_str(&format!(
                         "{prefix}{field}: {}\n",
-                        inline(v, &["role", "name"])
+                        inline(v, &["role", "name", "acts"])
                     ));
                 }
             }
@@ -1278,4 +1398,37 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #518 (`keel.invariant.permissions`): the agent's own flow writer (explore, heal, drift)
+    /// must never publish a safe mark, even one whose digest is right - an agent can compute it.
+    /// Defect named: `draft_bytes` accepting a flow that carries `safe`, which would let the hand
+    /// that wrote a destructive act also bless it. No CLI door reaches this writer without a
+    /// model or a browser, so the cell sits beside it. Cost: one tempdir, no I/O beyond it.
+    #[test]
+    fn the_agent_writer_refuses_a_flow_that_carries_a_safe_mark() {
+        let project = tempfile::tempdir().unwrap();
+        for file in ["app/cart/page.tsx", "app/checkout/page.tsx", "app/api/pay/route.ts"] {
+            let path = project.path().join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "export {}").unwrap();
+        }
+        let mut flow: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_flow/checkout.journey.yaml"
+        ))
+        .unwrap();
+        assert!(draft_bytes(&flow, project.path()).is_ok());
+
+        let edge = &mut flow["edges"][1];
+        assert!(!edge_marked_safe(edge));
+        edge["safe"] = json!({"acts": acts_digest(edge)});
+        assert!(edge_marked_safe(edge));
+        let refused = draft_bytes(&flow, project.path()).unwrap_err();
+        assert_eq!(refused[0].code, "flow.safe_owner_only");
+        assert_eq!(refused[0].pointer, "/edges/1/safe");
+    }
 }

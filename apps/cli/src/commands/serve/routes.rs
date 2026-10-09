@@ -2334,6 +2334,135 @@ pub(super) async fn journey_preview(
     preview_status(response).await
 }
 
+/// One observer setup at a time per Runtime: two concurrent `npm install`s in one project corrupt
+/// its `node_modules`.
+static OBSERVER_SETUP_RUNNING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Holds a one-at-a-time flag until it is dropped (#588 review). It travels INTO the blocking
+/// work, so the flag clears when the work ends: not when the request ends (a client that
+/// disconnects drops the handler's future mid-install, which once left the flag set for good),
+/// and never while the install still runs.
+struct Exclusive(&'static std::sync::atomic::AtomicBool);
+
+impl Exclusive {
+    fn take(flag: &'static std::sync::atomic::AtomicBool) -> Option<Self> {
+        use std::sync::atomic::Ordering;
+        // `then`, not `then_some`: an eager `Self(flag)` built on a failed take is dropped at once,
+        // and its Drop would clear the flag the running install holds.
+        flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+            .then(|| Self(flag))
+    }
+}
+
+impl Drop for Exclusive {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// `work` off the reactor while `flag` is held, or `None` when another holds it. The flag is
+/// released by the work's own end, wherever the returned future is by then.
+fn exclusively<T: Send + 'static>(
+    flag: &'static std::sync::atomic::AtomicBool,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<impl std::future::Future<Output = Option<T>>> {
+    let exclusive = Exclusive::take(flag)?;
+    Some(off_reactor(move || {
+        let _exclusive = exclusive;
+        work()
+    }))
+}
+
+/// npm plus the Chromium download (~150 MB) on a slow link; past this the steps are killed.
+const OBSERVER_SETUP_BUDGET: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// `POST /v1/journey-observer/setup` (#519): exactly `graphhelm setup --install-observer
+/// playwright` in this Runtime's project, so a project with no browser player can get one from the
+/// Studio. The body must be empty: no caller input reaches the commands, and the package version
+/// is pinned. It edits the project's `package.json` (creating one when there is none) and
+/// downloads Chromium; the result names every file it created or changed. Owner credential only
+/// (not on the agent allow-list), one at a time (409 `observer.setup_busy`), bounded by
+/// `OBSERVER_SETUP_BUDGET` (`observer.setup_timeout`).
+pub(super) async fn setup_journey_observer(
+    State(state): State<ServeState>,
+    body: Bytes,
+) -> Response {
+    const COMMAND: &str = "journey.observer_setup";
+    if !body.is_empty() {
+        return bad_request(COMMAND, "this route takes no body", "/body");
+    }
+    let Some(project) = state.project.as_deref().map(Path::to_path_buf) else {
+        return respond_failure(
+            COMMAND,
+            execution::execution_state(
+                "observer setup requires an explicit --project on this Runtime",
+                "/project",
+            ),
+        );
+    };
+    let Some(home) = std::env::home_dir() else {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(COMMAND, "no home directory to look for Chromium in").output,
+        );
+    };
+    let Some(setup) = exclusively(&OBSERVER_SETUP_RUNNING, move || {
+        crate::commands::observers::install_playwright_bounded(
+            &project,
+            &home,
+            OBSERVER_SETUP_BUDGET,
+        )
+    }) else {
+        return respond(
+            StatusCode::CONFLICT,
+            Outcome::domain(
+                COMMAND,
+                vec![Diagnostic::error(
+                    "observer.setup_busy",
+                    "an observer setup is already running on this Runtime",
+                    "/",
+                    "serve",
+                )],
+            )
+            .output,
+        );
+    };
+    let ran = setup.await;
+    use crate::commands::observers::Installed;
+    let failed = |code: &'static str, message: String| {
+        respond(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Outcome::domain(
+                COMMAND,
+                vec![Diagnostic::error(
+                    code,
+                    message,
+                    "/observers/install",
+                    "serve",
+                )],
+            )
+            .output,
+        )
+    };
+    match ran {
+        Some((data, Installed::Ok)) => respond_outcome(Outcome::success(COMMAND, data)),
+        Some((data, Installed::Failed)) => failed(
+            "observer.setup_failed",
+            format!("an install step failed: {data}"),
+        ),
+        Some((data, Installed::TimedOut)) => failed(
+            "observer.setup_timeout",
+            format!("the install outlived its budget and was stopped: {data}"),
+        ),
+        None => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(COMMAND, "the observer setup task failed").output,
+        ),
+    }
+}
+
 /// A preview still running answers 202, as agreed with the Studio (#519); everything else as is.
 async fn preview_status(response: Response) -> Response {
     if response.status() != StatusCode::OK {
@@ -6193,6 +6322,50 @@ mod off_reactor_tests {
             native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         };
         (directory, state)
+    }
+
+    /// #588 review (gh-claude-8's probe): a client that disconnects mid-install drops the
+    /// handler's future. Defects named: the flag cleared after the `.await` (never cleared: every
+    /// later setup 409s for the Runtime's life), a guard held in the future (cleared at once: a
+    /// second install starts beside the first), or a refused take that releases the flag (its own
+    /// 409 frees the way for a third). The guard rides into the blocking work, so the
+    /// flag stays set while the work runs and clears when it ends. Cost: about half a second.
+    #[test]
+    fn a_dropped_setup_request_keeps_the_flag_while_the_work_runs_and_frees_it_after() {
+        static FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let (started, ready) = std::sync::mpsc::channel();
+            let work = super::exclusively(&FLAG, move || {
+                started.send(()).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(400));
+            })
+            .expect("free at first");
+            let request = tokio::spawn(work);
+            tokio::task::yield_now().await;
+            ready.recv().expect("the work started");
+            // The client goes away: the request's future is dropped mid-install.
+            request.abort();
+            let _ = request.await;
+            // Twice: a refused take must not release the flag the running work holds.
+            for attempt in ["second", "third"] {
+                assert!(
+                    super::Exclusive::take(&FLAG).is_none(),
+                    "a {attempt} setup started while the first still ran"
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+            assert!(
+                super::Exclusive::take(&FLAG).is_some(),
+                "the flag outlived the work: every later setup would answer 409"
+            );
+        });
     }
 
     /// The helper's own contract, with a closure that can observe its thread: the work runs

@@ -770,3 +770,36 @@ fn signal_as_agent(base: &str, bearer: &str, key: &str, body: &str) -> (u16, Val
         serde_json::from_slice(&raw[split + 4..]).unwrap_or(Value::Null),
     )
 }
+
+/// #519 (`keel.invariant.permissions`, `external effects`): the Studio's observer setup edits the
+/// owner's package.json and downloads Chromium, so it is the owner's alone and takes no caller
+/// input. Defect named: the route added to the agent allow-list, or a body passed through to npm.
+/// The agent session token is refused before any handler; a body is refused by the owner's own
+/// request; neither writes a file. Cost: one server, three requests, no install.
+#[test]
+fn only_the_owner_sets_up_the_observer_and_nothing_reaches_npm() {
+    let harness = prepared();
+    let (_server, base, owner) = harness.serve(true);
+    let agent_token = std::fs::read_to_string(harness.events.with_extension("agent.token"))
+        .expect("serve mints the agent session token beside the owner token");
+    const ROUTE: &str = "/v1/journey-observer/setup";
+    let untouched = || {
+        assert!(!harness.project.join("package.json").exists());
+        assert!(
+            !harness
+                .project
+                .join(".graphhelm/observers/journey_driver.mjs")
+                .exists()
+        );
+    };
+
+    let (status, refused) = http(&base, "POST", ROUTE, Some(agent_token.trim()));
+    assert_eq!(status, 403, "{refused}");
+    let (status, refused) = http(&base, "POST", ROUTE, Some(AGENT_CREDENTIAL));
+    assert_ne!(status, 200, "{refused}");
+    untouched();
+
+    let (status, refused) = http_body(&base, "POST", ROUTE, Some(&owner), r#"{"package":"evil"}"#);
+    assert_eq!(status, 400, "{refused}");
+    untouched();
+}

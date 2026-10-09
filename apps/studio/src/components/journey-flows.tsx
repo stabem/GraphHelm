@@ -9,7 +9,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 
-import type { JourneyFlowEdge, JourneyFlowScreen, JourneyFlowView, JourneyFlowsView, JourneyFrame, JourneyRunView, LiveSession } from "../runtime/types";
+import type { JourneyFlowEdge, JourneyFlowScreen, JourneyFlowView, JourneyFlowsView, JourneyFrame, JourneyRunView, LiveSession, ObserverSetupView } from "../runtime/types";
 import { JourneyFlowchart, actWords, pathsOf } from "./journey-flowchart";
 
 /** Where a journey's run and its pictures come from (#519): the Runtime client's four reads. */
@@ -20,6 +20,8 @@ export interface JourneyRunSource {
   read: (flowId: string) => Promise<JourneyRunView>;
   screenFrame: (flowId: string, screenId: string) => Promise<JourneyFrame | null>;
   liveFrame: (sessionId: string, etag: string | null) => Promise<JourneyFrame | null>;
+  /** Install the browser player in the project (#519); absent, the Studio only names the gap. */
+  setupPlayer?: () => Promise<ObserverSetupView>;
 }
 
 export interface JourneyFlowsProps {
@@ -280,10 +282,52 @@ function SkippedSteps({ flow, edges, onMarkSafe }: { flow: JourneyFlowView; edge
   );
 }
 
+/** #519: a project with no browser player gets one from here. The owner reads what it changes
+ * before anything runs: it edits package.json and downloads Chromium. */
+export function PlayerSetup({ setup, onDone }: { setup: () => Promise<ObserverSetupView>; onDone: (note: string) => void }) {
+  const [step, setStep] = useState<"offer" | "confirm" | "running" | "done" | "failed">("offer");
+  const [said, setSaid] = useState("");
+  const install = () => {
+    setStep("running");
+    setup().then((result) => {
+      const files = result.changed.map((file) => `${file.path} (${file.change})`).join(", ");
+      const note = `Journey player installed. ${files === "" ? "Nothing needed changing." : `Changed: ${files}.`}`;
+      setSaid(note);
+      setStep("done");
+      onDone(note);
+    }, (cause: unknown) => {
+      setSaid(cause instanceof Error ? cause.message : String(cause));
+      setStep("failed");
+    });
+  };
+  return (
+    <div className="journey-player-setup">
+      {step === "offer" && <button type="button" onClick={() => setStep("confirm")}>Set up journey player</button>}
+      {step === "confirm" && (
+        <>
+          <p>Adds @playwright/test to package.json (and creates package.json if there is none), and downloads Chromium, ~150 MB.</p>
+          <button type="button" onClick={install}>Install</button>
+          <button type="button" onClick={() => setStep("offer")}>Cancel</button>
+        </>
+      )}
+      {step === "running" && <p role="status">Installing the journey player… this can take a few minutes.</p>}
+      {step === "done" && <p role="status">{said}</p>}
+      {step === "failed" && (
+        <>
+          <p role="alert">Couldn't install the journey player: {said}</p>
+          <button type="button" onClick={() => setStep("confirm")}>Try again</button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void>; onWatch?: (flowId: string, path?: string) => Promise<void>; onMarkSafe?: (flowId: string, edgeId: string) => Promise<void>; session?: LiveSession; source?: JourneyRunSource }) {
   const { offered, run, frames, failure: runFailure, again, confirm, confirming } = useJourneyRun(flow.id, source);
   const liveFrame = useLiveFrame(session, source);
   const [approving, setApproving] = useState(false);
+  // What the player setup changed stays on screen after its button goes, while the run it started goes on.
+  const [installed, setInstalled] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [watchError, setWatchError] = useState<{ text: string; path?: string } | null>(null);
@@ -341,6 +385,8 @@ function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source }: { flo
             {run?.state === "ready" && run.ranAt !== undefined && <> · ran <time dateTime={run.ranAt}>{new Date(run.ranAt).toLocaleString()}</time></>}
           </p>
           <button type="button" onClick={again} disabled={run?.state === "running" || (run === null && runFailure === null)}>Run again</button>
+          {run?.state === "failed" && run.reason === "driver.observer_missing" && source?.setupPlayer && <PlayerSetup setup={source.setupPlayer} onDone={(note) => { setInstalled(note); again(); }} />}
+          {installed !== null && <p className="journey-flow-note">{installed}</p>}
         </div>
       )}
       {/* #548: an approved flow plays by itself only up to its first act that changes data. The

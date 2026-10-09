@@ -588,6 +588,40 @@ pub(crate) fn slot_target(
     Ok((target, reclaimed))
 }
 
+#[cfg(test)]
+#[test]
+fn slot_target_reclaims_gone_worktrees_before_refusing_the_held_slot_floor() {
+    // The pre-queue refusal cannot reclaim: that operation must remain serialized. Exercise
+    // the held-slot call directly, without a disk-filling stress test or a production test hook.
+    // Defect: moving the floor ahead of reclaim, or deleting a live target under pressure.
+    // Existing cap/reclaim tests never refuse for disk pressure. Cost: local temp files only.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let fast = dir.path().join("fast");
+    let live = dir.path().join("wt-live");
+    let gone = dir.path().join("wt-gone");
+    for path in [root.join(LEDGER), fast.clone(), live.clone(), gone.clone()] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    let configure = |floor| {
+        std::fs::write(root.join(LEDGER).join(SLOT_TARGETS),
+            json!({"targetRoot": fast, "minFreeGb": floor}).to_string()).unwrap();
+        target_rule(&root).unwrap().unwrap()
+    };
+    let rule = configure(0);
+    let (live_target, _) = slot_target(&root, &rule, "lane-a", &live, true).unwrap();
+    let (gone_target, _) = slot_target(&root, &rule, "lane-a", &gone, true).unwrap();
+    std::fs::remove_dir(&gone).unwrap();
+    let rule = configure(4096);
+    assert!(fs2::available_space(&fast).unwrap() < 4096 * 1024_u64.pow(3));
+    let result = slot_target(&root, &rule, "lane-a", &live, true);
+    assert!(result.is_err(), "held-slot check ignored the floor: {result:?}");
+    assert!(!gone_target.exists());
+    assert!(!target_record_file(&root, "lane-a", "wt-gone").exists());
+    assert!(live_target.is_dir());
+    assert!(target_record_file(&root, "lane-a", "wt-live").is_file());
+}
+
 /// Every lane's recorded build directories for `workspace sweep` and `workspace slot status`.
 fn all_target_records(root: &Path) -> Vec<(String, String, PathBuf)> {
     let Ok(entries) = std::fs::read_dir(root.join(LEDGER).join(TARGET_RECORDS)) else {

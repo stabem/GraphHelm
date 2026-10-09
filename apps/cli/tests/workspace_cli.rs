@@ -1038,6 +1038,68 @@ fn slot_in(root: &Path, lane: &str, worktree: &Path, log: &Path) -> (i32, Value)
     )
 }
 
+/// The floor must stop the real child, not just parse successfully. Existing cap/reclaim
+/// observers do not exercise disk pressure. No production seam; a few short local children.
+#[test]
+fn the_slot_refuses_to_build_below_the_free_space_floor() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let fast = dir.path().join("fast");
+    let tree = dir.path().join("wt-floor");
+    let rules = root.join(".graphhelm-workspaces");
+    for path in [&rules, &fast, &tree] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    let log = dir.path().join("ran.txt");
+    let configure = |floor: Value| {
+        std::fs::write(
+            rules.join("slot-targets.json"),
+            serde_json::json!({"targetRoot": fast, "minFreeGb": floor}).to_string(),
+        ).unwrap();
+    };
+    configure(4096.into());
+    assert!(fs2::available_space(&fast).unwrap() < 4096 * 1024_u64.pow(3));
+    let (code, reply) = slot_in(&root, "lane-a", &tree, &log);
+    assert_eq!(code, 3, "{reply}");
+    assert!(!log.exists(), "the command ran below the floor");
+    assert!(!rules.join("slot").exists());
+    let message = reply["diagnostics"][0]["message"].as_str().unwrap();
+    assert!(message.contains("4096 GB") && message.contains("minFreeGb")
+        && message.contains("graphhelm workspace sweep"), "{reply}");
+    for malformed in [serde_json::json!(-1), serde_json::json!("20"), serde_json::json!(4097)] {
+        configure(malformed);
+        let (code, reply) = slot_in(&root, "lane-a", &tree, &log);
+        assert_eq!(code, 3, "{reply}");
+        assert_eq!(reply["diagnostics"][0]["path"], "/targetRoot");
+        assert!(!log.exists());
+    }
+    configure(0.into());
+    let (code, reply) = slot_in(&root, "lane-a", &tree, &log);
+    assert_eq!(code, 0, "{reply}");
+    assert!(log.exists());
+    let built = fast.join("lane-a/wt-floor/target/keep.bin");
+    std::fs::write(&built, b"keep").unwrap();
+    configure(4096.into());
+    assert_eq!(slot_in(&root, "lane-a", &tree, &log).0, 3);
+    assert_eq!(std::fs::read(&built).unwrap(), b"keep");
+    let (_, status) = run(&["slot", "status", "--root", root.to_str().unwrap()]);
+    assert_eq!(status["data"]["targetSpace"]["minFreeGb"], 4096);
+    assert!(status["data"]["targetSpace"]["freeGb"].is_number());
+    assert_eq!(status["data"]["targets"]["lane-a"], 1);
+
+    let missing = dir.path().join("missing-target-root");
+    std::fs::write(rules.join("slot-targets.json"),
+        serde_json::json!({"targetRoot": missing}).to_string()).unwrap();
+    let (_, status) = run(&["slot", "status", "--root", root.to_str().unwrap()]);
+    assert_eq!(status["data"]["targetSpace"]["minFreeGb"], 20);
+    assert!(status["data"]["targetSpace"]["freeGb"].is_null());
+    let (code, reply) = slot_in(&root, "lane-a", &tree, &log);
+    assert_eq!(code, 3, "{reply}");
+    assert!(!log.exists());
+    assert!(reply["diagnostics"][0]["message"].as_str().unwrap()
+        .contains("could not be measured"), "{reply}");
+}
+
 /// #360 (`keel.invariant.persistence`, destructive operation): with the owner's rule file the
 /// slot, the one door every build uses, puts the build directory on the configured root, holds a
 /// lane to its cap, and reclaims a build directory when its worktree is gone. Defects named: the

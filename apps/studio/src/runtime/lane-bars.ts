@@ -97,3 +97,22 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
     })
     .sort((a, b) => a.lane.localeCompare(b.lane));
 }
+
+/** #591: greedy interval packing. Bars sorted by start go into the first sub-row whose last bar
+ * ended at or before their start, else a new sub-row; for intervals this uses the minimum number of
+ * sub-rows (the largest number of bars open at one instant). Returns each bar's sub-row, in input order. */
+export function packBars(bars: readonly { start: number; end: number }[]): { rows: number; row: number[] } {
+  const order = bars.map((_, i) => i).sort((a, b) => bars[a]!.start - bars[b]!.start || bars[a]!.end - bars[b]!.end);
+  const ends: number[] = [];
+  const row = new Array<number>(bars.length).fill(0);
+  for (const i of order) {
+    const b = bars[i]!;
+    let r = ends.findIndex((e) => e <= b.start);
+    if (r < 0) { r = ends.length; ends.push(b.end); } else ends[r] = b.end;
+    row[i] = r;
+  }
+  return { rows: Math.max(1, ends.length), row };
+}
+
+/** A lane named "TBD" (any case) or nothing is a placeholder, not an agent. */
+export const placeholderLane = (name: string | null | undefined) => !name || !name.trim() || name.trim().toLowerCase() === "tbd";

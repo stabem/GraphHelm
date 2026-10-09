@@ -1,8 +1,9 @@
 import "./lanes-timeline.css";
-import type { Lane } from "../runtime/lane-bars";
+import { packBars, placeholderLane, type Lane } from "../runtime/lane-bars";
+import { stageDuration } from "../runtime/stage-health";
 import type { MissionTask } from "../runtime/mission";
 import type { Bot } from "../runtime/team";
-import { useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { agentBoard, span, type AgentRow, type AgentStatus } from "../runtime/agent-board";
 
 const pct = (n: number) => `${Math.round(n * 10000) / 100}%`;
@@ -64,7 +65,29 @@ function AgentBoard({ rows }: { rows: AgentRow[] }) {
   );
 }
 
+/** #591: sub-row geometry; a bar narrower than MIN_LABEL_PX on a 1000px track draws no text. */
+export const SUB_H = 18, SUB_GAP = 2, MIN_LABEL_PX = 44;
+const TRACK_PAD = 3;
+
+/** The drawn width of a lane track, so a bar knows whether its label fits; 1000px until measured. */
+function useTrackWidth(ref: RefObject<HTMLElement | null>): number {
+  const [w, setW] = useState(1000);
+  useEffect(() => {
+    const track = ref.current?.querySelector(".lt-track");
+    if (!track || typeof ResizeObserver === "undefined") return;
+    const measure = () => { const x = track.getBoundingClientRect().width; if (x > 0) setW(x); };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(track);
+    return () => ro.disconnect();
+  }, [ref]);
+  return w;
+}
+
 export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [] }: Props) {
+  const listRef = useRef<HTMLUListElement>(null);
+  const trackW = useTrackWidth(listRef);
+  lanes = lanes.filter((l) => !placeholderLane(l.lane));
   if (lanes.length === 0 && agents.length === 0) return <p className="lt-empty">No agent has recorded work in this window</p>;
   const board = agentBoard(agents, lanes, tasks, now);
   const rank = new Map<string, number>();
@@ -101,24 +124,31 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [] }:
         <span className="lt-ticks">{ticks.map((t) => <span key={t}>{t}</span>)}<span className="lt-now">now</span></span>
         <span>LAST DELIVERED</span>
       </div>
-      <ul className="lt-lanes" aria-label="Agent lanes">
+      <ul className="lt-lanes" aria-label="Agent lanes" ref={listRef}>
         {lanes.map((l) => {
           const open = l.bars.some((b) => b.open);
+          const pack = packBars(l.bars);
+          const trackH = pack.rows * SUB_H + (pack.rows - 1) * SUB_GAP + TRACK_PAD * 2;
           return (
-            <li key={l.lane} className="lt-row lt-lane">
+            <li key={l.lane} className="lt-row lt-lane" style={{ height: Math.max(44, trackH + 14) }}>
               <span className="lt-who">
                 <span className="lt-dot" data-state={l.silent ? "silent" : open ? "busy" : "idle"} />
                 <span className="lt-name">{l.lane}</span>
                 {l.silent ? <span className="lt-flag" data-flag="silent">silent</span> : !open && <span className="lt-flag" data-flag="free">free</span>}
               </span>
-              <div className="lt-track">
+              <div className="lt-track" style={{ height: trackH }} data-subrows={pack.rows}>
                 <span className="lt-nowline" aria-hidden="true" />
-                {l.bars.map((b, i) => (
-                  <div key={i} className="lt-bar" data-kind={b.kind} data-silent={l.silent && b.open}
-                    style={{ left: pct((b.start - from) / windowMs), width: pct((b.end - b.start) / windowMs) }}>
-                    <span>{`${b.label} ${b.kind}`}</span>
-                  </div>
-                ))}
+                {l.bars.map((b, i) => {
+                  const text = `${b.label} ${b.kind}`;
+                  const frac = (b.end - b.start) / windowMs;
+                  return (
+                    <div key={i} className="lt-bar" data-kind={b.kind} data-silent={l.silent && b.open} data-subrow={pack.row[i]}
+                      title={`${text} · ${stageDuration(b.end - b.start)}${b.open ? " so far" : ""}`}
+                      style={{ left: pct((b.start - from) / windowMs), width: pct(frac), top: TRACK_PAD + pack.row[i]! * (SUB_H + SUB_GAP), height: SUB_H }}>
+                      {frac * trackW >= MIN_LABEL_PX && <span>{text}</span>}
+                    </div>
+                  );
+                })}
               </div>
               <span className="lt-last">{delivered.get(l.lane) ?? "—"}</span>
             </li>

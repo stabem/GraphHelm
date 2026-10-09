@@ -119,3 +119,12 @@
 .mg-health[data-tone="orange"] .mg-health-text { color: #FB923C; }
 .mg-health[data-tone="amber"] .mg-health-text { color: #FBBF24; }
 .mg-health-time { color: #A9AEB8; }
+/* #591: the current card never overlaps: flag and sub-line on their own lines (ellipsis), the time in
+ * stage right-aligned on the who line; a dense card clamps its title to one line to fit 150x88. */
+.mg-node[data-dense="true"] .mg-node-title { -webkit-line-clamp: 1; }
+.mg-node .mg-health { width: 100%; min-width: 0; }
+.mg-node .mg-health-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mg-node-sub { width: 100%; font-family: var(--mono); font-size: 10px; color: #FF8A7E; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mg-node-foot { display: flex; align-items: baseline; gap: 6px; width: 100%; min-width: 0; }
+.mg-node-foot .mg-node-who { flex: 1 1 auto; min-width: 0; width: auto; }
+.mg-node-time { flex: none; margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: #A9AEB8; }

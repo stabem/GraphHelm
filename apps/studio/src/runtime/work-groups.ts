@@ -47,11 +47,15 @@ export interface PathCell {
   label: string;
   /** Who acted there (lane, reviewer, merge sha), when recorded. */
   who: string | null;
-  /** `✓`, `BLOCK`, `skipped`, or `null` for the current and ahead cells. */
+  /** `✓`, `BLOCK`, `skipped`, `fix pushed`, or `null` for the current and ahead cells. */
   mark: string | null;
   /** Time spent there, when the Runtime's clock recorded it. */
   time: string | null;
   count: number;
+  /** #591: the current card's heading when the stage alone does not say it (`Fixing`, `Re-review`). */
+  title: string | null;
+  /** #591: the current card's extra line (`after BLOCK by <reviewer>`). */
+  sub: string | null;
 }
 /** An arrow inside one row: `col` to `col`, solid between done cells, dashed into the current one;
  * `loop` is the Fix back to the re-review in the Review column. */
@@ -66,15 +70,13 @@ export function focusTask(rows: TaskState[]): string | null {
 }
 
 /**
- * Which column a task sits in, read only from its own records. Fix: an unanswered BLOCK, or the
- * fix pushed in answer to the last BLOCK while the re-review has not approved yet. Proven: merged
+ * Which column a task sits in, read only from its own records. Fix: an unanswered BLOCK (the author
+ * must fix). Once the fix is pushed the work is back in Review, waiting on the re-review. Proven: merged
  * and the journey replay passed the step the task serves (`proven`); merged alone is Merged.
  */
 export function workStage(t: TaskState, proven: boolean): WorkStage {
   if (t.step === "merged") return proven ? "proven" : "merged";
   if (t.blockedBy !== null) return "fix";
-  const last = t.rounds?.[t.rounds.length - 1];
-  if (t.step === "review" && last?.fixHead) return "fix";
   // #554: planning, and a design plan waiting on its critic, sit in the Plan column.
   return t.step === "critic" ? "plan" : t.step;
 }
@@ -148,19 +150,23 @@ export function prPath(t: TaskState, proven: boolean): Omit<PrRow, "task"> {
   const cells: PathCell[] = [];
   const add = (stage: WorkStage, c: Partial<PathCell>) => {
     const col = COL[stage], state = c.state ?? stateAt(col);
-    cells.push({ stage, col, label: WORK_STAGES[col]!.label, who: null, mark: state === "done" ? "✓" : null, time: null, count: 1, ...c, state });
+    cells.push({ stage, col, label: WORK_STAGES[col]!.label, who: null, mark: state === "done" ? "✓" : null, time: null, count: 1, title: null, sub: null, ...c, state });
   };
   const planned = Boolean(t.plan || t.critic || t.clock?.spent?.plan || t.clock?.spent?.critic);
   add("plan", { mark: cur > 0 ? (planned ? "✓" : "skipped") : null, time: spent(t, "plan", "critic"), who: t.critic ? `critic ${t.critic.score}/${t.critic.passScore}` : null });
   add("implement", { who: t.lane, time: spent(t, "implement") });
   const reviews = rounds.length + (t.blockedBy ? 0 : approved || t.step === "review" ? 1 : 0);
   const lastReviewer = t.blockedBy?.reviewer || (approved ? t.reviewers[t.reviewers.length - 1] : null) || rounds[rounds.length - 1]?.reviewer || null;
-  if (t.blockedBy) add("review", { state: "block", mark: "BLOCK", who: lastReviewer, count: Math.max(1, reviews), label: counted("Review", reviews) });
-  else if (current === "fix") add("review", { state: "block", mark: "BLOCK", who: lastReviewer, count: rounds.length, label: counted("Review", rounds.length) });
+  // #591: the fix answering the last BLOCK is pushed and the re-review has not answered yet.
+  const fixPushed = !t.blockedBy && t.step === "review" && Boolean(rounds[rounds.length - 1]?.fixHead);
+  const blocker = t.blockedBy ? t.blockedBy.reviewer || "a reviewer" : null;
+  if (t.blockedBy) add("review", { state: "block", mark: "BLOCK", who: `by ${blocker}`, count: Math.max(1, reviews), label: counted("Review", reviews) });
+  else if (fixPushed) add("review", { who: t.reviewers.join(", ") || lastReviewer, count: reviews, label: counted("Re-review", rounds.length), title: counted("Re-review", rounds.length), time: spent(t, "review") });
   else add("review", { who: lastReviewer, count: Math.max(1, reviews), label: counted("Review", reviews), time: spent(t, "review") });
-  if (fixes > 0 || current === "fix") {
-    const fixState = stateAt(COL.fix);
-    add("fix", { state: fixState, mark: fixState === "done" ? "✓" : null, count: Math.max(1, fixes), label: counted("Fix", fixes), who: t.lane });
+  if (t.blockedBy) {
+    add("fix", { title: "Fixing", sub: `after BLOCK by ${blocker}`, count: fixes + 1, label: counted("Fix", fixes + 1), who: t.lane });
+  } else if (fixes > 0) {
+    add("fix", { state: "done", mark: fixPushed ? "fix pushed" : "✓", count: fixes, label: counted("Fix", fixes), who: t.lane });
   } else if (cur > COL.fix) {
     // No BLOCK was ever recorded: the PR went straight past Fix; draw nothing there.
   } else add("fix", { state: "ahead" });
@@ -168,8 +174,8 @@ export function prPath(t: TaskState, proven: boolean): Omit<PrRow, "task"> {
   add("merged", { who: t.mergeSha ? t.mergeSha.slice(0, 8) : null, mark: t.mergeSha ? "✓" : null });
   add("proven", { mark: proven ? "✓" : null });
   const lit = cells.filter((c) => c.state !== "ahead");
-  const edges: PathEdge[] = lit.slice(1).map((b, i) => ({ row: t.key, from: lit[i]!.col, to: b.col, kind: b.state === "current" ? "next" : "done" }));
-  if (fixes > 0) edges.push({ row: t.key, from: COL.fix, to: COL.review, kind: current === "fix" && !t.blockedBy ? "next" : "done" });
+  const edges: PathEdge[] = lit.slice(1).map((b, i) => ({ row: t.key, from: lit[i]!.col, to: b.col, kind: b.state === "current" && !fixPushed ? "next" : "done" }));
+  if (fixes > 0) edges.push({ row: t.key, from: COL.fix, to: COL.review, kind: fixPushed ? "next" : "done" });
   return { key: t.key, open: t.step !== "merged", cells, edges };
 }
 

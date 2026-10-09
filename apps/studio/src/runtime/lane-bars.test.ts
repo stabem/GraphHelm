@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { agentBoard } from "./agent-board";
-import { laneBars, STALL_MS, type TimedTaskEvent } from "./lane-bars";
+import { laneBars, packBars, placeholderLane, STALL_MS, type TimedTaskEvent } from "./lane-bars";
 
 const T0 = Date.parse("2026-10-09T00:00:00Z");
 const at = (ms: number) => new Date(T0 + ms).toISOString();
@@ -98,5 +98,27 @@ describe("laneBars", () => {
     const row = agentBoard([{ name: "gh-claude-8" } as never], lanes, [], T0 + 100).find((r) => r.name === "gh-claude-8")!;
     expect(row).toMatchObject({ stage: "review", pr: 581 });
     expect(row.status).not.toBe("free");
+  });
+});
+
+describe("packBars (#591)", () => {
+  const bars = [
+    { start: 0, end: 100 }, { start: 10, end: 50 }, { start: 20, end: 30 }, { start: 50, end: 90 }, { start: 100, end: 120 }, { start: 30, end: 60 },
+  ];
+  it("no two bars in one sub-row overlap", () => {
+    const { row } = packBars(bars);
+    for (let i = 0; i < bars.length; i++) for (let j = i + 1; j < bars.length; j++) {
+      if (row[i] === row[j]) expect(bars[i]!.end <= bars[j]!.start || bars[j]!.end <= bars[i]!.start).toBe(true);
+    }
+  });
+  it("uses the minimum number of sub-rows (the most bars open at one instant)", () => {
+    // At t=25 three bars are open (0-100, 10-50, 20-30); at t=55, three (0-100, 50-90, 30-60).
+    expect(packBars(bars).rows).toBe(3);
+    expect(packBars([{ start: 0, end: 10 }, { start: 10, end: 20 }]).rows).toBe(1);
+    expect(packBars([]).rows).toBe(1);
+  });
+  it("a lane named TBD or nothing is a placeholder", () => {
+    expect(["TBD", "tbd ", "", "  "].map(placeholderLane)).toEqual([true, true, true, true]);
+    expect(placeholderLane("gh-claude-5")).toBe(false);
   });
 });

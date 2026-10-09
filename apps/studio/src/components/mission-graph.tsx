@@ -206,9 +206,9 @@ export function stageState(stage: WorkStage, t: MissionTask): NodeState {
   return "work";
 }
 const STAGE_LABEL: Record<WorkStage, string> = {
-  plan: "Planning", implement: "Writing", review: "In review", fix: "Fix pushed · re-review", merge: "Merging", merged: "Merged · not proven", proven: "Proven",
+  plan: "Planning", implement: "Writing", review: "In review", fix: "Fixing", merge: "Merging", merged: "Merged · not proven", proven: "Proven",
 };
-export const stageLabel = (stage: WorkStage, t: MissionTask) => (stage === "fix" && t.blocked ? "Blocked" : t.step === "critic" ? "Design in review" : STAGE_LABEL[stage]);
+export const stageLabel = (stage: WorkStage, t: MissionTask) => (t.step === "critic" && stage === "plan" ? "Design in review" : STAGE_LABEL[stage]);
 
 /** #591 geometry: a 120px row header, then the seven stage columns; each PR owns one 112px band. */
 export const ROW_HEAD = 120, X0 = ROW_HEAD + 12, BAND = 112, CARD_TOP = 12, CELL_TOP = 36, MID = CARD_TOP + NODE_H / 2, FOLD_H = 44;
@@ -244,12 +244,43 @@ interface IssueProps {
 }
 
 /** #591: the plain health flag plus the time in stage, on the card and in the inspector header. */
-export function HealthFlag({ health }: { health: StageHealth }) {
+export function HealthFlag({ health, time = true }: { health: StageHealth; time?: boolean }) {
   return (
     <span className="mg-health" data-flag={health.flag} data-tone={health.tone}>
-      <span className="mg-health-text">{health.text}</span>
-      {health.elapsed && <span className="mg-health-time">{health.elapsed}</span>}
+      <span className="mg-health-text" title={health.text}>{health.text}</span>
+      {time && health.elapsed && <span className="mg-health-time">{health.elapsed}</span>}
     </span>
+  );
+}
+
+/** #591: the current card. A BLOCK opens a Fixing card for the author (amber, red only when the
+ * stall rule trips); the health flag gets its own line and the time in stage sits right on the who line. */
+function CurrentCard({ cell: c, stage, task: t, health, selected, left, top, onSelect }: {
+  cell: PrRow["cells"][number]; stage: WorkStage; task: MissionTask; health: StageHealth | null; selected: boolean; left: number; top: number; onSelect(): void;
+}) {
+  const stuck = health?.flag === "stuck";
+  const fixing = stage === "fix" && t.blocked;
+  const st: NodeState = stuck ? "stalled" : fixing ? "work" : stageState(stage, t);
+  const base = stuck ? "Stuck" : c.title ?? stageLabel(stage, t);
+  const who = fixing ? t.lane ?? "nobody yet" : t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : "nobody yet";
+  // The Fixing card's sub-line already names the BLOCK; its "Blocked by" flag would say it twice.
+  const flag = health && !(fixing && health.flag === "blocked") ? health : null;
+  return (
+    <button type="button" className="mg-node" data-state={st} data-stage={stage} data-blocked={t.blocked} data-current="true" data-dense={Boolean(c.sub || flag)}
+      aria-pressed={selected} style={{ left, top }} onClick={onSelect}>
+      <span className="mg-node-head">
+        <span className="mg-dot" data-state={st} />
+        <span className="mg-node-label">{c.count > 1 ? `${base} ×${c.count}` : base}</span>
+        <span className="mg-node-pr">{prText(t)}</span>
+      </span>
+      <span className="mg-node-title">{t.title}</span>
+      {c.sub && <span className="mg-node-sub" title={c.sub}>{c.sub}</span>}
+      {flag && <HealthFlag health={flag} time={false} />}
+      <span className="mg-node-foot">
+        <span className="mg-node-who">{who}</span>
+        {health?.elapsed && <span className="mg-node-time">{health.elapsed}</span>}
+      </span>
+    </button>
   );
 }
 
@@ -295,7 +326,7 @@ export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSel
               )}
               {shown.map((r) => {
                 const top = tops.get(r.key)!;
-                const t = r.task, stage = group.stages[t.key]!, st = stageState(stage, t);
+                const t = r.task, stage = group.stages[t.key]!;
                 const pr = t.pr ? `PR #${t.pr}` : "No PR";
                 return (
                   <div key={r.key} className="mg-row" data-row={r.key} data-open={r.open}>
@@ -308,17 +339,8 @@ export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSel
                       <div key={i} className="mg-seg" data-dir={sg.dir} data-done={sg.done} style={sg.style} aria-hidden="true" />
                     ))}
                     {r.cells.map((c) => c.state === "current" ? (
-                      <button key={c.stage} type="button" className="mg-node" data-state={st} data-stage={stage} data-blocked={t.blocked} data-current="true"
-                        aria-pressed={t.key === selectedTaskKey} style={{ left: colX(c.col), top: top + CARD_TOP }} onClick={() => onSelectTask(t.key)}>
-                        <span className="mg-node-head">
-                          <span className="mg-dot" data-state={st} />
-                          <span className="mg-node-label">{c.count > 1 ? `${stageLabel(stage, t)} ×${c.count}` : stageLabel(stage, t)}</span>
-                          <span className="mg-node-pr">{prText(t)}</span>
-                        </span>
-                        <span className="mg-node-title">{t.title}</span>
-                        {health[t.key] && <HealthFlag health={health[t.key]!} />}
-                        <span className="mg-node-who">{t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : "nobody yet"}</span>
-                      </button>
+                      <CurrentCard key={c.stage} cell={c} stage={stage} task={t} health={health[t.key] ?? null} selected={t.key === selectedTaskKey}
+                        left={colX(c.col)} top={top + CARD_TOP} onSelect={() => onSelectTask(t.key)} />
                     ) : (
                       <button key={c.stage} type="button" className="mg-cell" data-cell={c.state} data-stage={c.stage} tabIndex={c.state === "ahead" ? -1 : 0}
                         aria-label={`${pr} ${[c.label, c.who, c.mark, c.time].filter(Boolean).join(" · ")}`} style={{ left: colX(c.col), top: top + CELL_TOP }}
@@ -326,7 +348,7 @@ export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSel
                         {c.state !== "ahead" && <>
                           <span className="mg-cell-line">
                             <span className="mg-cell-label">{c.label}</span>
-                            {c.mark && <span className="mg-cell-mark" data-tone={c.mark === "BLOCK" ? "block" : c.mark === "✓" ? "ok" : "skip"}>{c.mark}</span>}
+                            {c.mark && <span className="mg-cell-mark" data-tone={c.mark === "BLOCK" ? "block" : c.mark === "✓" || c.mark === "fix pushed" ? "ok" : "skip"}>{c.mark}</span>}
                           </span>
                           <span className="mg-cell-line mg-cell-sub">{[c.who, c.time].filter(Boolean).join(" · ")}</span>
                         </>}

@@ -20,9 +20,9 @@ describe("workStage", () => {
     expect(workStage(task("a", { step: "merged" }), false)).toBe("merged");
     expect(workStage(task("a", { step: "merged" }), true)).toBe("proven");
   });
-  it("Fix: an unanswered BLOCK, or a fix pushed after a BLOCK awaiting re-review", () => {
+  it("Fix: an unanswered BLOCK; once the fix is pushed the work waits in Review (#591)", () => {
     expect(workStage(task("a", { step: "review", blockedBy: { reviewer: "r", headSha: "a", commentUrl: "" }, rounds: [round(null)] }), false)).toBe("fix");
-    expect(workStage(task("a", { step: "review", rounds: [round("b")] }), false)).toBe("fix");
+    expect(workStage(task("a", { step: "review", rounds: [round("b")] }), false)).toBe("review");
     expect(workStage(task("a", { step: "merge", rounds: [round("b")] }), false)).toBe("merge");
   });
 });
@@ -73,7 +73,15 @@ describe("prPath (#591)", () => {
       ["plan", "done", "Plan", "✓"], ["implement", "done", "Implement", "✓"], ["review", "block", "Review", "BLOCK"], ["fix", "current", "Fix", null],
       ["merge", "ahead", "Merge", null], ["merged", "ahead", "Merged", null], ["proven", "ahead", "Proven", null],
     ]);
-    expect(cells(task("a", { ...base, step: "review", rounds: [r1] })).slice(2, 4)).toEqual([["review", "block", "Review", "BLOCK"], ["fix", "current", "Fix", null]]);
+    const open = prPath(task("a", { ...base, lane: "gh-claude-1", step: "review", blockedBy: blocked, rounds: [{ ...r1, fixHead: null }] }), false);
+    expect(open.cells[2]).toMatchObject({ who: "by gh-claude-7", mark: "BLOCK" });
+    expect(open.cells[3]).toMatchObject({ state: "current", title: "Fixing", who: "gh-claude-1", sub: "after BLOCK by gh-claude-7" });
+    expect(open.edges).toEqual([{ row: "a", from: 0, to: 1, kind: "done" }, { row: "a", from: 1, to: 2, kind: "done" }, { row: "a", from: 2, to: 3, kind: "next" }]);
+    const pushed = prPath(task("a", { ...base, step: "review", rounds: [r1] }), false);
+    expect(pushed.cells.slice(2, 4).map((c) => [c.stage, c.state, c.label, c.mark, c.title])).toEqual([
+      ["review", "current", "Re-review", null, "Re-review"], ["fix", "done", "Fix", "fix pushed", null]]);
+    expect(pushed.edges).toContainEqual({ row: "a", from: 3, to: 2, kind: "next" });
+    expect(pushed.edges.filter((e) => e.kind === "next")).toHaveLength(1);
     const done = task("a", { ...base, step: "merged", mergeSha: "9a9a9a9a11", rounds: [r1] });
     expect(cells(done)).toEqual([
       ["plan", "done", "Plan", "✓"], ["implement", "done", "Implement", "✓"], ["review", "done", "Review ×2", "✓"], ["fix", "done", "Fix", "✓"],

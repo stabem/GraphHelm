@@ -146,9 +146,29 @@ describe("IssueGraph (#591)", () => {
     const health = { o: { flag: "blocked" as const, text: "Blocked by gh-claude-7", tone: "orange" as const, elapsedMs: 77 * 60_000, elapsed: "1h 17m" } };
     const { container } = render(<IssueGraph group={group} stepFor={() => undefined} selectedTaskKey="o" selectedCol={null} onSelectTask={vi.fn()} onSelectCol={vi.fn()} onOpenTest={vi.fn()} health={health} />);
     const card = container.querySelector('.mg-row[data-row="o"] .mg-node[data-current="true"]')!;
-    expect(within(card as HTMLElement).getByText("Blocked by gh-claude-7")).toBeInTheDocument();
-    expect(within(card as HTMLElement).getByText("1h 17m")).toBeInTheDocument();
+    // #591: a BLOCK opens a Fixing card for the author; the sub-line names the BLOCK, the time sits on the who line.
+    expect(card.querySelector(".mg-node-label")).toHaveTextContent("Fixing");
+    expect(card).toHaveAttribute("data-state", "work");
+    expect(card.querySelector(".mg-node-sub")).toHaveTextContent("after BLOCK by gh-claude-7");
+    expect(card.querySelector(".mg-node-foot")).toHaveTextContent("gh-claude-11h 17m");
+    expect(card.querySelector(".mg-node-time")).toHaveTextContent("1h 17m");
+    expect(card.querySelector(".mg-health")).toBeNull();
+    expect(within(container.querySelector(".mg-custody") as HTMLElement).getByText("pending").closest("li")).toHaveTextContent("Fixgh-claude-1pending");
     const head = container.querySelector(".mg-ins-head")!;
     expect(head.querySelector('.mg-health[data-flag="blocked"]')).toHaveTextContent("Blocked by gh-claude-71h 17m");
+  });
+  it("a stuck card turns red and reads Stuck; the flag is its own truncated line with a tooltip", () => {
+    const text = "Stuck · no record 5h 57m";
+    const health = { o: { flag: "stuck" as const, text, tone: "red" as const, elapsedMs: 27 * 60_000, elapsed: "27m" } };
+    const { container } = render(<IssueGraph group={group} stepFor={() => undefined} selectedTaskKey={null} selectedCol={null} onSelectTask={vi.fn()} onSelectCol={vi.fn()} onOpenTest={vi.fn()} health={health} />);
+    const card = container.querySelector('.mg-row[data-row="o"] .mg-node[data-current="true"]')!;
+    expect(card).toHaveAttribute("data-state", "stalled");
+    expect(card.querySelector(".mg-node-label")).toHaveTextContent("Stuck");
+    const flag = card.querySelector(".mg-health")!;
+    expect(flag.textContent).toBe(text);
+    expect(flag.querySelector(".mg-health-text")).toHaveAttribute("title", text);
+    expect(flag.querySelector(".mg-health-time")).toBeNull();
+    expect(card.querySelector(".mg-node-foot .mg-node-time")).toHaveTextContent("27m");
+    expect(card).toHaveAttribute("data-dense", "true");
   });
 });

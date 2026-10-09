@@ -43,6 +43,22 @@ interface Props {
 }
 
 /** #591: the rail's dot colour family for a bot: working amber, waiting or quiet red, done grey. */
+/** #591: open work spins; blocked or stuck work shows a static red "!" instead. */
+export function ProgressIcon({ alert = false }: { alert?: boolean }) {
+  if (alert) return (
+    <svg className="mv-prog" data-kind="alert" role="img" aria-label="blocked" viewBox="0 0 12 12" width="12" height="12">
+      <circle cx="6" cy="6" r="5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6 3.2v3.3M6 8.4v.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+  return (
+    <svg className="mv-prog" data-kind="spin" role="img" aria-label="in progress" viewBox="0 0 12 12" width="12" height="12">
+      <circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" strokeOpacity=".25" strokeWidth="1.5" />
+      <path d="M6 1.5a4.5 4.5 0 0 1 4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function agentTone(b: Bot): "work" | "stalled" | "idle" {
   return b.state === "working" ? "work" : b.state === "done" ? "idle" : "stalled";
 }
@@ -195,6 +211,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
                     <div key={g.key} className="mv-jcard" data-selected={false}>
                       <button type="button" className="mv-journey mv-group" aria-pressed={false} title={g.label} onClick={() => pickGroup(g.key)}>
                         <span className="mv-journey-title">{g.label}</span>
+                        {g.open && <ProgressIcon />}
                         <span className="mv-journey-count">{count}</span>
                       </button>
                       <span className="mv-segs" aria-hidden="true">
@@ -206,16 +223,18 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
                     <div key={g.key} className="mv-jcard" data-selected={true}>
                       <button type="button" className="mv-journey mv-group" aria-pressed={true} title={g.label} onClick={() => pickGroup(g.key)}>
                         <span className="mv-journey-title">{g.label}</span>
+                        {g.open && <ProgressIcon />}
                         <span className="mv-journey-count">{count}</span>
                       </button>
                       <span className="mv-journey-meta">{`${g.issue !== null ? `issue #${g.issue}` : "no issue"} · ${prs} ${prs === 1 ? "PR" : "PRs"}`}</span>
                       <div className="mv-chips">
                         {g.tasks.map((t, i) => {
                           const stage = g.stages[t.key]!;
+                          const busy = t.step !== "merged", alert = t.blocked || health[t.key]?.flag === "stuck";
                           return (
                             <button key={t.key} type="button" className="mv-chip mv-pr-chip" data-state={stageState(stage, t)} data-stage={stage}
                               aria-pressed={t.key === shownTask} aria-label={`${t.pr ? `PR #${t.pr}` : "No PR"}: ${t.title}`}
-                              onClick={() => pickGroup(g.key, t.key)}>{i + 1}</button>
+                              onClick={() => pickGroup(g.key, t.key)}>{i + 1}{busy && <ProgressIcon alert={alert} />}</button>
                           );
                         })}
                       </div>
@@ -226,6 +245,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
                             <span className="mv-tick" />
                             <span className="mv-step-n">{i + 1}</span>
                             <span className="mv-step-title">{t.title}</span>
+                            {t.step !== "merged" && <ProgressIcon alert={t.blocked || health[t.key]?.flag === "stuck"} />}
                             <span className="mv-step-ids">{t.pr ? `PR #${t.pr}` : "no PR"}</span>
                           </button>
                         ))}

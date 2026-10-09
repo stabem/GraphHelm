@@ -142,3 +142,11 @@
 .mv-agent-dot[data-tone="stalled"] { background: #FF6B5E; }
 .mv-agent-name { width: 92px; flex: none; font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mv-agent-doing { min-width: 0; color: #A9AEB8; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* #591: the work rail's in-progress spinner and the static red "!" for blocked or stuck work. */
+.mv-prog { flex: none; width: 12px; height: 12px; color: var(--mv-work); vertical-align: middle; }
+.mv-prog[data-kind="spin"] { animation: mv-spin 1s linear infinite; }
+.mv-prog[data-kind="alert"] { color: var(--mv-stalled); }
+.mv-chip .mv-prog { width: 10px; height: 10px; margin-left: 2px; color: #0B0C0F; }
+.mv-chip .mv-prog[data-kind="alert"] { color: #3A1E1A; }
+@keyframes mv-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .mv-prog[data-kind="spin"] { animation: none; } }

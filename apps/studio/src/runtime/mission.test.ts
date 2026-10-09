@@ -100,12 +100,12 @@ describe("custodyRows", () => {
     ]);
   });
 
-  it("an unanswered BLOCK ends the rows at the BLOCK", () => {
+  it("an unanswered BLOCK ends the rows at the BLOCK, then the Fix the author owes (#591)", () => {
     const m = buildMission(journey, null, [task({
       step: "review", reviewers: ["rev-b"], blockedBy: { reviewer: "rev-b", headSha: "cccccccc", commentUrl: "" },
       rounds: [{ reviewer: "rev-b", headSha: "cccccccc", commentUrl: "", fixHead: null, blockedAt: null, fixedAt: null }],
     })]);
-    expect(custodyRows(m.tasks[0]!).map((r) => r.verdict)).toEqual(["done", "BLOCK"]);
+    expect(custodyRows(m.tasks[0]!).map((r) => [r.stage, r.verdict])).toEqual([["Implement", "done"], ["Review", "BLOCK"], ["Fix", "pending"]]);
     expect(m.tasks[0]!.blockedBy).toEqual({ reviewer: "rev-b", headSha: "cccccccc" });
   });
 

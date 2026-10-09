@@ -16,7 +16,7 @@
 .lt-ticks { display: flex; justify-content: space-between; }
 .lt-now { color: #E9E7E2; }
 .lt-lanes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.lt-lane { height: 44px; }
+.lt-lane { min-height: 44px; }
 .lt-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .lt-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: #5C6170; }
 .lt-dot[data-state="busy"] { background: var(--mv-work); }
@@ -24,10 +24,10 @@
 .lt-name { font-family: var(--mono); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lt-flag { font-family: var(--mono); font-size: 10px; padding: 2px 6px; border-radius: 4px; background: #1B1E2C; color: var(--mv-ready); }
 .lt-flag[data-flag="silent"] { background: #3A1E1A; color: #FF8A7E; }
-.lt-track { position: relative; height: 30px; background: #101115; border-radius: 6px; border: 1px solid #1A1C21; overflow: hidden; }
-.lt-bar { position: absolute; top: 3px; bottom: 3px; border-radius: 4px; display: flex; align-items: center; padding: 0 6px; box-sizing: border-box; overflow: hidden;
+.lt-track { position: relative; height: 24px; box-sizing: border-box; background: #101115; border-radius: 6px; border: 1px solid #1A1C21; overflow: hidden; }
+.lt-bar { position: absolute; height: 18px; border-radius: 4px; min-width: 2px; display: flex; align-items: center; padding: 0 6px; box-sizing: border-box; overflow: hidden;
   font-family: var(--mono); font-size: 10.5px; font-weight: 500; color: #0B0C0F; background: var(--mv-implement); }
-.lt-bar span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lt-bar span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lt-bar[data-kind="review"] { background: var(--mv-work); }
 .lt-bar[data-kind="merge"] { background: var(--mv-proven); }
 .lt-bar[data-silent="true"] { background: repeating-linear-gradient(135deg, var(--mv-stalled) 0 4px, #3A1E1A 4px 8px); color: #FFE3DF; outline: 1px solid var(--mv-stalled); }

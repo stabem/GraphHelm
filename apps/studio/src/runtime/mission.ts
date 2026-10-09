@@ -97,6 +97,8 @@ export function custodyRows(t: MissionTask): CustodyRow[] {
   t.rounds.forEach((r, i) => {
     rows.push({ stage: i === 0 ? "Review" : "Re-review", who: r.reviewer || "—", verdict: "BLOCK", tone: "block" });
     if (r.fixHead) rows.push({ stage: "Fix", who: t.lane ?? "—", verdict: `pushed ${sha8(r.fixHead)}`, tone: "ok" });
+    // #591: the BLOCK is unanswered: the author owes the fix.
+    else if (t.blocked && i === t.rounds.length - 1) rows.push({ stage: "Fix", who: t.lane ?? "—", verdict: "pending", tone: "run" });
   });
   const stage = t.rounds.length > 0 ? "Re-review" : "Review";
   const who = t.reviewers.join(", ") || "—";

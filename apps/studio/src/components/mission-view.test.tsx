@@ -168,6 +168,25 @@ describe("MissionView", () => {
     expect(screen.getByText("The owner sees it")).toBeInTheDocument();
   });
 
+  it("#591: open work spins on the rail; blocked work shows a red ! instead; merged work shows neither", () => {
+    const block = { reviewer: "r", headSha: "abcdef0123", commentUrl: "" };
+    const tasks = [wt("a", { issue: 5, pr: 50, prTitle: "Moving", step: "review" }), wt("b", { issue: 5, pr: 51, prTitle: "Held", step: "review", blockedBy: block }),
+      wt("m", { issue: 5, pr: 52, prTitle: "Done", step: "merged" }), wt("c", { issue: 6, pr: 60, prTitle: "Elsewhere", step: "merged" })] as unknown as TaskState[];
+    render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    const cards = Array.from(screen.getByRole("region", { name: "Work by issue" }).querySelectorAll<HTMLElement>(".mv-jcard"));
+    const title = (c: HTMLElement) => c.querySelector(".mv-group")!;
+    expect(within(title(cards[0]!) as HTMLElement).getByRole("img", { name: "in progress" })).toHaveAttribute("data-kind", "spin");
+    expect(within(title(cards[1]!) as HTMLElement).queryByRole("img")).toBeNull();
+    const steps = Array.from(cards[0]!.querySelectorAll<HTMLElement>(".mv-step"));
+    const icon = (el: HTMLElement) => el.querySelector(".mv-prog")?.getAttribute("aria-label") ?? null;
+    const byTitle = (t: string) => steps.find((s) => s.textContent!.includes(t))!;
+    expect([icon(byTitle("Moving")), icon(byTitle("Held")), icon(byTitle("Done"))]).toEqual(["in progress", "blocked", null]);
+    const chips = Array.from(cards[0]!.querySelectorAll<HTMLElement>(".mv-pr-chip"));
+    const chip = (pr: number) => chips.find((c) => c.getAttribute("aria-label")!.startsWith(`PR #${pr}`))!;
+    expect([icon(chip(50)), icon(chip(51)), icon(chip(52))]).toEqual(["in progress", "blocked", null]);
+    expect(chip(51).querySelector(".mv-prog")).toHaveAttribute("data-kind", "alert");
+  });
+
   it("#591: agents right now come from the bots; away/shipped from the handover", () => {
     const bot = (name: string, state: string, doingNow: string, quietMinutes: number | null) => ({ key: name, actorId: name, name, hue: 0, role: null, doingNow,
       lastRecordAt: null, lastSequence: 0, state, quietMinutes, shared: false, native: false, tasks: [] });

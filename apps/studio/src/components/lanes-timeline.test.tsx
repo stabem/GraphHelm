@@ -82,4 +82,28 @@ describe("LanesTimeline", () => {
     const rows = within(screen.getByRole("list", { name: "Agent lanes" })).getAllByRole("listitem");
     expect(rows.map((r) => r.querySelector(".lt-name")!.textContent)).toEqual(["gh-claude-5", "gh-claude-6"]);
   });
+
+  it("#591: overlapping bars stack in sub-rows; narrow bars carry no text; every bar has a tooltip; TBD lanes drop", () => {
+    const busy = { lane: "gh-claude-6", silent: false, lastEventAt: now, bars: [
+      { kind: "implement" as const, label: "#600", start: now - 1000, end: now, open: true },
+      { kind: "review" as const, label: "#601", start: now - 800, end: now - 400, open: false },
+      { kind: "review" as const, label: "#602", start: now - 300, end: now - 290, open: false },
+    ] };
+    const tbd = { lane: "TBD", silent: false, lastEventAt: now, bars: [{ kind: "implement" as const, label: "#9", start: now - 10, end: now, open: true }] };
+    const blank = { ...tbd, lane: "" };
+    render(<LanesTimeline lanes={[busy, tbd, blank]} now={now} windowMs={1000} agents={[{ name: "TBD" } as never]} />);
+    const list = screen.getByRole("list", { name: "Agent lanes" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(screen.getByRole("list", { name: "Agent board" })).queryByText("TBD")).toBeNull();
+    const track = list.querySelector(".lt-track") as HTMLElement;
+    expect(track).toHaveAttribute("data-subrows", "2");
+    expect(track.style.height).toBe(`${2 * 18 + 2 + 6}px`);
+    const bars = Array.from(track.querySelectorAll<HTMLElement>(".lt-bar"));
+    expect(bars.map((b) => b.dataset.subrow)).toEqual(["0", "1", "1"]);
+    expect(bars.map((b) => b.style.top)).toEqual(["3px", "23px", "23px"]);
+    expect(bars[0]).toHaveTextContent("#600 implement");
+    expect(bars[2]!.textContent).toBe("");
+    expect(bars[2]).toHaveAttribute("title", "#602 review · 0s");
+    expect(bars[0]!.getAttribute("title")).toBe("#600 implement · 1s so far");
+  });
 });

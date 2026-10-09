@@ -414,20 +414,68 @@ pub(crate) fn validate_owner_execution(
     value: &serde_json::Value,
     actor: &PersistedActor,
 ) -> Result<(), Failure> {
-    use crate::commands::journey_owner::{APPROVED_KIND, OWNER_EXECUTION};
+    use crate::commands::journey_owner::{APPROVED_KIND, MARK_KIND, OWNER_EXECUTION};
     let reserved = execution == Some(OWNER_EXECUTION);
     let kind = value["type"].as_str().unwrap_or("");
-    let approval_id = value["id"]
-        .as_str()
-        .is_some_and(|id| id.starts_with("journey-approved-"));
+    let id = value["id"].as_str().unwrap_or("");
+    // Each owner record kind owns its id prefix (#534: approvals; slice 2: safe marks).
+    let squats = |prefix: &str, owner_kind: &str| id.starts_with(prefix) && kind != owner_kind;
+    let owner_kind = kind == APPROVED_KIND || kind == MARK_KIND;
     if (reserved && actor.actor_type() != graphhelm_protocols::PersistedActorType::Owner)
-        || (approval_id && kind != APPROVED_KIND)
-        || (kind == APPROVED_KIND && !reserved)
+        || squats("journey-approved-", APPROVED_KIND)
+        || squats("journey-safe-", MARK_KIND)
+        || (owner_kind && !reserved)
     {
         return Err(super::signal_invalid(
             "the owner record execution and journey approval ids are the owner's",
             "/signal",
         ));
+    }
+    Ok(())
+}
+
+/// #534 slice 2: an owner's safe mark on a draft's edge (#518), with the same rules as an
+/// approval: owner only, and an id that names exactly the flow, edge and digest it describes.
+fn validate_journey_mark(value: &serde_json::Value, actor: &PersistedActor) -> Result<(), Failure> {
+    use crate::commands::journey_owner::{MARK_PROTOCOL, mark_signal_id};
+    let invalid = || {
+        super::signal_invalid(
+            "a safe mark is an owner-only record naming one flow, one edge and its digest",
+            "/signal",
+        )
+    };
+    if actor.actor_type() != graphhelm_protocols::PersistedActorType::Owner
+        || value
+            .pointer("/source/type")
+            .and_then(serde_json::Value::as_str)
+            != Some("user")
+    {
+        return Err(invalid());
+    }
+    let description: serde_json::Value = value["description"]
+        .as_str()
+        .and_then(|text| serde_json::from_str(text).ok())
+        .ok_or_else(invalid)?;
+    let flow = description["flowId"].as_str().unwrap_or("");
+    let edge = description["edgeId"].as_str().unwrap_or("");
+    let digest = description["digest"].as_str().unwrap_or("");
+    let known = description.as_object().is_some_and(|object| {
+        object
+            .keys()
+            .all(|key| matches!(key.as_str(), "protocol" | "flowId" | "edgeId" | "digest"))
+    });
+    if description["protocol"] != MARK_PROTOCOL
+        || !known
+        || OpaqueId::parse(flow).is_err()
+        || edge.is_empty()
+        || edge.len() > 128
+        || edge.chars().any(char::is_control)
+        || !digest.strip_prefix("sha256:").is_some_and(|h| {
+            h.len() == 64 && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        })
+        || value["id"].as_str() != Some(mark_signal_id(flow, edge, digest).as_str())
+    {
+        return Err(invalid());
     }
     Ok(())
 }
@@ -491,6 +539,9 @@ pub(crate) fn validate_owner_signal(
     let kind = value["type"].as_str().unwrap_or("");
     if kind == crate::commands::journey_owner::APPROVED_KIND {
         return validate_journey_approval(value, actor);
+    }
+    if kind == crate::commands::journey_owner::MARK_KIND {
+        return validate_journey_mark(value, actor);
     }
     if !matches!(
         kind,
@@ -1421,5 +1472,33 @@ mod journey_approval_tests {
         assert!(check(Some("gh-team"), &approval, &owner).is_err());
         // Ordinary signals elsewhere are untouched.
         assert!(check(Some("gh-team"), &note("lane-note"), &agent).is_ok());
+    }
+
+    /// #534 slice 2: a safe mark is an owner record like an approval: owner only, its id names
+    /// exactly the flow, edge and digest, and no other kind may take a `journey-safe-` id.
+    #[test]
+    fn only_the_owner_records_a_safe_mark_and_its_id_space_is_the_owners() {
+        use crate::commands::journey_owner::{
+            MARK_KIND, MARK_PROTOCOL, OWNER_EXECUTION, mark_signal_id,
+        };
+        let digest = format!("sha256:{}", "e".repeat(64));
+        let id = mark_signal_id("checkout", "pay.submit", &digest);
+        let mark = serde_json::json!({
+            "id": id, "type": MARK_KIND, "severity": "low", "source": {"type": "user", "id": "owner"},
+            "description": serde_json::json!({"protocol": MARK_PROTOCOL, "flowId": "checkout",
+                "edgeId": "pay.submit", "digest": digest}).to_string(),
+        });
+        let owner = actor(PersistedActorType::Owner, "owner-cli");
+        let agent = actor(PersistedActorType::Agent, "agent-chat");
+        assert!(super::validate_owner_signal(&mark, &owner, false).is_ok());
+        assert!(super::validate_owner_signal(&mark, &agent, false).is_err());
+        let mut other_edge = mark.clone();
+        other_edge["id"] = mark_signal_id("checkout", "cart.checkout", &digest).into();
+        assert!(super::validate_owner_signal(&other_edge, &owner, false).is_err());
+        let check = super::validate_owner_execution;
+        assert!(check(Some(OWNER_EXECUTION), &mark, &owner).is_ok());
+        assert!(check(Some("gh-team"), &mark, &owner).is_err());
+        let squat = serde_json::json!({"id": id, "type": "operator_note", "description": "squat"});
+        assert!(check(Some("gh-team"), &squat, &agent).is_err());
     }
 }

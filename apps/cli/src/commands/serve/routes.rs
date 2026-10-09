@@ -2024,11 +2024,8 @@ pub(super) async fn mark_journey_edge_safe(
     UrlPath((id, edge)): UrlPath<(String, String)>,
 ) -> Response {
     flow_command(state, "journey.mark_safe", move |project| {
-        crate::commands::journey_flow::run_mark_safe(&crate::args::JourneyMarkSafeArgs {
-            id,
-            edge,
-            project: Some(project),
-        })
+        // Owner-only route: the owner is authenticated here (#534 slice 2).
+        crate::commands::journey_flow::mark_safe_owned(&id, &edge, project.to_path_buf())
     })
     .await
 }

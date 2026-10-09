@@ -395,7 +395,17 @@ fn watch_plays_a_guarded_act_only_under_a_mark_that_still_binds_its_edge() {
     };
     assert_eq!(guarded(dir.path()).as_array().map(Vec::len), Some(1));
 
-    let (code, reply) = cli(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
+    let owner = owner_token(dir.path());
+    let (code, reply) = cli(
+        dir.path(),
+        &[
+            "mark-safe",
+            "checkout",
+            "pay.submit",
+            "--token-file",
+            &owner,
+        ],
+    );
     assert_eq!(code, 0, "{reply}");
     assert_eq!(guarded(dir.path()), serde_json::json!([]));
 
@@ -452,4 +462,47 @@ fn owner_token(project: &Path) -> String {
         .join(".graphhelm/events.token")
         .to_string_lossy()
         .into_owned()
+}
+
+/// #534 slice 2: a watch plays a guarded act only under a mark the OWNER recorded. A marked YAML
+/// copied into a project whose owner never marked it leaves the act guarded. Defect named: the
+/// watch trusting a mark anyone could write into the file. Cost: seconds, offline, no browser.
+#[test]
+fn watch_guards_an_act_under_a_mark_the_owner_never_recorded() {
+    let marked = draft();
+    let owner = owner_token(marked.path());
+    let (code, reply) = cli(
+        marked.path(),
+        &[
+            "mark-safe",
+            "checkout",
+            "pay.submit",
+            "--token-file",
+            &owner,
+        ],
+    );
+    assert_eq!(code, 0, "{reply}");
+    let guarded = |project: &Path| {
+        refuses(
+            project,
+            &["watch", "checkout"],
+            "journey.watch",
+            3,
+            "replay.observer_missing",
+        )["data"]["guarded"]
+            .clone()
+    };
+    assert_eq!(guarded(marked.path()), serde_json::json!([]));
+    let copied = draft();
+    owner_token(copied.path());
+    std::fs::copy(
+        marked
+            .path()
+            .join(".graphhelm/journeys/checkout.journey.yaml"),
+        copied
+            .path()
+            .join(".graphhelm/journeys/checkout.journey.yaml"),
+    )
+    .unwrap();
+    assert_eq!(guarded(copied.path()).as_array().map(Vec::len), Some(1));
 }

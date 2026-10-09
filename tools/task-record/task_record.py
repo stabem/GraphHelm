@@ -41,7 +41,8 @@ def github_words(kind, number, repo):
     if repo:
         command += ["--repo", repo]
     try:
-        reply = json.loads(subprocess.run(command, capture_output=True, text=True, timeout=60, check=True).stdout)
+        # gh writes UTF-8; the platform default (cp1252 on Windows) cannot decode every byte of it (#526).
+        reply = json.loads(subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=60, check=True).stdout)
     except (OSError, subprocess.SubprocessError, ValueError):
         return None, None
     summary = next((line.split(":", 1)[1].strip() for line in (reply.get("body") or "").splitlines()

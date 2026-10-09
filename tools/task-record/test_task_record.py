@@ -237,5 +237,24 @@ class TitleAndSummary(unittest.TestCase):
         self.assertEqual(self.asked, [])
 
 
+class GithubWordsDecodeUtf8(unittest.TestCase):
+    """#526: `gh` answers in UTF-8. Read with the platform default, a curly quote (byte 0x9d in
+    UTF-8, unmapped in cp1252) killed the reader on Windows and the record was never sent. The fake
+    `gh` is a real child process writing those bytes, so the decoding under test is the real one.
+    On a host whose default is already UTF-8 this passes with or without the fix. Cost: one child
+    Python process."""
+
+    def test_a_pr_body_with_non_latin_characters_is_read(self):
+        reply = json.dumps({"title": "feat: say \u201chello\u201d", "body": "Summary: The owner reads \u201cplain words\u201d \u2713\n"}, ensure_ascii=False)
+        child = [sys.executable, "-c", "import sys; sys.stdout.buffer.write(bytes.fromhex(sys.argv[1]))", reply.encode("utf-8").hex()]
+        real = task_record.subprocess.run
+        task_record.subprocess.run = lambda _command, **options: real(child, **options)
+        try:
+            words = task_record.github_words("pr_opened", 526, "stabem/GraphHelm")
+        finally:
+            task_record.subprocess.run = real
+        self.assertEqual(words, ("feat: say \u201chello\u201d", "The owner reads \u201cplain words\u201d \u2713"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -568,6 +568,36 @@ pub fn close(group: &mut ProcessGroup) {
     unsafe { libc::kill(-pgid, libc::SIGKILL) };
 }
 
+/// The longest [`terminate`] itself may take before it answers (#454). On Windows it is the job
+/// drain's ceiling (`JOB_DRAIN_CEILING`): every enumerated member is polled until its process
+/// object signals, and after this long the answer is [`TerminationOutcome::BoundReached`]. On Unix
+/// the sweep is bounded by passes, not time, and stays far inside this. A caller that waits on a
+/// cleanup which runs `terminate` and then its own reap must wait LONGER than this plus its reap,
+/// or it reports a drain that merely took its full ceiling as a timeout of its own.
+pub const TERMINATE_CEILING: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// [`terminate`], for a caller that must know the tree is GONE and can wait for it (#454).
+///
+/// Measured on Windows under a saturated CPU: a job member whose kill had landed (it carried the
+/// exit status `TerminateJobObject` gave it, one thread left) still read as running for 1.8 s and
+/// 3.0 s, and past [`TERMINATE_CEILING`] in two earlier runs, and then finished on its own. A
+/// second `TerminateProcess` on it is refused (`ERROR_ACCESS_DENIED`): there is nothing left to
+/// ask for. So once [`TERMINATE_CEILING`] has passed, a member that already HAS its exit status
+/// is waited for up to `finishing` longer, while a member with no exit status (the kill did not
+/// land) is [`TerminationOutcome::BoundReached`] at the ceiling exactly as in [`terminate`].
+///
+/// The longest this takes is `TERMINATE_CEILING + finishing` plus one poll (a 1 ms sleep and one
+/// status read per remaining member). On Unix the sweep is bounded by passes, not time, and the
+/// allowance is unused.
+#[cfg(unix)]
+pub fn terminate_with_allowance(
+    process_id: u32,
+    group: ProcessGroup,
+    _finishing: std::time::Duration,
+) -> TerminationOutcome {
+    terminate(process_id, group)
+}
+
 /// What a [`terminate`] actually achieved, because "it returned" is not the same as "the tree is
 /// gone" (#748).
 ///
@@ -1112,6 +1142,17 @@ pub fn close(group: &mut ProcessGroup) {
 /// acquire a third.
 #[cfg(windows)]
 pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
+    terminate_with_allowance(process_id, group, std::time::Duration::ZERO)
+}
+
+/// See the Unix twin's doc above: [`terminate`], plus `finishing` more for members whose kill has
+/// already landed.
+#[cfg(windows)]
+pub fn terminate_with_allowance(
+    process_id: u32,
+    group: ProcessGroup,
+    finishing: std::time::Duration,
+) -> TerminationOutcome {
     use windows_sys::Win32::{
         Foundation::CloseHandle,
         System::{
@@ -1138,8 +1179,14 @@ pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
         // means "every member THIS enumeration named has been observed gone", not "the whole job is
         // empty" -- see `drain_terminated_job`'s own doc for the open window this leaves and issue
         // #846 for the measurement.
-        let members = job_member_ids(group);
-        unsafe { TerminateJobObject(group.0 as _, 1) };
+        let members = job_member_ids(group).map(|members| name_unlisted_members(group, members));
+        let killed = unsafe { TerminateJobObject(group.0 as _, 1) } != 0;
+        let kill_error = if killed {
+            0
+        } else {
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+        };
+        trace(|| format!("TerminateJobObject ok={killed} error={kill_error}"));
         // `passes: 0` IS THE SIGNATURE of "membership could not be read", and it is distinguishable
         // from a real ceiling, which always reports at least one pass. Both are `BoundReached`
         // because both mean the same thing to a caller: this did not observe the tree go.
@@ -1149,7 +1196,13 @@ pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
                 remaining: 0,
             };
         };
-        return drain_terminated_job(&members);
+        trace(|| {
+            format!(
+                "terminate leader={process_id} members={:?} unlisted={}",
+                members.0, members.1
+            )
+        });
+        return drain_terminated_job(&members, finishing);
     }
     let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
     if !handle.is_null() {
@@ -1175,7 +1228,7 @@ pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
 /// `terminate` HANG, and a hang has no colour -- the gate has no per-test timeout, so it would stop
 /// rather than redden.
 #[cfg(windows)]
-const JOB_DRAIN_CEILING: std::time::Duration = std::time::Duration::from_secs(5);
+const JOB_DRAIN_CEILING: std::time::Duration = TERMINATE_CEILING;
 
 /// The most job members this will enumerate before it stops claiming to have seen them all.
 ///
@@ -1263,7 +1316,10 @@ fn job_member_ids(group: ProcessGroup) -> Option<(Vec<u32>, usize)> {
 /// flake was unchanged and the fix looked applied. Two instruments disagreeing about the same
 /// instant; the one that decides is the one a caller can observe.
 #[cfg(windows)]
-fn drain_terminated_job(members: &(Vec<u32>, usize)) -> TerminationOutcome {
+fn drain_terminated_job(
+    members: &(Vec<u32>, usize),
+    finishing: std::time::Duration,
+) -> TerminationOutcome {
     let mut ids = members.0.clone();
     let unlisted = members.1;
     let started = std::time::Instant::now();
@@ -1273,14 +1329,36 @@ fn drain_terminated_job(members: &(Vec<u32>, usize)) -> TerminationOutcome {
         ids.retain(|id| process_is_running(*id));
         if ids.is_empty() {
             if unlisted == 0 {
+                trace(|| {
+                    format!(
+                        "complete: passes={passes} after {} ms",
+                        started.elapsed().as_millis()
+                    )
+                });
                 return TerminationOutcome::Complete;
             }
+            trace(|| format!("bound: unlisted={unlisted}; {}", snapshot_of(&members.0)));
             return TerminationOutcome::BoundReached {
                 passes,
                 remaining: unlisted,
             };
         }
-        if started.elapsed() >= JOB_DRAIN_CEILING {
+        // #454: past the ceiling, a member that has no exit status has not taken the kill, and that
+        // is the bound. One that has it is finishing and may use the caller's allowance.
+        let elapsed = started.elapsed();
+        let not_landed = if elapsed >= JOB_DRAIN_CEILING {
+            ids.iter().filter(|id| exit_status(**id).is_none()).count()
+        } else {
+            0
+        };
+        if drain_step(elapsed, not_landed, finishing) == DrainStep::Bound {
+            trace(|| {
+                format!(
+                    "bound: listed_running={ids:?} not_landed={not_landed} unlisted={unlisted} after {} ms; {}",
+                    elapsed.as_millis(),
+                    snapshot_of(&members.0)
+                )
+            });
             return TerminationOutcome::BoundReached {
                 passes,
                 remaining: ids.len() + unlisted,
@@ -1288,6 +1366,222 @@ fn drain_terminated_job(members: &(Vec<u32>, usize)) -> TerminationOutcome {
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
+}
+
+/// How often [`name_unlisted_members`] looks again before it gives the count back as it is.
+#[cfg(windows)]
+const UNLISTED_NAMING_ROUNDS: usize = 5;
+
+/// Names the members a job COUNTS and does not LIST, before the kill (#454).
+///
+/// Measured: a member that is dying is counted by the job (`NumberOfAssignedProcesses`) and left
+/// out of its id list for an instant: 49 times in 600 direct kills of a job member, lasting
+/// microseconds on a quiet box. A cleanup that enumerates at that instant got "one member, no
+/// name", and the drain, which waits on names, answered `BoundReached` on its first pass with
+/// nothing waited for. That was `replay.cleanup_uncertain` with `passes: 1`.
+///
+/// Such a member is usually still a process (43 of those 49 could still be opened by id), so it
+/// can be found the other way round: every process the system lists is asked whether it is in
+/// THIS job. What is found joins the list and is waited for like any other member. When the job
+/// still counts more than were found, the same question is asked again a millisecond later, at
+/// most [`UNLISTED_NAMING_ROUNDS`] times; what is left after that stays in the count, and the
+/// drain reports it as before.
+///
+/// Only the `unlisted > 0` case pays for the sweep. A list cut at [`JOB_MEMBER_LIST_CAP`] is a
+/// different matter (the members are alive and too many) and is returned untouched. After the
+/// kill none of this is possible: the job reads empty at once while its members are still
+/// running (300 of 300), which is why it happens here, before `TerminateJobObject`.
+#[cfg(windows)]
+fn name_unlisted_members(group: ProcessGroup, members: (Vec<u32>, usize)) -> (Vec<u32>, usize) {
+    let (mut ids, mut unlisted) = members;
+    if unlisted == 0 || ids.len() >= JOB_MEMBER_LIST_CAP {
+        return (ids, unlisted);
+    }
+    for round in 0..UNLISTED_NAMING_ROUNDS {
+        if round > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            let Some(again) = job_member_ids(group) else {
+                break;
+            };
+            for id in again.0 {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+            unlisted = again.1;
+            if unlisted == 0 {
+                break;
+            }
+        }
+        let named = job_members_not_listed(group, &ids);
+        trace(|| format!("unlisted={unlisted} round={round} named={named:?}"));
+        unlisted = unlisted.saturating_sub(named.len());
+        ids.extend(named);
+        if unlisted == 0 {
+            break;
+        }
+    }
+    (ids, unlisted)
+}
+
+/// Every process the system lists that is in this job and is not in `listed` (#454): the job is
+/// not asked for names (it leaves a dying member out), each process is asked for its job.
+#[cfg(windows)]
+fn job_members_not_listed(group: ProcessGroup, listed: &[u32]) -> Vec<u32> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        System::{
+            Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+                TH32CS_SNAPPROCESS,
+            },
+            JobObjects::IsProcessInJob,
+            Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+        },
+    };
+    let mut found = Vec::new();
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return found;
+    }
+    let mut entry = PROCESSENTRY32W {
+        dwSize: u32::try_from(std::mem::size_of::<PROCESSENTRY32W>()).unwrap(),
+        ..unsafe { std::mem::zeroed() }
+    };
+    let mut more = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+    while more {
+        let id = entry.th32ProcessID;
+        if id != 0 && !listed.contains(&id) && !found.contains(&id) {
+            let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, id) };
+            if !process.is_null() {
+                let mut in_job = 0;
+                let asked = unsafe { IsProcessInJob(process, group.0 as _, &mut in_job) } != 0;
+                unsafe { CloseHandle(process) };
+                if asked && in_job != 0 {
+                    found.push(id);
+                }
+            }
+        }
+        more = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+    }
+    unsafe { CloseHandle(snapshot) };
+    found
+}
+
+/// What the drain does with the members still running after `elapsed` (#454).
+#[cfg(windows)]
+#[derive(Debug, PartialEq, Eq)]
+enum DrainStep {
+    Wait,
+    Bound,
+}
+
+/// Before the ceiling the drain waits. From the ceiling on, a member the kill has not landed on
+/// (`not_landed`, no exit status) is the bound at once; when every remaining member already has its
+/// exit status, the drain waits up to `finishing` longer and only then answers the bound.
+#[cfg(windows)]
+fn drain_step(
+    elapsed: std::time::Duration,
+    not_landed: usize,
+    finishing: std::time::Duration,
+) -> DrainStep {
+    let limit = if not_landed == 0 {
+        JOB_DRAIN_CEILING.saturating_add(finishing)
+    } else {
+        JOB_DRAIN_CEILING
+    };
+    if elapsed < limit {
+        DrainStep::Wait
+    } else {
+        DrainStep::Bound
+    }
+}
+
+/// `GRAPHHELM_PTREE_TRACE=<file>` (#454 instrument): one line per observation while a job drains,
+/// appended to that file (the replay worker forwards the variable). Off by default; nothing here
+/// is read by code.
+#[cfg(windows)]
+fn trace(line: impl FnOnce() -> String) {
+    use std::io::Write;
+    let Some(path) = std::env::var_os("GRAPHHELM_PTREE_TRACE") else {
+        return;
+    };
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis());
+        let _ = writeln!(
+            file,
+            "ptree-trace at={at} pid={} {}",
+            std::process::id(),
+            line()
+        );
+    }
+}
+
+/// The exit status the system holds for a process, or `None` when it has none yet (`STILL_ACTIVE`)
+/// or cannot be read (#454). A terminated process carries its status from the moment the kill
+/// lands, before its last thread is gone and its object signals. `None` on a failed read is the
+/// safe side: an unreadable member counts as one the kill has not landed on.
+#[cfg(windows)]
+fn exit_status(process_id: u32) -> Option<u32> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, STILL_ACTIVE},
+        System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+    };
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+    if handle.is_null() {
+        return None;
+    }
+    let mut code = 0u32;
+    let read = unsafe { GetExitCodeProcess(handle, &mut code) } != 0;
+    unsafe { CloseHandle(handle) };
+    (read && code != STILL_ACTIVE as u32).then_some(code)
+}
+
+/// Every process that is a pre-kill member or the child of one, from a toolhelp snapshot, with
+/// whether its process object still reads as running (#454 instrument).
+#[cfg(windows)]
+fn snapshot_of(members: &[u32]) -> String {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+            TH32CS_SNAPPROCESS,
+        },
+    };
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return "snapshot unavailable".to_owned();
+    }
+    let mut entry = PROCESSENTRY32W {
+        dwSize: u32::try_from(std::mem::size_of::<PROCESSENTRY32W>()).unwrap(),
+        ..unsafe { std::mem::zeroed() }
+    };
+    let mut rows = Vec::new();
+    let mut more = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+    while more {
+        let pid = entry.th32ProcessID;
+        let parent = entry.th32ParentProcessID;
+        if members.contains(&pid) || members.contains(&parent) {
+            let name_len = entry.szExeFile.iter().position(|c| *c == 0).unwrap_or(0);
+            let name = String::from_utf16_lossy(&entry.szExeFile[..name_len]);
+            rows.push(format!(
+                "{{pid={pid} parent={parent} exe={name} threads={} base_priority={} exit_status={:?} running={}}}",
+                entry.cntThreads,
+                entry.pcPriClassBase,
+                exit_status(pid),
+                process_is_running(pid)
+            ));
+        }
+        more = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+    }
+    unsafe { CloseHandle(snapshot) };
+    format!("toolhelp members-and-children: [{}]", rows.join(", "))
 }
 
 #[cfg(all(test, windows))]
@@ -1434,6 +1728,90 @@ mod post_enumeration_join_window {
     /// process still holding `graphhelm_process_tree-*.exe`). So the arrangement below happens before
     /// any assertion that can fail, and everything that can panic is wrapped so the two fixture
     /// processes and the job handle are always ended, panic or not.
+    /// #454: at the ceiling the drain separates a member the kill has not landed on from one that
+    /// already has its exit status and is finishing. Defect named: a member that was terminated
+    /// and merely slow to finish under load was answered `BoundReached` at the ceiling, which
+    /// `journey replay` reports as `replay.cleanup_uncertain`. The allowance never rescues a
+    /// member with no exit status, and a caller that gives none keeps the old answer. Cost:
+    /// arithmetic.
+    #[test]
+    fn past_the_ceiling_only_members_that_took_the_kill_get_the_allowance() {
+        use super::{DrainStep, JOB_DRAIN_CEILING, drain_step};
+        use std::time::Duration;
+        let allowance = Duration::from_secs(25);
+        let just_before = JOB_DRAIN_CEILING - Duration::from_millis(1);
+        let one_second_past = JOB_DRAIN_CEILING + Duration::from_secs(1);
+        assert_eq!(drain_step(just_before, 1, allowance), DrainStep::Wait);
+        assert_eq!(
+            drain_step(one_second_past, 0, allowance),
+            DrainStep::Wait,
+            "every remaining member has its exit status: it is finishing, not surviving"
+        );
+        assert_eq!(
+            drain_step(JOB_DRAIN_CEILING, 1, allowance),
+            DrainStep::Bound,
+            "a member with no exit status has not taken the kill; no allowance covers that"
+        );
+        assert_eq!(
+            drain_step(JOB_DRAIN_CEILING + allowance, 0, allowance),
+            DrainStep::Bound,
+            "the allowance is a bound too"
+        );
+        assert_eq!(
+            drain_step(JOB_DRAIN_CEILING, 0, Duration::ZERO),
+            DrainStep::Bound,
+            "plain `terminate` gives no allowance and answers at the ceiling as before"
+        );
+    }
+
+    /// #454: the reader the drain decides with. A live process has no exit status; a terminated
+    /// one carries the status its kill gave it. Defect named: a reader that answered a status for a
+    /// live member would let a process the kill never reached use the allowance. Cost: one
+    /// suspended child process.
+    #[test]
+    fn a_live_member_has_no_exit_status_and_a_terminated_one_has_its_kills() {
+        let mut member = spawn_suspended_member();
+        let id = member.id();
+        let before = super::exit_status(id);
+        terminate_directly(id);
+        let _ = member.wait();
+        let after = super::exit_status(id);
+        assert_eq!(before, None, "a live (suspended) member has no exit status");
+        assert_eq!(after, Some(1), "`terminate_directly` ends it with status 1");
+    }
+
+    /// #454: a member the job counts and does not list is found by asking each process for its
+    /// job. Two real members, the list given names only the first: the sweep names the second and
+    /// nothing outside the job (a third process that was never assigned). Defect named: with the
+    /// unlisted member unnamed, the drain answered `BoundReached` on its first pass and
+    /// `journey replay` failed `replay.cleanup_uncertain` with nothing waited for. Cost: three
+    /// suspended child processes.
+    #[test]
+    fn a_member_the_job_does_not_list_is_named_by_asking_each_process() {
+        let job = OwnedKillOnCloseJob::new();
+        let mut first = Some(spawn_suspended_member());
+        let mut second = Some(spawn_suspended_member());
+        let mut outsider = Some(spawn_suspended_member());
+        let first_id = first.as_ref().unwrap().id();
+        let second_id = second.as_ref().unwrap().id();
+        let outsider_id = outsider.as_ref().unwrap().id();
+        assign_to_job(job.group(), first_id);
+        assign_to_job(job.group(), second_id);
+        let swept = super::job_members_not_listed(job.group(), &[first_id]);
+        let named = super::name_unlisted_members(job.group(), (vec![first_id], 1));
+        let untouched = super::name_unlisted_members(job.group(), (vec![first_id], 0));
+        cleanup_child(&mut first);
+        cleanup_child(&mut second);
+        cleanup_child(&mut outsider);
+        assert_eq!(swept, vec![second_id], "the outsider was {outsider_id}");
+        assert_eq!(named, (vec![first_id, second_id], 0));
+        assert_eq!(
+            untouched,
+            (vec![first_id], 0),
+            "a job that lists everyone it counts is not swept"
+        );
+    }
+
     #[test]
     fn a_member_assigned_after_enumeration_is_not_waited_for() {
         // EVERY FIXTURE LIVES BEHIND THIS GUARD FROM THE MOMENT IT EXISTS (Codex, second pass): the
@@ -1481,7 +1859,8 @@ mod post_enumeration_join_window {
             // wait for it.
             terminate_directly(enumerated_id);
 
-            let drain = std::thread::spawn(move || drain_terminated_job(&stale));
+            let drain =
+                std::thread::spawn(move || drain_terminated_job(&stale, std::time::Duration::ZERO));
 
             // EXPLICIT SYNCHRONIZATION, NOT A WALL-CLOCK RACE (Codex, second pass): a bounded poll
             // here would compare THIS thread's elapsed time against a margin over

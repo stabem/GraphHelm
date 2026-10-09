@@ -1,6 +1,8 @@
 //! The build slot (#360 phase 2, #361): one cargo build at a time per workspace root, served in
 //! arrival order. Each build uses its own worktree's target (`<cwd>/target`); `--shared-target`
-//! keeps the old `<root>/target-shared`, unsafe for tests.
+//! keeps the old `<root>/target-shared`, unsafe for tests. With the owner's rule file
+//! (`slot-targets.json`, #360) the build directory is `<targetRoot>/<lane>/<worktree>/target`
+//! instead, recorded, capped per lane, and reclaimed when its worktree is gone.
 //!
 //! Each waiter creates a ticket file under `<root>/.graphhelm-workspaces/slot/` and holds an
 //! exclusive OS lock on it for as long as it lives. A ticket whose lock can be taken belongs to a
@@ -244,6 +246,28 @@ pub(crate) fn run_slot(request: &SlotRequest<'_>) -> Outcome {
             "/priority",
         );
     }
+    // #360: the owner's build-directory rule. A lane over its cap is refused here, before it
+    // queues, so nobody waits for a turn the slot would then refuse.
+    let rule = if request.shared {
+        None
+    } else {
+        match super::workspace::target_rule(root) {
+            Ok(rule) => rule,
+            Err(message) => return refuse(&message, "/targetRoot"),
+        }
+    };
+    let worktree = match (&rule, std::env::current_dir()) {
+        (None, _) => None,
+        (Some(_), Ok(dir)) => Some(dir),
+        (Some(_), Err(_)) => {
+            return refuse("the current directory could not be read", "/target");
+        }
+    };
+    if let (Some(rule), Some(worktree)) = (&rule, &worktree)
+        && let Err(message) = super::workspace::slot_target(root, rule, lane, worktree, false)
+    {
+        return refuse(&message, "/target");
+    }
     let dir = slot_dir(root);
     if std::fs::create_dir_all(&dir).is_err() {
         return refuse("the slot directory could not be created", "/root");
@@ -315,8 +339,21 @@ pub(crate) fn run_slot(request: &SlotRequest<'_>) -> Outcome {
         drop(ticket);
         remove_ticket(&mine);
     };
+    let mut reclaimed = Vec::new();
     let target = if request.shared {
         shared_target(root)
+    } else if let (Some(rule), Some(worktree)) = (&rule, &worktree) {
+        // Holding the slot: reclaiming, the cap and the record are serialized across lanes.
+        match super::workspace::slot_target(root, rule, lane, worktree, true) {
+            Ok((target, gone)) => {
+                reclaimed = gone;
+                target
+            }
+            Err(message) => {
+                release(slot, ticket);
+                return refuse(&message, "/target");
+            }
+        }
     } else {
         match std::env::current_dir() {
             Ok(dir) => dir.join("target"),
@@ -352,7 +389,7 @@ pub(crate) fn run_slot(request: &SlotRequest<'_>) -> Outcome {
         COMMAND,
         json!({"lane": lane, "label": label, "exitCode": code, "waitedSeconds": waited,
             "heldSeconds": held, "targetDir": target.to_string_lossy(), "cleaned": cleaned,
-            "priority": request.priority}),
+            "priority": request.priority, "reclaimedTargets": reclaimed}),
     );
     outcome.exit_code = code;
     outcome
@@ -371,8 +408,12 @@ fn nanos_of(value: &serde_json::Value) -> Option<u128> {
 /// the `.info` and `holder.json` files only describe.
 pub(crate) fn run_status(root: &Path) -> Outcome {
     let dir = slot_dir(root);
+    let targets = super::workspace::target_counts(root);
     if !dir.is_dir() {
-        return Outcome::success(STATUS_COMMAND, json!({"holder": null, "waiting": []}));
+        return Outcome::success(
+            STATUS_COMMAND,
+            json!({"holder": null, "waiting": [], "targets": targets}),
+        );
     }
     let now = unix_now();
     let held = match OpenOptions::new()
@@ -440,6 +481,6 @@ pub(crate) fn run_status(root: &Path) -> Outcome {
     });
     Outcome::success(
         STATUS_COMMAND,
-        json!({"holder": holder, "waiting": waiting}),
+        json!({"holder": holder, "waiting": waiting, "targets": targets}),
     )
 }

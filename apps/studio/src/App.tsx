@@ -174,6 +174,17 @@ function sameValue(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+type CanvasTab = "team" | "journey" | "graph";
+const CANVAS_TAB_KEY = "graphhelm.studio.canvas-tab";
+/** #583: the canvas tab the owner last chose this browser session, else Graph. */
+function savedCanvasTab(): CanvasTab {
+  try {
+    const saved = sessionStorage.getItem(CANVAS_TAB_KEY);
+    if (saved === "team" || saved === "journey" || saved === "graph") return saved;
+  } catch { /* storage refused: fall back to the default */ }
+  return "graph";
+}
+
 export default function App({
   createClient,
   modelContext,
@@ -2123,7 +2134,8 @@ export default function App({
   const unassignedSteps = useMemo(() => model.nodes.filter((node) => !assignedNodeIds.has(node.id)), [model, assignedNodeIds]);
   const nativeKeys = useMemo(() => new Set(Object.keys(nativePersonaLinks)), [nativePersonaLinks]);
 
-  const [canvasTab, setCanvasTab] = useState<"team" | "journey" | "graph">("team");
+  // #583: Graph is the default canvas tab; a tab the owner chose this browser session is kept.
+  const [canvasTab, setCanvasTab] = useState<CanvasTab>(savedCanvasTab);
   // #409: the live sessions the Runtime holds, read on every tick while the Journey tab is open;
   // the chip on a card is read from this list, never from the Open live click. `null` until the
   // Runtime answered once (an older Runtime without the route keeps the controls hidden).
@@ -2281,7 +2293,7 @@ export default function App({
   const [highlight, setHighlight] = useState<number | null>(null);
   const [mainChatSeed, setMainChatSeed] = useState<{ text: string; nonce: number } | null>(null);
   const [nativeRefresh, setNativeRefresh] = useState(0);
-  useEffect(() => { setAnswering(null); setHighlight(null); setMainChatSeed(null); setCanvasTab("team"); }, [selected]);
+  useEffect(() => { setAnswering(null); setHighlight(null); setMainChatSeed(null); setCanvasTab(savedCanvasTab()); }, [selected]);
   const graphFileInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (fileFocusNonce > 0) {
@@ -2639,8 +2651,9 @@ export default function App({
     // board marks so re-opening the run re-verifies without re-typing.
     updateBoard({ ...board, graphFile: value });
   };
-  const chooseCanvas = (tab: "team" | "journey" | "graph") => {
+  const chooseCanvas = (tab: CanvasTab) => {
     setCanvasTab(tab);
+    try { sessionStorage.setItem(CANVAS_TAB_KEY, tab); } catch { /* storage refused: the choice lasts this page only */ }
     setMobileTab(tab === "team" ? "team" : "journeys");
   };
   /** The one legal action for a blocked or waiting step, or for a pending proposal. */
@@ -3079,14 +3092,15 @@ export default function App({
             )}
 
             <section className="canvas-column" aria-label="Canvas">
-            {handover !== null && !handoverHidden && (
+            {canvasTab !== "graph" && handover !== null && !handoverHidden && (
               <HandoverCard handover={handover} onOpen={openRecords} onDismiss={markSeen} onHide={hideHandover} />
             )}
-            <div className="canvas-tabs" role="tablist" aria-label="Canvas views">
+            {/* #583: the Graph tab is the whole page: its own top bar replaces the banner and this strip. */}
+            {canvasTab !== "graph" && <div className="canvas-tabs" role="tablist" aria-label="Canvas views">
               <button type="button" role="tab" aria-selected={canvasTab === "team"} onClick={() => chooseCanvas("team")}>Team (live)</button>
               <button type="button" role="tab" aria-selected={canvasTab === "journey"} onClick={() => chooseCanvas("journey")}>Journey</button>
-              <button type="button" role="tab" aria-selected={canvasTab === "graph"} onClick={() => chooseCanvas("graph")}>Graph</button>
-            </div>
+              <button type="button" role="tab" aria-selected={false} onClick={() => chooseCanvas("graph")}>Graph</button>
+            </div>}
             <div
               className="scene"
               style={dockReservePx === null ? undefined : ({ "--dock-reserve": `${dockReservePx}px` } as CSSProperties)}
@@ -3128,7 +3142,8 @@ export default function App({
             {canvasTab === "graph" && (
               <div id="studio-panel-graph" role="tabpanel" aria-label="Graph">
                 <MissionView journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} runFor={missionRunFor}
-                  lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe} />
+                  lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe}
+                  runName={selected} lastRecordAt={Date.parse(eventList[eventList.length - 1]?.occurredAt ?? "")} onTeam={() => chooseCanvas("team")} />
               </div>
             )}
             {citedRecords !== null && citedRecords.executionId === selected && (

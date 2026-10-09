@@ -81,3 +81,6 @@
 .mg-primary, .mg-secondary { display: inline-flex; align-items: center; min-height: 40px; padding: 0 14px; border-radius: 8px; font: 600 13px var(--sans); cursor: pointer; text-decoration: none; box-sizing: border-box; }
 .mg-primary { border: 0; background: #E9E7E2; color: #0B0C0F; }
 .mg-secondary { border: 1px solid #2A2D34; background: transparent; color: #E9E7E2; font-weight: 500; }
+
+/* #583: an issue's graph carries its title above the canvas. */
+.mg-title h1 { margin: 0; font-size: 19px; font-weight: 600; }

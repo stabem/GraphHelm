@@ -1036,7 +1036,14 @@ fn the_plan_names_replayable_flows_and_a_card_naming_the_flow_covers_its_branche
     // What a clone holds: the flow, never its git-ignored generated contracts.
     fs::remove_file(journeys.join("checkout.json")).unwrap();
     fs::remove_file(journeys.join("checkout.back.json")).unwrap();
-    git(root, &["add", ".graphhelm/journeys/checkout.journey.yaml"]);
+    git(
+        root,
+        &[
+            "add",
+            ".graphhelm/journeys/checkout.journey.yaml",
+            ".gitignore",
+        ],
+    );
     git(root, &["commit", "-q", "-m", "approve"]);
     fs::write(root.join("app/cart/page.tsx"), "export const x = 1\n").unwrap();
     git(root, &["add", "."]);

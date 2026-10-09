@@ -199,12 +199,29 @@ describe("MissionView", () => {
     expect(screen.getByText("14 h away · 42 shipped")).toBeInTheDocument();
   });
 
-  it("#591: the inspector nudges the current step's owner lane through onSignal", async () => {
+  it("#591: the inspector asks the owner lane for status; the asked time survives selecting another PR", async () => {
     const userEvent = fastUserEvent();
     const onSignal = vi.fn().mockResolvedValue(undefined);
-    const tasks = [wt("a", { issue: 5, pr: 609, prTitle: "Two CLI", step: "implement", lane: "gh-claude-4" })] as unknown as TaskState[];
+    const tasks = [wt("a", { issue: 5, pr: 609, prTitle: "Two CLI", step: "implement", lane: "gh-claude-4" }),
+      wt("b", { issue: 5, pr: 610, prTitle: "Other", step: "implement", lane: "gh-claude-6" })] as unknown as TaskState[];
     render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} onSignal={onSignal} />);
-    await userEvent.click(screen.getByRole("button", { name: "Nudge gh-claude-4" }));
+    await userEvent.click(screen.getByRole("button", { name: "Row PR #609: Two CLI" }));
+    await userEvent.click(screen.getByRole("button", { name: "Ask gh-claude-4 for status" }));
     expect(onSignal).toHaveBeenCalledWith({ type: "operator_note", to: "gh-claude-4", description: "Owner asks: status of Implement on PR #609?" });
+    expect(await screen.findByText("Asked 0 min ago · no answer yet")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Row PR #610: Other" }));
+    expect(screen.getByRole("button", { name: "Ask gh-claude-6 for status" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Row PR #609: Two CLI" }));
+    expect(screen.getByText("Asked 0 min ago · no answer yet")).toBeInTheDocument();
+  });
+
+  it("#591: the Review row names only the current reviewer; earlier ones go to a history line", () => {
+    const tasks = [wt("a", { issue: 5, pr: 609, prTitle: "Two CLI", step: "review", lane: "gh-claude-4", headSha: "bbb", reviewers: ["gh-claude-3", "gh-claude-7"] })] as unknown as TaskState[];
+    const rb = (since: number, headSha: string) => [{ kind: "review" as const, label: "#609", start: since, end: 100, open: true, since, headSha }];
+    const lanes = [{ lane: "gh-claude-3", bars: rb(10, "aaa"), silent: false, lastEventAt: 10 }, { lane: "gh-claude-7", bars: rb(20, "bbb"), silent: false, lastEventAt: 20 }];
+    const { container } = render(<MissionView journeys={journeys} tasks={tasks} lanes={lanes} now={100} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    const review = Array.from(container.querySelectorAll(".mg-custody-row")).find((r) => r.textContent!.startsWith("Review"))!;
+    expect(review).toHaveTextContent("Reviewgh-claude-7pending");
+    expect(screen.getByText("Earlier reviewers: gh-claude-3")).toBeInTheDocument();
   });
 });

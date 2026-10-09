@@ -106,4 +106,15 @@ describe("LanesTimeline", () => {
     expect(bars[2]).toHaveAttribute("title", "#602 review · 0s");
     expect(bars[0]!.getAttribute("title")).toBe("#600 implement · 1s so far");
   });
+
+  it("#591 the board shows the latest record, and an author awaiting review is not Free", () => {
+    const M = 60_000, T = 10 * 3_600_000;
+    const author = { lane: "gh-claude-3", silent: false, lastEventAt: T - 12 * M, bars: [], awaiting: [613], lastRecord: { kind: "pr_opened", pr: 613, at: T - 12 * M } };
+    render(<LanesTimeline lanes={[author]} now={T} windowMs={3_600_000} />);
+    const row = within(screen.getByRole("list", { name: "Agent board" })).getByText("gh-claude-3").closest("li")!;
+    expect(within(row).getByText("pr_opened #613 · 12m ago")).toBeInTheDocument();
+    expect(row.querySelector(".ab-pill")).toHaveAttribute("data-status", "awaiting");
+    expect(row.querySelector(".ab-pill")).toHaveTextContent("awaiting review #613");
+    expect(document.querySelector('[data-kind="free"]')).toHaveTextContent("none right now");
+  });
 });

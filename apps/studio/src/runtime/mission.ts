@@ -1,6 +1,6 @@
 import type { JourneyRunView, JourneyView } from "./types";
 import type { TaskState } from "./team-tasks";
-import { realName, realNames } from "./lane-bars";
+import { realName, realNames, type Lane } from "./lane-bars";
 
 export type StepStatus = "proven" | "failed" | "needs_you" | "preview_only" | "not_run";
 export type TrustLevel = 0 | 1 | 2 | 3 | 4 | 5;
@@ -19,6 +19,8 @@ export interface MissionTask {
   mergeSha: string | null;
   /** `https://github.com/<owner>/<repo>`; the PR link needs it. */
   repoUrl: string | null;
+  /** #591: reviewers assigned before the current one (on older heads, or replaced); not the live row. */
+  reviewerHistory?: string[];
 }
 export interface MissionSummary { proven: number; total: number; inFlight: number; needYou: number; readyUnclaimed: number }
 export interface Mission { contractId: string; title: string; steps: MissionStep[]; tasks: MissionTask[]; summary: MissionSummary }
@@ -128,4 +130,21 @@ export function custodyRows(t: MissionTask): CustodyRow[] {
   else if (t.step === "review" && !t.blocked) rows.push({ stage, who, verdict: "pending", tone: "run" });
   if (t.step === "merged") rows.push({ stage: "Merge", who: sha8(t.mergeSha) ?? "—", verdict: "merged", tone: "ok" });
   return rows;
+}
+
+/** #591: only the CURRENT reviewer is live: the latest `review_assigned` on the task's current head,
+ * read off the review bars (each carries the head it was assigned on). Earlier reviewers move to
+ * `reviewerHistory`. Without a matching bar the newest named reviewer stays live. */
+export function withCurrentReviewer(t: MissionTask, lanes: readonly Lane[]): MissionTask {
+  let best: { lane: string; since: number } | null = null;
+  for (const l of lanes) for (const b of l.bars) {
+    if (b.kind !== "review") continue;
+    if (!((t.pr !== null && b.label === `#${t.pr}`) || (b.taskId !== undefined && b.taskId === t.key))) continue;
+    if (t.headSha && b.headSha && b.headSha !== t.headSha) continue;
+    const since = b.since ?? b.start;
+    if (!best || since >= best.since) best = { lane: l.lane, since };
+  }
+  const current = realName(best?.lane) ?? t.reviewers[t.reviewers.length - 1] ?? null;
+  if (current === null) return t;
+  return { ...t, reviewers: [current], reviewerHistory: t.reviewers.filter((r) => r !== current) };
 }

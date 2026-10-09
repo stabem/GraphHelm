@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { JourneyRunView, JourneyView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
 import type { Lane } from "../runtime/lane-bars";
-import { buildMission, toMissionTask, unlinkedTasks, type Mission } from "../runtime/mission";
+import { buildMission, toMissionTask, unlinkedTasks, withCurrentReviewer, type Mission } from "../runtime/mission";
 import { layoutMission } from "../runtime/mission-layout";
 import { testFrames } from "../runtime/test-frames";
 import { activity, ownerLane, ownerRole, stageHealth, stageProgress } from "../runtime/stage-health";
@@ -102,6 +102,8 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
   // undefined: the group's default (the task that most needs the owner); null: none, a column is chosen.
   const [taskKey, setTaskKey] = useState<string | null | undefined>(undefined);
   const [stageCol, setStageCol] = useState<number | null>(null);
+  // #591: when the owner asked a lane for status, by PR + lane; kept here so it survives selecting another PR.
+  const [askedAt, setAskedAt] = useState<Record<string, number>>({});
   const [sub, setSub] = useState<Sub>("graph");
   const [frame, setFrame] = useState(0);
   // #591: one shared one-second clock for the live card timers, anchored on the `now` the parent gave.
@@ -152,7 +154,9 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
   if (sel === null) return <div className="mv" data-wide="true" data-page={page}>{header}
     {sub === "lanes" ? <div className="mv-pad"><LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} /></div>
       : <p className="mv-none mv-pad">No journeys in this project yet</p>}</div>;
-  const group: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
+  const rawGroup: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
+  // #591: the live Review row names only the current reviewer (latest assignment on the current head).
+  const group: WorkGroup | null = rawGroup ? { ...rawGroup, rows: rawGroup.rows.map((r) => ({ ...r, task: withCurrentReviewer(r.task, lanes) })) } : null;
   // #591: time in stage and the health flag of each PR card, from the same records the lanes read.
   const groupRows = group ? tasks.filter((t) => group.rows.some((r) => r.key === t.key)) : [];
   const health = Object.fromEntries(groupRows.map((t) => [t.key, stageHealth(t, lanes, groupRows, live)]));
@@ -203,8 +207,10 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
     if (!t || !lane) return null;
     const seen = laneLiveness(lane, lanes, tasks, live).sinceMs;
     const stage = WORK_STAGES.find((s) => s.id === group.stages[key])?.label ?? t.step;
+    const id = `${t.pr ?? key}:${lane}`;
     return <LaneActions key={`${key}:${lane}`} lane={lane} step={stage} pr={t.pr} roster={roster} now={live}
-      lastSeenAt={seen === null ? null : live - seen} send={onSignal} />;
+      lastSeenAt={seen === null ? null : live - seen} send={onSignal}
+      askedAt={askedAt[id] ?? null} onAsked={(at) => setAskedAt((m) => ({ ...m, [id]: at }))} />;
   } : undefined;
   const shownTask = taskKey === undefined ? group?.focus ?? null : taskKey;
   const ids = mission ? stepIds(mission) : [];

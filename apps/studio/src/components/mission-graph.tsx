@@ -184,6 +184,7 @@ export function TaskInspector({ task: t, step, onOpenTest, health = null, pace =
             <li key={i} className="mg-custody-row"><span className="mg-stage">{r.stage}</span><span className="mg-who">{r.who}</span><span className="mg-verdict" data-tone={r.tone}>{r.verdict}</span></li>
           ))}
         </ul>
+        {t.reviewerHistory && t.reviewerHistory.length > 0 && <p className="mg-muted">{`Earlier reviewers: ${t.reviewerHistory.join(", ")}`}</p>}
       </div>
       {actions}
       <div className="mg-section">
@@ -267,21 +268,24 @@ export function PaceBlock({ pace, label, stuck, size = "card" }: { pace: Pace; l
   const act = a.sinceMs === null ? "no activity recorded" : a.tone === "red" ? `no activity ${stageDuration(a.sinceMs)}`
     : `${a.role ? `${a.role} active` : "last activity"} ${stageDuration(a.sinceMs)} ago`;
   const x = p ? p.pace.toFixed(1) : "";
+  // #591: the time and the activity note each get their own line; nothing overlaps or cuts them.
   return (
     <span className="mg-pace" data-size={size}>
+      {p && (
+        <span className="mg-pace-time">
+          <span className="mg-timer">{liveDuration(p.elapsedMs)}</span>
+          {tone && <>{" · "}<span className="mg-pace-x">{`${x}× typical`}</span></>}
+        </span>
+      )}
       <span className="mg-pace-line">
         <span className="mg-act-dot" data-tone={a.tone} aria-hidden="true" />
         <span className="mg-act" data-tone={a.tone}>{act}</span>
-        {p && <span className="mg-timer">{liveDuration(p.elapsedMs)}</span>}
       </span>
       {p && tone && (
         <span className="mg-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(p.ratio * 100)}
           aria-label={`${label} for ${stageDuration(p.elapsedMs)}, ${x} times the usual time`} data-tone={tone}>
           <span className="mg-bar-fill" style={{ width: `${Math.round(p.ratio * 100)}%` }} />
         </span>
-      )}
-      {p && tone && (
-        <span className="mg-pace-x" aria-hidden="true">{`${x}× typical`}</span>
       )}
     </span>
   );
@@ -297,6 +301,26 @@ export function HealthFlag({ health, time = true }: { health: StageHealth; time?
   );
 }
 
+/** #591: the current card's "author → reviewer" line. */
+function cardWho(c: PrRow["cells"][number], stage: WorkStage, t: MissionTask): string {
+  if (stage === "fix" && t.blocked) return t.lane ?? "nobody yet";
+  if (stage === "review" && Boolean(c.title?.startsWith("Re-review")) && c.who) return c.who;
+  return t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : "nobody yet";
+}
+
+/** #591: how tall the current card grows (measure-free): every line it shows, the who line wrapped
+ * at about 22 mono characters a line. The row band grows to hold it. */
+export function cardHeight(c: PrRow["cells"][number], stage: WorkStage, t: MissionTask, health: StageHealth | null, pace: Pace | null): number {
+  const lines = (s: string, per: number) => Math.max(1, Math.ceil(s.length / per));
+  let h = 9 + 15 + Math.min(2, lines(t.title, 22)) * 16;
+  if (c.sub) h += 15;
+  if (health) h += 15;
+  h += lines(cardWho(c, stage, t), 22) * 14;
+  if (pace) h += (pace.progress ? 15 : 0) + 15 + 8;
+  else if (health?.elapsed) h += 14;
+  return Math.max(NODE_H, h + 12);
+}
+
 /** #591: the current card. A BLOCK opens a Fixing card for the author (amber, red only when the
  * owner lane is silent past LIVENESS_MS: Stalled); the health flag gets its own line and the time in stage sits right on the who line. */
 function CurrentCard({ cell: c, stage, task: t, health, pace, selected, left, top, onSelect }: {
@@ -306,9 +330,7 @@ function CurrentCard({ cell: c, stage, task: t, health, pace, selected, left, to
   const fixing = stage === "fix" && t.blocked;
   const st: NodeState = stuck ? "stalled" : fixing ? "work" : stageState(stage, t);
   const base = stuck ? "Stalled" : c.title ?? stageLabel(stage, t);
-  // #591: a re-review is the reviewer's to answer; the cell names them.
-  const reReview = stage === "review" && Boolean(c.title?.startsWith("Re-review"));
-  const who = fixing ? t.lane ?? "nobody yet" : reReview && c.who ? c.who : t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : "nobody yet";
+  const who = cardWho(c, stage, t);
   // The Fixing card's sub-line already names the BLOCK; its "Blocked by" flag would say it twice.
   const flag = health && !(fixing && health.flag === "blocked") ? health : null;
   return (
@@ -338,11 +360,18 @@ export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSel
   const open = group.rows.filter((r) => r.open), merged = group.rows.filter((r) => !r.open);
   const shown = showMerged ? [...open, ...merged] : open;
   const tops = new Map<string, number>();
+  // #591: a row's band holds its wrapped title and its tallest card.
+  const band = (r: PrRow) => {
+    const cur = r.cells.find((c) => c.state === "current");
+    const st = group.stages[r.task.key];
+    const card = cur && st ? cardHeight(cur, st, r.task, health[r.task.key] ?? null, pace[r.task.key] ?? null) : 0;
+    return Math.max(rowBand(r.task.title), CARD_TOP + card + 16);
+  };
   let y = HEAD;
-  for (const r of open) { tops.set(r.key, y); y += rowBand(r.task.title); }
+  for (const r of open) { tops.set(r.key, y); y += band(r); }
   const foldTop = y;
   if (merged.length) y += FOLD_H;
-  if (showMerged) for (const r of merged) { tops.set(r.key, y); y += rowBand(r.task.title); }
+  if (showMerged) for (const r of merged) { tops.set(r.key, y); y += band(r); }
   const selected = group.rows.find((r) => r.key === selectedTaskKey) ?? null;
   const col = selected ? WORK_STAGES.findIndex((s) => s.id === group.stages[selected.key]) : selectedCol;
   const width = colX(WORK_STAGES.length) - 18;

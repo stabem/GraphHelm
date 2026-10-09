@@ -293,3 +293,34 @@ describe("IssueGraph owner asks (#591)", () => {
     }
   });
 });
+
+describe("cards never cut names or time (#591)", () => {
+  const A = "gh-claude-fable-author-lane-11", R = "gh-claude-fable-reviewer-lane-12";
+  const pace = { progress: { elapsedMs: 34 * 60_000 + 5_000, expectedMs: 3_600_000, ratio: 0.57, pace: 0.6, tone: "green" as const },
+    activity: { sinceMs: 4 * 60_000, tone: "green" as const, role: "reviewer" as const } };
+  const render2 = (lane: string, reviewer: string) => {
+    const group = buildWorkGroups([ts("a", { pr: 609, prTitle: "Short", step: "review", lane, reviewers: [reviewer] }),
+      ts("b", { pr: 610, prTitle: "Next", step: "review", lane: "x", reviewers: ["y"] })], [])[0]!;
+    return render(<IssueGraph group={group} stepFor={() => undefined} selectedTaskKey={null} selectedCol={null} onSelectTask={vi.fn()} onSelectCol={vi.fn()}
+      onOpenTest={vi.fn()} pace={{ a: pace, b: pace }} />);
+  };
+  it("full lane names, the time line and the activity note each render on their own line", () => {
+    const { container } = render2(A, R);
+    const card = container.querySelector('.mg-row[data-row="a"] .mg-node[data-current="true"]')!;
+    expect(card.querySelector(".mg-node-who")!.textContent).toBe(`${A} → ${R}`);
+    expect(card.querySelector(".mg-pace-time")!.textContent).toBe("34m 05s · 0.6× typical");
+    expect(card.querySelector(".mg-pace-line")!.textContent).toBe("reviewer active 4m ago");
+  });
+  it("the card css lets text wrap and the card grow; the band grows to the tallest card", async () => {
+    const css = (await import("./mission-graph.css?raw")).default as string;
+    const rule = (sel: string) => css.split("\n").find((l) => l.startsWith(`${sel} {`)) ?? "";
+    expect(rule(".mg-node")).not.toMatch(/(^|[ ;{])height: \d/);
+    expect(rule(".mg-node-who")).not.toMatch(/ellipsis|nowrap/);
+    expect(rule(".mg-act")).not.toMatch(/ellipsis|nowrap/);
+    expect(css).not.toMatch(/\.mg-node \.mg-pace-x \{[^}]*absolute/);
+    const gap = (c: HTMLElement) => { const t = Array.from(c.querySelectorAll<HTMLElement>(".mg-rowhead")).map((h) => parseInt(h.style.top, 10)); return t[1]! - t[0]!; };
+    const short = gap(render2("a", "b").container);
+    const long = gap(render2(A, R).container);
+    expect(long).toBeGreaterThan(short);
+  });
+});

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { agentBoard, span } from "./agent-board";
 import type { Bot } from "./team";
-import type { Lane } from "./lane-bars";
+import { laneBars, type Lane, type TimedTaskEvent } from "./lane-bars";
+import { STALE_CLAIM_MS } from "./agent-board";
 import type { MissionTask } from "./mission";
 
 const now = 10 * 3_600_000;
@@ -23,16 +24,17 @@ describe("agentBoard", () => {
     expect(Object.fromEntries(rows.map((r) => [r.name, r.status]))).toEqual({ a: "working", b: "waiting", c: "silent", d: "free", e: "free" });
   });
 
-  it("duration is since the open bar started, with PR, title and link", () => {
-    const [r] = agentBoard([bot("a")], [lane("a", [bar("implement", now - 77 * M)])], [task({})], now);
-    expect(r).toMatchObject({ stage: "implement", pr: 7, title: "Add board", href: "https://github.com/o/r/pull/7", forMs: 77 * M });
-    expect(span(r!.forMs!)).toBe("1h 17m");
+  it("the open bar gives PR, title and link; the time is the lane's latest record", () => {
+    const l = { ...lane("a", [bar("implement", now - 77 * M)]), lastRecord: { kind: "planned", issue: 7, at: now - 5 * M } };
+    const [r] = agentBoard([bot("a")], [l], [task({})], now);
+    expect(r).toMatchObject({ stage: "implement", pr: 7, title: "Add board", href: "https://github.com/o/r/pull/7", forMs: 5 * M, latest: "planned #7 · 5m ago", stageMs: 77 * M });
+    expect(span(77 * M)).toBe("1h 17m");
   });
 
-  it("free time is since the last bar ended; unknown without bars", () => {
+  it("a lane with no record has no time", () => {
     const rows = agentBoard([bot("d"), bot("e")], [lane("d", [bar("review", now - 60 * M, false, now - 23 * M)])], [], now);
-    expect(rows.find((r) => r.name === "d")!.forMs).toBe(23 * M);
     expect(rows.find((r) => r.name === "e")!.forMs).toBeNull();
+    expect(rows.find((r) => r.name === "d")!.latest).toBeNull();
   });
 
   it("sorts silent, working longest first, waiting, free", () => {
@@ -54,9 +56,10 @@ describe("agentBoard", () => {
       const [r] = agentBoard([bot("rev")], [lane("rev", [])], [pr({ reviewers: ["rev"] })], now);
       expect(r).toMatchObject({ status: "waiting", label: "Reviewing", doing: "reviewing #9 Fix it", pr: 9, forMs: null });
     });
-    it("duration is since the open review bar started", () => {
-      const [r] = agentBoard([bot("rev")], [lane("rev", [bar("review", now - 12 * M, true, now, "#9")])], [pr({ reviewers: ["rev"] })], now);
-      expect(r).toMatchObject({ status: "waiting", label: "Reviewing", forMs: 12 * M });
+    it("time is since the reviewer's latest record", () => {
+      const l = { ...lane("rev", [bar("review", now - 12 * M, true, now, "#9")]), lastRecord: { kind: "review_assigned", pr: 9, at: now - 12 * M } };
+      const [r] = agentBoard([bot("rev")], [l], [pr({ reviewers: ["rev"] })], now);
+      expect(r).toMatchObject({ status: "waiting", label: "Reviewing", forMs: 12 * M, latest: "review_assigned #9 · 12m ago" });
     });
     it("Working wins when the lane also implements", () => {
       const [r] = agentBoard([bot("a")], [lane("a", [bar("implement", now - 5 * M)])], [pr({ reviewers: ["a"] })], now);
@@ -82,5 +85,72 @@ describe("agentBoard", () => {
     const rows = agentBoard([bot("TBD"), bot("tbd"), bot(""), bot("ok")], [lane("Tbd", []), lane(" ", []), lane("real", [])],
       [task({ reviewers: ["TBD"], step: "review" })], now);
     expect(rows.map((r) => r.name).sort()).toEqual(["ok", "real"]);
+  });
+});
+
+describe("#591 board times the latest activity (record shapes)", () => {
+  const H = 3_600_000;
+  const T0 = Date.parse("2026-10-08T00:00:00Z");
+  const iso = (ms: number) => new Date(T0 + ms).toISOString();
+  let seq = 0;
+  const ev = (e: Partial<TimedTaskEvent>): TimedTaskEvent => ({ actorId: "rt", sequence: seq++, taskId: "issue-600", ...e }) as TimedTaskEvent;
+  const board = (events: TimedTaskEvent[], at: number, names: string[]) => {
+    const lanes = laneBars(events, T0 + at, 48 * H);
+    return Object.fromEntries(agentBoard(names.map(bot), lanes, [], T0 + at).map((r) => [r.name, r]));
+  };
+
+  it("a slice ends when its PR merges, even with the issue open (Refs #N): the lane is Free", () => {
+    const events = [
+      ev({ kind: "task.claimed", lane: "gh-claude-3", issue: 600, at: iso(0) }),
+      ev({ kind: "task.pr_opened", lane: "gh-claude-3", issue: 600, pr: 615, headSha: "aaa", at: iso(1 * H) }),
+      ev({ kind: "task.review_assigned", reviewer: "gh-claude-5", pr: 615, at: iso(2 * H) }),
+      ev({ kind: "task.review_verdict", reviewer: "gh-claude-5", verdict: "APPROVE" as never, pr: 615, headSha: "aaa", at: iso(3 * H) }),
+      // The merge record is keyed by the PR, not by the issue's task id.
+      ev({ kind: "task.merged", taskId: "pr-615", pr: 615, mergeSha: "mmm", at: iso(4 * H) }),
+    ];
+    const rows = board(events, 25 * H, ["gh-claude-3", "gh-claude-5"]);
+    expect(rows["gh-claude-3"]!.status).toBe("free");
+    expect(rows["gh-claude-5"]!.status).toBe("free");
+  });
+
+  it("a second claim of the same lane on the issue ends when that lane's PR merges", () => {
+    const events = [
+      ev({ kind: "task.claimed", lane: "gh-claude-3", issue: 600, at: iso(0) }),
+      ev({ kind: "task.claimed", lane: "gh-claude-3", issue: 600, at: iso(0.5 * H) }),
+      ev({ kind: "task.pr_opened", lane: "gh-claude-3", issue: 600, pr: 615, headSha: "aaa", at: iso(1 * H) }),
+      ev({ kind: "task.merged", pr: 615, at: iso(2 * H) }),
+    ];
+    expect(board(events, 3 * H, ["gh-claude-3"])["gh-claude-3"]!.status).toBe("free");
+  });
+
+  it("the time is since the lane's latest record, naming that record", () => {
+    const events = [
+      ev({ kind: "task.claimed", lane: "gh-claude-3", issue: 600, at: iso(0) }),
+      ev({ kind: "task.pr_opened", lane: "gh-claude-3", issue: 600, pr: 613, headSha: "aaa", at: iso(10 * H) }),
+      ev({ kind: "task.review_assigned", reviewer: "gh-claude-5", pr: 613, at: iso(10 * H + 2 * M) }),
+      ev({ kind: "task.review_verdict", reviewer: "gh-claude-5", verdict: "BLOCK" as never, pr: 613, headSha: "aaa", at: iso(10 * H + 9 * M) }),
+    ];
+    const rows = board(events, 10 * H + 12 * M, ["gh-claude-3", "gh-claude-5"]);
+    expect(rows["gh-claude-3"]).toMatchObject({ latest: "pr_opened #613 · 12m ago", forMs: 12 * M });
+    expect(rows["gh-claude-5"]).toMatchObject({ latest: "review_verdict #613 · 3m ago", forMs: 3 * M });
+  });
+
+  it("a claim with no PR and no record for over 2h reads stale claim · #issue", () => {
+    const events = [ev({ kind: "task.claimed", lane: "gh-claude-3", issue: 600, at: iso(0) })];
+    expect(board(events, STALE_CLAIM_MS - M, ["gh-claude-3"])["gh-claude-3"]!.status).not.toBe("stale");
+    const r = board(events, STALE_CLAIM_MS + M, ["gh-claude-3"])["gh-claude-3"]!;
+    expect(r).toMatchObject({ status: "stale", label: "stale claim · #600" });
+  });
+
+  it("after pr_opened the author is awaiting review #N, not Free, until a verdict or the merge", () => {
+    const open = [
+      ev({ kind: "task.claimed", lane: "gh-claude-3", issue: 600, at: iso(0) }),
+      ev({ kind: "task.pr_opened", lane: "gh-claude-3", issue: 600, pr: 613, headSha: "aaa", at: iso(1 * H) }),
+    ];
+    expect(board(open, 1 * H + M, ["gh-claude-3"])["gh-claude-3"]).toMatchObject({ status: "awaiting", label: "awaiting review #613", pr: 613 });
+    const assigned = [...open, ev({ kind: "task.review_assigned", reviewer: "gh-claude-5", pr: 613, at: iso(1 * H + 2 * M) })];
+    expect(board(assigned, 1 * H + 5 * M, ["gh-claude-3"])["gh-claude-3"]!.status).toBe("awaiting");
+    const merged = [...assigned, ev({ kind: "task.merged", pr: 613, at: iso(2 * H) })];
+    expect(board(merged, 2 * H + M, ["gh-claude-3"])["gh-claude-3"]!.status).toBe("free");
   });
 });

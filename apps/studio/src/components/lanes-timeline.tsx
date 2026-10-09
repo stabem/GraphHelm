@@ -4,7 +4,7 @@ import { stageDuration } from "../runtime/stage-health";
 import type { MissionTask } from "../runtime/mission";
 import type { Bot } from "../runtime/team";
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { agentBoard, span, type AgentRow, type AgentStatus } from "../runtime/agent-board";
+import { agentBoard, type AgentRow, type AgentStatus } from "../runtime/agent-board";
 
 const pct = (n: number) => `${Math.round(n * 10000) / 100}%`;
 
@@ -27,7 +27,7 @@ function lastDelivered(tasks: MissionTask[]) {
 
 interface Props { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[]; agents?: Bot[] }
 
-const PILL: Record<AgentStatus, string> = { silent: "Silent", working: "Working", waiting: "Waiting", free: "Free" };
+const PILL: Record<AgentStatus, string> = { silent: "Silent", stale: "Stale claim", working: "Working", awaiting: "Awaiting review", waiting: "Waiting", free: "Free" };
 const STAGE: Record<string, string> = { implement: "implementing", review: "reviewing", merge: "merging" };
 type Filter = "all" | "working" | "free" | "silent";
 
@@ -55,7 +55,7 @@ function AgentBoard({ rows }: { rows: AgentRow[] }) {
               <span className="ab-pill" data-status={r.status}>{r.label ?? PILL[r.status]}</span>
               <span className="ab-name">{r.name}</span>
               <span className="ab-what">{r.href ? <a href={r.href} target="_blank" rel="noreferrer">{what}</a> : what}</span>
-              <span className="ab-for">{r.forMs === null ? "—" : r.status === "free" ? `free for ${span(r.forMs)}` : `for ${span(r.forMs)}`}</span>
+              <span className="ab-for">{r.latest ?? "—"}</span>
               <span className="ab-last">{r.lastDelivered ? `last delivered ${r.lastDelivered}` : "nothing delivered yet"}</span>
             </li>
           );
@@ -101,7 +101,8 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [] }:
   const ticks: string[] = [];
   for (let h = hours; h > 0; h -= step) ticks.push(`−${h}h`);
   const delivered = lastDelivered(tasks);
-  const cards = laneCards(lanes, tasks);
+  // #591: free hands are the board's Free rows: no open slice, no PR awaiting review, no review owed.
+  const cards = { ...laneCards(lanes, tasks), free: board.filter((r) => r.status === "free").map((r) => r.name) };
   const card = (items: string[]) => (items.length ? items.join(", ") : "none right now");
   return (
     <div className="lt-wrap">

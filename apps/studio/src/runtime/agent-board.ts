@@ -3,7 +3,9 @@ import type { Lane, LaneBar } from "./lane-bars";
 import type { MissionTask } from "./mission";
 
 /** #591 Lanes board: who is free, who does what, and for how long. */
-export type AgentStatus = "silent" | "working" | "waiting" | "free";
+export type AgentStatus = "silent" | "stale" | "working" | "awaiting" | "waiting" | "free";
+/** #591: a claim with no PR and no record of its lane for this long is a stale claim, not work. */
+export const STALE_CLAIM_MS = 2 * 3_600_000;
 export interface AgentRow {
   name: string;
   status: AgentStatus;
@@ -13,8 +15,12 @@ export interface AgentRow {
   title: string | null;
   /** Link to the PR when the task knows its repository. */
   href: string | null;
-  /** ms in the current stage, or ms free since the last bar ended; null when unknown. */
+  /** #591: ms since the lane's latest record; null when it left none. */
   forMs: number | null;
+  /** #591: that record and its age, e.g. "pr_opened #613 · 12m ago"; null when none. */
+  latest?: string | null;
+  /** ms in the open stage (sorts Working longest first); absent when no bar is open. */
+  stageMs?: number;
   lastDelivered: string | null;
   /** Pill text override: "Reviewing" for a lane busy on an open review. */
   label?: string | null;
@@ -22,7 +28,15 @@ export interface AgentRow {
   doing?: string | null;
 }
 
-const ORDER: Record<AgentStatus, number> = { silent: 0, working: 1, waiting: 2, free: 3 };
+const ORDER: Record<AgentStatus, number> = { silent: 0, stale: 1, working: 2, awaiting: 3, waiting: 4, free: 5 };
+
+function latestOf(lane: Lane | undefined, now: number): { latest: string | null; forMs: number | null } {
+  const rec = lane?.lastRecord;
+  if (!rec) return { latest: null, forMs: null };
+  const ms = Math.max(0, now - rec.at);
+  const n = rec.pr ?? rec.issue;
+  return { latest: `${rec.kind}${n !== undefined ? ` #${n}` : ""} · ${span(ms)} ago`, forMs: ms };
+}
 
 function laneFor(b: Bot, lanes: Lane[]): Lane | undefined {
   return lanes.find((l) => l.lane === b.name || l.lane === b.actorId || l.lane === b.key);
@@ -53,26 +67,41 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
   for (const t of tasks) if (t.step === "merged" && t.lane) delivered.set(t.lane, `${t.pr ? `#${t.pr} ` : ""}${t.title}`);
   const rows = pairs.map(({ name, lane }): AgentRow => {
     const ids = [name, lane?.lane].filter((n): n is string => !!n);
-    const openBars = (lane?.bars ?? []).filter((b) => b.open);
+    const when = latestOf(lane, now);
+    const quietMs = lane && lane.lastEventAt > 0 ? now - lane.lastEventAt : 0;
+    // #591: a PR-less claim whose lane left no record for STALE_CLAIM_MS is not work.
+    const staleClaim = (b: LaneBar) => b.kind === "implement" && !b.label.startsWith("#") && quietMs > STALE_CLAIM_MS;
+    const allOpen = (lane?.bars ?? []).filter((b) => b.open);
+    const awaiting = lane?.awaiting ?? [];
+    // An implement bar on a PR its lane opened and that waits on review is not writing.
+    const openBars = allOpen.filter((b) => !staleClaim(b) && !(b.kind === "implement" && awaiting.some((p) => b.label === `#${p}`)));
     if (!openBars.some((b) => b.kind === "implement")) {
       const rt = tasks.find((t) => t.step !== "merged" && t.step !== "merge" && t.pr !== null
         && !hasVerdictOnHead(t, ids)
         && (t.reviewers.some((r) => ids.includes(r)) || openBars.some((b) => b.kind === "review" && ((b.taskId !== undefined && b.taskId === t.key) || b.label === `#${t.pr}`))));
       if (rt) {
-        const rb = openBars.find((b) => b.kind === "review" && ((b.taskId !== undefined && b.taskId === rt.key) || b.label === `#${rt.pr}`)) ?? null;
-        const since = rb ? (rb.since ?? rb.start) : null;
         const last0 = delivered.get(name) ?? (lane ? delivered.get(lane.lane) : undefined) ?? null;
         return {
           name, status: "waiting", stage: "review", pr: rt.pr, title: rt.title, label: "Reviewing", doing: `reviewing #${rt.pr} ${rt.title}`,
-          href: rt.repoUrl ? `${rt.repoUrl}/pull/${rt.pr}` : null, forMs: since === null ? null : Math.max(0, now - since), lastDelivered: last0,
+          href: rt.repoUrl ? `${rt.repoUrl}/pull/${rt.pr}` : null, lastDelivered: last0, ...when,
         };
       }
     }
     const bar = openBars.reduce<LaneBar | null>((a, b) => (a === null || (b.since ?? b.start) > (a.since ?? a.start) ? b : a), null);
     const last = lane ? delivered.get(lane.lane) ?? delivered.get(name) ?? null : delivered.get(name) ?? null;
     if (!bar) {
-      const ended = (lane?.bars ?? []).reduce((m, b) => Math.max(m, b.end), 0) || lane?.lastEventAt || 0;
-      return { name, status: "free", stage: null, pr: null, title: null, href: null, forMs: ended > 0 ? Math.max(0, now - ended) : null, lastDelivered: last };
+      if (awaiting.length > 0) {
+        const p = awaiting[awaiting.length - 1]!;
+        const task = tasks.find((t) => t.pr === p) ?? null;
+        return { name, status: "awaiting", stage: null, pr: p, title: task?.title ?? null, label: `awaiting review #${p}`, doing: `awaiting review #${p}${task ? ` ${task.title}` : ""}`,
+          href: task?.repoUrl ? `${task.repoUrl}/pull/${p}` : null, lastDelivered: last, ...when };
+      }
+      const stale = allOpen.find(staleClaim);
+      if (stale) {
+        const ref = stale.issue !== undefined ? `#${stale.issue}` : stale.label;
+        return { name, status: "stale", stage: null, pr: null, title: null, label: `stale claim · ${ref}`, doing: `stale claim · ${ref}`, href: null, lastDelivered: last, ...when };
+      }
+      return { name, status: "free", stage: null, pr: null, title: null, href: null, lastDelivered: last, ...when };
     }
     const task = tasks.find((t) => (bar.taskId !== undefined && t.key === bar.taskId) || (t.pr !== null && bar.label === `#${t.pr}`)) ?? null;
     const pr = task?.pr ?? (bar.label.startsWith("#") ? Number(bar.label.slice(1)) : null);
@@ -80,11 +109,11 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
     return {
       name, status, stage: bar.kind, pr, title: task?.title ?? null,
       href: task?.repoUrl && pr ? `${task.repoUrl}/pull/${pr}` : null,
-      forMs: Math.max(0, now - (bar.since ?? bar.start)), lastDelivered: last,
+      lastDelivered: last, ...when, stageMs: Math.max(0, now - (bar.since ?? bar.start)),
     };
   });
   return rows.sort((a, b) => ORDER[a.status] - ORDER[b.status]
-    || (a.status === "working" ? (b.forMs ?? 0) - (a.forMs ?? 0) : 0)
+    || (a.status === "working" ? (b.stageMs ?? 0) - (a.stageMs ?? 0) : 0)
     || a.name.localeCompare(b.name));
 }
 

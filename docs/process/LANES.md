@@ -87,8 +87,8 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   the rule says not to: leave it out. The worktree's directory name must be a workspace id
   (lowercase letters, digits, `.`, `_`, `-`).
   `minFreeGb` is an integer from 0 to 4096, defaults to 20 when absent, and 0 disables the
-  free-space floor. With the floor enabled the target root must already exist and its free space
-  must be readable. Before queueing and again while holding the slot, a run below the floor
+  free-space floor. With the floor enabled the target root's volume must report its free space.
+  Before queueing and again while holding the slot, a run below the floor
   refuses and names the free GB, the floor and `graphhelm workspace sweep`; it never evicts a
   live target. GB here means 1024 cubed bytes. Reclaim still runs only while holding the slot,
   before the second floor check; a pre-queue refusal does not reclaim anything. Free space is a

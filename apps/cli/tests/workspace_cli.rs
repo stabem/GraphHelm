@@ -1096,7 +1096,16 @@ fn the_slot_refuses_to_build_below_the_free_space_floor() {
     assert!(status["data"]["targetSpace"]["freeGb"].is_number());
     assert_eq!(status["data"]["targets"]["lane-a"], 1);
 
+    // Windows can measure the volume of a nonexistent directory, so use a genuinely
+    // unavailable volume there; an absent path is sufficient for statvfs on other hosts.
+    #[cfg(not(windows))]
     let missing = dir.path().join("missing-target-root");
+    #[cfg(windows)]
+    let missing = ('D'..='Z')
+        .rev()
+        .map(|letter| std::path::PathBuf::from(format!("{letter}:\\")))
+        .find(|path| !path.exists() && fs2::available_space(path).is_err())
+        .expect("an unavailable drive letter");
     std::fs::write(
         rules.join("slot-targets.json"),
         serde_json::json!({"targetRoot": missing}).to_string(),

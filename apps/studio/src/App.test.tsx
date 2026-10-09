@@ -1116,7 +1116,9 @@ describe("the window", () => {
     resolveSave({ contentSha256: "new", notification: { status: "recorded", notifiedRuns: [], pendingRuns: [] } });
     await waitFor(() => expect(screen.queryByRole("button", { name: "Saving…" })).not.toBeInTheDocument());
     await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByTitle("can sleep"));
-    expect(screen.queryByLabelText("Project document editor")).not.toBeInTheDocument();
+    // #549: the editor closes when the selection lands, a render later; checked at once, a loaded
+    // machine read it still open (the known flake of this cell). Wait for the condition instead.
+    await waitFor(() => expect(screen.queryByLabelText("Project document editor")).not.toBeInTheDocument());
     confirm.mockRestore();
   });
 

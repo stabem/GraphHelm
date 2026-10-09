@@ -740,9 +740,27 @@ fn the_slot_builds_in_the_worktrees_own_target_unless_shared_is_asked() {
     );
 }
 
-fn slot_with(root: &str, lane: &str, label: &str, extra: &[&str], command: &[String]) -> std::process::Child {
+fn slot_with(
+    root: &str,
+    lane: &str,
+    label: &str,
+    extra: &[&str],
+    command: &[String],
+) -> std::process::Child {
     Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args(["--json", "workspace", "slot", "--root", root, "--lane", lane, "--label", label, "--jobs", "3"])
+        .args([
+            "--json",
+            "workspace",
+            "slot",
+            "--root",
+            root,
+            "--lane",
+            lane,
+            "--label",
+            label,
+            "--jobs",
+            "3",
+        ])
         .args(extra)
         .arg("--")
         .args(command)
@@ -771,9 +789,21 @@ fn slot_status_names_the_holder_and_the_waiters_in_order() {
     let root = dir.path().join("root");
     let root_s = root.to_str().unwrap();
     let log = dir.path().join("log.txt");
-    let holder = slot_with(root_s, "lane-a", "hold", &[], &marker_command(&log, "a", 3000));
+    let holder = slot_with(
+        root_s,
+        "lane-a",
+        "hold",
+        &[],
+        &marker_command(&log, "a", 3000),
+    );
     std::thread::sleep(std::time::Duration::from_millis(800));
-    let waiter = slot_with(root_s, "lane-b", "wait", &[], &marker_command(&log, "b", 100));
+    let waiter = slot_with(
+        root_s,
+        "lane-b",
+        "wait",
+        &[],
+        &marker_command(&log, "b", 100),
+    );
     std::thread::sleep(std::time::Duration::from_millis(800));
     let (code, status) = run(&["slot", "status", "--root", root_s]);
     let _ = holder.wait_with_output().unwrap();
@@ -799,23 +829,57 @@ fn a_waiter_that_timed_out_keeps_its_place_when_it_queues_again() {
     let root = dir.path().join("root");
     let root_s = root.to_str().unwrap();
     let log = dir.path().join("log.txt");
-    let holder = slot_with(root_s, "lane-a", "hold", &[], &marker_command(&log, "a", 5000));
+    let holder = slot_with(
+        root_s,
+        "lane-a",
+        "hold",
+        &[],
+        &marker_command(&log, "a", 5000),
+    );
     std::thread::sleep(std::time::Duration::from_millis(800));
     // 0.02 min = 1.2 s: lane-b gives up while lane-a still holds the slot.
-    let gave_up = slot_with(root_s, "lane-b", "pr1", &["--max-wait", "0.02"], &marker_command(&log, "b", 100))
-        .wait_with_output()
-        .unwrap();
+    let gave_up = slot_with(
+        root_s,
+        "lane-b",
+        "pr1",
+        &["--max-wait", "0.02"],
+        &marker_command(&log, "b", 100),
+    )
+    .wait_with_output()
+    .unwrap();
     assert!(!gave_up.status.success(), "lane-b was meant to time out");
     let reply: Value = serde_json::from_slice(&gave_up.stdout).unwrap();
-    assert!(reply["diagnostics"][0]["message"].as_str().unwrap_or("").contains("place"), "{reply}");
+    assert!(
+        reply["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("place"),
+        "{reply}"
+    );
     // lane-c arrives after lane-b first queued, then lane-b queues again with the same label.
-    let later = slot_with(root_s, "lane-c", "pr2", &[], &marker_command(&log, "c", 100));
+    let later = slot_with(
+        root_s,
+        "lane-c",
+        "pr2",
+        &[],
+        &marker_command(&log, "c", 100),
+    );
     std::thread::sleep(std::time::Duration::from_millis(500));
-    let again = slot_with(root_s, "lane-b", "pr1", &[], &marker_command(&log, "b", 100));
+    let again = slot_with(
+        root_s,
+        "lane-b",
+        "pr1",
+        &[],
+        &marker_command(&log, "b", 100),
+    );
     for child in [holder, later, again] {
         assert!(child.wait_with_output().unwrap().status.success());
     }
-    assert_eq!(log_tags(&log), ["a", "b", "c"], "lane-b kept its place ahead of lane-c");
+    assert_eq!(
+        log_tags(&log),
+        ["a", "b", "c"],
+        "lane-b kept its place ahead of lane-c"
+    );
 }
 
 /// #540 (3): `--priority` puts a job next after the holder, never preempting it, and only for a
@@ -828,19 +892,55 @@ fn priority_goes_next_for_a_listed_lane_and_is_refused_for_any_other() {
     let root = dir.path().join("root");
     let root_s = root.to_str().unwrap();
     std::fs::create_dir_all(root.join(".graphhelm-workspaces")).unwrap();
-    std::fs::write(root.join(".graphhelm-workspaces").join("slot-priority-lanes"), "coordinator\n").unwrap();
+    std::fs::write(
+        root.join(".graphhelm-workspaces")
+            .join("slot-priority-lanes"),
+        "coordinator\n",
+    )
+    .unwrap();
     let log = dir.path().join("log.txt");
-    let refused = slot_with(root_s, "lane-x", "jump", &["--priority"], &marker_command(&log, "x", 100))
-        .wait_with_output()
-        .unwrap();
-    assert!(!refused.status.success(), "an unlisted lane's --priority is refused");
-    let holder = slot_with(root_s, "lane-a", "hold", &[], &marker_command(&log, "a", 2500));
+    let refused = slot_with(
+        root_s,
+        "lane-x",
+        "jump",
+        &["--priority"],
+        &marker_command(&log, "x", 100),
+    )
+    .wait_with_output()
+    .unwrap();
+    assert!(
+        !refused.status.success(),
+        "an unlisted lane's --priority is refused"
+    );
+    let holder = slot_with(
+        root_s,
+        "lane-a",
+        "hold",
+        &[],
+        &marker_command(&log, "a", 2500),
+    );
     std::thread::sleep(std::time::Duration::from_millis(600));
-    let normal = slot_with(root_s, "lane-b", "wait", &[], &marker_command(&log, "b", 100));
+    let normal = slot_with(
+        root_s,
+        "lane-b",
+        "wait",
+        &[],
+        &marker_command(&log, "b", 100),
+    );
     std::thread::sleep(std::time::Duration::from_millis(600));
-    let urgent = slot_with(root_s, "coordinator", "owner-asked", &["--priority"], &marker_command(&log, "p", 100));
+    let urgent = slot_with(
+        root_s,
+        "coordinator",
+        "owner-asked",
+        &["--priority"],
+        &marker_command(&log, "p", 100),
+    );
     for child in [holder, normal, urgent] {
         assert!(child.wait_with_output().unwrap().status.success());
     }
-    assert_eq!(log_tags(&log), ["a", "p", "b"], "priority went next, after the holder, never inside it");
+    assert_eq!(
+        log_tags(&log),
+        ["a", "p", "b"],
+        "priority went next, after the holder, never inside it"
+    );
 }

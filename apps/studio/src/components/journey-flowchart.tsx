@@ -111,11 +111,19 @@ const top = (row: number): number => row * (CARD_H + GAP_Y);
 
 /** An arrow between two cards, at the height of the picture: straight along a row, an elbow to a
  * branch, and a loop under the cards when it goes back. A branch that REJOINS a row above it (the
- * owner's sketch: the lower card feeds back into the main row) leaves its card from the top,
- * crosses in the empty band between the two rows, and enters the card it rejoins from below: it
- * never runs behind a card or merges into the arrow already entering that card from the left. */
-function arrowPath(from: ChartNode, to: ChartNode): string {
+ * owner's sketch: the lower card feeds back into the main row) enters from below. One adjacent
+ * return can leave from the top; longer or multiple returns use separate tracks in the column
+ * gutter and row band, with distinct exit and entry ports, so no segment is shared or under a card. */
+function arrowPath(from: ChartNode, to: ChartNode, track?: number): string {
   if (to.row < from.row) {
+    if (track !== undefined) {
+      const x1 = left(from.col) + CARD_W;
+      const y1 = top(from.row) + CARD_H / 2 + track;
+      const gutter = x1 + GAP_X / 2 + track;
+      const band = top(to.row) + CARD_H + GAP_Y / 2 + track;
+      const port = left(to.col) + CARD_W / 2 + track;
+      return `M ${x1} ${y1} H ${gutter} V ${band} H ${port} V ${top(to.row) + CARD_H}`;
+    }
     const band = top(to.row) + CARD_H + GAP_Y / 2;
     return `M ${left(from.col) + CARD_W / 2} ${top(from.row)} V ${band} H ${left(to.col) + CARD_W / 2} V ${top(to.row) + CARD_H}`;
   }
@@ -179,6 +187,12 @@ export interface JourneyFlowchartProps {
 export function JourneyFlowchart({ flow, run = null, frames = {}, current = null, liveFrame = null }: JourneyFlowchartProps) {
   const layout = layoutFlow(flow);
   const byId = new Map(layout.nodes.map((node) => [node.screen.id, node]));
+  const rejoins = layout.arrows.filter((edge) => byId.get(edge.to)!.row < byId.get(edge.from)!.row);
+  // Bound every offset inside the 40px row gap even when there are many return edges.
+  const tracks = new Map(rejoins.flatMap((edge, index) =>
+    rejoins.length === 1 && byId.get(edge.from)!.row === byId.get(edge.to)!.row + 1
+      ? []
+      : [[edge.id, (index - (rejoins.length - 1) / 2) * Math.min(12, GAP_Y / (rejoins.length + 1))] as const]));
   const [open, setOpen] = useState<string | null>(null);
   const close = useRef<HTMLButtonElement>(null);
   const opened = open === null ? undefined : byId.get(open);
@@ -190,7 +204,8 @@ export function JourneyFlowchart({ flow, run = null, frames = {}, current = null
     return () => document.removeEventListener("keydown", onKey);
   }, [opened === undefined]);
   const frameOf = (id: string): string | null => (id === current && liveFrame !== null ? liveFrame : frames[id] ?? null);
-  const width = layout.cols * CARD_W + (layout.cols - 1) * GAP_X;
+  const outerGutter = rejoins.some((edge) => tracks.has(edge.id) && byId.get(edge.from)!.col === layout.cols - 1);
+  const width = layout.cols * CARD_W + (layout.cols - 1) * GAP_X + (outerGutter ? GAP_X : 0);
   const height = layout.rows * (CARD_H + GAP_Y);
   // The chart shrinks to the column it is in (down to MIN_FIT), so a short journey shows every card;
   // a longer one scrolls, and says so. Measured on mount and whenever the column changes width.
@@ -219,7 +234,7 @@ export function JourneyFlowchart({ flow, run = null, frames = {}, current = null
             </marker>
           </defs>
           {layout.arrows.map((edge) => (
-            <path key={edge.id} d={arrowPath(byId.get(edge.from)!, byId.get(edge.to)!)} data-edge={edge.id} data-result={run?.edges?.[edge.id]?.result} markerEnd="url(#journey-chart-head)" />
+            <path key={edge.id} d={arrowPath(byId.get(edge.from)!, byId.get(edge.to)!, tracks.get(edge.id))} data-edge={edge.id} data-result={run?.edges?.[edge.id]?.result} markerEnd="url(#journey-chart-head)" />
           ))}
         </svg>
         <ol className="journey-flow-steps" aria-label="Steps">

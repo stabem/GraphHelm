@@ -452,7 +452,7 @@ describe("TaskGraphs step timer (#502)", () => {
     render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} now={T0 + 999 * 60_000} />);
     const row = screen.getByRole("group", { name: /issue #1\b/i });
     const nodes = within(row).getAllByRole("listitem");
-    expect(nodes.map((node) => node.querySelector(".task-node-time")?.textContent ?? "")).toEqual(["10 min", "", "20 min", "2 min"]); // #480: no plan recorded, so the time to the PR is Plan's
+    expect(nodes.map((node) => node.querySelector(".task-node-time")?.textContent ?? "")).toEqual(["", "10 min", "20 min", "2 min"]); // #480: no plan recorded: Plan holds no time, Implement keeps it
   });
 });
 

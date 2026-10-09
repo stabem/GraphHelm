@@ -191,8 +191,7 @@ function nodesOf(task: TaskState): StepNode[] {
 /** #502: the lit node's time and, for a step with a typical time, a bar against it; a step the
  * slice left shows what it spent there. */
 function StepTime({ task, node, timing }: { task: TaskState; node: StepNode; timing: Timing }) {
-  // #480: an unrecorded Plan still spent the time from the claim to the next step.
-  if (node.state === "done" || node.state === "unrecorded") {
+  if (node.state === "done") {
     const spent = node.timed === null ? undefined : task.clock.spent[node.timed];
     return spent === undefined ? null : <span className="task-node-time">{duration(spent)}</span>;
   }

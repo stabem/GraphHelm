@@ -485,6 +485,11 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
     const state = sliceFor(slices, event);
     if (state.step === "merged") continue;
     state.lastSequence = event.sequence;
+    // #480 (gh-claude-2): Plan and Critic hold time only once a plan is recorded. Before that, the
+    // claim's time is Implement's, as it was before #480, so old tasks' medians stay comparable.
+    // Judged after the record is applied, so the `task.planned` that ends Plan books the claim's
+    // time as Plan's.
+    const timed = (step: TaskStep) => (step === "plan" || step === "critic") && (state.plan ?? null) === null ? "implement" : step;
     const before = state.step;
     switch (event.kind) {
       case "task.claimed":
@@ -556,7 +561,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         state.step = "merged";
         break;
     }
-    clockStep(state.clock, before, state.step, event.occurredAt);
+    clockStep(state.clock, timed(before), timed(state.step), event.occurredAt);
   }
   slices.forEach((slice, index) => {
     // A slice opened by a PR record (no claim seen) still belongs to its issue.

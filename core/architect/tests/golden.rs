@@ -666,3 +666,132 @@ fn the_useful_change_goal_compiles_to_one_tests_node_and_nothing_cognitive() {
         "the stamped document must be completable"
     );
 }
+
+/// #467: with a critic in the profile, the compiler puts `critic_design` → `critic_grade` in
+/// front of the model's draft, after the model and without changing its prompt: the draft's own
+/// entrypoints become the critic's successors, `critic_design` becomes the only entrypoint, both
+/// nodes carry the critic's bounds in their words, and the result still lints clean. Without a
+/// critic the byte-stable golden document above is unchanged. Credible regressions: the critic
+/// left to the model's choice, the draft starting before the design is graded, or an inserted pair
+/// the lint refuses. Cost: the recorded first-compile reply, one compile.
+#[test]
+fn a_profile_with_a_critic_puts_the_graded_design_in_front_of_the_draft() {
+    let plain = first_compile();
+    let before: Vec<String> = plain.document["spec"]["entrypoints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| id.as_str().unwrap().to_owned())
+        .collect();
+    assert!(!before.is_empty());
+    let mut graded = profile();
+    graded.critic = Some(graphhelm_architect::CriticProfile {
+        pass_score: 8,
+        max_rounds: 3,
+    });
+    let synthesized = compile("first-compile/replies.json", &graded, &catalog_with_cargo())
+        .unwrap_or_else(|refusal| panic!("{refusal:?}"));
+    let spec = &synthesized.document["spec"];
+    assert_eq!(spec["entrypoints"], serde_json::json!(["critic_design"]));
+    for id in ["critic_design", "critic_grade"] {
+        assert_eq!(spec["nodes"][id]["type"], "agent", "{id}");
+    }
+    assert_eq!(
+        spec["nodes"]["critic_grade"]["critic"],
+        serde_json::json!({"passScore": 8, "maxRounds": 3, "record": "task.critic_verdict"})
+    );
+    let edges: Vec<(String, String)> = spec["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|edge| {
+            (
+                edge["from"].as_str().unwrap().to_owned(),
+                edge["to"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert!(edges.contains(&("critic_design".to_owned(), "critic_grade".to_owned())));
+    for first in &before {
+        assert!(
+            edges.contains(&("critic_grade".to_owned(), first.clone())),
+            "the draft's entrypoint {first} must wait for the critic"
+        );
+    }
+    assert!(
+        synthesized
+            .rationale
+            .iter()
+            .any(|entry| entry.node == "critic_grade" && entry.reason.contains("pass at 8/10")),
+        "the rationale names the critic's bounds"
+    );
+    let report = relint(&synthesized.document);
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+}
+
+/// #467: a draft that already uses a reserved critic id is sent back to the model with a
+/// repairable diagnostic, never overwritten. Cost: pure, no I/O.
+#[test]
+fn a_draft_using_a_reserved_critic_id_is_sent_back() {
+    let mut graded = profile();
+    graded.critic = Some(graphhelm_architect::CriticProfile {
+        pass_score: 8,
+        max_rounds: 3,
+    });
+    let mut document = serde_json::json!({"spec": {"nodes": {"critic_grade": {"type": "agent"}}}})
+        .as_object()
+        .unwrap()
+        .clone();
+    let diagnostics = graphhelm_architect::insert_critic(&graded, &mut document).unwrap_err();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics[0].code,
+        graphhelm_architect::CRITIC_ID_RESERVED_CODE
+    );
+    assert_eq!(diagnostics[0].path, "/spec/nodes/critic_grade");
+    assert_eq!(
+        document["spec"]["nodes"]["critic_grade"],
+        serde_json::json!({"type": "agent"}),
+        "the draft's node is not overwritten"
+    );
+}
+
+/// #467 (review of #553): the critic never repairs or shadows a draft defect. A draft that
+/// declares no entrypoint is left untouched, so the schema check still refuses it instead of
+/// accepting `critic_design` as a made-up entrypoint with nothing behind the critic; and a draft
+/// edge that already uses an id of the edges the compiler adds is sent back, like a reserved node
+/// id, instead of producing two edges with one id. Cost: pure, no I/O.
+#[test]
+fn the_critic_does_not_hide_a_draft_without_entrypoints_or_reuse_a_draft_edge_id() {
+    let mut graded = profile();
+    graded.critic = Some(graphhelm_architect::CriticProfile::DESIGN);
+    let headless = serde_json::json!({"spec": {
+        "nodes": {"a": {"type": "agent"}, "b": {"type": "agent"}},
+        "edges": [{"id": "a_to_b", "from": "a", "to": "b", "type": "control"},
+                  {"id": "b_to_a", "from": "b", "to": "a", "type": "control"}],
+    }});
+    let mut document = headless.as_object().unwrap().clone();
+    graphhelm_architect::insert_critic(&graded, &mut document).unwrap();
+    assert_eq!(
+        serde_json::Value::Object(document),
+        headless,
+        "a draft with no entrypoint is left for the schema check to refuse"
+    );
+
+    let mut document = serde_json::json!({"spec": {
+        "entrypoints": ["a"],
+        "nodes": {"a": {"type": "agent"}},
+        "edges": [{"id": "critic_grade_to_a", "from": "a", "to": "a", "type": "control"}],
+    }})
+    .as_object()
+    .unwrap()
+    .clone();
+    let diagnostics = graphhelm_architect::insert_critic(&graded, &mut document).unwrap_err();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics[0].code,
+        graphhelm_architect::CRITIC_ID_RESERVED_CODE
+    );
+    assert_eq!(diagnostics[0].path, "/spec/edges/0/id");
+    assert!(document["spec"]["nodes"].get("critic_grade").is_none());
+}

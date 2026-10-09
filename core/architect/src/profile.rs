@@ -40,6 +40,27 @@ pub struct TaskProfile {
     pub wait_within_seconds: u64,
     #[serde(default = "default_clearance")]
     pub clearance_within_seconds: u64,
+    /// #467: when the task's plan says `critic: design`, the compiler puts a design node and a
+    /// blind critic node in front of the draft. Absent: the graph is the draft alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub critic: Option<CriticProfile>,
+}
+
+/// The design critic's bounds, copied from the task plan's `critic` (#467).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CriticProfile {
+    pub pass_score: u32,
+    pub max_rounds: u32,
+}
+
+impl CriticProfile {
+    /// The decided defaults (#467): pass at 8 of 10, at most 3 rounds. One home, so every door
+    /// that asks for `critic: design` gets the same bounds.
+    pub const DESIGN: Self = Self {
+        pass_score: 8,
+        max_rounds: 3,
+    };
 }
 
 fn default_mode() -> String {
@@ -68,6 +89,7 @@ impl TaskProfile {
             max_nodes: default_max_nodes(),
             wait_within_seconds: default_wait(),
             clearance_within_seconds: default_clearance(),
+            critic: None,
         }
     }
 
@@ -116,6 +138,15 @@ impl TaskProfile {
                     format!("a customs budget must be within 1..={MAX_BUDGET_SECONDS} seconds"),
                 ));
             }
+        }
+        // #467: the same bounds as `task-plan.schema.json` `critic`.
+        if let Some(critic) = self.critic
+            && !((1..=10).contains(&critic.pass_score) && (1..=5).contains(&critic.max_rounds))
+        {
+            return Err(refuse(
+                "/critic",
+                "critic passScore must be within 1..=10 and maxRounds within 1..=5".to_owned(),
+            ));
         }
         Ok(())
     }

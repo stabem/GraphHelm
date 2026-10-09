@@ -955,6 +955,16 @@ fn synthesize_schema() -> serde_json::Value {
             },
             "mode": {"type": "string", "enum": ["autopilot", "supervised", "manual"]},
             "maxNodes": {"type": "integer", "minimum": 1, "maximum": 50},
+            "critic": {
+                "type": "string",
+                "enum": ["none", "design"],
+                "description": "design puts a design step and a blind critic step in front of \
+                                the draft, as the task plan's critic says; none is the draft alone.",
+            },
+            "plan": {
+                "type": "object",
+                "description": "The task's graphhelm-task-plan-v1 document, as keel_plan returns it; without critic, the plan's own critic decides.",
+            },
             "allowPrograms": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -2154,6 +2164,7 @@ pub(crate) fn call(
                 "judgeRoute",
                 "judgeFixture",
                 "library",
+                "critic",
             ] {
                 if let Some(value) = str_arg(arguments, field) {
                     body[field] = serde_json::Value::String(value.to_owned());
@@ -2166,6 +2177,9 @@ pub(crate) fn call(
             }
             if let Some(programs) = arguments.get("allowPrograms") {
                 body["allowPrograms"] = programs.clone();
+            }
+            if let Some(plan) = arguments.get("plan") {
+                body["plan"] = plan.clone();
             }
             api.request(
                 "POST",

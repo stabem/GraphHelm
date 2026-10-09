@@ -40,8 +40,8 @@ pub use judgment::{Candidate, Extras, JudgmentReport, NodeJudgment, RankingRepor
 pub use library::{GraphLibrary, MAX_TEMPLATES, Parameter, SIDECAR_SUFFIX, Template};
 pub use model::{DraftModel, DraftReply, MAX_FIXTURE_BYTES, RecordedDraftModel};
 pub use profile::{
-    DEFAULT_CLEARANCE_WITHIN_SECONDS, DEFAULT_MAX_NODES, DEFAULT_WAIT_WITHIN_SECONDS,
-    MAX_GOAL_BYTES, MAX_MAX_NODES, MODES, TaskProfile,
+    CriticProfile, DEFAULT_CLEARANCE_WITHIN_SECONDS, DEFAULT_MAX_NODES,
+    DEFAULT_WAIT_WITHIN_SECONDS, MAX_GOAL_BYTES, MAX_MAX_NODES, MODES, TaskProfile,
 };
 pub use refusal::ArchitectRefusal;
 pub use synthesize::{
@@ -49,6 +49,9 @@ pub use synthesize::{
     MAX_REPAIR_ROUNDS, MAX_REPLY_BYTES, NODE_TYPE_NOT_EXECUTABLE_CODE, NOT_JSON_CODE,
     NodeRationale, ORIGIN_LABEL, SynthesizedGraph, TOOL_CALL_MISSING_CODE, stamp_customs,
     synthesize, synthesize_with,
+};
+pub use synthesize::{
+    CRITIC_DESIGN_NODE, CRITIC_GRADE_NODE, CRITIC_ID_RESERVED_CODE, insert_critic,
 };
 pub use template::{
     REPAIR_HEAD, RepairContext, Stance, TEMPLATE, assemble_prompt, prompt_sha256, template_sha256,

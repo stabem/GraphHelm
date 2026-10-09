@@ -120,6 +120,14 @@ pub(crate) struct SynthesizeRequest<'a> {
     pub(crate) allow_programs: &'a [String],
     pub(crate) wait_within_seconds: Option<u64>,
     pub(crate) clearance_within_seconds: Option<u64>,
+    /// #467: `design` puts the graded design in front of the draft, the way the task plan's
+    /// `critic` says; `none` or absent is the draft alone. Any other word is refused here, once,
+    /// so every door refuses it with the same words.
+    pub(crate) critic: Option<&'a str>,
+    /// #467: the task's `graphhelm-task-plan-v1` document (what `keel plan` prints). When no
+    /// `critic` is named, the plan's own `critic` decides, with the plan's bounds. An explicit
+    /// `critic` wins over the plan.
+    pub(crate) plan: Option<&'a Value>,
     /// How many drafts to ask for and rank; `1` (today's road) when absent. The bound `1..=3`
     /// and the "more than one needs a judge" rule are the compiler's own (`InvalidProfile`),
     /// never pre-empted here, so every door refuses with the same words.
@@ -182,6 +190,8 @@ pub(crate) fn execute(
     if let Some(seconds) = request.clearance_within_seconds {
         profile.clearance_within_seconds = seconds;
     }
+    let decision = critic_decision(request.critic, request.plan)?;
+    profile.critic = decision.as_ref().and_then(|decision| decision.critic);
     let catalog = CapabilityCatalog::from_runtime(request.allow_programs);
     let extras = Extras {
         judge,
@@ -190,11 +200,110 @@ pub(crate) fn execute(
     };
     let synthesized =
         synthesize_with(&profile, &catalog, model, &extras).map_err(|refusal| refused(&refusal))?;
-    serde_json::to_value(&synthesized).map_err(|_| {
+    let mut reply = serde_json::to_value(&synthesized).map_err(|_| {
         refused(&ArchitectRefusal::ModelUnavailable {
             message: "the synthesized graph could not be serialized".to_owned(),
         })
-    })
+    })?;
+    // The decision and where it came from travel with the reply, so a reader can tell a critic
+    // the plan asked for from one a caller forced. Absent when nobody named a critic or a plan:
+    // that road's reply is unchanged, byte for byte.
+    if let (Some(decision), Some(object)) = (decision, reply.as_object_mut()) {
+        object.insert("critic".to_owned(), decision.record());
+    }
+    Ok(reply)
+}
+
+/// Whether the graded design goes in front of the draft, and who decided (#467).
+struct CriticDecision {
+    critic: Option<graphhelm_architect::CriticProfile>,
+    /// `flag` when the caller named `critic`; `plan` when the task plan decided.
+    source: &'static str,
+    task: Option<String>,
+}
+
+impl CriticDecision {
+    fn record(&self) -> Value {
+        let mut record = serde_json::json!({
+            "mode": if self.critic.is_some() { "design" } else { "none" },
+            "source": self.source,
+        });
+        if let Some(critic) = self.critic {
+            record["passScore"] = Value::from(critic.pass_score);
+            record["maxRounds"] = Value::from(critic.max_rounds);
+        }
+        if let Some(task) = &self.task {
+            record["taskId"] = Value::String(task.clone());
+        }
+        record
+    }
+}
+
+/// An explicit `critic` wins. Without one, the task plan's `critic` decides, with the plan's own
+/// bounds (the compiler checks their range). Without either, nobody decided and the draft stands
+/// alone. A plan that is not a `graphhelm-task-plan-v1` document, or whose `critic` is not the
+/// shape `keel plan` writes, is refused at `/plan` rather than read as "no critic": a misread
+/// plan must not let a design go ungraded.
+fn critic_decision(
+    critic: Option<&str>,
+    plan: Option<&Value>,
+) -> Result<Option<CriticDecision>, Failure> {
+    let flagged = |critic| CriticDecision {
+        critic,
+        source: "flag",
+        task: None,
+    };
+    match critic {
+        Some("none") => return Ok(Some(flagged(None))),
+        Some("design") => {
+            return Ok(Some(flagged(Some(
+                graphhelm_architect::CriticProfile::DESIGN,
+            ))));
+        }
+        Some(_) => return Err(argument("critic must be none or design", "/critic")),
+        None => {}
+    }
+    let Some(plan) = plan else {
+        return Ok(None);
+    };
+    if plan["schema"] != "graphhelm-task-plan-v1" {
+        return Err(argument(
+            "plan must be a graphhelm-task-plan-v1 document, as keel plan prints it",
+            "/plan",
+        ));
+    }
+    let bound = |key: &str| {
+        plan["critic"][key]
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+    };
+    let critic = match (plan.get("critic"), plan["critic"]["mode"].as_str()) {
+        // A plan written before the planner decided a critic names none.
+        (None, _) | (Some(_), Some("none")) => None,
+        (Some(_), Some("design")) => match (bound("passScore"), bound("maxRounds")) {
+            (Some(pass_score), Some(max_rounds)) => Some(graphhelm_architect::CriticProfile {
+                pass_score,
+                max_rounds,
+            }),
+            _ => {
+                return Err(argument(
+                    "plan critic must carry passScore and maxRounds",
+                    "/plan/critic",
+                ));
+            }
+        },
+        _ => {
+            return Err(argument(
+                "plan critic mode must be none or design",
+                "/plan/critic/mode",
+            ));
+        }
+    };
+    Ok(Some(CriticDecision {
+        critic,
+        source: "plan",
+        task: plan["taskId"].as_str().map(str::to_owned),
+    }))
 }
 
 /// Opens the model door `source` names.
@@ -452,6 +561,8 @@ pub struct SynthesizeArguments {
     pub judge_fixture: Option<PathBuf>,
     pub drafts: Option<u8>,
     pub library: Option<PathBuf>,
+    pub critic: Option<String>,
+    pub plan: Option<PathBuf>,
 }
 
 pub fn run(arguments: &SynthesizeArguments) -> Outcome {
@@ -473,6 +584,10 @@ fn run_inner(arguments: &SynthesizeArguments) -> Result<Value, Failure> {
         Some(dir) => Some(build_library(dir)?),
         None => None,
     };
+    let plan = match arguments.plan.as_deref() {
+        Some(path) => Some(read_plan(path)?),
+        None => None,
+    };
     let request = SynthesizeRequest {
         goal: &arguments.goal,
         mode: arguments.mode.as_deref(),
@@ -480,6 +595,8 @@ fn run_inner(arguments: &SynthesizeArguments) -> Result<Value, Failure> {
         allow_programs: &arguments.allow_programs,
         wait_within_seconds: None,
         clearance_within_seconds: None,
+        critic: arguments.critic.as_deref(),
+        plan: plan.as_ref(),
         drafts: arguments.drafts,
     };
     let mut reply = execute(&request, model.as_ref(), judge.as_deref(), library.as_ref())?;
@@ -494,6 +611,29 @@ fn run_inner(arguments: &SynthesizeArguments) -> Result<Value, Failure> {
         );
     }
     Ok(reply)
+}
+
+/// Reads `--plan`: the plan document itself, or the whole `keel plan` envelope (its
+/// `data.plan`), so `graphhelm --json keel plan ... > plan.json` can be passed as it is. Bounded
+/// before parsing; the path is never echoed.
+fn read_plan(path: &Path) -> Result<Value, Failure> {
+    const MAX_PLAN_BYTES: u64 = 256 * 1024;
+    let unreadable = || {
+        argument(
+            "--plan must name a readable JSON file of at most 256 KiB",
+            "/plan",
+        )
+    };
+    let size = std::fs::metadata(path).map_err(|_| unreadable())?.len();
+    if size > MAX_PLAN_BYTES {
+        return Err(unreadable());
+    }
+    let bytes = std::fs::read(path).map_err(|_| unreadable())?;
+    let mut value: Value = serde_json::from_slice(&bytes).map_err(|_| unreadable())?;
+    if let Some(plan) = value.pointer_mut("/data/plan") {
+        value = plan.take();
+    }
+    Ok(value)
 }
 
 /// `--out` must be a `.json` path that does not exist yet. Checked before any model is asked,
@@ -636,6 +776,8 @@ mod tests {
             judge_fixture: None,
             drafts: None,
             library: None,
+            critic: None,
+            plan: None,
         }
     }
 

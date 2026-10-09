@@ -1968,6 +1968,14 @@ pub struct SynthesizeArgs {
     /// may choose to reuse or adapt; read only when a judge is named.
     #[arg(long)]
     pub library: Option<PathBuf>,
+    /// `design` puts a design step and a blind critic step in front of the draft, the way the
+    /// task plan's `critic` says (#467); `none` or absent is the draft alone.
+    #[arg(long)]
+    pub critic: Option<String>,
+    /// The task's plan, as `graphhelm --json keel plan` prints it (#467). Without `--critic`,
+    /// the plan's own `critic` decides whether the design is graded first; `--critic` wins.
+    #[arg(long)]
+    pub plan: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

@@ -200,6 +200,14 @@ describe("foldTaskEvents plan step (#480)", () => {
     expect(foldTaskEvents([claim, plan(2, "design"), opened(3)])[0].step).toBe("review");
   });
 
+  it("ends Critic only on a passing critic round; revise and exhausted keep it lit", () => {
+    const round = (sequence: number, n: number, score: number, verdict: string) => record(sequence, "task.critic_verdict", "gh-claude-1", {
+      ...issue, lane: "gh-claude-1", round: n, score, passScore: 8, maxRounds: 3, verdict, designRef: "d", reasons: ["r"] });
+    expect(foldTaskEvents([claim, plan(2, "design"), round(3, 1, 5, "revise")])[0].step).toBe("critic");
+    expect(foldTaskEvents([claim, plan(2, "design"), round(3, 1, 5, "revise"), round(4, 2, 9, "pass")])[0].step).toBe("implement");
+    expect(foldTaskEvents([claim, plan(2, "design"), round(3, 3, 5, "exhausted")])[0].step).toBe("critic");
+  });
+
   it("keeps a plan recorded after the PR without moving the graph back", () => {
     const state = foldTaskEvents([claim, opened(2), plan(3, "design")]);
     expect(state).toHaveLength(1);

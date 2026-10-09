@@ -155,8 +155,12 @@ function nodesOf(task: TaskState): StepNode[] {
       since: task.clock.since, state: planning ? "current" : plan === null ? "unrecorded" : "done", ...(plan === null ? {} : { hint: plan.summary }) },
   ];
   if (plan?.critic.mode === "design") {
-    nodes.push({ key: "critic", label: "Critic", who: `pass ${plan.critic.passScore}/10 · ${plan.critic.maxRounds} rounds`, review: false,
-      reason: null, timed: "critic", since: task.clock.since, state: critiquing ? "current" : planning ? "next" : "done" });
+    // The latest recorded round (#467) when there is one, else the plan's bounds. An exhausted
+    // critic goes to a person: drawn as blocked, never as done.
+    const round = task.critic;
+    nodes.push({ key: "critic", label: "Critic", review: false, reason: null, timed: "critic", since: task.clock.since,
+      who: round !== null ? `round ${round.round}/${round.maxRounds} · ${round.score}/10` : `pass ${plan.critic.passScore}/10 · ${plan.critic.maxRounds} rounds`,
+      state: round?.verdict === "exhausted" && critiquing ? "blocked" : critiquing ? "current" : planning ? "next" : "done" });
   }
   nodes.push(
     { key: "implement", label: "Implement", who: task.lane, review: false, reason: null, timed: "implement", since: task.clock.since,

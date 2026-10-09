@@ -1,6 +1,12 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup } from "@testing-library/react";
+import { cleanup, configure } from "@testing-library/react";
 import { afterEach } from "vitest";
+
+import { scaled, UI_WAIT_BASE_MS } from "./time-scale";
+
+/** #549: `findBy*` and `waitFor` wait for their condition and return the moment it holds; only
+ * the point at which "it never showed" is declared moves with GRAPHHELM_TEST_TIME_SCALE. */
+configure({ asyncUtilTimeout: scaled(UI_WAIT_BASE_MS) });
 
 /**
  * Unmount between tests.

@@ -19,7 +19,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use super::journey_live::{Launched, LaunchedStop, base_reachable, launch, would_destroy};
+use super::journey_live::{
+    Launched, LaunchedStop, base_reachable, launch, launcher_isolated, would_destroy,
+};
 use super::journey_replay::{
     Driver, Failure, Result, SURVIVABLE, TemporaryOutput, declared_browser, failure, observe,
     observer_ready, preflight, record, safe_directory, safe_node, walked, with_storage,
@@ -664,13 +666,17 @@ fn play(
 ) -> Result<()> {
     let secrets = preflight(flow)?;
     observer_ready(project)?;
-    let base = flow["base"].as_str().unwrap().to_owned();
-    // The app under test is started when it is down, and stopped when the preview ends.
-    let launched: Option<Launched> = if base_reachable(&base) {
+    let mut base = flow["base"].as_str().unwrap().to_owned();
+    // The app under test is started when it is down, and stopped when the preview ends. An
+    // isolated launcher always starts its own on free ports (#585), and the preview plays there.
+    let launched: Option<Launched> = if !launcher_isolated(project) && base_reachable(&base) {
         None
     } else {
         Some(launch(project, &base)?)
     };
+    if let Some(own) = launched.as_ref().and_then(|app| app.base.clone()) {
+        base = own;
+    }
     if let (Some(app), Ok(mut slot)) = (&launched, stopper.lock()) {
         *slot = Some(app.stopper());
     }

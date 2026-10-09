@@ -37,7 +37,10 @@ import { devSession, type DevSession } from "./runtime/session";
 import { workConversation } from "./runtime/work-conversation";
 import { isSubagentLifecycleSignal } from "./runtime/subagents";
 import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
-import { isClaudeTaskSignal, isTaskEventSignal, readClaudeTasks, readTaskEvents, type ClaudeTaskReadModel, type TaskState } from "./runtime/team-tasks";
+import { foldTaskEvents, isClaudeTaskSignal, isTaskEventSignal, readClaudeTasks, readTaskEventRecords, type ClaudeTaskReadModel, type TaskEventRecord, type TaskState } from "./runtime/team-tasks";
+import { MissionView } from "./components/mission-view";
+import { laneBars, type TimedTaskEvent } from "./runtime/lane-bars";
+import { skippedEdgeInto } from "./runtime/mission";
 import { TaskGraphs } from "./components/task-graphs";
 import { JEV_ABSENT_NOTE, jevAvailability } from "./runtime/jev";
 import type {
@@ -85,7 +88,7 @@ import { HandoverCard } from "./components/handover-card";
 import { RightPanel } from "./components/right-panel";
 import { JourneyCanvas } from "./components/journey-canvas";
 import { beforeAfterPairs, captureDocuments, type BeforeAfterPair } from "./runtime/journeys";
-import type { JourneyFlowsView, JourneysView, LiveSession } from "./runtime/types";
+import type { JourneyFlowsView, JourneyRunView, JourneysView, LiveSession } from "./runtime/types";
 import { JourneyFlows, type JourneyRunSource } from "./components/journey-flows";
 import { SaidLinks, type SaidLinkContext } from "./components/said";
 import { ChatColumn, NEEDS_YOU } from "./components/chat-column";
@@ -1648,7 +1651,7 @@ export default function App({
   const [runTeamRead, setRunTeamRead] = useState<RunTeamReadModel | null>(null);
   const [claudeTaskRead, setClaudeTaskRead] = useState<ClaudeTaskReadModel | null>(null);
   // #391: the per-task graphs, folded from the run's `task.*` records.
-  const [taskGraphs, setTaskGraphs] = useState<{ executionId: string; tasks: TaskState[] } | null>(null);
+  const [taskGraphs, setTaskGraphs] = useState<{ executionId: string; tasks: TaskState[]; records: TaskEventRecord[] } | null>(null);
   const subagentEvidenceCache = useRef(new Map<string, Promise<EvidenceContent>>());
   useEffect(() => { subagentEvidenceCache.current.clear(); }, [selected]);
   useEffect(() => {
@@ -1674,9 +1677,9 @@ export default function App({
     void readClaudeTasks({ executionId: run, events: eventList, readEvidence })
       .then((result) => { if (!cancelled) setClaudeTaskRead(result); })
       .catch(() => { if (!cancelled) setClaudeTaskRead({ executionId: run, tasks: [], rejected: 1 }); });
-    void readTaskEvents({ executionId: run, events: eventList, readEvidence })
-      .then((tasks) => { if (!cancelled) setTaskGraphs({ executionId: run, tasks }); })
-      .catch(() => { if (!cancelled) setTaskGraphs({ executionId: run, tasks: [] }); });
+    void readTaskEventRecords({ executionId: run, events: eventList, readEvidence })
+      .then((records) => { if (!cancelled) setTaskGraphs({ executionId: run, tasks: foldTaskEvents(records), records }); })
+      .catch(() => { if (!cancelled) setTaskGraphs({ executionId: run, tasks: [], records: [] }); });
     return () => { cancelled = true; };
   }, [selected, events, eventList, openEvidence]);
 
@@ -2120,7 +2123,7 @@ export default function App({
   const unassignedSteps = useMemo(() => model.nodes.filter((node) => !assignedNodeIds.has(node.id)), [model, assignedNodeIds]);
   const nativeKeys = useMemo(() => new Set(Object.keys(nativePersonaLinks)), [nativePersonaLinks]);
 
-  const [canvasTab, setCanvasTab] = useState<"team" | "journey">("team");
+  const [canvasTab, setCanvasTab] = useState<"team" | "journey" | "graph">("team");
   // #409: the live sessions the Runtime holds, read on every tick while the Journey tab is open;
   // the chip on a card is read from this list, never from the Open live click. `null` until the
   // Runtime answered once (an older Runtime without the route keeps the controls hidden).
@@ -2175,6 +2178,60 @@ export default function App({
       setFlowsRevision((revision) => revision + 1);
     }
   }, []);
+  // Graph tab: each journey's run, read through the same `journeyRun` the Journey tab's flowchart
+  // uses (no new endpoint), and its screen frames through `journeyScreenFrame`.
+  const [missionRuns, setMissionRuns] = useState<Record<string, JourneyRunView | null>>({});
+  const [missionRunsRevision, setMissionRunsRevision] = useState(0);
+  const [missionFrames, setMissionFrames] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const client = clientRef.current;
+    if (client === null || canvasTab !== "graph" || journeysView === null) return undefined;
+    let cancelled = false;
+    for (const journey of journeysView.journeys) {
+      client.journeyRun(journey.contractId).then(
+        (run) => { if (!cancelled) setMissionRuns((before) => ({ ...before, [journey.contractId]: run })); },
+        () => { if (!cancelled) setMissionRuns((before) => ({ ...before, [journey.contractId]: null })); });
+    }
+    return () => { cancelled = true; };
+  }, [canvasTab, journeysView, missionRunsRevision]);
+  useEffect(() => {
+    const client = clientRef.current;
+    if (client === null || canvasTab !== "graph") return undefined;
+    let cancelled = false;
+    const made: string[] = [];
+    for (const [contractId, run] of Object.entries(missionRuns)) {
+      for (const [screenId, screen] of Object.entries(run?.screens ?? {})) {
+        if (!screen.frame) continue;
+        client.journeyScreenFrame(contractId, screenId).then((frame) => {
+          if (cancelled || frame === null) return;
+          const url = URL.createObjectURL(frame.blob);
+          made.push(url);
+          setMissionFrames((before) => ({ ...before, [`${contractId} ${screenId}`]: url }));
+        }, () => undefined);
+      }
+    }
+    return () => { cancelled = true; for (const url of made) URL.revokeObjectURL(url); };
+  }, [canvasTab, missionRuns]);
+  const missionRunFor = useCallback((contractId: string) => missionRuns[contractId] ?? null, [missionRuns]);
+  const missionFrameUrl = useCallback((stepId: string, contractId: string) => {
+    const step = journeysView?.journeys.find((j) => j.contractId === contractId)?.steps.find((s) => s.stepId === stepId);
+    return missionFrames[`${contractId} ${step?.screen?.screenId ?? stepId}`] ?? null;
+  }, [journeysView, missionFrames]);
+  // The test canvas's "mark safe" is #518's mark: the skipped edge into that step, on that flow.
+  const markMissionStepSafe = useCallback((stepId: string, contractId: string) => {
+    const journey = journeysView?.journeys.find((j) => j.contractId === contractId);
+    const edge = journey === undefined ? undefined : skippedEdgeInto(missionRuns[contractId] ?? null, stepId, journey.steps.map((s) => s.stepId));
+    if (edge === undefined) return;
+    void markFlowEdgeSafe(contractId, edge[0]).catch(() => undefined).finally(() => setMissionRunsRevision((r) => r + 1));
+  }, [journeysView, missionRuns, markFlowEdgeSafe]);
+  // The Runtime has no route that sends a journey step back to its author; leaving the step unmarked
+  // keeps it waiting, which is what "send back" means until such a route exists.
+  const sendMissionStepBack = useCallback((_stepId: string, _contractId: string) => undefined, []);
+  const missionLanes = useMemo(() => {
+    const records = taskGraphs?.executionId === selected ? taskGraphs.records : [];
+    const timed: TimedTaskEvent[] = records.flatMap((r) => (r.occurredAt ? [{ ...r, at: r.occurredAt }] : []));
+    return laneBars(timed, clock, 14 * 3_600_000);
+  }, [taskGraphs, selected, clock]);
   const watchFlow = useCallback(async (flowId: string, path?: string) => {
     const client = clientRef.current;
     if (client === null) throw new Error("Not connected.");
@@ -2568,7 +2625,7 @@ export default function App({
     // board marks so re-opening the run re-verifies without re-typing.
     updateBoard({ ...board, graphFile: value });
   };
-  const chooseCanvas = (tab: "team" | "journey") => {
+  const chooseCanvas = (tab: "team" | "journey" | "graph") => {
     setCanvasTab(tab);
     setMobileTab(tab === "team" ? "team" : "journeys");
   };
@@ -3014,6 +3071,7 @@ export default function App({
             <div className="canvas-tabs" role="tablist" aria-label="Canvas views">
               <button type="button" role="tab" aria-selected={canvasTab === "team"} onClick={() => chooseCanvas("team")}>Team (live)</button>
               <button type="button" role="tab" aria-selected={canvasTab === "journey"} onClick={() => chooseCanvas("journey")}>Journey</button>
+              <button type="button" role="tab" aria-selected={canvasTab === "graph"} onClick={() => chooseCanvas("graph")}>Graph</button>
             </div>
             <div
               className="scene"
@@ -3053,6 +3111,12 @@ export default function App({
                 {...(liveSessions === null ? {} : { liveSessions, opening: liveOpening, onOpenLive: openLive, onCloseLive: closeLive })} />
             )}
             </div>
+            {canvasTab === "graph" && (
+              <div id="studio-panel-graph" role="tabpanel" aria-label="Graph">
+                <MissionView journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} runFor={missionRunFor}
+                  lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe} onSendBack={sendMissionStepBack} />
+              </div>
+            )}
             {citedRecords !== null && citedRecords.executionId === selected && (
               <section ref={citationPanel} className="journey-detail cited-records" role="dialog" aria-modal="false" aria-label="Cited records" tabIndex={-1}
                 onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); closeCitedRecords(); } }}>

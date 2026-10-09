@@ -898,12 +898,26 @@ const REFUSAL_DRAIN_WAIT: std::time::Duration = std::time::Duration::from_secs(5
 /// `REFUSAL_DRAIN_WAIT` to arrive: the drain stops there, the refusal is still sent, and such a
 /// client may still see a reset. The whole drain sits under the one timeout, so the wait is a
 /// real bound on how long a refusal can be delayed, not a per-read one.
+///
+/// A request that carries `Expect: 100-continue` is answered at once, undrained: that client has
+/// sent no body and is waiting to be told. Polling its body would make the server write
+/// `100 Continue`, asking an unauthenticated peer to upload what is about to be refused, and a
+/// body past the limit would then lose the refusal to the reset this function exists to prevent.
 async fn refused(request: Request, response: Response) -> Response {
-    let _ = tokio::time::timeout(
-        REFUSAL_DRAIN_WAIT,
-        axum::body::to_bytes(request.into_body(), REFUSAL_DRAIN_BYTES),
-    )
-    .await;
+    let expects_continue = request
+        .headers()
+        .get_all(axum::http::header::EXPECT)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|token| token.trim().eq_ignore_ascii_case("100-continue"));
+    if !expects_continue {
+        let _ = tokio::time::timeout(
+            REFUSAL_DRAIN_WAIT,
+            axum::body::to_bytes(request.into_body(), REFUSAL_DRAIN_BYTES),
+        )
+        .await;
+    }
     response
 }
 

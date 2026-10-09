@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
+import { scaled, TEST_TIMEOUT_BASE_MS } from "./src/test/time-scale.ts";
+
 /** Where the dev server looks for the bearer token, in order of precedence. */
 function tokenPath(env: Record<string, string>): string | null {
   if (env.GRAPHHELM_STUDIO_TOKEN_FILE) return env.GRAPHHELM_STUDIO_TOKEN_FILE;
@@ -234,6 +236,10 @@ export default defineConfig(({ mode }) => {
       // the suite; this adds no retry and hides no assertion failure.
       pool: "threads",
       isolate: false,
+      // #549: the test timeout is a hang catcher scaled by GRAPHHELM_TEST_TIME_SCALE (unset: 1),
+      // the knob the CLI tests already read. The default 5 s failed App cells on a busy host with
+      // nothing wrong; see src/test/time-scale.ts for what may and may not be scaled.
+      testTimeout: scaled(TEST_TIMEOUT_BASE_MS),
     },
   };
 });

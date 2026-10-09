@@ -8,6 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { scaled } from "./test/time-scale";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Profiler } from "react";
 import { fastUserEvent } from "./test/user-event";
@@ -3619,7 +3620,7 @@ describe("round-4: the instruments admit their own state", () => {
     await screen.findByLabelText("Projects");
     healthy = false;
     await waitFor(() => expect(screen.getByText(/stale/i)).toBeInTheDocument(), {
-      timeout: 2000,
+      timeout: scaled(2000),
     });
   });
 
@@ -3664,7 +3665,7 @@ describe("round-4: the instruments admit their own state", () => {
     );
     await screen.findByLabelText("Projects");
     firstHealthy = false;
-    await waitFor(() => expect(screen.getByText(/stale/i)).toBeInTheDocument(), { timeout: 2000 });
+    await waitFor(() => expect(screen.getByText(/stale/i)).toBeInTheDocument(), { timeout: scaled(2000) });
 
     fireEvent.click(screen.getByRole("button", { name: /^disconnect$/i }), { detail: 1 });
     fireEvent.click(screen.getByRole("button", { name: /click again to disconnect/i }), { detail: 1 });

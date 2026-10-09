@@ -311,12 +311,26 @@ fn a_claim_may_name_its_parent_issue_and_a_malformed_one_is_refused() {
         let mut document = as_actor(package_fixture("claimed"));
         document["parent"] = parent;
         let id = format!("parent-{case}");
-        let reply = signal(scratch.path(), &events, &id, "task.claimed", ACTOR, &document);
+        let reply = signal(
+            scratch.path(),
+            &events,
+            &id,
+            "task.claimed",
+            ACTOR,
+            &document,
+        );
         assert_eq!(reply["ok"], json!(accepted), "{case}: {reply}");
     }
     // Only a claim names a parent.
     let mut opened = as_actor(package_fixture("pr-opened"));
     opened["parent"] = json!(356);
-    let reply = signal(scratch.path(), &events, "parent-on-pr", "task.pr_opened", ACTOR, &opened);
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "parent-on-pr",
+        "task.pr_opened",
+        ACTOR,
+        &opened,
+    );
     assert_eq!(reply["ok"], json!(false), "{reply}");
 }

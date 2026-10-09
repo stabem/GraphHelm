@@ -31,6 +31,8 @@ def painted(page, locator):
     # DOM correctness is independent of elapsed time. Two rAF callbacks allow
     # a paint opportunity between them; this is not a physical-display probe.
     locator.wait_for(state="visible")
+    from playwright.sync_api import expect
+    expect(locator).to_be_in_viewport()
     return page.evaluate("""() => new Promise(resolve =>
         requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now()))))""")
 

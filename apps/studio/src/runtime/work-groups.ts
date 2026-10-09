@@ -27,6 +27,17 @@ export interface WorkGroup {
   open: boolean;
   /** The newest record any of its tasks carries. */
   latest: number;
+  /** #591: the issue's one-line summary, from the first task that recorded one. */
+  summary: string | null;
+  /** #591: the task that most needs the owner (blocked, else in flight, else the newest). */
+  focus: string | null;
+}
+
+/** #591: blocked work first, then work in flight, then the newest record; ties keep PR order. */
+export function focusTask(rows: TaskState[]): string | null {
+  const rank = (t: TaskState) => (t.blockedBy !== null ? 0 : t.step !== "merged" ? 1 : 2);
+  const best = [...rows].sort(byPr).sort((a, b) => rank(a) - rank(b) || (b.lastSequence ?? 0) - (a.lastSequence ?? 0))[0];
+  return best?.key ?? null;
 }
 
 /**
@@ -81,6 +92,8 @@ export function buildWorkGroups(tasks: TaskState[], journeys: JourneyView[], run
       journeyIds: [...new Set(sorted.flatMap((t) => t.journeys))],
       open: rows.some((r) => r.step !== "merged"),
       latest: Math.max(...rows.map((r) => r.lastSequence ?? 0)),
+      summary: sorted.find((r) => r.summary)?.summary ?? null,
+      focus: focusTask(rows),
     };
   });
   return groups.sort((a, b) => Number(b.open) - Number(a.open) || b.latest - a.latest);

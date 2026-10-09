@@ -96,9 +96,9 @@ describe("MissionView", () => {
     render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
     const work = screen.getByRole("region", { name: "Work by issue" });
     const cards = Array.from(work.querySelectorAll("button.mv-group")).map((b) => b.textContent);
-    expect(cards).toEqual(["#519 Watch plays inside the Studio2 PRs", "#400 Old work1 PR"]);
+    expect(cards).toEqual(["#519 Watch plays inside the Studio0 / 2", "#400 Old work0 / 1"]);
     expect(work.querySelector("button.mv-group")).toHaveAttribute("aria-pressed", "true");
-    expect(within(work).getByText("proves Watch plays inside the Studio 0/1")).toBeInTheDocument();
+    expect(within(work).getByText("issue #519 · 2 PRs")).toBeInTheDocument();
     expect(within(work).getByRole("button", { name: "PR #548: Proof recorded like replay" })).toHaveAttribute("data-stage", "fix");
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("#519 Watch plays inside the Studio");
     const graph = screen.getByRole("region", { name: "Work graph" });
@@ -138,5 +138,45 @@ describe("MissionView", () => {
   it("no last record time: the live indicator is omitted", () => {
     render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} runName="r" lastRecordAt={Number.NaN} />);
     expect(screen.queryByText(/live · last record/)).toBeNull();
+  });
+  it("#591: the selected task defaults to the one that most needs the owner", () => {
+    const pick = (rows: Record<string, unknown>[]) => {
+      const { unmount } = render(<MissionView journeys={journeys} tasks={rows as unknown as TaskState[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+      const ins = screen.getByRole("complementary", { name: "Selected work" });
+      const text = ins.querySelector("h3")?.textContent ?? null;
+      unmount();
+      return text;
+    };
+    const block = { reviewer: "r", headSha: "abcdef0123", commentUrl: "" };
+    expect(pick([wt("a", { issue: 1, pr: 1, prTitle: "Old merged", step: "merged", lastSequence: 9 }), wt("b", { issue: 1, pr: 2, prTitle: "In review", step: "review", lastSequence: 3 }),
+      wt("c", { issue: 1, pr: 3, prTitle: "Blocked", step: "review", blockedBy: block, lastSequence: 1 })])).toBe("Blocked");
+    expect(pick([wt("a", { issue: 1, pr: 1, prTitle: "Old merged", step: "merged", lastSequence: 9 }), wt("b", { issue: 1, pr: 2, prTitle: "In review", step: "review", lastSequence: 3 })])).toBe("In review");
+    expect(pick([wt("a", { issue: 1, pr: 1, prTitle: "Older", step: "merged", lastSequence: 2 }), wt("b", { issue: 1, pr: 2, prTitle: "Newest", step: "merged", lastSequence: 7 })])).toBe("Newest");
+    render(<MissionView journeys={journeys} tasks={[wt("a", { issue: 1, pr: 1 })] as unknown as TaskState[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    expect(screen.queryByText("Pick a PR to see who touched it.")).toBeNull();
+  });
+
+  it("#591: the selected card carries numbered step chips and PR rows; other cards show no PR chips", () => {
+    const tasks = [wt("a", { issue: 5, pr: 50, prTitle: "First", step: "review", summary: "The owner sees it" }), wt("b", { issue: 5, pr: 51, prTitle: "Second" }),
+      wt("c", { issue: 6, pr: 60, prTitle: "Elsewhere", step: "merged" })] as unknown as TaskState[];
+    render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    const cards = Array.from(screen.getByRole("region", { name: "Work by issue" }).querySelectorAll(".mv-jcard"));
+    expect(Array.from(cards[0]!.querySelectorAll(".mv-pr-chip")).map((c) => c.textContent)).toEqual(["1", "2"]);
+    expect(Array.from(cards[0]!.querySelectorAll(".mv-step-ids")).map((c) => c.textContent)).toEqual(["PR #50", "PR #51"]);
+    expect(cards[1]!.querySelectorAll(".mv-pr-chip")).toHaveLength(0);
+    expect(cards[1]!.querySelectorAll(".mv-seg")).toHaveLength(1);
+    expect(screen.getByText("The owner sees it")).toBeInTheDocument();
+  });
+
+  it("#591: agents right now come from the bots; away/shipped from the handover", () => {
+    const bot = (name: string, state: string, doingNow: string, quietMinutes: number | null) => ({ key: name, actorId: name, name, hue: 0, role: null, doingNow,
+      lastRecordAt: null, lastSequence: 0, state, quietMinutes, shared: false, native: false, tasks: [] });
+    const agents = [bot("gh-claude-5", "working", "merging #565", null), bot("gh-claude-1", "quiet", "#548 re-review", 300), bot("codex-gh", "done", "", 23)] as never;
+    render(<MissionView journeys={journeys} tasks={[wt("a", { issue: 1, pr: 1 })] as unknown as TaskState[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null}
+      onMarkSafe={vi.fn()} agents={agents} away={{ minutes: 840, shipped: 42 }} />);
+    const list = screen.getByRole("region", { name: "Agents right now" });
+    const rows = Array.from(list.querySelectorAll(".mv-agent")).map((r) => [r.querySelector(".mv-agent-dot")!.getAttribute("data-tone"), r.textContent]);
+    expect(rows).toEqual([["work", "gh-claude-5merging #565"], ["stalled", "gh-claude-1#548 re-review · silent 300 min"], ["idle", "codex-ghidle 23 min"]]);
+    expect(screen.getByText("14 h away · 42 shipped")).toBeInTheDocument();
   });
 });

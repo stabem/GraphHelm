@@ -229,7 +229,7 @@ export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSel
   const height = HEAD + layout.rows * ROW + 16;
   return (
     <div className="mg">
-      <div className="mg-title"><h1>{group.label}</h1></div>
+      <div className="mg-title"><h1>{group.label}</h1>{group.summary && <span className="mg-desc">{group.summary}</span>}</div>
       <div className="mg-body">
         <section className="mg-graph" aria-label="Work graph">
           <div className="mg-scroll">

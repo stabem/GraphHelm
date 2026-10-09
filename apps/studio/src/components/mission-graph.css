@@ -51,7 +51,7 @@
 .mg-legend-note { margin-left: auto; }
 
 /* Inspector */
-.mg-inspector { flex: 1 1 300px; max-width: 380px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px; padding: 18px;
+.mg-inspector { flex: 1 1 320px; max-width: 380px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px; padding: 18px;
   background: #111216; border: 1px solid #1E2026; border-radius: 14px; }
 .mg-inspector h3 { margin: 0; font-size: 17px; font-weight: 600; line-height: 1.3; }
 .mg-ins-head { display: flex; flex-direction: column; gap: 6px; }
@@ -83,4 +83,6 @@
 .mg-secondary { border: 1px solid #2A2D34; background: transparent; color: #E9E7E2; font-weight: 500; }
 
 /* #583: an issue's graph carries its title above the canvas. */
+.mg-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
 .mg-title h1 { margin: 0; font-size: 19px; font-weight: 600; }
+.mg-desc { color: #A9AEB8; }

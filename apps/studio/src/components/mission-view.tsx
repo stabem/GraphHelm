@@ -11,6 +11,7 @@ import { IssueGraph, MissionGraph, STATUS_LABEL, stageState } from "./mission-gr
 import { ProofTable } from "./proof-table";
 import { TestCanvas } from "./test-canvas";
 import { LanesTimeline } from "./lanes-timeline";
+import type { Bot } from "../runtime/team";
 
 type Sub = "graph" | "proof" | "test" | "lanes";
 const WINDOW_MS = 14 * 3_600_000;
@@ -34,7 +35,24 @@ interface Props {
   lastRecordAt?: number | null;
   /** #583: present, the top nav carries Team, which leaves the Graph page. */
   onTeam?: () => void;
+  /** #591: "Agents right now" in the rail, from the team model. */
+  agents?: Bot[];
+  /** #591: the "While you were away" gap, for the summary's `N h away · N shipped`; absent, omitted. */
+  away?: { minutes: number; shipped: number } | null;
 }
+
+/** #591: the rail's dot colour family for a bot: working amber, waiting or quiet red, done grey. */
+export function agentTone(b: Bot): "work" | "stalled" | "idle" {
+  return b.state === "working" ? "work" : b.state === "done" ? "idle" : "stalled";
+}
+export function agentActivity(b: Bot): string {
+  if (b.state === "done") return b.quietMinutes !== null ? `idle ${b.quietMinutes} min` : "idle";
+  if (b.state === "quiet") return `${b.doingNow || "quiet"}${b.quietMinutes !== null ? ` · silent ${b.quietMinutes} min` : ""}`;
+  if (b.state === "waiting_for_you") return b.doingNow ? `${b.doingNow} · waits for you` : "waits for you";
+  return b.doingNow || "working";
+}
+export const awayText = (a: { minutes: number; shipped: number }) => `${Math.max(1, Math.round(a.minutes / 60))} h away · ${a.shipped} shipped`;
+const SEG_TONE: Record<string, string> = { proven: "#4ADE9B", merged: "#8FB3D9", work: "#F5A524", stalled: "#FF6B5E", ready: "#24272E" };
 
 type Selection = { kind: "group"; key: string } | { kind: "journey"; id: string };
 
@@ -55,10 +73,11 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam }: Props) {
+export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, agents = [], away = null }: Props) {
   const [chosen, setChosen] = useState<Selection | null>(null);
   const [stepId, setStepId] = useState<string | null>(null);
-  const [taskKey, setTaskKey] = useState<string | null>(null);
+  // undefined: the group's default (the task that most needs the owner); null: none, a column is chosen.
+  const [taskKey, setTaskKey] = useState<string | null | undefined>(undefined);
   const [stageCol, setStageCol] = useState<number | null>(null);
   const [sub, setSub] = useState<Sub>("graph");
   const [frame, setFrame] = useState(0);
@@ -67,9 +86,9 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
   const groups = useMemo(() => buildWorkGroups(tasks, journeys, runFor), [tasks, journeys, runFor]);
   const orphans = useMemo(() => unlinkedTasks(journeys, tasks), [journeys, tasks]);
   const allTasks = useMemo(() => tasks.map(toMissionTask), [tasks]);
-  // Default: the first group with open work, else the first journey, else the first group.
-  const fallback: Selection | null = groups.find((g) => g.open) ? { kind: "group", key: groups.find((g) => g.open)!.key }
-    : journeys[0] ? { kind: "journey", id: journeys[0].contractId } : groups[0] ? { kind: "group", key: groups[0].key } : null;
+  // Default: the first group (open work sorts first, then the newest), else the first journey.
+  const fallback: Selection | null = groups[0] ? { kind: "group", key: groups[0].key }
+    : journeys[0] ? { kind: "journey", id: journeys[0].contractId } : null;
   const valid = (s: Selection | null) => s !== null && (s.kind === "group" ? groups.some((g) => g.key === s.key) : journeys.some((j) => j.contractId === s.id));
   const sel = valid(chosen) ? chosen! : fallback;
   const tabs: { id: Sub | "team"; label: string }[] = [
@@ -115,10 +134,10 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
     setFrame(Math.max(0, journey.steps.findIndex((s) => s.stepId === id)));
     setSub("test");
   };
-  const reset = () => { setStepId(null); setTaskKey(null); setStageCol(null); if (sub === "test") setSub("graph"); };
+  const reset = () => { setStepId(null); setTaskKey(undefined); setStageCol(null); if (sub === "test") setSub("graph"); };
   const pickJourney = (id: string) => { setChosen({ kind: "journey", id }); reset(); };
   const pickGroup = (key: string, task: string | null = null) => {
-    setChosen({ kind: "group", key }); reset(); setTaskKey(task);
+    setChosen({ kind: "group", key }); reset(); setTaskKey(task ?? undefined);
     if (sub === "test") setSub("graph");
   };
   const pickStep = (jid: string, sid: string) => {
@@ -137,7 +156,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
     const placed = layoutMission(mission).placed.find((p) => p.task.key === key);
     return placed ? mission.steps[placed.col] : undefined;
   };
-  const missionTitle = (id: string) => missions.find((m) => m.contractId === id);
+  const shownTask = taskKey === undefined ? group?.focus ?? null : taskKey;
   const ids = mission ? stepIds(mission) : [];
   const gsum = group ? {
     proven: group.tasks.filter((t) => group.stages[t.key] === "proven").length,
@@ -155,6 +174,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
           <span className="mg-sum" data-tone="work"><b>{gsum.inFlight}</b> in flight</span>
           <span className="mg-sum" data-tone="ready"><b>{gsum.ready}</b> ready, unclaimed</span>
           <span className="mg-sum" data-tone="stalled"><b>{gsum.needYou}</b> need you</span>
+          {away && <><span className="mv-sum-fill" /><span className="mv-away">{awayText(away)}</span></>}
         </p>
       )}
       <div className="mv-body">
@@ -166,23 +186,46 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
                 {groups.map((g) => {
                   const on = group?.key === g.key;
                   const prs = g.tasks.filter((t) => t.pr !== null).length;
-                  const first = g.journeyIds.map(missionTitle).find(Boolean);
-                  return (
-                    <div key={g.key} className="mv-jcard" data-selected={on}>
-                      <button type="button" className="mv-journey mv-group" aria-pressed={on} title={g.label} onClick={() => pickGroup(g.key)}>
+                  const proven = g.tasks.filter((t) => g.stages[t.key] === "proven").length;
+                  const count = `${proven} / ${g.tasks.length}`;
+                  if (!on) return (
+                    <div key={g.key} className="mv-jcard" data-selected={false}>
+                      <button type="button" className="mv-journey mv-group" aria-pressed={false} title={g.label} onClick={() => pickGroup(g.key)}>
                         <span className="mv-journey-title">{g.label}</span>
-                        <span className="mv-journey-count">{`${prs} ${prs === 1 ? "PR" : "PRs"}`}</span>
+                        <span className="mv-journey-count">{count}</span>
                       </button>
-                      {first && <span className="mv-journey-meta">{`proves ${first.title} ${first.summary.proven}/${first.summary.total}`}</span>}
+                      <span className="mv-segs" aria-hidden="true">
+                        {g.tasks.map((t) => <span key={t.key} className="mv-seg" style={{ background: SEG_TONE[stageState(g.stages[t.key]!, t)] }} />)}
+                      </span>
+                    </div>
+                  );
+                  return (
+                    <div key={g.key} className="mv-jcard" data-selected={true}>
+                      <button type="button" className="mv-journey mv-group" aria-pressed={true} title={g.label} onClick={() => pickGroup(g.key)}>
+                        <span className="mv-journey-title">{g.label}</span>
+                        <span className="mv-journey-count">{count}</span>
+                      </button>
+                      <span className="mv-journey-meta">{`${g.issue !== null ? `issue #${g.issue}` : "no issue"} · ${prs} ${prs === 1 ? "PR" : "PRs"}`}</span>
                       <div className="mv-chips">
-                        {g.tasks.map((t) => {
+                        {g.tasks.map((t, i) => {
                           const stage = g.stages[t.key]!;
                           return (
                             <button key={t.key} type="button" className="mv-chip mv-pr-chip" data-state={stageState(stage, t)} data-stage={stage}
-                              aria-pressed={on && t.key === taskKey} aria-label={`${t.pr ? `PR #${t.pr}` : "No PR"}: ${t.title}`}
-                              onClick={() => pickGroup(g.key, t.key)}>{t.pr ? `#${t.pr}` : "—"}</button>
+                              aria-pressed={t.key === shownTask} aria-label={`${t.pr ? `PR #${t.pr}` : "No PR"}: ${t.title}`}
+                              onClick={() => pickGroup(g.key, t.key)}>{i + 1}</button>
                           );
                         })}
+                      </div>
+                      <div className="mv-steps">
+                        {g.tasks.map((t, i) => (
+                          <button key={t.key} type="button" className="mv-step" data-state={stageState(g.stages[t.key]!, t)} aria-pressed={t.key === shownTask}
+                            onClick={() => pickGroup(g.key, t.key)}>
+                            <span className="mv-tick" />
+                            <span className="mv-step-n">{i + 1}</span>
+                            <span className="mv-step-title">{t.title}</span>
+                            <span className="mv-step-ids">{t.pr ? `PR #${t.pr}` : "no PR"}</span>
+                          </button>
+                        ))}
                       </div>
                     </div>
                   );
@@ -232,12 +275,24 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
                 {unlinkedOpen && <ul>{orphans.map((t) => <li key={t.key}>{`${t.pr ? `#${t.pr}` : "no PR"} ${t.title}`}</li>)}</ul>}
               </section>
             )}
+            {agents.length > 0 && (
+              <section aria-label="Agents right now" className="mv-agents">
+                <span className="mv-cap">Agents right now</span>
+                {agents.map((b) => (
+                  <div key={b.key} className="mv-agent">
+                    <span className="mv-agent-dot" data-tone={agentTone(b)} />
+                    <span className="mv-agent-name">{b.name}</span>
+                    <span className="mv-agent-doing">{agentActivity(b)}</span>
+                  </div>
+                ))}
+              </section>
+            )}
           </nav>
         )}
         <div className="mv-content">
-          {sub === "graph" && group && <IssueGraph group={group} stepFor={stepFor} selectedTaskKey={taskKey} selectedCol={stageCol}
+          {sub === "graph" && group && <IssueGraph group={group} stepFor={stepFor} selectedTaskKey={shownTask} selectedCol={stageCol}
             onSelectTask={(key) => { setTaskKey(key); setStageCol(null); }} onSelectCol={(c) => { setStageCol(c); setTaskKey(null); }} onOpenTest={openTest} />}
-          {sub === "graph" && !group && mission && <MissionGraph mission={mission} selectedStepId={stepId} selectedTaskKey={taskKey}
+          {sub === "graph" && !group && mission && <MissionGraph mission={mission} selectedStepId={stepId} selectedTaskKey={taskKey ?? null}
             onSelectStep={(id) => { setStepId(id); setTaskKey(null); }} onSelectTask={pickTask} onOpenTest={openTest} />}
           {sub === "proof" && (mission && contractId ? <ProofTable mission={mission} onOpenTest={openTest} frameUrl={(id) => frameUrl(id, contractId)}
             {...(onReplay ? { onReplay: () => onReplay(contractId) } : {})} />

@@ -20,6 +20,11 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   (pinned squash, DELIVERY.md §5).
 - A lane holds at most **one implementation task, one review in progress and one waiting slot
   ticket** at a time.
+- Before you merge as reviewer, check the PR against **today's main**. When its base is not the
+  current `origin/main` and what landed since touches the same files or symbols
+  (`git log <base>..origin/main --stat`), build and run the reached tests on the PR merged with
+  main, or ask the author to rebase. "Mergeable" only means no textual conflict: a changed
+  signature and a new caller of the old one merge cleanly and do not compile (#520 + #533 → #551).
 - As reviewer, read every comment on the PR first. When a review of record already exists for that
   head, stop and tell the coordinator instead of adding a second one.
 

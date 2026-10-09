@@ -295,3 +295,42 @@ fn an_opening_record_may_carry_a_title_and_summary_and_a_malformed_one_is_refuse
         }
     }
 }
+
+/// #514: a claim may name the issue whose work turned it up (`parent`), so the Studio draws it
+/// inside that issue's card. Optional; anything but a positive number is refused.
+#[test]
+fn a_claim_may_name_its_parent_issue_and_a_malformed_one_is_refused() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    for (case, parent, accepted) in [
+        ("ok", json!(356), true),
+        ("zero", json!(0), false),
+        ("negative", json!(-1), false),
+        ("text", json!("356"), false),
+    ] {
+        let mut document = as_actor(package_fixture("claimed"));
+        document["parent"] = parent;
+        let id = format!("parent-{case}");
+        let reply = signal(
+            scratch.path(),
+            &events,
+            &id,
+            "task.claimed",
+            ACTOR,
+            &document,
+        );
+        assert_eq!(reply["ok"], json!(accepted), "{case}: {reply}");
+    }
+    // Only a claim names a parent.
+    let mut opened = as_actor(package_fixture("pr-opened"));
+    opened["parent"] = json!(356);
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "parent-on-pr",
+        "task.pr_opened",
+        ACTOR,
+        &opened,
+    );
+    assert_eq!(reply["ok"], json!(false), "{reply}");
+}

@@ -232,9 +232,11 @@ pub(crate) fn validate_task_event(
                 && short("branch", 256)
                 && (document.get("plan").is_none() || document["plan"].is_object())
                 && repo()
-                && words(),
+                && words()
+                // #514: the issue whose work turned this task up; optional, a positive number.
+                && (document.get("parent").is_none() || count("parent")),
             &[
-                "issue", "lane", "branch", "plan", "repo", "title", "summary",
+                "issue", "lane", "branch", "plan", "repo", "title", "summary", "parent",
             ],
         ),
         "task.pr_opened" => (

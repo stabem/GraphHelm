@@ -79,6 +79,7 @@ def parse(argv):
     p.add_argument("--issue", type=int, required=True, help="the task is issue-<N> for its whole life")
     p.add_argument("--revision", type=int, help="defaults to the step's position: claimed 1 ... merged 5")
     p.add_argument("--branch")
+    p.add_argument("--parent", type=int, help="claimed: the issue whose work turned this task up (#514)")
     p.add_argument("--pr", type=int)
     p.add_argument("--head", help="the PR head sha the step is about")
     p.add_argument("--reviewer")
@@ -114,6 +115,8 @@ def document(args, now):
     if args.kind == "claimed":
         need(args, "branch")
         doc.update(issue=args.issue, lane=args.lane, branch=args.branch)
+        if args.parent:
+            doc["parent"] = args.parent
     elif args.kind == "pr_opened":
         # #508: the reviewer is part of opening the PR, so the Review step is never drawn unnamed.
         need(args, "pr", "head", "reviewer")

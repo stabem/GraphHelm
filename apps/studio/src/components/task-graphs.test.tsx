@@ -35,7 +35,8 @@ describe("TaskGraphs", () => {
     const lit = within(blocked).getByRole("listitem", { current: "step" });
     expect(lit).toHaveTextContent(/review/i);
     expect(lit).toHaveTextContent("gh-claude-1");
-    expect(within(blocked).getByText("gh-claude-4")).toBeInTheDocument();
+    // The author stands on Implement and, since #514, on the Fix of the BLOCK round.
+    expect(within(blocked).getAllByText("gh-claude-4").length).toBeGreaterThanOrEqual(1);
     const edge = within(blocked).getByRole("link", { name: /blocked by gh-claude-1/i });
     expect(edge).toHaveAttribute("href", commentUrl);
     expect(within(blocked).getByRole("link", { name: "PR #388" })).toHaveAttribute("href", "https://github.com/stabem/GraphHelm/pull/388");
@@ -248,8 +249,105 @@ describe("TaskGraphs review names its reviewer (#508)", () => {
       record(2, "issue-9", "task.review_verdict", "gh-claude-5", { pr: 19, headSha: head, reviewer: "gh-claude-5", verdict: "BLOCK", commentUrl }),
     ]);
     render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} />);
-    const lit = screen.getByRole("listitem", { current: "step" });
-    expect(lit).toHaveTextContent("gh-claude-5");
-    expect(within(lit).queryByText("no reviewer recorded")).toBeNull();
+    // Since #514 a BLOCK lights the author's Fix; the reviewer stands on the blocked Review node.
+    const review = screen.getAllByRole("listitem").find((node) => /^Review/.test(node.textContent ?? ""))!;
+    expect(review).toHaveTextContent("gh-claude-5");
+    expect(screen.queryByText("no reviewer recorded")).toBeNull();
+  });
+});
+
+/* #514 (owner, seeing #356 as two cards for PR #501 and PR #487): one card per issue. Each PR of
+ * that issue is its own row inside the card, and a task spawned from another task's finding
+ * (`claimed` with `parent`) is a row in the parent's card, marked "found while working on #N". The
+ * card's place is its worst open row; it is delivered only when every row is merged. Cost: jsdom. */
+describe("TaskGraphs issue cards (#514)", () => {
+  const head = "a".repeat(40);
+  const claim = (seq: number, issue: number, branch: string, extra: Record<string, unknown> = {}) =>
+    record(seq, `issue-${issue}`, "task.claimed", "gh-claude-4", { issue, lane: "gh-claude-4", branch, ...extra });
+  const opened = (seq: number, issue: number, pr: number) =>
+    record(seq, `issue-${issue}`, "task.pr_opened", "gh-claude-4", { pr, headSha: head, journeys: [], lane: "gh-claude-4" });
+  const merged = (seq: number, issue: number, pr: number) =>
+    record(seq, `issue-${issue}`, "task.merged", "gh-claude-5", { pr, mergeSha: "c".repeat(40), closes: [], merger: "gh-claude-5" });
+  const block = (seq: number, issue: number, pr: number) =>
+    record(seq, `issue-${issue}`, "task.review_verdict", "gh-claude-5", { pr, headSha: head, reviewer: "gh-claude-5", verdict: "BLOCK", commentUrl });
+  const cards = () => screen.getAllByRole("article");
+  const prs = (card: HTMLElement) => within(card).getAllByRole("group").map((row) => within(row).queryByText(/^PR #\d+$/)?.textContent ?? "claim");
+
+  it("draws two PRs of one issue as two rows inside one card", () => {
+    render(<TaskGraphs tasks={foldTaskEvents([claim(1, 356, "a"), opened(2, 356, 487), claim(3, 356, "b"), opened(4, 356, 501)])} onOpenJourney={vi.fn()} />);
+    expect(cards()).toHaveLength(1);
+    expect(cards()[0]).toHaveAttribute("aria-label", expect.stringMatching(/#356/));
+    expect(prs(cards()[0]).sort()).toEqual(["PR #487", "PR #501"]);
+  });
+
+  it("draws a task found while working on another issue as a row in that issue's card", () => {
+    render(<TaskGraphs tasks={foldTaskEvents([claim(1, 356, "a"), opened(2, 356, 487), claim(3, 514, "c", { parent: 356 })])} onOpenJourney={vi.fn()} />);
+    expect(cards()).toHaveLength(1);
+    const child = within(cards()[0]).getByRole("group", { name: /issue #514/i });
+    expect(child).toHaveTextContent("found while working on #356");
+  });
+
+  it("gives a child its own card, still marked, when the parent has no card", () => {
+    render(<TaskGraphs tasks={foldTaskEvents([claim(3, 514, "c", { parent: 356 })])} onOpenJourney={vi.fn()} />);
+    expect(cards()).toHaveLength(1);
+    expect(cards()[0]).toHaveTextContent("found while working on #356");
+  });
+
+  it("places a card by its worst open row and delivers it only when every row is merged", () => {
+    render(<TaskGraphs tasks={foldTaskEvents([
+      claim(1, 356, "a"), opened(2, 356, 487), merged(3, 356, 487), claim(4, 356, "b"), opened(5, 356, 501), block(6, 356, 501),
+      claim(10, 7, "x"), opened(11, 7, 107),
+      claim(20, 8, "y"), opened(21, 8, 108), merged(22, 8, 108),
+    ])} onOpenJourney={vi.fn()} />);
+    const delivered = screen.getByText("Delivered (1)").closest("details")!;
+    const active = cards().filter((card) => !delivered.contains(card));
+    expect(active.map((card) => /#(\d+)/.exec(card.getAttribute("aria-label") ?? "")?.[1])).toEqual(["356", "7"]);
+    expect(within(delivered).getAllByRole("article")).toHaveLength(1);
+  });
+});
+
+/* #514 (owner, on a BLOCKed row: "a node for it: re-review and the agent working"): each BLOCK
+ * grows the row by a Fix (the author's, lit until a newer head is recorded) and a Re-review (lit on
+ * that head), labelled by round, with the blocked review marked and its reason linked. */
+describe("TaskGraphs review rounds (#514)", () => {
+  const A = "a".repeat(40), B = "b".repeat(40), C = "c".repeat(40);
+  const url = (n: number) => `https://github.com/stabem/GraphHelm/pull/19#issuecomment-${n}`;
+  const steps = [
+    record(1, "issue-9", "task.claimed", "gh-claude-2", { issue: 9, lane: "gh-claude-2", branch: "b" }),
+    record(2, "issue-9", "task.pr_opened", "gh-claude-2", { pr: 19, headSha: A, journeys: [], lane: "gh-claude-2" }),
+    record(3, "issue-9", "task.review_verdict", "gh-claude-5", { pr: 19, headSha: A, reviewer: "gh-claude-5", verdict: "BLOCK", commentUrl: url(1) }),
+    record(4, "issue-9", "task.pr_opened", "gh-claude-2", { pr: 19, headSha: B, journeys: [], lane: "gh-claude-2" }),
+    record(5, "issue-9", "task.review_verdict", "gh-claude-5", { pr: 19, headSha: B, reviewer: "gh-claude-5", verdict: "BLOCK", commentUrl: url(2) }),
+    record(6, "issue-9", "task.pr_opened", "gh-claude-2", { pr: 19, headSha: C, journeys: [], lane: "gh-claude-2" }),
+    record(7, "issue-9", "task.review_verdict", "gh-claude-5", { pr: 19, headSha: C, reviewer: "gh-claude-5", verdict: "APPROVE", commentUrl: url(3) }),
+  ];
+  const nodes = (n: number) => {
+    const { unmount } = render(<TaskGraphs tasks={foldTaskEvents(steps.slice(0, n))} onOpenJourney={vi.fn()} />);
+    const items = screen.getAllByRole("listitem").map((item) => {
+      const label = item.querySelector(".task-node-label")?.textContent ?? "";
+      const state = item.className.replace(/.*task-node-/, "");
+      return `${label}:${state}`;
+    });
+    unmount();
+    return items;
+  };
+
+  it("grows Fix and Re-review per BLOCK round and lights the right one at each step", () => {
+    expect(nodes(3)).toEqual(["Implement:done", "Review ✗:blocked", "Fix · round 1:current", "Re-review · round 1:next", "Merge:next"]);
+    expect(nodes(4)).toEqual(["Implement:done", "Review ✗:blocked", "Fix · round 1:done", "Re-review · round 1:current", "Merge:next"]);
+    expect(nodes(5)).toEqual(["Implement:done", "Review ✗:blocked", "Fix · round 1:done", "Re-review · round 1 ✗:blocked",
+      "Fix · round 2:current", "Re-review · round 2:next", "Merge:next"]);
+    expect(nodes(7)).toEqual(["Implement:done", "Review ✗:blocked", "Fix · round 1:done", "Re-review · round 1 ✗:blocked",
+      "Fix · round 2:done", "Re-review · round 2:done", "Merge:current"]);
+  });
+
+  it("names the author on Fix and the reviewer on each review, with the reason linked", () => {
+    render(<TaskGraphs tasks={foldTaskEvents(steps.slice(0, 5))} onOpenJourney={vi.fn()} />);
+    const items = screen.getAllByRole("listitem");
+    const by = (label: RegExp) => items.find((item) => label.test(item.querySelector(".task-node-label")?.textContent ?? ""))!;
+    expect(by(/^Fix · round 2/)).toHaveTextContent("gh-claude-2");
+    expect(by(/^Re-review · round 1/)).toHaveTextContent("gh-claude-5");
+    expect(within(by(/^Review/)).getByRole("link", { name: "reason" })).toHaveAttribute("href", url(1));
+    expect(within(by(/^Re-review · round 1/)).getByRole("link", { name: "reason" })).toHaveAttribute("href", url(2));
   });
 });

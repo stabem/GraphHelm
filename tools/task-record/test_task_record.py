@@ -229,6 +229,13 @@ class TitleAndSummary(unittest.TestCase):
         self.assertEqual(document["summary"], "line break")
         self.assertIn("title is 250 characters; the standard asks for 50", err)
 
+    def test_a_claim_names_its_parent_issue_only_when_given(self):
+        # #514: a task spawned from another task's finding links back to it.
+        document, _ = self.doc("claimed", "--issue", "514", "--branch", "b", "--parent", "356")
+        self.assertEqual(document["parent"], 356)
+        document, _ = self.doc("claimed", "--issue", "514", "--branch", "b")
+        self.assertNotIn("parent", document)
+
     def test_no_github_and_other_kinds_add_nothing(self):
         document, _ = self.doc("claimed", "--issue", "1", "--branch", "b", "--no-github")
         self.assertNotIn("title", document)

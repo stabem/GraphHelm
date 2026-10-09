@@ -1,0 +1,47 @@
+/* Proof (design: Proof artboard). Colour tokens live on .mv (mission-view.css). */
+.proof { display: flex; flex-direction: column; gap: 18px; min-width: 0; color: #E9E7E2; font-family: var(--sans); font-size: 13px; }
+.proof-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px 24px; }
+.proof-title { display: flex; flex-direction: column; gap: 6px; flex: 1 1 320px; }
+.proof-title h2 { margin: 0; font-size: 24px; font-weight: 600; }
+.proof-cap { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #8D929C; }
+.proof-sub { color: #A9AEB8; line-height: 1.45; }
+.proof-cols, .proof-row { display: grid; grid-template-columns: 48px minmax(200px, 280px) 220px minmax(0, 1fr) 210px; gap: 20px; }
+.proof-cols { padding: 0 16px; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #8D929C; }
+.proof-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.proof-row { align-items: center; padding: 12px 16px; border-radius: 12px; background: #111216; border: 1px solid #1E2026; }
+.proof-row[data-status="needs_you"], .proof-row[data-status="failed"] { background: #16110F; border-color: #3E2520; }
+.proof-n { display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 22px; font-weight: 600; }
+.proof-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--mv-tone); }
+.proof-promise { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.proof-name { font-weight: 600; font-size: 14px; }
+.proof-badge { align-self: flex-start; font-family: var(--mono); font-size: 11px; padding: 3px 8px; border-radius: 999px; color: var(--mv-tone); border: 1px solid var(--mv-ring); }
+.proof-frame { height: 112px; padding: 0; border-radius: 8px; background: #0D0E11; border: 1px solid #23262D; display: flex; flex-direction: column; overflow: hidden; cursor: pointer; color: inherit; font: inherit; text-align: left; }
+.proof-frame[data-status="proven"] { border-color: #2F5A47; }
+.proof-frame[data-status="needs_you"], .proof-frame[data-status="failed"] { border-color: #5A2E27; }
+.proof-frame img { display: block; width: 100%; flex: 1 1 auto; min-height: 0; object-fit: cover; }
+.proof-mini { flex: 1 1 auto; display: flex; flex-direction: column; width: 100%; }
+.proof-mini-bar { display: flex; gap: 4px; padding: 6px 8px; border-bottom: 1px solid #23262D; }
+.proof-mini-bar i { width: 5px; height: 5px; border-radius: 50%; background: #3A3D45; }
+.proof-mini-body { flex: 1 1 auto; display: flex; flex-direction: column; gap: 5px; padding: 8px; }
+.proof-mini-hl { height: 22px; border-radius: 4px; background: var(--mv-tint); border: 1px solid var(--mv-ring); }
+.proof-mini-hl[data-status="not_run"] { border-style: dashed; }
+.proof-mini-line { height: 4px; width: 70%; background: #262930; border-radius: 2px; }
+.proof-frame-txt { display: flex; justify-content: space-between; width: 100%; box-sizing: border-box; padding: 4px 8px 6px; font-family: var(--mono); font-size: 10px; color: #A9AEB8; }
+.proof-chain { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.proof-chips { display: contents; }
+.proof-chip { font-family: var(--mono); font-size: 11px; padding: 3px 8px; border-radius: 6px; background: #0D0E11; border: 1px solid #23262D; color: #A9AEB8; }
+.proof-chip[data-tone="ok"] { color: var(--mv-proven); }
+.proof-chip[data-tone="run"] { color: var(--mv-work); }
+.proof-chip[data-tone="no"] { color: #FF8A7E; }
+.proof-stage { color: #8D929C; }
+.proof-call { display: flex; flex-direction: column; gap: 8px; }
+.proof-hint { color: #A9AEB8; font-size: 12px; line-height: 1.4; }
+.proof-primary, .proof-secondary { min-height: 40px; padding: 0 14px; border-radius: 8px; font: 600 13px var(--sans); cursor: pointer; }
+.proof-primary { border: 0; background: #E9E7E2; color: #0B0C0F; }
+.proof-primary:disabled { cursor: not-allowed; opacity: .55; }
+.proof-secondary { border: 1px solid #2A2D34; background: transparent; color: #E9E7E2; font-weight: 500; }
+@media (max-width: 1100px) {
+  .proof-cols { display: none; }
+  .proof-row { grid-template-columns: 48px minmax(0, 1fr); }
+  .proof-frame, .proof-chain, .proof-call { grid-column: 2; }
+}

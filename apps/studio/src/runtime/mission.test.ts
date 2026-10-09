@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMission, unlinkedTasks, TRUST_LABELS } from "./mission";
+import { buildMission, custodyRows, unlinkedTasks, TRUST_LABELS } from "./mission";
 import type { JourneyView, JourneyRunView } from "./types";
 import { foldTaskEvents, parseTaskEvent, type TaskState } from "./team-tasks";
 
@@ -27,7 +27,7 @@ describe("buildMission", () => {
   it("no run: every step reads not_run, nothing proven", () => {
     const m = buildMission(journey, null, []);
     expect(m.steps.map((s) => s.status)).toEqual(["not_run", "not_run", "not_run"]);
-    expect(m.summary).toEqual({ proven: 0, total: 3, inFlight: 0, needYou: 0 });
+    expect(m.summary).toEqual({ proven: 0, total: 3, inFlight: 0, needYou: 0, readyUnclaimed: 0 });
   });
 
   it("replay pass proves a step; fail does not", () => {
@@ -85,5 +85,32 @@ describe("buildMission", () => {
   it("empty prTitle falls through to title", () => {
     const m = buildMission(journey, null, [task({ prTitle: "", title: "Real title" })]);
     expect(m.tasks[0].title).toBe("Real title");
+  });
+});
+
+describe("custodyRows", () => {
+  it("reads who touched it from the review rounds, the approval and the merge", () => {
+    const m = buildMission(journey, null, [task({
+      key: "r", lane: "impl", step: "merged", reviewers: ["rev-a"], mergeSha: "4f1ead4c99", repoUrl: "https://github.com/o/r",
+      rounds: [{ reviewer: "rev-a", headSha: "aaaaaaaa11", commentUrl: "", fixHead: "bbbbbbbb22", blockedAt: null, fixedAt: null }],
+    })]);
+    expect(custodyRows(m.tasks[0]!).map((r) => [r.stage, r.who, r.verdict])).toEqual([
+      ["Implement", "impl", "done"], ["Review", "rev-a", "BLOCK"], ["Fix", "impl", "pushed bbbbbbbb"],
+      ["Re-review", "rev-a", "APPROVE"], ["Merge", "4f1ead4c", "merged"],
+    ]);
+  });
+
+  it("an unanswered BLOCK ends the rows at the BLOCK", () => {
+    const m = buildMission(journey, null, [task({
+      step: "review", reviewers: ["rev-b"], blockedBy: { reviewer: "rev-b", headSha: "cccccccc", commentUrl: "" },
+      rounds: [{ reviewer: "rev-b", headSha: "cccccccc", commentUrl: "", fixHead: null, blockedAt: null, fixedAt: null }],
+    })]);
+    expect(custodyRows(m.tasks[0]!).map((r) => r.verdict)).toEqual(["done", "BLOCK"]);
+    expect(m.tasks[0]!.blockedBy).toEqual({ reviewer: "rev-b", headSha: "cccccccc" });
+  });
+
+  it("a task with no records past its claim reads one Implement row", () => {
+    const m = buildMission(journey, null, [task({ step: "implement" })]);
+    expect(custodyRows(m.tasks[0]!)).toEqual([{ stage: "Implement", who: "gh-claude-1", verdict: "working", tone: "run" }]);
   });
 });

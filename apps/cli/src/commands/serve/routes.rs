@@ -2074,6 +2074,7 @@ pub(super) async fn open_journey(
             live_host: false,
             watch: false,
             pace_ms: 1500,
+            window: false,
         })
     })
     .await
@@ -2095,21 +2096,26 @@ pub(super) async fn watch_journey_flow(
     } else {
         match serde_json::from_slice(&body) {
             Ok(value @ serde_json::Value::Object(_)) => value,
-            _ => return bad_request(COMMAND, "the body must be {path?, paceMs?}", "/body"),
+            _ => return bad_request(COMMAND, "the body must be {path?, paceMs?, window?}", "/body"),
         }
     };
     if let Some(key) = payload
         .as_object()
         .unwrap()
         .keys()
-        .find(|key| !matches!(key.as_str(), "path" | "paceMs"))
+        .find(|key| !matches!(key.as_str(), "path" | "paceMs" | "window"))
     {
         return bad_request(
             COMMAND,
-            "the body must be {path?, paceMs?}",
+            "the body must be {path?, paceMs?, window?}",
             &format!("/body/{key}"),
         );
     }
+    let window = match payload.get("window") {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::Bool(window)) => *window,
+        Some(_) => return bad_request(COMMAND, "\"window\" must be a boolean", "/body/window"),
+    };
     let path = match payload.get("path") {
         None | Some(serde_json::Value::Null) => None,
         Some(serde_json::Value::String(path)) => Some(path.clone()),
@@ -2132,6 +2138,7 @@ pub(super) async fn watch_journey_flow(
                 project: Some(project),
                 pace_ms,
                 allow_origin: Vec::new(),
+                window,
             },
         ))
     })
@@ -2180,6 +2187,100 @@ pub(super) async fn journey_sessions(State(state): State<ServeState>) -> Respons
         })
     })
     .await
+}
+
+/// `GET /v1/journeys/sessions/{id}/frame` (#519): the latest frame of a watch that streams its
+/// page (the default; `window: true` plays in a window and has none). 200 `image/jpeg` with
+/// `ETag: "<seq>"` and `X-Frame-Seq`/`X-Frame-Width`/`X-Frame-Height`; `If-None-Match` with the
+/// current tag answers 304; 204 while the session has no frame yet; 404 `live.session_gone` once
+/// it is closed or expired. A frame is a view, never proof, and is never journaled. Owner
+/// credential only, as `GET /v1/journeys/sessions` (the agent allow-list does not reach it).
+pub(super) async fn journey_frame(
+    State(state): State<ServeState>,
+    UrlPath(session): UrlPath<String>,
+    headers: HeaderMap,
+) -> Response {
+    const COMMAND: &str = "journey.frame";
+    let Some(project) = state.project.as_deref().map(Path::to_path_buf) else {
+        return respond_failure(
+            COMMAND,
+            execution::execution_state(
+                "journey sessions require an explicit --project on this Runtime",
+                "/project",
+            ),
+        );
+    };
+    use crate::commands::journey_live::{FrameRead, read_frame};
+    use axum::http::header;
+    use axum::response::IntoResponse;
+    let Some(read) = off_reactor(move || read_frame(&project, &session)).await else {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(COMMAND, "the frame read failed").output,
+        );
+    };
+    const EXPOSED: &str = "ETag, X-Frame-Seq, X-Frame-Width, X-Frame-Height";
+    match read {
+        FrameRead::Gone => respond(
+            StatusCode::NOT_FOUND,
+            Outcome::domain(
+                COMMAND,
+                vec![Diagnostic::error(
+                    "live.session_gone",
+                    "the session is closed or expired; it has no frame",
+                    "/session",
+                    SOURCE,
+                )],
+            )
+            .output,
+        ),
+        FrameRead::Pending => (
+            StatusCode::NO_CONTENT,
+            [(header::CACHE_CONTROL, "no-store")],
+        )
+            .into_response(),
+        FrameRead::Frame {
+            seq,
+            width,
+            height,
+            jpeg,
+        } => {
+            let tag = format!("\"{seq}\"");
+            let unchanged = headers
+                .get(header::IF_NONE_MATCH)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.split(',').any(|candidate| candidate.trim() == tag));
+            let common = [
+                (header::CACHE_CONTROL, "no-store".to_owned()),
+                (header::ETAG, tag),
+                (header::ACCESS_CONTROL_EXPOSE_HEADERS, EXPOSED.to_owned()),
+            ];
+            if unchanged {
+                return (StatusCode::NOT_MODIFIED, common).into_response();
+            }
+            (
+                StatusCode::OK,
+                common,
+                [
+                    (header::CONTENT_TYPE, "image/jpeg".to_owned()),
+                    (
+                        header::HeaderName::from_static("x-frame-seq"),
+                        seq.to_string(),
+                    ),
+                    (
+                        header::HeaderName::from_static("x-frame-width"),
+                        width.to_string(),
+                    ),
+                    (
+                        header::HeaderName::from_static("x-frame-height"),
+                        height.to_string(),
+                    ),
+                ],
+                jpeg,
+            )
+                .into_response()
+        }
+    }
 }
 
 /// `DELETE /v1/journeys/sessions/{id}` (#398): exactly `graphhelm journey close`.
@@ -5684,6 +5785,7 @@ fn served_image_type(media_type: &str) -> Option<&'static str> {
 /// Raw image bytes with exactly the four headers of #313 Ruling 8.
 fn image_response(media_type: &'static str, bytes: Vec<u8>) -> Response {
     use axum::http::header;
+    use axum::response::IntoResponse;
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, media_type)

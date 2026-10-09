@@ -29,7 +29,11 @@ test('closed protocol refuses malformed, secret, sequence and oversized frames',
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], survive: true }, 'driver.observer_missing'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], survive: 1 }, 'driver.protocol_invalid'],
     // #491: `show` is boolean and only for a headed window; the `show` op needs such a session.
-    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], show: true }, 'driver.protocol_invalid'],
+    // #519: a headless watch shows in the page and may stream frames; a headed one may not stream.
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], show: true, screencast: true }, 'driver.observer_missing'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], headed: true, show: true, screencast: true }, 'driver.protocol_invalid'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], screencast: true }, 'driver.protocol_invalid'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], show: true, screencast: 'yes' }, 'driver.protocol_invalid'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], headed: true, show: 'yes' }, 'driver.protocol_invalid'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], headed: true, show: true }, 'driver.observer_missing'],
     [{ protocol, requestId: 1, op: 'show', caption: 'Clicks "Checkout"', role: 'button', name: 'Checkout' }, 'driver.protocol_invalid'],

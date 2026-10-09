@@ -3,7 +3,7 @@
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { resolve, relative, isAbsolute, dirname } from 'node:path';
-import { lstat, mkdir } from 'node:fs/promises';
+import { lstat, mkdir, rename, writeFile } from 'node:fs/promises';
 
 const PROTOCOL = 'graphhelm-journey-driver/1';
 const FRAME = 65536, TIMEOUT = 30000;
@@ -15,7 +15,7 @@ const SNAPSHOT = 32768, SNAPSHOT_DISCOVER = 6144;
 // TIMEOUT raced that deadline and surfaced as replay.timeout instead of expectation_failed (#398).
 const SCREEN_WAIT = TIMEOUT - 5000;
 const fields = {
-  open: ['base', 'viewport', 'allowOrigins', 'headed', 'survive', 'show'], snapshot: ['expect','discover'],
+  open: ['base', 'viewport', 'allowOrigins', 'headed', 'survive', 'show', 'screencast'], snapshot: ['expect','discover'],
   show: ['caption', 'role', 'name'],
   act: ['kind', 'role', 'name', 'text', 'secretEnv', 'locator'],
   capture: ['path', 'maskSecrets'], close: [],
@@ -64,8 +64,11 @@ function validate(r) {
   if (r.op === 'open') {
     if (Object.hasOwn(r,'headed') && typeof r.headed !== 'boolean') fail('driver.protocol_invalid');
     if (Object.hasOwn(r,'survive') && typeof r.survive !== 'boolean') fail('driver.protocol_invalid');
-    // #491: `show` (a watch) is a visible, maximized window for a person; never a headless one.
-    if (Object.hasOwn(r,'show') && (typeof r.show !== 'boolean' || (r.show && r.headed !== true))) fail('driver.protocol_invalid');
+    // #491: `show` (a watch) draws its caption and outline in the page, headed or not (#519).
+    if (Object.hasOwn(r,'show') && typeof r.show !== 'boolean') fail('driver.protocol_invalid');
+    // #519: `screencast` streams a headless watch's page as frames for the Studio; a headed
+    // window is already visible, so the two never go together.
+    if (Object.hasOwn(r,'screencast') && (typeof r.screencast !== 'boolean' || (r.screencast && (r.headed === true || r.show !== true)))) fail('driver.protocol_invalid');
     if (!exactKeys(r.viewport,['width','height']) || ![r.viewport.width,r.viewport.height].every(n => Number.isInteger(n) && n > 0 && n <= 16384) || r.viewport.width*r.viewport.height > 16777216 || !Array.isArray(r.allowOrigins) || r.allowOrigins.length > 32) fail('driver.protocol_invalid');
     url(r.base,true); for (const origin of r.allowOrigins) url(origin,false,true);
   } else if (r.op === 'snapshot') {
@@ -91,6 +94,34 @@ function validate(r) {
   // Refuse a raw secret in any approved name, origin, cache locator or literal before I/O.
   if (secrets.some(([,v]) => v && JSON.stringify(r).includes(v))) fail('driver.secret_literal');
   requestId = r.requestId;
+}
+/** #519: the page as frames for the Studio while a headless watch plays. The latest frame is
+ * `screencast/frame.jpg` in the output directory, with `frame.json` (`seq`, `width`, `height`)
+ * written after it; each is replaced whole by a rename, so a reader never sees half a file.
+ * Holding the acknowledgement for FRAME_GAP keeps the stream near five frames a second. */
+let streaming=false;
+const FRAME_GAP=200;
+async function screencast(viewport) {
+  const dir=resolve(output,'screencast');
+  await mkdir(dir,{recursive:true});
+  const info=await lstat(dir);
+  if (info.isSymbolicLink() || !info.isDirectory()) fail('driver.capture_refused');
+  const cdp=await context.newCDPSession(page);
+  let seq=0, queue=Promise.resolve();
+  cdp.on('Page.screencastFrame',({data,metadata,sessionId})=>{
+    queue=queue.then(async()=>{
+      try {
+        seq+=1;
+        const jpg=resolve(dir,'frame.jpg'), meta=resolve(dir,'frame.json');
+        await writeFile(jpg+'.tmp',Buffer.from(data,'base64')); await rename(jpg+'.tmp',jpg);
+        await writeFile(meta+'.tmp',JSON.stringify({seq,width:Math.round(metadata.deviceWidth),height:Math.round(metadata.deviceHeight)}));
+        await rename(meta+'.tmp',meta);
+        await new Promise(done=>setTimeout(done,FRAME_GAP));
+      } catch {} finally { await cdp.send('Page.screencastFrameAck',{sessionId}).catch(()=>{}); }
+    });
+  });
+  await cdp.send('Page.startScreencast',{format:'jpeg',quality:70,maxWidth:viewport.width,maxHeight:viewport.height});
+  streaming=true;
 }
 async function release() {
   try { if (context) await context.close(); }
@@ -203,9 +234,10 @@ async function run(r) {
       // #491: a watch opens maximized and the page takes the real window size (viewport: null),
       // so the owner can read it; every other session keeps its fixed, reproducible viewport.
       const launchArgs=['--host-resolver-rules=MAP *.test 127.0.0.1,MAP *.localhost 127.0.0.1,EXCLUDE localhost'];
-      if (r.show === true) launchArgs.push('--start-maximized');
+      const window=r.show === true && r.headed === true;
+      if (window) launchArgs.push('--start-maximized');
       browser=await chromium.launch({headless:r.headed !== true,timeout:TIMEOUT,args:launchArgs});
-      context=await browser.newContext({viewport:r.show === true ? null : r.viewport,serviceWorkers:'block',acceptDownloads:false});
+      context=await browser.newContext({viewport:window ? null : r.viewport,serviceWorkers:'block',acceptDownloads:false});
       context.setDefaultTimeout(TIMEOUT); context.setDefaultNavigationTimeout(TIMEOUT);
       if (typeof context.routeWebSocket !== 'function') fail('driver.observer_missing');
       await context.route('**/*',async route => {
@@ -240,6 +272,7 @@ async function run(r) {
         socket.connectToServer();
       });
       page=await context.newPage();
+      if (r.screencast === true) await screencast(r.viewport);
       await page.goto(r.base,{waitUntil:'domcontentloaded',timeout:TIMEOUT});
       opened=true; checkHost();
       return {url:redacted(page.url())};
@@ -291,6 +324,8 @@ async function run(r) {
     if (r.kind === 'enter_text') {
       const value = r.secretEnv ? process.env[r.secretEnv] : r.text;
       await target.fill(value,{timeout:TIMEOUT});
+      // #519: frames are not masked like captures; a filled secret is drawn as dots (style only).
+      if (streaming && r.secretEnv) await target.evaluate(el=>{ el.style.webkitTextSecurity='disc'; }).catch(()=>{});
       // Values of all filled inputs are masked, including approved literals.
       secretInputs.push(target);
     } else if (['activate','submit','navigate'].includes(r.kind)) await target.click({timeout:TIMEOUT});

@@ -662,6 +662,10 @@ fn build_router(state: ServeState) -> Router {
             axum::routing::delete(routes::close_journey),
         )
         .route("/v1/journeys/sessions/{id}/act", post(routes::act_journey))
+        .route(
+            "/v1/journeys/sessions/{id}/frame",
+            get(routes::journey_frame),
+        )
         .route("/v1/executions/{id}/events", get(routes::events))
         .route(
             "/v1/executions/{id}/evidence/{evidenceId}",

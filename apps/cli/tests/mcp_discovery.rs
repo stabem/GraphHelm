@@ -30,11 +30,22 @@ fn free_port() -> u16 {
     })
 }
 
-/// The port `free_port` hands out, chosen among the candidates `offer` yields (each with the
-/// listener that holds it).
+/// The ports this test binary has handed out, across its tests and threads.
+static HANDED_OUT: std::sync::Mutex<std::collections::BTreeSet<u16>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// The port `free_port` hands out: the first candidate `offer` yields (each with the listener
+/// that holds it) that this binary has not handed out before. A refused candidate's listener is
+/// kept until a port is chosen, so the OS cannot offer that number again in the meantime.
 fn first_unused<L>(mut offer: impl FnMut() -> (L, u16)) -> u16 {
-    let (_listener, port) = offer();
-    port
+    let mut refused = Vec::new();
+    loop {
+        let (listener, port) = offer();
+        if HANDED_OUT.lock().unwrap().insert(port) {
+            return port;
+        }
+        refused.push(listener);
+    }
 }
 
 /// #549: the operating system may offer a port it has just seen released, so two `free_port`

@@ -376,11 +376,13 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
     findings
 }
 
-/// What a safe mark binds (#518): WHERE the acts are played and WHAT they are. The screen the
-/// edge leaves and that screen's URL, the screen it reaches, and the acts exactly as the canonical
-/// flow writes them. Editing an act (kind, role, name, text, secret, order, count), moving the
-/// edge to another screen, or repointing its screen at another URL voids the mark: "Send" marked
-/// safe on one page is not "Send" on another.
+/// What a safe mark binds (#518): WHERE the acts are played and WHAT they are. The flow's `base`
+/// (the app a watch opens), the screen the edge leaves and that screen's URL, the screen it
+/// reaches, and the acts exactly as the canonical flow writes them. Editing an act (kind, role,
+/// name, text, secret, order, count), moving the edge to another screen, repointing its screen at
+/// another URL, or pointing the flow at another app voids the mark: "Send" marked safe on one
+/// page of one app is not "Send" on another. `base_not_local` keeps a flow on this machine, not
+/// on the app the owner was shown, so `base` is bound here.
 fn mark_digest(flow: &Value, edge: &Value) -> String {
     let url = flow["screens"]
         .as_array()
@@ -388,6 +390,7 @@ fn mark_digest(flow: &Value, edge: &Value) -> String {
         .map(|screen| scalar(&screen["url"]))
         .unwrap_or_default();
     let mut lines = vec![
+        format!("base: {}", scalar(&flow["base"])),
         format!("from: {}", scalar(&edge["from"])),
         format!("url: {url}"),
         format!("to: {}", scalar(&edge["to"])),

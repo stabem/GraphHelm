@@ -682,10 +682,12 @@ fn the_owner_marks_a_draft_edge_safe_and_editing_its_acts_voids_the_mark() {
     );
     assert!(stale(&run(dir.path(), &["validate", "--all"]).1));
     // So does playing the same acts somewhere else: the screen the edge leaves now opens another
-    // URL, or the edge now reaches another screen. "Pay now" marked safe on /checkout is not
+    // URL, the flow now opens another app, or the edge now reaches another screen. "Pay now" marked safe on /checkout is not
     // "Pay now" on /account.
     for moved in [
         marked.replace("url: /checkout", "url: /account"),
+        // Another app on this machine: the mark was given for the one at port 3000.
+        marked.replace("base: http://localhost:3000", "base: http://localhost:9000"),
         marked.replace("to: done", "to: cart"),
     ] {
         assert_ne!(moved, marked);

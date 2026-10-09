@@ -169,9 +169,9 @@ graphhelm journey mark-safe checkout pay.submit --json
 ```
 
 It writes `safe: {digest: <digest>}` on that edge of a canonical draft and lists every act the
-mark covers. The digest binds where the acts are played and what they are: the screen the edge
-leaves and its URL, the screen it reaches, and the acts. Editing, adding or removing an act,
-moving the edge, or changing that screen's URL voids the mark (`flow.safe_stale`, a warning) and
+mark covers. The digest binds where the acts are played and what they are: the flow's `base`,
+the screen the edge leaves and its URL, the screen it reaches, and the acts. Editing, adding or
+removing an act, moving the edge, changing that screen's URL or the flow's `base` voids the mark (`flow.safe_stale`, a warning) and
 the guard applies again. Only a draft carries marks: `approve`
 drops them, and a mark on an approved flow is `flow.safe_not_draft`. Like approval, the mark is
 the owner's: the Runtime route (`POST /v1/journey-flows/{id}/edges/{edge}/safe`) takes the owner

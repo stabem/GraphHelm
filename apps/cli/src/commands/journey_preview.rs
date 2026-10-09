@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use super::journey_live::{Launched, base_reachable, launch, would_destroy};
+use super::journey_live::{Launched, LaunchedStop, base_reachable, launch, would_destroy};
 use super::journey_replay::{
     Driver, Failure, Result, SURVIVABLE, TemporaryOutput, failure, observe, observer_ready,
     preflight, safe_directory, safe_node,
@@ -118,19 +118,28 @@ fn save_state(dir: &Path, state: &Value) {
 /// grace no runner is alive, even when the pid now names another process (#560 review: a hard
 /// kill, then pid reuse, would otherwise read `running` for ever).
 fn runner_alive(state: &Value) -> bool {
-    let age = state["startedAt"]
-        .as_str()
-        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-        .map(|at| chrono::Utc::now().signed_duration_since(at));
-    let within =
-        |limit: Duration| age.is_some_and(|age| age < chrono::Duration::from_std(limit).unwrap());
-    if !within(PREVIEW_BUDGET + RUNNER_GRACE) {
+    if !within_budget(state) {
         return false;
     }
     match state["pid"].as_u64() {
         Some(pid) => alive(pid),
-        None => within(RUNNER_GRACE),
+        None => younger_than(state, RUNNER_GRACE),
     }
+}
+
+/// Whether a run started less than its budget plus the grace ago.
+fn within_budget(state: &Value) -> bool {
+    younger_than(state, PREVIEW_BUDGET + RUNNER_GRACE)
+}
+
+fn younger_than(state: &Value, limit: Duration) -> bool {
+    state["startedAt"]
+        .as_str()
+        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+        .is_some_and(|at| {
+            chrono::Utc::now().signed_duration_since(at)
+                < chrono::Duration::from_std(limit).unwrap()
+        })
 }
 
 /// How long a started run may take to write its own pid.
@@ -172,8 +181,15 @@ fn body(state: Option<Value>, flow: &Value, digest: &str, commit: &str) -> Value
     state["kind"] = kind.into();
     if state["state"] == "running" && !runner_alive(&state) {
         // A runner that died without finishing never reports; say so instead of "running" forever.
+        // Past its budget the run did not finish in time, whatever became of the runner (#560
+        // review): its own watchdog ends it there.
         state["state"] = "failed".into();
-        state["reason"] = "internal".into();
+        state["reason"] = if within_budget(&state) {
+            "internal"
+        } else {
+            "preview.budget_exceeded"
+        }
+        .into();
     }
     if let Some(object) = state.as_object_mut() {
         object.remove("pid");
@@ -322,10 +338,42 @@ fn refused(guarded: bool, act: &Value) -> Option<&'static str> {
     if guarded { would_destroy(act) } else { None }
 }
 
+/// The budget watchdog (#560 review): a thread that, at `deadline`, records `failed /
+/// preview.budget_exceeded` (only while the state is still this runner's `running` run), stops
+/// the app the run launched, and then calls `end` (in the runner: exit the process). Nothing
+/// the main thread is blocked on (a launcher, a browser call) can keep the run past its budget.
+fn watch_budget(
+    dir: PathBuf,
+    pid: u32,
+    deadline: Instant,
+    launched: std::sync::Arc<std::sync::Mutex<Option<LaunchedStop>>>,
+    end: impl FnOnce() + Send + 'static,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+        let Some(mut state) = read_state(&dir) else {
+            return;
+        };
+        if state["state"] != "running" || state["pid"].as_u64() != Some(u64::from(pid)) {
+            return;
+        }
+        state["state"] = "failed".into();
+        state["reason"] = "preview.budget_exceeded".into();
+        state["current"] = Value::Null;
+        state["ranAt"] = chrono::Utc::now().to_rfc3339().into();
+        save_state(&dir, &state);
+        if let Some(stop) = launched.lock().ok().and_then(|mut slot| slot.take()) {
+            stop.stop();
+        }
+        end();
+    })
+}
+
 /// The top-level `reason` a failed preview carries (the closed list agreed on #519).
 fn failed_reason(code: &str) -> &'static str {
     match code {
         "watch.app_down" => "watch.app_down",
+        "watch.launch_failed" => "watch.launch_failed",
         "watch.launcher_invalid" => "watch.launcher_invalid",
         "driver.observer_missing" | "replay.observer_missing" => "driver.observer_missing",
         "preview.budget_exceeded" => "preview.budget_exceeded",
@@ -448,7 +496,15 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     };
     run.save();
     let deadline = Instant::now() + PREVIEW_BUDGET;
-    let outcome = play(&project, &flow, &mut run, deadline);
+    let launched = std::sync::Arc::new(std::sync::Mutex::new(None));
+    watch_budget(
+        run.dir.clone(),
+        std::process::id(),
+        deadline,
+        launched.clone(),
+        || std::process::exit(3),
+    );
+    let outcome = play(&project, &flow, &mut run, deadline, &launched);
     // Every screen and edge no path reached says so; the run's result is its worst step.
     for screen in flow["screens"].as_array().unwrap() {
         let id = screen["id"].as_str().unwrap();
@@ -488,7 +544,13 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     answer(json!({"state":run.state["state"]}), None)
 }
 
-fn play(project: &Path, flow: &Value, run: &mut Run, deadline: Instant) -> Result<()> {
+fn play(
+    project: &Path,
+    flow: &Value,
+    run: &mut Run,
+    deadline: Instant,
+    stopper: &std::sync::Arc<std::sync::Mutex<Option<LaunchedStop>>>,
+) -> Result<()> {
     let secrets = preflight(flow)?;
     observer_ready(project)?;
     let base = flow["base"].as_str().unwrap().to_owned();
@@ -498,6 +560,9 @@ fn play(project: &Path, flow: &Value, run: &mut Run, deadline: Instant) -> Resul
     } else {
         Some(launch(project, &base)?)
     };
+    if let (Some(app), Ok(mut slot)) = (&launched, stopper.lock()) {
+        *slot = Some(app.stopper());
+    }
     let guarded = guarded(flow, launched.is_some());
     let screens: std::collections::BTreeMap<&str, &Value> = flow["screens"]
         .as_array()
@@ -526,6 +591,9 @@ fn play(project: &Path, flow: &Value, run: &mut Run, deadline: Instant) -> Resul
         play_path(
             project, &base, &secrets, &screens, &edges, &ids, guarded, run,
         )?;
+    }
+    if let Ok(mut slot) = stopper.lock() {
+        slot.take();
     }
     drop(launched);
     Ok(())
@@ -661,7 +729,10 @@ fn sha_of(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{body, guarded, plain_id, refused, runner_alive, severity, step_reason};
+    use super::{
+        body, guarded, plain_id, read_state, refused, runner_alive, save_state, severity,
+        step_reason, watch_budget,
+    };
     use serde_json::json;
 
     /// #519: a stored preview answers only for the flow and commit it ran on; a changed flow or a
@@ -726,7 +797,53 @@ mod tests {
         stored["commit"] = "c1".into();
         let answer = body(Some(stored), &flow, "sha256:aa", "c1");
         assert_eq!(answer["state"], "failed");
-        assert_eq!(answer["reason"], "internal");
+        // #560 review (gh-claude-3's real run): past its budget the run did not finish in time.
+        assert_eq!(answer["reason"], "preview.budget_exceeded");
+    }
+
+    /// #560 review (gh-claude-3's real run: a runner still alive 15 minutes after a 300 s budget,
+    /// blocked in a launcher that never returned): at its deadline the watchdog records
+    /// `failed / preview.budget_exceeded` and ends the runner, whatever the main thread is blocked
+    /// on; and it never touches a run that already ended or belongs to another runner.
+    /// Cost: about half a second, temp files only.
+    #[test]
+    fn the_budget_watchdog_ends_a_run_that_outlives_its_budget() {
+        use std::sync::{Arc, Mutex, mpsc};
+        use std::time::{Duration, Instant};
+        let dir = tempfile::tempdir().unwrap();
+        let me = std::process::id();
+        let state = |pid: u32, state: &str| {
+            json!({"preview":true,"state":state,"pid":pid,"startedAt":chrono::Utc::now().to_rfc3339(),
+                "digest":"sha256:aa","commit":"c1","screens":{},"edges":{}})
+        };
+        let watch = |expected_end: bool| {
+            let (ended, rx) = mpsc::channel();
+            watch_budget(
+                dir.path().to_path_buf(),
+                me,
+                Instant::now() + Duration::from_millis(200),
+                Arc::new(Mutex::new(None)),
+                move || ended.send(()).unwrap(),
+            )
+            .join()
+            .unwrap();
+            assert_eq!(rx.try_recv().is_ok(), expected_end);
+        };
+
+        save_state(dir.path(), &state(me, "running"));
+        watch(true);
+        let ended = read_state(dir.path()).unwrap();
+        assert_eq!(ended["state"], "failed");
+        assert_eq!(ended["reason"], "preview.budget_exceeded");
+        assert!(ended["ranAt"].is_string());
+
+        save_state(dir.path(), &state(me, "ready"));
+        watch(false);
+        assert_eq!(read_state(dir.path()).unwrap()["state"], "ready");
+
+        save_state(dir.path(), &state(me.wrapping_add(1), "running"));
+        watch(false);
+        assert_eq!(read_state(dir.path()).unwrap()["state"], "running");
     }
 
     /// #519: ids become file names only within the schema's identifier characters, and step

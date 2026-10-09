@@ -13,6 +13,7 @@ mod journey;
 mod journey_explore;
 mod journey_flow;
 mod journey_live;
+mod journey_owner;
 mod journey_preview;
 mod journey_replay;
 mod journey_validate;

@@ -218,7 +218,8 @@ fn open_live_at_a_step_replays_cached_edges_headed_and_stops_open_at_a_drifted_e
         &project,
         &["commit", "--quiet", "--no-verify", "-m", "fixture"],
     );
-    let (code, value) = journey(&project, &["approve", "checkout"]);
+    let token = owner_token(&project);
+    let (code, value) = journey(&project, &["approve", "checkout", "--token-file", &token]);
     assert_eq!(code, 0, "{value}");
 
     // The replay cache is what makes the live walk deterministic.
@@ -320,4 +321,31 @@ fn open_live_at_a_step_replays_cached_edges_headed_and_stops_open_at_a_drifted_e
     assert_eq!(still["data"]["screen"], "cart", "{still}");
     let (code, closed) = journey(&project, &["close", &session]);
     assert_eq!(code, 0, "{closed}");
+}
+
+/// #534: approving is the owner's; `graphhelm init` makes the project's owner store and token.
+fn owner_token(project: &Path) -> String {
+    // init ignores all of `.graphhelm/`; a real project keeps its flows tracked, so the
+    // project's own .gitignore is put back after the owner store is made.
+    let gitignore = project.join(".gitignore");
+    let kept = std::fs::read(&gitignore).ok();
+    let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["--json", "init", "--project"])
+        .arg(project)
+        .args(["--harness", "claude-code"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    match kept {
+        Some(bytes) => std::fs::write(&gitignore, bytes).unwrap(),
+        None => drop(std::fs::remove_file(&gitignore)),
+    }
+    project
+        .join(".graphhelm/events.token")
+        .to_string_lossy()
+        .into_owned()
 }

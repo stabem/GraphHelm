@@ -881,7 +881,14 @@ fn a_fresh_clone_plans_and_checks_from_the_committed_flows() {
     let approve = Command::cargo_bin("graphhelm")
         .unwrap()
         .current_dir(root)
-        .args(["--json", "journey", "approve", "checkout"])
+        .args([
+            "--json",
+            "journey",
+            "approve",
+            "checkout",
+            "--token-file",
+            &owner_token(root),
+        ])
         .output()
         .unwrap();
     assert!(
@@ -1007,7 +1014,14 @@ fn the_plan_names_replayable_flows_and_a_card_naming_the_flow_covers_its_branche
     let approve = Command::cargo_bin("graphhelm")
         .unwrap()
         .current_dir(root)
-        .args(["--json", "journey", "approve", "checkout"])
+        .args([
+            "--json",
+            "journey",
+            "approve",
+            "checkout",
+            "--token-file",
+            &owner_token(root),
+        ])
         .output()
         .unwrap();
     assert!(
@@ -1120,4 +1134,31 @@ fn keel_plan_decides_the_design_critic_by_class() {
             .any(|step| step == "design"),
         "{record}"
     );
+}
+
+/// #534: approving is the owner's; `graphhelm init` makes the project's owner store and token.
+fn owner_token(project: &Path) -> String {
+    // init ignores all of `.graphhelm/`; a real project keeps its flows tracked, so the
+    // project's own .gitignore is put back after the owner store is made.
+    let gitignore = project.join(".gitignore");
+    let kept = std::fs::read(&gitignore).ok();
+    let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["--json", "init", "--project"])
+        .arg(project)
+        .args(["--harness", "claude-code"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    match kept {
+        Some(bytes) => std::fs::write(&gitignore, bytes).unwrap(),
+        None => drop(std::fs::remove_file(&gitignore)),
+    }
+    project
+        .join(".graphhelm/events.token")
+        .to_string_lossy()
+        .into_owned()
 }

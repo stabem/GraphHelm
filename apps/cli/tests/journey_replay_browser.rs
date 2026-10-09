@@ -281,7 +281,14 @@ fn two_credential_free_paths_replay_to_canonical_cache_sealed_captures_and_fresh
     );
     let (code, value) = reply(
         cli()
-            .args(["journey", "approve", "checkout", "--project"])
+            .args([
+                "journey",
+                "approve",
+                "checkout",
+                "--token-file",
+                &owner_token(&project),
+                "--project",
+            ])
             .arg(&project),
     );
     assert_eq!(code, 0, "{value}");
@@ -829,7 +836,14 @@ process.stdin.on('end',()=>{
     assert_eq!(result["data"]["modelCalls"], 0);
     let (code, value) = reply(
         cli()
-            .args(["journey", "approve", "checkout", "--project"])
+            .args([
+                "journey",
+                "approve",
+                "checkout",
+                "--token-file",
+                &owner_token(&project),
+                "--project",
+            ])
             .arg(&project),
     );
     assert_eq!(code, 0, "{value}");
@@ -838,4 +852,31 @@ process.stdin.on('end',()=>{
     assert_eq!(code, 0, "approved repair replays with no model: {result}");
     assert_eq!(result["data"]["modelCalls"], 0);
     assert_eq!(app.control("reset")["reset"], true);
+}
+
+/// #534: approving is the owner's; `graphhelm init` makes the project's owner store and token.
+fn owner_token(project: &Path) -> String {
+    // init ignores all of `.graphhelm/`; a real project keeps its flows tracked, so the
+    // project's own .gitignore is put back after the owner store is made.
+    let gitignore = project.join(".gitignore");
+    let kept = std::fs::read(&gitignore).ok();
+    let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["--json", "init", "--project"])
+        .arg(project)
+        .args(["--harness", "claude-code"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    match kept {
+        Some(bytes) => std::fs::write(&gitignore, bytes).unwrap(),
+        None => drop(std::fs::remove_file(&gitignore)),
+    }
+    project
+        .join(".graphhelm/events.token")
+        .to_string_lossy()
+        .into_owned()
 }

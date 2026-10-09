@@ -64,7 +64,8 @@ fn project(approved: bool) -> tempfile::TempDir {
                     .success()
             );
         }
-        let (code, reply) = cli(dir.path(), &["approve", "checkout"]);
+        let token = owner_token(dir.path());
+        let (code, reply) = cli(dir.path(), &["approve", "checkout", "--token-file", &token]);
         assert_eq!(code, 0, "{reply}");
     }
     // A driver I/O tripwire: invalid input must not execute even an installed program.
@@ -312,4 +313,31 @@ fn malformed_oversized_and_directory_cache_are_preserved_and_refused() {
         "replay.cache_invalid",
     );
     assert!(cache.is_dir());
+}
+
+/// #534: approving is the owner's; `graphhelm init` makes the project's owner store and token.
+fn owner_token(project: &Path) -> String {
+    // init ignores all of `.graphhelm/`; a real project keeps its flows tracked, so the
+    // project's own .gitignore is put back after the owner store is made.
+    let gitignore = project.join(".gitignore");
+    let kept = std::fs::read(&gitignore).ok();
+    let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["--json", "init", "--project"])
+        .arg(project)
+        .args(["--harness", "claude-code"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    match kept {
+        Some(bytes) => std::fs::write(&gitignore, bytes).unwrap(),
+        None => drop(std::fs::remove_file(&gitignore)),
+    }
+    project
+        .join(".graphhelm/events.token")
+        .to_string_lossy()
+        .into_owned()
 }

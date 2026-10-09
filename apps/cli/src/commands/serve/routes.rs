@@ -1981,10 +1981,9 @@ pub(super) async fn approve_journey_flow(
     UrlPath(id): UrlPath<String>,
 ) -> Response {
     flow_command(state, "journey.approve", move |project| {
-        crate::commands::journey_flow::run_approve(&crate::args::JourneyApproveArgs {
-            id,
-            project: Some(project),
-        })
+        // The route is owner-only (the agent session token's allow-list does not reach it), so the
+        // owner is already authenticated here (#534).
+        crate::commands::journey_flow::approve_owned(&id, project.to_path_buf())
     })
     .await
 }

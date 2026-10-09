@@ -117,6 +117,7 @@ fn prepared() -> Harness {
     git(&project, &["init", "-q", "--object-format=sha1"]);
     git(&project, &["add", "-A"]);
     git(&project, &["commit", "-q", "-m", "init"]);
+    owner_token(&project);
     Harness {
         scratch,
         events,
@@ -430,7 +431,8 @@ fn approve_over_http_and_mcp_does_what_the_cli_does_and_refuses_findings() {
             .join(".graphhelm/journeys/checkout.json")
             .exists()
     );
-    let (code, cli_again) = harness.cli(&["approve", "checkout"]);
+    let token = owner_token(&harness.project);
+    let (code, cli_again) = harness.cli(&["approve", "checkout", "--token-file", &token]);
     assert_eq!(code, Some(0), "{cli_again}");
     assert_eq!(cli_again["data"]["approved"], approved["data"]["approved"]);
     assert_eq!(harness.flow_text("checkout"), http_flow);
@@ -622,4 +624,31 @@ fn a_malformed_keel_plan_body_is_a_400_naming_the_field() {
         assert_eq!(diagnostic["code"], "GHCLI001_ARGUMENT_INVALID", "{reply}");
         assert_eq!(diagnostic["path"], pointer, "{body}: {reply}");
     }
+}
+
+/// #534: approving is the owner's; `graphhelm init` makes the project's owner store and token.
+fn owner_token(project: &Path) -> String {
+    // init ignores all of `.graphhelm/`; a real project keeps its flows tracked, so the
+    // project's own .gitignore is put back after the owner store is made.
+    let gitignore = project.join(".gitignore");
+    let kept = std::fs::read(&gitignore).ok();
+    let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["--json", "init", "--project"])
+        .arg(project)
+        .args(["--harness", "claude-code"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    match kept {
+        Some(bytes) => std::fs::write(&gitignore, bytes).unwrap(),
+        None => drop(std::fs::remove_file(&gitignore)),
+    }
+    project
+        .join(".graphhelm/events.token")
+        .to_string_lossy()
+        .into_owned()
 }

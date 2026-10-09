@@ -2348,9 +2348,11 @@ struct Exclusive(&'static std::sync::atomic::AtomicBool);
 impl Exclusive {
     fn take(flag: &'static std::sync::atomic::AtomicBool) -> Option<Self> {
         use std::sync::atomic::Ordering;
+        // `then`, not `then_some`: an eager `Self(flag)` built on a failed take is dropped at once,
+        // and its Drop would clear the flag the running install holds.
         flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
-            .then_some(Self(flag))
+            .then(|| Self(flag))
     }
 }
 
@@ -6324,8 +6326,9 @@ mod off_reactor_tests {
 
     /// #588 review (gh-claude-8's probe): a client that disconnects mid-install drops the
     /// handler's future. Defects named: the flag cleared after the `.await` (never cleared: every
-    /// later setup 409s for the Runtime's life), or a guard held in the future (cleared at once:
-    /// a second install starts beside the first). The guard rides into the blocking work, so the
+    /// later setup 409s for the Runtime's life), a guard held in the future (cleared at once: a
+    /// second install starts beside the first), or a refused take that releases the flag (its own
+    /// 409 frees the way for a third). The guard rides into the blocking work, so the
     /// flag stays set while the work runs and clears when it ends. Cost: about half a second.
     #[test]
     fn a_dropped_setup_request_keeps_the_flag_while_the_work_runs_and_frees_it_after() {
@@ -6350,10 +6353,13 @@ mod off_reactor_tests {
             // The client goes away: the request's future is dropped mid-install.
             request.abort();
             let _ = request.await;
-            assert!(
-                super::Exclusive::take(&FLAG).is_none(),
-                "a second setup started while the first still ran"
-            );
+            // Twice: a refused take must not release the flag the running work holds.
+            for attempt in ["second", "third"] {
+                assert!(
+                    super::Exclusive::take(&FLAG).is_none(),
+                    "a {attempt} setup started while the first still ran"
+                );
+            }
             tokio::time::sleep(std::time::Duration::from_millis(800)).await;
             assert!(
                 super::Exclusive::take(&FLAG).is_some(),

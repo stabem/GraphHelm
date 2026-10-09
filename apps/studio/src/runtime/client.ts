@@ -83,6 +83,10 @@ const REPLY_SUGGESTIONS_REQUEST_TIMEOUT_MS = 120_000;
  * Runtime reopen and re-verify the project's whole journal, so on a large project they take
  * longer than the ordinary budget: 10s left a real run (2026-10-05) unopenable forever. */
 export const RUNTIME_READ_TIMEOUT_MS = 60_000;
+/** #549 / #600 review: the gateway probe may take the Runtime's `PROBE_TIMEOUT` (30 s) to
+ * answer a slow runtime; the Studio waits longer, so a slow but alive runtime reads as its real
+ * health. A Rust test reads this number and fails when it is not above the probe's bound. */
+export const GATEWAY_PROBE_WAIT_MS = 45_000;
 /** A live open replays cached acts in a real browser before it answers (#409): the Runtime bounds
  * it at its own run budget (180 s), so the request waits longer than a read. */
 const RUNTIME_LIVE_TIMEOUT_MS = 200_000;
@@ -1739,6 +1743,7 @@ export class RuntimeClient {
     const reply = await this.#request<{ health?: string }>({
       method: "GET",
       path: `/v1/gateway/probe?route=${encodeURIComponent(id)}`,
+      timeoutMs: GATEWAY_PROBE_WAIT_MS,
     });
     return { health: reply.health ?? "unknown" };
   }

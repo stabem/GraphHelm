@@ -1,7 +1,8 @@
 //! `graphhelm gateway probe --manifest <file> --route <id> [--broker <dir> --keyring <dir>
 //! --key-id <id>]`: a quota-free health check (§18) — never a real model call. A `direct_api`
 //! route proves its credential leases from the broker; a `native_runtime` route proves its CLI
-//! spawns and exits `0` on `--version` within a fixed 10s budget. Never prints a credential value:
+//! spawns and exits `0` on `--version` within [`PROBE_TIMEOUT`] (30 s, #549); every caller
+//! of the probe waits longer than that (#600 review). Never prints a credential value:
 //! the `direct_api` check only ever records whether `CredentialBroker::lease` succeeded, never the
 //! bytes it returned.
 

@@ -199,8 +199,37 @@ impl ApiClient {
         idempotency_key: Option<&str>,
         if_match: Option<u64>,
     ) -> Result<(u16, serde_json::Value), String> {
+        self.request_waiting(
+            method,
+            path,
+            body,
+            idempotency_key,
+            if_match,
+            REQUEST_TIMEOUT,
+        )
+    }
+
+    /// [`Self::request`] with its own wait, for a call whose Runtime side may take longer than
+    /// [`REQUEST_TIMEOUT`] (the gateway probe, #600 review).
+    pub(crate) fn request_waiting(
+        &self,
+        method: &'static str,
+        path: &str,
+        body: Option<&serde_json::Value>,
+        idempotency_key: Option<&str>,
+        if_match: Option<u64>,
+        timeout: Duration,
+    ) -> Result<(u16, serde_json::Value), String> {
         let endpoint = self.current_endpoint()?;
-        let result = self.request_with(&endpoint, method, path, body, idempotency_key, if_match);
+        let result = self.request_with(
+            &endpoint,
+            method,
+            path,
+            body,
+            idempotency_key,
+            if_match,
+            timeout,
+        );
         if !self.is_discovering() {
             return result;
         }
@@ -213,7 +242,15 @@ impl ApiClient {
                 if fresh.url == endpoint.url && fresh.token.as_str() == endpoint.token.as_str() {
                     return result;
                 }
-                self.request_with(&fresh, method, path, body, idempotency_key, if_match)
+                self.request_with(
+                    &fresh,
+                    method,
+                    path,
+                    body,
+                    idempotency_key,
+                    if_match,
+                    timeout,
+                )
             }
             // A transport failure may have landed; never retried here, only re-resolved next time.
             Err(_) => {
@@ -389,6 +426,7 @@ impl ApiClient {
         body: Option<&serde_json::Value>,
         idempotency_key: Option<&str>,
         if_match: Option<u64>,
+        timeout: Duration,
     ) -> Result<(u16, serde_json::Value), String> {
         use graphhelm_model_gateway::transport::{HttpTransport, TransportRequest};
         let mut headers = vec![(
@@ -412,7 +450,7 @@ impl ApiClient {
             url: super::url::join(&endpoint.url, path)?,
             headers,
             body: payload,
-            timeout: REQUEST_TIMEOUT,
+            timeout,
         };
         // The transport error's Display never has access to a header value — safe to relay.
         let response = self

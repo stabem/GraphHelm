@@ -1511,8 +1511,11 @@ fn validated_arguments(
 
 /// One tool call: the secret guard first, then exactly one API request; the tool result is
 /// the API envelope verbatim as text content, `isError` mirroring the envelope's `ok`.
-/// How long the MCP `probe` tool waits for the gateway probe (#600 review).
-pub(crate) const PROBE_CALLER_WAIT: std::time::Duration = super::client::REQUEST_TIMEOUT;
+/// #549 / #600 review: how long the MCP `probe` tool waits; longer than the probe's own bound,
+/// so a hung runtime is answered `unavailable` before this client gives up.
+pub(crate) const PROBE_CALLER_WAIT: std::time::Duration =
+    crate::commands::gateway::probe::PROBE_TIMEOUT
+        .saturating_add(std::time::Duration::from_secs(15));
 
 pub(crate) fn call(
     api: &ApiClient,
@@ -2109,7 +2112,7 @@ pub(crate) fn call(
             if let Some(manifest) = str_arg(arguments, "manifest") {
                 path.push_str(&format!("&manifest={}", url::query_value(manifest)));
             }
-            api.request("GET", &path, None, None, None)
+            api.request_waiting("GET", &path, None, None, None, PROBE_CALLER_WAIT)
         }),
         // #223 existence-slice: no required arguments yet (see resolve_contract_schema).
         "resolve_contract" => Ok(api.request(

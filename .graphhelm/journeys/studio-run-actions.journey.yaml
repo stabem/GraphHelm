@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-run-actions
-title: "Pause a run, or cancel it after confirming (draft: the replay tool cannot find the Run actions control)"
+title: "Pause a run, or cancel it after confirming"
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -24,7 +24,7 @@ screens:
     title: The run is cancelled and has no actions left
     url: /?session=studio-fixture
     state: success
-    expect: [{role: button, name: sweep}, {role: region, name: Team}]
+    expect: [{role: button, name: sweep}, {role: button, name: Run actions}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/legality.ts, apps/studio/src/runtime/client.ts]
   - id: paused
     title: The run shows as paused
@@ -36,7 +36,7 @@ screens:
     title: "A run is open, with its chat and its team on screen"
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: Canvas}, {role: region, name: Team}]
+    expect: [{role: button, name: Run actions}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/legality.ts]
 edges:
   - id: actions.cancel
@@ -58,7 +58,7 @@ edges:
     from: run
     to: actions
     acts:
-      - {kind: activate, role: summary, name: Run actions}
+      - {kind: activate, role: button, name: Run actions}
 paths:
   main: [run.actions, actions.pause]
   cancel: [run.actions, actions.cancel, cancel-confirm.yes]

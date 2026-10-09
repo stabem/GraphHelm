@@ -3170,7 +3170,9 @@ export default function App({
             <div className="dock" ref={dockRef}>
               <span className="canvas-execution-state">Execution / {status.status ?? "State unavailable"}</span>
               <details className="execution-actions" open={runActionsOpen} onToggle={(event) => setRunActionsOpen(event.currentTarget.open)}>
-              <summary>Run actions</summary>
+              {/* #585: a bare <summary> reads as an unnamed group, so no journey could target it by
+                * role and name; it is the button that opens the run's actions. */}
+              <summary role="button" aria-expanded={runActionsOpen}>Run actions</summary>
               <div className="execution-menu">
               {!ended && (<>
               <span title={legality.pause ?? "Nothing new starts; work already in flight finishes and is joined — the run exits by quiescence."}>

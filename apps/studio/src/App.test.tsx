@@ -672,7 +672,10 @@ async function open(client: ReturnType<typeof stubClient>, modelContext: ModelCo
     />,
   );
   await screen.findByLabelText("Projects");
-  await userEvent.click(screen.getByText("Run actions"));
+  // #585: the run's actions open from a control with a role and a name, so a journey can target it.
+  const runActions = screen.getByRole("button", { name: "Run actions" });
+  await userEvent.click(runActions);
+  expect(runActions).toHaveAttribute("aria-expanded", String(runActions.closest("details")?.open));
   // These conversation journeys explicitly open the optional pane.
   if (conversation && screen.getByRole("button", { name: "Toggle conversation" }).getAttribute("aria-expanded") !== "true") {
     await userEvent.click(screen.getByRole("button", { name: "Toggle conversation" }));

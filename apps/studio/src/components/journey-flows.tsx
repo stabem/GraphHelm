@@ -1,14 +1,25 @@
 /**
  * The owner's journey approval screen (#353, reshaped by #465): a compact list of the project's
- * journey flows, and the selected one as plain steps — what it Does and what it Sees — with Watch
- * (#462: a headed browser plays the journey while its current step lights here) and Approve
+ * journey flows, and the selected one as a flowchart of its screens (#519) — each card the screen
+ * as the journey's run rendered it, how that step fared, what it Does and what it Sees — with Watch
+ * (#462: the journey plays while its current step lights here and shows the live page) and Approve
  * (`POST /v1/journey-flows/{id}/approve`, the same path as `graphhelm journey approve`). Approve is
  * offered only when the Runtime says it would be accepted. Finding codes, pointers and URLs are the
  * agent's business; the owner reads what to do in words.
  */
 import { useEffect, useRef, useState } from "react";
 
-import type { JourneyFlowEdge, JourneyFlowScreen, JourneyFlowView, JourneyFlowsView, LiveSession } from "../runtime/types";
+import type { JourneyFlowEdge, JourneyFlowScreen, JourneyFlowView, JourneyFlowsView, JourneyFrame, JourneyRunView, LiveSession } from "../runtime/types";
+import { JourneyFlowchart, pathsOf } from "./journey-flowchart";
+
+/** Where a journey's run and its pictures come from (#519): the Runtime client's four reads. */
+export interface JourneyRunSource {
+  /** Start the run, or read the cached one; `force` is Run again. */
+  start: (flowId: string, force: boolean) => Promise<JourneyRunView>;
+  read: (flowId: string) => Promise<JourneyRunView>;
+  screenFrame: (flowId: string, screenId: string) => Promise<JourneyFrame | null>;
+  liveFrame: (sessionId: string, etag: string | null) => Promise<JourneyFrame | null>;
+}
 
 export interface JourneyFlowsProps {
   view: JourneyFlowsView | null;
@@ -24,6 +35,9 @@ export interface JourneyFlowsProps {
   onWatch?: (flowId: string, path?: string) => Promise<void>;
   /** The journey the owner selected (and its status), so the proof map below follows it. */
   onSelect?: (flowId: string, status: JourneyFlowView["status"]) => void;
+  /** Opening a journey runs its test and shows each screen as it was rendered (#519). Absent: the
+   * flowchart is drawn without pictures or results. */
+  run?: JourneyRunSource;
 }
 
 /** A title's trailing parenthetical is a note for the reader (`Name (draft: why)`), not the name. */
@@ -41,33 +55,7 @@ const STATUS_LABEL: Record<JourneyFlowView["status"], string> = {
   unreadable: "Can't be read",
 };
 
-const VERB: Record<string, string> = {
-  activate: "Clicks",
-  submit: "Submits with",
-  navigate: "Follows",
-  enter_text: "Fills in",
-  wait_for: "Waits for",
-  inspect: "Looks at",
-};
-
-const ROLE: Record<string, string> = { textbox: "field", heading: "heading", button: "button", link: "link" };
-
-function actWords(act: { kind: string; name: string }): string {
-  return `${VERB[act.kind] ?? act.kind.replace(/_/g, " ")} “${act.name}”`;
-}
-
-/** What the replay checks on a screen, from its selectors: the detail behind the plain title. */
-function expectWords(screen: JourneyFlowScreen): string {
-  return (screen.expect ?? []).map((item) => `the “${item.name}” ${ROLE[item.role] ?? item.role}`).join(", ");
-}
-
 interface Step { screen: JourneyFlowScreen; arrivedBy: JourneyFlowEdge | null }
-
-/** The flow's paths, `main` first: Approve approves every one of them, so every one is shown. */
-function pathsOf(flow: JourneyFlowView): string[] {
-  const names = Object.keys(flow.paths);
-  return [...names.filter((name) => name === "main"), ...names.filter((name) => name !== "main").sort()];
-}
 
 /** One path as steps: its first screen, then each edge's destination with the edge that leads
  * there. A flow without that path lists its screens. */
@@ -93,6 +81,110 @@ function currentStep(steps: Step[], session: LiveSession | undefined): number {
   return steps.findIndex((step) => step.screen.id === seen);
 }
 
+const RUN_POLL_MS = 1000;
+const LIVE_FRAME_MS = 200;
+
+/** Why a run could not start or finish, in words; the Runtime's closed list of codes picks them. */
+const RUN_REASON: Record<string, string> = {
+  "watch.app_down": "the app it opens isn't running",
+  "watch.launcher_invalid": "the project's app launcher isn't set up right",
+  "driver.observer_missing": "the browser player isn't installed in this project yet",
+  "preview.busy": "another run is still going",
+  "preview.budget_exceeded": "it took longer than allowed",
+};
+
+function runWords(run: JourneyRunView): string {
+  if (run.state === "running") return "Running this journey's test…";
+  if (run.state === "failed") return `Couldn't run this journey's test: ${RUN_REASON[run.reason ?? ""] ?? "something went wrong in the Runtime"}.`;
+  if (run.state !== "ready") return "This journey's test has not run yet.";
+  const result = run.result === "pass" ? "Test passed" : run.result === "drift" ? "The app no longer matches this journey" : run.result === "fail" ? "Test failed" : "Test ran";
+  return run.kind === "preview" ? `${result} (a preview: a draft's run is never proof)` : result;
+}
+
+/** The journey's run (#519): started when the journey is opened, read once a second while it
+ * runs, and each reached screen's picture fetched once per result. Object URLs are revoked when a
+ * picture is replaced and when the journey is left. A Runtime that answers 404 predates the run
+ * routes: `offered` turns false and the flowchart is drawn without a run line. */
+function useJourneyRun(flowId: string, source: JourneyRunSource | undefined): { offered: boolean; run: JourneyRunView | null; frames: Record<string, string>; failure: string | null; again: () => void } {
+  const [run, setRun] = useState<JourneyRunView | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [absent, setAbsent] = useState(false);
+  const [frames, setFrames] = useState<Record<string, string>>({});
+  const [attempt, setAttempt] = useState(0);
+  const held = useRef(new Map<string, { key: string; url: string | null }>());
+  useEffect(() => {
+    if (source === undefined) return undefined;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const fail = (cause: unknown) => {
+      if (cancelled) return;
+      if (typeof cause === "object" && cause !== null && (cause as { httpStatus?: unknown }).httpStatus === 404) setAbsent(true);
+      else setFailure(cause instanceof Error ? cause.message : String(cause));
+    };
+    const take = (next: JourneyRunView) => {
+      if (cancelled) return;
+      setRun(next);
+      setFailure(null);
+      if (next.state === "running") timer = setTimeout(() => { source.read(flowId).then(take, fail); }, RUN_POLL_MS);
+    };
+    source.start(flowId, attempt > 0).then(take, fail);
+    return () => { cancelled = true; if (timer !== undefined) clearTimeout(timer); };
+  }, [flowId, source, attempt]);
+  useEffect(() => {
+    if (source === undefined || run === null) return;
+    for (const [screenId, screen] of Object.entries(run.screens ?? {})) {
+      if (!screen.frame) continue;
+      const key = `${run.digest ?? ""}:${run.commit ?? ""}:${attempt}:${screen.result ?? ""}`;
+      if (held.current.get(screenId)?.key === key) continue;
+      held.current.set(screenId, { key, url: held.current.get(screenId)?.url ?? null });
+      source.screenFrame(flowId, screenId).then((frame) => {
+        const entry = held.current.get(screenId);
+        if (frame === null || entry === undefined || entry.key !== key) return;
+        const url = URL.createObjectURL(frame.blob);
+        if (entry.url !== null) URL.revokeObjectURL(entry.url);
+        entry.url = url;
+        setFrames((before) => ({ ...before, [screenId]: url }));
+      }, () => { held.current.delete(screenId); });
+    }
+  }, [flowId, source, run, attempt]);
+  useEffect(() => {
+    const kept = held.current;
+    return () => {
+      for (const entry of kept.values()) if (entry.url !== null) URL.revokeObjectURL(entry.url);
+      kept.clear();
+    };
+  }, []);
+  return { offered: source !== undefined && !absent, run, frames, failure, again: () => setAttempt((before) => before + 1) };
+}
+
+/** The page a Watch is playing (#519): read five times a second while it plays, and once more
+ * when it stops, because the Runtime keeps the last frame until the session closes. */
+function useLiveFrame(session: LiveSession | undefined, source: JourneyRunSource | undefined): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  const sessionId = session?.frame === true ? session.sessionId : null;
+  const playing = session?.state === "playing";
+  useEffect(() => {
+    if (source === undefined || sessionId === null) { setUrl(null); return undefined; }
+    let cancelled = false;
+    let busy = false;
+    let etag: string | null = null;
+    const tick = () => {
+      if (busy) return;
+      busy = true;
+      source.liveFrame(sessionId, etag).then((frame) => {
+        if (cancelled || frame === null) return;
+        etag = frame.etag;
+        setUrl(URL.createObjectURL(frame.blob));
+      }, () => { /* the next tick retries */ }).finally(() => { busy = false; });
+    };
+    tick();
+    const timer = playing ? setInterval(tick, LIVE_FRAME_MS) : undefined;
+    return () => { cancelled = true; if (timer !== undefined) clearInterval(timer); };
+  }, [source, sessionId, playing]);
+  useEffect(() => () => { if (url !== null) URL.revokeObjectURL(url); }, [url]);
+  return url;
+}
+
 function watchWords(session: LiveSession, steps: Step[], current: number): string {
   const total = session.stepCount ?? steps.length;
   const at = current >= 0 ? current + 1 : (session.stepIndex ?? 0) + 1;
@@ -115,7 +207,9 @@ function watchFailure(cause: unknown): string {
   return `Can't play this journey: ${message}`;
 }
 
-function Detail({ flow, onApprove, onWatch, session }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void>; onWatch?: (flowId: string, path?: string) => Promise<void>; session?: LiveSession }) {
+function Detail({ flow, onApprove, onWatch, session, source }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void>; onWatch?: (flowId: string, path?: string) => Promise<void>; session?: LiveSession; source?: JourneyRunSource }) {
+  const { offered, run, frames, failure: runFailure, again } = useJourneyRun(flow.id, source);
+  const liveFrame = useLiveFrame(session, source);
   const [approving, setApproving] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -125,6 +219,9 @@ function Detail({ flow, onApprove, onWatch, session }: { flow: JourneyFlowView; 
   const title = splitTitle(flow.title ?? flow.id);
   const paths = pathsOf(flow);
   const playing = session?.state === "playing";
+  // The path a Watch is playing, as steps, to say "step 2 of 3" and to light its card.
+  const watched = stepsOf(flow, session?.path || "main");
+  const current = currentStep(watched, session);
   const approve = () => {
     setApproving(true);
     setError(null);
@@ -159,40 +256,23 @@ function Detail({ flow, onApprove, onWatch, session }: { flow: JourneyFlowView; 
       {error !== null && <p className="journey-failure" role="alert">{error}</p>}
       {flow.drift.length > 0 && <p className="journey-flow-note">The app changed since this journey was recorded; watch it to see where.</p>}
       {blocked && <p className="journey-flow-note">The agent still has to fix this journey before you can approve it.</p>}
-      {(paths.length === 0 ? ["main"] : paths).map((path) => {
-        const steps = stepsOf(flow, path);
-        const here = session !== undefined && (session.path || "main") === path ? session : undefined;
-        const current = currentStep(steps, here);
-        return (
-          <div key={path} className="journey-flow-path">
-            {path !== "main" && (
-              <div className="journey-flow-path-head">
-                <h4>Also approved: the “{path}” way</h4>
-                {onWatch && <button type="button" onClick={() => watch(path)} disabled={starting || playing}>{`Watch “${path}”`}</button>}
-              </div>
-            )}
-            <ol className="journey-flow-steps" aria-label={path === "main" ? "Steps" : `Steps: ${path}`}>
-              {steps.map((step, index) => (
-                <li key={step.screen.id} className="journey-flow-step" aria-current={index === current ? "step" : undefined}>
-                  <span className="journey-flow-step-number">{index + 1}</span>
-                  <span className="journey-flow-step-text">
-                    {step.arrivedBy && (step.arrivedBy.acts ?? []).length > 0 && (
-                      <span className="journey-does"><span className="journey-label">Does</span> {(step.arrivedBy.acts ?? []).map(actWords).join(", then ")}</span>
-                    )}
-                    {/* #517: the screen's own title is what the owner reads; what the replay checks
-                        folds behind "details". A screen without a title reads by those checks. */}
-                    <span className="journey-sees"><span className="journey-label">Sees</span> {step.screen.title ?? (expectWords(step.screen) || step.screen.id)}</span>
-                    {step.screen.title !== undefined && expectWords(step.screen) !== "" && (
-                      <details className="journey-sees-details"><summary>details</summary>{expectWords(step.screen)}</details>
-                    )}
-                  </span>
-                </li>
-              ))}
-            </ol>
-            {here && <p className="journey-flow-watch" role="status">{watchWords(here, steps, current)}</p>}
-          </div>
-        );
-      })}
+      {offered && (
+        <div className="journey-flow-run">
+          <p role="status" data-state={run?.state} data-result={run?.result}>
+            {runFailure !== null ? `Couldn't run this journey's test: ${runFailure}` : run === null ? "Starting this journey's test…" : runWords(run)}
+            {run?.state === "ready" && run.ranAt !== undefined && <> · ran <time dateTime={run.ranAt}>{new Date(run.ranAt).toLocaleString()}</time></>}
+          </p>
+          <button type="button" onClick={again} disabled={run?.state === "running" || (run === null && runFailure === null)}>Run again</button>
+        </div>
+      )}
+      {paths.filter((path) => path !== "main").map((path) => (
+        <div key={path} className="journey-flow-path-head">
+          <h4>Also approved: the “{path}” way</h4>
+          {onWatch && <button type="button" onClick={() => watch(path)} disabled={starting || playing}>{`Watch “${path}”`}</button>}
+        </div>
+      ))}
+      <JourneyFlowchart flow={flow} run={run} frames={frames} current={watched[current]?.screen.id ?? null} liveFrame={liveFrame} />
+      {session !== undefined && <p className="journey-flow-watch" role="status">{watchWords(session, watched, current)}</p>}
     </article>
   );
 }
@@ -204,7 +284,7 @@ function flowOf(flows: JourneyFlowView[], journeyId: string | null | undefined):
   return owners.sort((a, b) => b.id.length - a.id.length)[0]?.id ?? null;
 }
 
-export function JourneyFlows({ view, failure = null, onApprove, focusFlowId = null, sessions = null, onWatch, onSelect }: JourneyFlowsProps) {
+export function JourneyFlows({ view, failure = null, onApprove, focusFlowId = null, sessions = null, onWatch, onSelect, run }: JourneyFlowsProps) {
   const focused = view === null ? null : flowOf(view.flows, focusFlowId);
   const [picked, setPicked] = useState<string | null>(null);
   const detail = useRef<HTMLDivElement>(null);
@@ -242,7 +322,7 @@ export function JourneyFlows({ view, failure = null, onApprove, focusFlowId = nu
         ))}
       </ul>
       <div ref={detail} tabIndex={-1} className="journey-flow-detail">
-        <Detail key={selected.id} flow={selected} onApprove={onApprove} {...(onWatch ? { onWatch } : {})} {...(watching ? { session: watching } : {})} />
+        <Detail key={selected.id} flow={selected} onApprove={onApprove} {...(onWatch ? { onWatch } : {})} {...(watching ? { session: watching } : {})} {...(run ? { source: run } : {})} />
       </div>
     </section>
   );

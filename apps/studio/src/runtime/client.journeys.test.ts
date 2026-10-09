@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { DisconnectedError, RuntimeClient, RuntimeError } from "./client";
 
-interface Seen { url: string; headers: Record<string, string> }
+interface Seen { url: string; headers: Record<string, string>; method?: string; body?: unknown }
 
 function client(reply: () => Response) {
   const seen: Seen[] = [];
   const fetchImpl = (async (url: string, init: RequestInit = {}) => {
-    seen.push({ url, headers: (init.headers ?? {}) as Record<string, string> });
+    seen.push({ url, headers: (init.headers ?? {}) as Record<string, string>, method: init.method, body: init.body ?? undefined });
     return reply();
   }) as unknown as typeof fetch;
   return { seen, runtime: new RuntimeClient("secret-token", { fetch: fetchImpl }) };
@@ -78,6 +78,40 @@ describe("RuntimeClient.readImage", () => {
     const { runtime } = client(() => bytes("image/png"));
     runtime.dispose();
     await expect(runtime.readImage("r", "e")).rejects.toBeInstanceOf(DisconnectedError);
+  });
+});
+
+// #519: a journey's run and its frames go through the routes agreed on the issue. Regressions
+// caught: Run again that does not force, a frame read that drops the tag (so every poll downloads
+// the picture again), "no frame yet" surfaced as an error, and the token outside the header.
+describe("RuntimeClient journey run and frames", () => {
+  it("reads and starts the run on /v1/journey-flows/{id}/preview, forcing only on Run again", async () => {
+    const { seen, runtime } = client(() => json({ state: "running" }));
+    await expect(runtime.journeyRun("a b")).resolves.toEqual({ state: "running" });
+    await runtime.startJourneyRun("a b");
+    await runtime.startJourneyRun("a b", true);
+    expect(seen.map((request) => [request.method, request.url, request.body])).toEqual([
+      ["GET", "/v1/journey-flows/a%20b/preview", undefined],
+      ["POST", "/v1/journey-flows/a%20b/preview", "{}"],
+      ["POST", "/v1/journey-flows/a%20b/preview", '{"force":true}'],
+    ]);
+  });
+  it("returns a frame with its tag and asks for a newer one with If-None-Match", async () => {
+    const { seen, runtime } = client(() => new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "image/jpeg", etag: '"7"' } }));
+    const first = await runtime.liveFrame("s 1");
+    expect(first?.blob.size).toBe(3);
+    expect(first?.etag).toBe('"7"');
+    await runtime.liveFrame("s 1", '"7"');
+    await runtime.journeyScreenFrame("checkout", "pay");
+    expect(seen.map((request) => request.url)).toEqual(["/v1/journeys/sessions/s%201/frame", "/v1/journeys/sessions/s%201/frame", "/v1/journey-flows/checkout/screens/pay/frame"]);
+    expect(seen[0].headers["If-None-Match"]).toBeUndefined();
+    expect(seen[1].headers["If-None-Match"]).toBe('"7"');
+    expect(seen[1].headers.Authorization).toBe("Bearer secret-token");
+  });
+  it.each([304, 204, 404])("reads %s on a frame route as no frame, and refuses anything else", async (status) => {
+    await expect(client(() => new Response(null, { status })).runtime.liveFrame("s-1", '"7"')).resolves.toBeNull();
+    await expect(client(() => bytes("image/jpeg", 500)).runtime.journeyScreenFrame("checkout", "pay")).rejects.toBeInstanceOf(RuntimeError);
+    await expect(client(() => json({ nope: true })).runtime.journeyScreenFrame("checkout", "pay")).rejects.toThrow(/image/);
   });
 });
 

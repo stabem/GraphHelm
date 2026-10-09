@@ -30,6 +30,8 @@ import type {
   GraphTopology,
   JourneysView,
   JourneyFlowsView,
+  JourneyFrame,
+  JourneyRunView,
   ModelRouteSummary,
   NativeChatPage,
   NativeChatRequest,
@@ -1950,6 +1952,45 @@ export class RuntimeClient {
   async readImage(executionId: string, evidenceId: string): Promise<Blob> {
     const id = checkedId(executionId, "executionId");
     const evidence = checkedId(evidenceId, "evidenceId");
+    const image = await this.#image(`/v1/executions/${encodeURIComponent(id)}/evidence/${encodeURIComponent(evidence)}`, "The Runtime did not return an image for this evidence.");
+    if (image === null) throw new RuntimeError("The Runtime did not return an image for this evidence.", 204, []);
+    return image.blob;
+  }
+
+  /**
+   * The run a journey gets when it is opened (#519): `GET /v1/journey-flows/{id}/preview`. An
+   * approved flow's run is its replay, a draft's is a preview that is never proof.
+   */
+  async journeyRun(flowId: string): Promise<JourneyRunView> {
+    const id = checkedId(flowId, "flowId");
+    return this.#request<JourneyRunView>({ method: "GET", path: `/v1/journey-flows/${encodeURIComponent(id)}/preview`, timeoutMs: RUNTIME_READ_TIMEOUT_MS });
+  }
+
+  /** Start that run, or read the cached one (#519): `POST /v1/journey-flows/{id}/preview`, the same
+   * body as the GET. `force` is the owner's Run again. */
+  async startJourneyRun(flowId: string, force = false): Promise<JourneyRunView> {
+    const id = checkedId(flowId, "flowId");
+    return this.#request<JourneyRunView>({ method: "POST", path: `/v1/journey-flows/${encodeURIComponent(id)}/preview`, body: force ? { force: true } : {}, timeoutMs: RUNTIME_READ_TIMEOUT_MS });
+  }
+
+  /** One screen as the run rendered it (#519): `GET /v1/journey-flows/{id}/screens/{screen}/frame`.
+   * `null` when the Runtime has no frame for it, or none newer than `etag`. */
+  async journeyScreenFrame(flowId: string, screenId: string, etag: string | null = null): Promise<JourneyFrame | null> {
+    const id = checkedId(flowId, "flowId");
+    const screen = checkedJourneyId(screenId, "screenId");
+    return this.#image(`/v1/journey-flows/${encodeURIComponent(id)}/screens/${encodeURIComponent(screen)}/frame`, "The Runtime did not return an image for this screen.", { etag });
+  }
+
+  /** The page a Watch is playing, as of now (#519): `GET /v1/journeys/sessions/{id}/frame`.
+   * `null` when there is no frame yet, none newer than `etag`, or the session is gone. */
+  async liveFrame(sessionId: string, etag: string | null = null): Promise<JourneyFrame | null> {
+    const id = checkedId(sessionId, "sessionId");
+    return this.#image(`/v1/journeys/sessions/${encodeURIComponent(id)}/frame`, "The Runtime did not return an image for this session.", { etag });
+  }
+
+  /** Image bytes from a route that answers them raw. On a frame route (`frame` given), 304, 204 and
+   * 404 mean "nothing to show yet" and read as `null`; otherwise every non-2xx is a refusal. */
+  async #image(path: string, notAnImage: string, frame?: { etag: string | null }): Promise<JourneyFrame | null> {
     const token = this.#token;
     if (token === null) throw new DisconnectedError();
     const controller = new AbortController();
@@ -1964,14 +2005,15 @@ export class RuntimeClient {
     });
     try {
       const response = await Promise.race([
-        this.#fetch(`${this.#baseUrl}/v1/executions/${encodeURIComponent(id)}/evidence/${encodeURIComponent(evidence)}`, {
+        this.#fetch(`${this.#baseUrl}${path}`, {
           method: "GET",
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${token}`, ...(frame?.etag ? { "If-None-Match": frame.etag } : {}) },
           signal: controller.signal,
         }),
         deadline,
         cancelled,
       ]);
+      if (frame !== undefined && (response.status === 304 || response.status === 204 || response.status === 404)) return null;
       if (!response.ok) {
         throw new RuntimeError(
           response.status === 401 ? "The bearer token was refused." : `The Runtime replied ${response.status}.`,
@@ -1981,9 +2023,10 @@ export class RuntimeClient {
       }
       const type = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
       if (!IMAGE_TYPES.includes(type)) {
-        throw new RuntimeError("The Runtime did not return an image for this evidence.", response.status, []);
+        throw new RuntimeError(notAnImage, response.status, []);
       }
-      return await Promise.race([response.blob(), deadline, cancelled]);
+      const blob = await Promise.race([response.blob(), deadline, cancelled]);
+      return { blob, etag: response.headers.get("etag") };
     } catch (error) {
       if (error instanceof DisconnectedError || error instanceof RuntimeError) throw error;
       if (error instanceof RequestDeadlineError || deadlineReached) {

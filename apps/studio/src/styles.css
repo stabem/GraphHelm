@@ -2854,10 +2854,45 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .journey-flow-row[data-status="draft"] .journey-flow-row-status { color: var(--text); }
 .journey-flow-detail { outline: none; }
 .journey-flow-note { margin: 4px 0 0; font-size: 0.85rem; color: var(--dim); }
-.journey-flow-steps { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
-.journey-flow-step { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; align-items: start; padding: 6px 8px; border: 1px solid transparent; border-radius: var(--r-sm); }
-.journey-flow-step[aria-current="step"] { border-color: var(--signal); background: var(--signal-wash); }
-.journey-flow-step-number { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-pill); border: 1px solid var(--edge); font-size: 12px; color: var(--dim); }
+/* #519: the selected journey is a flowchart. Cards sit on a fixed grid (the component sets each
+   card's left/top/size), arrows are one SVG under them, and the chart scrolls in its own box. */
+.journey-chart-scroll { margin-top: 10px; overflow: auto; padding: 4px 20px; }
+.journey-chart { position: relative; }
+.journey-chart-arrows { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.journey-chart-arrows path { fill: none; stroke: var(--edge); stroke-width: 1.5; }
+.journey-chart-arrows marker path { fill: var(--dim); stroke: none; }
+.journey-chart-arrows path[data-result="fail"] { stroke: var(--danger); }
+.journey-chart-arrows path[data-result="pass"] { stroke: var(--dim); }
+.journey-flow-steps { margin: 0; padding: 0; list-style: none; }
+.journey-flow-step { position: absolute; border: 1px solid var(--edge); border-radius: var(--r-sm); background: var(--surface); overflow: hidden; }
+.journey-flow-step[aria-current="step"] { border-color: var(--signal); background: var(--signal-wash); box-shadow: 0 0 0 2px var(--signal-wash); }
+.journey-card { display: flex; flex-direction: column; gap: 6px; width: 100%; height: 100%; padding: 0 0 8px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: zoom-in; }
+.journey-card:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+.journey-card-frame { display: block; flex: 0 0 auto; background: var(--signal-wash); border-bottom: 1px solid var(--edge); overflow: hidden; }
+.journey-card-frame img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top left; }
+.journey-card[data-state="running"] .journey-card-frame { animation: journey-card-pulse 1.2s ease-in-out infinite; }
+@keyframes journey-card-pulse { 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) { .journey-card[data-state="running"] .journey-card-frame { animation: none; } }
+.journey-card-head { display: flex; align-items: center; gap: 8px; padding: 0 8px; }
+.journey-card-result { font-size: 12px; padding: 1px 8px; border-radius: var(--r-pill); border: 1px solid var(--edge); color: var(--dim); white-space: nowrap; }
+.journey-card-result[data-state="pass"] { color: var(--text); border-color: var(--signal); }
+.journey-card-result[data-state="fail"], .journey-card-result[data-state="drift"] { color: var(--danger); border-color: var(--danger); }
+.journey-card .journey-flow-step-text { padding: 0 8px; overflow: hidden; }
+.journey-card .journey-does, .journey-card .journey-sees { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.journey-flow-run { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; font-size: 0.85rem; }
+.journey-flow-run p { margin: 0; }
+.journey-flow-run p[data-result="fail"], .journey-flow-run p[data-result="drift"], .journey-flow-run p[data-state="failed"] { color: var(--danger); }
+/* The expanded card: over the Studio, never a window outside it. */
+.journey-zoom-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: rgba(0, 0, 0, 0.55); cursor: zoom-out; }
+.journey-zoom { display: flex; flex-direction: column; gap: 8px; max-width: min(1280px, 100%); max-height: 100%; padding: 14px 16px; border: 1px solid var(--edge); border-radius: var(--r-sm); background: var(--surface); color: var(--text); overflow: auto; cursor: auto; }
+.journey-zoom-head { display: flex; align-items: center; gap: 10px; }
+.journey-zoom-head h4 { margin: 0; flex: 1 1 auto; font-size: 15px; }
+.journey-zoom-why { margin: 0; color: var(--danger); font-size: 13px; }
+.journey-zoom-frame { min-height: 120px; border: 1px solid var(--edge); background: var(--signal-wash); }
+.journey-zoom-frame img { display: block; max-width: 100%; height: auto; }
+.journey-zoom-frame p { margin: 0; padding: 40px 16px; text-align: center; color: var(--dim); }
+.journey-zoom p { margin: 0; }
+.journey-flow-step-number { display: inline-grid; place-items: center; flex: 0 0 auto; width: 22px; height: 22px; border-radius: var(--r-pill); border: 1px solid var(--edge); font-size: 12px; color: var(--dim); }
 .journey-flow-step[aria-current="step"] .journey-flow-step-number { border-color: var(--signal); color: var(--text); }
 .journey-flow-step-text { display: grid; gap: 2px; font-size: 13px; }
 /* #517: what the replay checks on a step's screen, folded under its plain title. */
@@ -2866,8 +2901,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .journey-flow-watch { margin: 8px 0 0; font-size: 0.85rem; }
 .journey-flow-watch-failure { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 10px; border-left: 3px solid var(--danger); font-size: 0.85rem; }
 .journey-flow-watch-failure p { margin: 0; flex: 1 1 200px; }
-.journey-flow-path + .journey-flow-path { margin-top: 12px; padding-top: 8px; border-top: 1px dashed var(--edge); }
-.journey-flow-path-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.journey-flow-path-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
 .journey-flow-path-head h4 { margin: 0; font-size: 13px; }
 
 /* Tab panels preserve the canvas height without changing the column layout. */

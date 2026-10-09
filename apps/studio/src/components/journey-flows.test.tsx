@@ -8,7 +8,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 
 import { fastUserEvent } from "../test/user-event";
 import type { JourneyFlowView, JourneyFlowsView, LiveSession } from "../runtime/types";
-import { JourneyFlows } from "./journey-flows";
+import { JourneyFlows, type JourneyRunSource } from "./journey-flows";
 
 const userEvent = fastUserEvent();
 afterEach(cleanup);
@@ -77,18 +77,19 @@ describe("JourneyFlows", () => {
 
   // #517: a titled screen read as its selector list ("the “Cart” heading, …") instead of its
   // plain title; the list is what the replay checks and belongs behind a toggle.
-  it("says what a titled screen shows by its title and folds the checked controls under details", () => {
+  it("says what a titled screen shows by its title and folds the checked controls under details", async () => {
     const base = flow("checkout");
     const titled: JourneyFlowsView = { flows: [{ ...base, screens: base.screens.map((item) => item.id === "cart" ? { ...item, title: "Your cart, with the total" } : item) }] };
     render(<JourneyFlows view={titled} onApprove={vi.fn()} />);
     const [first, second] = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
     expect(within(first!).getByText("Sees").parentElement).toHaveTextContent(/^Sees Your cart, with the total$/);
-    const details = within(first!).getByRole("group");
+    // A screen without a title still reads by what is checked.
+    expect(second).toHaveTextContent("Sees the “Password” field");
+    // #519: the checked controls fold inside the expanded card.
+    await userEvent.click(within(first!).getByRole("button"));
+    const details = within(screen.getByRole("dialog", { name: "Step 1: Your cart, with the total" })).getByRole("group");
     expect(details).not.toHaveAttribute("open");
     expect(details).toHaveTextContent(/^detailsthe “Cart” heading$/);
-    // A screen without a title still reads by what is checked, with nothing to fold.
-    expect(second).toHaveTextContent("Sees the “Password” field");
-    expect(within(second!).queryByRole("group")).toBeNull();
   });
 
   it("offers Approve only where the Runtime would accept it, and says why not in words", async () => {
@@ -161,16 +162,22 @@ describe("JourneyFlows paths", () => {
     paths: { main: ["cart.checkout", "pay.submit"], cancel: ["cart.cancel"] },
   })] };
 
-  it("shows every path with its own steps, and watches the one asked for", async () => {
+  it("draws every path in one flowchart, a second way as a side branch, and watches the one asked for", async () => {
     const onWatch = vi.fn(async () => undefined);
     render(<JourneyFlows view={twoWays} onApprove={vi.fn()} onWatch={onWatch} />);
     expect(within(screen.getByRole("list", { name: "Journeys" })).getByRole("button")).toHaveTextContent("3 steps · 2 ways");
-    expect(within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem")).toHaveLength(3);
     expect(screen.getByRole("heading", { name: "Also approved: the “cancel” way" })).toBeInTheDocument();
-    expect(within(screen.getByRole("list", { name: "Steps: cancel" })).getAllByRole("listitem").map((step) => step.textContent)).toEqual([
+    // The shared first screen is drawn once; the cancel way adds its own screen below the main row.
+    const cards = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
+    expect(cards.map((card) => card.textContent)).toEqual([
       "1Sees the “Cart” heading",
-      "2Does Clicks “Cancel order”Sees the “Order cancelled” heading",
+      "2Does Clicks “Checkout”Sees the “Password” field",
+      "3Does Fills in “Password”, then Submits with “Pay now”Sees the “Order placed” heading",
+      "4Does Clicks “Cancel order”Sees the “Order cancelled” heading",
     ]);
+    expect(cards.map((card) => card.style.top)).toEqual(["0px", "0px", "0px", cards[3]!.style.top]);
+    expect(cards[3]!.style.top).not.toBe("0px");
+    expect(cards[3]!.style.left).toBe(cards[1]!.style.left);
     await userEvent.click(screen.getByRole("button", { name: "Watch “cancel”" }));
     expect(onWatch).toHaveBeenCalledWith("checkout", "cancel");
   });
@@ -178,9 +185,8 @@ describe("JourneyFlows paths", () => {
   it("lights the watched step only on the path being played", () => {
     render(<JourneyFlows view={twoWays} onApprove={vi.fn()} onWatch={vi.fn()}
       sessions={[watchRow({ path: "cancel", edge: "cart.cancel", actIndex: 0, stepCount: 2 })]} />);
-    expect(within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem").every((step) => !step.hasAttribute("aria-current"))).toBe(true);
-    expect(within(screen.getByRole("list", { name: "Steps: cancel" })).getAllByRole("listitem").map((step) => step.getAttribute("aria-current")))
-      .toEqual([null, "step"]);
+    expect(within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem").map((step) => step.getAttribute("aria-current")))
+      .toEqual([null, null, null, "step"]);
     expect(screen.getByRole("status")).toHaveTextContent("Playing step 2 of 2…");
   });
 });
@@ -267,5 +273,118 @@ describe("JourneyFlows focus", () => {
   it("keeps the default selection for an id no flow has", () => {
     render(<JourneyFlows view={view} onApprove={vi.fn()} focusFlowId="no-such-flow" />);
     expect(screen.getByRole("article", { name: "Journey Flow checkout" })).toBeInTheDocument();
+  });
+});
+
+// #519 (owner: opening a journey runs its test; each card is the emulated screen; a click expands
+// it inside the Studio). Regressions caught: a journey opened without its test starting, a card
+// without the picture or the result of its step, a failure shown as a code instead of words, a
+// card that opens a window instead of an in-app view, a Watch whose live page never shows, and a
+// Run again that reads the cache. Cost: jsdom render, fake timers for the one-second poll, no network.
+describe("JourneyFlows run", () => {
+  const one: JourneyFlowsView = { flows: [flow("checkout")] };
+  const frame = (name: string) => ({ blob: new Blob([name], { type: "image/jpeg" }), etag: `"${name}"` });
+  const source = (extra: Partial<JourneyRunSource> = {}): JourneyRunSource => ({
+    start: vi.fn(async () => ({ state: "ready" as const, kind: "preview" as const, digest: "d1", result: "fail" as const, ranAt: "2026-10-08T21:00:00Z",
+      screens: { cart: { frame: true, result: "pass" as const }, pay: { frame: true, result: "fail" as const, reason: "expect_missing", seen: "Sign in" }, done: { frame: false, reason: "not_reached" } },
+      edges: { "cart.checkout": { result: "pass" as const } } })),
+    read: vi.fn(async () => ({ state: "none" as const })),
+    screenFrame: vi.fn(async (_flow: string, screenId: string) => frame(screenId)),
+    liveFrame: vi.fn(async () => null),
+    ...extra,
+  });
+  const urls = () => {
+    const made: string[] = [];
+    vi.stubGlobal("URL", Object.assign(URL, {
+      createObjectURL: vi.fn((blob: Blob) => { const url = `blob:frame-${made.length}-${blob.size}`; made.push(url); return url; }),
+      revokeObjectURL: vi.fn(),
+    }));
+    return made;
+  };
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  it("runs the journey's test when it is opened and shows each card's picture and result in words", async () => {
+    urls();
+    const run = source();
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={run} />);
+    expect(run.start).toHaveBeenCalledWith("checkout", false);
+    const cards = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
+    await waitFor(() => expect(cards[0]!.querySelector("img")).not.toBeNull());
+    expect(cards.map((card) => card.textContent)).toEqual([
+      "1PassedSees the “Cart” heading",
+      "2FailedDoes Clicks “Checkout”Sees the “Password” field",
+      "3Not reachedDoes Fills in “Password”, then Submits with “Pay now”Sees the “Order placed” heading",
+    ]);
+    expect(cards[2]!.querySelector("img")).toBeNull();
+    expect(run.screenFrame).toHaveBeenCalledTimes(2);
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent(/^Test failed \(a preview: a draft's run is never proof\) · ran /);
+    expect(screen.getByRole("region", { name: "Journey flows" }).textContent).not.toContain("expect_missing");
+  });
+
+  it("expands a card inside the Studio with the reason in words, and closes on Escape or a click outside", async () => {
+    urls();
+    const open = vi.spyOn(window, "open");
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source()} />);
+    const cards = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
+    await waitFor(() => expect(cards[1]!.querySelector("img")).not.toBeNull());
+    await userEvent.click(within(cards[1]!).getByRole("button"));
+    const dialog = screen.getByRole("dialog", { name: "Step 2: pay" });
+    expect(dialog).toHaveTextContent("Why: something this screen should show was not there (the page showed: Sign in).");
+    expect(within(dialog).getByRole("img", { name: "The screen at step 2" })).toHaveAttribute("src", cards[1]!.querySelector("img")!.getAttribute("src"));
+    expect(open).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await userEvent.click(within(cards[0]!).getByRole("button"));
+    await userEvent.click(screen.getByRole("dialog").parentElement!);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("reads a running test once a second, fills cards as screens are reached, and Run again forces a new run", async () => {
+    urls();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const running = { state: "running" as const, digest: "d1", current: "pay", screens: { cart: { frame: true, result: "pass" as const } } };
+    const ready = { state: "ready" as const, kind: "replay" as const, digest: "d1", result: "pass" as const,
+      screens: { cart: { frame: true, result: "pass" as const }, pay: { frame: true, result: "pass" as const }, done: { frame: true, result: "pass" as const } } };
+    const run = source({ start: vi.fn(async () => running), read: vi.fn(async () => ready) });
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={run} />);
+    const cards = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
+    await waitFor(() => expect(cards[1]).toHaveTextContent("Running…"));
+    expect(screen.getByRole("status")).toHaveTextContent("Running this journey's test…");
+    expect(screen.getByRole("button", { name: "Run again" })).toBeDisabled();
+    expect(run.read).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1000);
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^Test passed$/));
+    expect(run.read).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(cards[2]!.querySelector("img")).not.toBeNull());
+    await userEvent.click(screen.getByRole("button", { name: "Run again" }));
+    expect(run.start).toHaveBeenLastCalledWith("checkout", true);
+  });
+
+  it("says in words why the test could not run", async () => {
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start: vi.fn(async () => ({ state: "failed" as const, reason: "watch.app_down" })) })} />);
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Couldn't run this journey's test: the app it opens isn't running."));
+    expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
+  });
+
+  it("draws the flowchart without a run line on a Runtime that has no run route", async () => {
+    const start = vi.fn(async () => { throw Object.assign(new Error("The Runtime replied 404."), { httpStatus: 404 }); });
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start })} />);
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
+    expect(within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem")).toHaveLength(3);
+  });
+
+  it("shows the live page on the card a Watch is playing", async () => {
+    const made = urls();
+    const liveFrame = vi.fn(async () => frame("live-page"));
+    render(<JourneyFlows view={one} onApprove={vi.fn()} onWatch={vi.fn()} run={source({ liveFrame, start: vi.fn(async () => ({ state: "none" as const })) })}
+      sessions={[watchRow({ edge: "cart.checkout", actIndex: 0, frame: true })]} />);
+    const cards = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
+    await waitFor(() => expect(cards[1]!.querySelector("img")).not.toBeNull());
+    expect(liveFrame).toHaveBeenCalledWith("w1", null);
+    expect(cards[1]).toHaveAttribute("aria-current", "step");
+    expect(cards[1]!.querySelector("img")!.getAttribute("src")).toBe(made[made.length - 1]);
+    expect(cards[0]!.querySelector("img")).toBeNull();
   });
 });

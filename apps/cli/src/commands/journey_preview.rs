@@ -406,9 +406,18 @@ fn watch_budget(
 /// then store the run as `failed / preview.runner_lost` (`preview.budget_exceeded` past the
 /// budget) without the record, so it is stopped once.
 fn reap_lost(project: &Path, dir: &Path) -> Option<Value> {
+    reap_lost_from(project, dir, || read_state(dir))
+}
+
+/// [`reap_lost`] from `read`, the state file's reads in order (a test supplies them).
+fn reap_lost_from(
+    project: &Path,
+    dir: &Path,
+    read: impl FnMut() -> Option<Value>,
+) -> Option<Value> {
     // Settled first (#586): a run that finished between the read and the liveness check is read
     // as it finished, and is never reaped.
-    let mut state = read_settled(|| read_state(dir))?;
+    let mut state = read_settled(read)?;
     if state["state"] != "running" || runner_alive(&state) || state["launched"].is_null() {
         return Some(state);
     }
@@ -934,8 +943,8 @@ fn sha_of(text: &str) -> String {
 mod tests {
     use super::{
         Guard, JourneyPreviewArgs, body, failed_reason, plain_id, proof_args, read_settled,
-        read_state, reap_lost, runner_alive, save_state, severity, step_reason, unsealed_proof,
-        watch_budget,
+        read_state, reap_lost, reap_lost_from, runner_alive, save_state, severity, step_reason,
+        unsealed_proof, watch_budget,
     };
     use serde_json::{Value, json};
     use std::path::Path;
@@ -1107,6 +1116,64 @@ mod tests {
         assert!(!unsealed_proof(&no_execution, &approved));
     }
 
+    /// #586 (the #585 sweep on main: five flows read `failed / internal` while their stored state
+    /// was `ready` seconds later): a reader that saw `running` and then finds the runner gone must
+    /// answer what the runner stored on its way out, never a failure. Catches the reader judging
+    /// a finished run by the state it read before the run finished. A runner that is really dead
+    /// still reads `failed / internal`, and a live one is read once. Cost: four process listings.
+    #[test]
+    fn a_reader_racing_a_finishing_runner_answers_what_the_runner_stored() {
+        let flow = json!({"status":"draft"});
+        let now = chrono::Utc::now().to_rfc3339();
+        let running = |pid: u32| {
+            json!({"preview":true,"digest":"sha256:aa","commit":"c1",
+            "state":"running","pid":pid,"startedAt":now,"screens":{},"edges":{}})
+        };
+        // No process has this pid, here or on Linux: the runner is gone.
+        let gone = running(u32::MAX);
+        let ready = json!({"preview":true,"digest":"sha256:aa","commit":"c1","state":"ready",
+            "result":"pass","pid":u32::MAX,"startedAt":now,"ranAt":now,"screens":{},"edges":{}});
+        let answer = |reads: Vec<Value>| {
+            let mut reads = reads.into_iter();
+            let mut count = 0;
+            let stored = read_settled(|| {
+                count += 1;
+                reads.next()
+            });
+            (body(stored, &flow, "sha256:aa", "c1"), count)
+        };
+
+        let (finished, _) = answer(vec![gone.clone(), ready]);
+        assert_eq!(finished["state"], "ready", "{finished}");
+        assert_eq!(finished["result"], "pass", "{finished}");
+
+        let (dead, _) = answer(vec![gone.clone(), gone]);
+        assert_eq!(dead["state"], "failed", "{dead}");
+        assert_eq!(dead["reason"], "internal", "{dead}");
+
+        let (live, reads) = answer(vec![running(std::process::id())]);
+        assert_eq!(live["state"], "running", "{live}");
+        assert_eq!(reads, 1, "a live runner's state is read once");
+    }
+
+    /// #586: a flow the preview refuses before any browser starts says why, in the refusal's own
+    /// code, so the owner reads "a secret is missing" instead of "something went wrong". Catches
+    /// a preflight code falling through to `internal` (seen: `studio-connect` without its
+    /// `studio_token`). Anything unknown stays `internal`. Cost: microseconds.
+    #[test]
+    fn a_preflight_refusal_keeps_its_own_reason() {
+        for code in [
+            "driver.secret_missing",
+            "driver.secret_literal",
+            "driver.unsupported_act",
+            "replay.act_value_missing",
+            "replay.entry_missing",
+        ] {
+            assert_eq!(failed_reason(code), code);
+        }
+        assert_eq!(failed_reason("anything.else"), "internal");
+    }
+
     /// #593 review (gh-claude-3 killed a runner after its isolated fixture was up: the fixture
     /// stayed alive, and every new preview launches another): a reader that finds the runner gone
     /// runs the launched app's `down` once, then stores `failed / preview.runner_lost` without the
@@ -1166,6 +1233,50 @@ mod tests {
             downs(),
             1,
             "a record naming another script or directory stops nothing"
+        );
+    }
+
+    /// #593 review (gh-claude-3): the reaper settles before it reaps. A reader that first sees
+    /// `running` with a dead runner and then, on the settling read, the `ready` the runner wrote
+    /// on its way out, answers `ready`: no `down`, no `preview.runner_lost`, and nothing stored
+    /// over the finished run. Catches a reaper that reads once (and kills the fixture of a run
+    /// that just finished). Cost: one process listing, temp files only.
+    #[test]
+    fn a_reaper_racing_a_finishing_runner_reaps_nothing() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join(".graphhelm")).unwrap();
+        std::fs::write(
+            project.path().join(".graphhelm/journey-fixture.json"),
+            r#"{"schema":"graphhelm-journey-fixture/1","script":"fake.sh","isolated":true}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join("fake.sh"),
+            "#!/usr/bin/env bash\nif [ \"$1\" = down ]; then echo down >> down.log; fi\n",
+        )
+        .unwrap();
+        let previews = tempfile::tempdir().unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        let app = std::env::temp_dir().join("graphhelm-watch-composition");
+        let running = json!({"preview":true,"digest":"sha256:aa","commit":"c1","state":"running",
+            "pid":u32::MAX,"startedAt":now,"screens":{},"edges":{},
+            "launched":{"script":"fake.sh","dir":app.to_string_lossy()}});
+        let ready = json!({"preview":true,"digest":"sha256:aa","commit":"c1","state":"ready",
+            "result":"pass","pid":u32::MAX,"startedAt":now,"ranAt":now,"screens":{},"edges":{}});
+        // The file holds what the runner left; the reads show the race.
+        save_state(previews.path(), &ready);
+        let mut reads = vec![running, ready.clone()].into_iter();
+        let answered = reap_lost_from(project.path(), previews.path(), || reads.next()).unwrap();
+        assert_eq!(answered["state"], "ready", "{answered}");
+        assert!(answered.get("reason").is_none(), "{answered}");
+        assert!(
+            !project.path().join("down.log").exists(),
+            "a finished run's fixture is not stopped by a reader"
+        );
+        assert_eq!(
+            read_state(previews.path()).unwrap(),
+            ready,
+            "the finished run is not overwritten"
         );
     }
 

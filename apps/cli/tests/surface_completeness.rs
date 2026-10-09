@@ -244,7 +244,10 @@ const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 9] = [
     (
         "POST",
         "/v1/journey-flows/{id}/edges/{edge}/safe",
-        "the owner's word that a draft's destructive-looking act may be played in a watch (#518).          Drafts and their acts are written by agents, so on the chat surface the hand that wrote          the act would be offered the mark that excuses it, which is self-validation, not a          runtime verb; its doors are the Studio and `graphhelm journey mark-safe`",
+        "the owner's word that a draft's destructive-looking act may be played in a watch (#518). \
+         Drafts and their acts are written by agents, so on the chat surface the hand that wrote \
+         the act would be offered the mark that excuses it, which is self-validation, not a \
+         runtime verb; its doors are the Studio and `graphhelm journey mark-safe`",
     ),
 ];
 

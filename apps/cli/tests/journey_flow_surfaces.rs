@@ -568,7 +568,7 @@ fn only_the_owner_credential_marks_an_edge_safe() {
     assert!(
         harness
             .flow_text("checkout")
-            .contains(&format!("    safe: {{acts: {digest}}}\n")),
+            .contains(&format!("safe: {{acts: {digest}}}\n")),
         "{}",
         harness.flow_text("checkout")
     );

@@ -612,6 +612,14 @@ fn journey_map_worked_example_validates_and_compiles() {
     assert_eq!(reply["data"]["checked"], 2, "{reply}");
 }
 
+/// The fixture's last act line, without its indentation (the text before it keeps that).
+const PAY_NOW: &str = "- {kind: submit, role: button, name: Pay now}\n";
+
+/// That act line followed by the mark the canonical renderer writes under it.
+fn marked_line(digest: &str) -> String {
+    format!("{PAY_NOW}{}safe: {{acts: {digest}}}\n", " ".repeat(4))
+}
+
 /// #518 (`keel.invariant.permissions`, `.persistence`): the owner's safe mark on a draft edge.
 /// Defects named: a mark that survives an edit of the acts it covered (an agent rewrites
 /// "Pay now" into "Delete account" under the owner's mark); a mark that blesses an act the owner
@@ -648,13 +656,7 @@ fn the_owner_marks_a_draft_edge_safe_and_editing_its_acts_voids_the_mark() {
         "{digest}"
     );
     let marked = text();
-    assert_eq!(
-        marked,
-        EXAMPLE.replace(
-            "      - {kind: submit, role: button, name: Pay now}\n",
-            &format!("      - {{kind: submit, role: button, name: Pay now}}\n    safe: {{acts: {digest}}}\n"),
-        )
-    );
+    assert_eq!(marked, EXAMPLE.replace(PAY_NOW, &marked_line(&digest),));
     let (out, reply) = run(dir.path(), &["validate", "--all"]);
     assert_eq!(out.status.code(), Some(0), "{reply}");
     assert!(!stale(&reply), "{reply}");
@@ -671,8 +673,11 @@ fn the_owner_marks_a_draft_edge_safe_and_editing_its_acts_voids_the_mark() {
     write_flow(
         dir.path(),
         &marked.replace(
-            "      - {kind: submit, role: button, name: Pay now}\n",
-            "      - {kind: submit, role: button, name: Pay now}\n      - {kind: activate, role: button, name: Delete account}\n",
+            PAY_NOW,
+            &format!(
+                "{PAY_NOW}{}- {{kind: activate, role: button, name: Delete account}}\n",
+                " ".repeat(6)
+            ),
         ),
     );
     assert!(stale(&run(dir.path(), &["validate", "--all"]).1));
@@ -728,10 +733,7 @@ fn the_owner_marks_a_draft_edge_safe_and_editing_its_acts_voids_the_mark() {
     assert_eq!(text(), approved);
     write_flow(
         dir.path(),
-        &approved.replace(
-            "      - {kind: submit, role: button, name: Pay now}\n",
-            &format!("      - {{kind: submit, role: button, name: Pay now}}\n    safe: {{acts: {digest}}}\n"),
-        ),
+        &approved.replace(PAY_NOW, &marked_line(&digest)),
     );
     let (out, reply) = run(dir.path(), &["validate", "--all"]);
     assert_eq!(out.status.code(), Some(2), "{reply}");

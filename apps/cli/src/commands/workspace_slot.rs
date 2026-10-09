@@ -215,8 +215,18 @@ pub(crate) fn run_slot(request: &SlotRequest<'_>) -> Outcome {
     };
     let max_wait = match request.max_wait {
         None => None,
+        // `try_from`: a finite but huge number (`1e300`) overflows a Duration, and the plain
+        // constructor panics on it (#557 review); it is refused like any other bad value.
         Some(minutes) if minutes.is_finite() && minutes > 0.0 => {
-            Some(Duration::from_secs_f64(minutes * 60.0))
+            match Duration::try_from_secs_f64(minutes * 60.0) {
+                Ok(limit) => Some(limit),
+                Err(_) => {
+                    return refuse(
+                        "--max-wait must be a positive number of minutes",
+                        "/maxWait",
+                    );
+                }
+            }
         }
         Some(_) => {
             return refuse(
@@ -377,17 +387,6 @@ pub(crate) fn run_status(root: &Path) -> Outcome {
         },
         Err(_) => false,
     };
-    let holder_info = held
-        .then(|| std::fs::read_to_string(dir.join(HOLDER)).ok())
-        .flatten()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
-    let holder_ticket = holder_info
-        .as_ref()
-        .and_then(|info| info["ticket"].as_str().map(str::to_owned));
-    let holder = holder_info.as_ref().map(|info| {
-        json!({"lane": info["lane"], "label": info["label"], "pid": info["pid"],
-            "heldSeconds": seconds_since(nanos_of(&info["sinceNanos"]), now)})
-    });
     let Ok(live) = live_tickets(&dir, None) else {
         return refuse_as(
             STATUS_COMMAND,
@@ -395,6 +394,29 @@ pub(crate) fn run_status(root: &Path) -> Outcome {
             "/root",
         );
     };
+    let names: Vec<String> = live
+        .iter()
+        .filter_map(|ticket| ticket.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect();
+    // `holder.json` is trusted only while the ticket it names is live (#557 review): a holder
+    // killed hard leaves the file behind, and a next holder on an older binary never rewrites it,
+    // so a stale file would name a dead lane and list the real holder as a waiter.
+    let holder_info = held
+        .then(|| std::fs::read_to_string(dir.join(HOLDER)).ok())
+        .flatten()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .filter(|info| {
+            info["ticket"]
+                .as_str()
+                .is_some_and(|t| names.iter().any(|n| n == t))
+        });
+    let holder_ticket = holder_info
+        .as_ref()
+        .and_then(|info| info["ticket"].as_str().map(str::to_owned));
+    let holder = holder_info.as_ref().map(|info| {
+        json!({"lane": info["lane"], "label": info["label"], "pid": info["pid"],
+            "heldSeconds": seconds_since(nanos_of(&info["sinceNanos"]), now)})
+    });
     let waiting: Vec<serde_json::Value> = live
         .iter()
         .filter(|ticket| {

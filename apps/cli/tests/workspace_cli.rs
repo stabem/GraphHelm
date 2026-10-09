@@ -1130,6 +1130,24 @@ fn the_slot_builds_on_the_owners_target_root_caps_a_lane_and_reclaims_orphans() 
     assert!(!rules.join("targets/lane-a/wt-one.json").exists());
     assert!(fast.join("lane-a/wt-two/target").is_dir());
 
+    // The rule, the records and the cap belong to one slot root. A second slot (its own root,
+    // its own target root) counts the same lane from zero, although this root has it at its cap.
+    let (second, second_fast) = (dir.path().join("root-b"), dir.path().join("fast-b"));
+    std::fs::create_dir_all(second.join(".graphhelm-workspaces")).unwrap();
+    std::fs::write(
+        second.join(".graphhelm-workspaces/slot-targets.json"),
+        serde_json::json!({"targetRoot": second_fast, "cap": 1}).to_string(),
+    )
+    .unwrap();
+    let (code, reply) = slot_in(&second, "lane-a", &two, &log);
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(
+        Path::new(&built()),
+        second_fast.join("lane-a/wt-two/target")
+    );
+    assert_eq!(slot_in(&second, "lane-a", &three, &log).0, 2);
+    assert!(fast.join("lane-a/wt-three/target").is_dir());
+
     // Sweep: a dry run lists the orphan and deletes nothing; --apply removes it; a build
     // directory reached through a link is kept, and what the link points at survives.
     let outside = dir.path().join("outside");

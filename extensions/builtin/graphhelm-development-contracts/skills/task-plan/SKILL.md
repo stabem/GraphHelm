@@ -38,6 +38,24 @@ how much process the change needs. It never writes code.
    document. Say in the PR body that the plan was written by hand.
 6. Put the promise, paths and proof command in the PR body as the Keel card.
 
+## Design critic (`critic: design`)
+
+`graphhelm keel plan` sets `critic` to `design` for a change that needs a full card, and `none`
+otherwise. When it says `design`, the design is graded before any implementation:
+
+1. Write the design: the promise, the paths in scope, the approach and how it will be proved.
+2. Run the critic as a **blind subagent**. Its brief carries the promise, the card and the design,
+   and asks for one grade from 0 to 10 with its reasons. It never carries the author's reasoning,
+   a finding to look for or an expected grade; a critic given any of those is not blind.
+3. Record the round: `python tools/task-record/task_record.py --lane <you> critic_verdict
+   --issue <N> --round <R> --score <S> --design-ref <path> --reason "<why>"`. The verdict follows
+   from the score and the round: `pass` at 8 or more, `revise` while a round is left, `exhausted`
+   on round 3.
+4. On `revise`, change the design for the reasons given and grade again as the next round. On
+   `exhausted`, stop and hand the task to a person. Running out of rounds is never a pass.
+
+Implementation starts only after a `pass` record.
+
 ## Completion
 
 Done when one plan record exists for the task (or the hand-written card, outside an execution)

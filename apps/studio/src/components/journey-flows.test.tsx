@@ -389,6 +389,10 @@ describe("JourneyFlows run", () => {
     render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start: vi.fn(async () => ({ state: "failed" as const, reason: "watch.app_down" })) })} />);
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Couldn't run this journey's test: the app it opens isn't running."));
     expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
+    cleanup();
+    // A launcher that fails or hangs is its own code, not "something went wrong in the Runtime".
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start: vi.fn(async () => ({ state: "failed" as const, reason: "watch.launch_failed" })) })} />);
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Couldn't run this journey's test: the app under test didn't start."));
   });
 
   it("draws the flowchart without a run line on a Runtime that has no run route", async () => {
@@ -508,6 +512,22 @@ describe("JourneyFlows held step", () => {
     await waitFor(() => expect(screen.queryByRole("group", { name: "Step waiting for you" })).toBeNull());
     expect(start.mock.calls).toEqual([["checkout", false], ["checkout", false, true]]);
     expect(screen.getByRole("status")).toHaveTextContent(/^Test passed/);
+  });
+
+  // The reviewer's note on #565: nothing showed that the click was taken. The Runtime ignores a
+  // second confirm while one runs, but the owner could not see that.
+  it("shows the Run it click was taken until the Runtime answers", async () => {
+    let answer: (value: typeof done) => void = () => undefined;
+    const start = vi.fn((_flow: string, _force: boolean, confirm?: boolean) => (confirm ? new Promise<typeof done>((resolve) => { answer = resolve; }) : Promise.resolve(held)));
+    const run: JourneyRunSource = { start, read: vi.fn(async () => held), screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null) };
+    render(<JourneyFlows view={approved} onApprove={vi.fn()} run={run} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Run it" }));
+    const pending = screen.getByRole("button", { name: "Running…" });
+    expect(pending).toBeDisabled();
+    await userEvent.click(pending);
+    expect(start.mock.calls.filter((call) => call[2] === true)).toHaveLength(1);
+    answer(done);
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Step waiting for you" })).toBeNull());
   });
 
   it("offers no Run it when nothing is held", async () => {

@@ -463,6 +463,9 @@ export interface LiveSession {
   mode?: string;
   edge?: string | null;
   actIndex?: number | null;
+  /** #505: the words the watch browser shows for the act about to run (`run.details: Clicks
+   * "Details"`); null between acts. */
+  caption?: string | null;
   stepIndex?: number;
   stepCount?: number;
   /** The Runtime holds page frames for this session (#519): a headless Watch. */

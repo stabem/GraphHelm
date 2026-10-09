@@ -1967,10 +1967,13 @@ export class RuntimeClient {
   }
 
   /** Start that run, or read the cached one (#519): `POST /v1/journey-flows/{id}/preview`, the same
-   * body as the GET. `force` is the owner's Run again. */
-  async startJourneyRun(flowId: string, force = false): Promise<JourneyRunView> {
+   * body as the GET. `force` is the owner's Run again. `executionId` is the run an APPROVED flow's
+   * replay records its proof into (captures and walked edges), as `journey open` takes it; a
+   * draft's preview ignores it. */
+  async startJourneyRun(flowId: string, force = false, executionId?: string): Promise<JourneyRunView> {
     const id = checkedId(flowId, "flowId");
-    return this.#request<JourneyRunView>({ method: "POST", path: `/v1/journey-flows/${encodeURIComponent(id)}/preview`, body: force ? { force: true } : {}, timeoutMs: RUNTIME_READ_TIMEOUT_MS });
+    const body = { ...(force ? { force: true } : {}), ...(executionId ? { executionId: checkedId(executionId, "executionId") } : {}) };
+    return this.#request<JourneyRunView>({ method: "POST", path: `/v1/journey-flows/${encodeURIComponent(id)}/preview`, body, timeoutMs: RUNTIME_READ_TIMEOUT_MS });
   }
 
   /** One screen as the run rendered it (#519): `GET /v1/journey-flows/{id}/screens/{screen}/frame`.

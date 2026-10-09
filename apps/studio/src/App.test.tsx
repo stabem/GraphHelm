@@ -629,6 +629,18 @@ describe("live team layout", () => {
     expect(within(map).getByRole("button", { name: "receipt, open detail" })).toBeInTheDocument();
     expect(within(map).queryByRole("button", { name: "cart, open detail" })).toBeNull();
   });
+
+  // #519: an approved flow's run is its replay, and its proof is recorded into a run. Opening a
+  // journey without naming the selected run would run the test and record nothing.
+  it("opens a journey's test naming the selected run, so an approved flow's proof has a run to land in", async () => {
+    const flows = { flows: [{ id: "paid", title: "paid flow", status: "approved", approvable: false, drift: [], findings: [],
+      approved: { revision: "a".repeat(40), digest: "sha256:b" }, screens: [{ id: "s", url: "/", state: "stable" }], edges: [], paths: {} }] };
+    const startJourneyRun = vi.fn(async () => ({ state: "none" }));
+    await open(stubClient({ journeyFlows: vi.fn(async () => flows), startJourneyRun }));
+    await userEvent.click(screen.getByRole("tab", { name: "Journey" }));
+    await screen.findByRole("article", { name: "Journey paid flow" });
+    await waitFor(() => expect(startJourneyRun).toHaveBeenCalledWith("paid", false, "demo-deploy"));
+  });
 });
 
 /** The ordinary loop: the dev server hands the page a token and it opens connected. */

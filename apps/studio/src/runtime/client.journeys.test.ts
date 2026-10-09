@@ -90,10 +90,15 @@ describe("RuntimeClient journey run and frames", () => {
     await expect(runtime.journeyRun("a b")).resolves.toEqual({ state: "running" });
     await runtime.startJourneyRun("a b");
     await runtime.startJourneyRun("a b", true);
+    // The run an approved flow's replay records its proof into rides the same body.
+    await runtime.startJourneyRun("a b", false, "run-1");
+    await runtime.startJourneyRun("a b", true, "run-1");
     expect(seen.map((request) => [request.method, request.url, request.body])).toEqual([
       ["GET", "/v1/journey-flows/a%20b/preview", undefined],
       ["POST", "/v1/journey-flows/a%20b/preview", "{}"],
       ["POST", "/v1/journey-flows/a%20b/preview", '{"force":true}'],
+      ["POST", "/v1/journey-flows/a%20b/preview", '{"executionId":"run-1"}'],
+      ["POST", "/v1/journey-flows/a%20b/preview", '{"force":true,"executionId":"run-1"}'],
     ]);
   });
   it("returns a frame with its tag and asks for a newer one with If-None-Match", async () => {

@@ -466,6 +466,16 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
   // lane's): PRs open in the order their slices were claimed. The claim's slice becomes that PR's
   // slice. A merge recorded with no pr_opened (#449's own log) still lands on the issue's claim
   // instead of opening a second graph.
+  // #480 (gh-claude-10's BLOCK on 2bba9de4): a plan or a critic round is the recording lane's own
+  // record and names no PR, so it belongs to that lane's newest open claim, never to another
+  // lane's claim of the same issue (a handover leaves the first lane's claim open).
+  if ((event.kind === "task.planned" || event.kind === "task.critic_verdict") && event.lane !== undefined) {
+    const own = group.filter((slice) => slice.lane === event.lane);
+    const mine = own.filter((slice) => slice.pr === null && slice.step !== "merged").at(-1) ?? own.at(-1);
+    if (mine !== undefined) return mine;
+    // A planned with no claim of this lane opens its own slice; a critic round keeps #562's route.
+    if (event.kind === "task.planned") return add();
+  }
   const claimed = group.filter((slice) => event.kind === "task.pr_opened" ? open(slice)
     : slice.pr === null && slice.step !== "merged").at(0);
   if (claimed !== undefined) {

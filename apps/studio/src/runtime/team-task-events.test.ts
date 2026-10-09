@@ -208,6 +208,20 @@ describe("foldTaskEvents plan step (#480)", () => {
     expect(foldTaskEvents([claim, plan(2, "design"), round(3, 3, 5, "exhausted")])[0].step).toBe("critic");
   });
 
+  // gh-claude-10's BLOCK on 2bba9de4: two lanes hold PR-less claims of one issue (a handover);
+  // lane-b's plan and critic round must land on lane-b's slice, not on lane-a's older one.
+  it("lands a lane's plan and critic round on that lane's own claim, not another lane's", () => {
+    const claimOf = (sequence: number, lane: string) => record(sequence, "task.claimed", lane, { ...issue, issue: 480, lane, branch: `issue-480-${lane}` });
+    const planOf = (sequence: number, lane: string) => record(sequence, "task.planned", lane, { ...issue, lane, classes: ["code"], reviews: 1,
+      proof: "tests", critic: { mode: "design", passScore: 8, maxRounds: 3 }, summary: `${lane}'s plan` });
+    const roundOf = (sequence: number, lane: string) => record(sequence, "task.critic_verdict", lane, { ...issue, lane, round: 1, score: 9,
+      passScore: 8, maxRounds: 3, verdict: "pass", designRef: "d", reasons: ["r"] });
+    const tasks = foldTaskEvents([claimOf(1, "lane-a"), claimOf(2, "lane-b"), planOf(3, "lane-b"), roundOf(4, "lane-b")]);
+    const byLane = Object.fromEntries(tasks.map((task) => [task.lane, task]));
+    expect(byLane["lane-a"]).toMatchObject({ step: "plan", plan: null });
+    expect(byLane["lane-b"]).toMatchObject({ step: "implement", plan: { summary: "lane-b's plan" } });
+  });
+
   it("keeps a plan recorded after the PR without moving the graph back", () => {
     const state = foldTaskEvents([claim, opened(2), plan(3, "design")]);
     expect(state).toHaveLength(1);

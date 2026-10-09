@@ -25,6 +25,7 @@ edges:
     from: chat
     to: chat.sent
     acts:
+      - {kind: activate, role: tab, name: Everyone}
       - {kind: enter_text, role: textbox, name: Message, text: "Hello team, please report your status."}
       - {kind: activate, role: button, name: Send}
 paths:

@@ -33,7 +33,7 @@ interface Props {
   runName?: string;
   /** #583: when the newest record was written (ms); absent, the live indicator is omitted. */
   lastRecordAt?: number | null;
-  /** #583: present, the top nav carries Team, which leaves the Graph page. */
+  /** #583: present, the view is the full page. The owner retired the Team tab (Lanes replaces it), so the nav no longer offers it. */
   onTeam?: () => void;
   /** #591: "Agents right now" in the rail, from the team model. */
   agents?: Bot[];
@@ -93,7 +93,6 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
   const sel = valid(chosen) ? chosen! : fallback;
   const tabs: { id: Sub | "team"; label: string }[] = [
     { id: "graph", label: "Graph" }, { id: "lanes", label: "Lanes" }, { id: "proof", label: "Proof" },
-    ...(onTeam ? [{ id: "team" as const, label: "Team" }] : []),
   ];
   const header = (
       <header className="mv-head">

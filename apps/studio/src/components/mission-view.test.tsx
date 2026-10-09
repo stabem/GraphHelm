@@ -124,16 +124,15 @@ describe("MissionView", () => {
     expect(screen.getByText("This work names no journey yet — agents pass --journeys when they claim.")).toBeInTheDocument();
   });
 
-  it("full page: breadcrumb, Team in the nav, live indicator", async () => {
-    const userEvent = fastUserEvent();
+  it("full page: breadcrumb, no Team in the nav, live indicator", () => {
     const onTeam = vi.fn();
     render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={12_000} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()}
       runName="gh-team" lastRecordAt={0} onTeam={onTeam} />);
     expect(screen.getByText("Run gh-team")).toBeInTheDocument();
     expect(screen.getByText("Mission graph")).toBeInTheDocument();
     expect(screen.getByText("live · last record 12 s ago")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("tab", { name: "Team" }));
-    expect(onTeam).toHaveBeenCalled();
+    expect(screen.queryByRole("tab", { name: "Team" })).toBeNull();
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Graph", "Lanes", "Proof"]);
   });
 
   it("no last record time: the live indicator is omitted", () => {

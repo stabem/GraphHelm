@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use graphhelm_events::{
-    EvidenceInput, EvidenceProtector, EvidenceSealer, SealedEvidence, SecretBytes,
+    EvidenceInput, EvidenceProtector, EvidenceSealer, LocalEventRepository, SealedEvidence,
+    SecretBytes,
 };
 use graphhelm_graph::raw_content_sha256;
 use graphhelm_sealed_key_provider::SealedKeyProvider;
@@ -275,6 +276,36 @@ pub(crate) fn execute_native_observer(
     )
 }
 
+/// [`execute_authenticated`] on a store handle the caller already opened (#478): the HTTP route
+/// keeps one handle for its whole request, so the body does not pay a second open (the reconcile
+/// listing and a journal fsync). The refusals that need no store still run first.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn execute_authenticated_on(
+    store: &LocalEventRepository,
+    execution: Option<&str>,
+    signal: &[u8],
+    evidence_out: Option<&Path>,
+    actor: PersistedActor,
+    key: OpaqueId,
+    sealing: Option<&SignalKeyring>,
+    scoped_agent_authenticated: bool,
+    attachments: &[ImageAttachment],
+) -> Result<serde_json::Value, Failure> {
+    refuse_unpreservable(evidence_out, sealing, attachments)?;
+    record_on(
+        store,
+        execution,
+        signal,
+        evidence_out,
+        actor,
+        key,
+        sealing,
+        scoped_agent_authenticated,
+        false,
+        attachments,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_authenticated_inner(
     events: &Path,
@@ -288,6 +319,29 @@ fn execute_authenticated_inner(
     allow_native: bool,
     attachments: &[ImageAttachment],
 ) -> Result<serde_json::Value, Failure> {
+    refuse_unpreservable(evidence_out, sealing, attachments)?;
+    let store = event_store(events).map_err(|error| repository_failure(&error))?;
+    record_on(
+        &store,
+        execution,
+        signal,
+        evidence_out,
+        actor,
+        key,
+        sealing,
+        scoped_agent_authenticated,
+        allow_native,
+        attachments,
+    )
+}
+
+/// The refusals decided before the store is opened: a caller who can preserve nothing must learn
+/// that before the work rather than after it.
+fn refuse_unpreservable(
+    evidence_out: Option<&Path>,
+    sealing: Option<&SignalKeyring>,
+    attachments: &[ImageAttachment],
+) -> Result<(), Failure> {
     if evidence_out.is_none() && sealing.is_none() {
         return Err(argument(
             "this Runtime has no keyring, so the signal envelope can only be preserved as a file; \
@@ -308,8 +362,23 @@ fn execute_authenticated_inner(
             "/attachments",
         ));
     }
-    let store = event_store(events).map_err(|error| repository_failure(&error))?;
-    let (scope, stream, projection) = load_projection(&store, execution)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_on(
+    store: &LocalEventRepository,
+    execution: Option<&str>,
+    signal: &[u8],
+    evidence_out: Option<&Path>,
+    actor: PersistedActor,
+    key: OpaqueId,
+    sealing: Option<&SignalKeyring>,
+    scoped_agent_authenticated: bool,
+    allow_native: bool,
+    attachments: &[ImageAttachment],
+) -> Result<serde_json::Value, Failure> {
+    let (scope, stream, projection) = load_projection(store, execution)?;
 
     let raw = signal;
     let envelope: serde_json::Value = serde_json::from_slice(raw)
@@ -331,7 +400,7 @@ fn execute_authenticated_inner(
         envelope.get("type").and_then(serde_json::Value::as_str),
         Some("actor_alias" | "owner_refusal")
     ) {
-        let (_, _, history) = super::resolve_stream(&store, execution)?;
+        let (_, _, history) = super::resolve_stream(store, execution)?;
         super::owner_records::validate_owner_record(
             &envelope,
             &actor,
@@ -654,7 +723,7 @@ fn execute_authenticated_inner(
         }
         None => {
             for event in pending {
-                append_event(&store, &scope, &stream_id, event)?;
+                append_event(store, &scope, &stream_id, event)?;
             }
         }
     }

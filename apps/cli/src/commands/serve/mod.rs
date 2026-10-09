@@ -1756,6 +1756,34 @@ async fn run_idempotent_mutation<'a>(
     .await
 }
 
+/// [`run_idempotent_mutation`] on a store handle the route opened itself (#478), for a route whose
+/// body can run on that same handle: the request then opens the store once in all.
+async fn run_idempotent_mutation_with_store<'a>(
+    store: &LocalEventRepository,
+    events: &Path,
+    execution: &str,
+    command: &'static str,
+    identity: MutationIdentity,
+    wiring: ExecutorWiring,
+    run: impl FnOnce(PersistedActor, OpaqueId) -> MutationFuture<'a>,
+) -> Response {
+    run_idempotent_mutation_on(
+        store,
+        events,
+        execution,
+        command,
+        identity,
+        wiring,
+        MutationObservation {
+            after_absent_preflight: std::future::ready(()),
+            after_presence_read: std::future::ready(()),
+            post_append_conflict: || {},
+        },
+        run,
+    )
+    .await
+}
+
 /// The mutation algorithm with two private observation points. Production always supplies a
 /// ready future and a no-op closure through `run_idempotent_mutation`; in-process tests can inject
 /// a Tokio rendezvous without adding an environment variable, wire route, sleep, filesystem
@@ -1790,12 +1818,41 @@ async fn run_idempotent_mutation_inner<'a>(
     // the reconcile listing and a journal fsync, and the request used to pay them four or five
     // times. A handle holds no lock between operations and re-reads the journal tail before each
     // one, so it sees the body's append made through `run`'s own handle; the rare error paths
-    // below still open their own.
+    // still open their own.
     let store = match event_store(events) {
         Ok(store) => store,
         Err(error) => return respond_failure(command, execution::repository_failure(&error)),
     };
-    match classify_existing_keys_on(&store, execution, &identity) {
+    run_idempotent_mutation_on(
+        &store,
+        events,
+        execution,
+        command,
+        identity,
+        wiring,
+        observation,
+        run,
+    )
+    .await
+}
+
+/// The algorithm itself, on the request's one store handle (#478).
+#[allow(clippy::too_many_arguments)]
+async fn run_idempotent_mutation_on<'a>(
+    store: &LocalEventRepository,
+    events: &Path,
+    execution: &str,
+    command: &'static str,
+    identity: MutationIdentity,
+    wiring: ExecutorWiring,
+    observation: MutationObservation<
+        impl Future<Output = ()> + Send,
+        impl Future<Output = ()> + Send,
+        impl FnOnce() + Send,
+    >,
+    run: impl FnOnce(PersistedActor, OpaqueId) -> MutationFuture<'a>,
+) -> Response {
+    match classify_existing_keys_on(store, execution, &identity) {
         Ok(KeyState::Complete(original_decision_sequence)) => {
             return reply_with_current_status(
                 events,
@@ -1833,7 +1890,7 @@ async fn run_idempotent_mutation_inner<'a>(
     // task. `If-Match` only lets a caller fail fast on a head it already knows is stale, without
     // waiting for the store to discover the same thing one append later.
     if let Some(expected) = identity.if_match {
-        let head = current_head_on(&store, execution);
+        let head = current_head_on(store, execution);
         if head != Some(expected) {
             return if_match_conflict(command, head);
         }
@@ -1854,7 +1911,7 @@ async fn run_idempotent_mutation_inner<'a>(
             // was given up, and it buys the narrower claim: a declaration now asserts who sent a
             // request that SUCCEEDED.
             if let Err(failure) = record_presence_declaration(
-                &store,
+                store,
                 execution,
                 &identity,
                 observation.after_presence_read,
@@ -1875,7 +1932,7 @@ async fn run_idempotent_mutation_inner<'a>(
             // `If-Match`-chained write. Read the head and fixture-only state from one fresh,
             // validated stream snapshot so those fields describe the same committed history.
             let (head_sequence, waiting_input) =
-                fresh_stream_snapshot_on(&store, execution, wiring.any_fixture());
+                fresh_stream_snapshot_on(store, execution, wiring.any_fixture());
             if let serde_json::Value::Object(ref mut map) = value {
                 map.insert("headSequence".to_owned(), serde_json::json!(head_sequence));
             }
@@ -3945,19 +4002,19 @@ mod tests {
         );
     }
 
-    /// #478: a signal mutation opens the event store ONCE for its own reads and its presence
-    /// append, plus once in the command body (`signal::execute`): two opens, where main paid five
-    /// (classify, execute, presence plan, presence commit, fresh snapshot). Every open runs the
-    /// reconcile listing and a journal fsync, so each extra one was paid on every signal. The
-    /// declaration is on so the presence path runs. The spawned wake sweep is not counted: on this
-    /// single-threaded runtime it has not run when the count is read. Credible regression: a
-    /// helper on the request path opening its own store again. Cost: one fixture run, one
-    /// in-process mutation.
-    #[tokio::test]
-    async fn a_signal_mutation_opens_the_store_twice_not_five_times() {
-        let directory = tempfile::tempdir().unwrap();
-        let events = directory.path().join("events");
-        let fixtures = directory.path().join("fixtures.json");
+    /// #478 fixture: a started execution, a signal for it, and an identity that declares a model
+    /// and a session so the presence path runs.
+    fn one_open_fixture(
+        directory: &Path,
+    ) -> (
+        std::path::PathBuf,
+        &'static str,
+        MutationIdentity,
+        Vec<u8>,
+        std::path::PathBuf,
+    ) {
+        let events = directory.join("events");
+        let fixtures = directory.join("fixtures.json");
         std::fs::write(
             &fixtures,
             serde_json::to_vec(&serde_json::json!({
@@ -3983,10 +4040,6 @@ mod tests {
             OpaqueId::parse("unit-start-key").unwrap(),
         );
         assert!(started.is_ok(), "the fixture execution must start");
-        let actor = PersistedActor::new(
-            PersistedActorType::Agent,
-            ActorId::parse("agent-one-open").unwrap(),
-        );
         let signal_value = serde_json::json!({
             "id": "signal-unit-one-open",
             "source": {"type": "node", "id": "implementation"},
@@ -3996,10 +4049,12 @@ mod tests {
             "evidence": ["exec-1"],
             "emittedAt": "2026-10-08T00:00:00Z"
         });
-        let signal = serde_json::to_vec(&signal_value).unwrap();
-        let evidence_out = directory.path().join("one-open-evidence.json");
+        let evidence_out = directory.join("one-open-evidence.json");
         let identity = MutationIdentity {
-            actor: actor.clone(),
+            actor: PersistedActor::new(
+                PersistedActorType::Agent,
+                ActorId::parse("agent-one-open").unwrap(),
+            ),
             keys: vec![DerivedKey {
                 prefix: "unit-one-open".to_owned(),
                 full: OpaqueId::parse("unit-one-open-0123456789abcdef").unwrap(),
@@ -4015,6 +4070,41 @@ mod tests {
             declared_effort: None,
             declared_session: Some("session-one-open".to_owned()),
         };
+        let signal = serde_json::to_vec(&signal_value).unwrap();
+        (events, execution_id, identity, signal, evidence_out)
+    }
+
+    /// #478 fixture: the opens counted for `events` since the last reset, and whether the presence
+    /// declaration landed.
+    fn opens_and_presence(events: &Path, execution_id: &str) -> (u64, bool) {
+        let opens = crate::commands::STORE_OPENS
+            .lock()
+            .unwrap()
+            .get(events)
+            .copied()
+            .unwrap_or(0);
+        let store = event_store(events).unwrap();
+        let Ok((_, _, history)) = execution::resolve_stream(&store, Some(execution_id)) else {
+            panic!("the history must remain readable");
+        };
+        let declared = history
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::AgentPresenceDeclared(_)));
+        (opens, declared)
+    }
+
+    /// #478: a mutation opens the event store ONCE for its own reads and its presence append; a
+    /// body that opens its own handle (every mutation route but `signal`) adds one more: two
+    /// opens, where main paid five (classify, the body, presence plan, presence commit, fresh
+    /// snapshot). Every open runs the reconcile listing and a journal fsync. The spawned wake
+    /// sweep is not counted: on this single-threaded runtime it has not run when the count is
+    /// read. Credible regression: a helper on the request path opening its own store again.
+    /// Cost: one fixture run, one in-process mutation.
+    #[tokio::test]
+    async fn a_mutation_opens_the_store_once_beside_its_body() {
+        let directory = tempfile::tempdir().unwrap();
+        let (events, execution_id, identity, signal, evidence_out) =
+            one_open_fixture(directory.path());
         crate::commands::STORE_OPENS.lock().unwrap().remove(&events);
         let events_for_run = events.clone();
         let response = run_idempotent_mutation_inner(
@@ -4044,23 +4134,54 @@ mod tests {
             },
         )
         .await;
-        let opens = crate::commands::STORE_OPENS
-            .lock()
-            .unwrap()
-            .get(&events)
-            .copied()
-            .unwrap_or(0);
+        let (opens, declared) = opens_and_presence(&events, execution_id);
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(opens, 2, "store opens for one signal request");
-        let store = event_store(&events).unwrap();
-        let Ok((_, _, history)) = execution::resolve_stream(&store, Some(execution_id)) else {
-            panic!("the history must remain readable");
-        };
-        assert!(
-            history
-                .iter()
-                .any(|event| matches!(event.kind, EventKind::AgentPresenceDeclared(_))),
-            "the presence declaration still lands through the shared handle"
+        assert_eq!(
+            opens, 2,
+            "store opens for one mutation with a self-opening body"
         );
+        assert!(declared, "the presence declaration still lands");
+    }
+
+    /// #478: the signal route's shape. The route opens the store, hands the handle to the mutation
+    /// and a clone of it to the signal body, so the whole request opens the store ONCE. Credible
+    /// regression: the signal body or a request helper opening a second handle. Cost: one fixture
+    /// run, one in-process mutation.
+    #[tokio::test]
+    async fn a_signal_request_opens_the_store_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let (events, execution_id, identity, signal, evidence_out) =
+            one_open_fixture(directory.path());
+        crate::commands::STORE_OPENS.lock().unwrap().remove(&events);
+        let store = event_store(&events).unwrap();
+        let store_for_run = store.clone();
+        let response = run_idempotent_mutation_with_store(
+            &store,
+            &events,
+            execution_id,
+            "execution.signal",
+            identity,
+            ExecutorWiring::FIXTURE_ONLY,
+            move |event_actor, key| {
+                Box::pin(async move {
+                    Ok(execution::signal::execute_authenticated_on(
+                        &store_for_run,
+                        Some(execution_id),
+                        &signal,
+                        Some(&evidence_out),
+                        event_actor,
+                        key,
+                        None,
+                        false,
+                        &[],
+                    )?)
+                })
+            },
+        )
+        .await;
+        let (opens, declared) = opens_and_presence(&events, execution_id);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(opens, 1, "store opens for one signal request");
+        assert!(declared, "the presence declaration still lands");
     }
 }

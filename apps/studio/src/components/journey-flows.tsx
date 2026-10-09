@@ -103,6 +103,12 @@ const RUN_REASON: Record<string, string> = {
   "preview.busy": "another run is still going",
   "preview.budget_exceeded": "it took longer than allowed",
   "watch.launch_failed": "the app under test didn't start",
+  // #586: what stops a run before or at a step, which used to read as an internal error.
+  "driver.secret_missing": "this journey needs a secret the Runtime was not given",
+  "driver.secret_literal": "the journey has a secret written in it, which is not allowed",
+  "driver.unsupported_act": "the journey has a step the browser player cannot do",
+  "replay.act_value_missing": "a step types something but the journey does not say what",
+  "replay.entry_missing": "the journey's first screen has no fixed address to open",
 };
 
 /** What a held step would do: every act of its edge in words, or the act's name when the flow no

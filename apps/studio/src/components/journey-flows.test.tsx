@@ -385,6 +385,20 @@ describe("JourneyFlows run", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent("Why: the test stopped before an action that would delete or cancel something.");
   });
 
+  // #586: these five reasons read "something went wrong in the Runtime", which sends the owner to
+  // the wrong place: each is something in the journey or its setup that the owner can act on.
+  it.each([
+    ["driver.secret_missing", "this journey needs a secret the Runtime was not given"],
+    ["driver.secret_literal", "the journey has a secret written in it, which is not allowed"],
+    ["driver.unsupported_act", "the journey has a step the browser player cannot do"],
+    ["replay.act_value_missing", "a step types something but the journey does not say what"],
+    ["replay.entry_missing", "the journey's first screen has no fixed address to open"],
+  ])("says %s in words", async (reason, words) => {
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start: vi.fn(async () => ({ state: "failed" as const, reason })) })} />);
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(`Couldn't run this journey's test: ${words}.`));
+    expect(screen.getByRole("status").textContent).not.toContain(reason);
+  });
+
   it("says in words why the test could not run", async () => {
     render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start: vi.fn(async () => ({ state: "failed" as const, reason: "watch.app_down" })) })} />);
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Couldn't run this journey's test: the app it opens isn't running."));

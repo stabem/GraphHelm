@@ -608,16 +608,18 @@ pub const CRITIC_DESIGN_NODE: &str = "critic_design";
 pub const CRITIC_GRADE_NODE: &str = "critic_grade";
 
 /// #467: when the profile carries a critic, puts `critic_design` → `critic_grade` in front of the
-/// draft: the draft's entrypoints (or, with none declared, its nodes without an incoming edge)
+/// draft: the draft's entrypoints
 /// become the critic's successors, and `critic_design` becomes the only entrypoint. Deterministic
 /// and after the model: the model never chooses whether a design is graded. The revise rounds run
 /// INSIDE `critic_grade`, one `task.critic_verdict` record per round, because the executor does
 /// not re-run a finished node; the node completes on a `pass` within `maxRounds`, and an
 /// `exhausted` verdict needs a person. A draft that already uses either id is sent back to the
-/// model with a diagnostic rather than overwritten. Without a critic, nothing changes.
+/// model with a diagnostic rather than overwritten, and so is a draft edge using an id of the
+/// edges added here. A draft that declares no entrypoint is left as it is, for the schema check
+/// to refuse. Without a critic, nothing changes.
 ///
 /// # Errors
-/// A repairable diagnostic when the draft already uses a reserved id.
+/// A repairable diagnostic when the draft already uses a reserved node or edge id.
 pub fn insert_critic(
     profile: &TaskProfile,
     document: &mut Map<String, Value>,
@@ -657,22 +659,37 @@ pub fn insert_critic(
                 .collect()
         })
         .unwrap_or_default();
-    let first: Vec<String> = if declared.is_empty() {
-        let targets: std::collections::BTreeSet<&str> = spec
-            .get("edges")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|edge| edge.get("to").and_then(Value::as_str))
-            .collect();
-        nodes
-            .keys()
-            .filter(|id| !targets.contains(id.as_str()))
-            .cloned()
-            .collect()
-    } else {
-        declared
-    };
+    // A draft that declares no entrypoint is invalid, and stays so: writing `critic_design` as
+    // its entrypoint would hide that from the schema check and let it through unrepaired.
+    if declared.is_empty() {
+        return Ok(());
+    }
+    let first = declared;
+    // The edges this adds have ids too; a draft edge already using one is sent back, like a node.
+    let taken: Vec<Diagnostic> = spec
+        .get("edges")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter(|(_, edge)| {
+            edge.get("id").and_then(Value::as_str).is_some_and(|id| {
+                id == "critic_design_to_grade"
+                    || first.iter().any(|to| id == format!("critic_grade_to_{to}"))
+            })
+        })
+        .map(|(index, _)| {
+            Diagnostic::error(
+                CRITIC_ID_RESERVED_CODE,
+                "this edge id is reserved for the compiler's design critic; rename it".to_owned(),
+                format!("/spec/edges/{index}/id"),
+                DRAFT_SOURCE,
+            )
+        })
+        .collect();
+    if !taken.is_empty() {
+        return Err(taken);
+    }
     let agent = |purpose: &str, capability: &str, output: &str, instructions: &str| {
         serde_json::json!({"ephemeral": {
             "purpose": purpose,

@@ -228,7 +228,7 @@ describe("PR #581's shape on the Graph (#591)", () => {
       const { MissionView } = await import("./mission-view");
       const NOW = Date.parse("2026-10-09T12:00:00Z"), H = 3_600_000;
       const task = ts("pr-581", { issue: 549, pr: 581, prTitle: "Fix the thing", step: "review", lane: "gh-claude-11", reviewers: ["gh-claude-8"],
-        headSha: "66613c95aa", blockedBy: { reviewer: "gh-claude-8", headSha: "1a1a1a1a00", commentUrl: "" },
+        headSha: "66613c95aa", blockedBy: null /* #613: the fold clears it on the newer head */,
         rounds: [{ reviewer: "gh-claude-8", headSha: "1a1a1a1a00", commentUrl: "", fixHead: "66613c95aa", blockedAt: new Date(NOW - 5.5 * H).toISOString(), fixedAt: new Date(NOW - 3 * H).toISOString() }],
         clock: { since: new Date(NOW - 5.5 * H).toISOString(), spent: {} } });
       const lanes = [{ lane: "gh-claude-8", bars: [], silent: false, lastEventAt: NOW - 5 * 60_000 }];
@@ -255,5 +255,41 @@ describe("PR #581's shape on the Graph (#591)", () => {
       expect(screen.getAllByText("gh-claude-9 silent 1h 10m").length).toBe(2);
       expect(container.querySelector('.mg-act-dot[data-tone="green"]')).toBeNull();
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("IssueGraph owner asks (#591)", () => {
+  it("row header wraps the whole title, carries it as a tooltip, and the row grows to fit", () => {
+    const long = "fix(build): two CLI binaries share one target directory and the second build overwrites the first one silently";
+    const group = buildWorkGroups([ts("a", { pr: 609, prTitle: long, step: "review" }), ts("b", { pr: 610, prTitle: "Short", step: "review" })], [])[0]!;
+    const { container } = render(<IssueGraph group={group} stepFor={() => undefined} selectedTaskKey={null} selectedCol={null} onSelectTask={vi.fn()} onSelectCol={vi.fn()} onOpenTest={vi.fn()} />);
+    const head = screen.getByRole("button", { name: `Row PR #609: ${long}` });
+    expect(head).toHaveAttribute("title", long);
+    expect(head.querySelector(".mg-rowhead-title")).toHaveTextContent(long);
+    const tops = Array.from(container.querySelectorAll<HTMLElement>(".mg-rowhead")).map((h) => parseInt(h.style.top, 10));
+    // The long title needs more lines than one band holds: the next row starts further down.
+    expect(tops[1]! - tops[0]!).toBeGreaterThan(128);
+  });
+  it("row header css wraps instead of truncating, and cells stay top-aligned", async () => {
+    const css = (await import("./mission-graph.css?raw")).default as string;
+    const rule = (sel: string) => css.split("\n").find((l) => l.startsWith(`${sel} {`)) ?? "";
+    expect(rule(".mg-rowhead-title")).toMatch(/white-space: normal/);
+    expect(rule(".mg-rowhead-title")).toMatch(/overflow-wrap: anywhere/);
+    expect(rule(".mg-rowhead-title")).not.toMatch(/ellipsis/);
+    expect(rule(".mg-rowhead")).toMatch(/justify-content: flex-start/);
+  });
+  it("no TBD and no empty reviewer names anywhere: custody, cells, who lines, inspector", () => {
+    const rnd = { reviewer: "TBD", headSha: "a", commentUrl: "", fixHead: null, blockedAt: null, fixedAt: null };
+    const group = buildWorkGroups([
+      ts("o", { pr: 12, prTitle: "Open one", step: "review", lane: "tbd", reviewers: ["TBD", "", "gh-claude-7"], blockedBy: { reviewer: "Tbd", headSha: "a", commentUrl: "" }, rounds: [rnd] }),
+      ts("p", { pr: 13, prTitle: "Other", step: "merge", lane: "gh-claude-2", reviewers: ["", "TBD"] }),
+    ], [])[0]!;
+    for (const sel of ["o", "p"]) {
+      const { container, unmount } = render(<IssueGraph group={group} stepFor={() => undefined} selectedTaskKey={sel} selectedCol={null} onSelectTask={vi.fn()} onSelectCol={vi.fn()} onOpenTest={vi.fn()} />);
+      expect(container.textContent).not.toMatch(/tbd/i);
+      for (const who of Array.from(container.querySelectorAll(".mg-who"))) expect(who.textContent!.trim()).not.toBe("");
+      expect(container.textContent).not.toMatch(/→\s*$|→ ,|, ,/);
+      unmount();
+    }
   });
 });

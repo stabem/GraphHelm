@@ -120,11 +120,11 @@ describe("prPath (#591)", () => {
 });
 
 describe("a pushed fix after a BLOCK (#591, PR #581's shape)", () => {
-  // The BLOCK on 1a1a1a1a stays in `blockedBy` until a verdict on the new head arrives; the newer
-  // pr_opened head (66613c95) already says the author is done.
+  // The newer pr_opened head (66613c95) answers the BLOCK on 1a1a1a1a: since #613 the fold clears
+  // `blockedBy`, and the BLOCK lives on in `rounds` with its fixHead.
   const t581 = task("pr-581", {
     issue: 549, pr: 581, lane: "gh-claude-11", step: "review", reviewers: ["gh-claude-8"], headSha: "66613c95aa",
-    blockedBy: { reviewer: "gh-claude-8", headSha: "1a1a1a1a00", commentUrl: "" }, recordedHeads: ["1a1a1a1a00", "66613c95aa"],
+    blockedBy: null, recordedHeads: ["1a1a1a1a00", "66613c95aa"],
     rounds: [{ reviewer: "gh-claude-8", headSha: "1a1a1a1a00", commentUrl: "", fixHead: "66613c95aa", blockedAt: "2026-10-09T06:30:00Z", fixedAt: "2026-10-09T09:00:00Z" }],
   });
   it("sits in Review, not Fix", () => expect(workStage(t581, false)).toBe("review"));
@@ -136,6 +136,6 @@ describe("a pushed fix after a BLOCK (#591, PR #581's shape)", () => {
     expect(p.cells.some((c) => c.title === "Fixing")).toBe(false);
   });
   it("an unchanged head keeps the Fixing card", () => {
-    expect(workStage({ ...t581, headSha: "1a1a1a1a00", rounds: [{ ...t581.rounds[0]!, fixHead: null }] }, false)).toBe("fix");
+    expect(workStage({ ...t581, headSha: "1a1a1a1a00", blockedBy: { reviewer: "gh-claude-8", headSha: "1a1a1a1a00", commentUrl: "" }, rounds: [{ ...t581.rounds[0]!, fixHead: null }] }, false)).toBe("fix");
   });
 });

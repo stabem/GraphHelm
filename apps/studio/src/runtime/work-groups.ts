@@ -1,6 +1,6 @@
 import type { JourneyRunView, JourneyView } from "./types";
 import type { TaskState } from "./team-tasks";
-import { buildMission, openBlock, toMissionTask, type MissionTask } from "./mission";
+import { buildMission, namedTask, openBlock, toMissionTask, type MissionTask } from "./mission";
 import { layoutMission } from "./mission-layout";
 import { duration, type TimedStep } from "./step-timing";
 
@@ -140,7 +140,8 @@ const counted = (label: string, n: number) => (n > 1 ? `${label} ×${n}` : label
  * approving (or pending) review; Fix: one per fix pushed after a BLOCK. Merge: reached once approved;
  * Merged: `mergeSha`; Proven: the linked journey's replay passed the step (`proven`).
  */
-export function prPath(t: TaskState, proven: boolean): Omit<PrRow, "task"> {
+export function prPath(raw: TaskState, proven: boolean): Omit<PrRow, "task"> {
+  const t = namedTask(raw);
   const current = workStage(t, proven);
   const cur = COL[current];
   const rounds = t.rounds ?? [];

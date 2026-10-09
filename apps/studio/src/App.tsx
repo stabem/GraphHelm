@@ -3148,7 +3148,14 @@ export default function App({
                 <MissionView journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} runFor={missionRunFor}
                   lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe}
                   runName={selected} lastRecordAt={Date.parse(eventList[eventList.length - 1]?.occurredAt ?? "")} onTeam={() => chooseCanvas("team")}
-                  agents={team.bots} away={handover ? { minutes: handover.gapMinutes, shipped: handover.shipped.length } : null} />
+                  agents={team.bots} away={handover ? { minutes: handover.gapMinutes, shipped: handover.shipped.length } : null}
+                  onSignal={async (note) => {
+                    // #591 Nudge / Reassign: an owner note on this run, the same POST /signal the chat box uses.
+                    const client = clientRef.current;
+                    if (!client || selected === "") throw new Error("No Runtime is connected.");
+                    const evidence = await client.signal(selected, note.description, { to: note.to, kind: note.type });
+                    if (evidence.result === "refused") throw new Error(evidence.diagnostics[0]?.message ?? "The Runtime refused the note.");
+                  }} />
               </div>
             )}
             {citedRecords !== null && citedRecords.executionId === selected && (

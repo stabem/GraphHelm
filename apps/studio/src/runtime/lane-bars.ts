@@ -120,3 +120,8 @@ export function packBars(bars: readonly { start: number; end: number }[]): { row
 
 /** A lane named "TBD" (any case) or nothing is a placeholder, not an agent. */
 export const placeholderLane = (name: string | null | undefined) => !name || !name.trim() || name.trim().toLowerCase() === "tbd";
+/** #591: the one name filter the Graph shows through: a real name, or null for "TBD" / empty. */
+export const realName = (name: string | null | undefined): string | null => (placeholderLane(name) ? null : name!.trim());
+/** #591: the real names of a list, placeholders and empties dropped. */
+export const realNames = (names: readonly (string | null | undefined)[] | null | undefined): string[] =>
+  (names ?? []).map(realName).filter((n): n is string => n !== null);

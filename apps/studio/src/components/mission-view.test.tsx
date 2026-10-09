@@ -198,4 +198,13 @@ describe("MissionView", () => {
     expect(rows).toEqual([["work", "gh-claude-5merging #565"], ["stalled", "gh-claude-1#548 re-review · silent 300 min"], ["idle", "codex-ghidle 23 min"]]);
     expect(screen.getByText("14 h away · 42 shipped")).toBeInTheDocument();
   });
+
+  it("#591: the inspector nudges the current step's owner lane through onSignal", async () => {
+    const userEvent = fastUserEvent();
+    const onSignal = vi.fn().mockResolvedValue(undefined);
+    const tasks = [wt("a", { issue: 5, pr: 609, prTitle: "Two CLI", step: "implement", lane: "gh-claude-4" })] as unknown as TaskState[];
+    render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} onSignal={onSignal} />);
+    await userEvent.click(screen.getByRole("button", { name: "Nudge gh-claude-4" }));
+    expect(onSignal).toHaveBeenCalledWith({ type: "operator_note", to: "gh-claude-4", description: "Owner asks: status of Implement on PR #609?" });
+  });
 });

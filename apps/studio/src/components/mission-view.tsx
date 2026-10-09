@@ -13,6 +13,10 @@ import { ProofTable } from "./proof-table";
 import { TestCanvas } from "./test-canvas";
 import { LanesTimeline } from "./lanes-timeline";
 import type { Bot } from "../runtime/team";
+import { realName } from "../runtime/lane-bars";
+import { laneLiveness } from "../runtime/stage-health";
+import { WORK_STAGES } from "../runtime/work-groups";
+import { LaneActions, laneRoster, type LaneNote } from "./lane-actions";
 
 type Sub = "graph" | "proof" | "test" | "lanes";
 const WINDOW_MS = 14 * 3_600_000;
@@ -40,6 +44,8 @@ interface Props {
   agents?: Bot[];
   /** #591: the "While you were away" gap, for the summary's `N h away · N shipped`; absent, omitted. */
   away?: { minutes: number; shipped: number } | null;
+  /** #591: posts an owner note on the run (App: client.signal). Absent: no Nudge / Reassign. */
+  onSignal?: (note: LaneNote) => Promise<unknown>;
 }
 
 /** #591: the rail's dot colour family for a bot: working amber, waiting or quiet red, done grey. */
@@ -90,7 +96,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, agents = [], away = null }: Props) {
+export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, agents = [], away = null, onSignal }: Props) {
   const [chosen, setChosen] = useState<Selection | null>(null);
   const [stepId, setStepId] = useState<string | null>(null);
   // undefined: the group's default (the task that most needs the owner); null: none, a column is chosen.
@@ -189,6 +195,17 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
     const placed = layoutMission(mission).placed.find((p) => p.task.key === key);
     return placed ? mission.steps[placed.col] : undefined;
   };
+  // #591: Nudge / Reassign the lane that owns the selected PR's current step.
+  const roster = laneRoster(agents.map((b) => b.name), lanes);
+  const inspectorActions = onSignal && group ? (key: string) => {
+    const t = groupRows.find((r) => r.key === key);
+    const lane = t ? realName(ownerLane(t)) : null;
+    if (!t || !lane) return null;
+    const seen = laneLiveness(lane, lanes, tasks, live).sinceMs;
+    const stage = WORK_STAGES.find((s) => s.id === group.stages[key])?.label ?? t.step;
+    return <LaneActions key={`${key}:${lane}`} lane={lane} step={stage} pr={t.pr} roster={roster} now={live}
+      lastSeenAt={seen === null ? null : live - seen} send={onSignal} />;
+  } : undefined;
   const shownTask = taskKey === undefined ? group?.focus ?? null : taskKey;
   const ids = mission ? stepIds(mission) : [];
   const gsum = group ? {
@@ -328,7 +345,8 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
         )}
         <div className="mv-content">
           {sub === "graph" && group && <IssueGraph group={group} stepFor={stepFor} selectedTaskKey={shownTask} selectedCol={stageCol}
-            onSelectTask={(key) => { setTaskKey(key); setStageCol(null); }} onSelectCol={(c) => { setStageCol(c); setTaskKey(null); }} onOpenTest={openTest} health={health} pace={pace} />}
+            onSelectTask={(key) => { setTaskKey(key); setStageCol(null); }} onSelectCol={(c) => { setStageCol(c); setTaskKey(null); }} onOpenTest={openTest} health={health} pace={pace}
+            {...(inspectorActions ? { inspectorActions } : {})} />}
           {sub === "graph" && !group && mission && <MissionGraph mission={mission} selectedStepId={stepId} selectedTaskKey={taskKey ?? null}
             onSelectStep={(id) => { setStepId(id); setTaskKey(null); }} onSelectTask={pickTask} onOpenTest={openTest} />}
           {sub === "proof" && (mission && contractId ? <ProofTable mission={mission} onOpenTest={openTest} frameUrl={(id) => frameUrl(id, contractId)}

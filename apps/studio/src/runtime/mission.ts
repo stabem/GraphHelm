@@ -1,5 +1,6 @@
 import type { JourneyRunView, JourneyView } from "./types";
 import type { TaskState } from "./team-tasks";
+import { realName, realNames } from "./lane-bars";
 
 export type StepStatus = "proven" | "failed" | "needs_you" | "preview_only" | "not_run";
 export type TrustLevel = 0 | 1 | 2 | 3 | 4 | 5;
@@ -46,20 +47,26 @@ function stepStatus(stepId: string, run: JourneyRunView | null, stepIds: string[
 }
 
 /**
- * #591: the BLOCK the author still owes a fix for. `TaskState.blockedBy` stays set until a verdict on
- * a newer head arrives, but a newer `pr_opened` head (the task's `headSha` moved past the BLOCK's, or
- * the last round recorded a `fixHead`) already says the author is done: the work waits on the re-review.
+ * #591: the BLOCK the author still owes a fix for. Since #613 the fold (`foldTaskEvents`) clears
+ * `blockedBy` when a `pr_opened` names a head other than the BLOCK head, so `blockedBy === null`
+ * already means "the author answered; the work waits on the re-review".
  */
-export function openBlock(t: Pick<TaskState, "blockedBy" | "headSha" | "rounds">): TaskState["blockedBy"] {
-  const b = t.blockedBy;
-  if (!b) return null;
-  if (t.headSha && b.headSha && t.headSha !== b.headSha) return null;
-  const last = (t.rounds ?? []).at(-1);
-  if (last?.fixHead && last.headSha === b.headSha) return null;
-  return b;
+export function openBlock(t: Pick<TaskState, "blockedBy">): TaskState["blockedBy"] {
+  return t.blockedBy ?? null;
 }
 
-export function toMissionTask(t: TaskState): MissionTask {
+/** #591: the task with every name the Graph shows run through one filter: "TBD" and empty lanes,
+ * reviewers and BLOCK authors read as nobody, never as a name. */
+export function namedTask(t: TaskState): TaskState {
+  return {
+    ...t, lane: realName(t.lane), reviewers: realNames(t.reviewers),
+    blockedBy: t.blockedBy ? { ...t.blockedBy, reviewer: realName(t.blockedBy.reviewer) ?? "" } : null,
+    rounds: (t.rounds ?? []).map((r) => ({ ...r, reviewer: realName(r.reviewer) ?? "" })),
+  };
+}
+
+export function toMissionTask(raw: TaskState): MissionTask {
+  const t = namedTask(raw);
   const block = openBlock(t);
   const trust: TrustLevel = t.step === "merged" ? 3 : t.step === "merge" ? 2 : 1;
   return {

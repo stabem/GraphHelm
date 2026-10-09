@@ -1,5 +1,5 @@
 import "./mission-graph.css";
-import { useState, type CSSProperties } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { custodyRows, sha8, TRUST_LABELS, type Mission, type MissionStep, type MissionTask, type StepStatus } from "../runtime/mission";
 import { layoutMission, type PlacedTask } from "../runtime/mission-layout";
 import { liveDuration, stageDuration, type Activity, type StageHealth, type StageProgress } from "../runtime/stage-health";
@@ -150,8 +150,10 @@ export function MissionGraph({ mission, selectedStepId, selectedTaskKey, onSelec
 
 /** The selected work: who touched it and the evidence on its head. `step` is the journey step the
  * task serves, when it serves one; without it the inspector offers no test. */
-export function TaskInspector({ task: t, step, onOpenTest, health = null, pace = null, paceLabel = "" }: {
+export function TaskInspector({ task: t, step, onOpenTest, health = null, pace = null, paceLabel = "", actions = null }: {
   task: MissionTask; step: MissionStep | undefined; onOpenTest(stepId: string): void; health?: StageHealth | null; pace?: Pace | null; paceLabel?: string;
+  /** #591: the owner's Nudge / Reassign controls, under "Who touched it". */
+  actions?: ReactNode;
 }) {
   const st = nodeState(t, step);
   const note = t.blockedBy ? `BLOCK by ${t.blockedBy.reviewer || "a reviewer"} at ${sha8(t.blockedBy.headSha) ?? "an unrecorded head"}`
@@ -183,6 +185,7 @@ export function TaskInspector({ task: t, step, onOpenTest, health = null, pace =
           ))}
         </ul>
       </div>
+      {actions}
       <div className="mg-section">
         <span className="mg-cap">Evidence on this head</span>
         {step && step.status !== "not_run" ? (
@@ -216,6 +219,12 @@ export const stageLabel = (stage: WorkStage, t: MissionTask) => (t.step === "cri
 /** #591 geometry: a 120px row header, then the seven stage columns; each PR owns one 112px band. */
 export const ROW_HEAD = 120, X0 = ROW_HEAD + 12, BAND = 128, CUR_H = 104, CARD_TOP = 12, CELL_TOP = 36, MID = CARD_TOP + NODE_H / 2, FOLD_H = 44;
 const colX = (col: number) => X0 + col * PITCH;
+/** #591: the row header wraps its whole title (about 17 characters a 16px line in 114px); the band
+ * grows to hold it, and the cells stay top-aligned in it. */
+export function rowBand(title: string): number {
+  const lines = Math.max(1, Math.ceil(title.length / 17));
+  return Math.max(BAND, CARD_TOP + 8 + 15 + 4 + lines * 16 + 8 + 12);
+}
 
 /** The arrows inside one row: forward ones run straight along the row's middle; the loop from Fix
  * back to the re-review rides above the row's cells, inside its band, so no arrow leaves its row. */
@@ -246,6 +255,8 @@ interface IssueProps {
   health?: Record<string, StageHealth | null>;
   /** #591: live progress against the usual time and the last activity, by task key. */
   pace?: Record<string, Pace>;
+  /** #591: the owner's controls for the selected PR's current lane, when the Studio can send. */
+  inspectorActions?: (taskKey: string) => ReactNode;
 }
 export interface Pace { progress: StageProgress | null; activity: Activity }
 
@@ -322,16 +333,16 @@ function CurrentCard({ cell: c, stage, task: t, health, pace, selected, left, to
 
 /** #591: an issue's graph, one row per PR along the stage columns: the stages it passed as small
  * cells, the stage it is in as the full card, arrows only inside its own row. Merged rows fold below. */
-export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSelectTask, onSelectCol, onOpenTest, health = {}, pace = {} }: IssueProps) {
+export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSelectTask, onSelectCol, onOpenTest, health = {}, pace = {}, inspectorActions }: IssueProps) {
   const [showMerged, setShowMerged] = useState(false);
   const open = group.rows.filter((r) => r.open), merged = group.rows.filter((r) => !r.open);
   const shown = showMerged ? [...open, ...merged] : open;
   const tops = new Map<string, number>();
   let y = HEAD;
-  for (const r of open) { tops.set(r.key, y); y += BAND; }
+  for (const r of open) { tops.set(r.key, y); y += rowBand(r.task.title); }
   const foldTop = y;
   if (merged.length) y += FOLD_H;
-  if (showMerged) for (const r of merged) { tops.set(r.key, y); y += BAND; }
+  if (showMerged) for (const r of merged) { tops.set(r.key, y); y += rowBand(r.task.title); }
   const selected = group.rows.find((r) => r.key === selectedTaskKey) ?? null;
   const col = selected ? WORK_STAGES.findIndex((s) => s.id === group.stages[selected.key]) : selectedCol;
   const width = colX(WORK_STAGES.length) - 18;
@@ -405,7 +416,8 @@ export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSel
           </div>
         </section>
         {selected ? <TaskInspector task={selected.task} step={stepFor(selected.key)} onOpenTest={onOpenTest} health={health[selected.key] ?? null}
-            pace={selected.open ? pace[selected.key] ?? null : null} paceLabel={stageLabel(group.stages[selected.key]!, selected.task)} />
+            pace={selected.open ? pace[selected.key] ?? null : null} paceLabel={stageLabel(group.stages[selected.key]!, selected.task)}
+            actions={selected.open ? inspectorActions?.(selected.key) ?? null : null} />
           : <aside className="mg-inspector" aria-label="Selected work"><p className="mg-muted">Pick a PR to see who touched it.</p></aside>}
       </div>
     </div>

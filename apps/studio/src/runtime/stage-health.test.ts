@@ -142,7 +142,7 @@ describe("laneLiveness (#591)", () => {
     expect(ownerLane(t)).toBe("gh-claude-7");
   });
   it("a pushed fix times its Re-review from the push, not from the BLOCK", () => {
-    const t = ts("a", { step: "review", headSha: "b", blockedBy: { reviewer: "gh-claude-8", headSha: "a", commentUrl: "" }, clock: { since: iso(NOW - 5 * H), spent: {} },
+    const t = ts("a", { step: "review", headSha: "b", blockedBy: null /* #613: the fold cleared it */, clock: { since: iso(NOW - 5 * H), spent: {} },
       rounds: [{ reviewer: "gh-claude-8", headSha: "a", commentUrl: "", fixHead: "b", blockedAt: iso(NOW - 5 * H), fixedAt: iso(NOW - 3 * H) }] });
     expect(stageSince(t, [])).toBe(NOW - 3 * H);
     expect(stageProgress(t, [t], NOW)!.elapsedMs).toBe(3 * H);

@@ -101,7 +101,6 @@ const LIVE_FRAME_MS = 200;
 const RUN_REASON: Record<string, string> = {
   "watch.app_down": "the app it opens isn't running",
   "watch.launcher_invalid": "the project's app launcher isn't set up right",
-  "watch.launch_failed": "the project's app launcher couldn't start the app",
   "driver.observer_missing": "the browser player isn't installed in this project yet",
   "preview.busy": "another run is still going",
   "preview.budget_exceeded": "it took longer than allowed",

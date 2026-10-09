@@ -1,0 +1,37 @@
+.tc { display: flex; flex-direction: column; gap: 16px; }
+.tc-strip {
+  list-style: none; margin: 0; padding: 16px; display: flex; overflow-x: auto;
+  background: radial-gradient(#22252C 1px, transparent 1px) 0 0/16px 16px;
+}
+.tc-strip li { position: relative; flex: none; width: 232px; margin-right: 40px; }
+.tc-strip li:not(:last-child)::after {
+  content: "→"; position: absolute; right: -40px; top: 50%; width: 40px;
+  transform: translateY(-50%); text-align: center; color: #6b7280;
+}
+.tc-strip li:last-child { margin-right: 0; }
+.tc-card { width: 100%; min-height: 72px; text-align: left; padding: 10px 12px; border: 1px solid #22252C; border-radius: 8px; background: #17181D; color: inherit; cursor: pointer; }
+.tc-card[aria-pressed="true"] { border-color: #8ab4ff; }
+.tc-card[data-status="failed"] { border-color: #e5484d; }
+.tc-card[data-status="waits_for_you"] { border-color: #f5a524; }
+.tc-main { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.tc-browser { flex: 1 1 480px; min-width: 0; border: 1px solid #22252C; border-radius: 8px; overflow: hidden; background: #17181D; }
+.tc-chrome { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; background: #17181D; border-bottom: 1px solid #22252C; }
+.tc-chrome button { background: none; border: 0; color: inherit; cursor: pointer; }
+.tc-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; height: 20px; line-height: 20px; padding: 0 8px; border-radius: 4px; background: #0e0f12; }
+.tc-count { font-size: 12px; opacity: 0.7; }
+.tc-viewport { display: flex; align-items: center; justify-content: center; min-height: 240px; background: #0e0f12; }
+.tc-viewport img { display: block; max-width: 100%; max-height: 480px; width: 100%; object-fit: contain; }
+.tc-status { padding: 6px 10px; font-size: 12px; border-top: 1px solid #22252C; }
+.tc-inspector { flex: 0 0 420px; max-width: 100%; }
+.tc-kicker { font-size: 11px; letter-spacing: 0.08em; opacity: 0.7; }
+.tc-decide { display: flex; gap: 8px; }
+@media (max-width: 900px) {
+  .tc-inspector { flex: 1 1 100%; }
+}
+.tc-empty { opacity: 0.7; }
+.tc-reason { font-size: 13px; opacity: 0.8; }
+.proof { width: 100%; border-collapse: collapse; }
+.proof caption { text-align: left; font-weight: 600; padding-bottom: 8px; }
+.proof th, .proof td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #22252C; }
+.proof tr[data-status="needs_you"] td { color: #f5a524; }
+.proof tr[data-status="failed"] td { color: #e5484d; }

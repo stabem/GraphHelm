@@ -174,6 +174,8 @@ export interface TaskEventRecord {
   /** #477: the issue's (claimed) or the PR's (pr_opened) title and one-line summary. */
   title?: string;
   summary?: string;
+  /** #514: the issue whose work turned this task up (on `task.claimed`). */
+  parent?: number;
 }
 
 /** #477: optional words for the Team tab. Absent is `{}`; present but malformed is `false` (the
@@ -232,7 +234,10 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
       const branch = text(document.branch, 256);
       const said = words(document);
       if (said === false) return null;
-      return issue !== null && lane === actorId && branch !== null ? { ...base, kind, issue, lane, branch, ...said, ...(repo === null ? {} : { repo }) } : null;
+      const parent = document.parent === undefined ? undefined : count(document.parent);
+      if (parent === null) return null;
+      return issue !== null && lane === actorId && branch !== null
+        ? { ...base, kind, issue, lane, branch, ...said, ...(repo === null ? {} : { repo }), ...(parent === undefined ? {} : { parent }) } : null;
     }
     case "task.pr_opened": {
       const repo = repository(document.repo);
@@ -272,6 +277,17 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
 
 export type TaskStep = "implement" | "review" | "merge" | "merged";
 
+/** #514 (owner: a node for the fix and the re-review): one round per BLOCK. The fix is done when a
+ * `pr_opened` names a newer head; the re-review is that head's review. Derived from records only. */
+export interface ReviewRound {
+  reviewer: string;
+  /** The head the BLOCK was on, and the comment that gave the reason. */
+  headSha: string;
+  commentUrl: string;
+  /** The head the author pushed in answer, once a `pr_opened` named it. */
+  fixHead: string | null;
+}
+
 export type StrayVerdict =
   | { reason: "unrecorded"; reviewer: string; verdict: string; headSha: string; record: TaskEventRecord }
   | { reason: "superseded"; reviewer: string; verdict: string; headSha: string; supersededBy: string };
@@ -306,6 +322,10 @@ export interface TaskState {
   prSummary: string | null;
   /** Every head a `pr_opened` named, in order. */
   recordedHeads: string[];
+  /** #514: the issue whose work turned this task up; the Studio draws it inside that issue's card. */
+  parent: number | null;
+  /** #514: the BLOCK rounds of the review loop, oldest first. */
+  rounds: ReviewRound[];
   lastSequence: number;
 }
 
@@ -315,6 +335,11 @@ function applyVerdict(state: TaskState, event: TaskEventRecord): void {
   state.repoUrl ??= /^(https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\//.exec(event.commentUrl ?? "")?.[1] ?? state.repoUrl;
   if (event.verdict === "BLOCK") {
     state.blockedBy = { reviewer: event.reviewer ?? "", headSha: event.headSha ?? "", commentUrl: event.commentUrl ?? "" };
+    // A second BLOCK on the same unanswered head (another reviewer) is the same round.
+    const last = state.rounds.at(-1);
+    if (last === undefined || last.fixHead !== null || last.headSha !== event.headSha) {
+      state.rounds.push({ reviewer: event.reviewer ?? "", headSha: event.headSha ?? "", commentUrl: event.commentUrl ?? "", fixHead: null });
+    }
     state.step = "review";
   } else {
     state.blockedBy = null;
@@ -335,7 +360,7 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
     const slice: TaskState = {
       key: "", taskId: event.taskId, branch: null, issue: null, pr: event.kind === "task.claimed" ? null : event.pr ?? null,
       lane: null, headSha: null, journeys: [], step: "implement", blockedBy: null, reviewers: [], mergeSha: null,
-      repoUrl: null, title: null, summary: null, prTitle: null, prSummary: null, strayVerdicts: [], recordedHeads: [], lastSequence: 0,
+      repoUrl: null, title: null, summary: null, prTitle: null, prSummary: null, strayVerdicts: [], recordedHeads: [], parent: null, rounds: [], lastSequence: 0,
     };
     slices.push(slice);
     return slice;
@@ -372,6 +397,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
     switch (event.kind) {
       case "task.claimed":
         state.branch = event.branch ?? state.branch;
+        state.parent = event.parent ?? state.parent;
         state.title = event.title ?? state.title;
         state.summary = event.summary ?? state.summary;
         state.repoUrl = event.repo !== undefined ? `https://github.com/${event.repo}` : state.repoUrl;
@@ -387,6 +413,11 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         state.headSha = event.headSha ?? state.headSha;
         state.journeys = event.journeys ?? state.journeys;
         state.step = "review";
+        // #514: a newer head after a BLOCK is the author's fix; its review is the re-review.
+        {
+          const round = state.rounds.at(-1);
+          if (round !== undefined && round.fixHead === null && event.headSha !== undefined && event.headSha !== round.headSha) round.fixHead = event.headSha;
+        }
         if (event.headSha !== undefined && !state.recordedHeads.includes(event.headSha)) state.recordedHeads.push(event.headSha);
         // A verdict that arrived before this head's pr_opened (a back-fill) now speaks for it.
         for (const stray of state.strayVerdicts.filter((entry) => entry.reason === "unrecorded" && entry.headSha === state.headSha)) {

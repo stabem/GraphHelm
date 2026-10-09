@@ -1,16 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import type { TaskState, TaskStep } from "../runtime/team-tasks";
+import type { TaskState } from "../runtime/team-tasks";
 
 /* #391 (journey-first spec §7, Rule 5): one small graph per task, folded from the `task.*` records
  * alone. GitHub is linked, never polled: the view works offline and the records are the audit
  * trail. */
 
-const STEPS: { step: Exclude<TaskStep, "merged">; label: string }[] = [
-  { step: "implement", label: "Implement" },
-  { step: "review", label: "Review" },
-  { step: "merge", label: "Merge" },
-];
 
 /** A recorded URL becomes a link only when it points at github.com: the records are written by
  * lanes, and a `javascript:` or look-alike URL must not become clickable in the owner's view. */
@@ -45,6 +40,32 @@ function ordered(tasks: TaskState[]): { open: TaskState[]; delivered: TaskState[
   };
 }
 
+/** #514 (owner): one card per issue. Each PR of the issue is a row; a task claimed with a `parent`
+ * is a row in the parent issue's card when that card exists, else its own card. */
+interface Card { issue: number | null; key: string; rows: TaskState[] }
+function cardsOf(tasks: TaskState[]): Card[] {
+  const issues = new Set(tasks.map((task) => task.issue).filter((issue): issue is number => issue !== null));
+  const cards = new Map<string, Card>();
+  for (const task of tasks) {
+    const home = task.parent !== null && issues.has(task.parent) ? task.parent : task.issue;
+    const key = home !== null ? `issue-${home}` : task.key;
+    const card = cards.get(key) ?? { issue: home, key, rows: [] };
+    card.rows.push(task);
+    cards.set(key, card);
+  }
+  return [...cards.values()];
+}
+/** A card sits where its worst open row would; it is delivered only when every row is merged. */
+function orderedCards(tasks: TaskState[]): { open: Card[]; delivered: Card[] } {
+  const all = cardsOf(tasks).map((card) => ({ card, ...ordered(card.rows) }));
+  const latest = (rows: TaskState[]) => Math.max(...rows.map((row) => row.lastSequence));
+  const open = all.filter((entry) => entry.open.length > 0)
+    .sort((a, b) => rank(a.open[0]) - rank(b.open[0]) || latest(b.card.rows) - latest(a.card.rows));
+  const delivered = all.filter((entry) => entry.open.length === 0).sort((a, b) => latest(b.card.rows) - latest(a.card.rows));
+  const rowsInOrder = (entry: (typeof all)[number]): Card => ({ ...entry.card, rows: [...entry.open, ...entry.delivered] });
+  return { open: open.map(rowsInOrder), delivered: delivered.map(rowsInOrder) };
+}
+
 /** #477: the rows whose last record moved since the previous render, marked for a few seconds so
  * the owner sees what just changed. The first render marks nothing. */
 function useChanged(tasks: TaskState[]): Set<string> {
@@ -65,23 +86,58 @@ function useChanged(tasks: TaskState[]): Set<string> {
   return fresh.length > 0 ? new Set(fresh) : changed;
 }
 
-function Node({ task, step, label }: { task: TaskState; step: Exclude<TaskStep, "merged">; label: string }) {
-  const order = STEPS.findIndex((entry) => entry.step === step);
-  const current = STEPS.findIndex((entry) => entry.step === task.step);
-  const state = task.step === "merged" || order < current ? "done" : order === current ? "current" : "next";
+type NodeState = "done" | "current" | "next" | "blocked";
+interface StepNode { key: string; label: string; who: ReactNode; state: NodeState; reason: string | null; review: boolean }
+
+/** #514 (owner: "a node for it: re-review and the agent working"): the row grows one Fix and one
+ * Re-review per BLOCK round, so the story of the loop shows. A Review blocked is marked ✗ with its
+ * reason linked; Fix is the author's, lit until a newer head is recorded; Re-review is lit on that
+ * head. All from the records. */
+function nodesOf(task: TaskState): StepNode[] {
+  const merged = task.step === "merged";
   // #458: the merge sha short, as everywhere else in the Studio, linked when the repository is known.
-  const merge = task.mergeSha === null ? null : task.repoUrl !== null && /^[0-9a-f]{7,64}$/.test(task.mergeSha)
+  const sha = task.mergeSha === null ? null : task.repoUrl !== null && /^[0-9a-f]{7,64}$/.test(task.mergeSha)
     ? <a href={`${task.repoUrl}/commit/${task.mergeSha}`} target="_blank" rel="noreferrer">{task.mergeSha.slice(0, 8)}</a>
     : task.mergeSha.slice(0, 8);
-  const who = step === "implement" ? task.lane
-    : step === "review" ? (task.reviewers.length > 0 ? task.reviewers.join(", ") : null)
-    : merge;
+  const reviewers = task.reviewers.length > 0 ? task.reviewers.join(", ") : null;
+  const rounds = task.rounds;
+  const nodes: StepNode[] = [
+    { key: "implement", label: "Implement", who: task.lane, state: task.step === "implement" ? "current" : "done", reason: null, review: false },
+    {
+      key: "review", label: "Review", who: rounds.length > 0 ? rounds[0].reviewer : reviewers, review: true,
+      state: rounds.length > 0 ? "blocked" : task.step === "review" ? "current" : task.step === "implement" ? "next" : "done",
+      reason: rounds[0]?.commentUrl ?? null,
+    },
+  ];
+  rounds.forEach((round, index) => {
+    const next = rounds[index + 1];
+    const last = next === undefined;
+    const tag = ` · round ${index + 1}`;
+    nodes.push({
+      key: `fix-${index}`, label: `Fix${tag}`, who: task.lane, review: false, reason: null,
+      state: round.fixHead !== null ? "done" : last && !merged ? "current" : "done",
+    });
+    nodes.push({
+      key: `rereview-${index}`, label: `Re-review${tag}`, review: true,
+      who: next !== undefined ? next.reviewer : reviewers ?? round.reviewer,
+      state: next !== undefined ? "blocked" : round.fixHead === null ? "next" : task.step === "review" ? "current" : "done",
+      reason: next?.commentUrl ?? null,
+    });
+  });
+  nodes.push({ key: "merge", label: "Merge", who: sha, state: merged ? "done" : task.step === "merge" ? "current" : "next", reason: null, review: false });
+  return nodes;
+}
+
+function Node({ node }: { node: StepNode }) {
   return (
-    <li className={`task-node task-node-${state}`} aria-current={state === "current" ? "step" : undefined}>
-      <span className="task-node-label">{label}</span>
-      {who !== null && <span className="task-node-agent">{who}</span>}
+    <li className={`task-node task-node-${node.state}`} aria-current={node.state === "current" ? "step" : undefined}>
+      <span className="task-node-label">{node.label}{node.state === "blocked" && <span className="task-node-cross" aria-label="blocked"> ✗</span>}</span>
+      {node.who !== null && <span className="task-node-agent">{node.who}</span>}
+      {node.state === "blocked" && node.reason !== null && GITHUB_URL.test(node.reason) && (
+        <a className="task-node-reason" href={node.reason} target="_blank" rel="noreferrer">reason</a>
+      )}
       {/* #508 (owner): a review in progress with nobody named means a record is missing; say so. */}
-      {who === null && step === "review" && state === "current" && <span className="task-node-missing">no reviewer recorded</span>}
+      {node.who === null && node.review && node.state === "current" && <span className="task-node-missing">no reviewer recorded</span>}
     </li>
   );
 }
@@ -98,6 +154,7 @@ function Graph({ task, changed, onOpenJourney }: { task: TaskState; changed: boo
         {task.step === "merged" && <span className="task-graph-merged">merged</span>}
       </div>
       {task.summary !== null && <p className="task-graph-summary" title={task.summary}>{task.summary}</p>}
+      {task.parent !== null && task.parent !== task.issue && <p className="task-graph-parent">found while working on #{task.parent}</p>}
       {task.pr !== null && (
         <p className="task-graph-pr">
           {task.repoUrl !== null
@@ -111,7 +168,7 @@ function Graph({ task, changed, onOpenJourney }: { task: TaskState; changed: boo
         </p>
       )}
       <ol className="task-graph-steps">
-        {STEPS.map(({ step, label }) => <Node key={step} task={task} step={step} label={label} />)}
+        {nodesOf(task).map((node) => <Node key={node.key} node={node} />)}
       </ol>
       {task.blockedBy !== null && (GITHUB_URL.test(task.blockedBy.commentUrl)
         ? <a className="task-graph-blocked" href={task.blockedBy.commentUrl} target="_blank" rel="noreferrer">
@@ -133,17 +190,36 @@ function Graph({ task, changed, onOpenJourney }: { task: TaskState; changed: boo
   );
 }
 
+function CardView({ card, changed, onOpenJourney }: { card: Card; changed: Set<string>; onOpenJourney: (contractId: string) => void }) {
+  const lead = card.rows.find((row) => row.issue === card.issue && row.title !== null) ?? card.rows.find((row) => row.issue === card.issue) ?? card.rows[0];
+  const label = card.issue !== null ? `Issue #${card.issue}${lead.issue === card.issue && lead.title !== null ? ` · ${lead.title}` : ""}` : title(lead);
+  return (
+    <article className="task-card" aria-label={label}>
+      {card.rows.length > 1 && (
+        <header className="task-card-head">
+          {card.issue !== null && (lead.repoUrl !== null
+            ? <a href={`${lead.repoUrl}/issues/${card.issue}`} target="_blank" rel="noreferrer">#{card.issue}</a>
+            : <strong>#{card.issue}</strong>)}
+          {lead.issue === card.issue && lead.title !== null && <span className="task-graph-title" title={lead.title}>{lead.title}</span>}
+          <span className="task-card-count">{card.rows.length} rows</span>
+        </header>
+      )}
+      {card.rows.map((row) => <Graph key={row.key} task={row} changed={changed.has(row.key)} onOpenJourney={onOpenJourney} />)}
+    </article>
+  );
+}
+
 export function TaskGraphs({ tasks, onOpenJourney }: TaskGraphsProps) {
   const changed = useChanged(tasks);
   if (tasks.length === 0) return null;
-  const { open, delivered } = ordered(tasks);
+  const { open, delivered } = orderedCards(tasks);
   return (
     <section className="task-graphs" aria-label="Tasks">
-      {open.map((task) => <Graph key={task.key} task={task} changed={changed.has(task.key)} onOpenJourney={onOpenJourney} />)}
+      {open.map((card) => <CardView key={card.key} card={card} changed={changed} onOpenJourney={onOpenJourney} />)}
       {delivered.length > 0 && (
         <details className="task-graphs-delivered">
           <summary>Delivered ({delivered.length})</summary>
-          {delivered.map((task) => <Graph key={task.key} task={task} changed={changed.has(task.key)} onOpenJourney={onOpenJourney} />)}
+          {delivered.map((card) => <CardView key={card.key} card={card} changed={changed} onOpenJourney={onOpenJourney} />)}
         </details>
       )}
     </section>

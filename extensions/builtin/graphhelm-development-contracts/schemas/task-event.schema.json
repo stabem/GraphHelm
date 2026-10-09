@@ -20,7 +20,8 @@
         "plan": {"type": "object"},
         "repo": {"$ref": "#/$defs/repo"},
         "title": {"$ref": "#/$defs/title"},
-        "summary": {"$ref": "#/$defs/summary"}
+        "summary": {"$ref": "#/$defs/summary"},
+        "parent": {"description": "The issue whose work turned this task up (#514); the Studio draws this task inside that issue's card.", "$ref": "#/$defs/positive"}
       }
     },
     {

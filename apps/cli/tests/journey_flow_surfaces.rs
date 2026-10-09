@@ -157,11 +157,18 @@ impl Harness {
     }
 
     fn serve(&self, project: bool) -> (ServerGuard, String, String) {
+        let events = self.events.clone();
+        self.serve_with(&events, project)
+    }
+
+    /// The Runtime on a given store; #534's cells serve the project's own owner store, as a real
+    /// Runtime started from the project does.
+    fn serve_with(&self, events: &Path, project: bool) -> (ServerGuard, String, String) {
         let binding = format!("{AGENT_CREDENTIAL}=agent-planner|project-local|{RUN}");
         let mut command = graphhelm();
         command
             .args(["serve", "--events"])
-            .arg(&self.events)
+            .arg(events)
             .args(["--bind", "127.0.0.1:0", "--keyring"])
             .arg(&self.keyring)
             .args(["--key-id", KEY_ID]);
@@ -181,9 +188,9 @@ impl Harness {
         let started: Value = serde_json::from_str(line.trim()).unwrap();
         assert_eq!(started["command"], "serve.started", "{started}");
         let base = format!("http://{}", started["data"]["address"].as_str().unwrap());
-        let mut name = self.events.file_name().unwrap().to_os_string();
+        let mut name = events.file_name().unwrap().to_os_string();
         name.push(".token");
-        let token = std::fs::read_to_string(self.events.with_file_name(name))
+        let token = std::fs::read_to_string(events.with_file_name(name))
             .unwrap()
             .trim()
             .to_owned();
@@ -656,4 +663,94 @@ fn owner_token(project: &Path) -> String {
         .join(".graphhelm/events.token")
         .to_string_lossy()
         .into_owned()
+}
+
+/// #569 review: the agent session token could post a signal of another kind into the reserved
+/// owner execution under an approval's id, so the owner's later approval collided on it and failed:
+/// an agent could block any flow's approval. Admission now refuses every non-owner signal into
+/// `graphhelm-owner` and every other kind under a `journey-approved-` id, and the owner's record
+/// uses a key the agent cannot compute. Cost: one Runtime on the project's own store, seconds.
+#[test]
+fn an_agent_cannot_squat_the_owner_record_execution_and_the_owner_still_approves() {
+    let harness = prepared();
+    let events = harness.project.join(".graphhelm/events");
+    let (_server, base, owner) = harness.serve_with(&events, true);
+    // The owner's first approval starts the reserved execution.
+    let (status, first) = http(
+        &base,
+        "POST",
+        "/v1/journey-flows/basket/approve",
+        Some(&owner),
+    );
+    assert_eq!(status, 200, "{first}");
+    let agent = std::fs::read_to_string(events.with_extension("agent.token")).unwrap();
+    let agent = agent.trim();
+    for id in [
+        "journey-approved-0123456789abcdef0123456789abcdef",
+        "agent-note-into-owner",
+    ] {
+        let body = json!({"signal": {"id": id, "type": "operator_note", "severity": "low",
+            "source": {"type": "agent", "id": "agent-chat"}, "description": "squat",
+            "evidence": ["squat"], "emittedAt": "2026-10-09T00:00:00Z"}})
+        .to_string();
+        let (status, refused) = signal_as_agent(&base, agent, id, &body);
+        assert_ne!(
+            status, 200,
+            "an agent recorded into the owner execution: {refused}"
+        );
+        // Refused by the owner-execution rule itself, not by a missing header or an unknown run.
+        assert!(
+            refused.to_string().contains("owner record execution"),
+            "{refused}"
+        );
+    }
+    // The owner's approval of another flow still succeeds and is signed.
+    let (status, approved) = http(
+        &base,
+        "POST",
+        "/v1/journey-flows/checkout/approve",
+        Some(&owner),
+    );
+    assert_eq!(status, 200, "{approved}");
+    let (_, validated) = harness.cli(&["validate", "--all"]);
+    assert!(
+        !validated.to_string().contains("flow.approval_unsigned"),
+        "{validated}"
+    );
+}
+
+/// A signal POST exactly as a lane sends it: idempotency key and actor headers included, so a
+/// refusal is the admission's own answer.
+fn signal_as_agent(base: &str, bearer: &str, key: &str, body: &str) -> (u16, Value) {
+    let address = base.strip_prefix("http://").unwrap();
+    let head = [
+        "POST /v1/executions/graphhelm-owner/signal HTTP/1.1".to_owned(),
+        format!("Host: {address}"),
+        "Connection: close".to_owned(),
+        format!("Content-Length: {}", body.len()),
+        "Content-Type: application/json".to_owned(),
+        format!("Authorization: Bearer {bearer}"),
+        format!("Idempotency-Key: {key}"),
+        "X-GraphHelm-Actor: agent-chat".to_owned(),
+        "X-GraphHelm-Actor-Type: agent".to_owned(),
+    ]
+    .join("\r\n");
+    let request = format!("{head}\r\n\r\n{body}");
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(60)))
+        .unwrap();
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).unwrap();
+    let split = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+    let status = String::from_utf8_lossy(&raw[..split])
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse().ok())
+        .unwrap_or(0);
+    (
+        status,
+        serde_json::from_slice(&raw[split + 4..]).unwrap_or(Value::Null),
+    )
 }

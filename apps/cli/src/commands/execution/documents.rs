@@ -361,6 +361,34 @@ fn valid_repo(repo: &str) -> bool {
     repo.len() <= 140 && owner_ok && name_ok
 }
 
+/// #534 (#569 review): the reserved owner execution and the approval id space are the owner's.
+/// Before any kind-specific check: nobody but the owner records into `graphhelm-owner`, and no
+/// signal of another kind may take a `journey-approved-` id, so an agent cannot squat the id an
+/// owner's later approval needs and block it. An approval outside the reserved execution is refused
+/// too, so every approval lives where readers look.
+pub(crate) fn validate_owner_execution(
+    execution: Option<&str>,
+    value: &serde_json::Value,
+    actor: &PersistedActor,
+) -> Result<(), Failure> {
+    use crate::commands::journey_owner::{APPROVED_KIND, OWNER_EXECUTION};
+    let reserved = execution == Some(OWNER_EXECUTION);
+    let kind = value["type"].as_str().unwrap_or("");
+    let approval_id = value["id"]
+        .as_str()
+        .is_some_and(|id| id.starts_with("journey-approved-"));
+    if (reserved && actor.actor_type() != graphhelm_protocols::PersistedActorType::Owner)
+        || (approval_id && kind != APPROVED_KIND)
+        || (kind == APPROVED_KIND && !reserved)
+    {
+        return Err(super::signal_invalid(
+            "the owner record execution and journey approval ids are the owner's",
+            "/signal",
+        ));
+    }
+    Ok(())
+}
+
 /// #534: an owner's journey approval. Only the owner records it, on any route (the agent session
 /// token's `/signal` included), and its id must name exactly the flow and digest it describes,
 /// so a reader can trust the id without opening the envelope.
@@ -402,7 +430,8 @@ fn validate_journey_approval(
         || !known
         || OpaqueId::parse(flow).is_err()
         || !digest.strip_prefix("sha256:").is_some_and(|h| hex(h, 64))
-        || !hex(revision, 40)
+        // A SHA-1 (40) or SHA-256 (64) repository's revision (#569 review).
+        || !(hex(revision, 40) || hex(revision, 64))
         || value["id"].as_str() != Some(signal_id(flow, digest).as_str())
     {
         return Err(invalid());
@@ -1316,5 +1345,38 @@ mod journey_approval_tests {
         extra["description"] = serde_json::json!({"protocol": APPROVED_PROTOCOL, "flowId": "checkout", "digest": digest,
             "revision": "a".repeat(40), "safe": true}).to_string().into();
         assert!(super::validate_owner_signal(&extra, &owner, false).is_err());
+        // A SHA-256 repository's 64-hex revision is a revision too (#569 review).
+        let mut sha256 = good.clone();
+        sha256["description"] =
+            serde_json::json!({"protocol": APPROVED_PROTOCOL, "flowId": "checkout",
+            "digest": digest, "revision": "d".repeat(64)})
+            .to_string()
+            .into();
+        assert!(super::validate_owner_signal(&sha256, &owner, false).is_ok());
+    }
+
+    /// #569 review: nobody but the owner records into the reserved owner execution, and no other
+    /// kind may take an approval id, so an agent cannot squat the id an approval needs.
+    #[test]
+    fn the_owner_execution_and_the_approval_ids_are_the_owners() {
+        use crate::commands::journey_owner::OWNER_EXECUTION;
+        let digest = format!("sha256:{}", "b".repeat(64));
+        let id = signal_id("checkout", &digest);
+        let approval = approval(&id, "checkout", &digest);
+        let note = |id: &str| serde_json::json!({"id": id, "type": "operator_note", "description": "squat"});
+        let owner = actor(PersistedActorType::Owner, "owner-cli");
+        let agent = actor(PersistedActorType::Agent, "agent-chat");
+        let check = super::validate_owner_execution;
+        assert!(check(Some(OWNER_EXECUTION), &approval, &owner).is_ok());
+        // Any kind from a non-owner into the reserved execution.
+        assert!(check(Some(OWNER_EXECUTION), &note("agent-note"), &agent).is_err());
+        // Another kind under an approval id, anywhere, even from the owner.
+        assert!(check(Some(OWNER_EXECUTION), &note(&id), &agent).is_err());
+        assert!(check(Some("gh-team"), &note(&id), &agent).is_err());
+        assert!(check(Some(OWNER_EXECUTION), &note(&id), &owner).is_err());
+        // An approval outside the reserved execution.
+        assert!(check(Some("gh-team"), &approval, &owner).is_err());
+        // Ordinary signals elsewhere are untouched.
+        assert!(check(Some("gh-team"), &note("lane-note"), &agent).is_ok());
     }
 }

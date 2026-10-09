@@ -32,12 +32,14 @@ pub(crate) fn store(project: &Path) -> PathBuf {
     project.join(".graphhelm/events")
 }
 
-/// `journey-approved-<flow>-<hex>`: the record's id names exactly what it vouches for.
+/// `journey-approved-<32 hex>`: the first 128 bits of sha256 over the flow id and the digest. A
+/// flow id may be 128 characters, so it cannot be spelled into an id (`OpaqueId` holds 128 bytes);
+/// the description carries both in full and admission recomputes this id from them, so the id still
+/// names exactly the flow and digest it vouches for.
 pub(crate) fn signal_id(flow: &str, digest: &str) -> String {
-    format!(
-        "journey-approved-{flow}-{}",
-        digest.strip_prefix("sha256:").unwrap_or(digest)
-    )
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(format!("{flow}\n{digest}").as_bytes());
+    format!("journey-approved-{}", &hex::encode(hash)[..32])
 }
 
 /// Whether the project's owner store holds an owner's approval of `flow` at exactly `digest`.
@@ -94,8 +96,14 @@ pub(crate) fn record(
         "evidence": [format!("journey-flow:{flow}")],
         "emittedAt": chrono_now(),
     });
-    let key = OpaqueId::parse(&id)
-        .map_err(|_| "the approval id is not a valid identifier".to_string())?;
+    // An unpredictable idempotency key (#569 review): an agent can choose any route's
+    // `Idempotency-Key`, so a key it could compute (the signal id) could be squatted to block the
+    // owner. A retry stays safe because `approved` is checked first.
+    let key = OpaqueId::parse(format!(
+        "{id}-{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..8]
+    ))
+    .map_err(|_| "the approval id is not a valid identifier".to_string())?;
     execution::signal::execute(
         &events,
         Some(OWNER_EXECUTION),

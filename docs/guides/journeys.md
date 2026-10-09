@@ -155,7 +155,7 @@ It writes `status: approved` plus `approved: {digest, revision}` into the YAML a
 project's `.graphhelm/events.token` (made by `graphhelm init`). Without it, or with another
 store's token, `journey approve` refuses and writes nothing. The Studio's Approve button uses the
 owner credential the same way. Before the YAML is written, approve appends an owner-only record
-(signal kind `journey_flow_approved`, id `journey-approved-<flow>-<digest hex>`) to the reserved
+(signal kind `journey_flow_approved`, id `journey-approved-<first 32 hex of sha256(flow id, digest)>`) to the reserved
 execution `graphhelm-owner` in the project's `.graphhelm/events`. The Runtime refuses that kind
 from anyone but the owner, including the agent session token. `journey validate`, replay and
 `keel plan` trust a YAML approval only when that record exists for the exact digest:

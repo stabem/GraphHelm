@@ -394,6 +394,7 @@ fn record_on(
             "/signal/type",
         ));
     }
+    super::documents::validate_owner_execution(execution, &envelope, &actor)?;
     super::documents::validate_owner_signal(&envelope, &actor, sealing.is_some())?;
     super::documents::validate_task_event(&envelope, &actor)?;
     if matches!(

@@ -360,6 +360,10 @@ pub struct LocalEventRepository {
     /// #185: blob files `plan_reconcile` opened by handle, the cost that grew with the store.
     #[cfg(test)]
     reconcile_blob_opens: Arc<AtomicU64>,
+    /// #506: a test-only pause per verified batch, taken from the cache, so a test can make a
+    /// walk outlast the cache's age, or hold the lock long, deterministically.
+    #[cfg(test)]
+    full_walk_delay: Option<std::time::Duration>,
     failpoint: Option<LocalFailpoint>,
     schemas: &'static graphhelm_schema::RepositorySchemaSet,
     /// Unbounded unless this handle came from `open_within` (#750). Checked inside the journal
@@ -700,6 +704,8 @@ impl LocalEventRepository {
             journal_sync_count: Arc::new(AtomicU64::new(0)),
             #[cfg(test)]
             reconcile_blob_opens: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            full_walk_delay: prefix_cache.and_then(|cache| cache.walk_delay),
             failpoint,
             schemas,
             read_budget,
@@ -1784,6 +1790,7 @@ impl LocalEventRepository {
                 (VerifyCtx::fresh(), 0, std::time::Instant::now())
             }
         };
+        let from_genesis = offset == 0;
         let bytes = read_bounded_range(&mut journal, offset, length)?;
         if !bytes.is_empty() && bytes.last() != Some(&b'\n') {
             return Err(EventRepositoryError::IntegrityAt(
@@ -1811,6 +1818,14 @@ impl LocalEventRepository {
             Err(error) => return Err(error),
         }
         let state = ctx.state.clone();
+        // #506: a walk from genesis is stamped when it ENDS. Stamped at its start, a walk that
+        // took longer than the cache's age left a prefix already expired, so the next read
+        // walked from genesis again, and a slow store re-verified forever.
+        let full_verified_at = if from_genesis {
+            std::time::Instant::now()
+        } else {
+            full_verified_at
+        };
         *verified = Some(ctx.into_prefix(self.journal_identity, length, full_verified_at));
         Ok(state)
     }
@@ -1870,6 +1885,12 @@ impl LocalEventRepository {
             .filter(|line| !line.is_empty())
         {
             ensure_inclusive_limit(line.len() as u64, MAX_BATCH_BYTES as u64)?;
+            // #506: a test-only pause per batch, after the walk's start stamp and under its lock,
+            // so a walk's length grows with the journal the way a real one does.
+            #[cfg(test)]
+            if let Some(delay) = self.full_walk_delay {
+                std::thread::sleep(delay);
+            }
             let batch = parse_physical_batch(self.schemas, line)?;
             let before = walked_events;
             walked_events = walked_events.saturating_add(batch.events.len() as u64);
@@ -2934,6 +2955,8 @@ enum LoadPath {
 pub struct PrefixCache {
     slot: Arc<Mutex<Option<VerifiedPrefix>>>,
     max_age: std::time::Duration,
+    #[cfg(test)]
+    walk_delay: Option<std::time::Duration>,
 }
 
 impl PrefixCache {
@@ -2943,6 +2966,8 @@ impl PrefixCache {
         Self {
             slot: Arc::new(Mutex::new(None)),
             max_age,
+            #[cfg(test)]
+            walk_delay: None,
         }
     }
 }
@@ -8197,6 +8222,35 @@ mod limit_tests {
             counters(&again),
             (1, 0),
             "an expired prefix is never reused"
+        );
+    }
+
+    /// #506: a walk from genesis is stamped when it ENDS. Stamped at its start, a walk longer
+    /// than the cache's age produced a prefix already expired, so the next read walked from
+    /// genesis again, and a store whose walk outgrew the age re-verified on every read (a pinned
+    /// core and long stalls). The walk here is made to outlast the age on purpose.
+    /// Credible regression: the stamp moving back to the start. Cost: one temp store, a 500 ms
+    /// test-only pause.
+    #[test]
+    fn a_full_verify_is_stamped_when_it_ends_so_a_slow_one_is_still_reused() {
+        let directory = tempfile::tempdir().unwrap();
+        let build = cache_repository(directory.path());
+        build.append_atomic(&valid_graph_request()).unwrap();
+        drop(build);
+        let mut cache = PrefixCache::new(std::time::Duration::from_millis(300));
+        cache.walk_delay = Some(std::time::Duration::from_millis(500));
+        let first = shared_repository(directory.path(), &cache);
+        assert_eq!(
+            counters(&first),
+            (1, 0),
+            "the first open walks from genesis"
+        );
+        drop(first);
+        let second = shared_repository(directory.path(), &cache);
+        assert_eq!(
+            counters(&second),
+            (0, 0),
+            "a walk that outlasted the age must still be reused right after it ends"
         );
     }
 

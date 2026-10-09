@@ -676,6 +676,12 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
         if flow["status"] != "approved" {
             for id in path_edges.as_array().unwrap() {
                 let id = id.as_str().unwrap();
+                // #518: the owner marked this edge safe, and it is still the edge that was
+                // marked (same app, screens, URL and acts), so its acts are played. A mark the
+                // edge outgrew is void and the guard applies as if it were not there.
+                if super::journey_flow::edge_marked_safe(&flow, &edges[id]) {
+                    continue;
+                }
                 for (act_index, act) in edges[id]["acts"].as_array().unwrap().iter().enumerate() {
                     if let Some(word) = would_destroy(act) {
                         guarded.push(json!({"edge":id,"actIndex":act_index,"kind":act["kind"],

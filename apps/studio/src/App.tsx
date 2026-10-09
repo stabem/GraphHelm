@@ -1,3 +1,4 @@
+import { recordReviewAssigned } from "./runtime/review-assign";
 /**
  * GraphHelm Local Studio.
  *
@@ -3149,6 +3150,11 @@ export default function App({
                   lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe}
                   runName={selected} lastRecordAt={Date.parse(eventList[eventList.length - 1]?.occurredAt ?? "")} onTeam={() => chooseCanvas("team")}
                   agents={team.bots} away={handover ? { minutes: handover.gapMinutes, shipped: handover.shipped.length } : null}
+                  onReviewAssigned={async (task, lane) => {
+                    const client = clientRef.current;
+                    if (!client || selected === "") throw new Error("No Runtime is connected.");
+                    await recordReviewAssigned(client, selected, task, lane);
+                  }}
                   onSignal={async (note) => {
                     // #591 Nudge / Reassign: an owner note on this run, the same POST /signal the chat box uses.
                     const client = clientRef.current;

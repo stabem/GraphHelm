@@ -46,6 +46,7 @@ interface Props {
   away?: { minutes: number; shipped: number } | null;
   /** #591: posts an owner note on the run (App: client.signal). Absent: no Nudge / Reassign. */
   onSignal?: (note: LaneNote) => Promise<unknown>;
+  onReviewAssigned?: (task: TaskState, lane: string) => Promise<unknown>;
 }
 
 /** #591: the rail's dot colour family for a bot: working amber, waiting or quiet red, done grey. */
@@ -96,7 +97,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, agents = [], away = null, onSignal }: Props) {
+export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, agents = [], away = null, onSignal, onReviewAssigned }: Props) {
   const [chosen, setChosen] = useState<Selection | null>(null);
   const [stepId, setStepId] = useState<string | null>(null);
   // undefined: the group's default (the task that most needs the owner); null: none, a column is chosen.
@@ -210,6 +211,11 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
     const id = `${t.pr ?? key}:${lane}`;
     return <LaneActions key={`${key}:${lane}`} lane={lane} step={stage} pr={t.pr} roster={roster} now={live}
       lastSeenAt={seen === null ? null : live - seen} send={onSignal}
+      assignReview={async (reviewer) => {
+        const task = tasks.find((row) => row.key === key);
+        if (!task || !onReviewAssigned) throw new Error("Review assignment is unavailable.");
+        await onReviewAssigned(task, reviewer);
+      }}
       askedAt={askedAt[id] ?? null} onAsked={(at) => setAskedAt((m) => ({ ...m, [id]: at }))} />;
   } : undefined;
   const shownTask = taskKey === undefined ? group?.focus ?? null : taskKey;

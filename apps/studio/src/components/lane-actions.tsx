@@ -20,16 +20,12 @@ export function laneRoster(agentNames: readonly string[], lanes: readonly Lane[]
 
 const ago = (ms: number) => `${Math.max(0, Math.floor(ms / 60_000))} min ago`;
 
-/**
- * #591: Ask for status and Hand to… for the lane that owns the current step. Both only post owner
- * notes on the run. Handing off deliberately writes NO task record (no `review_assigned`): the
- * coordinator reads the notes and records the hand-off itself; the Studio never writes a lane's
- * task history. `askedAt` lives in the caller so it survives selecting another PR.
- */
-export function LaneActions({ lane, step, pr, roster, lastSeenAt, now, askedAt, onAsked, send }: {
+/** Review hand-offs record the assignment before announcing it to either lane. */
+export function LaneActions({ lane, step, pr, roster, lastSeenAt, now, askedAt, onAsked, send, assignReview }: {
   lane: string; step: string; pr: number | null; roster: RosterLane[]; lastSeenAt: number | null; now: number;
   askedAt: number | null; onAsked(at: number): void;
   send(note: LaneNote): Promise<unknown>;
+  assignReview?: (lane: string) => Promise<unknown>;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -39,10 +35,15 @@ export function LaneActions({ lane, step, pr, roster, lastSeenAt, now, askedAt, 
   const handRef = useRef<HTMLButtonElement>(null);
   const itemsRef = useRef<(HTMLButtonElement | null)[]>([]);
   const prText = pr !== null ? `PR #${pr}` : "this work";
-  const run = async (notes: LaneNote[], done: () => void) => {
+  const isReview = step === "Review" || step === "Re-review";
+  const run = async (notes: LaneNote[], done: () => void, reviewer?: string) => {
     setBusy(true);
     setError(null);
     try {
+      if (reviewer !== undefined && isReview) {
+        if (!assignReview) throw new Error("Review assignment is unavailable.");
+        await assignReview(reviewer);
+      }
       for (const n of notes) await send(n);
       done();
     } catch (e) {
@@ -62,7 +63,7 @@ export function LaneActions({ lane, step, pr, roster, lastSeenAt, now, askedAt, 
     void run([
       { type: "operator_note", to, description: `Take over ${step} on ${prText} from ${lane}` },
       { type: "operator_note", to: lane, description: `Hand ${step} on ${prText} to ${to}` },
-    ], () => { setRequested(to); setTarget(null); });
+    ], () => { setRequested(to); setTarget(null); }, to);
   };
   useEffect(() => { if (menuOpen) itemsRef.current[0]?.focus(); }, [menuOpen]);
   const closeMenu = () => { setMenuOpen(false); handRef.current?.focus(); };
@@ -89,6 +90,7 @@ export function LaneActions({ lane, step, pr, roster, lastSeenAt, now, askedAt, 
             onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}>Hand to…</button>
           {menuOpen && (
             <div role="menu" aria-label={`Hand ${step.toLowerCase()} to`} className="mg-menu" onKeyDown={onMenuKey}>
+              {!isReview && <p className="mg-muted">{`Hand-off is announced; the record stays with ${lane}`}</p>}
               {choices.map((r, i) => (
                 <button key={r.name} ref={(el) => { itemsRef.current[i] = el; }} type="button" role="menuitem" tabIndex={-1} className="mg-menu-item"
                   data-silent={r.silent} onClick={() => pick(r.name)}>

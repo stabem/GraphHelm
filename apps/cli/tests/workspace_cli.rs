@@ -944,3 +944,65 @@ fn priority_goes_next_for_a_listed_lane_and_is_refused_for_any_other() {
         "priority went next, after the holder, never inside it"
     );
 }
+
+/// #557 review: a finite but huge `--max-wait` overflows a Duration; it is refused with the
+/// argument's own words, never a panic. Cost: one CLI run, no command started.
+#[test]
+fn a_huge_max_wait_is_refused_not_a_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let log = dir.path().join("log.txt");
+    let out = slot_with(
+        root.to_str().unwrap(),
+        "lane-a",
+        "huge",
+        &["--max-wait", "1e300"],
+        &marker_command(&log, "a", 10),
+    )
+    .wait_with_output()
+    .unwrap();
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
+    assert!(
+        reply["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("--max-wait must be"),
+        "status {:?}, reply {reply}",
+        out.status
+    );
+    assert!(!log.exists(), "the command never ran");
+}
+
+/// #557 review: a `holder.json` left by a holder killed hard names a ticket that is no longer
+/// live; `status` must not name that dead lane as the holder. Cost: one CLI run.
+#[test]
+fn slot_status_does_not_trust_a_stale_holder_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let slot_dir = root.join(".graphhelm-workspaces").join("slot");
+    std::fs::create_dir_all(&slot_dir).unwrap();
+    std::fs::write(
+        slot_dir.join("holder.json"),
+        r#"{"lane":"ghost","label":"dead","pid":1,"sinceNanos":"1","ticket":"000000000000000000000001-ghost-1.ticket"}"#,
+    )
+    .unwrap();
+    // A live holder that wrote no holder.json (an older binary): it holds slot.lock.
+    let lock = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(slot_dir.join("slot.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let (code, status) = run(&["slot", "status", "--root", root.to_str().unwrap()]);
+    drop(lock);
+    assert_eq!(code, 0, "{status}");
+    assert_ne!(
+        status["data"]["holder"]["lane"], "ghost",
+        "a stale holder.json was trusted: {status}"
+    );
+    assert!(
+        status["data"]["holder"].is_object(),
+        "the slot is held, by someone unnamed: {status}"
+    );
+}

@@ -806,3 +806,80 @@ fn a_recorded_keel_plan_reaches_the_briefing() {
         "without a keyring the briefing omits the plan rather than guessing"
     );
 }
+
+/// #561: the CLI door of the same promise. `keel plan --events` records the plan on the run as
+/// the owner; `graph synthesize --execution` on that run, with no `--critic` and no `--plan`,
+/// puts the graded design in front and names the run as the source. Before the plan is recorded
+/// the same command is the draft alone. Credible regression: the flags parsed and never read (the
+/// run's plan ignored on the door a lane's terminal uses). Cost: the shared temp project, one
+/// `keel plan`, two synthesize runs.
+#[test]
+fn graph_synthesize_inside_a_run_reads_the_plan_keel_plan_recorded_there() {
+    if !git_available() {
+        return;
+    }
+    let harness = prepared();
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../core/architect/fixtures");
+    let goal = std::fs::read_to_string(fixtures.join("first-compile/GOAL.txt")).unwrap();
+    let synthesize = |name: &str| {
+        let output = graphhelm()
+            .args([
+                "--json",
+                "graph",
+                "synthesize",
+                "--goal",
+                goal.trim_end(),
+                "--out",
+            ])
+            .arg(harness.scratch.path().join(name))
+            .args(["--allow-program", "cargo", "--fixture"])
+            .arg(fixtures.join("first-compile/replies.json"))
+            .arg("--events")
+            .arg(&harness.events)
+            .args(["--execution", RUN, "--keyring"])
+            .arg(&harness.keyring)
+            .args(["--key-id", KEY_ID])
+            .output()
+            .unwrap();
+        let reply = envelope(&output);
+        assert_eq!(reply["ok"], true, "{reply}");
+        reply
+    };
+    let before = synthesize("before.json");
+    assert!(before["data"].get("critic").is_none(), "{before}");
+    assert_ne!(
+        before["data"]["document"]["spec"]["entrypoints"],
+        json!(["critic_design"])
+    );
+
+    let output = graphhelm()
+        .args(["--json", "keel", "plan", "--task", "issue-561", "--paths"])
+        .arg("core/events/src/journal.rs")
+        .arg("--repo")
+        .arg(&harness.project)
+        .arg("--events")
+        .arg(&harness.events)
+        .args(["--execution", RUN, "--keyring"])
+        .arg(&harness.keyring)
+        .args(["--key-id", KEY_ID])
+        .output()
+        .unwrap();
+    let recorded = envelope(&output);
+    assert_eq!(output.status.code(), Some(0), "{recorded}");
+    assert_eq!(
+        recorded["data"]["plan"]["critic"]["mode"], "design",
+        "{recorded}"
+    );
+
+    let after = synthesize("after.json");
+    assert_eq!(
+        after["data"]["document"]["spec"]["entrypoints"],
+        json!(["critic_design"]),
+        "{after}"
+    );
+    assert_eq!(
+        after["data"]["critic"],
+        json!({"mode": "design", "source": "run", "passScore": 8, "maxRounds": 3, "taskId": "issue-561"}),
+        "{after}"
+    );
+}

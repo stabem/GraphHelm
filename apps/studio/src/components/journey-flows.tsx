@@ -14,8 +14,9 @@ import { JourneyFlowchart, actWords, pathsOf } from "./journey-flowchart";
 
 /** Where a journey's run and its pictures come from (#519): the Runtime client's four reads. */
 export interface JourneyRunSource {
-  /** Start the run, or read the cached one; `force` is Run again. */
-  start: (flowId: string, force: boolean) => Promise<JourneyRunView>;
+  /** Start the run, or read the cached one; `force` is Run again; `confirm` is the owner's click
+   * on a held step of an approved flow (#548) and replaces `force`. */
+  start: (flowId: string, force: boolean, confirm?: boolean) => Promise<JourneyRunView>;
   read: (flowId: string) => Promise<JourneyRunView>;
   screenFrame: (flowId: string, screenId: string) => Promise<JourneyFrame | null>;
   liveFrame: (sessionId: string, etag: string | null) => Promise<JourneyFrame | null>;
@@ -103,10 +104,18 @@ const RUN_REASON: Record<string, string> = {
   "preview.budget_exceeded": "it took longer than allowed",
 };
 
+/** What a held step would do: every act of its edge in words, or the act's name when the flow no
+ * longer has that edge. */
+function heldWords(flow: JourneyFlowView, held: NonNullable<JourneyRunView["held"]>): string {
+  const acts = flow.edges.find((edge) => edge.id === held.edge)?.acts ?? [];
+  return acts.length > 0 ? acts.map(actWords).join(", then ") : `“${held.act}”`;
+}
+
 function runWords(run: JourneyRunView): string {
   if (run.state === "running") return "Running this journey's test…";
   if (run.state === "failed") return `Couldn't run this journey's test: ${RUN_REASON[run.reason ?? ""] ?? "something went wrong in the Runtime"}.`;
   if (run.state !== "ready") return "This journey's test has not run yet.";
+  if (run.held) return "Stopped before a step that changes data";
   const result = run.result === "pass" ? "Test passed" : run.result === "drift" ? "The app no longer matches this journey" : run.result === "fail" ? "Test failed" : "Test ran";
   return run.kind === "preview" ? `${result} (a preview: a draft's run is never proof)` : result;
 }
@@ -115,12 +124,13 @@ function runWords(run: JourneyRunView): string {
  * runs, and each reached screen's picture fetched once per result. Object URLs are revoked when a
  * picture is replaced and when the journey is left. A Runtime that answers 404 predates the run
  * routes: `offered` turns false and the flowchart is drawn without a run line. */
-function useJourneyRun(flowId: string, source: JourneyRunSource | undefined): { offered: boolean; run: JourneyRunView | null; frames: Record<string, string>; failure: string | null; again: () => void } {
+function useJourneyRun(flowId: string, source: JourneyRunSource | undefined): { offered: boolean; run: JourneyRunView | null; frames: Record<string, string>; failure: string | null; again: () => void; confirm: () => void } {
   const [run, setRun] = useState<JourneyRunView | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [absent, setAbsent] = useState(false);
   const [frames, setFrames] = useState<Record<string, string>>({});
-  const [attempt, setAttempt] = useState(0);
+  // Which start this is: the first open, a Run again (`force`), or a confirmed held step.
+  const [attempt, setAttempt] = useState<{ n: number; confirm: boolean }>({ n: 0, confirm: false });
   const held = useRef(new Map<string, { key: string; url: string | null }>());
   useEffect(() => {
     if (source === undefined) return undefined;
@@ -137,14 +147,14 @@ function useJourneyRun(flowId: string, source: JourneyRunSource | undefined): { 
       setFailure(null);
       if (next.state === "running") timer = setTimeout(() => { source.read(flowId).then(take, fail); }, RUN_POLL_MS);
     };
-    source.start(flowId, attempt > 0).then(take, fail);
+    (attempt.confirm ? source.start(flowId, false, true) : source.start(flowId, attempt.n > 0)).then(take, fail);
     return () => { cancelled = true; if (timer !== undefined) clearTimeout(timer); };
   }, [flowId, source, attempt]);
   useEffect(() => {
     if (source === undefined || run === null) return;
     for (const [screenId, screen] of Object.entries(run.screens ?? {})) {
       if (!screen.frame) continue;
-      const key = `${run.digest ?? ""}:${run.commit ?? ""}:${attempt}:${screen.result ?? ""}`;
+      const key = `${run.digest ?? ""}:${run.commit ?? ""}:${attempt.n}:${screen.result ?? ""}`;
       if (held.current.get(screenId)?.key === key) continue;
       held.current.set(screenId, { key, url: held.current.get(screenId)?.url ?? null });
       source.screenFrame(flowId, screenId).then((frame) => {
@@ -164,7 +174,7 @@ function useJourneyRun(flowId: string, source: JourneyRunSource | undefined): { 
       kept.clear();
     };
   }, []);
-  return { offered: source !== undefined && !absent, run, frames, failure, again: () => setAttempt((before) => before + 1) };
+  return { offered: source !== undefined && !absent, run, frames, failure, again: () => setAttempt((before) => ({ n: before.n + 1, confirm: false })), confirm: () => setAttempt((before) => ({ n: before.n + 1, confirm: true })) };
 }
 
 /** The page a Watch is playing (#519): read five times a second while it plays, and once more
@@ -259,7 +269,7 @@ function SkippedSteps({ flow, edges, onMarkSafe }: { flow: JourneyFlowView; edge
 }
 
 function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void>; onWatch?: (flowId: string, path?: string) => Promise<void>; onMarkSafe?: (flowId: string, edgeId: string) => Promise<void>; session?: LiveSession; source?: JourneyRunSource }) {
-  const { offered, run, frames, failure: runFailure, again } = useJourneyRun(flow.id, source);
+  const { offered, run, frames, failure: runFailure, again, confirm } = useJourneyRun(flow.id, source);
   const liveFrame = useLiveFrame(session, source);
   const [approving, setApproving] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -273,7 +283,7 @@ function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source }: { flo
   // What the guard skipped: the act a Watch stopped at, and every edge the journey's run skipped.
   const skipped = [...new Set([
     ...(session?.state === "skipped" && session.skipped ? [session.skipped.edge] : []),
-    ...Object.entries(run?.edges ?? {}).filter(([, edge]) => edge.result === "skipped").map(([id]) => id),
+    ...Object.entries(run?.edges ?? {}).filter(([, edge]) => edge.result === "skipped" && edge.reason !== "confirm_needed").map(([id]) => id),
   ])];
   // The path a Watch is playing, as steps, to say "step 2 of 3" and to light its card.
   const watched = stepsOf(flow, session?.path || "main");
@@ -319,6 +329,14 @@ function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source }: { flo
             {run?.state === "ready" && run.ranAt !== undefined && <> · ran <time dateTime={run.ranAt}>{new Date(run.ranAt).toLocaleString()}</time></>}
           </p>
           <button type="button" onClick={again} disabled={run?.state === "running" || (run === null && runFailure === null)}>Run again</button>
+        </div>
+      )}
+      {/* #548: an approved flow plays by itself only up to its first act that changes data. The
+          owner reads what it would do and where, and one click runs it, on that run only. */}
+      {offered && run?.state === "ready" && run.held && (
+        <div className="journey-flow-held" role="group" aria-label="Step waiting for you">
+          <p>The next step changes data at {run.held.base}: {heldWords(flow, run.held)}. Run it?</p>
+          <button type="button" onClick={confirm}>Run it</button>
         </div>
       )}
       {paths.filter((path) => path !== "main").map((path) => (

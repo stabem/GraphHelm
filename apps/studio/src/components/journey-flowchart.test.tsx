@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { JourneyFlowView } from "../runtime/types";
 import { JourneyFlowchart, MIN_FIT, fitScale } from "./journey-flowchart";
 
-const screen = (id: string) => ({ id, title: id, scopePaths: [], expect: [] });
+const screen = (id: string) => ({ id, title: id, url: "/", state: "stable", scopePaths: [], expect: [] });
 const edge = (id: string, from: string, to: string) => ({ id, from, to, acts: [] });
 
 /** Main row a → b → c → d; a second way leaves b for x below and rejoins the main row. */
@@ -32,6 +32,31 @@ function arrow(container: HTMLElement, id: string): string | null {
 // from its top, crosses in the empty band between the rows, and enters the rejoined card from
 // below. The grid is fixed (cards 232×252, gaps 56/40), so the paths are exact. Cost: jsdom render.
 describe("JourneyFlowchart rejoin", () => {
+  // #605: the second return used to cross the first branch's card and share its final segment.
+  // Exact rendered SVG paths observe the fixed grid without adding a production seam.
+  // Cost: three small jsdom renders, no network or browser process.
+  it.each([
+    ["ahead", "d", false, "M 808 412 H 830 V 266 H 974 V 252", "M 808 716 H 842 V 278 H 986 V 252"],
+    ["above", "c", false, "M 808 412 H 830 V 266 H 686 V 252", "M 808 716 H 842 V 278 H 698 V 252"],
+    ["behind", "c", true, "M 1096 412 H 1118 V 266 H 686 V 252", "M 1096 716 H 1130 V 278 H 698 V 252"],
+  ] as const)("keeps two returns %s separate and outside the intervening card", (_shape, target, longer, first, second) => {
+    const chart = flow([]);
+    chart.screens = ["a", "b", "c", "d", "x", "z", ...(longer ? ["y", "w"] : [])].map(screen);
+    chart.edges = [edge("ab", "a", "b"), edge("bc", "b", "c"), edge("cd", "c", "d"),
+      edge("bx", "b", "x"), edge("bz", "b", "z"),
+      ...(longer ? [edge("xy", "x", "y"), edge("zw", "z", "w")] : []),
+      edge("first", longer ? "y" : "x", target), edge("second", longer ? "w" : "z", target)];
+    chart.paths = { main: ["ab", "bc", "cd"],
+      side: ["ab", "bx", ...(longer ? ["xy"] : []), "first"],
+      third: ["ab", "bz", ...(longer ? ["zw"] : []), "second"] };
+    const view = render(<JourneyFlowchart flow={chart} />);
+    expect(arrow(view.container, "first")).toBe(first);
+    expect(arrow(view.container, "second")).toBe(second);
+    // The rightmost gutter must fit in the chart rather than being clipped by its scroll box.
+    if (longer) expect(view.container.querySelector(".journey-chart")).toHaveStyle({ width: "1152px" });
+    view.unmount();
+  });
+
   it("draws a branch that rejoins the main row up through the band between the rows", () => {
     // x sits under c (col 2, row 1); d is col 3 on the main row.
     const ahead = render(<JourneyFlowchart flow={flow(["ab", "bx", "xd"])} />);

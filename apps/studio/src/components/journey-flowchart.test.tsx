@@ -2,7 +2,7 @@ import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlowView } from "../runtime/types";
-import { JourneyFlowchart } from "./journey-flowchart";
+import { JourneyFlowchart, MIN_FIT, fitScale } from "./journey-flowchart";
 
 const screen = (id: string) => ({ id, title: id, scopePaths: [], expect: [] });
 const edge = (id: string, from: string, to: string) => ({ id, from, to, acts: [] });
@@ -45,5 +45,20 @@ describe("JourneyFlowchart rejoin", () => {
     // The rejoined card behind the branch's last card: still up and across, never under the cards.
     const behind = render(<JourneyFlowchart flow={flow(["ab", "bx", "xy", "yc"])} />);
     expect(arrow(behind.container, "yc")).toBe("M 980 292 V 272 H 692 V 252");
+  });
+});
+
+describe("fitScale (#519)", () => {
+  it("shrinks a chart wider than its column so every card shows", () => {
+    expect(fitScale(560, 403)).toBeCloseTo(403 / 560);
+  });
+  it("never enlarges a chart that already fits", () => {
+    expect(fitScale(400, 600)).toBe(1);
+  });
+  it("stops at MIN_FIT and lets a long journey scroll", () => {
+    expect(fitScale(3000, 400)).toBe(MIN_FIT);
+  });
+  it("changes nothing before the column is measured", () => {
+    expect(fitScale(560, 0)).toBe(1);
   });
 });

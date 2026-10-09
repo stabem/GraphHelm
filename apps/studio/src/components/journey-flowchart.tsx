@@ -7,7 +7,7 @@
  * The geometry is fixed (every card the same size on a grid), so the arrows are computed from the
  * layout alone and never measured from the page.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { JourneyFlowEdge, JourneyFlowScreen, JourneyFlowView, JourneyRunEdge, JourneyRunScreen, JourneyRunView } from "../runtime/types";
 
@@ -16,6 +16,18 @@ const CARD_H = 252;
 const FRAME_H = 145;
 const GAP_X = 56;
 const GAP_Y = 40;
+/** The smallest the chart is drawn to fit its column; below this a card stops being readable, so a
+ * longer journey scrolls instead (#519: the owner saw step 2 cut off in a 400 px column). */
+export const MIN_FIT = 0.6;
+/** The scroll box's own left + right padding (`.journey-chart-scroll`). */
+const SCROLL_PAD_X = 40;
+
+/** How much to shrink a chart `content` px wide to fit a box `box` px wide: 1 when it fits (never
+ * enlarged), never below MIN_FIT. An unmeasured box (0) changes nothing. */
+export function fitScale(content: number, box: number): number {
+  if (box <= 0 || content <= box) return 1;
+  return Math.max(MIN_FIT, box / content);
+}
 
 const VERB: Record<string, string> = {
   activate: "Clicks",
@@ -178,9 +190,26 @@ export function JourneyFlowchart({ flow, run = null, frames = {}, current = null
   const frameOf = (id: string): string | null => (id === current && liveFrame !== null ? liveFrame : frames[id] ?? null);
   const width = layout.cols * CARD_W + (layout.cols - 1) * GAP_X;
   const height = layout.rows * (CARD_H + GAP_Y);
+  // The chart shrinks to the column it is in (down to MIN_FIT), so a short journey shows every card;
+  // a longer one scrolls, and says so. Measured on mount and whenever the column changes width.
+  const box = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1);
+  useLayoutEffect(() => {
+    const element = box.current;
+    if (element === null) return undefined;
+    const measure = () => setScale(fitScale(width, element.clientWidth - SCROLL_PAD_X));
+    measure();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [width]);
+  const box_width = (box.current?.clientWidth ?? 0) - SCROLL_PAD_X;
+  const overflowing = box_width > 0 && width * scale > box_width + 0.5;
   return (
-    <div className="journey-chart-scroll">
-      <div className="journey-chart" style={{ width, height }}>
+    <div className="journey-chart-scroll" ref={box} data-overflow={overflowing ? "" : undefined}>
+      {overflowing && <p className="journey-chart-more" aria-hidden="true">More steps to the right →</p>}
+      <div className="journey-chart" style={{ width, height, zoom: scale }}>
         <svg className="journey-chart-arrows" style={{ width, height }} aria-hidden="true">
           <defs>
             <marker id="journey-chart-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">

@@ -1070,7 +1070,7 @@ fn the_slot_builds_on_the_owners_target_root_caps_a_lane_and_reclaims_orphans() 
     // A rule the slot cannot read is refused, not ignored.
     std::fs::write(rules.join("slot-targets.json"), r#"{"cap": 2}"#).unwrap();
     let (code, reply) = slot_in(&root, "lane-a", &one, &log);
-    assert_eq!(code, 2, "{reply}");
+    assert_eq!(code, 3, "{reply}");
     assert_eq!(reply["diagnostics"][0]["path"], "/targetRoot", "{reply}");
     assert!(!log.exists());
 
@@ -1102,7 +1102,7 @@ fn the_slot_builds_on_the_owners_target_root_caps_a_lane_and_reclaims_orphans() 
     // The third worktree of the lane is refused before the command runs; both are named.
     std::fs::write(fast.join("lane-a/wt-one/target/built.bin"), b"x").unwrap();
     let (code, reply) = slot_in(&root, "lane-a", &three, &log);
-    assert_eq!(code, 2, "{reply}");
+    assert_eq!(code, 3, "{reply}");
     let message = reply["diagnostics"][0]["message"].as_str().unwrap();
     assert!(
         message.contains("wt-one") && message.contains("wt-two"),
@@ -1145,7 +1145,7 @@ fn the_slot_builds_on_the_owners_target_root_caps_a_lane_and_reclaims_orphans() 
         Path::new(&built()),
         second_fast.join("lane-a/wt-two/target")
     );
-    assert_eq!(slot_in(&second, "lane-a", &three, &log).0, 2);
+    assert_eq!(slot_in(&second, "lane-a", &three, &log).0, 3);
     assert!(fast.join("lane-a/wt-three/target").is_dir());
 
     // Sweep: a dry run lists the orphan and deletes nothing; --apply removes it; a build

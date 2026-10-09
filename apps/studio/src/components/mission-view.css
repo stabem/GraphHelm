@@ -55,7 +55,10 @@
 .mv-body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 20px; min-width: 0; }
 
 /* Journey rail */
-.mv-journeys { flex: 1 1 250px; max-width: 290px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mv-journeys { flex: 1 1 250px; max-width: 290px; display: flex; flex-direction: column; gap: 6px; min-width: 0;
+  /* The rail scrolls on its own: the Studio main area does not scroll, so a long list was cut off.
+   * Bottom padding clears the floating Run actions dock. */
+  max-height: calc(100vh - 170px); overflow-y: auto; overscroll-behavior: contain; padding-bottom: 72px; scrollbar-width: thin; }
 .mv-cap { padding: 0 2px 6px; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #8D929C; }
 .mv-jcard { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 10px; border: 1px solid transparent; }
 .mv-jcard[data-selected="true"] { gap: 10px; padding: 12px; background: #121318; border-color: #23262D; }
@@ -87,7 +90,7 @@
 /* Phone width (design: Glance): the rail stacks on top, the graph scrolls, the inspector goes below. */
 @media (max-width: 700px) {
   .mv-body { flex-direction: column; align-items: stretch; }
-  .mv-journeys { max-width: none; flex: none; }
+  .mv-journeys { max-width: none; flex: none; max-height: none; overflow: visible; padding-bottom: 0; }
   .mv-content { flex: none; width: 100%; }
   .mv .mg-body { flex-direction: column; align-items: stretch; }
   .mv .mg-graph { flex: none; }

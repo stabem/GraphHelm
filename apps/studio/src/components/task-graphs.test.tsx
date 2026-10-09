@@ -439,3 +439,30 @@ describe("TaskGraphs card home follows the parent chain (#524 review)", () => {
     expect(screen.getAllByRole("group")).toHaveLength(2);
   });
 });
+
+/* #544 (owner): one graph that throws while drawing must not blank the Studio. The state below is
+ * what a hot reload left in memory on 2026-10-08: a task folded before `rounds` existed. Without the
+ * boundary React unmounts the whole tree and this render throws. Cost: jsdom only, milliseconds. */
+describe("TaskGraphs keeps drawing when one graph throws (#544)", () => {
+  it("names the graph that couldn't draw with its reason, draws the others, and retries on a newer record", () => {
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const [first, second] = twoTasks();
+      const stale = { ...first, rounds: undefined as never };
+      const { rerender } = render(<TaskGraphs tasks={[stale, second]} onOpenJourney={vi.fn()} />);
+      const notice = screen.getByRole("alert");
+      expect(notice).toHaveTextContent(`Issue #${first.issue}`);
+      expect(notice).toHaveTextContent(/this graph couldn't draw: .*(length|undefined)/i);
+      expect(screen.getByRole("group", { name: new RegExp(`issue #${second.issue}`, "i") })).toBeInTheDocument();
+      expect(screen.queryByRole("group", { name: new RegExp(`issue #${first.issue}`, "i") })).toBeNull();
+      // The same stale state again keeps the notice; a newer record for the task draws it.
+      rerender(<TaskGraphs tasks={[stale, second]} onOpenJourney={vi.fn()} />);
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+      rerender(<TaskGraphs tasks={[{ ...first, lastSequence: first.lastSequence + 1 }, second]} onOpenJourney={vi.fn()} />);
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.getByRole("group", { name: new RegExp(`issue #${first.issue}`, "i") })).toBeInTheDocument();
+    } finally {
+      quiet.mockRestore();
+    }
+  });
+});

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { duration, pace, typicalStep, type TimedStep } from "../runtime/step-timing";
 import type { TaskState } from "../runtime/team-tasks";
@@ -261,6 +261,27 @@ function Graph({ task, changed, onOpenJourney, timing }: { task: TaskState; chan
   );
 }
 
+/** #544 (owner): a graph that throws while drawing says so in its own place, and the rest of the
+ * Studio keeps working. Seen when a hot reload swapped this file under task states an older fold had
+ * produced (no `rounds`), which blanked the whole app. A newer record for the task tries again. */
+class GraphBoundary extends Component<{ label: string; retryOn: number; children: ReactNode }, { reason: string | null; seen: number }> {
+  state = { reason: null as string | null, seen: this.props.retryOn };
+  static getDerivedStateFromProps(props: { retryOn: number }, state: { seen: number }) {
+    return props.retryOn === state.seen ? null : { reason: null, seen: props.retryOn };
+  }
+  static getDerivedStateFromError(error: unknown) {
+    return { reason: error instanceof Error ? error.message : String(error) };
+  }
+  render() {
+    if (this.state.reason === null) return this.props.children;
+    return (
+      <p className="task-graph-failed" role="alert" title={this.state.reason}>
+        {this.props.label}: this graph couldn't draw: {this.state.reason.slice(0, 160)}
+      </p>
+    );
+  }
+}
+
 function CardView({ card, changed, onOpenJourney, timing }: { card: Card; changed: Set<string>; onOpenJourney: (contractId: string) => void; timing: Timing }) {
   const lead = card.rows.find((row) => row.issue === card.issue && row.title !== null) ?? card.rows.find((row) => row.issue === card.issue) ?? card.rows[0];
   const label = card.issue !== null ? `Issue #${card.issue}${lead.issue === card.issue && lead.title !== null ? ` · ${lead.title}` : ""}` : title(lead);
@@ -275,7 +296,11 @@ function CardView({ card, changed, onOpenJourney, timing }: { card: Card; change
           <span className="task-card-count">{card.rows.length} rows</span>
         </header>
       )}
-      {card.rows.map((row) => <Graph key={row.key} task={row} changed={changed.has(row.key)} onOpenJourney={onOpenJourney} timing={timing} />)}
+      {card.rows.map((row) => (
+        <GraphBoundary key={row.key} label={title(row)} retryOn={row.lastSequence}>
+          <Graph task={row} changed={changed.has(row.key)} onOpenJourney={onOpenJourney} timing={timing} />
+        </GraphBoundary>
+      ))}
     </article>
   );
 }

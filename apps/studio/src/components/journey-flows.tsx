@@ -125,13 +125,16 @@ function runWords(run: JourneyRunView): string {
  * runs, and each reached screen's picture fetched once per result. Object URLs are revoked when a
  * picture is replaced and when the journey is left. A Runtime that answers 404 predates the run
  * routes: `offered` turns false and the flowchart is drawn without a run line. */
-function useJourneyRun(flowId: string, source: JourneyRunSource | undefined): { offered: boolean; run: JourneyRunView | null; frames: Record<string, string>; failure: string | null; again: () => void; confirm: () => void } {
+function useJourneyRun(flowId: string, source: JourneyRunSource | undefined): { offered: boolean; run: JourneyRunView | null; frames: Record<string, string>; failure: string | null; again: () => void; confirm: () => void; confirming: boolean } {
   const [run, setRun] = useState<JourneyRunView | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [absent, setAbsent] = useState(false);
   const [frames, setFrames] = useState<Record<string, string>>({});
   // Which start this is: the first open, a Run again (`force`), or a confirmed held step.
   const [attempt, setAttempt] = useState<{ n: number; confirm: boolean }>({ n: 0, confirm: false });
+  // A start is in flight: set with the click itself, cleared by that start's own answer or
+  // failure. Not derived from what the answer says, so two equal failures in a row still clear it.
+  const [starting, setStarting] = useState(false);
   const held = useRef(new Map<string, { key: string; url: string | null }>());
   useEffect(() => {
     if (source === undefined) return undefined;
@@ -139,11 +142,13 @@ function useJourneyRun(flowId: string, source: JourneyRunSource | undefined): { 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const fail = (cause: unknown) => {
       if (cancelled) return;
+      setStarting(false);
       if (typeof cause === "object" && cause !== null && (cause as { httpStatus?: unknown }).httpStatus === 404) setAbsent(true);
       else setFailure(cause instanceof Error ? cause.message : String(cause));
     };
     const take = (next: JourneyRunView) => {
       if (cancelled) return;
+      setStarting(false);
       setRun(next);
       setFailure(null);
       if (next.state === "running") timer = setTimeout(() => { source.read(flowId).then(take, fail); }, RUN_POLL_MS);
@@ -175,7 +180,7 @@ function useJourneyRun(flowId: string, source: JourneyRunSource | undefined): { 
       kept.clear();
     };
   }, []);
-  return { offered: source !== undefined && !absent, run, frames, failure, again: () => setAttempt((before) => ({ n: before.n + 1, confirm: false })), confirm: () => setAttempt((before) => ({ n: before.n + 1, confirm: true })) };
+  return { offered: source !== undefined && !absent, run, frames, failure, again: () => setAttempt((before) => ({ n: before.n + 1, confirm: false })), confirm: () => { setStarting(true); setAttempt((before) => ({ n: before.n + 1, confirm: true })); }, confirming: attempt.confirm && starting };
 }
 
 /** The page a Watch is playing (#519): read five times a second while it plays, and once more
@@ -270,11 +275,8 @@ function SkippedSteps({ flow, edges, onMarkSafe }: { flow: JourneyFlowView; edge
 }
 
 function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void>; onWatch?: (flowId: string, path?: string) => Promise<void>; onMarkSafe?: (flowId: string, edgeId: string) => Promise<void>; session?: LiveSession; source?: JourneyRunSource }) {
-  const { offered, run, frames, failure: runFailure, again, confirm } = useJourneyRun(flow.id, source);
+  const { offered, run, frames, failure: runFailure, again, confirm, confirming } = useJourneyRun(flow.id, source);
   const liveFrame = useLiveFrame(session, source);
-  // The Run it click is in flight until the Runtime answers with the new run (or a failure).
-  const [confirming, setConfirming] = useState(false);
-  useEffect(() => setConfirming(false), [run, runFailure]);
   const [approving, setApproving] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -340,7 +342,7 @@ function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source }: { flo
       {offered && run?.state === "ready" && run.held && (
         <div className="journey-flow-held" role="group" aria-label="Step waiting for you">
           <p>The next step changes data at {run.held.base}: {heldWords(flow, run.held)}. Run it?</p>
-          <button type="button" disabled={confirming} onClick={() => { setConfirming(true); confirm(); }}>{confirming ? "Running…" : "Run it"}</button>
+          <button type="button" disabled={confirming} onClick={confirm}>{confirming ? "Running…" : "Run it"}</button>
         </div>
       )}
       {paths.filter((path) => path !== "main").map((path) => (

@@ -530,6 +530,23 @@ describe("JourneyFlows held step", () => {
     await waitFor(() => expect(screen.queryByRole("group", { name: "Step waiting for you" })).toBeNull());
   });
 
+  // Review note on #578: the pending mark was cleared by a change of the failure text, so a second
+  // click failing with the SAME words left the button on "Running…" for good.
+  it("gives the Run it button back after each failed click, the same failure twice included", async () => {
+    const start = vi.fn(async (_flow: string, _force: boolean, confirm?: boolean) => {
+      if (confirm) throw new Error("the app it opens isn't running");
+      return held;
+    });
+    const run: JourneyRunSource = { start, read: vi.fn(async () => held), screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null) };
+    render(<JourneyFlows view={approved} onApprove={vi.fn()} run={run} />);
+    for (const clicks of [1, 2]) {
+      await userEvent.click(await screen.findByRole("button", { name: "Run it" }));
+      await waitFor(() => expect(start.mock.calls.filter((call) => call[2] === true)).toHaveLength(clicks));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Run it" })).toBeEnabled());
+      expect(screen.getByRole("status")).toHaveTextContent("Couldn't run this journey's test: the app it opens isn't running");
+    }
+  });
+
   it("offers no Run it when nothing is held", async () => {
     const run: JourneyRunSource = { start: vi.fn(async () => done), read: vi.fn(async () => done), screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null) };
     render(<JourneyFlows view={approved} onApprove={vi.fn()} run={run} />);

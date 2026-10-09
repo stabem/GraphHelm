@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 mod support;
+use support::time_scale::scaled;
 use support::{RawResponse, parse_response, raw_request, split_url};
 
 // -------------------------------------------------------------------------------------------
@@ -97,7 +98,7 @@ fn serve_with(
 }
 
 fn read_token(path: &Path) -> String {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     loop {
         if let Ok(contents) = std::fs::read_to_string(path)
             && !contents.is_empty()
@@ -112,7 +113,7 @@ fn read_token(path: &Path) -> String {
 }
 
 fn wait_for_health(base: &str) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     loop {
         if let Ok(response) = raw_request(&format!("{base}/health"), None)
             && response.status == 200

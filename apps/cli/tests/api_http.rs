@@ -29,6 +29,7 @@ unsafe extern "system" {
 type SpawnObserver = Box<dyn FnOnce(&Child)>;
 
 mod support;
+use support::time_scale::scaled;
 use support::{RawResponse, parse_response, split_url};
 
 const SIGNAL_KEY_HEX: &str = "0101010101010101010101010101010101010101010101010101010101010101";
@@ -330,8 +331,9 @@ fn serve_with_env_observed(
     // concurrent-binary convoy, a tight bound here would fire on legitimate slow starts and read
     // back as a SERVER fault in the very file used to attribute server faults. This bound exists
     // to catch a genuine hang, not to characterize a normal startup distribution — it stays a
-    // pure hang-catcher, not a performance assertion.
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // pure hang-catcher, not a performance assertion. #549: and so it scales with the machine.
+    let startup_budget = scaled(Duration::from_secs(30));
+    let deadline = Instant::now() + startup_budget;
     let line = loop {
         if let Some(line) = stdout_lines.lock().unwrap().first().cloned() {
             break line;
@@ -347,7 +349,7 @@ fn serve_with_env_observed(
             let _ = guard.child.wait();
             let stderr_text = stderr_lines.lock().unwrap().join("\n");
             panic!(
-                "`graphhelm serve` printed nothing on stdout within 30s and never exited; stderr:\n{stderr_text}"
+                "`graphhelm serve` printed nothing on stdout within {startup_budget:?} and never exited; stderr:\n{stderr_text}"
             );
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -420,6 +422,21 @@ fn budget_leaves_room_for_the_retry_loop_to_actually_loop() {
         passes >= 3,
         "the outer loop gets only {passes} passes; that is a deadline pair, not a retry loop"
     );
+}
+
+/// #549: the knob that scales this file's hang catchers. Defect named: a mistyped value read as 1,
+/// which leaves a lane with the same load-induced reds and no sign the knob never applied; and a
+/// zero, which would turn every ceiling into an instant failure. Cost: microseconds.
+#[test]
+fn a_time_scale_that_is_not_a_factor_is_refused_instead_of_read_as_one() {
+    use support::time_scale::time_scale_factor;
+    assert_eq!(time_scale_factor(None), Ok(1));
+    assert_eq!(time_scale_factor(Some("")), Ok(1));
+    assert_eq!(time_scale_factor(Some(" 3 ")), Ok(3));
+    assert_eq!(time_scale_factor(Some("20")), Ok(20));
+    for refused in ["0", "21", "1.5", "-2", "fast"] {
+        assert!(time_scale_factor(Some(refused)).is_err(), "{refused:?}");
+    }
 }
 
 #[cfg(windows)]
@@ -584,7 +601,7 @@ fn server_guard_sabotage_ignored() {
     // failing. Two seconds is generous for a second test-binary invocation running one filtered,
     // ignored test with no compilation involved; the point is that it EXPIRES rather than that
     // the number is exactly right.
-    let child_exit_budget = Duration::from_secs(2);
+    let child_exit_budget = scaled(Duration::from_secs(2));
     let child_deadline = Instant::now() + child_exit_budget;
     loop {
         match child.try_wait() {
@@ -681,7 +698,7 @@ fn server_guard_sabotage_is_platform_portable() {
 /// in depth against filesystem-visibility edge cases rather than a real race (the server calls
 /// `sync_all` on it).
 fn read_token(path: &Path) -> String {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     loop {
         if let Ok(contents) = std::fs::read_to_string(path)
             && !contents.is_empty()
@@ -704,7 +721,7 @@ fn read_token(path: &Path) -> String {
 /// bounded 30s worst case here is still the doctrine this whole ticket is about -- a red that
 /// hangs is not a red -- just a looser bound than 5s on this one, rarely-hit path.
 fn wait_for_health(base: &str) {
-    let deadline = Instant::now() + RETRY_LOOP_DEADLINE;
+    let deadline = Instant::now() + scaled(RETRY_LOOP_DEADLINE);
     loop {
         if let Ok(response) = raw_request(&format!("{base}/health"), None)
             && response.status == 200
@@ -1649,7 +1666,8 @@ fn a_non_loopback_bind_is_refused_fail_closed_before_anything_is_opened() {
         .spawn()
         .unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let refusal_budget = scaled(Duration::from_secs(5));
+    let deadline = Instant::now() + refusal_budget;
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break status;
@@ -1658,7 +1676,7 @@ fn a_non_loopback_bind_is_refused_fail_closed_before_anything_is_opened() {
             let _ = child.kill();
             let _ = child.wait();
             panic!(
-                "the loopback guard did not refuse a non-loopback --bind within 5s; the process \
+                "the loopback guard did not refuse a non-loopback --bind within {refusal_budget:?}; the process \
                  was still running and had to be killed — it would otherwise have bound \
                  0.0.0.0 and served forever"
             );

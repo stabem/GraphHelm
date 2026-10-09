@@ -27,6 +27,8 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
+pub mod time_scale;
+
 /// The read/write budget for a test request. 15 seconds is what three of the four copies already
 /// carried; `resume_atomicity.rs` carried 5 with nothing saying why, and a shorter budget there
 /// only makes a slow listener look like a failure sooner.

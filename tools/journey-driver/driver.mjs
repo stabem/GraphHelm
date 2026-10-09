@@ -15,7 +15,7 @@ const SNAPSHOT = 32768, SNAPSHOT_DISCOVER = 6144;
 // TIMEOUT raced that deadline and surfaced as replay.timeout instead of expectation_failed (#398).
 const SCREEN_WAIT = TIMEOUT - 5000;
 const fields = {
-  open: ['base', 'viewport', 'allowOrigins', 'headed', 'survive', 'show', 'screencast'], snapshot: ['expect','discover'],
+  open: ['base', 'viewport', 'allowOrigins', 'headed', 'survive', 'show', 'screencast', 'storage'], snapshot: ['expect','discover'],
   show: ['caption', 'role', 'name'],
   act: ['kind', 'role', 'name', 'text', 'secretEnv', 'locator'],
   capture: ['path', 'maskSecrets'], close: [],
@@ -71,6 +71,8 @@ function validate(r) {
     if (Object.hasOwn(r,'screencast') && (typeof r.screencast !== 'boolean' || (r.screencast && (r.headed === true || r.show !== true)))) fail('driver.protocol_invalid');
     if (!exactKeys(r.viewport,['width','height']) || ![r.viewport.width,r.viewport.height].every(n => Number.isInteger(n) && n > 0 && n <= 16384) || r.viewport.width*r.viewport.height > 16777216 || !Array.isArray(r.allowOrigins) || r.allowOrigins.length > 32) fail('driver.protocol_invalid');
     url(r.base,true); for (const origin of r.allowOrigins) url(origin,false,true);
+    // #585: localStorage the flow declares for the base origin, seeded once when the browser opens.
+    if (Object.hasOwn(r,'storage') && (!Array.isArray(r.storage) || r.storage.length > 16 || !r.storage.every(e => exactKeys(e,['key','value']) && string(e.key,256) && typeof e.value === 'string' && e.value.length <= 1024))) fail('driver.protocol_invalid');
   } else if (r.op === 'snapshot') {
     if (!Array.isArray(r.expect) || r.expect.length > 8 || !r.expect.every(v => pair(v))) fail('driver.protocol_invalid');
     if (Object.hasOwn(r,'discover') && typeof r.discover !== 'boolean') fail('driver.protocol_invalid');
@@ -237,7 +239,10 @@ async function run(r) {
       const window=r.show === true && r.headed === true;
       if (window) launchArgs.push('--start-maximized');
       browser=await chromium.launch({headless:r.headed !== true,timeout:TIMEOUT,args:launchArgs});
-      context=await browser.newContext({viewport:window ? null : r.viewport,serviceWorkers:'block',acceptDownloads:false});
+      // #585: declared storage is the context's starting state, so it survives every reload of the
+      // run and the app's own writes replace it.
+      const storageState=r.storage?.length ? {cookies:[],origins:[{origin:baseOrigin,localStorage:r.storage.map(e=>({name:e.key,value:e.value}))}]} : undefined;
+      context=await browser.newContext({viewport:window ? null : r.viewport,serviceWorkers:'block',acceptDownloads:false,storageState});
       context.setDefaultTimeout(TIMEOUT); context.setDefaultNavigationTimeout(TIMEOUT);
       if (typeof context.routeWebSocket !== 'function') fail('driver.observer_missing');
       await context.route('**/*',async route => {

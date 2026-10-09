@@ -21,8 +21,8 @@ use serde_json::{Value, json};
 
 use super::journey_live::{Launched, LaunchedStop, base_reachable, launch, would_destroy};
 use super::journey_replay::{
-    Driver, Failure, Result, SURVIVABLE, TemporaryOutput, failure, observe, observer_ready,
-    preflight, record, safe_directory, safe_node, walked,
+    Driver, Failure, Result, SURVIVABLE, TemporaryOutput, declared_browser, failure, observe,
+    observer_ready, preflight, record, safe_directory, safe_node, walked, with_storage,
 };
 use crate::args::{JourneyPreviewArgs, JourneyReplayArgs};
 use crate::output::{CommandOutput, Outcome};
@@ -30,7 +30,8 @@ use crate::output::{CommandOutput, Outcome};
 const COMMAND: &str = "journey.preview";
 const PREVIEWS: &str = ".graphhelm/journey-previews";
 const STATE: &str = "state.json";
-/// The page size a preview plays at; the frames the Studio shows are this size.
+/// The page size a preview plays at unless the flow declares one (#585); the frames the Studio
+/// shows are this size.
 const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 800;
 /// No path of a preview BEGINS after this from its start; the path in flight is bounded by the
@@ -428,6 +429,9 @@ struct Run {
     last: Option<(String, String)>,
     /// The owner clicked "Run it?" for this run: an approved flow's destructive acts are played.
     confirmed: bool,
+    /// #585: the page size and seeded localStorage the flow declares (else the preview's size).
+    viewport: Value,
+    storage: Option<Value>,
 }
 
 /// An approved flow asked to record into an execution on a Runtime with no sealed keyring: refused,
@@ -577,7 +581,10 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         contract: String::new(),
         last: None,
         confirmed: args.confirm,
+        viewport: Value::Null,
+        storage: None,
     };
+    (run.viewport, run.storage) = declared_browser(&flow, json!({"width":WIDTH,"height":HEIGHT}));
     run.save();
     let deadline = Instant::now() + PREVIEW_BUDGET;
     let launched = std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -742,7 +749,10 @@ fn play_path(
     // `survive` keeps the page after a step fails, so the failure's frame can be taken.
     driver.call(
         "open",
-        json!({"base":entry,"viewport":{"width":WIDTH,"height":HEIGHT},"allowOrigins":[],"survive":true}),
+        with_storage(
+            json!({"base":entry,"viewport":run.viewport,"allowOrigins":[],"survive":true}),
+            run.storage.as_ref(),
+        ),
         "/entry",
     )?;
     let arrived = |driver: &mut Driver, run: &mut Run, screen: &str| -> Result<bool> {

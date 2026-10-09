@@ -16,6 +16,19 @@ function client(overrides: Partial<NonNullable<NativeChatsProps["client"]>> = {}
 }
 
 describe("NativeChats", () => {
+  // #585: Main chat's "Connect existing chat" opens the step's window with the picker already
+  // open; a second button with the same name to press was all the owner (and a journey) got.
+  it("starts open when Main chat asked to connect a chat, and closed otherwise", async () => {
+    const { unmount } = render(<NativeChats client={client()} executionId="execution-1" nodeId="node-a" startOpen />);
+    expect(await screen.findByRole("list", { name: "Existing native chats" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Search chats" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect existing chat" })).toBeNull();
+    unmount();
+    render(<NativeChats client={client()} executionId="execution-1" nodeId="node-a" />);
+    expect(screen.getByRole("button", { name: "Connect existing chat" })).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Existing native chats" })).toBeNull();
+  });
+
   it("keeps a request visible as requested when POST succeeds but no read receipt exists", async () => {
     const runtime = client();
     render(<NativeChats client={runtime} executionId="execution-1" nodeId="node-a" />);

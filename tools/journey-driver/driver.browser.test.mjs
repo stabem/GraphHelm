@@ -205,3 +205,20 @@ test('an open dialog is reported among the controls',async t=>{
   assert.equal(snap.ok,true,JSON.stringify(snap).slice(0,300));
   assert.ok(snap.result.controls.some(x=>x.role==='dialog'&&x.name==='Rename item'),JSON.stringify(snap.result.controls));
 });
+
+// #585: a flow's declared storage is the browser's starting localStorage for the base origin; it
+// survives a reload and the app's own write replaces it. A declared viewport is the page's size.
+// Catches storage dropped, re-seeded on every load, or written to another origin, and a viewport
+// ignored. Cost: one page, ~2 seconds.
+test('declared storage survives a reload until the app overwrites it, at the declared viewport',async t=>{
+  const f=await startFixture();t.after(()=>f.close());
+  const c=await client(t);
+  const r=await c.send('open',{base:f.base+'/storage',viewport:{width:390,height:844},allowOrigins:[],storage:[{key:'seen',value:'flow'}]});
+  assert.equal(r.ok,true,JSON.stringify(r));
+  const seen=async name=>{const s=await c.send('snapshot',{expect:[{role:'heading',name}]});assert.equal(s.ok,true,`${name}: ${JSON.stringify(s).slice(0,300)}`);return s.result.ariaYaml;};
+  assert.match(await seen('Seen: flow'),/Width 390/);
+  assert.equal((await act(c,'activate','button','Reload')).ok,true);
+  await seen('Seen: flow');
+  assert.equal((await act(c,'activate','button','Overwrite')).ok,true);
+  await seen('Seen: app');
+});

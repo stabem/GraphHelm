@@ -202,6 +202,20 @@ pub struct JourneyPreviewArgs {
     /// Internal: this process is the background run.
     #[arg(long, hide = true)]
     pub run: bool,
+    /// The owner's click on "Run it?": this run of an approved flow may play its destructive acts
+    /// (#519). Without it an approved flow stops before the first one. Implies a new run.
+    #[arg(long, conflicts_with = "read")]
+    pub confirm: bool,
+    /// Internal (#519 slice 3): where an approved flow's run records its proof, as `journey
+    /// replay` does. All four or none; a draft never records.
+    #[arg(long, hide = true)]
+    pub events: Option<PathBuf>,
+    #[arg(long, hide = true)]
+    pub execution: Option<String>,
+    #[arg(long, hide = true)]
+    pub keyring: Option<PathBuf>,
+    #[arg(long, hide = true)]
+    pub key_id: Option<String>,
 }
 
 #[derive(Debug, Args)]

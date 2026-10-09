@@ -2194,43 +2194,81 @@ pub(super) async fn journey_sessions(State(state): State<ServeState>) -> Respons
     .await
 }
 
-/// The `force` a preview POST asks for, or `None` when its body is not `{force?, executionId?}`.
+/// The `force` and `executionId` (1..=128 characters) a preview POST names, or `None` when its body
+/// is not `{force?, confirm?, executionId?}` within those bounds.
 /// The Studio also names the run it has open (`executionId`, #538); an approved flow's replay
 /// records into it (#519 slice 3), and a preview of a draft does not use it.
-fn preview_force(body: &[u8]) -> Option<bool> {
+fn preview_body(body: &[u8]) -> Option<PreviewBody> {
     if body.is_empty() {
-        return Some(false);
+        return Some(PreviewBody::default());
     }
     let serde_json::Value::Object(map) = serde_json::from_slice::<serde_json::Value>(body).ok()?
     else {
         return None;
     };
-    let known = map.keys().all(|key| key == "force" || key == "executionId");
-    let force = match map.get("force") {
-        None | Some(serde_json::Value::Null) => false,
-        Some(serde_json::Value::Bool(force)) => *force,
+    if !map
+        .keys()
+        .all(|key| key == "force" || key == "confirm" || key == "executionId")
+    {
+        return None;
+    }
+    let flag = |key: &str| match map.get(key) {
+        None | Some(serde_json::Value::Null) => Some(false),
+        Some(serde_json::Value::Bool(value)) => Some(*value),
+        Some(_) => None,
+    };
+    let (force, confirm) = (flag("force")?, flag("confirm")?);
+    let execution = match map.get("executionId") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(id)) if !id.is_empty() && id.len() <= 128 => {
+            Some(id.clone())
+        }
         Some(_) => return None,
     };
-    let execution = map.get("executionId").is_none_or(|value| {
-        value.is_null()
-            || value
-                .as_str()
-                .is_some_and(|id| !id.is_empty() && id.len() <= 128)
-    });
-    (known && execution).then_some(force)
+    Some(PreviewBody {
+        force,
+        confirm,
+        execution,
+    })
+}
+
+/// What a preview POST asks for: a new run (`force`), the owner's click on "Run it?" for an
+/// approved flow held before a destructive act (`confirm`, also a new run), and the run to record
+/// into (`executionId`).
+#[derive(Debug, Default, PartialEq)]
+struct PreviewBody {
+    force: bool,
+    confirm: bool,
+    execution: Option<String>,
 }
 
 /// `POST /v1/journey-flows/{id}/preview` (#519): exactly `graphhelm journey preview <id>`; body
-/// `{force?, executionId?}`. 202 while the run goes, 200 with the kept result. Owner credential only.
+/// `{force?, confirm?, executionId?}`; `confirm` is the click that lets an approved flow held
+/// before a destructive act play it; with `executionId`, an approved flow's run records its proof there
+/// (slice 3). 202 while the run goes, 200 with the kept result. Owner credential only.
 pub(super) async fn start_journey_preview(
     State(state): State<ServeState>,
     UrlPath(id): UrlPath<String>,
     body: Bytes,
 ) -> Response {
     const COMMAND: &str = "journey.preview";
-    let Some(force) = preview_force(&body) else {
-        return bad_request(COMMAND, "the body must be {force?, executionId?}", "/body");
+    let Some(PreviewBody {
+        force,
+        confirm,
+        execution,
+    }) = preview_body(&body)
+    else {
+        return bad_request(
+            COMMAND,
+            "the body must be {force?, confirm?, executionId?}",
+            "/body",
+        );
     };
+    // #519 slice 3: an approved flow's run records its proof into this execution, sealed with the
+    // Runtime's keyring, as `journey open` does. Whether a missing keyring refuses is decided by
+    // `start()`, which knows the flow's status: a draft ignores the execution.
+    let sealing = state.sealing.clone();
+    let events = state.events.to_path_buf();
     let response = flow_command(state, COMMAND, move |project| {
         crate::commands::journey_preview::start(&crate::args::JourneyPreviewArgs {
             id,
@@ -2238,6 +2276,11 @@ pub(super) async fn start_journey_preview(
             force,
             read: false,
             run: false,
+            confirm,
+            events: execution.as_ref().map(|_| events),
+            keyring: sealing.as_ref().map(|keyring| keyring.directory.clone()),
+            key_id: sealing.as_ref().map(|keyring| keyring.key_id.clone()),
+            execution,
         })
     })
     .await;
@@ -2256,6 +2299,11 @@ pub(super) async fn journey_preview(
             force: false,
             read: true,
             run: false,
+            confirm: false,
+            events: None,
+            execution: None,
+            keyring: None,
+            key_id: None,
         })
     })
     .await;
@@ -6130,26 +6178,42 @@ mod off_reactor_tests {
     /// type or an empty id is still refused. Cost: microseconds.
     #[test]
     fn a_preview_post_accepts_the_studios_run_id_and_refuses_anything_else() {
-        assert_eq!(super::preview_force(b""), Some(false));
-        assert_eq!(super::preview_force(br#"{}"#), Some(false));
-        assert_eq!(super::preview_force(br#"{"force":true}"#), Some(true));
+        use super::{PreviewBody, preview_body};
+        let asked = |force, confirm, execution: Option<&str>| {
+            Some(PreviewBody {
+                force,
+                confirm,
+                execution: execution.map(str::to_owned),
+            })
+        };
+        assert_eq!(preview_body(b""), asked(false, false, None));
+        assert_eq!(preview_body(br#"{}"#), asked(false, false, None));
+        assert_eq!(preview_body(br#"{"force":true}"#), asked(true, false, None));
         assert_eq!(
-            super::preview_force(br#"{"executionId":"gh-team"}"#),
-            Some(false)
+            preview_body(br#"{"executionId":"gh-team"}"#),
+            asked(false, false, Some("gh-team"))
         );
         assert_eq!(
-            super::preview_force(br#"{"force":true,"executionId":"gh-team"}"#),
-            Some(true)
+            preview_body(br#"{"force":true,"executionId":"gh-team"}"#),
+            asked(true, false, Some("gh-team"))
         );
+        // The owner's click on "Run it?" (#519): an approved flow held before a destructive act.
+        assert_eq!(
+            preview_body(br#"{"confirm":true,"executionId":"gh-team"}"#),
+            asked(false, true, Some("gh-team"))
+        );
+        let too_long = format!(r#"{{"executionId":"{}"}}"#, "x".repeat(129));
         for refused in [
             &br#"{"force":"yes"}"#[..],
+            br#"{"confirm":1}"#,
             br#"{"executionId":""}"#,
             br#"{"executionId":7}"#,
+            too_long.as_bytes(),
             br#"{"path":"main"}"#,
             br#"[]"#,
             br#"not json"#,
         ] {
-            assert_eq!(super::preview_force(refused), None, "{refused:?}");
+            assert_eq!(preview_body(refused), None, "{refused:?}");
         }
     }
 

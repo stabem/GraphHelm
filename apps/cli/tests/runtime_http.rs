@@ -4683,3 +4683,53 @@ fn simultaneous_first_requests_preserve_a_cold_store() {
     concurrent_cold_requests(false);
     concurrent_cold_requests(true);
 }
+
+/// #549: what running out of a request's budget looks like, pinned, because it was misread. A
+/// whole-package run failed `simultaneous_first_requests_preserve_a_cold_store` with `os error
+/// 10060`, whose Windows text speaks of a failed connection attempt; it is also exactly what a
+/// READ that outlasts its timeout returns. Measured on this host: a connect to a listener nobody
+/// accepts from is refused (`10061`) after about two seconds, never `10060`. So that red was a
+/// server too slow for the fixed 15 s read budget, not a connect. The budget now covers connect,
+/// write and read and scales with the knob; this cell holds a server that accepts and never
+/// answers, and asserts the request ends at its budget (not at the OS's) as a timeout. Defect
+/// named: a request with no bound on one of its three waits, and a timeout nobody can attribute.
+/// Cost: one loopback connection, about a third of a second.
+#[test]
+fn a_request_to_a_server_that_never_answers_ends_at_its_budget_as_a_timeout() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        // Accept, read nothing, answer nothing, until the client has given up.
+        let _ = held.recv_timeout(Duration::from_secs(30));
+        drop(stream);
+    });
+    let budget = Duration::from_millis(300);
+    let started = Instant::now();
+    let outcome = support::raw_request_within(&format!("http://{address}/health"), None, budget);
+    let elapsed = started.elapsed();
+    let _ = release.send(());
+    server.join().unwrap();
+    let error = outcome
+        .err()
+        .expect("a server that never answers cannot have produced a response");
+    assert!(
+        elapsed >= budget / 2 && elapsed < Duration::from_secs(5),
+        "the request must end at its own {budget:?} budget, not at once and not at the 15 s \
+         default or the OS's: it took {elapsed:?}"
+    );
+    assert!(
+        matches!(
+            error.kind(),
+            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+        ),
+        "a read past its budget is a timeout: {error:?}"
+    );
+    #[cfg(windows)]
+    assert_eq!(
+        error.raw_os_error(),
+        Some(10060),
+        "on Windows a read timeout is WSAETIMEDOUT, the code that was taken for a failed connect"
+    );
+}

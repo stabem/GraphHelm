@@ -24,7 +24,7 @@
 #![allow(dead_code)]
 
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 pub mod time_scale;
@@ -40,10 +40,28 @@ pub struct RawResponse {
 }
 
 pub fn raw_request(url: &str, token: Option<&str>) -> std::io::Result<RawResponse> {
+    raw_request_within(url, token, time_scale::scaled(REQUEST_TIMEOUT))
+}
+
+/// `raw_request` with its budget named: the most each of the connect, a write and a read may
+/// take. #549: a request to a slow server failed a whole-package run with `os error 10060`, which
+/// reads like a failed CONNECT and is what Windows reports for a READ that outlasts its timeout.
+/// The connect had no bound at all. Now all three share one budget, the budget scales with
+/// `GRAPHHELM_TEST_TIME_SCALE` like every other hang catcher, and a cell in `runtime_http.rs`
+/// pins what running out of it looks like.
+pub fn raw_request_within(
+    url: &str,
+    token: Option<&str>,
+    budget: Duration,
+) -> std::io::Result<RawResponse> {
     let (host, port, path) = split_url(url);
-    let mut stream = TcpStream::connect((host.as_str(), port))?;
-    stream.set_read_timeout(Some(REQUEST_TIMEOUT))?;
-    stream.set_write_timeout(Some(REQUEST_TIMEOUT))?;
+    let address = (host.as_str(), port)
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| std::io::Error::other(format!("no address resolved for {host}:{port}")))?;
+    let mut stream = TcpStream::connect_timeout(&address, budget)?;
+    stream.set_read_timeout(Some(budget))?;
+    stream.set_write_timeout(Some(budget))?;
 
     let mut request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
     if let Some(token) = token {

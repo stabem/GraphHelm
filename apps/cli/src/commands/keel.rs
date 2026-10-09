@@ -980,15 +980,146 @@ mod tests {
     use std::process::Stdio;
     use std::thread;
 
+    const HOLDER_TEST: &str =
+        "commands::keel::tests::bounded_proof_kills_a_descendant_that_holds_an_output_pipe";
+
+    /// What one run of the pipe-holder arrangement showed.
+    #[derive(Debug, PartialEq)]
+    enum HolderRun {
+        /// The holder was up, `run_bounded` hit its deadline, and the holder's connection closed.
+        Killed,
+        /// The deadline came before the holder had reported ready. That is the ARRANGEMENT being
+        /// slower than the bound, and says nothing about `run_bounded`.
+        NotReady,
+    }
+
+    /// Runs the wrapper under `run_bounded(bound)`. The wrapper spawns a descendant (the holder)
+    /// that keeps the wrapper's output pipe, waits `holder_delay`, connects here, writes one
+    /// byte and stays alive. The observer reads that byte while the holder lives, because on
+    /// Windows the reset that follows `TerminateProcess` discards bytes not yet read.
+    fn run_pipe_holder(bound: Duration, holder_delay: Duration) -> HolderRun {
+        use std::io::Read;
+        use std::net::TcpListener;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        enum Observed {
+            NeverConnected,
+            DiedBeforeReady,
+            Ready(std::io::Result<usize>),
+        }
+
+        // Native wrappers avoid cold PowerShell startup inside the execution bound. The socket
+        // retains readiness followed by EOF even when this observer is scheduled after cleanup;
+        // sampling a PID file before the kill lost that evidence under competing suite load.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let killed = Arc::new(AtomicBool::new(false));
+        let stop = Arc::clone(&killed);
+        let (observed, observation) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let mut connection = loop {
+                match listener.accept() {
+                    Ok((connection, _)) => break connection,
+                    // Checked only after an empty accept: a holder that connected before the
+                    // kill is in the queue and is still taken.
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if stop.load(Ordering::SeqCst) {
+                            let _ = observed.send(Observed::NeverConnected);
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("the holder listener failed: {error}"),
+                }
+            };
+            connection.set_nonblocking(false).unwrap();
+            connection
+                .set_read_timeout(Some(crate::test_time::scaled(Duration::from_secs(5))))
+                .unwrap();
+            let mut ready = [0];
+            if connection.read_exact(&mut ready).is_err() || ready != [1] {
+                let _ = observed.send(Observed::DiedBeforeReady);
+                return;
+            }
+            let closed = connection.read(&mut [0]).or_else(|error| {
+                // TerminateProcess closes a Windows socket with a reset rather than EOF.
+                if error.kind() == std::io::ErrorKind::ConnectionReset {
+                    Ok(0)
+                } else {
+                    Err(error)
+                }
+            });
+            let _ = observed.send(Observed::Ready(closed));
+        });
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", HOLDER_TEST, "--nocapture"])
+            .env("GRAPHHELM_TEST_HOLDER_ADDRESS", address.to_string())
+            .env(
+                "GRAPHHELM_TEST_HOLDER_DELAY_MS",
+                holder_delay.as_millis().to_string(),
+            )
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let result = graphhelm_process_tree::run_bounded(command, bound).unwrap();
+        assert!(result.is_none(), "inherited pipe bypassed the deadline");
+        // The tree is dead: a holder that had not connected by now never will.
+        killed.store(true, Ordering::SeqCst);
+        // A hang catcher on the observer thread itself, past its own read bound.
+        match observation
+            .recv_timeout(crate::test_time::scaled(Duration::from_secs(10)))
+            .expect("the observer thread must report within its own read bound")
+        {
+            Observed::NeverConnected | Observed::DiedBeforeReady => HolderRun::NotReady,
+            Observed::Ready(closed) => {
+                assert_eq!(
+                    closed
+                        .expect("the descendant connection must close after process-tree cleanup"),
+                    0,
+                    "the real pipe holder must exit during bounded cleanup"
+                );
+                HolderRun::Killed
+            }
+        }
+    }
+
+    /// The property, with the arrangement's own slowness taken out of the verdict (#549): the
+    /// bound under test is also the time a re-executed test binary has to start, spawn a second
+    /// one and connect. Measured on this machine: 140 to 160 ms alone, up to 1.2 s inside this
+    /// test binary's own parallel run, and past 2 s on a starved one, where the cell reported a
+    /// bare `Timeout` for a kill that had worked. A run whose holder was not ready is tried again
+    /// with the next, longer bound; only "never ready at any bound" is a failure, and it names
+    /// the harness.
+    fn pipe_holder_is_killed(bounds: &[Duration], holder_delay: Duration) {
+        for bound in bounds {
+            match run_pipe_holder(*bound, holder_delay) {
+                HolderRun::Killed => return,
+                HolderRun::NotReady => {}
+            }
+        }
+        panic!(
+            "HARNESS-BROKE: the pipe holder was never ready before the bound, up to {:?} \
+             (holder delay {holder_delay:?}). The arrangement or the machine, not `run_bounded`: \
+             every run still hit its deadline and returned (#549)",
+            bounds.last()
+        );
+    }
+
     #[test]
     fn bounded_proof_kills_a_descendant_that_holds_an_output_pipe() {
         use std::io::{Read, Write};
-        use std::net::{TcpListener, TcpStream};
+        use std::net::TcpStream;
 
-        const TEST: &str =
-            "commands::keel::tests::bounded_proof_kills_a_descendant_that_holds_an_output_pipe";
         if let Ok(address) = std::env::var("GRAPHHELM_TEST_HOLDER_ADDRESS") {
             if std::env::var_os("GRAPHHELM_TEST_PIPE_HOLDER").is_some() {
+                let delay = std::env::var("GRAPHHELM_TEST_HOLDER_DELAY_MS")
+                    .ok()
+                    .and_then(|text| text.parse().ok())
+                    .unwrap_or(0);
+                thread::sleep(Duration::from_millis(delay));
                 let mut connection = TcpStream::connect(address).unwrap();
                 connection.write_all(&[1]).unwrap();
                 connection
@@ -999,7 +1130,7 @@ mod tests {
             } else {
                 let mut command = Command::new(std::env::current_exe().unwrap());
                 command
-                    .args(["--exact", TEST, "--nocapture"])
+                    .args(["--exact", HOLDER_TEST, "--nocapture"])
                     .env("GRAPHHELM_TEST_PIPE_HOLDER", "1");
                 // The wrapper must exit first; the outer observer owns descendant cleanup.
                 #[allow(clippy::zombie_processes)]
@@ -1008,56 +1139,30 @@ mod tests {
             return;
         }
 
-        // Native wrappers avoid cold PowerShell startup inside the execution bound. The socket
-        // retains readiness followed by EOF even when this observer is scheduled after cleanup;
-        // sampling a PID file before the kill lost that evidence under competing suite load.
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let (observed, observation) = std::sync::mpsc::channel();
-        thread::spawn(move || {
-            let (mut connection, _) = listener.accept().unwrap();
-            connection
-                .set_read_timeout(Some(crate::test_time::scaled(Duration::from_secs(5))))
-                .unwrap();
-            let mut ready = [0];
-            let result = connection
-                .read_exact(&mut ready)
-                .and_then(|()| {
-                    connection.read(&mut [0]).or_else(|error| {
-                        // TerminateProcess closes a Windows socket with a reset rather than EOF.
-                        if error.kind() == std::io::ErrorKind::ConnectionReset {
-                            Ok(0)
-                        } else {
-                            Err(error)
-                        }
-                    })
-                })
-                .map(|bytes| (ready, bytes));
-            let _ = observed.send(result);
-        });
-        let mut command = Command::new(std::env::current_exe().unwrap());
-        command
-            .args(["--exact", TEST, "--nocapture"])
-            .env("GRAPHHELM_TEST_HOLDER_ADDRESS", address.to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        // #549: the bound must expire AFTER the wrapper has spawned the holder. On a busy
-        // machine two seconds ended before that spawn, and the holder never reported ready.
-        let result = graphhelm_process_tree::run_bounded(
-            command,
-            crate::test_time::scaled(Duration::from_secs(2)),
-        )
-        .unwrap();
+        let bounds =
+            [2, 6, 18].map(|seconds| crate::test_time::scaled(Duration::from_secs(seconds)));
+        pipe_holder_is_killed(&bounds, Duration::ZERO);
+    }
 
-        assert!(result.is_none(), "inherited pipe bypassed the deadline");
+    /// #549: the arrangement being late must not read as `run_bounded` failing. Staged, not hoped
+    /// for: the holder waits one second before it connects, and the first bound is 300 ms. The
+    /// control line proves that bound really is too short here (so the cell cannot pass by the
+    /// holder happening to be early); the second call must then succeed at the longer bound.
+    /// Defect named: a late holder reported as a failed kill. Cost: about four seconds, three
+    /// short child processes; longer only on a machine too starved for the three-second bound.
+    #[test]
+    fn a_pipe_holder_that_is_late_for_one_bound_is_tried_at_the_next() {
+        let late = Duration::from_secs(1);
+        let short = Duration::from_millis(300);
         assert_eq!(
-            observation
-                .recv_timeout(crate::test_time::scaled(Duration::from_secs(5)))
-                .expect("the descendant must report readiness and disconnect after cleanup")
-                .expect("the descendant connection must close after process-tree cleanup"),
-            ([1], 0),
-            "the real pipe holder must start and then exit during bounded cleanup"
+            run_pipe_holder(short, late),
+            HolderRun::NotReady,
+            "ARRANGEMENT: a holder that waits {late:?} cannot be ready within {short:?}"
         );
+        // The later bounds escalate like the real cell's: this cell must not become the next one
+        // that reports a slow machine. On one CPU the holder took more than three seconds.
+        let later =
+            [3, 9, 27].map(|seconds| crate::test_time::scaled(Duration::from_secs(seconds)));
+        pipe_holder_is_killed(&[short, later[0], later[1], later[2]], late);
     }
 }

@@ -421,3 +421,21 @@ describe("TaskGraphs round timers (#502 on #514)", () => {
     expect(screen.getByRole("listitem", { current: "step" })).toHaveTextContent(/^Re-review · round 1.*in this step: 5 min/);
   });
 });
+
+describe("TaskGraphs card home follows the parent chain (#524 review)", () => {
+  it("puts a grandchild in the root issue's card, never in a card without its parent's row", () => {
+    const claim = (seq: number, issue: number, parent?: number) =>
+      record(seq, `issue-${issue}`, "task.claimed", "gh-claude-4", { issue, lane: "gh-claude-4", branch: `b${issue}`, ...(parent ? { parent } : {}) });
+    render(<TaskGraphs tasks={foldTaskEvents([claim(1, 100), claim(2, 200, 100), claim(3, 300, 200)])} onOpenJourney={vi.fn()} />);
+    const cards = screen.getAllByRole("article");
+    expect(cards).toHaveLength(1);
+    expect(within(cards[0]).getAllByRole("group")).toHaveLength(3);
+  });
+
+  it("survives a parent cycle", () => {
+    const claim = (seq: number, issue: number, parent: number) =>
+      record(seq, `issue-${issue}`, "task.claimed", "gh-claude-4", { issue, lane: "gh-claude-4", branch: `b${issue}`, parent });
+    render(<TaskGraphs tasks={foldTaskEvents([claim(1, 1, 2), claim(2, 2, 1)])} onOpenJourney={vi.fn()} />);
+    expect(screen.getAllByRole("group")).toHaveLength(2);
+  });
+});

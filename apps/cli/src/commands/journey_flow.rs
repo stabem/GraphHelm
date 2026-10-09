@@ -1174,10 +1174,13 @@ fn owner_token_matches(project: &Path, token_file: Option<&Path>) -> bool {
 }
 
 /// `graphhelm journey sign-legacy` (#534 slice 3): approvals made before the owner's record
-/// existed read as `flow.approval_unsigned` on the owner's machine. This lists them, and with
-/// `--id` or `--all` records the owner's signature for each one whose approval still matches its
-/// content (an edited, stale or invalid flow is listed as not signable, never signed). The
-/// revision stays the one the YAML names; nothing in the YAML changes. Owner door: owner token.
+/// existed read as `flow.approval_unsigned` on the owner's machine. Any lane can also write an
+/// `approved` block into a YAML (the digest is a plain sha256), and this command cannot tell the
+/// two apart by itself (#597 review). So it never signs in bulk: it lists each unsigned approval
+/// with the commit, author and date that introduced it (git's pickaxe on the digest), and signs
+/// one flow per `--id` the owner names after reading that. An approval that no commit introduced
+/// (only in the working tree), or a flow whose approval no longer matches its content, is listed
+/// as not signable and is never signed. The YAML is not changed. Owner door: owner token.
 pub(crate) fn run_sign_legacy(args: &crate::args::JourneySignLegacyArgs) -> Outcome {
     const COMMAND: &str = "journey.sign_legacy";
     let project = args.project.clone().unwrap_or_else(|| ".".into());
@@ -1203,38 +1206,36 @@ pub(crate) fn run_sign_legacy(args: &crate::args::JourneySignLegacyArgs) -> Outc
         if !findings.iter().any(|f| f.code == "flow.approval_unsigned") {
             continue;
         }
-        let blocking: Vec<_> = findings
+        let mut blocking: Vec<&str> = findings
             .iter()
             .filter(|f| !f.is_warning() && f.code != "flow.approval_unsigned")
             .map(|f| f.code)
             .collect();
+        let digest = flow["approved"]["digest"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let revision = flow["approved"]["revision"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let introduced = introduced_by(&project, &file, &digest);
+        if introduced.is_none() {
+            blocking.push("flow.approval_uncommitted");
+        }
         if blocking.is_empty() {
-            unsigned.push((
-                id,
-                flow["approved"]["digest"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-                flow["approved"]["revision"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-            ));
+            unsigned.push((id, digest, revision, introduced.unwrap_or(Value::Null)));
         } else {
             not_signable.push(json!({"id": id, "findings": blocking}));
         }
     }
-    let chosen: Vec<_> = unsigned
-        .iter()
-        .filter(|(id, _, _)| args.all || args.ids.contains(id))
-        .collect();
     let unknown: Vec<_> = args
         .ids
         .iter()
-        .filter(|id| !unsigned.iter().any(|(candidate, _, _)| candidate == *id))
+        .filter(|id| !unsigned.iter().any(|(candidate, ..)| candidate == *id))
         .collect();
     let mut signed = Vec::new();
-    for (id, digest, revision) in chosen {
+    for (id, digest, revision, _) in unsigned.iter().filter(|(id, ..)| args.ids.contains(id)) {
         if let Err(message) = super::journey_owner::record(&project, id, digest, revision) {
             return input_error(COMMAND, &message);
         }
@@ -1243,11 +1244,42 @@ pub(crate) fn run_sign_legacy(args: &crate::args::JourneySignLegacyArgs) -> Outc
     Outcome::success(
         COMMAND,
         json!({
-            "unsigned": unsigned.iter().map(|(id, digest, revision)| json!({"id": id, "digest": digest, "revision": revision})).collect::<Vec<_>>(),
+            "unsigned": unsigned.iter().map(|(id, digest, revision, introduced)| json!({
+                "id": id, "digest": digest, "revision": revision, "introducedBy": introduced,
+            })).collect::<Vec<_>>(),
             "signed": signed,
             "notSignable": not_signable,
             "notUnsigned": unknown,
         }),
+    )
+}
+
+/// The commit that introduced `digest` into the flow file (git's pickaxe), as
+/// `{commit, author, date, subject}`; `None` when no commit did (the approval only exists in the
+/// working tree) or git cannot answer.
+fn introduced_by(project: &Path, file: &Path, digest: &str) -> Option<Value> {
+    let relative = file
+        .strip_prefix(project)
+        .ok()?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let hex = digest.strip_prefix("sha256:")?;
+    let line = super::journey::git(
+        project,
+        &[
+            "log",
+            "-1",
+            "--format=%H%x09%an%x09%aI%x09%s",
+            "-S",
+            hex,
+            "--",
+            &relative,
+        ],
+    )?;
+    let mut fields = line.trim().splitn(4, '\t');
+    let commit = fields.next().filter(|commit| !commit.is_empty())?;
+    Some(
+        json!({"commit": commit, "author": fields.next(), "date": fields.next(), "subject": fields.next()}),
     )
 }
 

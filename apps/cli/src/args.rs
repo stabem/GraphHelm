@@ -154,8 +154,8 @@ pub enum JourneyCommand {
     Compile(JourneyCompileArgs),
     /// Approve a canonical flow at the project's HEAD and write its generated contracts.
     Approve(JourneyApproveArgs),
-    /// Record the owner's signature for approvals made before #534 (lists them; writes only with
-    /// `--id` or `--all`).
+    /// Record the owner's signature for approvals made before #534 (lists them with the commit
+    /// that introduced each; writes only for each `--id`).
     SignLegacy(JourneySignLegacyArgs),
     /// Mark one edge of a DRAFT flow safe to watch although an act on it looks destructive
     /// (#518). Owner only. The mark binds the edge's acts: editing them voids it.
@@ -416,12 +416,10 @@ pub struct JourneyCompileArgs {
 
 #[derive(Debug, Args)]
 pub struct JourneySignLegacyArgs {
-    /// A flow whose existing approval the owner signs; repeatable.
+    /// A flow whose existing approval the owner signs, after reading the commit that introduced
+    /// it; repeatable. There is no bulk form (#597 review): a forged approval looks the same.
     #[arg(long = "id")]
     pub ids: Vec<String>,
-    /// Sign every flow whose approval still matches its content.
-    #[arg(long)]
-    pub all: bool,
     #[arg(long)]
     pub project: Option<PathBuf>,
     /// The project's owner token (`.graphhelm/events.token`).

@@ -1,11 +1,58 @@
+/* Journey rail beside the content; stacks when the area is too narrow for both. */
 .mv {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: 0.75rem;
+  min-width: 0;
+}
+
+/* The Graph tab takes the whole main area: the chat column and right panel step aside. */
+.studio-columns:has(.mv[data-wide="true"]) > .chat-column,
+.studio-columns:has(.mv[data-wide="true"]) > .right-panel {
+  display: none;
 }
 
 .mv-journeys {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  flex: 0 0 260px;
+  width: 260px;
+  max-width: 100%;
+  gap: 0.25rem;
+}
+
+.mv-journey {
+  display: flex;
+  align-items: center;
   gap: 0.5rem;
+  min-width: 0;
+  text-align: left;
+}
+
+.mv-journey-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mv-journey-count {
+  flex: none;
+  color: var(--dim);
+  font-family: var(--mono);
+}
+
+.mv-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 320px;
+  min-width: 0;
+  gap: 0.75rem;
+}
+
+.mv-unlinked ul {
+  margin: 0.25rem 0 0;
+  color: var(--dim);
 }

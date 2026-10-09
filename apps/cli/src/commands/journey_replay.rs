@@ -33,7 +33,13 @@ pub(super) const OP_BUDGET: Duration = Duration::from_secs(30);
 // took its full ceiling as a timeout of its own, and a 1 s wait once raced the terminate.
 const REAP_WINDOW: Duration = Duration::from_secs(1);
 const CLEANUP_MARGIN: Duration = Duration::from_secs(1);
+// #454: how much longer cleanup waits for tree members whose kill has already landed and that
+// are only slow to finish (a saturated machine: 1.8 s and 3.0 s measured, and past the 5 s
+// ceiling in two earlier runs). A member the kill did not land on gets none of it. The upper tail
+// was not measured; this is a "never" bound, and the terminate checks it once per 1 ms poll.
+const FINISHING_ALLOWANCE: Duration = Duration::from_secs(25);
 const CLEANUP_OBSERVE: Duration = graphhelm_process_tree::TERMINATE_CEILING
+    .saturating_add(FINISHING_ALLOWANCE)
     .saturating_add(REAP_WINDOW)
     .saturating_add(CLEANUP_MARGIN);
 // The independent supervisor bounds waiting, including startup and the worker's
@@ -140,7 +146,11 @@ impl OwnedChild {
             let started = Instant::now();
             // The leader exiting does not prove its pipe-owning descendants exited.
             // Use the adapter's termination observer before closing the group in both cases.
-            let terminated = graphhelm_process_tree::terminate(child.id(), group);
+            let terminated = graphhelm_process_tree::terminate_with_allowance(
+                child.id(),
+                group,
+                FINISHING_ALLOWANCE,
+            );
             let terminate_ms = started.elapsed().as_millis();
             graphhelm_process_tree::close(&mut group);
             let deadline = Instant::now() + REAP_WINDOW;
@@ -1729,9 +1739,6 @@ fn supervise(args: &JourneyReplayArgs, deadline: Instant) -> Outcome {
     if let Some(trace) = std::env::var_os("GRAPHHELM_PTREE_TRACE") {
         command.env("GRAPHHELM_PTREE_TRACE", trace);
     }
-    if let Some(experiment) = std::env::var_os("GRAPHHELM_PTREE_EXPERIMENT") {
-        command.env("GRAPHHELM_PTREE_EXPERIMENT", experiment);
-    }
     let mut secrets = Vec::new();
     for (key, value) in std::env::vars_os()
         .filter(|(key, _)| key.to_string_lossy().starts_with("GRAPHHELM_SECRET_"))
@@ -1951,8 +1958,9 @@ mod tests {
     #[test]
     fn the_cleanup_window_outlasts_the_terminate_ceiling_and_the_reap() {
         assert!(
-            CLEANUP_OBSERVE > graphhelm_process_tree::TERMINATE_CEILING + REAP_WINDOW,
-            "{CLEANUP_OBSERVE:?} must exceed {:?} + {REAP_WINDOW:?}",
+            CLEANUP_OBSERVE
+                > graphhelm_process_tree::TERMINATE_CEILING + FINISHING_ALLOWANCE + REAP_WINDOW,
+            "{CLEANUP_OBSERVE:?} must exceed {:?} + {FINISHING_ALLOWANCE:?} + {REAP_WINDOW:?}",
             graphhelm_process_tree::TERMINATE_CEILING
         );
     }

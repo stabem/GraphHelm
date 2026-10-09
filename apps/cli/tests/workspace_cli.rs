@@ -1187,3 +1187,111 @@ fn the_slot_builds_on_the_owners_target_root_caps_a_lane_and_reclaims_orphans() 
         b"keep"
     );
 }
+
+/// #360, review BLOCK on `18a2759e` (gh-claude-7): "the worktree is gone" was "it is not a
+/// directory I can see", which is also true of a worktree on a volume that is offline, and of a
+/// record with no worktree at all; the build directory was then deleted although its worktree
+/// existed. Defects named: a build directory reclaimed because its worktree could not be READ; a
+/// record without an absolute worktree treated as an orphan; a sweep that deletes the build
+/// directory of a worktree that exists; a changed target root reported as reclaimed while the
+/// real directory leaks. Cost: a few short child commands, temp directories.
+#[test]
+fn a_build_directory_is_reclaimed_only_when_its_worktree_is_positively_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let fast = dir.path().join("fast");
+    let rules = root.join(".graphhelm-workspaces");
+    std::fs::create_dir_all(&rules).unwrap();
+    let rule = |target_root: &Path| {
+        std::fs::write(
+            rules.join("slot-targets.json"),
+            serde_json::json!({"targetRoot": target_root, "cap": 3}).to_string(),
+        )
+        .unwrap();
+    };
+    rule(&fast);
+    let log = dir.path().join("target.txt");
+    let tree = dir.path().join("trees").join("wt-one");
+    std::fs::create_dir_all(&tree).unwrap();
+    assert_eq!(slot_in(&root, "lane-a", &tree, &log).0, 0);
+    let record = rules.join("targets").join("lane-a").join("wt-one.json");
+    let built = fast
+        .join("lane-a")
+        .join("wt-one")
+        .join("target")
+        .join("built.bin");
+    std::fs::write(&built, b"x").unwrap();
+    let original = std::fs::read_to_string(&record).unwrap();
+    let with_worktree = |worktree: &str| {
+        let mut value: Value = serde_json::from_str(&original).unwrap();
+        value["worktree"] = worktree.into();
+        std::fs::write(&record, value.to_string()).unwrap();
+    };
+    let sweep = || {
+        let (code, reply) = run(&["sweep", "--root", root.to_str().unwrap(), "--apply"]);
+        assert_eq!(code, 0, "{reply}");
+        reply["data"]["targets"].clone()
+    };
+    let kept =
+        |reason: &str| serde_json::json!([{"lane": "lane-a", "name": "wt-one", "reason": reason}]);
+
+    // The worktree exists: an applied sweep keeps its build directory.
+    let swept = sweep();
+    assert_eq!(swept["kept"], kept("worktree_exists"), "{swept}");
+    assert!(built.is_file());
+
+    // No worktree, or a relative one: not a record, so nothing is deleted for it.
+    for worktree in ["", "trees/wt-one"] {
+        with_worktree(worktree);
+        let swept = sweep();
+        assert_eq!(swept["removed"], serde_json::json!([]), "{swept}");
+        assert!(built.is_file(), "deleted for worktree {worktree:?}");
+    }
+
+    // A worktree on a volume that does not answer cannot be read, which is not "gone". A second
+    // worktree of the lane does not reclaim it either.
+    #[cfg(windows)]
+    {
+        let offline = ('D'..='Z')
+            .rev()
+            .map(|letter| format!("{letter}:\\"))
+            .find(|drive| !Path::new(drive).exists())
+            .expect("a drive letter that is not mounted");
+        with_worktree(&format!("{offline}trees\\wt-one"));
+        let swept = sweep();
+        assert_eq!(swept["kept"], kept("worktree_unreadable"), "{swept}");
+        assert!(built.is_file());
+        let other = dir.path().join("trees").join("wt-two");
+        std::fs::create_dir_all(&other).unwrap();
+        let (code, reply) = slot_in(&root, "lane-a", &other, &log);
+        assert_eq!(code, 0, "{reply}");
+        assert_eq!(reply["data"]["reclaimedTargets"], serde_json::json!([]));
+        assert!(built.is_file());
+        std::fs::remove_dir_all(&other).unwrap();
+        let _ = sweep();
+    }
+
+    // The record names a build directory under another target root: nothing is deleted, the
+    // record stays, and the sweep says why.
+    with_worktree(
+        dir.path()
+            .join("trees")
+            .join("never-there")
+            .to_str()
+            .unwrap(),
+    );
+    rule(&dir.path().join("fast-moved"));
+    let swept = sweep();
+    assert_eq!(swept["kept"], kept("target_root_changed"), "{swept}");
+    assert!(built.is_file() && record.is_file());
+
+    // Positively gone, on a volume that answers, under the rule it was built with: reclaimed.
+    rule(&fast);
+    let swept = sweep();
+    assert_eq!(
+        swept["removed"],
+        serde_json::json!([{"lane": "lane-a", "name": "wt-one"}]),
+        "{swept}"
+    );
+    assert!(!built.exists() && !record.exists());
+}

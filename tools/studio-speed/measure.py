@@ -107,7 +107,7 @@ def main():
                         expect(detail).to_have_count(0)
                         samples["openJourney"].append(click_time(page,
                             page.get_by_role("list", name="Journeys", exact=True).get_by_role("button", name=title, exact=False),
-                            detail.get_by_role("list", name="Steps", exact=True)))
+                            detail.get_by_role("list", name="Steps", exact=True).get_by_role("button").first))
                         expect(detail.get_by_role("heading", name=title, exact=True)).to_be_visible()
                         expect(detail.get_by_role("list", name="Steps").locator(":scope > li")).to_have_count(2)
                         samples["tabGraph"].append(click_time(page,

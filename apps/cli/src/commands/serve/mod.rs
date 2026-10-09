@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::io::Write;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 

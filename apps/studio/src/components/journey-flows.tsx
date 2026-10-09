@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { JourneyFlowEdge, JourneyFlowScreen, JourneyFlowView, JourneyFlowsView, JourneyFrame, JourneyRunView, LiveSession } from "../runtime/types";
-import { JourneyFlowchart, pathsOf } from "./journey-flowchart";
+import { JourneyFlowchart, actWords, pathsOf } from "./journey-flowchart";
 
 /** Where a journey's run and its pictures come from (#519): the Runtime client's four reads. */
 export interface JourneyRunSource {
@@ -33,6 +33,9 @@ export interface JourneyFlowsProps {
   sessions?: LiveSession[] | null;
   /** Play the flow in a headed browser (#462). Resolves when the play ends. Absent: no Watch. */
   onWatch?: (flowId: string, path?: string) => Promise<void>;
+  /** Mark a draft's skipped step safe to watch (#518): the owner's word, through the Runtime's
+   * owner-only route. Absent: no Mark safe. */
+  onMarkSafe?: (flowId: string, edgeId: string) => Promise<void>;
   /** The journey the owner selected (and its status), so the proof map below follows it. */
   onSelect?: (flowId: string, status: JourneyFlowView["status"]) => void;
   /** Opening a journey runs its test and shows each screen as it was rendered (#519). Absent: the
@@ -217,7 +220,45 @@ function watchFailure(cause: unknown): string {
   return `Can't play this journey: ${message}`;
 }
 
-function Detail({ flow, onApprove, onWatch, session, source }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void>; onWatch?: (flowId: string, path?: string) => Promise<void>; session?: LiveSession; source?: JourneyRunSource }) {
+/** The steps of a DRAFT the guard skipped (#515), each with every act its edge holds, and the
+ * owner's Mark safe (#518). One mark covers the whole edge, so every act is shown before the
+ * button: a mark never blesses an act the owner did not read. */
+function SkippedSteps({ flow, edges, onMarkSafe }: { flow: JourneyFlowView; edges: string[]; onMarkSafe: (flowId: string, edgeId: string) => Promise<void> }) {
+  const [marking, setMarking] = useState<string | null>(null);
+  const [failure, setFailure] = useState<{ edge: string; text: string } | null>(null);
+  const stale = new Set(flow.findings.filter((finding) => finding.code === "flow.safe_stale").map((finding) => finding.pointer));
+  const mark = (edgeId: string) => {
+    setMarking(edgeId);
+    setFailure(null);
+    onMarkSafe(flow.id, edgeId)
+      .catch((cause: unknown) => setFailure({ edge: edgeId, text: cause instanceof Error ? cause.message : String(cause) }))
+      .finally(() => setMarking(null));
+  };
+  return (
+    <ul className="journey-flow-skipped" aria-label="Skipped steps">
+      {edges.map((edgeId) => {
+        const index = flow.edges.findIndex((edge) => edge.id === edgeId);
+        const edge = flow.edges[index];
+        if (edge === undefined) return null;
+        const marked = edge.safe !== undefined && !stale.has(`/edges/${index}/safe`);
+        return (
+          <li key={edgeId}>
+            <p>
+              <strong>Skipped, so nothing is deleted, paid or sent by watching a draft.</strong>{" "}
+              This step does: {(edge.acts ?? []).map(actWords).join(", then ")}.
+            </p>
+            {marked
+              ? <p role="status">Marked safe. Watch it again to play this step.</p>
+              : <button type="button" onClick={() => mark(edgeId)} disabled={marking !== null}>{marking === edgeId ? "Marking…" : "Mark safe"}</button>}
+            {failure?.edge === edgeId && <p className="journey-failure" role="alert">Couldn't mark this step safe: {failure.text}</p>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void>; onWatch?: (flowId: string, path?: string) => Promise<void>; onMarkSafe?: (flowId: string, edgeId: string) => Promise<void>; session?: LiveSession; source?: JourneyRunSource }) {
   const { offered, run, frames, failure: runFailure, again } = useJourneyRun(flow.id, source);
   const liveFrame = useLiveFrame(session, source);
   const [approving, setApproving] = useState(false);
@@ -229,6 +270,11 @@ function Detail({ flow, onApprove, onWatch, session, source }: { flow: JourneyFl
   const title = splitTitle(flow.title ?? flow.id);
   const paths = pathsOf(flow);
   const playing = session?.state === "playing";
+  // What the guard skipped: the act a Watch stopped at, and every edge the journey's run skipped.
+  const skipped = [...new Set([
+    ...(session?.state === "skipped" && session.skipped ? [session.skipped.edge] : []),
+    ...Object.entries(run?.edges ?? {}).filter(([, edge]) => edge.result === "skipped").map(([id]) => id),
+  ])];
   // The path a Watch is playing, as steps, to say "step 2 of 3" and to light its card.
   const watched = stepsOf(flow, session?.path || "main");
   const current = currentStep(watched, session);
@@ -283,6 +329,7 @@ function Detail({ flow, onApprove, onWatch, session, source }: { flow: JourneyFl
       ))}
       <JourneyFlowchart flow={flow} run={run} frames={frames} current={watched[current]?.screen.id ?? null} liveFrame={liveFrame} />
       {session !== undefined && <p className="journey-flow-watch" role="status">{watchWords(session, watched, current)}</p>}
+      {onMarkSafe && flow.status === "draft" && skipped.length > 0 && <SkippedSteps flow={flow} edges={skipped} onMarkSafe={onMarkSafe} />}
       {session?.state === "playing" && typeof session.caption === "string" && session.caption !== "" && (
         <p className="journey-flow-watch-caption">{captionWords(session.caption, session.edge)}</p>
       )}
@@ -297,7 +344,7 @@ function flowOf(flows: JourneyFlowView[], journeyId: string | null | undefined):
   return owners.sort((a, b) => b.id.length - a.id.length)[0]?.id ?? null;
 }
 
-export function JourneyFlows({ view, failure = null, onApprove, focusFlowId = null, sessions = null, onWatch, onSelect, run }: JourneyFlowsProps) {
+export function JourneyFlows({ view, failure = null, onApprove, focusFlowId = null, sessions = null, onWatch, onMarkSafe, onSelect, run }: JourneyFlowsProps) {
   const focused = view === null ? null : flowOf(view.flows, focusFlowId);
   const [picked, setPicked] = useState<string | null>(null);
   const detail = useRef<HTMLDivElement>(null);
@@ -335,7 +382,7 @@ export function JourneyFlows({ view, failure = null, onApprove, focusFlowId = nu
         ))}
       </ul>
       <div ref={detail} tabIndex={-1} className="journey-flow-detail">
-        <Detail key={selected.id} flow={selected} onApprove={onApprove} {...(onWatch ? { onWatch } : {})} {...(watching ? { session: watching } : {})} {...(run ? { source: run } : {})} />
+        <Detail key={selected.id} flow={selected} onApprove={onApprove} {...(onWatch ? { onWatch } : {})} {...(onMarkSafe ? { onMarkSafe } : {})} {...(watching ? { session: watching } : {})} {...(run ? { source: run } : {})} />
       </div>
     </section>
   );

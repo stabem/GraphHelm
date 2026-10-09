@@ -56,6 +56,18 @@ describe("RuntimeClient journey flows", () => {
   });
 });
 
+// #518: Mark safe goes through the owner route and nothing else. Regression caught: an edge id
+// that reaches the path unchecked.
+describe("RuntimeClient.markJourneyEdgeSafe", () => {
+  it("posts to /v1/journey-flows/{id}/edges/{edge}/safe and refuses an unsafe edge id", async () => {
+    const { seen, runtime } = client(() => json({ id: "checkout", edge: "pay.submit", safe: { digest: "sha256:x" }, acts: [] }));
+    await expect(runtime.markJourneyEdgeSafe("checkout", "pay.submit")).resolves.toMatchObject({ edge: "pay.submit" });
+    expect([seen[0].method, seen[0].url]).toEqual(["POST", "/v1/journey-flows/checkout/edges/pay.submit/safe"]);
+    await expect(runtime.markJourneyEdgeSafe("checkout", "../x")).rejects.toBeInstanceOf(RuntimeError);
+    expect(seen).toHaveLength(1);
+  });
+});
+
 describe("RuntimeClient.readImage", () => {
   it.each(["image/png", "image/jpeg", "image/webp"])("returns a blob for %s", async (type) => {
     const { seen, runtime } = client(() => bytes(type));

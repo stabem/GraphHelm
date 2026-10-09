@@ -1936,6 +1936,17 @@ export class RuntimeClient {
   }
 
   /**
+   * The owner's Mark safe (#518): `POST /v1/journey-flows/{id}/edges/{edge}/safe`, exactly
+   * `graphhelm journey mark-safe <id> <edge>`. Owner credential only. The reply lists every act
+   * the mark covers.
+   */
+  async markJourneyEdgeSafe(flowId: string, edgeId: string): Promise<{ id: string; edge: string; safe: { digest: string }; acts: unknown[] }> {
+    const id = checkedId(flowId, "flowId");
+    const edge = checkedJourneyId(edgeId, "edgeId");
+    return this.#request<{ id: string; edge: string; safe: { digest: string }; acts: unknown[] }>({ method: "POST", path: `/v1/journey-flows/${encodeURIComponent(id)}/edges/${encodeURIComponent(edge)}/safe` });
+  }
+
+  /**
    * The owner's Approve (#353): `POST /v1/journey-flows/{id}/approve`, exactly
    * `graphhelm journey approve <id>`. A flow with validate findings is refused by the Runtime.
    */

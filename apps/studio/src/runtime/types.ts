@@ -421,6 +421,10 @@ export interface JourneyFlowEdge {
   to: string;
   /** What the user does on this edge, from the flow source (#465 reads them as Does). */
   acts?: Array<{ kind: string; role: string; name: string }>;
+  /** The owner's mark that this draft edge may be played in a watch although an act on it looks
+   * destructive (#518). Present does not mean valid: a mark the edge outgrew is void, and the
+   * flow then carries a `flow.safe_stale` finding at `/edges/<n>/safe`. */
+  safe?: { digest: string };
 }
 
 export interface JourneyFlowView {

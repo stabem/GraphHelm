@@ -160,7 +160,7 @@ pub(crate) fn validate_task_event(
     // #419: the lane, reviewer or merger a record names is an identity, refused as one (DELIVERY.md
     // "Task records"), before the shape check, so a wrong name is never reported as a wrong shape.
     let identity = match kind {
-        "task.claimed" | "task.pr_opened" | "task.critic_verdict" => Some("lane"),
+        "task.claimed" | "task.planned" | "task.pr_opened" | "task.critic_verdict" => Some("lane"),
         "task.review_verdict" => Some("reviewer"),
         "task.merged" => Some("merger"),
         _ => None,
@@ -224,7 +224,35 @@ pub(crate) fn validate_task_event(
             .is_some_and(|id| OpaqueId::parse(id).is_ok())
         && count("revision")
         && short("at", 64);
-    // The same shapes as the schema's five `oneOf` branches, unknown keys refused alike.
+    // #480: the keel plan's decided classes (1-4, distinct), its review count and proof, and the
+    // critic it gets (#467), the same bounds as `task-event.schema.json`.
+    let classes = || {
+        document["classes"].as_array().is_some_and(|items| {
+            !items.is_empty()
+                && items.len() <= 4
+                && items.iter().enumerate().all(|(at, class)| {
+                    matches!(
+                        class.as_str(),
+                        Some("docs" | "code" | "user_visible" | "invariant")
+                    ) && !items[..at].contains(class)
+                })
+        })
+    };
+    let critic = || {
+        let critic = &document["critic"];
+        critic.as_object().is_some_and(|object| {
+            object
+                .keys()
+                .all(|key| matches!(key.as_str(), "mode" | "passScore" | "maxRounds"))
+        }) && matches!(critic["mode"].as_str(), Some("none" | "design"))
+            && critic["passScore"]
+                .as_u64()
+                .is_some_and(|n| (1..=10).contains(&n))
+            && critic["maxRounds"]
+                .as_u64()
+                .is_some_and(|n| (1..=5).contains(&n))
+    };
+    // The same shapes as the schema's six `oneOf` branches, unknown keys refused alike.
     let (fields, keys): (bool, &[&str]) = match kind {
         "task.claimed" => (
             count("issue")
@@ -240,6 +268,21 @@ pub(crate) fn validate_task_event(
             &[
                 "issue", "lane", "branch", "plan", "repo", "title", "summary", "parent", "journeys",
             ],
+        ),
+        "task.planned" => (
+            is_actor("lane")
+                && classes()
+                && document["reviews"]
+                    .as_u64()
+                    .is_some_and(|n| (1..=5).contains(&n))
+                && matches!(
+                    document["proof"].as_str(),
+                    Some("none" | "tests" | "journey" | "both")
+                )
+                && critic()
+                && document.get("summary").is_some()
+                && words(),
+            &["lane", "classes", "reviews", "proof", "critic", "summary"],
         ),
         "task.pr_opened" => (
             count("pr")

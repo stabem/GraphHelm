@@ -22,7 +22,8 @@ export interface MissionTask {
 export interface MissionSummary { proven: number; total: number; inFlight: number; needYou: number; readyUnclaimed: number }
 export interface Mission { contractId: string; title: string; steps: MissionStep[]; tasks: MissionTask[]; summary: MissionSummary }
 
-const STEP_ORDER: Record<TaskState["step"], number> = { implement: 0, review: 1, merge: 2, merged: 3 };
+// #480: Plan and Critic come before the work; they sort with it.
+const STEP_ORDER: Record<TaskState["step"], number> = { plan: 0, critic: 0, implement: 0, review: 1, merge: 2, merged: 3 };
 
 /** Run-edge keys are the flow's own edge ids (free-form; `graphhelm journey explore` writes
  * `<from>.<to>`, fixtures use `<from>-><to>`). They cannot be resolved through JourneyView.arrows:

@@ -1,0 +1,1 @@
+{"schema":"graphhelm-task-event-v1","taskId":"issue-480","revision":2,"at":"2026-10-08T12:00:00Z","lane":"gh-claude-1","classes":["user_visible"],"reviews":1,"proof":"both","critic":{"mode":"design","passScore":8,"maxRounds":3},"summary":"Record the keel plan as task.planned; the Studio lights Plan, and Critic when the plan asks for one."}

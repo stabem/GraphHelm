@@ -44,7 +44,7 @@ function title(task: TaskState): string {
 
 /** #477: a PR title reads as what changes for the user; its conventional `type(area):` prefix is
  * for the squash commit, not for the owner. */
-function plainTitle(text: string): string {
+export function plainTitle(text: string): string {
   return text.replace(/^[a-z]+(\([^)]*\))?!?:\s*/, "");
 }
 
@@ -63,7 +63,7 @@ function ordered(tasks: TaskState[]): { open: TaskState[]; delivered: TaskState[
 
 /** #514 (owner): one card per issue. Each PR of the issue is a row; a task claimed with a `parent`
  * is a row in the parent issue's card when that card exists, else its own card. */
-interface Card { issue: number | null; key: string; rows: TaskState[] }
+export interface Card { issue: number | null; key: string; rows: TaskState[] }
 function cardsOf(tasks: TaskState[]): Card[] {
   // A card's home follows the parent chain while the parent has rows here (a grandchild sits with
   // its root, never in a card its parent's row left), stopping at a cycle (#524 review).
@@ -92,7 +92,7 @@ function cardsOf(tasks: TaskState[]): Card[] {
   return [...cards.values()];
 }
 /** A card sits where its worst open row would; it is delivered only when every row is merged. */
-function orderedCards(tasks: TaskState[]): { open: Card[]; delivered: Card[] } {
+export function orderedCards(tasks: TaskState[]): { open: Card[]; delivered: Card[] } {
   const all = cardsOf(tasks).map((card) => ({ card, ...ordered(card.rows) }));
   const latest = (rows: TaskState[]) => Math.max(...rows.map((row) => row.lastSequence));
   const open = all.filter((entry) => entry.open.length > 0)
@@ -122,13 +122,15 @@ function useChanged(tasks: TaskState[]): Set<string> {
   return fresh.length > 0 ? new Set(fresh) : changed;
 }
 
-type NodeState = "done" | "current" | "next" | "blocked";
+type NodeState = "done" | "current" | "next" | "blocked" | "unrecorded";
 interface StepNode {
   key: string; label: string; who: ReactNode; state: NodeState; reason: string | null; review: boolean;
   /** #502: the step whose typical time this node is measured against (Fix and Re-review: none), and
    * when the node was entered (the Runtime's append time of the record that lit it). */
   timed: TimedStep | null;
   since: string | null;
+  /** #480: the plan's one line, shown on hover over Plan. */
+  hint?: string;
 }
 
 /** #514 (owner: "a node for it: re-review and the agent working"): the row grows one Fix and one
@@ -143,15 +145,33 @@ function nodesOf(task: TaskState): StepNode[] {
     : task.mergeSha.slice(0, 8);
   const reviewers = task.reviewers.length > 0 ? task.reviewers.join(", ") : null;
   const rounds = task.rounds;
+  // #480: every task starts with Plan, lit until its `task.planned`; a design plan (#467) adds
+  // Critic before Implement. A task past Plan with no recorded plan says so, never "done".
+  const plan = task.plan ?? null;
+  const planning = task.step === "plan";
+  const critiquing = task.step === "critic";
   const nodes: StepNode[] = [
-    { key: "implement", label: "Implement", who: task.lane, state: task.step === "implement" ? "current" : "done", reason: null, review: false,
-      timed: "implement", since: task.clock.since },
+    { key: "plan", label: "Plan", who: !planning && plan === null ? "not recorded" : null, review: false, reason: null, timed: "plan",
+      since: task.clock.since, state: planning ? "current" : plan === null ? "unrecorded" : "done", ...(plan === null ? {} : { hint: plan.summary }) },
+  ];
+  if (plan?.critic.mode === "design") {
+    // The latest recorded round (#467) when there is one, else the plan's bounds. An exhausted
+    // critic goes to a person: drawn as blocked, never as done.
+    const round = task.critic;
+    nodes.push({ key: "critic", label: "Critic", review: false, reason: null, timed: "critic", since: task.clock.since,
+      who: round !== null ? `round ${round.round}/${round.maxRounds} · ${round.score}/10` : `pass ${plan.critic.passScore}/10 · ${plan.critic.maxRounds} rounds`,
+      state: round?.verdict === "exhausted" && critiquing ? "blocked" : critiquing ? "current" : planning ? "next" : "done" });
+  }
+  nodes.push(
+    { key: "implement", label: "Implement", who: task.lane, review: false, reason: null, timed: "implement", since: task.clock.since,
+      state: task.step === "implement" ? "current" : planning || critiquing ? "next" : "done" },
     {
       key: "review", label: "Review", who: rounds.length > 0 ? rounds[0].reviewer : reviewers, review: true,
-      state: rounds.length > 0 ? "blocked" : task.step === "review" ? "current" : task.step === "implement" ? "next" : "done",
+      state: rounds.length > 0 ? "blocked" : task.step === "review" ? "current"
+        : task.step === "implement" || planning || critiquing ? "next" : "done",
       reason: rounds[0]?.commentUrl ?? null, timed: "review", since: task.clock.since,
     },
-  ];
+  );
   rounds.forEach((round, index) => {
     const next = rounds[index + 1];
     const last = next === undefined;
@@ -200,7 +220,7 @@ function StepTime({ task, node, timing }: { task: TaskState; node: StepNode; tim
 
 function Node({ task, node, timing }: { task: TaskState; node: StepNode; timing: Timing }) {
   return (
-    <li className={`task-node task-node-${node.state}`} aria-current={node.state === "current" ? "step" : undefined}>
+    <li className={`task-node task-node-${node.state}`} aria-current={node.state === "current" ? "step" : undefined} title={node.hint}>
       <span className="task-node-label">{node.label}{node.state === "blocked" && <span className="task-node-cross" aria-label="blocked"> ✗</span>}</span>
       {node.who !== null && <span className="task-node-agent">{node.who}</span>}
       {node.state === "blocked" && node.reason !== null && GITHUB_URL.test(node.reason) && (
@@ -320,7 +340,7 @@ export function TaskGraphs({ tasks, onOpenJourney, now: fixedNow }: TaskGraphsPr
   const unclaimed = tasks.filter(isUnclaimedCritic);
   const { open, delivered } = orderedCards(tasks.filter((task) => !isUnclaimedCritic(task)));
   const clocks = tasks.filter((task) => task.step === "merged").map((task) => task.clock);
-  const steps: TimedStep[] = ["implement", "review", "merge"];
+  const steps: TimedStep[] = ["plan", "critic", "implement", "review", "merge"];
   const timing: Timing = {
     now,
     typical: Object.fromEntries(steps.map((step) => [step, typicalStep(clocks, step)])) as Timing["typical"],

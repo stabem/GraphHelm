@@ -156,7 +156,7 @@ const TASK_EVENT_SCHEMA = "graphhelm-task-event-v1";
 const VERDICTS = ["APPROVE", "APPROVE-WITH-RISK", "BLOCK"] as const;
 type Verdict = typeof VERDICTS[number];
 
-export type TaskEventKind = "task.claimed" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged" | "task.critic_verdict";
+export type TaskEventKind = "task.claimed" | "task.planned" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged" | "task.critic_verdict";
 
 /** #467: one round of the blind design critic, as its `task.critic_verdict` record states it. */
 export interface CriticRound { round: number; score: number; passScore: number; maxRounds: number; verdict: "pass" | "revise" | "exhausted" }
@@ -188,6 +188,8 @@ export interface TaskEventRecord {
   occurredAt?: string | null;
   /** #467: the round a `task.critic_verdict` states. */
   critic?: CriticRound;
+  /** #480: the lane's keel plan, from `task.planned`. */
+  plan?: TaskPlan;
 }
 
 /** #477: optional words for the Team tab. Absent is `{}`; present but malformed is `false` (the
@@ -209,6 +211,41 @@ function words(document: Record<string, unknown>): { title?: string; summary?: s
     out.summary = summary;
   }
   return out;
+}
+
+const TASK_CLASSES = ["docs", "code", "user_visible", "invariant"] as const;
+const PROOFS = ["none", "tests", "journey", "both"] as const;
+
+/** #480: what `task.planned` carries: the keel plan's decided classes, review count, proof, the
+ * critic its class gets (#467), and the plan in one line. */
+export interface TaskPlan {
+  classes: typeof TASK_CLASSES[number][];
+  reviews: number;
+  proof: typeof PROOFS[number];
+  critic: { mode: "none" | "design"; passScore: number; maxRounds: number };
+  summary: string;
+}
+
+function bounded(value: unknown, min: number, max: number): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max ? value : null;
+}
+
+/** The same bounds as `task-event.schema.json`'s `task.planned` and the Runtime's admission. */
+function taskPlan(document: Record<string, unknown>): TaskPlan | null {
+  const classes = Array.isArray(document.classes) && document.classes.length >= 1 && document.classes.length <= 4
+    && document.classes.every((value, at, all) => TASK_CLASSES.some((known) => known === value) && all.indexOf(value) === at)
+    ? document.classes as TaskPlan["classes"] : null;
+  const reviews = bounded(document.reviews, 1, 5);
+  const proof = PROOFS.find((value) => value === document.proof);
+  const critic = record(document.critic);
+  const mode = critic?.mode === "none" || critic?.mode === "design" ? critic.mode : null;
+  const passScore = bounded(critic?.passScore, 1, 10);
+  const maxRounds = bounded(critic?.maxRounds, 1, 5);
+  const criticKeys = critic !== null && Object.keys(critic).every((key) => key === "mode" || key === "passScore" || key === "maxRounds");
+  const summary = typeof document.summary === "string" && Array.from(document.summary).length <= 300 ? text(document.summary, document.summary.length) : null;
+  return classes !== null && reviews !== null && proof !== undefined && mode !== null && passScore !== null
+    && maxRounds !== null && criticKeys && summary !== null
+    ? { classes, reviews, proof, critic: { mode, passScore, maxRounds }, summary } : null;
 }
 
 function count(value: unknown): number | null {
@@ -252,6 +289,10 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
       const journeys = journeyIds(document.journeys);
       return issue !== null && lane === actorId && branch !== null
         ? { ...base, kind, issue, lane, branch, ...said, ...(repo === null ? {} : { repo }), ...(parent === undefined ? {} : { parent }), ...(journeys === null ? {} : { journeys }) } : null;
+    }
+    case "task.planned": {
+      const plan = taskPlan(document);
+      return plan !== null && document.lane === actorId ? { ...base, kind, lane: actorId, plan } : null;
     }
     case "task.pr_opened": {
       const repo = repository(document.repo);
@@ -304,7 +345,9 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
   }
 }
 
-export type TaskStep = "implement" | "review" | "merge" | "merged";
+/** #480: a claimed task is planning until its `task.planned`; a `design` plan then waits on its
+ * critic (#467) before implementation. */
+export type TaskStep = "plan" | "critic" | "implement" | "review" | "merge" | "merged";
 
 /** #514 (owner: a node for the fix and the re-review): one round per BLOCK. The fix is done when a
  * `pr_opened` names a newer head; the re-review is that head's review. Derived from records only. */
@@ -335,6 +378,8 @@ export interface TaskState {
   lane: string | null;
   headSha: string | null;
   journeys: string[];
+  /** #480: the lane's recorded keel plan; `null` (or absent, before #480) when none was recorded. */
+  plan?: TaskPlan | null;
   /** The step that is lit. */
   step: TaskStep;
   /** A BLOCK that no verdict on a newer head has answered: the red edge into the next step. */
@@ -402,7 +447,8 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
   const add = () => {
     const slice: TaskState = {
       key: "", taskId: event.taskId, branch: null, issue: null, pr: event.kind === "task.claimed" ? null : event.pr ?? null,
-      lane: null, headSha: null, journeys: [], step: "implement", blockedBy: null, reviewers: [], mergeSha: null,
+      lane: null, headSha: null, journeys: [], plan: null,
+      step: event.kind === "task.claimed" || event.kind === "task.planned" ? "plan" : "implement", blockedBy: null, reviewers: [], mergeSha: null,
       repoUrl: null, title: null, summary: null, prTitle: null, prSummary: null, strayVerdicts: [], critic: null, recordedHeads: [], parent: null, rounds: [], clock: emptyClock(), lastSequence: 0,
     };
     slices.push(slice);
@@ -420,6 +466,16 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
   // lane's): PRs open in the order their slices were claimed. The claim's slice becomes that PR's
   // slice. A merge recorded with no pr_opened (#449's own log) still lands on the issue's claim
   // instead of opening a second graph.
+  // #480 (gh-claude-10's BLOCK on 2bba9de4): a plan or a critic round is the recording lane's own
+  // record and names no PR, so it belongs to that lane's newest open claim, never to another
+  // lane's claim of the same issue (a handover leaves the first lane's claim open).
+  if ((event.kind === "task.planned" || event.kind === "task.critic_verdict") && event.lane !== undefined) {
+    const own = group.filter((slice) => slice.lane === event.lane);
+    const mine = own.filter((slice) => slice.pr === null && slice.step !== "merged").at(-1) ?? own.at(-1);
+    if (mine !== undefined) return mine;
+    // A planned with no claim of this lane opens its own slice; a critic round keeps #562's route.
+    if (event.kind === "task.planned") return add();
+  }
   const claimed = group.filter((slice) => event.kind === "task.pr_opened" ? open(slice)
     : slice.pr === null && slice.step !== "merged").at(0);
   if (claimed !== undefined) {
@@ -439,6 +495,11 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
     const state = sliceFor(slices, event);
     if (state.step === "merged") continue;
     state.lastSequence = event.sequence;
+    // #480 (gh-claude-2): Plan and Critic hold time only once a plan is recorded. Before that, the
+    // claim's time is Implement's, as it was before #480, so old tasks' medians stay comparable.
+    // Judged after the record is applied, so the `task.planned` that ends Plan books the claim's
+    // time as Plan's.
+    const timed = (step: TaskStep) => (step === "plan" || step === "critic") && (state.plan ?? null) === null ? "implement" : step;
     const before = state.step;
     switch (event.kind) {
       case "task.claimed":
@@ -450,6 +511,12 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         state.issue = event.issue ?? state.issue;
         state.lane = event.lane ?? state.lane;
         state.journeys = event.journeys?.length ? event.journeys : state.journeys;
+        break;
+      case "task.planned":
+        state.lane = event.lane ?? state.lane;
+        state.plan = event.plan ?? state.plan ?? null;
+        // A plan recorded late (after the PR) informs the graph without moving it back.
+        if (state.step === "plan" || state.step === "critic") state.step = state.plan?.critic.mode === "design" ? "critic" : "implement";
         break;
       case "task.pr_opened":
         state.repoUrl = event.repo !== undefined ? `https://github.com/${event.repo}` : state.repoUrl;
@@ -494,6 +561,8 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         state.critic = event.critic ?? state.critic;
         // The round names who recorded it; an unclaimed task has no other source for it (#562).
         state.lane ??= event.lane ?? null;
+        // #480: a passing round ends the Critic step; a revise or an exhausted round keeps it lit.
+        if (state.step === "critic" && state.critic?.verdict === "pass") state.step = "implement";
         break;
       case "task.merged":
         state.pr = event.pr ?? state.pr;
@@ -502,7 +571,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         state.step = "merged";
         break;
     }
-    clockStep(state.clock, before, state.step, event.occurredAt);
+    clockStep(state.clock, timed(before), timed(state.step), event.occurredAt);
   }
   slices.forEach((slice, index) => {
     // A slice opened by a PR record (no claim seen) still belongs to its issue.

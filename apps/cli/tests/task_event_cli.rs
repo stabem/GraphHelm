@@ -130,11 +130,12 @@ fn a_task_signal_naming_another_actor_is_refused_and_records_nothing() {
 }
 
 #[test]
-fn each_of_the_five_task_kinds_is_accepted_from_its_recording_actor() {
+fn each_of_the_six_task_kinds_is_accepted_from_its_recording_actor() {
     let scratch = tempfile::tempdir().unwrap();
     let events = start(scratch.path());
     for (name, kind) in [
         ("claimed", "task.claimed"),
+        ("planned", "task.planned"),
         ("pr-opened", "task.pr_opened"),
         ("review-assigned", "task.review_assigned"),
         ("review-verdict", "task.review_verdict"),
@@ -195,6 +196,7 @@ fn a_document_naming_another_lane_reviewer_or_merger_is_an_actor_mismatch() {
     let events = start(scratch.path());
     for (fixture, kind, field) in [
         ("pr-opened", "task.pr_opened", "lane"),
+        ("planned", "task.planned", "lane"),
         ("review-verdict", "task.review_verdict", "reviewer"),
         ("merged", "task.merged", "merger"),
     ] {
@@ -294,6 +296,54 @@ fn an_opening_record_may_carry_a_title_and_summary_and_a_malformed_one_is_refuse
             let reply = signal(scratch.path(), &events, &id, kind, ACTOR, &document);
             assert_eq!(reply["ok"], json!(accepted), "{kind} {case}: {reply}");
         }
+    }
+}
+
+/// #480: `task.planned` carries the lane's keel plan (classes, reviews, proof, critic, summary) so
+/// the Studio lights Plan, and Critic only for `critic.mode: design`. Each field is bounded like the
+/// schema: a wrong class, a repeated class, an out-of-range score, an unknown critic key, a missing
+/// or overlong summary are refused as invalid and record nothing. Cost: a few CLI calls on one
+/// held run.
+#[test]
+fn a_planned_record_outside_the_schema_bounds_is_refused() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    type Edit = fn(&mut Value);
+    let cases: [(&str, Edit); 9] = [
+        ("class", |d| d["classes"] = json!(["frontend"])),
+        ("no-class", |d| d["classes"] = json!([])),
+        ("twice", |d| d["classes"] = json!(["code", "code"])),
+        ("reviews", |d| d["reviews"] = json!(0)),
+        ("proof", |d| d["proof"] = json!("vibes")),
+        ("score", |d| d["critic"]["passScore"] = json!(0)),
+        ("critic-key", |d| d["critic"]["auto"] = json!(true)),
+        ("no-summary", |d| {
+            d.as_object_mut().unwrap().remove("summary");
+        }),
+        ("long-summary", |d| d["summary"] = json!("x".repeat(301))),
+    ];
+    for (case, edit) in cases {
+        let mut document = as_actor(package_fixture("planned"));
+        edit(&mut document);
+        let id = format!("planned-{case}");
+        let reply = signal(
+            scratch.path(),
+            &events,
+            &id,
+            "task.planned",
+            ACTOR,
+            &document,
+        );
+        assert_eq!(reply["ok"], json!(false), "{case}: {reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["code"],
+            json!("GHCLI003_SIGNAL_INVALID"),
+            "{case}: {reply}"
+        );
+        assert!(
+            !scratch.path().join(format!("{id}-evidence.json")).exists(),
+            "{case}: a refused task record writes no evidence"
+        );
     }
 }
 

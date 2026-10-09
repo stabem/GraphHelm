@@ -23,6 +23,7 @@ const head = "a".repeat(40);
 const url = "https://github.com/o/r/pull/19#c1";
 
 describe("step clock in the fold (#502)", () => {
+  // #480: with no plan recorded, the claim's time stays Implement's, as before #480.
   it("starts Implement at the claim, moves to Review at pr_opened and to Merge at the APPROVE", () => {
     const records = [
       record(1, 0, "task.claimed", "l1", { issue: 9, lane: "l1", branch: "b" }),
@@ -36,6 +37,18 @@ describe("step clock in the fold (#502)", () => {
     expect(at(3)).toEqual({ since: "2026-10-08T10:30:00.000Z", spent: { implement: 30 * 60_000 } });
     expect(at(4)).toEqual({ since: "2026-10-08T10:50:00.000Z", spent: { implement: 30 * 60_000, review: 20 * 60_000 } });
     expect(at(5)).toEqual({ since: "2026-10-08T10:55:00.000Z", spent: { implement: 30 * 60_000, review: 20 * 60_000, merge: 5 * 60_000 } });
+  });
+
+  // #480: once the lane records its plan, the claim's time is Plan's, a design plan's critic gets
+  // its own, and Implement starts at the plan. Catches a plan that books nothing, or that moves
+  // the claim's time into Implement anyway.
+  it("books Plan and Critic from a recorded plan, and Implement from the plan on", () => {
+    const plan = (minutes: number, mode: "none" | "design") => record(2, minutes, "task.planned", "l1", { lane: "l1", classes: ["code"],
+      reviews: 1, proof: "tests", critic: { mode, passScore: 8, maxRounds: 3 }, summary: "s" });
+    const claim = record(1, 0, "task.claimed", "l1", { issue: 9, lane: "l1", branch: "b" });
+    const opened = record(3, 30, "task.pr_opened", "l1", { pr: 19, headSha: head, journeys: [], lane: "l1" });
+    expect(foldTaskEvents([claim, plan(5, "none"), opened])[0].clock.spent).toEqual({ plan: 5 * 60_000, implement: 25 * 60_000 });
+    expect(foldTaskEvents([claim, plan(5, "design"), opened])[0].clock.spent).toEqual({ plan: 5 * 60_000, critic: 25 * 60_000 });
   });
 
   it("keeps a BLOCK and a new head inside Review instead of restarting the clock", () => {

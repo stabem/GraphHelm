@@ -9,6 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { Profiler } from "react";
 import { fastUserEvent } from "./test/user-event";
 // Its own instance: see the helper for why this is not a shared const.
 const userEvent = fastUserEvent();
@@ -1284,6 +1285,62 @@ describe("operator actions", () => {
     expect(screen.queryByRole("button", { name: /Cancel execution/i })).not.toBeInTheDocument();
     expect(screen.getByText(/This run is completed: nothing is left to pause, resume or cancel/)).toBeInTheDocument();
     expect(client.cancel).not.toHaveBeenCalled();
+  });
+
+  /* #503: on a big run a quiet tick (nothing new) still cost a ~110-130 ms main-thread block: every
+   * 4 s poll answered with fresh-but-equal status and run-list objects, so the whole Studio
+   * re-rendered. A tick that brings nothing new must not commit. Cost: jsdom, ~1.5 s. */
+  it("a quiet poll tick does not re-render the Studio", async () => {
+    const client = stubClient();
+    let commits = 0;
+    render(
+      <Profiler id="studio" onRender={() => { commits += 1; }}>
+        <App
+          createClient={() => client as unknown as RuntimeClient}
+          modelContext={null}
+          session={async () => ({ token: "local-token", project: "dale-api-base" })}
+          pollIntervalMs={40}
+        />
+      </Profiler>,
+    );
+    await screen.findByLabelText("Projects");
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const before = commits;
+    const ticksBefore = client.getStatus.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(client.getStatus.mock.calls.length - ticksBefore).toBeGreaterThanOrEqual(5);
+    expect(commits - before).toBeLessThanOrEqual(2);
+  });
+
+  /* #503: a hidden tab polled as often as a visible one. Cost: jsdom, ~1.5 s. */
+  it("a hidden tab polls every fourth tick and resumes when shown", async () => {
+    const client = stubClient();
+    render(
+      <App
+        createClient={() => client as unknown as RuntimeClient}
+        modelContext={null}
+        session={async () => ({ token: "local-token", project: "dale-api-base" })}
+        pollIntervalMs={40}
+      />,
+    );
+    await screen.findByLabelText("Projects");
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      const hiddenStart = client.getStatus.mock.calls.length;
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      const hidden = client.getStatus.mock.calls.length - hiddenStart;
+      visibility.mockReturnValue("visible");
+      const shownStart = client.getStatus.mock.calls.length;
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      const shown = client.getStatus.mock.calls.length - shownStart;
+      expect(hidden).toBeLessThanOrEqual(Math.ceil(shown / 4) + 1);
+      expect(shown).toBeGreaterThanOrEqual(8);
+    } finally {
+      visibility.mockRestore();
+    }
   });
 
   it("sweeps on request", async () => {

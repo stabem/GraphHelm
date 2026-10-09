@@ -1,0 +1,126 @@
+{
+  "schema": "graphhelm.studio-speed/1",
+  "measuredAt": "2026-10-09T23:45:36.890971+00:00",
+  "sourceHead": "1c48dbdde1efe675fc98653819a064def47548f2",
+  "sourceDirty": false,
+  "platform": "Windows",
+  "browser": "145.0.7632.6",
+  "playwright": "1.58.0",
+  "runtime": "graphhelm 0.1.1",
+  "runs": 10,
+  "parallelism": 1,
+  "viewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "mode": "Vite dev; fresh context per run; shared warm server; no untimed warmup",
+  "fixture": "manual-override-deploy; one run; one question; adds one synthetic chat record per run",
+  "preview": "404 stub: journey details only, no replay or approval",
+  "clock": "browser click event to visible DOM plus two animation frames",
+  "p95Method": "nearest rank (maximum for ten samples)",
+  "correctness": "selected demo; planner visible; two journey steps; chat reread after reload",
+  "metrics": {
+    "connectFirstUsablePaint": {
+      "count": 10,
+      "medianMs": 247.85,
+      "p95Ms": 336.1,
+      "samplesMs": [
+        336.1,
+        242.4,
+        236.7,
+        250.9,
+        246.7,
+        244.8,
+        254.9,
+        289.3,
+        236.6,
+        249.0
+      ]
+    },
+    "tabTeam": {
+      "count": 10,
+      "medianMs": 94.45,
+      "p95Ms": 110.2,
+      "samplesMs": [
+        110.2,
+        95.4,
+        93.6,
+        94.5,
+        106.3,
+        89.0,
+        94.4,
+        92.5,
+        94.9,
+        94.3
+      ]
+    },
+    "tabJourney": {
+      "count": 10,
+      "medianMs": 127.0,
+      "p95Ms": 157.3,
+      "samplesMs": [
+        157.3,
+        128.8,
+        126.6,
+        120.9,
+        126.9,
+        131.3,
+        127.7,
+        127.1,
+        106.6,
+        100.6
+      ]
+    },
+    "tabGraph": {
+      "count": 10,
+      "medianMs": 77.95,
+      "p95Ms": 79.0,
+      "samplesMs": [
+        77.4,
+        79.0,
+        74.4,
+        78.7,
+        77.6,
+        76.2,
+        78.7,
+        78.3,
+        78.4,
+        75.6
+      ]
+    },
+    "openJourney": {
+      "count": 10,
+      "medianMs": 91.15,
+      "p95Ms": 94.7,
+      "samplesMs": [
+        77.0,
+        94.6,
+        78.3,
+        77.2,
+        90.1,
+        94.7,
+        92.2,
+        94.6,
+        93.4,
+        77.8
+      ]
+    },
+    "sendChat": {
+      "count": 10,
+      "medianMs": 281.0,
+      "p95Ms": 294.4,
+      "samplesMs": [
+        293.1,
+        276.4,
+        277.1,
+        277.8,
+        290.9,
+        278.4,
+        278.4,
+        293.0,
+        283.6,
+        294.4
+      ]
+    }
+  }
+}

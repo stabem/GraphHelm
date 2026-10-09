@@ -63,9 +63,23 @@ replies are **not** measured. All other UI requests reach the real fixture Runti
 
 ## Baseline: 2026-10-09
 
-Pending measurement. The accompanying JSON will retain all ten samples, tool
-versions, source revision and dirty-tree status. Median uses the middle pair;
-p95 uses nearest rank, which is the maximum with only ten samples. These are local
+Measured at 23:45 UTC (20:45 in Sao Paulo) on Windows, Chromium 145.0.7632.6,
+Playwright 1.58.0 and installed GraphHelm 0.1.1. The clean measurement source was
+`1c48dbdde1efe675fc98653819a064def47548f2`; subsequent changes only add these results.
+All ten passes completed, including the chat reload checks.
+
+| Interaction | Median (ms) | p95 (ms) |
+|---|---:|---:|
+| Connect to first usable paint | 247.85 | 336.10 |
+| Graph to Team | 94.45 | 110.20 |
+| Team to Journey | 127.00 | 157.30 |
+| Journey to Graph | 77.95 | 79.00 |
+| Open journey details | 91.15 | 94.70 |
+| Send chat to visible message | 281.00 | 294.40 |
+
+[Raw JSON](studio-speed-2026-10-09.json) retains all ten samples, tool versions,
+source revision and dirty-tree status. Median uses the middle pair; p95 uses
+nearest rank, which is the maximum with only ten samples. These are local
 development observations, with low tail confidence and machine-load sensitivity.
 They do not establish a production bottleneck or authorize tuning. Network,
 Runtime, parse and render decomposition, stalled reads, large histories and

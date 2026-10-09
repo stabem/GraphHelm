@@ -112,6 +112,10 @@ describe("RuntimeClient journey run and frames", () => {
       ["POST", "/v1/journey-flows/a%20b/preview", '{"executionId":"run-1"}'],
       ["POST", "/v1/journey-flows/a%20b/preview", '{"force":true,"executionId":"run-1"}'],
     ]);
+    // #548: the owner's click on a held step is `confirm`, never together with `force`.
+    await runtime.startJourneyRun("a b", false, "run-1", true);
+    await runtime.startJourneyRun("a b", true, undefined, true);
+    expect(seen.slice(5).map((request) => request.body)).toEqual(['{"confirm":true,"executionId":"run-1"}', '{"confirm":true}']);
   });
   it("returns a frame with its tag and asks for a newer one with If-None-Match", async () => {
     const { seen, runtime } = client(() => new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "image/jpeg", etag: '"7"' } }));

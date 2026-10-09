@@ -2879,6 +2879,9 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .journey-card-result[data-state="fail"], .journey-card-result[data-state="drift"] { color: var(--danger); border-color: var(--danger); }
 .journey-card .journey-flow-step-text { padding: 0 8px; overflow: hidden; }
 .journey-card .journey-does, .journey-card .journey-sees { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+/* #548: an approved flow's step that changes data waits for the owner's click. */
+.journey-flow-held { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--signal); background: var(--signal-wash); font-size: 0.85rem; }
+.journey-flow-held p { margin: 0; flex: 1 1 320px; overflow-wrap: anywhere; }
 /* #518: the steps the guard skipped, each with the owner's Mark safe. */
 .journey-flow-skipped { display: grid; gap: 8px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 0.85rem; }
 .journey-flow-skipped li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 10px; border-left: 3px solid var(--signal); background: var(--signal-wash); }

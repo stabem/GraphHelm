@@ -1980,10 +1980,11 @@ export class RuntimeClient {
   /** Start that run, or read the cached one (#519): `POST /v1/journey-flows/{id}/preview`, the same
    * body as the GET. `force` is the owner's Run again. `executionId` is the run an APPROVED flow's
    * replay records its proof into (captures and walked edges), as `journey open` takes it; a
-   * draft's preview ignores it. */
-  async startJourneyRun(flowId: string, force = false, executionId?: string): Promise<JourneyRunView> {
+   * draft's preview ignores it. `confirm` is the owner's click on a held step (#548): a new run
+   * that may perform the acts that change data, on that run only. It replaces `force`. */
+  async startJourneyRun(flowId: string, force = false, executionId?: string, confirm = false): Promise<JourneyRunView> {
     const id = checkedId(flowId, "flowId");
-    const body = { ...(force ? { force: true } : {}), ...(executionId ? { executionId: checkedId(executionId, "executionId") } : {}) };
+    const body = { ...(confirm ? { confirm: true } : force ? { force: true } : {}), ...(executionId ? { executionId: checkedId(executionId, "executionId") } : {}) };
     return this.#request<JourneyRunView>({ method: "POST", path: `/v1/journey-flows/${encodeURIComponent(id)}/preview`, body, timeoutMs: RUNTIME_READ_TIMEOUT_MS });
   }
 

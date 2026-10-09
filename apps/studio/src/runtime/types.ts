@@ -504,6 +504,10 @@ export interface JourneyRunView {
   reason?: string;
   screens?: Record<string, JourneyRunScreen>;
   edges?: Record<string, JourneyRunEdge>;
+  /** An APPROVED flow's run stopped before an act that changes data and waits for the owner's
+   * click (#548): the edge, the act's name and the app (`base`) it would act on. That edge reads
+   * `{result: "skipped", reason: "confirm_needed"}`. Absent otherwise. */
+  held?: { edge: string; act: string; base: string };
 }
 /** One frame's bytes and the tag to ask for a newer one with. */
 export interface JourneyFrame { blob: Blob; etag: string | null }

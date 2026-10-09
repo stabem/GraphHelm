@@ -36,6 +36,7 @@ const STEP_REASON: Record<string, string> = {
   not_reached: "an earlier step failed, so the test never got here",
   page_error: "the page did not load",
   timeout: "the page took too long",
+  confirm_needed: "this step changes data, so it waits for your click",
 };
 
 export function actWords(act: { kind: string; name: string }): string {
@@ -112,7 +113,7 @@ function arrowPath(from: ChartNode, to: ChartNode): string {
   return `M ${x1} ${y1} h ${GAP_X / 4} V ${under} H ${x2 - GAP_X / 4} V ${y2} H ${x2}`;
 }
 
-type StepState = "pass" | "fail" | "drift" | "skipped" | "running" | "not_reached" | null;
+type StepState = "pass" | "fail" | "drift" | "skipped" | "held" | "running" | "not_reached" | null;
 
 /** How a screen's step fared: its own result, or the arriving edge's when the act itself failed. */
 function stepState(node: ChartNode, run: JourneyRunView | null): { state: StepState; from: JourneyRunScreen | JourneyRunEdge | null } {
@@ -122,7 +123,7 @@ function stepState(node: ChartNode, run: JourneyRunView | null): { state: StepSt
   if (edge?.result === "fail" || edge?.result === "drift") return { state: edge.result, from: edge.reason !== undefined || screen === undefined ? edge : screen };
   if (screen?.result) return { state: screen.result, from: screen };
   // The guard stopped the act that leads here: the step was skipped on purpose, not lost.
-  if (edge?.result === "skipped") return { state: "skipped", from: edge };
+  if (edge?.result === "skipped") return { state: edge.reason === "confirm_needed" ? "held" : "skipped", from: edge };
   if (run.state === "running") return { state: run.current === node.screen.id ? "running" : null, from: null };
   if (screen !== undefined && !screen.frame) return { state: screen.reason === "not_reached" || screen.reason === undefined ? "not_reached" : "fail", from: screen };
   return { state: null, from: null };
@@ -133,6 +134,7 @@ const STATE_WORDS: Record<Exclude<StepState, null>, string> = {
   fail: "Failed",
   drift: "Changed",
   skipped: "Skipped",
+  held: "Waiting for you",
   running: "Running…",
   not_reached: "Not reached",
 };

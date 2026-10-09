@@ -2159,7 +2159,7 @@ export default function App({
     };
     return {
       // The selected run is where an approved flow's replay records its proof.
-      start: async (flowId, force) => client().startJourneyRun(flowId, force, selectedRef.current || undefined),
+      start: async (flowId, force, confirm) => client().startJourneyRun(flowId, force, selectedRef.current || undefined, confirm === true),
       read: async (flowId) => client().journeyRun(flowId),
       screenFrame: async (flowId, screenId) => client().journeyScreenFrame(flowId, screenId),
       liveFrame: async (sessionId, etag) => client().liveFrame(sessionId, etag),

@@ -479,3 +479,41 @@ describe("JourneyFlows mark safe", () => {
     expect(screen.queryByRole("list", { name: "Skipped steps" })).toBeNull();
   });
 });
+
+// #548: an approved flow plays by itself only up to its first act that changes data, then waits
+// for the owner. Regressions caught: a held step shown as an ordinary skip (or offered Mark safe,
+// which is a draft's door), the owner not told what would run or where, a click that re-runs
+// with `force` instead of `confirm` (so the Runtime holds again), and a confirm sent without a
+// click. Cost: jsdom render, no network.
+describe("JourneyFlows held step", () => {
+  const approved: JourneyFlowsView = { flows: [flow("checkout", { status: "approved", approvable: false, approved: { revision: "a".repeat(40), digest: `sha256:${"b".repeat(64)}` } })] };
+  const held = { state: "ready" as const, kind: "replay" as const, result: "pass" as const, held: { edge: "pay.submit", act: "Pay now", base: "http://localhost:3000" },
+    screens: { cart: { frame: false, result: "pass" as const }, pay: { frame: false, result: "pass" as const }, done: { frame: false, reason: "not_reached" } },
+    edges: { "cart.checkout": { result: "pass" as const }, "pay.submit": { result: "skipped" as const, reason: "confirm_needed" } } };
+  const done = { state: "ready" as const, kind: "replay" as const, result: "pass" as const, screens: {}, edges: {} };
+
+  it("says what the held step would do and where, and runs it only on the owner's click, as a confirm", async () => {
+    const start = vi.fn(async (_flow: string, _force: boolean, confirm?: boolean) => (confirm ? done : held));
+    const run: JourneyRunSource = { start, read: vi.fn(async () => held), screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null) };
+    render(<JourneyFlows view={approved} onApprove={vi.fn()} onMarkSafe={vi.fn()} run={run} />);
+    const bar = await screen.findByRole("group", { name: "Step waiting for you" });
+    expect(bar).toHaveTextContent("The next step changes data at http://localhost:3000: Fills in “Password”, then Submits with “Pay now”. Run it?");
+    expect(screen.getByRole("status")).toHaveTextContent(/^Stopped before a step that changes data/);
+    const cards = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
+    expect(cards[2]).toHaveTextContent(/^3Waiting for you/);
+    expect(screen.queryByRole("list", { name: "Skipped steps" })).toBeNull();
+    expect(start.mock.calls).toEqual([["checkout", false]]);
+
+    await userEvent.click(within(bar).getByRole("button", { name: "Run it" }));
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Step waiting for you" })).toBeNull());
+    expect(start.mock.calls).toEqual([["checkout", false], ["checkout", false, true]]);
+    expect(screen.getByRole("status")).toHaveTextContent(/^Test passed/);
+  });
+
+  it("offers no Run it when nothing is held", async () => {
+    const run: JourneyRunSource = { start: vi.fn(async () => done), read: vi.fn(async () => done), screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null) };
+    render(<JourneyFlows view={approved} onApprove={vi.fn()} run={run} />);
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^Test passed/));
+    expect(screen.queryByRole("button", { name: "Run it" })).toBeNull();
+  });
+});

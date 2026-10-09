@@ -20,12 +20,52 @@ impl Drop for Killed {
     }
 }
 
+/// A loopback port for a Runtime this test starts: bound to learn a free number, then released so
+/// the child can bind it.
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    first_unused(|| {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        (listener, port)
+    })
+}
+
+/// The ports this test binary has handed out, across its tests and threads.
+static HANDED_OUT: std::sync::Mutex<std::collections::BTreeSet<u16>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// The port `free_port` hands out: the first candidate `offer` yields (each with the listener
+/// that holds it) that this binary has not handed out before. A refused candidate's listener is
+/// kept until a port is chosen, so the OS cannot offer that number again in the meantime.
+fn first_unused<L>(mut offer: impl FnMut() -> (L, u16)) -> u16 {
+    let mut refused = Vec::new();
+    loop {
+        let (listener, port) = offer();
+        if HANDED_OUT.lock().unwrap().insert(port) {
+            return port;
+        }
+        refused.push(listener);
+    }
+}
+
+/// #549: the operating system may offer a port it has just seen released, so two `free_port`
+/// calls in one test could get the same number (seen once on a busy machine: 53068 twice, and
+/// `project_discovery_routes_two_projects_to_distinct_ports_and_tokens` failed at its own
+/// `assert_ne!`). A tight loop does not show it (3000 bind-and-release calls here gave 3000
+/// distinct ports), so the offers are scripted: whatever the OS offers, a number is handed out
+/// once. Cost: microseconds, no socket.
+#[test]
+fn a_port_the_os_offers_again_is_never_handed_out_twice() {
+    // Ports 1 and 2 are far below the dynamic range, so no real `free_port` call took them.
+    let mut offers = [1_u16, 1, 1, 2].into_iter();
+    let mut offer = || {
+        (
+            (),
+            offers.next().expect("an offer the helper should not need"),
+        )
+    };
+    assert_eq!(first_unused(&mut offer), 1);
+    assert_eq!(first_unused(&mut offer), 2, "port 1 was handed out twice");
 }
 
 fn health(port: u16) -> Option<serde_json::Value> {

@@ -491,13 +491,13 @@ mod tests {
     #[test]
     fn the_launcher_hands_serve_the_project_path_as_one_argument() {
         use std::net::TcpListener;
-        let free = || {
-            TcpListener::bind("127.0.0.1:0")
-                .unwrap()
-                .local_addr()
-                .unwrap()
-                .port()
-        };
+        // Both listeners are held while the two ports are read, so they cannot be the same number
+        // (#549: one bound and released before the next could be offered again).
+        let first = TcpListener::bind("127.0.0.1:0").unwrap();
+        let second = TcpListener::bind("127.0.0.1:0").unwrap();
+        let bind_port = first.local_addr().unwrap().port();
+        let studio_port = second.local_addr().unwrap().port();
+        drop((first, second));
         let root = std::env::temp_dir().join(format!("gh studio up {}", std::process::id()));
         let project = root.join("my project");
         let events = project.join(".graphhelm").join("events");
@@ -519,8 +519,8 @@ mod tests {
             .arg(&launcher)
             .arg("-Events")
             .arg(&events)
-            .args(["-Bind", &format!("127.0.0.1:{}", free())])
-            .args(["-StudioPort", &free().to_string(), "-NoBrowser"])
+            .args(["-Bind", &format!("127.0.0.1:{bind_port}")])
+            .args(["-StudioPort", &studio_port.to_string(), "-NoBrowser"])
             .arg("-GraphHelm")
             .arg(root.join("stub.cmd"));
         add_project(&mut launch, &project);

@@ -780,17 +780,18 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
                 {
                     // Not performed: the play stops here, on the screen before the act, and
                     // says what it would have done. The browser stays open for the owner.
-                    progress.show(
-                        &visited[index - 1],
-                        index - 1,
-                        Some(edge_id),
-                        Some(act_index),
-                    );
                     let caption = caption_bounded(format!(
                         "{edge_id}: skipped: would {} \"{}\"",
                         skip["would"].as_str().unwrap_or_default(),
                         act["name"].as_str().unwrap_or_default()
                     ));
+                    progress.show(
+                        &visited[index - 1],
+                        index - 1,
+                        Some(edge_id),
+                        Some(act_index),
+                        Some(&caption),
+                    );
                     let _ = driver.call(
                         "show",
                         json!({"caption":caption,"role":act["role"],"name":act["name"]}),

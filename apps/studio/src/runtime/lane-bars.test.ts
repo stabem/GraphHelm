@@ -16,7 +16,7 @@ describe("laneBars", () => {
     ], T0 + 400, 1000);
     const dev = lanes.find((l) => l.lane === "dev")!;
     const rev = lanes.find((l) => l.lane === "rev")!;
-    expect(dev.bars).toEqual([{ kind: "implement", label: "#9", start: T0, end: T0 + 100, open: false }]);
+    expect(dev.bars).toEqual([{ kind: "implement", label: "#9", start: T0, end: T0 + 100, open: false, taskId: "t1", since: T0 }]);
     expect(rev.bars.map((b) => [b.kind, b.start - T0, b.end - T0, b.open])).toEqual([["review", 100, 200, false], ["merge", 200, 300, false]]);
   });
 

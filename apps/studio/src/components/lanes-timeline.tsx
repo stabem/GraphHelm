@@ -1,6 +1,9 @@
 import "./lanes-timeline.css";
 import type { Lane } from "../runtime/lane-bars";
 import type { MissionTask } from "../runtime/mission";
+import type { Bot } from "../runtime/team";
+import { useState } from "react";
+import { agentBoard, span, type AgentRow, type AgentStatus } from "../runtime/agent-board";
 
 const pct = (n: number) => `${Math.round(n * 10000) / 100}%`;
 
@@ -21,10 +24,54 @@ function lastDelivered(tasks: MissionTask[]) {
   return out;
 }
 
-interface Props { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[] }
+interface Props { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[]; agents?: Bot[] }
 
-export function LanesTimeline({ lanes, now, windowMs, tasks = [] }: Props) {
-  if (lanes.length === 0) return <p className="lt-empty">No agent has recorded work in this window</p>;
+const PILL: Record<AgentStatus, string> = { silent: "Silent", working: "Working", waiting: "Waiting", free: "Free" };
+const STAGE: Record<string, string> = { implement: "implementing", review: "reviewing", merge: "merging" };
+type Filter = "all" | "working" | "free" | "silent";
+
+function AgentBoard({ rows }: { rows: AgentRow[] }) {
+  const [filter, setFilter] = useState<Filter>("all");
+  const count = (f: Filter) => (f === "all" ? rows.length : rows.filter((r) => r.status === f).length);
+  const shown = filter === "all" ? rows : rows.filter((r) => r.status === filter);
+  return (
+    <section className="ab" aria-label="Agents">
+      <div className="ab-head">
+        <h2>Agents</h2>
+        <div className="ab-chips" role="group" aria-label="Filter agents">
+          {(["all", "working", "free", "silent"] as const).map((f) => (
+            <button key={f} type="button" className="ab-chip" aria-pressed={filter === f} onClick={() => setFilter(f)}>
+              {`${f === "all" ? "All" : PILL[f]} ${count(f)}`}
+            </button>
+          ))}
+        </div>
+      </div>
+      <ul className="ab-rows" aria-label="Agent board">
+        {shown.map((r) => {
+          const what = r.stage ? `${STAGE[r.stage]}${r.pr ? ` PR #${r.pr}` : ""}${r.title ? ` ${r.title}` : ""}` : "—";
+          return (
+            <li key={r.name} className="ab-row">
+              <span className="ab-pill" data-status={r.status}>{PILL[r.status]}</span>
+              <span className="ab-name">{r.name}</span>
+              <span className="ab-what">{r.href ? <a href={r.href} target="_blank" rel="noreferrer">{what}</a> : what}</span>
+              <span className="ab-for">{r.forMs === null ? "—" : r.status === "free" ? `free for ${span(r.forMs)}` : `for ${span(r.forMs)}`}</span>
+              <span className="ab-last">{r.lastDelivered ? `last delivered ${r.lastDelivered}` : "nothing delivered yet"}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [] }: Props) {
+  if (lanes.length === 0 && agents.length === 0) return <p className="lt-empty">No agent has recorded work in this window</p>;
+  const board = agentBoard(agents, lanes, tasks, now);
+  const rank = new Map<string, number>();
+  board.forEach((r, i) => rank.set(r.name, i));
+  const botOf = (l: Lane) => agents.find((b) => b.actorId === l.lane || b.key === l.lane)?.name;
+  const at = (l: Lane) => rank.get(l.lane) ?? rank.get(botOf(l) ?? "") ?? board.length;
+  lanes = [...lanes].sort((a, b) => at(a) - at(b));
   const from = now - windowMs;
   const hours = Math.round(windowMs / 3_600_000);
   const step = hours > 8 ? 2 : 1;
@@ -34,6 +81,8 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [] }: Props) {
   const cards = laneCards(lanes, tasks);
   const card = (items: string[]) => (items.length ? items.join(", ") : "none right now");
   return (
+    <div className="lt-wrap">
+    <AgentBoard rows={board} />
     <section className="lt" aria-label="Lanes">
       <div className="lt-head">
         <div className="lt-title">
@@ -63,6 +112,7 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [] }: Props) {
                 {l.silent ? <span className="lt-flag" data-flag="silent">silent</span> : !open && <span className="lt-flag" data-flag="free">free</span>}
               </span>
               <div className="lt-track">
+                <span className="lt-nowline" aria-hidden="true" />
                 {l.bars.map((b, i) => (
                   <div key={i} className="lt-bar" data-kind={b.kind} data-silent={l.silent && b.open}
                     style={{ left: pct((b.start - from) / windowMs), width: pct((b.end - b.start) / windowMs) }}>
@@ -81,5 +131,6 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [] }: Props) {
         <div className="lt-card" data-kind="free"><span className="lt-card-cap">FREE HANDS</span><span>{card(cards.free)}</span></div>
       </div>
     </section>
+    </div>
   );
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { LanesTimeline } from "./lanes-timeline";
 import type { MissionTask } from "../runtime/mission";
+import { fastUserEvent } from "../test/user-event";
 
 const now = 1_000_000;
 const lanes = [
@@ -59,5 +60,26 @@ describe("LanesTimeline", () => {
   it("shows an empty state", () => {
     render(<LanesTimeline lanes={[]} now={now} windowMs={1000} />);
     expect(screen.getByText("No agent has recorded work in this window")).toBeInTheDocument();
+  });
+
+  it("the agent board filters by status with counts", async () => {
+    const user = fastUserEvent();
+    render(<LanesTimeline lanes={lanes} now={now} windowMs={1000} />);
+    const board = screen.getByRole("list", { name: "Agent board" });
+    expect(within(board).getAllByRole("listitem").map((li) => li.querySelector(".ab-name")!.textContent)).toEqual(["gh-claude-5", "gh-claude-6"]);
+    expect(screen.getByRole("button", { name: "All 2" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Working 0" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Free 1" }));
+    expect(within(board).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(board).getByText("gh-claude-6")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Silent 1" }));
+    expect(within(board).getByText("Silent")).toBeInTheDocument();
+    expect(within(board).queryByText("gh-claude-6")).toBeNull();
+  });
+
+  it("timeline rows follow the board order", () => {
+    render(<LanesTimeline lanes={[lanes[1]!, lanes[0]!]} now={now} windowMs={1000} />);
+    const rows = within(screen.getByRole("list", { name: "Agent lanes" })).getAllByRole("listitem");
+    expect(rows.map((r) => r.querySelector(".lt-name")!.textContent)).toEqual(["gh-claude-5", "gh-claude-6"]);
   });
 });

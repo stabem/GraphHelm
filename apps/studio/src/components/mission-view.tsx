@@ -118,7 +118,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
   );
   const page = onTeam ? "full" : undefined;
   if (sel === null) return <div className="mv" data-wide="true" data-page={page}>{header}
-    {sub === "lanes" ? <div className="mv-pad"><LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} /></div>
+    {sub === "lanes" ? <div className="mv-pad"><LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} /></div>
       : <p className="mv-none mv-pad">No journeys in this project yet</p>}</div>;
   const group: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
   const knownIds = new Set(journeys.map((j) => j.contractId));
@@ -299,7 +299,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
           {sub === "test" && journey && contractId && <TestCanvas frames={testFrames(journey, runFor(contractId))} selected={frame} onSelect={setFrame}
             frameUrl={(id) => frameUrl(id, contractId)} onMarkSafe={(id) => onMarkSafe(id, contractId)}
             {...(onSendBack ? { onSendBack: (id: string) => onSendBack(id, contractId) } : {})} />}
-          {sub === "lanes" && <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} />}
+          {sub === "lanes" && <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} />}
         </div>
       </div>
     </div>

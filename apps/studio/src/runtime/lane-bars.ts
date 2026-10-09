@@ -2,7 +2,8 @@ import type { TaskEventRecord } from "./team-tasks";
 
 export type TimedTaskEvent = TaskEventRecord & { at: string };
 export type BarKind = "implement" | "review" | "merge";
-export interface LaneBar { kind: BarKind; label: string; start: number; end: number; open: boolean }
+/** `taskId` names the task the bar works on; `since` is the unclipped start (`start` is clipped to the window). */
+export interface LaneBar { kind: BarKind; label: string; start: number; end: number; open: boolean; taskId?: string; since?: number }
 export interface Lane { lane: string; bars: LaneBar[]; silent: boolean; lastEventAt: number }
 
 export const STALL_MS = 2 * 60 * 60 * 1000;
@@ -21,7 +22,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
     for (const [k, v] of open) {
       if (k === `${kind}:${taskId}:${lane}`) { v.bar.end = t; v.bar.open = false; open.delete(k); }
     }
-    const bar: LaneBar = { kind, label: label(taskId), start: t, end: now, open: true };
+    const bar: LaneBar = { kind, label: label(taskId), start: t, end: now, open: true, taskId, since: t };
     laneOf(lane).bars.push(bar);
     open.set(`${kind}:${taskId}:${lane}`, { lane, bar });
   };

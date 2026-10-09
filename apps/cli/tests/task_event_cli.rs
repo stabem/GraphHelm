@@ -296,6 +296,9 @@ fn an_opening_record_may_carry_a_title_and_summary_and_a_malformed_one_is_refuse
             let reply = signal(scratch.path(), &events, &id, kind, ACTOR, &document);
             assert_eq!(reply["ok"], json!(accepted), "{kind} {case}: {reply}");
         }
+    }
+}
+
 /// #480: `task.planned` carries the lane's keel plan (classes, reviews, proof, critic, summary) so
 /// the Studio lights Plan, and Critic only for `critic.mode: design`. Each field is bounded like the
 /// schema: a wrong class, a repeated class, an out-of-range score, an unknown critic key, a missing

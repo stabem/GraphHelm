@@ -166,6 +166,11 @@ function messageOf(error: unknown, fallback: string): string {
   return fallback;
 }
 
+/** Two Runtime answers with the same content (#503): poll replies are fresh objects every tick. */
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 export default function App({
   createClient,
   modelContext,
@@ -242,8 +247,9 @@ export default function App({
   // Loads, polls and verified mutations can settle out of order within one selection. A later
   // arrival is not necessarily a newer observation; identity guards alone do not protect it.
   const observeStatus = useCallback((next: ExecutionStatus) => {
+    // #503: a quiet tick answers with an equal status; keeping the old object keeps React still.
     setStatus((previous) => previous !== null && previous.executionId === next.executionId &&
-      previous.headSequence > next.headSequence ? previous : next);
+      (previous.headSequence > next.headSequence || sameValue(previous, next)) ? previous : next);
   }, []);
   // #327: Jev's answer is keyed by the QUESTION it answers (execution + pending signal), not by the
   // head. A busy run moves its head every few seconds; keying by head restarted a ~30s request on
@@ -574,11 +580,19 @@ export default function App({
     if (!connected || selected === "") return;
     const generation = ++pollGeneration.current;
     let tickBusy = false;
+    let hiddenTicks = 0;
     pollMisses.current = 0;
     setStale(false);
     const timer = setInterval(() => {
       const client = clientRef.current;
       if (!client || tickBusy) return;
+      // #503: nobody reads a hidden tab; it polls every fourth tick until it is shown again.
+      if (document.visibilityState === "hidden") {
+        hiddenTicks += 1;
+        if (hiddenTicks % 4 !== 0) return;
+      } else {
+        hiddenTicks = 0;
+      }
       tickBusy = true;
       void (async () => {
         try {
@@ -618,7 +632,11 @@ export default function App({
           // truncated.
           setExecutions((previous) => {
             const refreshed = new Map(listRows.map((run) => [run.executionId, run]));
-            const kept = previous.map((run) => refreshed.get(run.executionId) ?? run);
+            // #503: an unchanged row keeps its object, so a quiet tick publishes nothing new.
+            const kept = previous.map((run) => {
+              const fresh = refreshed.get(run.executionId);
+              return fresh === undefined || sameValue(fresh, run) ? run : fresh;
+            });
             const known = new Set(previous.map((run) => run.executionId));
             const added = listRows.filter((run) => !known.has(run.executionId));
             return added.length === 0 &&

@@ -1,0 +1,44 @@
+{
+  "before_main": {
+    "label": "before-main",
+    "scriptMs": 717,
+    "taskMs": 4224,
+    "layoutMs": 4,
+    "seconds": 60,
+    "ticks": 15,
+    "longTasks": 0,
+    "longTaskMsTotal": 0,
+    "domMutations": 31,
+    "domNodes": 1189,
+    "runtimeRequests": 45,
+    "requestsByPath": {
+      "/v1/executions/gh-team": 15,
+      "/v1/executions/gh-team/events": 15,
+      "/v1/executions": 15
+    },
+    "newEventsRead": [
+      "after=3497&limit=1000"
+    ]
+  },
+  "after_fix": {
+    "label": "after-fix",
+    "scriptMs": 105,
+    "taskMs": 3978,
+    "layoutMs": 2,
+    "seconds": 60,
+    "ticks": 15,
+    "longTasks": 0,
+    "longTaskMsTotal": 0,
+    "domMutations": 27,
+    "domNodes": 1189,
+    "runtimeRequests": 45,
+    "requestsByPath": {
+      "/v1/executions/gh-team": 15,
+      "/v1/executions/gh-team/events": 15,
+      "/v1/executions": 15
+    },
+    "newEventsRead": [
+      "after=3497&limit=1000"
+    ]
+  }
+}

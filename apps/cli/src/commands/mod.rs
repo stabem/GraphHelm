@@ -102,6 +102,7 @@ pub fn run(command: TopLevel) -> Outcome {
                     drafts,
                     library,
                     critic,
+                    plan,
                 } = *synthesize;
                 architect::run(&architect::SynthesizeArguments {
                     goal,
@@ -120,6 +121,7 @@ pub fn run(command: TopLevel) -> Outcome {
                     drafts,
                     library,
                     critic,
+                    plan,
                 })
             }
         },

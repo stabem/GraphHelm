@@ -1959,6 +1959,10 @@ pub struct SynthesizeArgs {
     /// task plan's `critic` says (#467); `none` or absent is the draft alone.
     #[arg(long)]
     pub critic: Option<String>,
+    /// The task's plan, as `graphhelm --json keel plan` prints it (#467). Without `--critic`,
+    /// the plan's own `critic` decides whether the design is graded first; `--critic` wins.
+    #[arg(long)]
+    pub plan: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

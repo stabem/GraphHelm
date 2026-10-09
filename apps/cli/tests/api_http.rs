@@ -8161,6 +8161,121 @@ fn the_api_and_the_cli_put_the_design_critic_in_front_of_the_draft_when_asked() 
     assert_eq!(reply["diagnostics"][0]["path"], "/critic", "{reply}");
 }
 
+/// #467: the task plan decides the critic. A plan whose `critic.mode` is `design` puts the graded
+/// design in front of the draft with NO `critic` named, on the CLI (`--plan`, the `keel plan`
+/// envelope as written) and on the route (`plan`, inline), with the plan's own bounds; the reply
+/// records the decision and that the plan made it. An explicit `critic` wins over the plan and is
+/// recorded as the caller's. A document that is not a task plan is refused at `/plan`, never
+/// read as "no critic". Credible regressions: the plan ignored (a design that needed grading
+/// starts ungraded), the defaults used instead of the plan's bounds, the plan overriding an
+/// explicit word, or the source recorded wrong. Cost: one served Runtime, three CLI runs, three
+/// requests.
+#[test]
+fn a_plan_that_asks_for_a_design_critic_gets_one_without_a_flag_and_the_reply_says_who_decided() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve(&events);
+    let fixture = root().join("core/architect/fixtures/first-compile/replies.json");
+    let goal = first_compile_goal();
+    let url = format!("{base}/v1/graphs/synthesize");
+    let plan = serde_json::json!({
+        "schema": "graphhelm-task-plan-v1",
+        "taskId": "issue-467",
+        "critic": {"mode": "design", "passScore": 9, "maxRounds": 2},
+    });
+    let plan_file = directory.path().join("plan.json");
+    std::fs::write(
+        &plan_file,
+        serde_json::to_vec(&serde_json::json!({
+            "ok": true, "command": "keel.plan", "data": {"plan": plan}, "diagnostics": [],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let cli = |out: &str, extra: &[&str]| {
+        let out = directory.path().join(out);
+        let mut args = vec![
+            "graph",
+            "synthesize",
+            "--goal",
+            goal.as_str(),
+            "--out",
+            out.to_str().unwrap(),
+            "--allow-program",
+            "cargo",
+            "--fixture",
+            fixture.to_str().unwrap(),
+            "--plan",
+            plan_file.to_str().unwrap(),
+        ];
+        args.extend_from_slice(extra);
+        cli_envelope(&args)
+    };
+    let decided = serde_json::json!({
+        "mode": "design", "source": "plan", "passScore": 9, "maxRounds": 2, "taskId": "issue-467",
+    });
+
+    let planned = cli("planned.json", &[]);
+    assert_eq!(planned["ok"], true, "{planned}");
+    assert_eq!(
+        planned["data"]["document"]["spec"]["entrypoints"],
+        serde_json::json!(["critic_design"]),
+        "{planned}"
+    );
+    assert_eq!(
+        planned["data"]["document"]["spec"]["nodes"]["critic_grade"]["critic"],
+        serde_json::json!({"passScore": 9, "maxRounds": 2, "record": "task.critic_verdict"}),
+        "the plan's bounds, not the defaults"
+    );
+    assert_eq!(planned["data"]["critic"], decided, "{planned}");
+
+    let request = |extra: Value| {
+        let mut body = serde_json::json!({
+            "goal": goal,
+            "allowPrograms": ["cargo"],
+            "fixture": fixture.to_str().unwrap(),
+        });
+        for (key, value) in extra.as_object().unwrap() {
+            body[key] = value.clone();
+        }
+        post_json(&url, &token, &[], &body)
+    };
+    let (status, reply) = request(serde_json::json!({"plan": plan}));
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["data"]["critic"], decided, "{reply}");
+    assert_eq!(
+        serde_json::to_vec(&reply["data"]["document"]).unwrap(),
+        serde_json::to_vec(&planned["data"]["document"]).unwrap(),
+        "one document on both doors"
+    );
+
+    // An explicit word wins over the plan, and the reply says the caller decided.
+    let overridden = cli("overridden.json", &["--critic", "none"]);
+    assert_eq!(overridden["ok"], true, "{overridden}");
+    assert_ne!(
+        overridden["data"]["document"]["spec"]["entrypoints"],
+        serde_json::json!(["critic_design"])
+    );
+    assert_eq!(
+        overridden["data"]["critic"],
+        serde_json::json!({"mode": "none", "source": "flag"})
+    );
+
+    // Not a task plan: refused, on both doors, never read as "no critic".
+    let (status, reply) = request(serde_json::json!({"plan": {"critic": {"mode": "design"}}}));
+    assert_eq!(status, 400, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["path"], "/plan", "{reply}");
+    std::fs::write(&plan_file, b"{}").unwrap();
+    let refused = cli("refused.json", &[]);
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert_eq!(refused["diagnostics"][0]["path"], "/plan", "{refused}");
+
+    // Nobody named a critic or a plan: no decision is recorded.
+    let (status, reply) = request(serde_json::json!({}));
+    assert_eq!(status, 200, "{reply}");
+    assert!(reply["data"].get("critic").is_none(), "{reply}");
+}
+
 /// The route's refusals are argument-shaped 400s carrying the CLI's own codes: a fixture-only
 /// server asked without a fixture names both doors; a compiler refusal is `GHCLI026` at `/goal`
 /// with the refusal as compact JSON, exactly as the CLI prints it; an unknown body field is

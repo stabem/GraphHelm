@@ -961,6 +961,10 @@ fn synthesize_schema() -> serde_json::Value {
                 "description": "design puts a design step and a blind critic step in front of \
                                 the draft, as the task plan's critic says; none is the draft alone.",
             },
+            "plan": {
+                "type": "object",
+                "description": "The task's graphhelm-task-plan-v1 document, as keel_plan returns it; without critic, the plan's own critic decides.",
+            },
             "allowPrograms": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -2173,6 +2177,9 @@ pub(crate) fn call(
             }
             if let Some(programs) = arguments.get("allowPrograms") {
                 body["allowPrograms"] = programs.clone();
+            }
+            if let Some(plan) = arguments.get("plan") {
+                body["plan"] = plan.clone();
             }
             api.request(
                 "POST",

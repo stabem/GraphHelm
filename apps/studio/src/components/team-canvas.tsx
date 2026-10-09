@@ -8,7 +8,7 @@ import { FileCode2, RotateCcw } from "lucide-react";
 
 import type { Camera } from "../graph/board";
 import type { GraphNode } from "../graph/model";
-import type { Bot, BotTask, OtherRecorder, TeamLink } from "../runtime/team";
+import { BOT_RECENT_MS, type Bot, type BotTask, type OtherRecorder, type TeamLink } from "../runtime/team";
 import { ago, readable } from "./format";
 
 export interface TeamCanvasProps {
@@ -60,7 +60,10 @@ export function botStateLabel(bot: Bot): string {
     case "working": return "Working";
     case "waiting_for_you": return "Waiting for you";
     case "done": return "Done";
-    case "quiet": return bot.quietMinutes === null ? "No record yet" : `No new record for ${bot.quietMinutes} min`;
+    case "quiet":
+      if (bot.quietMinutes === null) return "No record yet";
+      // #532: a lane quiet past the recent window reads as idle since its last record.
+      return bot.quietMinutes * 60_000 > BOT_RECENT_MS ? `Idle since ${ago(bot.lastRecordAt)} ago` : `No new record for ${bot.quietMinutes} min`;
   }
 }
 

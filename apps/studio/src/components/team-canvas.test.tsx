@@ -59,6 +59,7 @@ describe("TeamCanvas", () => {
     expect(screen.getByRole("button", { name: "kit-2, No new record for 50 min" })).toBeInTheDocument();
     expect(screen.getByLabelText("Team")).not.toHaveTextContent(/stuck/i);
     expect(botStateLabel(bot("x", "quiet", { quietMinutes: null }))).toBe("No record yet");
+    expect(botStateLabel(bot("x", "quiet", { quietMinutes: 600, lastRecordAt: new Date(Date.now() - 600 * 60_000).toISOString() }))).toBe("Idle since 10h ago");
   });
 
   it("opens a bot's thread on click and its task on the task button", async () => {

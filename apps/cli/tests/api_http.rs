@@ -5054,14 +5054,7 @@ fn a_refused_write_delivers_its_401_even_when_the_body_arrives_after_the_headers
         .unwrap();
     let payload = br#"{"id":"deepseek_official","provider":"openai"}"#;
     let head = format!(
-        "PUT {path} HTTP/1.1
-Host: {host}
-Connection: close
-Authorization: Bearer not-the-token
-Content-Type: application/json
-Content-Length: {}
-
-",
+        "PUT {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nAuthorization: Bearer not-the-token\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
         payload.len()
     );
     stream.write_all(head.as_bytes()).unwrap();
@@ -5079,6 +5072,47 @@ Content-Length: {}
     );
     let response = parse_response(&String::from_utf8_lossy(&raw)).unwrap();
     assert_eq!(response.status, 401, "{}", response.body);
+}
+
+/// #549 (review of #581): a client that sends `Expect: 100-continue` has sent NO body; it waits to
+/// be told. Reading its body to protect the refusal makes hyper write `100 Continue`, which invites
+/// an unauthenticated peer to upload what is about to be refused, and past the drain limit the
+/// 401 is then lost to the very reset the drain exists to prevent. Such a request must be refused
+/// at once, as `main` does. Defect named: the first thing on the wire being `100 Continue`. The
+/// cell sends headers only (a megabyte announced, none sent) and reads to the end. Cost: one
+/// server start, under a second with the fix; without it the read waits out the drain.
+#[test]
+fn a_refused_write_that_expects_100_continue_is_refused_without_being_invited_to_upload() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, _token) = serve(&events);
+    let (host, port, path) = split_url(&format!("{base}/v1/gateway/routes"));
+    let address = (host.as_str(), port)
+        .to_socket_addrs()
+        .unwrap()
+        .next()
+        .unwrap();
+    let mut stream = connect_with_retry(&address).unwrap();
+    stream.set_read_timeout(Some(CLIENT_IO_HANG_GUARD)).unwrap();
+    stream
+        .set_write_timeout(Some(CLIENT_IO_HANG_GUARD))
+        .unwrap();
+    let head = format!(
+        "PUT {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nAuthorization: Bearer not-the-token\r\nContent-Type: application/json\r\nExpect: 100-continue\r\nContent-Length: 1000000\r\n\r\n"
+    );
+    stream.write_all(head.as_bytes()).unwrap();
+    stream.flush().unwrap();
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).unwrap();
+    let text = String::from_utf8_lossy(&raw);
+    assert!(
+        text.starts_with("HTTP/1.1 401 "),
+        "the first status line must be the refusal: {text}"
+    );
+    assert!(
+        !text.contains("100 Continue"),
+        "an unauthenticated peer was invited to send its body: {text}"
+    );
 }
 
 /// The explicit auth assert (plan Step 1b): the 05a auth tests pinned only the routes that

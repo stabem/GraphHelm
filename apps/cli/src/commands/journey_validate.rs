@@ -37,7 +37,12 @@ impl Finding {
         // a store without the owner's record (`flow.approval_unsigned`) is an error.
         matches!(
             self.code,
-            "flow.unreachable_screen" | "flow.safe_stale" | "flow.approval_unverifiable"
+            "flow.unreachable_screen"
+                | "flow.safe_stale"
+                | "flow.approval_unverifiable"
+                // #534 slice 2: an unsigned or unverifiable safe mark is void, not wrong.
+                | "flow.safe_unsigned"
+                | "flow.safe_unverifiable"
         )
     }
     pub(crate) fn new(

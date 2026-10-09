@@ -672,16 +672,43 @@ fn the_owner_marks_a_draft_edge_safe_and_editing_its_acts_voids_the_mark() {
     let stale = |reply: &Value| finding(reply, "flow.safe_stale");
 
     // An unknown edge and a non-canonical flow are refused, and nothing is written.
-    let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.nope"]);
+    let (out, reply) = run(
+        dir.path(),
+        &[
+            "mark-safe",
+            "checkout",
+            "pay.nope",
+            "--token-file",
+            &owner_token(dir.path()),
+        ],
+    );
     assert_eq!(out.status.code(), Some(2), "{reply}");
     assert!(finding(&reply, "flow.edge_unknown"), "{reply}");
     write_flow(dir.path(), &EXAMPLE.replace("drift: []\n", "drift: []\n\n"));
-    let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
+    let (out, reply) = run(
+        dir.path(),
+        &[
+            "mark-safe",
+            "checkout",
+            "pay.submit",
+            "--token-file",
+            &owner_token(dir.path()),
+        ],
+    );
     assert_eq!(out.status.code(), Some(2), "{reply}");
     write_flow(dir.path(), EXAMPLE);
 
     // The mark names every act it covers and lands on that edge only, in canonical bytes.
-    let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
+    let (out, reply) = run(
+        dir.path(),
+        &[
+            "mark-safe",
+            "checkout",
+            "pay.submit",
+            "--token-file",
+            &owner_token(dir.path()),
+        ],
+    );
     assert_eq!(out.status.code(), Some(0), "{reply}");
     assert_eq!(
         reply["data"]["acts"].as_array().map(Vec::len),
@@ -744,7 +771,16 @@ fn the_owner_marks_a_draft_edge_safe_and_editing_its_acts_voids_the_mark() {
         ),
     );
     // Marking again binds the edge as it is now.
-    let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
+    let (out, reply) = run(
+        dir.path(),
+        &[
+            "mark-safe",
+            "checkout",
+            "pay.submit",
+            "--token-file",
+            &owner_token(dir.path()),
+        ],
+    );
     assert_eq!(out.status.code(), Some(0), "{reply}");
     assert_ne!(reply["data"]["safe"]["digest"], digest.as_str(), "{reply}");
     assert_eq!(
@@ -789,7 +825,16 @@ fn the_owner_marks_a_draft_edge_safe_and_editing_its_acts_voids_the_mark() {
     assert_eq!(out.status.code(), Some(0), "{reply}");
 
     // An approved flow takes no mark, by the door or by hand.
-    let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
+    let (out, reply) = run(
+        dir.path(),
+        &[
+            "mark-safe",
+            "checkout",
+            "pay.submit",
+            "--token-file",
+            &owner_token(dir.path()),
+        ],
+    );
     assert_eq!(out.status.code(), Some(2), "{reply}");
     assert!(finding(&reply, "flow.safe_not_draft"), "{reply}");
     assert_eq!(text(), approved);
@@ -1026,4 +1071,43 @@ fn sign_legacy_never_signs_a_flow_edited_after_its_approval() {
     assert_eq!(out.status.code(), Some(0), "{reply}");
     assert_eq!(reply["data"]["signed"], serde_json::json!([]), "{reply}");
     assert_eq!(reply["data"]["notSignable"][0]["id"], "checkout", "{reply}");
+}
+
+/// #534 slice 2: a safe mark (#518) is the owner's only with the owner's record. `mark-safe`
+/// needs the owner token and records before writing; a marked YAML copied into a project whose
+/// owner never marked it is void (`flow.safe_unsigned`, a warning: the guard simply applies).
+#[test]
+fn a_safe_mark_needs_the_owner_and_a_copied_mark_is_void() {
+    let dir = project(EXAMPLE);
+    owner_token(dir.path());
+    let path = dir.path().join(".graphhelm/journeys/checkout.journey.yaml");
+    let before = std::fs::read_to_string(&path).unwrap();
+    let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
+    assert_ne!(out.status.code(), Some(0), "{reply}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+    let token = owner_token(dir.path());
+    let (out, reply) = run(
+        dir.path(),
+        &[
+            "mark-safe",
+            "checkout",
+            "pay.submit",
+            "--token-file",
+            &token,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    let marked = validate(dir.path());
+    assert!(!finding(&marked, "flow.safe_unsigned"), "{marked}");
+    let other = project(EXAMPLE);
+    owner_token(other.path());
+    std::fs::copy(
+        &path,
+        other
+            .path()
+            .join(".graphhelm/journeys/checkout.journey.yaml"),
+    )
+    .unwrap();
+    let copied = validate(other.path());
+    assert!(finding(&copied, "flow.safe_unsigned"), "{copied}");
 }

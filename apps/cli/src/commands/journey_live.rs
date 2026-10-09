@@ -679,7 +679,7 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
                 // #518: the owner marked this edge safe, and it is still the edge that was
                 // marked (same app, screens, URL and acts), so its acts are played. A mark the
                 // edge outgrew is void and the guard applies as if it were not there.
-                if super::journey_flow::edge_marked_safe(&flow, &edges[id]) {
+                if super::journey_flow::edge_marked_safe_by_owner(&flow, &edges[id], &project) {
                     continue;
                 }
                 for (act_index, act) in edges[id]["acts"].as_array().unwrap().iter().enumerate() {

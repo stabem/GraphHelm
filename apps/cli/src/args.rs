@@ -459,6 +459,9 @@ pub struct JourneyMarkSafeArgs {
     pub edge: String,
     #[arg(long)]
     pub project: Option<PathBuf>,
+    /// The project's owner token (`.graphhelm/events.token`): marking is the owner's (#534).
+    #[arg(long = "token-file")]
+    pub token_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

@@ -238,6 +238,11 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
                     format!("/edges/{i}/safe"),
                     "the edge changed since the owner marked it safe; the mark is void",
                 ));
+            } else {
+                // #534 slice 2: the mark binds the edge, and only the owner's record makes it the
+                // owner's. Without it (written by hand, copied) the mark is void and the guard
+                // applies; without a readable store it cannot be checked and is void too.
+                findings.extend(mark_signature(value, edge, i, project));
             }
         }
         for (a, act) in edge["acts"].as_array().unwrap().iter().enumerate() {
@@ -415,6 +420,34 @@ fn mark_digest(flow: &Value, edge: &Value) -> String {
 /// that carries a mark.
 pub(crate) fn edge_marked_safe(flow: &Value, edge: &Value) -> bool {
     edge["safe"]["digest"].as_str() == Some(mark_digest(flow, edge).as_str())
+}
+
+/// #534 slice 2: the mark binds this edge AND the owner recorded it. What a watch plays.
+pub(crate) fn edge_marked_safe_by_owner(flow: &Value, edge: &Value, project: &Path) -> bool {
+    edge_marked_safe(flow, edge) && mark_signature(flow, edge, 0, project).is_empty()
+}
+
+fn mark_signature(flow: &Value, edge: &Value, index: usize, project: &Path) -> Vec<Finding> {
+    let (Some(id), Some(edge_id), Some(digest)) = (
+        flow["id"].as_str(),
+        edge["id"].as_str(),
+        edge["safe"]["digest"].as_str(),
+    ) else {
+        return vec![];
+    };
+    match super::journey_owner::marked(project, id, edge_id, digest) {
+        Ok(true) => vec![],
+        Ok(false) => vec![Finding::new(
+            "flow.safe_unsigned",
+            format!("/edges/{index}/safe"),
+            "no owner record marks this edge safe; the mark is void",
+        )],
+        Err(message) => vec![Finding::new(
+            "flow.safe_unverifiable",
+            format!("/edges/{index}/safe"),
+            format!("{message}; the mark is void"),
+        )],
+    }
 }
 
 /// #534: a YAML approval counts only with the owner's record for its exact digest in the
@@ -1419,6 +1452,24 @@ pub(crate) fn approve_owned(id: &str, project: std::path::PathBuf) -> Outcome {
 pub(crate) fn run_mark_safe(args: &crate::args::JourneyMarkSafeArgs) -> Outcome {
     const COMMAND: &str = "journey.mark_safe";
     let project = args.project.clone().unwrap_or_else(|| ".".into());
+    if !owner_token_matches(&project, args.token_file.as_deref()) {
+        return input_error(
+            COMMAND,
+            "marking an act safe is the owner's: give --token-file with the project's owner token (.graphhelm/events.token)",
+        );
+    }
+    mark_safe_owned(&args.id, &args.edge, project)
+}
+
+/// The mark itself, for a caller that has already authenticated the owner (#534 slice 2).
+pub(crate) fn mark_safe_owned(id: &str, edge: &str, project: std::path::PathBuf) -> Outcome {
+    const COMMAND: &str = "journey.mark_safe";
+    let args = crate::args::JourneyMarkSafeArgs {
+        id: id.to_owned(),
+        edge: edge.to_owned(),
+        project: Some(project.clone()),
+        token_file: None,
+    };
     let Some(files) = files(&project, std::slice::from_ref(&args.id)) else {
         return input_error(COMMAND, "invalid flow id or unsafe journeys directory");
     };
@@ -1463,6 +1514,16 @@ pub(crate) fn run_mark_safe(args: &crate::args::JourneyMarkSafeArgs) -> Outcome 
         );
     };
     let digest = mark_digest(&flow, &flow["edges"][index]);
+    // #534 slice 2: the owner's record first, then the YAML, so a mark never exists unsigned.
+    if let Err(message) = super::journey_owner::record_mark(&project, &args.id, &args.edge, &digest)
+    {
+        return report(
+            COMMAND,
+            vec![],
+            vec![Finding::new("flow.owner_record_failed", "/edges", message)],
+            json!({}),
+        );
+    }
     flow["edges"][index]["safe"] = json!({"digest": digest});
     if atomic_write(file, canonical(&flow, false).as_bytes()).is_err() {
         return input_error(COMMAND, "the flow could not be written; nothing changed");

@@ -60,10 +60,12 @@ fn source(relative: &str) -> String {
         .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
 }
 
-/// `{executionId}` (how a tool description names it) and `{id}` (how axum registers it) are the
-/// same parameter. Normalise toward the registration, which is the side that decides.
+/// `{executionId}` and `{sessionId}` (how a tool description names them, after the tool's own
+/// argument) and `{id}` (how axum registers both) are the same parameter. Normalise toward the
+/// registration, which is the side that decides.
 fn normalise(path: &str) -> String {
     path.replace("{executionId}", "{id}")
+        .replace("{sessionId}", "{id}")
 }
 
 /// Every `(METHOD, path)` the router registers, including the extra methods of a chained

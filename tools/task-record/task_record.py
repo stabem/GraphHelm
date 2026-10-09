@@ -153,26 +153,48 @@ def need(args, *names):
         sys.exit(f"task_record: {args.kind} needs --" + ", --".join(missing))
 
 
+# #602: what a plan records when there is nothing to plan from yet (just claimed, no paths) or
+# `keel plan` cannot run. Said on stderr each time; never a reason to skip the record.
+DEFAULT_PLAN = {"classes": ["code"], "reviews": 1, "proof": "tests",
+                "critic": {"mode": "none", "passScore": 8, "maxRounds": 3}}
+
+
+def git_paths(repo):
+    """#602: the task's paths when none are given: the branch's diff against `origin/main` plus
+    uncommitted changes, in `repo`. Empty when git cannot answer."""
+    def lines(*command):
+        try:
+            run = subprocess.run(["git", "-C", repo, *command], capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+        return run.stdout.splitlines() if run.returncode == 0 else []
+    paths = lines("diff", "--name-only", "origin/main...HEAD")
+    paths += [line[3:].split(" -> ")[-1].strip('"') for line in lines("status", "--porcelain") if len(line) > 3]
+    return sorted(dict.fromkeys(path for path in paths if path))
+
+
 def keel_plan(args):
-    """The `graphhelm-task-plan-v1` record the step copies its fields from."""
+    """The `graphhelm-task-plan-v1` record the step copies its fields from, or `None` (with the
+    reason on stderr) when there is nothing to plan from or `keel plan` cannot run."""
     if args.plan_file:
         reply = json.loads(Path(args.plan_file).read_text(encoding="utf-8"))
-    elif args.paths:
+    else:
+        paths = args.paths or git_paths(args.plan_repo)
+        if not paths:
+            print("task_record: planned: no --paths and no changed files yet; recording the default plan", file=sys.stderr)
+            return None
         command = [args.graphhelm, "--json", "keel", "plan", "--task", f"issue-{args.issue}",
-                   "--repo", args.plan_repo, "--promise", args.promise, "--paths", *args.paths]
+                   "--repo", args.plan_repo, "--promise", args.promise, "--paths", *paths]
         try:
             run = subprocess.run(command, capture_output=True, text=True, timeout=120)
-        except (OSError, subprocess.TimeoutExpired) as error:
-            sys.exit(f"task_record: `keel plan` did not run: {error}")
-        try:
             reply = json.loads(run.stdout)
-        except json.JSONDecodeError:
-            sys.exit(f"task_record: `keel plan` printed no JSON (exit {run.returncode}): {run.stderr.strip()[:300]}")
+        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
+            print(f"task_record: planned: `keel plan` did not answer ({error}); recording the default plan", file=sys.stderr)
+            return None
         if reply.get("ok") is not True:
             codes = ", ".join(d.get("code", "?") for d in reply.get("diagnostics", []))
-            sys.exit(f"task_record: `keel plan` refused: {codes}")
-    else:
-        return None
+            print(f"task_record: planned: `keel plan` refused ({codes}); recording the default plan", file=sys.stderr)
+            return None
     plan = reply.get("data", {}).get("plan", reply)
     if plan.get("schema") != "graphhelm-task-plan-v1":
         sys.exit("task_record: the plan is not a graphhelm-task-plan-v1 record")
@@ -180,16 +202,24 @@ def keel_plan(args):
 
 
 def planned_fields(args):
-    plan = keel_plan(args)
+    # Explicit fields win (each one given replaces its part of the plan below).
+    explicit = args.classes or args.reviews is not None or args.proof or args.critic_mode
+    plan = None if explicit and not args.plan_file and not args.paths else keel_plan(args)
     if plan is not None:
         # A plan recorded before #467 carries no critic: it asked for none.
-        critic = plan.get("critic") or {"mode": "none", "passScore": 8, "maxRounds": 3}
-        return {"classes": plan["classes"], "reviews": plan["reviews"], "proof": plan["proof"], "critic": critic}
-    need(args, "reviews", "proof", "critic-mode")
-    if not args.classes:
-        sys.exit("task_record: planned needs --paths, --plan-file, or --classes with --reviews, --proof and --critic-mode")
-    return {"classes": list(dict.fromkeys(args.classes)), "reviews": args.reviews, "proof": args.proof,
-            "critic": {"mode": args.critic_mode, "passScore": args.pass_score, "maxRounds": args.max_rounds}}
+        fields = {"classes": plan["classes"], "reviews": plan["reviews"], "proof": plan["proof"],
+                  "critic": plan.get("critic") or DEFAULT_PLAN["critic"]}
+    else:
+        fields = json.loads(json.dumps(DEFAULT_PLAN))
+    if args.classes:
+        fields["classes"] = list(dict.fromkeys(args.classes))
+    if args.reviews is not None:
+        fields["reviews"] = args.reviews
+    if args.proof:
+        fields["proof"] = args.proof
+    if args.critic_mode:
+        fields["critic"] = {"mode": args.critic_mode, "passScore": args.pass_score, "maxRounds": args.max_rounds}
+    return fields
 
 
 def document(args, now):

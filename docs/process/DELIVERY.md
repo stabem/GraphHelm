@@ -208,8 +208,11 @@ Name the journey the issue serves; the Studio Graph tab links the task to it. Id
 arrives; then **Implement**, or first **Critic** when the plan's `critic.mode` is `design` (#467).
 `planned` copies `classes`, `reviews`, `proof` and `critic` from `graphhelm keel plan` on the
 task's paths (`--paths`, or a saved `keel plan --json` reply with `--plan-file`), so the fields are
-the planner's decision, never retyped; `--classes`/`--reviews`/`--proof`/`--critic-mode` stand in
-only when no plan can be run. `summary` is the plan in one line (at most 300 characters, the same bound as #477's `summary`). A
+the planner's decision, never retyped. With no `--paths`, the branch's diff against `origin/main`
+plus uncommitted changes are the paths (#602), so `planned --summary "<one line>"` alone is enough.
+With nothing to plan from yet, or when `keel plan` cannot run, it records a stated default (`code`,
+1 review, `tests`, no critic) and says so on stderr; `--classes`/`--reviews`/`--proof`/`--critic-mode`
+override any field. `summary` is the plan in one line (at most 300 characters, the same bound as #477's `summary`). A
 `planned` recorded after the PR opened informs the graph without moving it back.
 The Runtime refuses a `task.*` signal whose `source.id`, or whose `lane` / `reviewer` (on a
 verdict) / `merger`, is not the actor recording it (`GHCLI038_ACTOR_MISMATCH`).
@@ -221,7 +224,7 @@ with `tools/task-record/task_record.py` (Python 3 standard library), which POSTs
 
 ```sh
 python tools/task-record/task_record.py --lane <you> claimed         --issue <N> --branch <branch> --journeys <contractId>
-python tools/task-record/task_record.py --lane <you> planned         --issue <N> --paths <card scope...> --summary "<the plan in one line>"
+python tools/task-record/task_record.py --lane <you> planned         --issue <N> --summary "<the plan in one line>"   # paths from git; --paths <scope...> to name them
 python tools/task-record/task_record.py --lane <you> pr_opened       --issue <N> --pr <P> --head <sha> --reviewer <reviewer> --journeys <contractId>
 python tools/task-record/task_record.py --lane <you> review_assigned --issue <N> --pr <P> --head <sha> --reviewer <other>   # only when the reviewer changes
 python tools/task-record/task_record.py --lane <you> review_verdict  --issue <N> --pr <P> --head <sha> --verdict APPROVE --comment-url <url>

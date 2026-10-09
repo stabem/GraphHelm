@@ -345,9 +345,41 @@ class Planned(unittest.TestCase):
         self.assertEqual(doc["classes"], ["docs"])
         self.assertEqual(doc["critic"]["mode"], "none")
 
-    def test_no_plan_source_or_no_summary_is_refused(self):
-        with self.assertRaises(SystemExit):
-            self.planned("--summary", "nothing to copy")
+    def offline(self):
+        """A repository git cannot read and a graphhelm that does not exist: no network, no build."""
+        empty = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(empty, ignore_errors=True))
+        return ["--plan-repo", empty, "--graphhelm", str(Path(empty) / "no-graphhelm.exe")]
+
+    def test_summary_alone_records_the_stated_default_plan(self):
+        # #602: lanes skipped `planned` when it demanded every field by hand. With nothing to plan
+        # from (no paths, git cannot answer), it records the stated default and says so on stderr.
+        err = io.StringIO()
+        with redirect_stderr(err):
+            doc = self.planned("--summary", "just claimed", *self.offline())
+        self.assertEqual({k: doc[k] for k in ("classes", "reviews", "proof", "critic")}, task_record.DEFAULT_PLAN)
+        self.assertIn("default plan", err.getvalue())
+
+    def test_a_keel_plan_that_cannot_run_falls_back_to_the_default(self):
+        err = io.StringIO()
+        with redirect_stderr(err):
+            doc = self.planned("--summary", "s", "--paths", "src/x.rs", *self.offline())
+        self.assertEqual(doc["classes"], ["code"])
+        self.assertIn("did not answer", err.getvalue())
+
+    def test_explicit_fields_win_over_the_default(self):
+        doc = self.planned("--summary", "s", "--proof", "both", "--critic-mode", "design", *self.offline())
+        self.assertEqual((doc["proof"], doc["critic"]["mode"], doc["classes"]), ("both", "design", ["code"]))
+
+    def test_the_paths_come_from_git_when_none_are_given(self):
+        repo = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(repo, ignore_errors=True))
+        run = lambda *a: __import__("subprocess").run(["git", "-C", repo, *a], capture_output=True, check=True)
+        run("init", "-q"); run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base")
+        (Path(repo) / "changed.rs").write_text("x", encoding="utf-8")
+        self.assertEqual(task_record.git_paths(repo), ["changed.rs"])
+
+    def test_no_summary_is_refused(self):
         with self.assertRaises(SystemExit):
             self.planned("--plan-file", self.plan_file(self.PLAN))
         with self.assertRaises(SystemExit):

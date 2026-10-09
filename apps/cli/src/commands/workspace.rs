@@ -36,14 +36,14 @@ pub fn run(args: &WorkspaceArgs) -> Outcome {
         }
         WorkspaceCommand::List(list) => run_list(&list.root),
         WorkspaceCommand::Sweep(sweep) => run_sweep(&sweep.root, sweep.apply),
-        WorkspaceCommand::Slot(slot) => match (slot.action, slot.root, slot.lane) {
+        WorkspaceCommand::Slot(slot) => match (&slot.action, &slot.root, &slot.lane) {
             (Some(crate::args::WorkspaceSlotAction::Status(status)), _, _) => {
                 super::workspace_slot::run_status(&status.root)
             }
             (None, Some(root), Some(lane)) => {
                 super::workspace_slot::run_slot(&super::workspace_slot::SlotRequest {
-                    root: &root,
-                    lane: &lane,
+                    root,
+                    lane,
                     label: &slot.label,
                     jobs: slot.jobs,
                     clean_workspace: slot.clean_workspace,

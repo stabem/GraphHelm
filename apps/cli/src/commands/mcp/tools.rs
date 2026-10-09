@@ -988,6 +988,10 @@ fn synthesize_schema() -> serde_json::Value {
                 "type": "object",
                 "description": "The task's graphhelm-task-plan-v1 document, as keel_plan returns it; without critic, the plan's own critic decides.",
             },
+            "execution": {
+                "type": "string",
+                "description": "The run this graph is built for; without critic and plan, the run's newest trusted keel.plan record decides.",
+            },
             "allowPrograms": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -2200,6 +2204,7 @@ pub(crate) fn call(
                 "judgeFixture",
                 "library",
                 "critic",
+                "execution",
             ] {
                 if let Some(value) = str_arg(arguments, field) {
                     body[field] = serde_json::Value::String(value.to_owned());

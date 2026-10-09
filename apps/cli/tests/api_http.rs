@@ -8276,6 +8276,109 @@ fn a_plan_that_asks_for_a_design_critic_gets_one_without_a_flag_and_the_reply_sa
     assert!(reply["data"].get("critic").is_none(), "{reply}");
 }
 
+/// #561: inside a run, the graph builder reads the plan itself. With `execution` named and no
+/// `critic` and no `plan`, the route opens the run's newest TRUSTED `keel.plan` record (recorded
+/// by the owner, valid against the task-plan schema: the briefing's rule) and lets it decide,
+/// recording the source as `run`. Credible regressions, each a cell below: a run without a plan
+/// record changes the reply; a plan an agent recorded turns the critic on or off (any session
+/// can record a signal, so that would let a lane switch its own critic off); a newer untrusted
+/// plan hides the older trusted one; a handed `plan` or an explicit `critic` loses to the run.
+/// Cost: one sealed Runtime, one CLI start, three signals, five synthesize requests.
+#[test]
+fn inside_a_run_the_newest_trusted_plan_record_decides_the_critic_and_is_named_as_the_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-plan-from-run";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let (_guard, base, token) = serve_sealed(&events);
+    let fixture = root().join("core/architect/fixtures/first-compile/replies.json");
+    let goal = first_compile_goal();
+    let url = format!("{base}/v1/graphs/synthesize");
+    let synthesize = |extra: Value| {
+        let mut body = serde_json::json!({
+            "goal": goal,
+            "allowPrograms": ["cargo"],
+            "fixture": fixture.to_str().unwrap(),
+            "execution": execution,
+        });
+        for (key, value) in extra.as_object().unwrap() {
+            body[key] = value.clone();
+        }
+        let (status, reply) = post_json(&url, &token, &[], &body);
+        assert_eq!(status, 200, "{reply}");
+        reply
+    };
+    let graded = |reply: &Value| {
+        reply["data"]["document"]["spec"]["entrypoints"] == serde_json::json!(["critic_design"])
+    };
+    let plan = |mode: &str, pass_score: u32| {
+        serde_json::json!({
+            "schema": "graphhelm-task-plan-v1", "taskId": "issue-561", "revision": "",
+            "paths": ["src/lib.rs"], "classes": ["code"], "invariantClasses": [],
+            "journeys": [], "proof": "tests", "reviews": 1, "skills": ["keel"],
+            "tools": [], "delegation": {"kind": "implementer", "tier": "standard",
+            "effort": "medium"}, "path": ["card", "change", "merge"], "decidedBy": "rules",
+            "jev": null,
+            "critic": {"mode": mode, "passScore": pass_score, "maxRounds": 2},
+        })
+    };
+    let record = |id: &str, actor_type: &str, document: &Value| {
+        let mut signal = signal_envelope(id, "keel.plan");
+        signal["source"] = serde_json::json!({"type": "user", "id": "someone"});
+        signal["severity"] = serde_json::json!("low");
+        signal["description"] = serde_json::json!(document.to_string());
+        let (status, reply) = post_json(
+            &format!("{base}/v1/executions/{execution}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", id),
+                ("X-GraphHelm-Actor", "someone"),
+                ("X-GraphHelm-Actor-Type", actor_type),
+            ],
+            &serde_json::json!({ "signal": signal }),
+        );
+        assert_eq!(status, 200, "{reply}");
+        assert_eq!(reply["ok"], true, "{reply}");
+    };
+
+    // No plan record on the run: nothing decides, nothing is recorded.
+    let bare = synthesize(serde_json::json!({}));
+    assert!(!graded(&bare), "{bare}");
+    assert!(bare["data"].get("critic").is_none(), "{bare}");
+
+    // A plan an agent recorded is not the run's plan.
+    record("plan-by-agent", "agent", &plan("design", 9));
+    let untrusted = synthesize(serde_json::json!({}));
+    assert!(!graded(&untrusted), "{untrusted}");
+    assert!(untrusted["data"].get("critic").is_none(), "{untrusted}");
+
+    // The owner's plan decides, with its own bounds, and the reply says the run decided.
+    record("plan-by-owner", "owner", &plan("design", 9));
+    let decided = synthesize(serde_json::json!({}));
+    assert!(graded(&decided), "{decided}");
+    assert_eq!(
+        decided["data"]["critic"],
+        serde_json::json!({
+            "mode": "design", "source": "run", "passScore": 9, "maxRounds": 2,
+            "taskId": "issue-561",
+        }),
+        "{decided}"
+    );
+
+    // A newer plan from an agent that switches the critic off does not hide the owner's.
+    record("plan-off-by-agent", "agent", &plan("none", 9));
+    assert!(graded(&synthesize(serde_json::json!({}))));
+
+    // What the caller hands over still wins over the run: a plan, and above it an explicit word.
+    let handed = synthesize(serde_json::json!({"plan": plan("none", 9)}));
+    assert!(!graded(&handed), "{handed}");
+    assert_eq!(handed["data"]["critic"]["source"], "plan", "{handed}");
+    let worded = synthesize(serde_json::json!({"critic": "none"}));
+    assert!(!graded(&worded), "{worded}");
+    assert_eq!(worded["data"]["critic"]["source"], "flag", "{worded}");
+}
+
 /// The route's refusals are argument-shaped 400s carrying the CLI's own codes: a fixture-only
 /// server asked without a fixture names both doors; a compiler refusal is `GHCLI026` at `/goal`
 /// with the refusal as compact JSON, exactly as the CLI prints it; an unknown body field is

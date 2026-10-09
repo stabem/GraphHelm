@@ -2004,6 +2004,13 @@ pub struct SynthesizeArgs {
     /// the plan's own `critic` decides whether the design is graded first; `--critic` wins.
     #[arg(long)]
     pub plan: Option<PathBuf>,
+    /// The run this graph is built for (#561). Without `--critic` and `--plan`, the run's own
+    /// newest trusted `keel.plan` record decides, read from `--events` with `--keyring --key-id`.
+    #[arg(long, requires_all = ["events", "keyring", "key_id"])]
+    pub execution: Option<String>,
+    /// The events directory `--execution` lives in.
+    #[arg(long, requires = "execution")]
+    pub events: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

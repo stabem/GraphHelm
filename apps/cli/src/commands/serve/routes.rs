@@ -184,7 +184,7 @@ pub(super) async fn graph_topology(body: Bytes) -> Response {
 }
 
 /// `POST /v1/graphs/synthesize` with `{goal, mode?, maxNodes?, allowPrograms?, fixture?,
-/// route?, critic?, plan?}`: the Graph Architect over HTTP (#107), replying `graph.synthesize`'s own `data` —
+/// route?, critic?, plan?, execution?}`: the Graph Architect over HTTP (#107), replying `graph.synthesize`'s own `data` —
 /// the exact `architect::execute` the CLI's `graph synthesize` runs, so the document, the
 /// rationale and the template hash are one reply on every door (spec D8), minus only the `out`
 /// path the CLI alone writes.
@@ -210,7 +210,7 @@ pub(super) async fn graph_topology(body: Bytes) -> Response {
 /// model call, so it runs OFF the reactor (#559) through `off_reactor`; the port's async `call`
 /// is driven from inside that blocking task (see `ServeDraftModel`).
 pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> Response {
-    const FIELDS: [&str; 12] = [
+    const FIELDS: [&str; 13] = [
         "goal",
         "mode",
         "maxNodes",
@@ -223,6 +223,7 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
         "library",
         "critic",
         "plan",
+        "execution",
     ];
     let payload: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(value) => value,
@@ -278,6 +279,20 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
         Some(plan @ serde_json::Value::Object(_)) => Some(plan.clone()),
         Some(_) => {
             return bad_request(SYNTHESIZE_COMMAND, "plan must be an object", "/plan");
+        }
+    };
+    // #561: the run this graph is built for. With no `critic` and no `plan`, the run's own newest
+    // trusted `keel.plan` record decides, opened with this Runtime's own keyring; nothing in the
+    // request names a path or a key. No such record leaves the request as it was.
+    let execution = match object.get("execution") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(execution)) => Some(execution.clone()),
+        Some(_) => {
+            return bad_request(
+                SYNTHESIZE_COMMAND,
+                "execution must be a string",
+                "/execution",
+            );
         }
     };
     let max_nodes = match object.get("maxNodes") {
@@ -524,7 +539,18 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
     });
 
     let goal = goal.to_owned();
+    let run = match (execution, state.sealing.clone()) {
+        (Some(execution), Some(keyring)) if critic.is_none() && plan.is_none() => {
+            Some((state.events.clone(), execution, keyring))
+        }
+        _ => None,
+    };
     let outcome = off_reactor(move || {
+        let from_run = run.and_then(|(events, execution, keyring)| {
+            crate::commands::journeys::newest_plan(&events, &execution, &keyring)
+        });
+        let plan_from_run = from_run.is_some();
+        let plan = plan.or(from_run);
         let request = SynthesizeRequest {
             goal: &goal,
             mode: mode.as_deref(),
@@ -534,6 +560,7 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
             clearance_within_seconds: None,
             critic: critic.as_deref(),
             plan: plan.as_ref(),
+            plan_from_run,
             drafts,
         };
         architect::execute(

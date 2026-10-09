@@ -128,6 +128,9 @@ pub(crate) struct SynthesizeRequest<'a> {
     /// `critic` is named, the plan's own `critic` decides, with the plan's bounds. An explicit
     /// `critic` wins over the plan.
     pub(crate) plan: Option<&'a Value>,
+    /// #561: `plan` was not handed over by the caller; the door read it from the run's own
+    /// newest trusted `keel.plan` record. Only changes the recorded source (`run`).
+    pub(crate) plan_from_run: bool,
     /// How many drafts to ask for and rank; `1` (today's road) when absent. The bound `1..=3`
     /// and the "more than one needs a judge" rule are the compiler's own (`InvalidProfile`),
     /// never pre-empted here, so every door refuses with the same words.
@@ -190,7 +193,7 @@ pub(crate) fn execute(
     if let Some(seconds) = request.clearance_within_seconds {
         profile.clearance_within_seconds = seconds;
     }
-    let decision = critic_decision(request.critic, request.plan)?;
+    let decision = critic_decision(request.critic, request.plan, request.plan_from_run)?;
     profile.critic = decision.as_ref().and_then(|decision| decision.critic);
     let catalog = CapabilityCatalog::from_runtime(request.allow_programs);
     let extras = Extras {
@@ -217,7 +220,8 @@ pub(crate) fn execute(
 /// Whether the graded design goes in front of the draft, and who decided (#467).
 struct CriticDecision {
     critic: Option<graphhelm_architect::CriticProfile>,
-    /// `flag` when the caller named `critic`; `plan` when the task plan decided.
+    /// `flag` when the caller named `critic`; `plan` when a handed task plan decided; `run`
+    /// when the plan was read from the run's own record.
     source: &'static str,
     task: Option<String>,
 }
@@ -247,6 +251,7 @@ impl CriticDecision {
 fn critic_decision(
     critic: Option<&str>,
     plan: Option<&Value>,
+    plan_from_run: bool,
 ) -> Result<Option<CriticDecision>, Failure> {
     let flagged = |critic| CriticDecision {
         critic,
@@ -301,7 +306,7 @@ fn critic_decision(
     };
     Ok(Some(CriticDecision {
         critic,
-        source: "plan",
+        source: if plan_from_run { "run" } else { "plan" },
         task: plan["taskId"].as_str().map(str::to_owned),
     }))
 }
@@ -563,6 +568,8 @@ pub struct SynthesizeArguments {
     pub library: Option<PathBuf>,
     pub critic: Option<String>,
     pub plan: Option<PathBuf>,
+    pub events: Option<PathBuf>,
+    pub execution: Option<String>,
 }
 
 pub fn run(arguments: &SynthesizeArguments) -> Outcome {
@@ -584,10 +591,19 @@ fn run_inner(arguments: &SynthesizeArguments) -> Result<Value, Failure> {
         Some(dir) => Some(build_library(dir)?),
         None => None,
     };
-    let plan = match arguments.plan.as_deref() {
+    let handed = match arguments.plan.as_deref() {
         Some(path) => Some(read_plan(path)?),
         None => None,
     };
+    // #561: inside a run, with nothing handed over and no explicit word, the run's own newest
+    // trusted plan decides. No such record leaves the request exactly as it was.
+    let from_run = if handed.is_none() && arguments.critic.is_none() {
+        run_plan(arguments)
+    } else {
+        None
+    };
+    let plan_from_run = from_run.is_some();
+    let plan = handed.or(from_run);
     let request = SynthesizeRequest {
         goal: &arguments.goal,
         mode: arguments.mode.as_deref(),
@@ -597,6 +613,7 @@ fn run_inner(arguments: &SynthesizeArguments) -> Result<Value, Failure> {
         clearance_within_seconds: None,
         critic: arguments.critic.as_deref(),
         plan: plan.as_ref(),
+        plan_from_run,
         drafts: arguments.drafts,
     };
     let mut reply = execute(&request, model.as_ref(), judge.as_deref(), library.as_ref())?;
@@ -611,6 +628,22 @@ fn run_inner(arguments: &SynthesizeArguments) -> Result<Value, Failure> {
         );
     }
     Ok(reply)
+}
+
+/// The run's own plan (#561): the newest `keel.plan` record of `--execution` that the briefing
+/// would trust (recorded by the owner, valid against the task-plan schema), opened with
+/// `--keyring --key-id`. `None` when no execution is named, when the store or the keyring cannot
+/// be read, or when the run holds no such record.
+fn run_plan(arguments: &SynthesizeArguments) -> Option<Value> {
+    let keyring = super::execution::signal::SignalKeyring {
+        directory: arguments.keyring.clone()?,
+        key_id: arguments.key_id.clone()?,
+    };
+    super::journeys::newest_plan(
+        arguments.events.as_deref()?,
+        arguments.execution.as_deref()?,
+        &keyring,
+    )
 }
 
 /// Reads `--plan`: the plan document itself, or the whole `keel plan` envelope (its
@@ -778,6 +811,8 @@ mod tests {
             library: None,
             critic: None,
             plan: None,
+            events: None,
+            execution: None,
         }
     }
 

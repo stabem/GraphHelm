@@ -2339,6 +2339,40 @@ pub(super) async fn journey_preview(
 static OBSERVER_SETUP_RUNNING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Holds a one-at-a-time flag until it is dropped (#588 review). It travels INTO the blocking
+/// work, so the flag clears when the work ends: not when the request ends (a client that
+/// disconnects drops the handler's future mid-install, which once left the flag set for good),
+/// and never while the install still runs.
+struct Exclusive(&'static std::sync::atomic::AtomicBool);
+
+impl Exclusive {
+    fn take(flag: &'static std::sync::atomic::AtomicBool) -> Option<Self> {
+        use std::sync::atomic::Ordering;
+        flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+            .then_some(Self(flag))
+    }
+}
+
+impl Drop for Exclusive {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// `work` off the reactor while `flag` is held, or `None` when another holds it. The flag is
+/// released by the work's own end, wherever the returned future is by then.
+fn exclusively<T: Send + 'static>(
+    flag: &'static std::sync::atomic::AtomicBool,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<impl std::future::Future<Output = Option<T>>> {
+    let exclusive = Exclusive::take(flag)?;
+    Some(off_reactor(move || {
+        let _exclusive = exclusive;
+        work()
+    }))
+}
+
 /// npm plus the Chromium download (~150 MB) on a slow link; past this the steps are killed.
 const OBSERVER_SETUP_BUDGET: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
@@ -2354,7 +2388,6 @@ pub(super) async fn setup_journey_observer(
     body: Bytes,
 ) -> Response {
     const COMMAND: &str = "journey.observer_setup";
-    use std::sync::atomic::Ordering;
     if !body.is_empty() {
         return bad_request(COMMAND, "this route takes no body", "/body");
     }
@@ -2373,10 +2406,13 @@ pub(super) async fn setup_journey_observer(
             Outcome::internal(COMMAND, "no home directory to look for Chromium in").output,
         );
     };
-    if OBSERVER_SETUP_RUNNING
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
+    let Some(setup) = exclusively(&OBSERVER_SETUP_RUNNING, move || {
+        crate::commands::observers::install_playwright_bounded(
+            &project,
+            &home,
+            OBSERVER_SETUP_BUDGET,
+        )
+    }) else {
         return respond(
             StatusCode::CONFLICT,
             Outcome::domain(
@@ -2390,16 +2426,8 @@ pub(super) async fn setup_journey_observer(
             )
             .output,
         );
-    }
-    let ran = off_reactor(move || {
-        crate::commands::observers::install_playwright_bounded(
-            &project,
-            &home,
-            OBSERVER_SETUP_BUDGET,
-        )
-    })
-    .await;
-    OBSERVER_SETUP_RUNNING.store(false, Ordering::Release);
+    };
+    let ran = setup.await;
     use crate::commands::observers::Installed;
     let failed = |code: &'static str, message: String| {
         respond(
@@ -6292,6 +6320,46 @@ mod off_reactor_tests {
             native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         };
         (directory, state)
+    }
+
+    /// #588 review (gh-claude-8's probe): a client that disconnects mid-install drops the
+    /// handler's future. Defects named: the flag cleared after the `.await` (never cleared: every
+    /// later setup 409s for the Runtime's life), or a guard held in the future (cleared at once:
+    /// a second install starts beside the first). The guard rides into the blocking work, so the
+    /// flag stays set while the work runs and clears when it ends. Cost: about half a second.
+    #[test]
+    fn a_dropped_setup_request_keeps_the_flag_while_the_work_runs_and_frees_it_after() {
+        static FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let (started, ready) = std::sync::mpsc::channel();
+            let work = super::exclusively(&FLAG, move || {
+                started.send(()).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(400));
+            })
+            .expect("free at first");
+            let request = tokio::spawn(work);
+            tokio::task::yield_now().await;
+            ready.recv().expect("the work started");
+            // The client goes away: the request's future is dropped mid-install.
+            request.abort();
+            let _ = request.await;
+            assert!(
+                super::Exclusive::take(&FLAG).is_none(),
+                "a second setup started while the first still ran"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+            assert!(
+                super::Exclusive::take(&FLAG).is_some(),
+                "the flag outlived the work: every later setup would answer 409"
+            );
+        });
     }
 
     /// The helper's own contract, with a closure that can observe its thread: the work runs

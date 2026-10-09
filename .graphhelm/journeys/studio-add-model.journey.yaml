@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-add-model
-title: "Add a model (draft: the test setup has no model gateway, so the Add model button is off)"
+title: Add a model
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -20,12 +20,23 @@ screens:
     state: stable
     expect: [{role: region, name: Models}, {role: heading, name: Models}, {role: button, name: Add model}, {role: button, name: Close models}]
     scope: [apps/studio/src/components/models.tsx, apps/studio/src/runtime/client.ts]
+  - id: run
+    title: "A run is open, with its chat and its team on screen"
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: navigation, name: Projects}, {role: button, name: models}]
+    scope: [apps/studio/src/components/rail.tsx]
 edges:
   - id: models.add
     from: models
     to: edit-route
     acts:
       - {kind: activate, role: button, name: Add model}
+  - id: run.models
+    from: run
+    to: models
+    acts:
+      - {kind: activate, role: button, name: models}
 paths:
-  main: [models.add]
+  main: [run.models, models.add]
 drift: []

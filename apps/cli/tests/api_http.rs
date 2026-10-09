@@ -5042,10 +5042,16 @@ fn a_refused_write_delivers_its_401_even_when_the_body_arrives_after_the_headers
     let events = directory.path().join("events");
     let (_guard, base, _token) = serve(&events);
     let (host, port, path) = split_url(&format!("{base}/v1/gateway/routes"));
-    let address = (host.as_str(), port).to_socket_addrs().unwrap().next().unwrap();
+    let address = (host.as_str(), port)
+        .to_socket_addrs()
+        .unwrap()
+        .next()
+        .unwrap();
     let mut stream = connect_with_retry(&address).unwrap();
     stream.set_read_timeout(Some(CLIENT_IO_HANG_GUARD)).unwrap();
-    stream.set_write_timeout(Some(CLIENT_IO_HANG_GUARD)).unwrap();
+    stream
+        .set_write_timeout(Some(CLIENT_IO_HANG_GUARD))
+        .unwrap();
     let payload = br#"{"id":"deepseek_official","provider":"openai"}"#;
     let head = format!(
         "PUT {path} HTTP/1.1

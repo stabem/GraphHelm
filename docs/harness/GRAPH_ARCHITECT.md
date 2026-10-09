@@ -41,6 +41,7 @@ the refusal. The loop is in `core/architect/src/synthesize.rs`.
 | in | model door | a recording, or a gateway route | `--fixture <replies.json>` / `--manifest <m> --route <id>`; HTTP/MCP `fixture` / `route` |
 | in | judge door (#1109, §10) | a recording of typed answers, or a `typesafe` gateway route; absent means no judgment is asked | `--judge-fixture <answers.json>` / `--judge-route <id>`; HTTP/MCP `judgeFixture` / `judgeRoute` |
 | in | drafts (#1109, §10) | how many stance drafts to ask for and rank, 1..=3, default 1; more than one needs a judge | `--drafts N`, `drafts` |
+| in | design critic (#467) | `design` makes the compiler put `critic_design` → `critic_grade` in front of the draft (pass at 8/10, at most 3 rounds, one `task.critic_verdict` record per round); `none` or absent is the draft alone; the two nodes count against `maxNodes`; a draft that uses either id is sent back with `GHA007_CRITIC_ID_RESERVED` | `--critic design`, `critic` |
 | in | library (#1109, §10) | a directory of graph templates with `.template.json` sidecars the judge may reuse or adapt; read only when a judge is named | `--library <dir>`, `library` |
 | out | `document` | the complete Graph DSL document (`apiVersion p50.dev/graph/v1`, `kind ExecutionGraph`, compiler-owned `metadata`, the model's `spec` with customs stamped) | every door; the CLI also writes it to `--out <path.json>` (`create_new`: an existing file is never overwritten) |
 | out | `rationale` | `[{node, reason}]` in node-id order: the node's objective, plus the stamp when the compiler added one | every door |
@@ -192,8 +193,8 @@ the same variable and is reviewed in the commit like any golden.
 
 | door | invocation | returns |
 |---|---|---|
-| CLI | `graphhelm graph synthesize --goal <text> --out <path.json> [--mode M] [--max-nodes N] [--allow-program P]* (--fixture <replies.json> \| --manifest <m> --route <id> [--broker --keyring --key-id]) [--judge-fixture <answers.json> \| --judge-route <id>] [--drafts N] [--library <dir>]` | the D8 JSON plus `out` |
-| HTTP | `POST /v1/graphs/synthesize` `{goal, mode?, maxNodes?, allowPrograms?, fixture?, route?, judgeFixture?, judgeRoute?, drafts?, library?}` (closed body; no `Idempotency-Key`, no execution id) | the D8 JSON, `command: graph.synthesize` |
+| CLI | `graphhelm graph synthesize --goal <text> --out <path.json> [--mode M] [--max-nodes N] [--critic none\|design] [--allow-program P]* (--fixture <replies.json> \| --manifest <m> --route <id> [--broker --keyring --key-id]) [--judge-fixture <answers.json> \| --judge-route <id>] [--drafts N] [--library <dir>]` | the D8 JSON plus `out` |
+| HTTP | `POST /v1/graphs/synthesize` `{goal, mode?, maxNodes?, allowPrograms?, fixture?, route?, judgeFixture?, judgeRoute?, drafts?, library?, critic?}` (closed body; no `Idempotency-Key`, no execution id) | the D8 JSON, `command: graph.synthesize` |
 | MCP | tool `synthesize`, same closed schema, posting only the fields given | the route's reply, byte for byte |
 
 The three return the same `data` (`api_http::the_api_and_the_cli_compile_the_same_goal_to_the_same_bytes`,

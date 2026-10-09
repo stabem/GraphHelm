@@ -120,6 +120,10 @@ pub(crate) struct SynthesizeRequest<'a> {
     pub(crate) allow_programs: &'a [String],
     pub(crate) wait_within_seconds: Option<u64>,
     pub(crate) clearance_within_seconds: Option<u64>,
+    /// #467: `design` puts the graded design in front of the draft, the way the task plan's
+    /// `critic` says; `none` or absent is the draft alone. Any other word is refused here, once,
+    /// so every door refuses it with the same words.
+    pub(crate) critic: Option<&'a str>,
     /// How many drafts to ask for and rank; `1` (today's road) when absent. The bound `1..=3`
     /// and the "more than one needs a judge" rule are the compiler's own (`InvalidProfile`),
     /// never pre-empted here, so every door refuses with the same words.
@@ -181,6 +185,11 @@ pub(crate) fn execute(
     }
     if let Some(seconds) = request.clearance_within_seconds {
         profile.clearance_within_seconds = seconds;
+    }
+    match request.critic {
+        None | Some("none") => {}
+        Some("design") => profile.critic = Some(graphhelm_architect::CriticProfile::DESIGN),
+        Some(_) => return Err(argument("critic must be none or design", "/critic")),
     }
     let catalog = CapabilityCatalog::from_runtime(request.allow_programs);
     let extras = Extras {
@@ -452,6 +461,7 @@ pub struct SynthesizeArguments {
     pub judge_fixture: Option<PathBuf>,
     pub drafts: Option<u8>,
     pub library: Option<PathBuf>,
+    pub critic: Option<String>,
 }
 
 pub fn run(arguments: &SynthesizeArguments) -> Outcome {
@@ -480,6 +490,7 @@ fn run_inner(arguments: &SynthesizeArguments) -> Result<Value, Failure> {
         allow_programs: &arguments.allow_programs,
         wait_within_seconds: None,
         clearance_within_seconds: None,
+        critic: arguments.critic.as_deref(),
         drafts: arguments.drafts,
     };
     let mut reply = execute(&request, model.as_ref(), judge.as_deref(), library.as_ref())?;
@@ -636,6 +647,7 @@ mod tests {
             judge_fixture: None,
             drafts: None,
             library: None,
+            critic: None,
         }
     }
 

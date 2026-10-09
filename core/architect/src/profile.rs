@@ -54,6 +54,15 @@ pub struct CriticProfile {
     pub max_rounds: u32,
 }
 
+impl CriticProfile {
+    /// The decided defaults (#467): pass at 8 of 10, at most 3 rounds. One home, so every door
+    /// that asks for `critic: design` gets the same bounds.
+    pub const DESIGN: Self = Self {
+        pass_score: 8,
+        max_rounds: 3,
+    };
+}
+
 fn default_mode() -> String {
     MODES[1].to_owned()
 }

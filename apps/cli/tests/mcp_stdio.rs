@@ -2512,6 +2512,41 @@ fn the_synthesize_tool_reaches_the_architect_route_and_relays_its_document() {
     );
 }
 
+/// #467: `critic` travels through the tool, so a chat session can ask for the graded design the
+/// way the CLI and the route do. Credible regression: the tool's forwarding list drops the field
+/// and the chat door silently compiles the draft alone. Cost: one wired Runtime, one tool call.
+#[test]
+fn the_synthesize_tool_forwards_the_design_critic() {
+    let harness = wired("exec-mcp-synthesize-critic");
+    let fixture = root_dir().join("core/architect/fixtures/first-compile/replies.json");
+    let goal =
+        std::fs::read_to_string(root_dir().join("core/architect/fixtures/first-compile/GOAL.txt"))
+            .unwrap()
+            .trim_end()
+            .to_owned();
+    let session = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        tool_call(
+            serde_json::json!(2),
+            "synthesize",
+            serde_json::json!({
+                "goal": goal,
+                "allowPrograms": ["cargo"],
+                "fixture": fixture.to_str().unwrap(),
+                "critic": "design",
+            }),
+        ),
+    ]);
+    let (is_error, envelope) = tool_envelope(&session.replies[1]);
+    assert!(!is_error, "{envelope}");
+    assert_eq!(
+        envelope["data"]["document"]["spec"]["entrypoints"],
+        serde_json::json!(["critic_design"]),
+        "{envelope}"
+    );
+}
+
 /// #1123 (spec D10): `judgeFixture` travels through the tool and the route's reply carries the
 /// judgments — the same `data` the HTTP door returns for the same two recordings.
 #[test]

@@ -687,21 +687,24 @@ pub fn insert_critic(
         "type": "agent",
         "name": "Design",
         "objective": format!(
-            "write the design for the goal, graded before any implementation (critic inserted by              the compiler, #467): {}", profile.goal
+            "write the design for the goal, graded before any implementation (critic inserted by \
+             the compiler, #467): {}", profile.goal
         ),
         "optionality": "required",
         "agent": agent(
             "Write the design: the promise, the paths, the approach.",
             "design.write",
             "schema://Design@1",
-            "Write the design the critic will grade: the promise, the paths in scope, the approach              and how it will be proved. Revise it when the critic says revise.",
+            "Write the design the critic will grade: the promise, the paths in scope, the approach \
+             and how it will be proved. Revise it when the critic says revise.",
         ),
     });
     let grade = serde_json::json!({
         "type": "agent",
         "name": "Critic",
         "objective": format!(
-            "grade the design blind against the promise and the card; pass at {}/10 within {}              rounds, one task.critic_verdict per round; out of rounds needs a person (#467)",
+            "grade the design blind against the promise and the card; pass at {}/10 within {} \
+             rounds, one task.critic_verdict per round; out of rounds needs a person (#467)",
             critic.pass_score, critic.max_rounds
         ),
         "optionality": "required",
@@ -709,7 +712,9 @@ pub fn insert_critic(
             "Grade the design blind: promise, card and design only, never the author's reasoning.",
             "design.grade",
             "schema://CriticVerdict@1",
-            "Run a blind critic on the promise, the card and the design only. Record each round as              task.critic_verdict with a 0-10 score and reasons; revise until it passes or the              rounds run out.",
+            "Run a blind critic on the promise, the card and the design only. Record each round as \
+             task.critic_verdict with a 0-10 score and reasons; revise until it passes or the \
+             rounds run out.",
         ),
         "critic": {"passScore": critic.pass_score, "maxRounds": critic.max_rounds,
                    "record": "task.critic_verdict"},

@@ -184,7 +184,7 @@ pub(super) async fn graph_topology(body: Bytes) -> Response {
 }
 
 /// `POST /v1/graphs/synthesize` with `{goal, mode?, maxNodes?, allowPrograms?, fixture?,
-/// route?}`: the Graph Architect over HTTP (#107), replying `graph.synthesize`'s own `data` —
+/// route?, critic?}`: the Graph Architect over HTTP (#107), replying `graph.synthesize`'s own `data` —
 /// the exact `architect::execute` the CLI's `graph synthesize` runs, so the document, the
 /// rationale and the template hash are one reply on every door (spec D8), minus only the `out`
 /// path the CLI alone writes.
@@ -210,7 +210,7 @@ pub(super) async fn graph_topology(body: Bytes) -> Response {
 /// model call, so it runs OFF the reactor (#559) through `off_reactor`; the port's async `call`
 /// is driven from inside that blocking task (see `ServeDraftModel`).
 pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> Response {
-    const FIELDS: [&str; 10] = [
+    const FIELDS: [&str; 11] = [
         "goal",
         "mode",
         "maxNodes",
@@ -221,6 +221,7 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
         "judgeFixture",
         "drafts",
         "library",
+        "critic",
     ];
     let payload: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(value) => value,
@@ -258,6 +259,15 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
         Some(serde_json::Value::String(mode)) => Some(mode.clone()),
         Some(_) => {
             return bad_request(SYNTHESIZE_COMMAND, "\"mode\" must be a string", "/mode");
+        }
+    };
+    // #467: the word itself (`none` | `design`) is checked by `architect::execute`, the one
+    // place every door shares.
+    let critic = match object.get("critic") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(critic)) => Some(critic.clone()),
+        Some(_) => {
+            return bad_request(SYNTHESIZE_COMMAND, "\"critic\" must be a string", "/critic");
         }
     };
     let max_nodes = match object.get("maxNodes") {
@@ -512,6 +522,7 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
             allow_programs: &allow_programs,
             wait_within_seconds: None,
             clearance_within_seconds: None,
+            critic: critic.as_deref(),
             drafts,
         };
         architect::execute(

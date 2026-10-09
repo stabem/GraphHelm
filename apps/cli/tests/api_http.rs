@@ -8069,6 +8069,98 @@ fn the_api_and_the_cli_agree_with_a_judge_and_report_the_unresolved_node() {
     );
 }
 
+/// #467: `critic: design` is one more field on every door, and the compiler, not the model,
+/// puts the graded design in front of the draft: the CLI's `--critic design` and the route's
+/// `"critic": "design"` answer the same fixture with the same bytes, whose only entrypoint is
+/// `critic_design`. A word that is neither `none` nor `design` is refused at `/critic` on both
+/// doors, never defaulted to the draft alone. Credible regressions: a door that drops the field
+/// (the draft would start ungraded), or one that reads an unknown word as `none`.
+/// Cost: one served Runtime, three CLI runs, three requests.
+#[test]
+fn the_api_and_the_cli_put_the_design_critic_in_front_of_the_draft_when_asked() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve(&events);
+    let fixture = root().join("core/architect/fixtures/first-compile/replies.json");
+    let goal = first_compile_goal();
+    let url = format!("{base}/v1/graphs/synthesize");
+    let cli = |out: &Path, critic: &str| {
+        cli_envelope(&[
+            "graph",
+            "synthesize",
+            "--goal",
+            &goal,
+            "--out",
+            out.to_str().unwrap(),
+            "--allow-program",
+            "cargo",
+            "--fixture",
+            fixture.to_str().unwrap(),
+            "--critic",
+            critic,
+        ])
+    };
+    let body = |critic: &str| {
+        serde_json::json!({
+            "goal": goal,
+            "allowPrograms": ["cargo"],
+            "fixture": fixture.to_str().unwrap(),
+            "critic": critic,
+        })
+    };
+
+    let graded = cli(&directory.path().join("graded.json"), "design");
+    assert_eq!(graded["ok"], true, "{graded}");
+    assert_eq!(
+        graded["data"]["document"]["spec"]["entrypoints"],
+        serde_json::json!(["critic_design"]),
+        "{graded}"
+    );
+    let (status, reply) = post_json(&url, &token, &[], &body("design"));
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(
+        serde_json::to_vec(&reply["data"]["document"]).unwrap(),
+        serde_json::to_vec(&graded["data"]["document"]).unwrap(),
+        "one document on both doors, critic included"
+    );
+
+    // `none` is the draft alone: the same bytes as a request that never names a critic.
+    let plain = cli(&directory.path().join("plain.json"), "none");
+    assert_eq!(plain["ok"], true, "{plain}");
+    let (status, unnamed) = post_json(
+        &url,
+        &token,
+        &[],
+        &serde_json::json!({
+            "goal": goal,
+            "allowPrograms": ["cargo"],
+            "fixture": fixture.to_str().unwrap(),
+        }),
+    );
+    assert_eq!(status, 200, "{unnamed}");
+    assert_eq!(
+        serde_json::to_vec(&plain["data"]["document"]).unwrap(),
+        serde_json::to_vec(&unnamed["data"]["document"]).unwrap()
+    );
+    assert_ne!(
+        plain["data"]["document"]["spec"]["entrypoints"],
+        serde_json::json!(["critic_design"])
+    );
+
+    let refused = cli(&directory.path().join("refused.json"), "always");
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert_eq!(
+        refused["diagnostics"][0]["code"],
+        serde_json::json!("GHCLI001_ARGUMENT_INVALID"),
+        "{refused}"
+    );
+    assert_eq!(refused["diagnostics"][0]["path"], "/critic", "{refused}");
+    assert!(!directory.path().join("refused.json").exists());
+    let (status, reply) = post_json(&url, &token, &[], &body("always"));
+    assert_eq!(status, 400, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["path"], "/critic", "{reply}");
+}
+
 /// The route's refusals are argument-shaped 400s carrying the CLI's own codes: a fixture-only
 /// server asked without a fixture names both doors; a compiler refusal is `GHCLI026` at `/goal`
 /// with the refusal as compact JSON, exactly as the CLI prints it; an unknown body field is

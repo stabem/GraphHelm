@@ -2860,6 +2860,9 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .journey-flow-step-number { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-pill); border: 1px solid var(--edge); font-size: 12px; color: var(--dim); }
 .journey-flow-step[aria-current="step"] .journey-flow-step-number { border-color: var(--signal); color: var(--text); }
 .journey-flow-step-text { display: grid; gap: 2px; font-size: 13px; }
+/* #517: what the replay checks on a step's screen, folded under its plain title. */
+.journey-sees-details { font-size: 12px; color: var(--dim); overflow-wrap: anywhere; }
+.journey-sees-details > summary { cursor: pointer; width: fit-content; }
 .journey-flow-watch { margin: 8px 0 0; font-size: 0.85rem; }
 .journey-flow-watch-failure { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 10px; border-left: 3px solid var(--danger); font-size: 0.85rem; }
 .journey-flow-watch-failure p { margin: 0; flex: 1 1 200px; }

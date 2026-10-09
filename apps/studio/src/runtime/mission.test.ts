@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildMission, unlinkedTasks, TRUST_LABELS } from "./mission";
 import type { JourneyView, JourneyRunView } from "./types";
-import type { TaskState } from "./team-tasks";
+import { foldTaskEvents, parseTaskEvent, type TaskState } from "./team-tasks";
 
 const journey: JourneyView = {
   contractId: "watch",
@@ -59,6 +59,13 @@ describe("buildMission", () => {
     ]);
     expect(m.tasks.map((t) => [t.key, t.trust])).toEqual([["a", 1], ["b", 1], ["c", 3]]);
     expect(m.summary.inFlight).toBe(2);
+  });
+
+  it("a task linked only by its claim appears in the mission (#577)", () => {
+    const records = [{ ...parseTaskEvent("task.claimed", "gh-claude-4", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-577", revision: 1, at: "2026-10-09T00:00:00Z", issue: 577, lane: "gh-claude-4", branch: "issue-577-x", journeys: ["watch"] }))!, sequence: 1 }];
+    const m = buildMission(journey, null, foldTaskEvents(records));
+    expect(m.tasks.map((t) => t.key)).toEqual(foldTaskEvents(records).map((t) => t.key));
+    expect(m.tasks).toHaveLength(1);
   });
 
   it("blocked task keeps its flag", () => {

@@ -164,6 +164,42 @@ class TaskRecordTest(unittest.TestCase):
         self.assertIn("--reviewer", str(refused.exception.code))
         self.assertEqual(FakeRuntime.seen, [])
 
+    def journeys_dir(self):
+        folder = Path(self.tmp.name) / "journeys"
+        folder.mkdir(exist_ok=True)
+        for stem in ("studio-graph-tab", "studio-connect"):
+            (folder / f"{stem}.journey.yaml").write_text(f"id: {stem}\n", encoding="utf-8")
+        return str(folder)
+
+    def test_a_claim_names_its_journey(self):
+        # #577: the Studio links the task to its journey from the claim on.
+        code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", "--no-github",
+                                  "--journeys", "studio-graph-tab", "--journeys-dir", self.journeys_dir())
+        self.assertEqual(code, 0, out)
+        described = json.loads(FakeRuntime.seen[0][1]["signal"]["description"])
+        self.assertEqual(described["journeys"], ["studio-graph-tab"])
+
+    def test_a_claim_without_journeys_carries_no_key(self):
+        code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", "--no-github")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("journeys", json.loads(FakeRuntime.seen[0][1]["signal"]["description"]))
+
+    def test_an_unknown_journey_is_refused_before_anything_is_sent(self):
+        with self.assertRaises(SystemExit) as refused:
+            self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", "--no-github",
+                          "--journeys", "studio-nope", "--journeys-dir", self.journeys_dir())
+        message = str(refused.exception.code)
+        self.assertIn("studio-nope", message)
+        self.assertIn("studio-connect, studio-graph-tab", message)
+        self.assertEqual(FakeRuntime.seen, [])
+
+    def test_pr_opened_still_carries_its_journeys(self):
+        code, out = self.run_step("--lane", "lane-a", "pr_opened", "--issue", "9", "--pr", "19", "--head", HEAD_A,
+                                  "--reviewer", "lane-b", "--no-github", "--journeys", "studio-connect",
+                                  "--journeys-dir", self.journeys_dir())
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(FakeRuntime.seen[0][1]["signal"]["description"])["journeys"], ["studio-connect"])
+
     def test_a_non_loopback_url_is_refused_before_the_token_is_read_or_sent(self):
         with self.assertRaises(SystemExit) as refused:
             self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", url="http://example.com:8793")

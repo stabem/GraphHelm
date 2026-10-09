@@ -94,10 +94,12 @@ records"). From a lane worktree the token path must be absolute:
 
 | When | Command |
 |---|---|
-| Start a task | `$T --issue N claimed --branch B` |
-| Open a PR, and again after **every** push | `$T --issue N pr_opened --pr P --head SHA --reviewer <reviewer>` |
+| Start a task | `$T --issue N claimed --branch B --journeys <contractId>` |
+| Open a PR, and again after **every** push | `$T --issue N pr_opened --pr P --head SHA --reviewer <reviewer> --journeys <contractId>` |
 | As reviewer, after posting the verdict | `$T --issue N review_verdict --pr P --head SHA --verdict APPROVE\|APPROVE-WITH-RISK\|BLOCK --comment-url URL` |
 | As merger, only after your own `gh pr merge` exits 0 | `$T --issue N merged --pr P --merge-sha SHA --closes <issues the squash closed>` |
+
+Name the journey the issue serves; the Studio Graph tab links the task to it. Ids are the stems of .graphhelm/journeys/*.journey.yaml.
 
 `--closes` is recorded exactly as given: name every issue the squash closed, and pass none for a
 `Refs` PR. Every lane merges under one GitHub account, so `mergedBy` cannot tell whose merge it

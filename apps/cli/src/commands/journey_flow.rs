@@ -417,6 +417,32 @@ pub(crate) fn edge_marked_safe(flow: &Value, edge: &Value) -> bool {
     edge["safe"]["digest"].as_str() == Some(mark_digest(flow, edge).as_str())
 }
 
+/// #534: a YAML approval counts only with the owner's record for its exact digest in the
+/// project's owner store. Without the record the flow is unsigned (an agent could have written
+/// the YAML); without a readable store the approval cannot be verified at all.
+fn owner_signature(value: &Value, project: &Path) -> Vec<Finding> {
+    if value["status"] != "approved" {
+        return vec![];
+    }
+    let (Some(id), Some(digest)) = (value["id"].as_str(), value["approved"]["digest"].as_str())
+    else {
+        return vec![];
+    };
+    match super::journey_owner::approved(project, id, digest) {
+        Ok(true) => vec![],
+        Ok(false) => vec![Finding::new(
+            "flow.approval_unsigned",
+            "/approved",
+            "no owner record approves this flow at this digest; only the owner's approve records one",
+        )],
+        Err(message) => vec![Finding::new(
+            "flow.approval_unverifiable",
+            "/approved",
+            message,
+        )],
+    }
+}
+
 pub(crate) fn approval_digest(flow: &Value) -> String {
     format!(
         "sha256:{}",
@@ -498,6 +524,9 @@ pub(crate) fn read_for_watch(file: &Path, project: &Path) -> Result<Value, Vec<F
     // or absent `<id>.json` (git-ignored output, often left over from an earlier compile) is no
     // reason to refuse it. `validate` still reports it.
     findings.retain(|f| f.code != "flow.contract_stale");
+    // #534: watch plays drafts too, so an unsigned approval only means "a draft" here.
+    findings
+        .retain(|f| f.code != "flow.approval_unsigned" && f.code != "flow.approval_unverifiable");
     if findings.iter().any(|f| !f.is_warning()) {
         Err(findings)
     } else {
@@ -525,6 +554,7 @@ pub(crate) fn read_for_replay(file: &Path, project: &Path) -> Result<Value, Vec<
 
 fn check_snapshot(file: &Path, text: &str, value: &Value, project: &Path) -> Vec<Finding> {
     let mut findings = semantic(file, value, project);
+    findings.extend(owner_signature(value, project));
     if text != canonical(value, false) {
         findings.push(Finding::new(
             "flow.not_canonical",
@@ -677,7 +707,12 @@ pub(crate) fn projected_flows(project: &Path) -> ProjectedFlows {
             continue;
         }
         let id = flow["id"].as_str().unwrap_or_default().to_owned();
-        if flow["status"] != "approved" {
+        // #534: an approval with no owner record for its digest is a draft to keel plan too.
+        if flow["status"] != "approved"
+            || owner_signature(&flow, project)
+                .iter()
+                .any(|f| !f.is_warning())
+        {
             let scopes = flow["screens"]
                 .as_array()
                 .into_iter()
@@ -1115,9 +1150,35 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
     Outcome::success(COMMAND, json!({"flows": flows}))
 }
 
+/// `graphhelm journey approve <id>` from a terminal (#534): the owner's door, so it asks for the
+/// owner's token (`--token-file`, the project's `.graphhelm/events.token`) and refuses without it.
+/// The Runtime route and the MCP tool authenticate the owner themselves and call `approve_owned`.
 pub(crate) fn run_approve(args: &crate::args::JourneyApproveArgs) -> Outcome {
     const COMMAND: &str = "journey.approve";
     let project = args.project.clone().unwrap_or_else(|| ".".into());
+    let owner = super::secret_file::token_path(&super::journey_owner::store(&project));
+    let given = args
+        .token_file
+        .as_deref()
+        .and_then(|path| super::secret_file::read_existing(path, "bearer token").ok());
+    let expected = super::secret_file::read_existing(&owner, "bearer token").ok();
+    if given.is_none() || given != expected {
+        return input_error(
+            COMMAND,
+            "approving is the owner's: give --token-file with the project's owner token (.graphhelm/events.token)",
+        );
+    }
+    approve_owned(&args.id, project)
+}
+
+/// The approval itself, for a caller that has already authenticated the owner (#534).
+pub(crate) fn approve_owned(id: &str, project: std::path::PathBuf) -> Outcome {
+    const COMMAND: &str = "journey.approve";
+    let args = crate::args::JourneyApproveArgs {
+        id: id.to_owned(),
+        project: Some(project.clone()),
+        token_file: None,
+    };
     let Some(files) = files(&project, std::slice::from_ref(&args.id)) else {
         return input_error(COMMAND, "invalid flow id or unsafe journeys directory");
     };
@@ -1205,6 +1266,23 @@ pub(crate) fn run_approve(args: &crate::args::JourneyApproveArgs) -> Outcome {
         writes.insert(path, contract_bytes(&contract));
     }
     writes.insert(file.clone(), canonical(&flow, false).into_bytes());
+    // #534: the owner's record first, then the YAML, so an approval never exists unsigned.
+    let digest = flow["approved"]["digest"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    if let Err(message) = super::journey_owner::record(&project, &args.id, &digest, &revision) {
+        return report(
+            COMMAND,
+            vec![],
+            vec![Finding::new(
+                "flow.owner_record_failed",
+                "/approved",
+                message,
+            )],
+            json!({}),
+        );
+    }
     if let Err(error) = write_batch(&writes) {
         return input_error(
             COMMAND,

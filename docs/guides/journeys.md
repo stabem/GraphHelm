@@ -142,7 +142,7 @@ are refused):
 
 ```sh
 git add -A && git commit -m "journey: checkout flow"
-graphhelm journey approve checkout --json
+graphhelm journey approve checkout --token-file .graphhelm/events.token --json
 ```
 ```json
 {"ok":true,"command":"journey.approve","data":{"approved":{"digest":"sha256:c1be00bf…","revision":"26ac5f4c…"},"id":"checkout","status":"approved","written":2},"diagnostics":[]}
@@ -150,6 +150,30 @@ graphhelm journey approve checkout --json
 
 It writes `status: approved` plus `approved: {digest, revision}` into the YAML and regenerates
 `checkout.json`. Commit both files.
+
+**The owner's record (#534).** Approving needs the owner's token: `--token-file` with the
+project's `.graphhelm/events.token` (made by `graphhelm init`). Without it, or with another
+store's token, `journey approve` refuses and writes nothing. The Studio's Approve button uses the
+owner credential the same way. Before the YAML is written, approve appends an owner-only record
+(signal kind `journey_flow_approved`, id `journey-approved-<first 32 hex of sha256(flow id, digest)>`) to the reserved
+execution `graphhelm-owner` in the project's `.graphhelm/events`. The Runtime refuses that kind
+from anyone but the owner, including the agent session token. `journey validate`, replay and
+`keel plan` trust a YAML approval only when that record exists for the exact digest:
+
+| Finding | Meaning |
+|---|---|
+| `flow.approval_unsigned` | the YAML says approved, but no owner record approves this digest (written by hand, copied from elsewhere, or approved before #534); the flow counts as a draft |
+| `flow.approval_unverifiable` (warning) | the project has no owner store to check (a fresh clone, CI), so the approval stands and the run says it could not check it |
+
+The owner's store is local (`.graphhelm/` is not committed), so only the owner's machine can tell
+a forged approval from a real one. A clone or CI reports the warning instead of refusing.
+`journey watch` plays drafts anyway, so neither stops a watch.
+
+**What this does and does not stop.** It stops an agent that holds only the agent session token
+and can write the YAML: it cannot produce the owner's record. On one machine, as one OS user, a
+process that can read `.graphhelm/events.token` or write `.graphhelm/events` directly can still
+record as the owner. Real separation needs the agent to run as another OS user, or the owner key
+held where the agent cannot read it.
 
 **Approval belongs to the owner** (a person, in the Studio or with `journey approve`), never to an
 agent approving its own flow. To change an approved flow: set `status: draft` and `approved: null`

@@ -54,6 +54,44 @@ fn run(project: &Path, args: &[&str]) -> (Output, Value) {
     (out, json)
 }
 
+/// #534: approving is the owner's. `graphhelm init` makes the project's owner store and its owner
+/// token (with the owner-only ACL); the token's path is what `approve --token-file` takes.
+fn owner_token(project: &Path) -> String {
+    // init ignores all of `.graphhelm/`; a real project keeps its flows tracked and its owner
+    // store (events, token, keys, owner records) out of git, so the test ignores exactly that.
+    let gitignore = project.join(".gitignore");
+    let kept = std::fs::read(&gitignore).ok();
+    let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["--json", "init", "--project"])
+        .arg(project)
+        .args(["--harness", "claude-code"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let mut ignore = kept.unwrap_or_default();
+    ignore.extend_from_slice(
+        b"
+.graphhelm/*
+!.graphhelm/journeys/
+/.mcp.json
+",
+    );
+    std::fs::write(&gitignore, ignore).unwrap();
+    project
+        .join(".graphhelm/events.token")
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn approve(project: &Path) -> (Output, Value) {
+    let token = owner_token(project);
+    run(project, &["approve", "checkout", "--token-file", &token])
+}
+
 fn finding(reply: &Value, code: &str) -> bool {
     reply["data"]["files"].as_array().is_some_and(|files| {
         files.iter().any(|file| {
@@ -292,7 +330,7 @@ fn approve_binds_the_projection_and_refuses_invalid_input_without_writes() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    let (out, reply) = run(dir.path(), &["approve", "checkout"]);
+    let (out, reply) = approve(dir.path());
     assert_eq!(out.status.code(), Some(0), "{reply}");
     let approved =
         std::fs::read_to_string(dir.path().join(".graphhelm/journeys/checkout.journey.yaml"))
@@ -400,7 +438,7 @@ fn approve_binds_the_projection_and_refuses_invalid_input_without_writes() {
     );
     let invalid = approved.replace("app/cart/page.tsx", "app/missing.tsx");
     write_flow(dir.path(), &invalid);
-    let (out, reply) = run(dir.path(), &["approve", "checkout"]);
+    let (out, reply) = approve(dir.path());
     assert_eq!(out.status.code(), Some(2), "{reply}");
     assert_eq!(
         std::fs::read_to_string(dir.path().join(".graphhelm/journeys/checkout.journey.yaml"))
@@ -412,7 +450,7 @@ fn approve_binds_the_projection_and_refuses_invalid_input_without_writes() {
         before
     );
     let non_git = project(EXAMPLE);
-    let (out, reply) = run(non_git.path(), &["approve", "checkout"]);
+    let (out, reply) = approve(non_git.path());
     assert_eq!(out.status.code(), Some(3), "{reply}");
     assert_eq!(reply["diagnostics"][0]["code"], "GHCLI001_ARGUMENT_INVALID");
     // The source schema pins SHA-1 approvals even though capture records also accept SHA-256.
@@ -443,7 +481,7 @@ fn approve_binds_the_projection_and_refuses_invalid_input_without_writes() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    let (out, reply) = run(non_git.path(), &["approve", "checkout"]);
+    let (out, reply) = approve(non_git.path());
     assert_eq!(out.status.code(), Some(3), "{reply}");
     assert_eq!(
         std::fs::read_to_string(
@@ -743,7 +781,7 @@ fn the_owner_marks_a_draft_edge_safe_and_editing_its_acts_voids_the_mark() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    let (out, reply) = run(dir.path(), &["approve", "checkout"]);
+    let (out, reply) = approve(dir.path());
     assert_eq!(out.status.code(), Some(0), "{reply}");
     let approved = text();
     assert!(!approved.contains("safe:"), "{approved}");
@@ -762,4 +800,98 @@ fn the_owner_marks_a_draft_edge_safe_and_editing_its_acts_voids_the_mark() {
     let (out, reply) = run(dir.path(), &["validate", "--all"]);
     assert_eq!(out.status.code(), Some(2), "{reply}");
     assert!(finding(&reply, "flow.safe_not_draft"), "{reply}");
+}
+
+/// #534 (found on #518): an approval used to be only YAML, `approved: {revision, digest}`, and the
+/// digest is a plain sha256 anyone can compute. Approving now needs the owner's token and records
+/// an owner-only signal naming the flow and digest; validate (and replay) trust a YAML approval
+/// only with that record. Credible regressions: an approval with no credential, a copied or
+/// hand-written approval counted as the owner's, a missing store read as "approved".
+fn committed(flow: &str) -> tempfile::TempDir {
+    let dir = project(flow);
+    for args in [
+        vec!["init", "-q", "--object-format=sha1"],
+        vec!["add", "-A"],
+        vec![
+            "-c",
+            "user.name=Flow Test",
+            "-c",
+            "user.email=flow@example.test",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
+    ] {
+        let out = Command::new("git")
+            .current_dir(dir.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    dir
+}
+
+fn validate(project: &Path) -> Value {
+    run(project, &["validate", "--all"]).1
+}
+
+#[test]
+fn approve_without_the_owner_token_is_refused_and_writes_nothing() {
+    let dir = committed(EXAMPLE);
+    owner_token(dir.path());
+    let before =
+        std::fs::read(dir.path().join(".graphhelm/journeys/checkout.journey.yaml")).unwrap();
+    let (out, reply) = run(dir.path(), &["approve", "checkout"]);
+    assert_ne!(out.status.code(), Some(0), "{reply}");
+    let other = tempfile::tempdir().unwrap();
+    let wrong = owner_token(other.path());
+    let (out, reply) = run(dir.path(), &["approve", "checkout", "--token-file", &wrong]);
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "a token from another store is not this owner's: {reply}"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join(".graphhelm/journeys/checkout.journey.yaml")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn the_owner_approval_is_recorded_and_a_copied_approval_is_unsigned() {
+    let dir = committed(EXAMPLE);
+    let (out, reply) = approve(dir.path());
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    let signed = validate(dir.path());
+    assert!(
+        !finding(&signed, "flow.approval_unsigned")
+            && !finding(&signed, "flow.approval_unverifiable"),
+        "{signed}"
+    );
+    // The same approved YAML (and contracts) in another project whose owner never approved it.
+    let other = committed(EXAMPLE);
+    owner_token(other.path());
+    for name in ["checkout.journey.yaml", "checkout.json"] {
+        std::fs::copy(
+            dir.path().join(".graphhelm/journeys").join(name),
+            other.path().join(".graphhelm/journeys").join(name),
+        )
+        .unwrap();
+    }
+    let copied = validate(other.path());
+    assert!(finding(&copied, "flow.approval_unsigned"), "{copied}");
+}
+
+#[test]
+fn an_approval_with_no_owner_store_cannot_be_verified() {
+    let dir = committed(EXAMPLE);
+    approve(dir.path());
+    std::fs::remove_dir_all(dir.path().join(".graphhelm/events")).unwrap();
+    assert!(finding(&validate(dir.path()), "flow.approval_unverifiable"));
 }

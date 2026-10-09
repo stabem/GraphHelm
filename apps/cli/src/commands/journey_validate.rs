@@ -33,7 +33,12 @@ pub(crate) struct Finding {
 impl Finding {
     pub(crate) fn is_warning(&self) -> bool {
         // A stale safe mark (#518) is void, not wrong: the guard simply applies again.
-        matches!(self.code, "flow.unreachable_screen" | "flow.safe_stale")
+        // #534: no owner store to check (a fresh clone, CI) is said, not counted as a forgery;
+        // a store without the owner's record (`flow.approval_unsigned`) is an error.
+        matches!(
+            self.code,
+            "flow.unreachable_screen" | "flow.safe_stale" | "flow.approval_unverifiable"
+        )
     }
     pub(crate) fn new(
         code: &'static str,

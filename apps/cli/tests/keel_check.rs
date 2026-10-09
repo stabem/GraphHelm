@@ -881,7 +881,14 @@ fn a_fresh_clone_plans_and_checks_from_the_committed_flows() {
     let approve = Command::cargo_bin("graphhelm")
         .unwrap()
         .current_dir(root)
-        .args(["--json", "journey", "approve", "checkout"])
+        .args([
+            "--json",
+            "journey",
+            "approve",
+            "checkout",
+            "--token-file",
+            &owner_token(root),
+        ])
         .output()
         .unwrap();
     assert!(
@@ -1007,7 +1014,14 @@ fn the_plan_names_replayable_flows_and_a_card_naming_the_flow_covers_its_branche
     let approve = Command::cargo_bin("graphhelm")
         .unwrap()
         .current_dir(root)
-        .args(["--json", "journey", "approve", "checkout"])
+        .args([
+            "--json",
+            "journey",
+            "approve",
+            "checkout",
+            "--token-file",
+            &owner_token(root),
+        ])
         .output()
         .unwrap();
     assert!(
@@ -1022,7 +1036,14 @@ fn the_plan_names_replayable_flows_and_a_card_naming_the_flow_covers_its_branche
     // What a clone holds: the flow, never its git-ignored generated contracts.
     fs::remove_file(journeys.join("checkout.json")).unwrap();
     fs::remove_file(journeys.join("checkout.back.json")).unwrap();
-    git(root, &["add", ".graphhelm/journeys/checkout.journey.yaml"]);
+    git(
+        root,
+        &[
+            "add",
+            ".graphhelm/journeys/checkout.journey.yaml",
+            ".gitignore",
+        ],
+    );
     git(root, &["commit", "-q", "-m", "approve"]);
     fs::write(root.join("app/cart/page.tsx"), "export const x = 1\n").unwrap();
     git(root, &["add", "."]);
@@ -1120,4 +1141,36 @@ fn keel_plan_decides_the_design_critic_by_class() {
             .any(|step| step == "design"),
         "{record}"
     );
+}
+
+/// #534: approving is the owner's; `graphhelm init` makes the project's owner store and token.
+fn owner_token(project: &Path) -> String {
+    // init ignores all of `.graphhelm/`; a real project keeps its flows tracked and its owner
+    // store (events, token, keys, owner records) out of git, so the test ignores exactly that.
+    let gitignore = project.join(".gitignore");
+    let kept = std::fs::read(&gitignore).ok();
+    let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["--json", "init", "--project"])
+        .arg(project)
+        .args(["--harness", "claude-code"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let mut ignore = kept.unwrap_or_default();
+    ignore.extend_from_slice(
+        b"
+.graphhelm/*
+!.graphhelm/journeys/
+/.mcp.json
+",
+    );
+    std::fs::write(&gitignore, ignore).unwrap();
+    project
+        .join(".graphhelm/events.token")
+        .to_string_lossy()
+        .into_owned()
 }

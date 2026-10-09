@@ -836,7 +836,7 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "));
     let Some(presented) = presented.map(str::to_owned) else {
-        return unauthorized_response();
+        return refused(request, unauthorized_response()).await;
     };
     if constant_time_eq(presented.as_bytes(), &state.token) {
         return next.run(request).await;
@@ -846,7 +846,7 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
     // other route, existing or added later, is the owner's.
     if constant_time_eq(presented.as_bytes(), &state.agent_session_token) {
         if !agent_session_route_allowed(&request) {
-            return owner_required_response();
+            return refused(request, owner_required_response()).await;
         }
         let mut request = request;
         request
@@ -865,7 +865,7 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
             && request.uri().path().split('/').nth(3) == Some(scoped.execution.as_str())
             && agent_route_allowed(&request)
     }) else {
-        return unauthorized_response();
+        return refused(request, unauthorized_response()).await;
     };
     let mut request = request;
     if let Ok(actor) = HeaderValue::from_str(scoped.actor.id().as_str()) {
@@ -879,6 +879,46 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
         HeaderValue::from_str(&presented).unwrap_or_else(|_| HeaderValue::from_static("invalid")),
     );
     next.run(request).await
+}
+
+/// How much of a refused request's body the auth layer reads and discards before it answers, and
+/// for how long it waits for those bytes. Both are what an UNAUTHENTICATED peer can make the
+/// server spend, so both are small. A peer could already hold a connection open before sending a
+/// header, so the wait adds no new way to tie one up.
+const REFUSAL_DRAIN_BYTES: usize = 64 * 1024;
+const REFUSAL_DRAIN_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Answers a request the auth layer refuses, after reading its body out of the socket (#549).
+/// The refusal is decided from the headers alone, and a client is still sending its body then.
+/// Closing with those bytes unread makes the peer's TCP stack reset the connection, and on
+/// Windows a reset discards the response the client has not read yet: it saw `os error 10053`
+/// where a 401 was sent. Nothing read here is parsed or kept.
+///
+/// ADVISORY for a body over `REFUSAL_DRAIN_BYTES` or one that takes longer than
+/// `REFUSAL_DRAIN_WAIT` to arrive: the drain stops there, the refusal is still sent, and such a
+/// client may still see a reset. The whole drain sits under the one timeout, so the wait is a
+/// real bound on how long a refusal can be delayed, not a per-read one.
+///
+/// A request that carries `Expect: 100-continue` is answered at once, undrained: that client has
+/// sent no body and is waiting to be told. Polling its body would make the server write
+/// `100 Continue`, asking an unauthenticated peer to upload what is about to be refused, and a
+/// body past the limit would then lose the refusal to the reset this function exists to prevent.
+async fn refused(request: Request, response: Response) -> Response {
+    let expects_continue = request
+        .headers()
+        .get_all(axum::http::header::EXPECT)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|token| token.trim().eq_ignore_ascii_case("100-continue"));
+    if !expects_continue {
+        let _ = tokio::time::timeout(
+            REFUSAL_DRAIN_WAIT,
+            axum::body::to_bytes(request.into_body(), REFUSAL_DRAIN_BYTES),
+        )
+        .await;
+    }
+    response
 }
 
 /// The routes an agent session token reaches (#380): an ALLOW-list, so a route not named here,

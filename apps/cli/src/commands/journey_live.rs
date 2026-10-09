@@ -787,7 +787,7 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
                     // Not performed: the play stops here, on the screen before the act, and
                     // says what it would have done. The browser stays open for the owner.
                     let caption = caption_bounded(format!(
-                        "{edge_id}: skipped: would {} \"{}\"",
+                        "Skipped: would {} \"{}\"",
                         skip["would"].as_str().unwrap_or_default(),
                         act["name"].as_str().unwrap_or_default()
                     ));
@@ -817,8 +817,10 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
                     if Instant::now() + pace >= play_deadline {
                         return Err(failure("watch.budget_exceeded", format!("/edges/{at}"), 1));
                     }
-                    // #491: caption the step and outline its control, then wait the pace.
-                    let caption = caption_bounded(format!("{edge_id}: {}", act_caption(act)));
+                    // #491: caption the step and outline its control, then wait the pace. #519: the
+                    // frames reach the owner in the Studio, so the caption says what the act does
+                    // without the edge id (#520 review).
+                    let caption = caption_bounded(act_caption(act));
                     progress.show(
                         &visited[index - 1],
                         index - 1,

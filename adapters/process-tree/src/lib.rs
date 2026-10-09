@@ -230,6 +230,14 @@ fn cleanup_bounded(
     }
 }
 
+// A local reap allowance, separate from execution and tree termination. The staged #549
+// observer exits after 1.5s: the former 1s window rejects it. Five seconds leaves 3.5s
+// of margin without retrying or restarting the child. This is not a measured starvation
+// maximum, and GRAPHHELM_TEST_TIME_SCALE must not change a product budget.
+// ADVISORY wall time: OS scheduling (and Unix waitid's EINTR retries) can delay a poll.
+// The deadline bounds polling; wait() is called only after the exit was observed.
+const REAP_CEILING: std::time::Duration = std::time::Duration::from_secs(5);
+
 fn reap_bounded(
     child: &mut std::process::Child,
     leader_already_exited: bool,
@@ -243,7 +251,7 @@ fn reap_bounded(
             .map(|status| status.success())
             .map_err(|error| format!("reaping cargo failed: {error}"));
     }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let deadline = std::time::Instant::now() + REAP_CEILING;
     loop {
         if leader_exited(child).map_err(|error| format!("reaping cargo failed: {error}"))? {
             #[cfg(unix)]
@@ -258,7 +266,10 @@ fn reap_bounded(
                 .map_err(|error| format!("reaping cargo failed: {error}"));
         }
         if std::time::Instant::now() >= deadline {
-            return Err("process-tree cleanup could not reap cargo within 1s".into());
+            return Err(format!(
+                "process-tree cleanup could not reap cargo within {}s",
+                REAP_CEILING.as_secs()
+            ));
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
@@ -2042,6 +2053,62 @@ impl ProcessIdentity {
 
 #[cfg(test)]
 mod tests {
+    /// #549: observe a real exit delayed beyond the old one-second reap window, without load.
+    /// Cost: two child processes, about 6.5 seconds; no shell, network, or production test seam.
+    #[test]
+    fn a_delayed_leader_is_reaped_but_a_stuck_leader_still_hits_the_ceiling() {
+        use std::io::{Read, Write};
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        const CHILD_DELAY: &str = "GRAPHHELM_REAP_FIXTURE_DELAY_MS";
+        if let Ok(delay) = std::env::var(CHILD_DELAY) {
+            std::io::stdin().read_exact(&mut [0]).unwrap();
+            std::thread::sleep(Duration::from_millis(delay.parse().unwrap()));
+            std::process::exit(7);
+        }
+
+        for (delay, should_exit) in [(1500, true), (60_000, false)] {
+            let mut child = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tests::a_delayed_leader_is_reaped_but_a_stuck_leader_still_hits_the_ceiling",
+                ])
+                .env(CHILD_DELAY, delay.to_string())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            let started = Instant::now();
+            child.stdin.take().unwrap().write_all(&[1]).unwrap();
+            let result = super::reap_bounded(&mut child, false);
+            let elapsed = started.elapsed();
+            // Always clean up before asserting, including on the old implementation's RED.
+            let _ = child.kill();
+            let status = child.wait().unwrap();
+            eprintln!("reap fixture delay={delay}ms elapsed={elapsed:?} result={result:?}");
+            if should_exit {
+                assert_eq!(
+                    result,
+                    Ok(false),
+                    "a delayed exit was reported as a stuck process"
+                );
+                assert_eq!(
+                    status.code(),
+                    Some(7),
+                    "the child's real exit was not reaped"
+                );
+            } else {
+                assert!(result.unwrap_err().contains("could not reap cargo within"));
+                assert!(
+                    elapsed < Duration::from_secs(15),
+                    "the reap ceiling did not end the wait"
+                );
+            }
+        }
+    }
+
     use super::{
         IdentityUnavailable, ProcessIdentity, TerminationOutcome, WAIT_SIGNALED,
         WAIT_STILL_RUNNING, decide_liveness_from_signal, group_signal_target, liveness_from_wait,

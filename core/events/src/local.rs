@@ -1761,12 +1761,17 @@ impl LocalEventRepository {
         let reusable = verified.take().filter(|prefix| {
             prefix.journal_identity == self.journal_identity
                 && prefix.verified_offset <= length
-                && self
-                    .prefix_max_age
-                    .is_none_or(|max_age| prefix.full_verified_at.elapsed() < max_age)
+                // #506: a walk from genesis still in progress (cut by a read budget) is never
+                // expired: its age starts when it completes. Expiring it threw its progress away,
+                // so on a journal whose walk outlasts one read's budget plus the age, every read
+                // restarted from genesis: the loop the end stamp alone did not break.
+                && (prefix.genesis_walk_pending
+                    || self
+                        .prefix_max_age
+                        .is_none_or(|max_age| prefix.full_verified_at.elapsed() < max_age))
         });
-        let (mut ctx, offset, full_verified_at) = match reusable {
-            Some(prefix) if prefix.verified_offset == length => {
+        let (mut ctx, offset, full_verified_at, genesis_walk) = match reusable {
+            Some(prefix) if prefix.verified_offset == length && !prefix.genesis_walk_pending => {
                 let state = prefix.state.clone();
                 *verified = Some(prefix);
                 #[cfg(test)]
@@ -1780,17 +1785,22 @@ impl LocalEventRepository {
                 self.record_load_kind(kind, LoadPath::Suffix);
                 let offset = prefix.verified_offset;
                 let full_verified_at = prefix.full_verified_at;
-                (VerifyCtx::from_prefix(prefix), offset, full_verified_at)
+                let genesis_walk = prefix.genesis_walk_pending;
+                (
+                    VerifyCtx::from_prefix(prefix),
+                    offset,
+                    full_verified_at,
+                    genesis_walk,
+                )
             }
             None => {
                 #[cfg(test)]
                 self.full_load_count.fetch_add(1, Ordering::SeqCst);
                 #[cfg(test)]
                 self.record_load_kind(kind, LoadPath::Full);
-                (VerifyCtx::fresh(), 0, std::time::Instant::now())
+                (VerifyCtx::fresh(), 0, std::time::Instant::now(), true)
             }
         };
-        let from_genesis = offset == 0;
         let bytes = read_bounded_range(&mut journal, offset, length)?;
         if !bytes.is_empty() && bytes.last() != Some(&b'\n') {
             return Err(EventRepositoryError::IntegrityAt(
@@ -1811,6 +1821,7 @@ impl LocalEventRepository {
                         self.journal_identity,
                         offset + consumed,
                         full_verified_at,
+                        genesis_walk,
                     ));
                 }
                 return Err(error);
@@ -1818,15 +1829,16 @@ impl LocalEventRepository {
             Err(error) => return Err(error),
         }
         let state = ctx.state.clone();
-        // #506: a walk from genesis is stamped when it ENDS. Stamped at its start, a walk that
-        // took longer than the cache's age left a prefix already expired, so the next read
-        // walked from genesis again, and a slow store re-verified forever.
-        let full_verified_at = if from_genesis {
+        // #506: a walk from genesis is stamped when it ENDS, whether it ran in one load or was
+        // cut by read budgets and finished by a later one. Stamped at its start, a walk that took
+        // longer than the cache's age left a prefix already expired, so the next read walked
+        // from genesis again, and a slow store re-verified forever.
+        let full_verified_at = if genesis_walk {
             std::time::Instant::now()
         } else {
             full_verified_at
         };
-        *verified = Some(ctx.into_prefix(self.journal_identity, length, full_verified_at));
+        *verified = Some(ctx.into_prefix(self.journal_identity, length, full_verified_at, false));
         Ok(state)
     }
 
@@ -2990,6 +3002,9 @@ struct VerifiedPrefix {
     /// When the journal was last verified from genesis. Suffix loads keep it; only a full
     /// load moves it. [`PrefixCache`] bounds reuse by its age.
     full_verified_at: std::time::Instant,
+    /// #506: a walk from genesis that a read budget cut before it reached the end. Its age is
+    /// not checked, and the load that completes it stamps `full_verified_at` then.
+    genesis_walk_pending: bool,
     state: Arc<LoadedState>,
     budget: LoadBudget,
     counted_evidence: BTreeSet<String>,
@@ -3038,11 +3053,13 @@ impl VerifyCtx {
         journal_identity: FileIdentity,
         verified_offset: u64,
         full_verified_at: std::time::Instant,
+        genesis_walk_pending: bool,
     ) -> VerifiedPrefix {
         VerifiedPrefix {
             journal_identity,
             verified_offset,
             full_verified_at,
+            genesis_walk_pending,
             state: self.state,
             budget: self.budget,
             counted_evidence: self.counted_evidence,
@@ -8295,6 +8312,58 @@ mod limit_tests {
             "the read after a budget cut resumes as a suffix, not from genesis"
         );
         assert_eq!(next.next_sequence(&wake_scope(), "stream-1").unwrap(), 302);
+    }
+
+    /// #506 (gh-claude-1's risk 2 on #542): serve's status reads open with a read budget, so on
+    /// a big journal the walk from genesis is cut (#363 keeps its progress) and finished by a
+    /// later read. That partial walk kept its START stamp: once the walk spanned more than the
+    /// cache's age, the partial prefix itself expired, its progress was thrown away, and every
+    /// read restarted from genesis: the loop on the path the Studio actually takes. A walk still
+    /// in progress must not expire, and the read that completes it stamps it then. Credible
+    /// regressions: the age check applied to a pending walk, or the completing load keeping the
+    /// start stamp. Cost: ~300 single-event appends, one 400 ms sleep.
+    #[test]
+    fn a_budget_cut_genesis_walk_finished_past_the_age_is_stamped_when_it_completes() {
+        let directory = tempfile::tempdir().unwrap();
+        let build = cache_repository(directory.path());
+        build.append_atomic(&valid_graph_request()).unwrap();
+        for sequence in 2..=301 {
+            build
+                .append_atomic(&wake_append(sequence, &format!("wake-pending-{sequence}")))
+                .unwrap();
+        }
+        drop(build);
+        let cache = PrefixCache::new(std::time::Duration::from_millis(300));
+        let spent = crate::ReadBudget::starting_now(
+            Arc::new(FixedClock),
+            chrono::Duration::milliseconds(-1),
+        );
+        let cut = LocalEventRepository::open_with_prefix_cache(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(FixedIds),
+            spent,
+            &cache,
+        );
+        assert!(
+            matches!(cut, Err(EventRepositoryError::ReadBudgetExceeded { .. })),
+            "the spent budget must cut the walk: {:?}",
+            cut.err()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let completes = shared_repository(directory.path(), &cache);
+        assert_eq!(
+            counters(&completes),
+            (0, 1),
+            "a walk cut from genesis resumes past the age instead of restarting"
+        );
+        drop(completes);
+        let next = shared_repository(directory.path(), &cache);
+        assert_eq!(
+            counters(&next),
+            (0, 0),
+            "the read that completed the walk stamped it: the next read is a hit"
+        );
     }
 
     fn counters(repository: &LocalEventRepository) -> (u64, u64) {

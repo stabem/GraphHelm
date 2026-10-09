@@ -2011,8 +2011,9 @@ export default function App({
     [status, stale, eventList, envelopes, nativeRequests, durableProposals, nodeNames, hasRecordedAgentWork]);
   const waitingAskers = useMemo(() => new Set(needs.items.flatMap((item) => item.kind === "question" ? [item.asker] : [])), [needs]);
   const team = useMemo(() => teamModel({ events: eventList, envelopes, personas, nativeLinks: nativePersonaLinks, aliases: actorAliases, model,
-    claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null, waitingAskers, now: clock }),
-    [eventList, envelopes, personas, nativePersonaLinks, actorAliases, model, claudeTaskRead, selected, waitingAskers, clock]);
+    claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null, waitingAskers, now: clock,
+    taskStates: taskGraphs?.executionId === selected ? taskGraphs.tasks : null }),
+    [eventList, envelopes, personas, nativePersonaLinks, actorAliases, model, claudeTaskRead, selected, waitingAskers, clock, taskGraphs]);
   const links = useMemo(() => teamLinks(eventList, envelopes, team.bots, clock), [eventList, envelopes, team, clock]);
   const botNames = useMemo(() => namesOf(team.bots), [team]);
   // Journeys (phase 5, T5): read on run select and again whenever a new `jpd.*` signal lands in the

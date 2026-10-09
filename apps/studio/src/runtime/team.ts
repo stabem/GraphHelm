@@ -1,7 +1,8 @@
 /**
  * The live team, derived from records only (spec §4.1).
  *
- * A bot is a persona, an aliased actor, or an actor with a record in the last two hours; every
+ * A bot is a persona, an aliased actor, a lane the run knows from `task.*` records or notes (#532),
+ * or an actor with a record in the last two hours; every
  * other recorder is folded into one line so a long run does not read as "98 agents". State and
  * tasks come from records, never from note text, and silence is reported as an age, never as
  * "stuck".
@@ -9,7 +10,7 @@
 import { hueOf } from "../components/format";
 import type { EnvelopeRecord } from "../graph/ledger";
 import type { GraphModel } from "../graph/model";
-import type { ClaudeTaskReadModel } from "./team-tasks";
+import type { ClaudeTaskReadModel, TaskState } from "./team-tasks";
 import type { NativeChatSummary, RuntimeEvent } from "./types";
 
 export const SHARED_CODEX_ACTOR = "codex";
@@ -19,6 +20,8 @@ export const LIVE_LINK_MS = 60 * 1000;
 const OPERATOR = "studio-operator";
 const SETTLED = new Set(["succeeded", "waived", "skipped"]);
 const OPENING = "Opening…";
+/** #532: shared identities many sessions record under; a note from one does not name a lane. */
+const TECHNICAL = new Set([SHARED_CODEX_ACTOR, "claude-code", OPERATOR]);
 const COORDINATOR = /coordinat|orchestrat|\blead\b/i;
 
 export type BotState = "working" | "waiting_for_you" | "quiet" | "done";
@@ -37,6 +40,8 @@ export interface TeamInput {
   claudeTasks: ClaudeTaskReadModel | null;
   waitingAskers: ReadonlySet<string>;
   now: number;
+  /** #532: the run's folded `task.*` slices; their lanes and reviewers are lanes the run knows. */
+  taskStates?: TaskState[] | null;
 }
 
 function signalKind(event: RuntimeEvent): string | null {
@@ -63,6 +68,8 @@ interface Tally { count: number; lastAt: string | null; lastSequence: number }
 export function teamModel(input: TeamInput): TeamModel {
   const tallies = new Map<string, Tally>();
   const notes = new Map<string, string>();
+  // #532: a lane the run knows stays on the canvas however long it has been idle.
+  const known = new Set<string>();
   for (const event of input.events) {
     if (event.kind !== "signal_recorded" || event.actorType !== "agent" || event.actorId === null) continue;
     const tally = tallies.get(event.actorId) ?? { count: 0, lastAt: null, lastSequence: 0 };
@@ -72,7 +79,9 @@ export function teamModel(input: TeamInput): TeamModel {
       tally.lastAt = event.occurredAt;
     }
     tallies.set(event.actorId, tally);
+    if (signalKind(event)?.startsWith("task.") === true) known.add(event.actorId);
     if (signalKind(event) === "operator_note") {
+      known.add(event.actorId);
       // #446: a sealed note not opened yet exists; it reads as opening, never as "no note".
       const envelope = input.envelopes[event.sequence];
       const text = envelope?.text?.trim();
@@ -91,11 +100,23 @@ export function teamModel(input: TeamInput): TeamModel {
   for (const id of Object.keys(input.aliases)) {
     if (!seeds.has(id) && id !== SHARED_CODEX_ACTOR && id !== OPERATOR) seeds.set(id, { actorId: id, native: false, charter: null, title: null });
   }
+  // #532: the lane's current task is the newest slice it claimed that has a title.
+  const current = new Map<string, TaskState>();
+  for (const task of input.taskStates ?? []) {
+    for (const id of [task.lane, ...task.reviewers]) if (id) known.add(id);
+    if (task.lane === null || task.title === null) continue;
+    const held = current.get(task.lane);
+    if (held === undefined || task.lastSequence > held.lastSequence) current.set(task.lane, task);
+  }
+  for (const id of TECHNICAL) known.delete(id);
+  for (const id of known) {
+    if (!seeds.has(id) && !tallies.has(id)) seeds.set(id, { actorId: id, native: false, charter: null, title: null });
+  }
   const otherRecorders: OtherRecorder[] = [];
   for (const [id, tally] of tallies) {
     if (seeds.has(id)) continue;
     const at = timeOf(tally.lastAt);
-    if (at !== null && input.now - at <= BOT_RECENT_MS) {
+    if (known.has(id) || (at !== null && input.now - at <= BOT_RECENT_MS)) {
       seeds.set(id, { actorId: id, native: false, charter: null, title: null });
     } else {
       otherRecorders.push({ actorId: id, count: tally.count, lastRecordAt: tally.lastAt });
@@ -136,7 +157,7 @@ export function teamModel(input: TeamInput): TeamModel {
     const name = input.aliases[key] ?? seed.title ?? (shared ? "Codex (shared)" : key);
     return {
       key, actorId: seed.actorId, name, hue: hueOf(key), role: seed.charter === null ? null : firstLine(seed.charter) || null,
-      doingNow: seed.actorId !== null ? notes.get(seed.actorId) ?? "No note yet" : "No note yet",
+      doingNow: doingNow(seed.actorId === null ? undefined : current.get(seed.actorId), seed.actorId === null ? undefined : notes.get(seed.actorId)),
       lastRecordAt: tally?.lastAt ?? null, lastSequence, state, quietMinutes, shared, native: seed.native, tasks,
     };
   });
@@ -147,6 +168,11 @@ export function teamModel(input: TeamInput): TeamModel {
   });
   otherRecorders.sort((a, b) => a.actorId.localeCompare(b.actorId, undefined, { numeric: true }));
   return { bots, otherRecorders };
+}
+
+function doingNow(task: TaskState | undefined, note: string | undefined): string {
+  if (task?.title) return firstLine(task.issue === null ? task.title : `#${task.issue} ${task.title}`);
+  return note ?? "No note yet";
 }
 
 /** The bot an actor id or thread id belongs to, or null when it belongs to none. */

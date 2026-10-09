@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { GraphModel } from "../graph/model";
 import type { EnvelopeRecord } from "../graph/ledger";
-import type { ClaudeTaskReadModel } from "./team-tasks";
+import type { ClaudeTaskReadModel, TaskState } from "./team-tasks";
 import type { RuntimeEvent } from "./types";
 import { teamLinks, teamModel, type TeamInput } from "./team";
 
@@ -24,8 +24,8 @@ function input(overrides: Partial<TeamInput> = {}): TeamInput {
   };
 }
 
-// 40 merge actors that recorded five hours ago, then the live crew.
-const oldCrowd = Array.from({ length: 40 }, (_, i) => record(i + 1, `merge-${i}`, minutesAgo(300)));
+// 40 merge actors that recorded five hours ago (no note, no task record), then the live crew.
+const oldCrowd = Array.from({ length: 40 }, (_, i) => record(i + 1, `merge-${i}`, minutesAgo(300), "node_completed"));
 const live: RuntimeEvent[] = [
   record(100, "coordinator", minutesAgo(3)),
   record(101, "kit-1", minutesAgo(2)),
@@ -127,5 +127,21 @@ describe("teamLinks", () => {
     const env: EnvelopeRecord = { 1: { to: "studio-operator", replyTo: null, text: "q" } };
     const bots = teamModel(input({ events, envelopes: env })).bots;
     expect(teamLinks(events, env, bots, NOW)).toEqual([]);
+  });
+
+  it("#532: keeps every lane the run knows, idle or not, and shows its claimed task", () => {
+    const task = { lane: "gh-claude-9", reviewers: ["gh-claude-5"], title: "Every lane shows", issue: 532, lastSequence: 7 } as unknown as TaskState;
+    const older = { lane: "gh-claude-9", reviewers: [], title: "Older work", issue: 500, lastSequence: 3 } as unknown as TaskState;
+    const team = teamModel(input({
+      events: [record(1, "gh-claude-9", minutesAgo(600), "task.claimed"), record(2, "old-noter", minutesAgo(600)), record(3, "merge-x", minutesAgo(600), "node_completed")],
+      envelopes: { 2: { to: null, replyTo: null, text: "still here" } },
+      taskStates: [older, task],
+    }));
+    expect(team.bots.map((bot) => bot.key).sort()).toEqual(["gh-claude-5", "gh-claude-9", "old-noter"]);
+    expect(team.otherRecorders.map((other) => other.actorId)).toEqual(["merge-x"]);
+    const lane = team.bots.find((bot) => bot.key === "gh-claude-9");
+    expect(lane?.doingNow).toBe("#532 Every lane shows");
+    expect(lane?.state).toBe("quiet");
+    expect(team.bots.find((bot) => bot.key === "old-noter")?.doingNow).toBe("still here");
   });
 });

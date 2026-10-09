@@ -563,12 +563,14 @@ fn only_the_owner_credential_marks_an_edge_safe() {
 
     let (status, marked) = http(&base, "POST", ROUTE, Some(&owner));
     assert_eq!(status, 200, "{marked}");
-    let digest = marked["data"]["safe"]["acts"].as_str().unwrap_or_default();
+    let digest = marked["data"]["safe"]["digest"]
+        .as_str()
+        .unwrap_or_default();
     assert!(digest.starts_with("sha256:"), "{marked}");
     assert!(
         harness
             .flow_text("checkout")
-            .contains(&format!("safe: {{acts: {digest}}}\n")),
+            .contains(&format!("safe: {{digest: {digest}}}\n")),
         "{}",
         harness.flow_text("checkout")
     );
@@ -579,7 +581,7 @@ fn only_the_owner_credential_marks_an_edge_safe() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|edge| edge["id"] == "pay.submit" && edge["safe"]["acts"] == digest),
+            .any(|edge| edge["id"] == "pay.submit" && edge["safe"]["digest"] == digest),
         "{listed}"
     );
 }

@@ -232,11 +232,11 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
                     format!("/edges/{i}/safe"),
                     "only a draft carries a safe mark; an approved flow is not guarded",
                 ));
-            } else if !edge_marked_safe(edge) {
+            } else if !edge_marked_safe(value, edge) {
                 findings.push(Finding::new(
                     "flow.safe_stale",
                     format!("/edges/{i}/safe"),
-                    "the edge's acts changed since the owner marked them safe; the mark is void",
+                    "the edge changed since the owner marked it safe; the mark is void",
                 ));
             }
         }
@@ -376,28 +376,42 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
     findings
 }
 
-/// What a safe mark binds (#518): the edge's acts exactly as the canonical flow writes them, so
-/// any edit to an act (kind, role, name, text, secret, order, count) voids the mark.
-fn acts_digest(edge: &Value) -> String {
-    let acts: Vec<String> = edge["acts"]
+/// What a safe mark binds (#518): WHERE the acts are played and WHAT they are. The screen the
+/// edge leaves and that screen's URL, the screen it reaches, and the acts exactly as the canonical
+/// flow writes them. Editing an act (kind, role, name, text, secret, order, count), moving the
+/// edge to another screen, or repointing its screen at another URL voids the mark: "Send" marked
+/// safe on one page is not "Send" on another.
+fn mark_digest(flow: &Value, edge: &Value) -> String {
+    let url = flow["screens"]
         .as_array()
-        .map(|acts| acts.iter().map(|act| inline(act, ACT_FIELDS)).collect())
+        .and_then(|screens| screens.iter().find(|screen| screen["id"] == edge["from"]))
+        .map(|screen| scalar(&screen["url"]))
         .unwrap_or_default();
+    let mut lines = vec![
+        format!("from: {}", scalar(&edge["from"])),
+        format!("url: {url}"),
+        format!("to: {}", scalar(&edge["to"])),
+    ];
+    if let Some(acts) = edge["acts"].as_array() {
+        lines.extend(acts.iter().map(|act| inline(act, ACT_FIELDS)));
+    }
     format!(
         "sha256:{}",
-        hex::encode(Sha256::digest(acts.join("\n").as_bytes()))
+        hex::encode(Sha256::digest(lines.join("\n").as_bytes()))
     )
 }
 
-/// The owner marked this edge's acts safe to watch on a draft, and they are still those acts.
+/// The owner marked this edge safe to watch on a draft, and it is still that edge.
 ///
-/// WHAT IT PROVES, AND WHAT IT DOES NOT. The digest proves the acts are unchanged since the mark
+/// WHAT IT PROVES, AND WHAT IT DOES NOT. The digest proves the edge is unchanged since the mark
 /// was written. It does not prove WHO wrote it: the mark lives in the flow file, like
-/// `approved: {revision, digest}`, and whoever can write that file can compute a digest. The
-/// doors are what make it the owner's: `journey mark-safe` and its route take the owner
-/// credential, and the agent's own writer (`draft_bytes`) refuses a flow that carries a mark.
-pub(crate) fn edge_marked_safe(edge: &Value) -> bool {
-    edge["safe"]["acts"].as_str() == Some(acts_digest(edge).as_str())
+/// `approved: {revision, digest}`, and whoever can write that file can compute a digest. What
+/// makes it the owner's are the doors: the Runtime route takes the owner credential (the agent
+/// session token is refused), `graphhelm journey mark-safe` takes none and is the owner's own
+/// machine, like `journey approve`, and the agent's own writer (`draft_bytes`) refuses a flow
+/// that carries a mark.
+pub(crate) fn edge_marked_safe(flow: &Value, edge: &Value) -> bool {
+    edge["safe"]["digest"].as_str() == Some(mark_digest(flow, edge).as_str())
 }
 
 pub(crate) fn approval_digest(flow: &Value) -> String {
@@ -1205,7 +1219,7 @@ pub(crate) fn run_approve(args: &crate::args::JourneyApproveArgs) -> Outcome {
 }
 
 /// `graphhelm journey mark-safe <flow> <edge>` (#518): the owner says "this draft's edge may be
-/// played in a watch although an act on it looks destructive". Writes `safe: {acts: <digest>}`
+/// played in a watch although an act on it looks destructive". Writes `safe: {digest: <digest>}`
 /// on that edge of a canonical DRAFT and nothing else; the reply lists every act the mark covers,
 /// so one mark never blesses an act the owner was not shown. Owner door: the CLI on the owner's
 /// machine, or the Runtime route with the owner credential.
@@ -1255,8 +1269,8 @@ pub(crate) fn run_mark_safe(args: &crate::args::JourneyMarkSafeArgs) -> Outcome 
             json!({}),
         );
     };
-    let digest = acts_digest(&flow["edges"][index]);
-    flow["edges"][index]["safe"] = json!({"acts": digest});
+    let digest = mark_digest(&flow, &flow["edges"][index]);
+    flow["edges"][index]["safe"] = json!({"digest": digest});
     if atomic_write(file, canonical(&flow, false).as_bytes()).is_err() {
         return input_error(COMMAND, "the flow could not be written; nothing changed");
     }
@@ -1356,7 +1370,7 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
                 } else {
                     out.push_str(&format!(
                         "{prefix}{field}: {}\n",
-                        inline(v, &["role", "name", "acts"])
+                        inline(v, &["role", "name", "digest"])
                     ));
                 }
             }
@@ -1425,10 +1439,10 @@ mod tests {
         .unwrap();
         assert!(draft_bytes(&flow, project.path()).is_ok());
 
-        let edge = &mut flow["edges"][1];
-        assert!(!edge_marked_safe(edge));
-        edge["safe"] = json!({"acts": acts_digest(edge)});
-        assert!(edge_marked_safe(edge));
+        assert!(!edge_marked_safe(&flow, &flow["edges"][1]));
+        let digest = mark_digest(&flow, &flow["edges"][1]);
+        flow["edges"][1]["safe"] = json!({"digest": digest});
+        assert!(edge_marked_safe(&flow, &flow["edges"][1]));
         let refused = draft_bytes(&flow, project.path()).unwrap_err();
         assert_eq!(refused[0].code, "flow.safe_owner_only");
         assert_eq!(refused[0].pointer, "/edges/1/safe");

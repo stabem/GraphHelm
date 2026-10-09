@@ -165,12 +165,14 @@ marks its edge:
 graphhelm journey mark-safe checkout pay.submit --json
 ```
 ```json
-{"ok":true,"command":"journey.mark_safe","data":{"acts":[{"kind":"enter_text",…},{"kind":"submit","name":"Pay now","role":"button"}],"edge":"pay.submit","id":"checkout","safe":{"acts":"sha256:…"},"written":1},"diagnostics":[]}
+{"ok":true,"command":"journey.mark_safe","data":{"acts":[{"kind":"enter_text",…},{"kind":"submit","name":"Pay now","role":"button"}],"edge":"pay.submit","id":"checkout","safe":{"digest":"sha256:…"},"written":1},"diagnostics":[]}
 ```
 
-It writes `safe: {acts: <digest>}` on that edge of a canonical draft and lists every act the mark
-covers. The digest binds the edge's acts: editing, adding or removing one voids the mark
-(`flow.safe_stale`, a warning) and the guard applies again. Only a draft carries marks: `approve`
+It writes `safe: {digest: <digest>}` on that edge of a canonical draft and lists every act the
+mark covers. The digest binds where the acts are played and what they are: the screen the edge
+leaves and its URL, the screen it reaches, and the acts. Editing, adding or removing an act,
+moving the edge, or changing that screen's URL voids the mark (`flow.safe_stale`, a warning) and
+the guard applies again. Only a draft carries marks: `approve`
 drops them, and a mark on an approved flow is `flow.safe_not_draft`. Like approval, the mark is
 the owner's: the Runtime route (`POST /v1/journey-flows/{id}/edges/{edge}/safe`) takes the owner
 credential only, and the agent's own flow writer refuses a flow that carries one

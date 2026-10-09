@@ -138,7 +138,7 @@
       "id": "https://p50.dev/schemas/journey-flow.schema.json",
       "documentVersion": "1.1.0",
       "path": "schemas/journey-flow.schema.json",
-      "sha256": "sha256:9f3097d822a688ef17b8e8edcc2c3710235fe60435fbfab9df3d1329e267a81c"
+      "sha256": "sha256:12eab2d26d3ab9007d01e6c0b4ee08397b7529f65d30ec7229c6673b7bf46b09"
     },
     "journey-replay-cache": {
       "id": "https://p50.dev/schemas/journey-replay-cache.schema.json",

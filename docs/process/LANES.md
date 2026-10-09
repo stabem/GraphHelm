@@ -74,7 +74,7 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 - **Where the owner set a build-directory rule, the slot picks the directory and the script does
   not export one (#360).** The rule is `<root>\.graphhelm-workspaces\slot-targets.json`:
 
-      {"targetRoot": "C:/gh", "cap": 3}
+      {"targetRoot": "C:/gh", "cap": 3, "minFreeGb": 20}
 
   With it the slot runs the command with
   `CARGO_TARGET_DIR=<targetRoot>\<lane>\<worktree directory name>\target`, records that
@@ -86,6 +86,16 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   `export CARGO_TARGET_DIR=...` inside the script overrides the slot and puts the build back where
   the rule says not to: leave it out. The worktree's directory name must be a workspace id
   (lowercase letters, digits, `.`, `_`, `-`).
+  `minFreeGb` is an integer from 0 to 4096, defaults to 20 when absent, and 0 disables the
+  free-space floor. With the floor enabled the target root must already exist and its free space
+  must be readable. Before queueing and again while holding the slot, a run below the floor
+  refuses and names the free GB, the floor and `graphhelm workspace sweep`; it never evicts a
+  live target. GB here means 1024 cubed bytes. Reclaim still runs only while holding the slot,
+  before the second floor check; a pre-queue refusal does not reclaim anything. Free space is a
+  sample, not a reservation, so another writer can consume space after the check. Slot status
+  adds `targetSpace: {targetRoot, freeGb, minFreeGb}` alongside the existing lane counts;
+  unreadable free space is `null`, never a claim that enough space remains. No-rule and
+  `--shared-target` runs keep their existing behavior.
 - Write Git Bash's full path in the slot command, as above. A bare `bash` or `sh` resolves to WSL.
 - A `cargo` run allowed outside the slot (`check`, `clippy`) uses
   `CARGO_TARGET_DIR=D:\gh\<lane>\target-check`.

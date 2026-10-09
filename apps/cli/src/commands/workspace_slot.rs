@@ -246,7 +246,7 @@ pub(crate) fn run_slot(request: &SlotRequest<'_>) -> Outcome {
             "/priority",
         );
     }
-    // #360: the owner's build-directory rule. A lane over its cap is refused here, before it
+    // #360: the owner's build-directory rule. A lane over its cap or below the floor refuses before it
     // queues, so nobody waits for a turn the slot would then refuse.
     let rule = if request.shared {
         None
@@ -343,7 +343,7 @@ pub(crate) fn run_slot(request: &SlotRequest<'_>) -> Outcome {
     let target = if request.shared {
         shared_target(root)
     } else if let (Some(rule), Some(worktree)) = (&rule, &worktree) {
-        // Holding the slot: reclaiming, the cap and the record are serialized across lanes.
+        // Holding the slot: reclaim, recheck the free-space floor and cap, then record.
         match super::workspace::slot_target(root, rule, lane, worktree, true) {
             Ok((target, gone)) => {
                 reclaimed = gone;
@@ -408,11 +408,11 @@ fn nanos_of(value: &serde_json::Value) -> Option<u128> {
 /// the `.info` and `holder.json` files only describe.
 pub(crate) fn run_status(root: &Path) -> Outcome {
     let dir = slot_dir(root);
-    let targets = super::workspace::target_counts(root);
+    let (targets, target_space) = super::workspace::target_counts(root);
     if !dir.is_dir() {
         return Outcome::success(
             STATUS_COMMAND,
-            json!({"holder": null, "waiting": [], "targets": targets}),
+            json!({"holder": null, "waiting": [], "targets": targets, "targetSpace": target_space}),
         );
     }
     let now = unix_now();
@@ -481,6 +481,6 @@ pub(crate) fn run_status(root: &Path) -> Outcome {
     });
     Outcome::success(
         STATUS_COMMAND,
-        json!({"holder": holder, "waiting": waiting, "targets": targets}),
+        json!({"holder": holder, "waiting": waiting, "targets": targets, "targetSpace": target_space}),
     )
 }

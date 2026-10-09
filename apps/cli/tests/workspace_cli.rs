@@ -1055,7 +1055,8 @@ fn the_slot_refuses_to_build_below_the_free_space_floor() {
         std::fs::write(
             rules.join("slot-targets.json"),
             serde_json::json!({"targetRoot": fast, "minFreeGb": floor}).to_string(),
-        ).unwrap();
+        )
+        .unwrap();
     };
     configure(4096.into());
     assert!(fs2::available_space(&fast).unwrap() < 4096 * 1024_u64.pow(3));
@@ -1064,9 +1065,17 @@ fn the_slot_refuses_to_build_below_the_free_space_floor() {
     assert!(!log.exists(), "the command ran below the floor");
     assert!(!rules.join("slot").exists());
     let message = reply["diagnostics"][0]["message"].as_str().unwrap();
-    assert!(message.contains("4096 GB") && message.contains("minFreeGb")
-        && message.contains("graphhelm workspace sweep"), "{reply}");
-    for malformed in [serde_json::json!(-1), serde_json::json!("20"), serde_json::json!(4097)] {
+    assert!(
+        message.contains("4096 GB")
+            && message.contains("minFreeGb")
+            && message.contains("graphhelm workspace sweep"),
+        "{reply}"
+    );
+    for malformed in [
+        serde_json::json!(-1),
+        serde_json::json!("20"),
+        serde_json::json!(4097),
+    ] {
         configure(malformed);
         let (code, reply) = slot_in(&root, "lane-a", &tree, &log);
         assert_eq!(code, 3, "{reply}");
@@ -1088,16 +1097,24 @@ fn the_slot_refuses_to_build_below_the_free_space_floor() {
     assert_eq!(status["data"]["targets"]["lane-a"], 1);
 
     let missing = dir.path().join("missing-target-root");
-    std::fs::write(rules.join("slot-targets.json"),
-        serde_json::json!({"targetRoot": missing}).to_string()).unwrap();
+    std::fs::write(
+        rules.join("slot-targets.json"),
+        serde_json::json!({"targetRoot": missing}).to_string(),
+    )
+    .unwrap();
     let (_, status) = run(&["slot", "status", "--root", root.to_str().unwrap()]);
     assert_eq!(status["data"]["targetSpace"]["minFreeGb"], 20);
     assert!(status["data"]["targetSpace"]["freeGb"].is_null());
     let (code, reply) = slot_in(&root, "lane-a", &tree, &log);
     assert_eq!(code, 3, "{reply}");
     assert!(!log.exists());
-    assert!(reply["diagnostics"][0]["message"].as_str().unwrap()
-        .contains("could not be measured"), "{reply}");
+    assert!(
+        reply["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("could not be measured"),
+        "{reply}"
+    );
 }
 
 /// #360 (`keel.invariant.persistence`, destructive operation): with the owner's rule file the
@@ -1138,7 +1155,7 @@ fn the_slot_builds_on_the_owners_target_root_caps_a_lane_and_reclaims_orphans() 
 
     std::fs::write(
         rules.join("slot-targets.json"),
-        serde_json::json!({"targetRoot": fast, "cap": 2}).to_string(),
+        serde_json::json!({"targetRoot": fast, "cap": 2, "minFreeGb": 0}).to_string(),
     )
     .unwrap();
     for tree in [&one, &two] {
@@ -1198,7 +1215,7 @@ fn the_slot_builds_on_the_owners_target_root_caps_a_lane_and_reclaims_orphans() 
     std::fs::create_dir_all(second.join(".graphhelm-workspaces")).unwrap();
     std::fs::write(
         second.join(".graphhelm-workspaces/slot-targets.json"),
-        serde_json::json!({"targetRoot": second_fast, "cap": 1}).to_string(),
+        serde_json::json!({"targetRoot": second_fast, "cap": 1, "minFreeGb": 0}).to_string(),
     )
     .unwrap();
     let (code, reply) = slot_in(&second, "lane-a", &two, &log);
@@ -1267,7 +1284,7 @@ fn a_build_directory_is_reclaimed_only_when_its_worktree_is_positively_gone() {
     let rule = |target_root: &Path| {
         std::fs::write(
             rules.join("slot-targets.json"),
-            serde_json::json!({"targetRoot": target_root, "cap": 3}).to_string(),
+            serde_json::json!({"targetRoot": target_root, "cap": 3, "minFreeGb": 0}).to_string(),
         )
         .unwrap();
     };

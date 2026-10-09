@@ -2195,6 +2195,161 @@ pub(super) async fn journey_sessions(State(state): State<ServeState>) -> Respons
     .await
 }
 
+/// `POST /v1/journey-flows/{id}/preview` (#519): exactly `graphhelm journey preview <id>`; body
+/// `{force?}`. 202 while the run goes, 200 with the kept result. Owner credential only.
+pub(super) async fn start_journey_preview(
+    State(state): State<ServeState>,
+    UrlPath(id): UrlPath<String>,
+    body: Bytes,
+) -> Response {
+    const COMMAND: &str = "journey.preview";
+    let force = if body.is_empty() {
+        false
+    } else {
+        match serde_json::from_slice::<serde_json::Value>(&body) {
+            Ok(serde_json::Value::Object(map))
+                if map.keys().all(|key| key == "force")
+                    && map
+                        .get("force")
+                        .is_none_or(|v| v.is_boolean() || v.is_null()) =>
+            {
+                map.get("force")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+            }
+            _ => return bad_request(COMMAND, "the body must be {force?}", "/body"),
+        }
+    };
+    let response = flow_command(state, COMMAND, move |project| {
+        crate::commands::journey_preview::start(&crate::args::JourneyPreviewArgs {
+            id,
+            project: Some(project),
+            force,
+            read: false,
+            run: false,
+        })
+    })
+    .await;
+    preview_status(response).await
+}
+
+/// `GET /v1/journey-flows/{id}/preview` (#519): exactly `graphhelm journey preview <id> --read`.
+pub(super) async fn journey_preview(
+    State(state): State<ServeState>,
+    UrlPath(id): UrlPath<String>,
+) -> Response {
+    let response = flow_command(state, "journey.preview", move |project| {
+        crate::commands::journey_preview::status(&crate::args::JourneyPreviewArgs {
+            id,
+            project: Some(project),
+            force: false,
+            read: true,
+            run: false,
+        })
+    })
+    .await;
+    preview_status(response).await
+}
+
+/// A preview still running answers 202, as agreed with the Studio (#519); everything else as is.
+async fn preview_status(response: Response) -> Response {
+    if response.status() != StatusCode::OK {
+        return response;
+    }
+    let (mut parts, body) = response.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, 4 * 1024 * 1024).await else {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal("journey.preview", "the preview answer could not be read").output,
+        );
+    };
+    let running = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .is_ok_and(|value| value["data"]["state"] == "running");
+    if running {
+        parts.status = StatusCode::ACCEPTED;
+    }
+    Response::from_parts(parts, axum::body::Body::from(bytes))
+}
+
+/// `GET /v1/journey-flows/{id}/screens/{screen}/frame` (#519): the masked frame the current
+/// preview kept for one screen. 200 `image/png` with `ETag`, `X-Frame-Width`, `X-Frame-Height`
+/// and `X-Preview: true`; `If-None-Match` with the current tag answers 304; 404
+/// `preview.no_frame` when that screen has none. A view, never proof. Owner credential only.
+pub(super) async fn journey_screen_frame(
+    State(state): State<ServeState>,
+    UrlPath((id, screen)): UrlPath<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    const COMMAND: &str = "journey.preview";
+    use axum::http::header;
+    use axum::response::IntoResponse;
+    let Some(project) = state.project.as_deref().map(Path::to_path_buf) else {
+        return respond_failure(
+            COMMAND,
+            execution::execution_state(
+                "journey previews require an explicit --project on this Runtime",
+                "/project",
+            ),
+        );
+    };
+    let read =
+        off_reactor(move || crate::commands::journey_preview::screen_frame(&project, &id, &screen))
+            .await
+            .flatten();
+    let Some((png, tag, width, height)) = read else {
+        return respond(
+            StatusCode::NOT_FOUND,
+            Outcome::domain(
+                COMMAND,
+                vec![Diagnostic::error(
+                    "preview.no_frame",
+                    "this screen has no frame in the current preview",
+                    "/screen",
+                    SOURCE,
+                )],
+            )
+            .output,
+        );
+    };
+    let tag = format!("\"{tag}\"");
+    let unchanged = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.split(',').any(|candidate| candidate.trim() == tag));
+    let common = [
+        (header::CACHE_CONTROL, "no-store".to_owned()),
+        (header::ETAG, tag),
+        (
+            header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            "ETag, X-Frame-Width, X-Frame-Height, X-Preview".to_owned(),
+        ),
+    ];
+    if unchanged {
+        return (StatusCode::NOT_MODIFIED, common).into_response();
+    }
+    (
+        StatusCode::OK,
+        common,
+        [
+            (header::CONTENT_TYPE, "image/png".to_owned()),
+            (
+                header::HeaderName::from_static("x-frame-width"),
+                width.to_string(),
+            ),
+            (
+                header::HeaderName::from_static("x-frame-height"),
+                height.to_string(),
+            ),
+            (
+                header::HeaderName::from_static("x-preview"),
+                "true".to_owned(),
+            ),
+        ],
+        png,
+    )
+        .into_response()
+}
+
 /// `GET /v1/journeys/sessions/{id}/frame` (#519): the latest frame of a watch that streams its
 /// page (the default; `window: true` plays in a window and has none). 200 `image/jpeg` with
 /// `ETag: "<seq>"` and `X-Frame-Seq`/`X-Frame-Width`/`X-Frame-Height`; `If-None-Match` with the

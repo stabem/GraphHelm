@@ -172,6 +172,16 @@ const TOOLS: [ToolSpec; 43] = [
         schema: journey_watch_schema,
     },
     ToolSpec {
+        name: "journey_preview",
+        description: "Run a journey flow, draft or approved, headless along every path and keep, \
+                      per screen and per edge, whether it passed and why (POST \
+                      /v1/journey-flows/{id}/preview; exactly `graphhelm journey preview`). It \
+                      answers the kept result when it is for this flow and commit, else starts a \
+                      run and answers state running; force runs anew. read: true only reads it \
+                      (GET /v1/journey-flows/{id}/preview). Never proof. Owner credential only.",
+        schema: journey_preview_schema,
+    },
+    ToolSpec {
         name: "journey_close",
         description: "Close an open live journey session and its browser (DELETE \
                       /v1/journeys/sessions/{sessionId}; exactly `graphhelm journey close`). \
@@ -547,6 +557,17 @@ fn journey_act_schema() -> serde_json::Value {
             "secret": {"type": "string"}
         }),
         &["sessionId", "kind", "role", "name"],
+    )
+}
+
+fn journey_preview_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({
+            "id": {"type": "string"},
+            "force": {"type": "boolean"},
+            "read": {"type": "boolean"}
+        }),
+        &["id"],
     )
 }
 
@@ -1719,6 +1740,15 @@ pub(crate) fn call(
                 None,
                 None,
             )
+        }),
+        "journey_preview" => require(arguments, "id").map(|id| {
+            let path = url::segment_path(&["v1", "journey-flows", id, "preview"]);
+            if arguments.get("read").and_then(serde_json::Value::as_bool) == Some(true) {
+                api.request("GET", &path, None, None, None)
+            } else {
+                let force = arguments.get("force").and_then(serde_json::Value::as_bool) == Some(true);
+                api.request("POST", &path, Some(&serde_json::json!({"force": force})), None, None)
+            }
         }),
         "journey_sessions" => Ok(api.request(
             "GET",

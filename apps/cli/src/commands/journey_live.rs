@@ -990,7 +990,7 @@ fn caller_wait(args: &JourneyOpenArgs) -> Duration {
     }
 }
 
-struct Launched {
+pub(super) struct Launched {
     project: PathBuf,
     script: String,
     dir: PathBuf,
@@ -1034,7 +1034,7 @@ fn base_address(base: &str) -> Option<String> {
     })
 }
 
-fn base_reachable(base: &str) -> bool {
+pub(super) fn base_reachable(base: &str) -> bool {
     use std::net::ToSocketAddrs;
     base_address(base)
         .and_then(|address| address.to_socket_addrs().ok())
@@ -1059,7 +1059,7 @@ fn posix_shell() -> Command {
 }
 
 /// Starts the declared app under test and waits until the flow's base answers.
-fn launch(project: &Path, base: &str) -> Result<Launched> {
+pub(super) fn launch(project: &Path, base: &str) -> Result<Launched> {
     let declared = project.join(FIXTURE_FILE);
     if !safe_node(&declared) {
         return Err(failure("watch.app_down", "/base", 2));

@@ -43,6 +43,8 @@ pub fn run(args: &JourneyArgs) -> Outcome {
         JourneyCommand::Act(act) => super::journey_live::act(act),
         JourneyCommand::Close(close) => super::journey_live::close(close),
         JourneyCommand::Sessions(sessions) => super::journey_live::sessions(sessions),
+        JourneyCommand::Preview(preview) if preview.read => super::journey_preview::status(preview),
+        JourneyCommand::Preview(preview) => super::journey_preview::start(preview),
         JourneyCommand::Explore(explore) => super::journey_explore::run(explore),
         JourneyCommand::Flows(flows) => super::journey_flow::run_flows(flows),
     }

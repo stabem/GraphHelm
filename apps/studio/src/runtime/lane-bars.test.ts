@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { agentBoard } from "./agent-board";
 import { laneBars, STALL_MS, type TimedTaskEvent } from "./lane-bars";
 
 const T0 = Date.parse("2026-10-09T00:00:00Z");
@@ -77,5 +78,25 @@ describe("laneBars", () => {
   it("skips events with an invalid timestamp", () => {
     const lanes = laneBars([ev({ kind: "task.claimed", lane: "dev", at: "garbage" })], T0, 1000);
     expect(lanes).toEqual([]);
+  });
+
+  it("#549: bars are kept per PR, so another slice's merge or claim never closes #581's review", () => {
+    const t = "issue-549";
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "author", taskId: t, branch: "s1", at: at(0) } as never),
+      ev({ kind: "task.pr_opened", lane: "author", taskId: t, pr: 571, headSha: "aaaa1111", at: at(10) } as never),
+      ev({ kind: "task.claimed", lane: "author", taskId: t, branch: "s2", at: at(20) } as never),
+      ev({ kind: "task.pr_opened", lane: "author", taskId: t, pr: 581, headSha: "66613c95", at: at(30) } as never),
+      ev({ kind: "task.review_assigned", reviewer: "gh-claude-8", taskId: t, pr: 581, headSha: "66613c95", at: at(40) } as never),
+      ev({ kind: "task.merged", taskId: t, pr: 571, at: at(50) }),
+      ev({ kind: "task.claimed", lane: "author", taskId: t, branch: "s3", at: at(60) } as never),
+    ], T0 + 100, 1000);
+    const rev = lanes.find((l) => l.lane === "gh-claude-8")!;
+    expect(rev.bars).toEqual([expect.objectContaining({ kind: "review", label: "#581", open: true })]);
+    const author = lanes.find((l) => l.lane === "author")!;
+    expect(author.bars.filter((b) => b.open).map((b) => b.label)).toEqual([t]);
+    const row = agentBoard([{ name: "gh-claude-8" } as never], lanes, [], T0 + 100).find((r) => r.name === "gh-claude-8")!;
+    expect(row).toMatchObject({ stage: "review", pr: 581 });
+    expect(row.status).not.toBe("free");
   });
 });

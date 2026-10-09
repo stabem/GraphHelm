@@ -39,10 +39,16 @@
   --mv-tone: var(--mv-ready); --mv-tint: rgba(154, 167, 255, 0.08); --mv-ring: rgba(154, 167, 255, 0.4);
 }
 
-/* The Graph tab takes the whole main area: the chat column and right panel step aside. */
-.studio-columns:has(.mv[data-wide="true"]) > .chat-column,
+/* The Graph tab takes the whole main area: the chat column and right panel step aside.
+   #591: only above the phone breakpoint. On a phone the Chat tab already hides the canvas column,
+   so hiding the chat column there too left an empty page; the phone tabs pick one column instead. */
 .studio-columns:has(.mv[data-wide="true"]) > .right-panel {
   display: none;
+}
+@media (min-width: 769px) {
+  .studio-columns:has(.mv[data-wide="true"]) > :is(.chat-column) {
+    display: none;
+  }
 }
 
 /* Header: the sub-tabs as the design's segmented nav. */

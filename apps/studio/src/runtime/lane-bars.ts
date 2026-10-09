@@ -10,25 +10,63 @@ export const STALL_MS = 2 * 60 * 60 * 1000;
 
 export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number): Lane[] {
   const lanes = new Map<string, { bars: LaneBar[]; last: number }>();
-  const open = new Map<string, { lane: string; bar: LaneBar }>();
-  const prOf = new Map<string, number>();
+  const open = new Map<string, { lane: string; bar: LaneBar; slice: string }>();
+  // #591: a bar belongs to one slice of its task, as foldTaskEvents keys it: its PR once one is
+  // recorded, else its claim. Keying by taskId let one slice's merge or a later claim close another
+  // slice's open review.
+  const claims = new Map<string, { key: string; lane?: string }[]>();
+  const known = new Set<string>();
+  const latest = new Map<string, string>();
+  const prOfKey = new Map<string, number>();
   const laneOf = (name: string) => {
     let l = lanes.get(name);
     if (!l) { l = { bars: [], last: 0 }; lanes.set(name, l); }
     return l;
   };
-  const label = (taskId: string) => (prOf.has(taskId) ? `#${prOf.get(taskId)}` : taskId);
-  const start = (lane: string, kind: BarKind, taskId: string, t: number) => {
-    for (const [k, v] of open) {
-      if (k === `${kind}:${taskId}:${lane}`) { v.bar.end = t; v.bar.open = false; open.delete(k); }
+  const rekey = (from: string, to: string, label: string) => {
+    for (const [k, v] of [...open]) {
+      const [kind, slice, ...rest] = k.split("|");
+      if (slice === from) { open.delete(k); v.slice = to; v.bar.label = label; open.set([kind, to, ...rest].join("|"), v); }
     }
-    const bar: LaneBar = { kind, label: label(taskId), start: t, end: now, open: true, taskId, since: t };
-    laneOf(lane).bars.push(bar);
-    open.set(`${kind}:${taskId}:${lane}`, { lane, bar });
   };
-  const close = (kind: BarKind, taskId: string, t: number, lane?: string) => {
-    for (const [k, v] of open) {
-      if (k.startsWith(`${kind}:${taskId}:`) && (!lane || v.lane === lane)) {
+  const sliceOf = (e: TimedTaskEvent): string => {
+    let key: string;
+    if (e.kind === "task.claimed") {
+      key = `${e.taskId}#claim-${e.sequence}`;
+      const list = claims.get(e.taskId) ?? [];
+      list.push({ key, lane: e.lane });
+      claims.set(e.taskId, list);
+    } else if (e.pr !== undefined) {
+      key = `${e.taskId}#pr-${e.pr}`;
+      prOfKey.set(key, e.pr);
+      if (!known.has(key)) {
+        // A PR no slice holds yet joins the oldest open claim of its task (the same lane's, when named).
+        const list = claims.get(e.taskId) ?? [];
+        const i = list.findIndex((c) => e.lane === undefined || c.lane === undefined || c.lane === e.lane);
+        if (i >= 0) {
+          const [claim] = list.splice(i, 1);
+          rekey(claim.key, key, `#${e.pr}`);
+        }
+      }
+    } else {
+      key = latest.get(e.taskId) ?? e.taskId;
+    }
+    known.add(key);
+    latest.set(e.taskId, key);
+    return key;
+  };
+  const start = (lane: string, kind: BarKind, taskId: string, slice: string, t: number) => {
+    const k = [kind, slice, lane].join("|");
+    const prev = open.get(k);
+    if (prev) { prev.bar.end = t; prev.bar.open = false; open.delete(k); }
+    const pr = prOfKey.get(slice);
+    const bar: LaneBar = { kind, label: pr !== undefined ? `#${pr}` : taskId, start: t, end: now, open: true, taskId, since: t };
+    laneOf(lane).bars.push(bar);
+    open.set(k, { lane, bar, slice });
+  };
+  const close = (kind: BarKind, slice: string, t: number, lane?: string) => {
+    for (const [k, v] of [...open]) {
+      if (k.startsWith(`${kind}|${slice}|`) && (!lane || v.lane === lane)) {
         v.bar.end = t; v.bar.open = false; open.delete(k);
       }
     }
@@ -36,17 +74,17 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
   for (const e of [...events].sort((a, b) => a.sequence - b.sequence)) {
     const t = Date.parse(e.at);
     if (!Number.isFinite(t)) continue;
-    if (e.pr !== undefined) prOf.set(e.taskId, e.pr);
+    const slice = sliceOf(e);
     const actor = e.kind === "task.claimed" ? e.lane : e.reviewer;
     if (actor) laneOf(actor).last = Math.max(laneOf(actor).last, t);
     switch (e.kind) {
-      case "task.claimed": if (e.lane) start(e.lane, "implement", e.taskId, t); break;
-      case "task.review_assigned": close("implement", e.taskId, t); if (e.reviewer) start(e.reviewer, "review", e.taskId, t); break;
+      case "task.claimed": if (e.lane) start(e.lane, "implement", e.taskId, slice, t); break;
+      case "task.review_assigned": close("implement", slice, t); if (e.reviewer) start(e.reviewer, "review", e.taskId, slice, t); break;
       case "task.review_verdict":
-        close("review", e.taskId, t, e.reviewer);
-        if (e.reviewer && String(e.verdict).startsWith("APPROVE")) start(e.reviewer, "merge", e.taskId, t);
+        close("review", slice, t, e.reviewer);
+        if (e.reviewer && String(e.verdict).startsWith("APPROVE")) start(e.reviewer, "merge", e.taskId, slice, t);
         break;
-      case "task.merged": for (const k of ["implement", "review", "merge"] as const) close(k, e.taskId, t); break;
+      case "task.merged": for (const k of ["implement", "review", "merge"] as const) close(k, slice, t); break;
       default: break;
     }
   }

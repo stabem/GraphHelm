@@ -225,6 +225,38 @@ describe("project document editor", () => {
     expect(screen.getByText("Unsaved draft")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save project file" })).toBeDisabled();
   });
+  // #549: the App guards navigation from the editor's last report. After a save the editor said
+  // "not saving" at once and "clean" only from an effect a render later, so between the two the
+  // App held "not saving" beside a stale "draft" and answered a click with the discard prompt for
+  // a file already saved. That window is what made App.test's document-save cell fail about one
+  // run in three. This cell reads what the App would hold at the instant saving ends, so it does
+  // not depend on timing. Cost: one render, no timers.
+  it("tells its host the saved draft is clean no later than it tells it saving ended", async () => {
+    const reports: string[] = [];
+    let attention = "none";
+    const onAttentionChange = vi.fn((next: string, dirty: boolean) => { attention = `${next}/${dirty}`; });
+    const onSavingChange = vi.fn((saving: boolean) => { reports.push(`saving=${saving} with ${attention}`); });
+    const saved = (status: "recorded" | "pending") => ({ contentSha256: "new", notification: { status, notifiedRuns: [], pendingRuns: [] } });
+    const saveDocument = vi.fn().mockResolvedValueOnce(saved("pending")).mockResolvedValue(saved("recorded"));
+    const reread = vi.fn().mockResolvedValueOnce({ content: "Original rule", contentSha256: "old" }).mockResolvedValue({ content: "New rule", contentSha256: "new" });
+    render(<DocumentEditor document={document} readDocument={reread} saveDocument={saveDocument} onClose={vi.fn()} onAttentionChange={onAttentionChange} onSavingChange={onSavingChange} />);
+    fireEvent.change(await screen.findByLabelText("File content"), { target: { value: "New rule" } });
+    fireEvent.change(screen.getByLabelText("Why are you changing this?"), { target: { value: "New terms" } });
+    await waitFor(() => expect(attention).toBe("draft/true"));
+    reports.length = 0;
+
+    // Saved, with run notices still pending: the host must not be left on "draft".
+    fireEvent.click(screen.getByRole("button", { name: "Save project file" }));
+    await screen.findByRole("button", { name: "Retry run notices" });
+    // The editor reports saving from its handler and again from its effect; every report agrees.
+    expect([...new Set(reports)]).toEqual(["saving=true with draft/true", "saving=false with pending_notice/false"]);
+
+    // The notices go through: clean, at the same instant saving ends.
+    reports.length = 0;
+    fireEvent.click(screen.getByRole("button", { name: "Retry run notices" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry run notices" })).not.toBeInTheDocument());
+    expect([...new Set(reports)]).toEqual(["saving=true with pending_notice/false", "saving=false with clean/false"]);
+  });
   it("uses the portable idempotency key fallback when randomUUID is unavailable", async () => {
     const originalRandomUUID = globalThis.crypto.randomUUID;
     Object.defineProperty(globalThis.crypto, "randomUUID", { value: undefined, configurable: true });

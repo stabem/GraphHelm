@@ -351,3 +351,91 @@ describe("TaskGraphs review rounds (#514)", () => {
     expect(within(by(/^Re-review · round 1/)).getByRole("link", { name: "reason" })).toHaveAttribute("href", url(2));
   });
 });
+
+/* #502 (owner: "a timer to know how long it has been there"): the lit step shows the time in that
+ * step, ticking from the Runtime's append time of the record that entered it, and a thin bar
+ * against the run's typical time for that step (median over merged slices, 3+ samples), coloured by
+ * pace with the typical value in its tooltip. With fewer samples it says so instead of inventing a
+ * target. A merged task shows the time it spent in each step. Cost: jsdom only. */
+describe("TaskGraphs step timer (#502)", () => {
+  const T0 = Date.parse("2026-10-08T10:00:00Z");
+  const at = (minutes: number) => new Date(T0 + minutes * 60_000).toISOString();
+  const head = "a".repeat(40);
+  const timed = (sequence: number, minutes: number, taskId: string, kind: string, actorId: string, fields: Record<string, unknown>) =>
+    ({ ...record(sequence, taskId, kind, actorId, fields), occurredAt: at(minutes) });
+  /** A merged slice that spent `review` minutes in Review. */
+  const done = (n: number, review: number) => [
+    timed(n * 10, 0, `issue-${n}`, "task.claimed", "l1", { issue: n, lane: "l1", branch: `b${n}` }),
+    timed(n * 10 + 1, 10, `issue-${n}`, "task.pr_opened", "l1", { pr: n + 100, headSha: head, journeys: [], lane: "l1" }),
+    timed(n * 10 + 2, 10 + review, `issue-${n}`, "task.review_verdict", "l2", { pr: n + 100, headSha: head, reviewer: "l2", verdict: "APPROVE", commentUrl }),
+    timed(n * 10 + 3, 12 + review, `issue-${n}`, "task.merged", "l2", { pr: n + 100, mergeSha: "c".repeat(40), closes: [n], merger: "l2" }),
+  ];
+  const reviewing = [
+    timed(900, 0, "issue-90", "task.claimed", "l1", { issue: 90, lane: "l1", branch: "b90" }),
+    timed(901, 100, "issue-90", "task.pr_opened", "l1", { pr: 190, headSha: head, journeys: [], lane: "l1" }),
+  ];
+
+  it("shows the time in the lit step and a bar coloured by pace against the typical time", () => {
+    const tasks = foldTaskEvents([...done(1, 20), ...done(2, 30), ...done(3, 40), ...reviewing]);
+    render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} now={T0 + 165 * 60_000} />);
+    const row = screen.getByRole("group", { name: /issue #90/i });
+    const lit = within(row).getByRole("listitem", { current: "step" });
+    expect(lit).toHaveTextContent("in this step: 1 h 05");
+    const bar = within(lit).getByRole("meter");
+    expect(bar).toHaveAttribute("data-pace", "stuck");
+    expect(bar).toHaveAttribute("title", expect.stringMatching(/typical 30 min \(median of 3\)/));
+  });
+
+  it("shows only the timer, and says why, with fewer than three past samples", () => {
+    const tasks = foldTaskEvents([...done(1, 20), ...reviewing]);
+    render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} now={T0 + 110 * 60_000} />);
+    const lit = within(screen.getByRole("group", { name: /issue #90/i })).getByRole("listitem", { current: "step" });
+    expect(lit).toHaveTextContent("in this step: 10 min");
+    expect(within(lit).queryByRole("meter")).toBeNull();
+    expect(lit).toHaveTextContent(/no typical time yet/);
+  });
+
+  it("shows how long a merged task spent in each step", () => {
+    const tasks = foldTaskEvents(done(1, 20));
+    render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} now={T0 + 999 * 60_000} />);
+    const row = screen.getByRole("group", { name: /issue #1\b/i });
+    const nodes = within(row).getAllByRole("listitem");
+    expect(nodes.map((node) => node.querySelector(".task-node-time")?.textContent ?? "")).toEqual(["10 min", "20 min", "2 min"]);
+  });
+});
+
+describe("TaskGraphs round timers (#502 on #514)", () => {
+  it("times a lit Fix from its BLOCK and a lit Re-review from the fix, not from when Review began", () => {
+    const T0 = Date.parse("2026-10-08T10:00:00Z");
+    const at = (m: number) => new Date(T0 + m * 60_000).toISOString();
+    const A = "a".repeat(40), B = "b".repeat(40);
+    const steps = [
+      { ...record(1, "issue-9", "task.pr_opened", "gh-claude-2", { pr: 19, headSha: A, journeys: [], lane: "gh-claude-2" }), occurredAt: at(0) },
+      { ...record(2, "issue-9", "task.review_verdict", "gh-claude-5", { pr: 19, headSha: A, reviewer: "gh-claude-5", verdict: "BLOCK", commentUrl }), occurredAt: at(40) },
+      { ...record(3, "issue-9", "task.pr_opened", "gh-claude-2", { pr: 19, headSha: B, journeys: [], lane: "gh-claude-2" }), occurredAt: at(55) },
+    ];
+    const { unmount } = render(<TaskGraphs tasks={foldTaskEvents(steps.slice(0, 2))} onOpenJourney={vi.fn()} now={T0 + 50 * 60_000} />);
+    expect(screen.getByRole("listitem", { current: "step" })).toHaveTextContent(/^Fix · round 1.*in this step: 10 min/);
+    unmount();
+    render(<TaskGraphs tasks={foldTaskEvents(steps)} onOpenJourney={vi.fn()} now={T0 + 60 * 60_000} />);
+    expect(screen.getByRole("listitem", { current: "step" })).toHaveTextContent(/^Re-review · round 1.*in this step: 5 min/);
+  });
+});
+
+describe("TaskGraphs card home follows the parent chain (#524 review)", () => {
+  it("puts a grandchild in the root issue's card, never in a card without its parent's row", () => {
+    const claim = (seq: number, issue: number, parent?: number) =>
+      record(seq, `issue-${issue}`, "task.claimed", "gh-claude-4", { issue, lane: "gh-claude-4", branch: `b${issue}`, ...(parent ? { parent } : {}) });
+    render(<TaskGraphs tasks={foldTaskEvents([claim(1, 100), claim(2, 200, 100), claim(3, 300, 200)])} onOpenJourney={vi.fn()} />);
+    const cards = screen.getAllByRole("article");
+    expect(cards).toHaveLength(1);
+    expect(within(cards[0]).getAllByRole("group")).toHaveLength(3);
+  });
+
+  it("survives a parent cycle", () => {
+    const claim = (seq: number, issue: number, parent: number) =>
+      record(seq, `issue-${issue}`, "task.claimed", "gh-claude-4", { issue, lane: "gh-claude-4", branch: `b${issue}`, parent });
+    render(<TaskGraphs tasks={foldTaskEvents([claim(1, 1, 2), claim(2, 2, 1)])} onOpenJourney={vi.fn()} />);
+    expect(screen.getAllByRole("group")).toHaveLength(2);
+  });
+});

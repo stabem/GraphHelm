@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
+import { duration, pace, typicalStep, type TimedStep } from "../runtime/step-timing";
 import type { TaskState } from "../runtime/team-tasks";
 
 /* #391 (journey-first spec §7, Rule 5): one small graph per task, folded from the `task.*` records
@@ -14,6 +15,26 @@ const GITHUB_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(p
 export interface TaskGraphsProps {
   tasks: TaskState[];
   onOpenJourney: (contractId: string) => void;
+  /** The clock the timers read (#502); tests pass a fixed one. Default: now, ticking every 30 s. */
+  now?: number;
+}
+
+/** #502: what a node needs to show its time: the current clock, and the run's typical time per step
+ * (median over the delivered slices; `null` below three samples) with how many samples it has. */
+interface Timing {
+  now: number;
+  typical: Record<TimedStep, { ms: number; samples: number } | null>;
+  samples: Record<TimedStep, number>;
+}
+
+function useNow(fixed: number | undefined): number {
+  const [now, setNow] = useState(() => fixed ?? Date.now());
+  useEffect(() => {
+    if (fixed !== undefined) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [fixed]);
+  return fixed ?? now;
 }
 
 function title(task: TaskState): string {
@@ -44,10 +65,25 @@ function ordered(tasks: TaskState[]): { open: TaskState[]; delivered: TaskState[
  * is a row in the parent issue's card when that card exists, else its own card. */
 interface Card { issue: number | null; key: string; rows: TaskState[] }
 function cardsOf(tasks: TaskState[]): Card[] {
+  // A card's home follows the parent chain while the parent has rows here (a grandchild sits with
+  // its root, never in a card its parent's row left), stopping at a cycle (#524 review).
+  const parentOf = new Map<number, number>();
+  for (const task of tasks) if (task.issue !== null && task.parent !== null) parentOf.set(task.issue, task.parent);
   const issues = new Set(tasks.map((task) => task.issue).filter((issue): issue is number => issue !== null));
+  const root = (issue: number | null): number | null => {
+    const seen = new Set<number>();
+    let at = issue;
+    while (at !== null && !seen.has(at)) {
+      seen.add(at);
+      const up = parentOf.get(at);
+      if (up === undefined || !issues.has(up) || seen.has(up)) return at;
+      at = up;
+    }
+    return at;
+  };
   const cards = new Map<string, Card>();
   for (const task of tasks) {
-    const home = task.parent !== null && issues.has(task.parent) ? task.parent : task.issue;
+    const home = task.parent !== null && issues.has(task.parent) ? root(task.parent) : task.issue;
     const key = home !== null ? `issue-${home}` : task.key;
     const card = cards.get(key) ?? { issue: home, key, rows: [] };
     card.rows.push(task);
@@ -87,7 +123,13 @@ function useChanged(tasks: TaskState[]): Set<string> {
 }
 
 type NodeState = "done" | "current" | "next" | "blocked";
-interface StepNode { key: string; label: string; who: ReactNode; state: NodeState; reason: string | null; review: boolean }
+interface StepNode {
+  key: string; label: string; who: ReactNode; state: NodeState; reason: string | null; review: boolean;
+  /** #502: the step whose typical time this node is measured against (Fix and Re-review: none), and
+   * when the node was entered (the Runtime's append time of the record that lit it). */
+  timed: TimedStep | null;
+  since: string | null;
+}
 
 /** #514 (owner: "a node for it: re-review and the agent working"): the row grows one Fix and one
  * Re-review per BLOCK round, so the story of the loop shows. A Review blocked is marked ✗ with its
@@ -102,11 +144,12 @@ function nodesOf(task: TaskState): StepNode[] {
   const reviewers = task.reviewers.length > 0 ? task.reviewers.join(", ") : null;
   const rounds = task.rounds;
   const nodes: StepNode[] = [
-    { key: "implement", label: "Implement", who: task.lane, state: task.step === "implement" ? "current" : "done", reason: null, review: false },
+    { key: "implement", label: "Implement", who: task.lane, state: task.step === "implement" ? "current" : "done", reason: null, review: false,
+      timed: "implement", since: task.clock.since },
     {
       key: "review", label: "Review", who: rounds.length > 0 ? rounds[0].reviewer : reviewers, review: true,
       state: rounds.length > 0 ? "blocked" : task.step === "review" ? "current" : task.step === "implement" ? "next" : "done",
-      reason: rounds[0]?.commentUrl ?? null,
+      reason: rounds[0]?.commentUrl ?? null, timed: "review", since: task.clock.since,
     },
   ];
   rounds.forEach((round, index) => {
@@ -114,21 +157,48 @@ function nodesOf(task: TaskState): StepNode[] {
     const last = next === undefined;
     const tag = ` · round ${index + 1}`;
     nodes.push({
-      key: `fix-${index}`, label: `Fix${tag}`, who: task.lane, review: false, reason: null,
+      key: `fix-${index}`, label: `Fix${tag}`, who: task.lane, review: false, reason: null, timed: null, since: round.blockedAt,
       state: round.fixHead !== null ? "done" : last && !merged ? "current" : "done",
     });
     nodes.push({
       key: `rereview-${index}`, label: `Re-review${tag}`, review: true,
       who: next !== undefined ? next.reviewer : reviewers ?? round.reviewer,
       state: next !== undefined ? "blocked" : round.fixHead === null ? "next" : task.step === "review" ? "current" : "done",
-      reason: next?.commentUrl ?? null,
+      reason: next?.commentUrl ?? null, timed: null, since: round.fixedAt,
     });
   });
-  nodes.push({ key: "merge", label: "Merge", who: sha, state: merged ? "done" : task.step === "merge" ? "current" : "next", reason: null, review: false });
+  nodes.push({ key: "merge", label: "Merge", who: sha, state: merged ? "done" : task.step === "merge" ? "current" : "next", reason: null, review: false,
+    timed: "merge", since: task.clock.since });
   return nodes;
 }
 
-function Node({ node }: { node: StepNode }) {
+/** #502: the lit node's time and, for a step with a typical time, a bar against it; a step the
+ * slice left shows what it spent there. */
+function StepTime({ task, node, timing }: { task: TaskState; node: StepNode; timing: Timing }) {
+  if (node.state === "done") {
+    const spent = node.timed === null ? undefined : task.clock.spent[node.timed];
+    return spent === undefined ? null : <span className="task-node-time">{duration(spent)}</span>;
+  }
+  if (node.state !== "current" || node.since === null) return null;
+  const elapsed = Math.max(0, timing.now - Date.parse(node.since));
+  const typical = node.timed === null ? null : timing.typical[node.timed];
+  return (
+    <>
+      <span className="task-node-time">in this step: {duration(elapsed)}</span>
+      {node.timed !== null && (typical === null
+        ? <span className="task-node-pace-none">no typical time yet ({timing.samples[node.timed]} of 3 past tasks)</span>
+        : (
+          <span className="task-node-bar" role="meter" aria-label={`time in ${node.timed}`} aria-valuemin={0}
+            aria-valuemax={Math.round(2 * typical.ms)} aria-valuenow={Math.round(elapsed)}
+            data-pace={pace(elapsed, typical.ms)} title={`typical ${duration(typical.ms)} (median of ${typical.samples})`}>
+            <span className="task-node-bar-fill" style={{ width: `${Math.min(100, (100 * elapsed) / (2 * typical.ms))}%` }} />
+          </span>
+        ))}
+    </>
+  );
+}
+
+function Node({ task, node, timing }: { task: TaskState; node: StepNode; timing: Timing }) {
   return (
     <li className={`task-node task-node-${node.state}`} aria-current={node.state === "current" ? "step" : undefined}>
       <span className="task-node-label">{node.label}{node.state === "blocked" && <span className="task-node-cross" aria-label="blocked"> ✗</span>}</span>
@@ -138,11 +208,12 @@ function Node({ node }: { node: StepNode }) {
       )}
       {/* #508 (owner): a review in progress with nobody named means a record is missing; say so. */}
       {node.who === null && node.review && node.state === "current" && <span className="task-node-missing">no reviewer recorded</span>}
+      <StepTime task={task} node={node} timing={timing} />
     </li>
   );
 }
 
-function Graph({ task, changed, onOpenJourney }: { task: TaskState; changed: boolean; onOpenJourney: (contractId: string) => void }) {
+function Graph({ task, changed, onOpenJourney, timing }: { task: TaskState; changed: boolean; onOpenJourney: (contractId: string) => void; timing: Timing }) {
   return (
     <div className={changed ? "task-graph task-graph-changed" : "task-graph"} role="group" aria-label={title(task)}>
       <div className="task-graph-head">
@@ -168,7 +239,7 @@ function Graph({ task, changed, onOpenJourney }: { task: TaskState; changed: boo
         </p>
       )}
       <ol className="task-graph-steps">
-        {nodesOf(task).map((node) => <Node key={node.key} node={node} />)}
+        {nodesOf(task).map((node) => <Node key={node.key} task={task} node={node} timing={timing} />)}
       </ol>
       {task.blockedBy !== null && (GITHUB_URL.test(task.blockedBy.commentUrl)
         ? <a className="task-graph-blocked" href={task.blockedBy.commentUrl} target="_blank" rel="noreferrer">
@@ -190,7 +261,7 @@ function Graph({ task, changed, onOpenJourney }: { task: TaskState; changed: boo
   );
 }
 
-function CardView({ card, changed, onOpenJourney }: { card: Card; changed: Set<string>; onOpenJourney: (contractId: string) => void }) {
+function CardView({ card, changed, onOpenJourney, timing }: { card: Card; changed: Set<string>; onOpenJourney: (contractId: string) => void; timing: Timing }) {
   const lead = card.rows.find((row) => row.issue === card.issue && row.title !== null) ?? card.rows.find((row) => row.issue === card.issue) ?? card.rows[0];
   const label = card.issue !== null ? `Issue #${card.issue}${lead.issue === card.issue && lead.title !== null ? ` · ${lead.title}` : ""}` : title(lead);
   return (
@@ -204,22 +275,30 @@ function CardView({ card, changed, onOpenJourney }: { card: Card; changed: Set<s
           <span className="task-card-count">{card.rows.length} rows</span>
         </header>
       )}
-      {card.rows.map((row) => <Graph key={row.key} task={row} changed={changed.has(row.key)} onOpenJourney={onOpenJourney} />)}
+      {card.rows.map((row) => <Graph key={row.key} task={row} changed={changed.has(row.key)} onOpenJourney={onOpenJourney} timing={timing} />)}
     </article>
   );
 }
 
-export function TaskGraphs({ tasks, onOpenJourney }: TaskGraphsProps) {
+export function TaskGraphs({ tasks, onOpenJourney, now: fixedNow }: TaskGraphsProps) {
   const changed = useChanged(tasks);
+  const now = useNow(fixedNow);
   if (tasks.length === 0) return null;
   const { open, delivered } = orderedCards(tasks);
+  const clocks = tasks.filter((task) => task.step === "merged").map((task) => task.clock);
+  const steps: TimedStep[] = ["implement", "review", "merge"];
+  const timing: Timing = {
+    now,
+    typical: Object.fromEntries(steps.map((step) => [step, typicalStep(clocks, step)])) as Timing["typical"],
+    samples: Object.fromEntries(steps.map((step) => [step, clocks.filter((clock) => clock.spent[step] !== undefined).length])) as Timing["samples"],
+  };
   return (
     <section className="task-graphs" aria-label="Tasks">
-      {open.map((card) => <CardView key={card.key} card={card} changed={changed} onOpenJourney={onOpenJourney} />)}
+      {open.map((card) => <CardView key={card.key} card={card} changed={changed} onOpenJourney={onOpenJourney} timing={timing} />)}
       {delivered.length > 0 && (
         <details className="task-graphs-delivered">
           <summary>Delivered ({delivered.length})</summary>
-          {delivered.map((card) => <CardView key={card.key} card={card} changed={changed} onOpenJourney={onOpenJourney} />)}
+          {delivered.map((card) => <CardView key={card.key} card={card} changed={changed} onOpenJourney={onOpenJourney} timing={timing} />)}
         </details>
       )}
     </section>

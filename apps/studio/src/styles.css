@@ -2963,6 +2963,14 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .task-node-next { opacity: 0.7; }
 .task-node-label { font-size: 12px; font-weight: 600; }
 .task-node-agent { font-size: 12px; font-family: var(--mono); overflow-wrap: anywhere; }
+/* #502: the lit step's time and a thin bar against the run's typical time for that step (green
+   under it, amber past it, red past twice it); a step already left shows what it spent there. */
+.task-node-time { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.task-node-pace-none { font-size: 10px; color: var(--faint); }
+.task-node-bar { display: block; height: 4px; margin-top: 3px; border-radius: 2px; background: var(--edge); overflow: hidden; }
+.task-node-bar-fill { display: block; height: 100%; background: var(--live); }
+.task-node-bar[data-pace="over"] .task-node-bar-fill { background: var(--signal); }
+.task-node-bar[data-pace="stuck"] .task-node-bar-fill { background: var(--danger); }
 /* #508: a lit Review with no reviewer recorded reads as a fault, never as a blank. */
 .task-node-missing { font-size: 11px; font-weight: 600; color: var(--danger); }
 /* #514: a review that blocked is marked with a cross and its reason; the row grows Fix/Re-review. */

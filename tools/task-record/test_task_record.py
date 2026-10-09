@@ -136,6 +136,7 @@ class TaskRecordTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertTrue(out.startswith("recorded "), out)
         self.assertIn("without title/summary", err.getvalue())
+        self.assertIn("may predate", err.getvalue())
         sent = [json.loads(body["signal"]["description"]) for _, body in FakeRuntime.seen]
         self.assertEqual([("title" in doc) for doc in sent], [True, False])
 

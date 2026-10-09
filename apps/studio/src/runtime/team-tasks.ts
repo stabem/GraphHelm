@@ -1,5 +1,6 @@
 import { digestOf } from "./customs";
 import type { EvidenceContent, RuntimeEvent } from "./types";
+import { clockStep, emptyClock, type StepClock } from "./step-timing";
 
 const PROTOCOL = "graphhelm-native-task-v1";
 const MAX_ENVELOPE_BYTES = 1024 * 1024;
@@ -176,6 +177,8 @@ export interface TaskEventRecord {
   summary?: string;
   /** #514: the issue whose work turned this task up (on `task.claimed`). */
   parent?: number;
+  /** #502: when the Runtime appended the record (its own clock, not the lane's `at`). */
+  occurredAt?: string | null;
 }
 
 /** #477: optional words for the Team tab. Absent is `{}`; present but malformed is `false` (the
@@ -286,6 +289,9 @@ export interface ReviewRound {
   commentUrl: string;
   /** The head the author pushed in answer, once a `pr_opened` named it. */
   fixHead: string | null;
+  /** #502: when the BLOCK and the fix were recorded (the Runtime's clock), for the round's timers. */
+  blockedAt: string | null;
+  fixedAt: string | null;
 }
 
 export type StrayVerdict =
@@ -326,6 +332,8 @@ export interface TaskState {
   parent: number | null;
   /** #514: the BLOCK rounds of the review loop, oldest first. */
   rounds: ReviewRound[];
+  /** #502: when the slice entered its step and what it spent in the steps it left. */
+  clock: StepClock;
   lastSequence: number;
 }
 
@@ -338,7 +346,8 @@ function applyVerdict(state: TaskState, event: TaskEventRecord): void {
     // A second BLOCK on the same unanswered head (another reviewer) is the same round.
     const last = state.rounds.at(-1);
     if (last === undefined || last.fixHead !== null || last.headSha !== event.headSha) {
-      state.rounds.push({ reviewer: event.reviewer ?? "", headSha: event.headSha ?? "", commentUrl: event.commentUrl ?? "", fixHead: null });
+      state.rounds.push({ reviewer: event.reviewer ?? "", headSha: event.headSha ?? "", commentUrl: event.commentUrl ?? "", fixHead: null,
+        blockedAt: event.occurredAt ?? null, fixedAt: null });
     }
     state.step = "review";
   } else {
@@ -360,7 +369,7 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
     const slice: TaskState = {
       key: "", taskId: event.taskId, branch: null, issue: null, pr: event.kind === "task.claimed" ? null : event.pr ?? null,
       lane: null, headSha: null, journeys: [], step: "implement", blockedBy: null, reviewers: [], mergeSha: null,
-      repoUrl: null, title: null, summary: null, prTitle: null, prSummary: null, strayVerdicts: [], recordedHeads: [], parent: null, rounds: [], lastSequence: 0,
+      repoUrl: null, title: null, summary: null, prTitle: null, prSummary: null, strayVerdicts: [], recordedHeads: [], parent: null, rounds: [], clock: emptyClock(), lastSequence: 0,
     };
     slices.push(slice);
     return slice;
@@ -394,6 +403,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
     const state = sliceFor(slices, event);
     if (state.step === "merged") continue;
     state.lastSequence = event.sequence;
+    const before = state.step;
     switch (event.kind) {
       case "task.claimed":
         state.branch = event.branch ?? state.branch;
@@ -416,7 +426,10 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         // #514: a newer head after a BLOCK is the author's fix; its review is the re-review.
         {
           const round = state.rounds.at(-1);
-          if (round !== undefined && round.fixHead === null && event.headSha !== undefined && event.headSha !== round.headSha) round.fixHead = event.headSha;
+          if (round !== undefined && round.fixHead === null && event.headSha !== undefined && event.headSha !== round.headSha) {
+            round.fixHead = event.headSha;
+            round.fixedAt = event.occurredAt ?? null;
+          }
         }
         if (event.headSha !== undefined && !state.recordedHeads.includes(event.headSha)) state.recordedHeads.push(event.headSha);
         // A verdict that arrived before this head's pr_opened (a back-fill) now speaks for it.
@@ -446,6 +459,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         state.step = "merged";
         break;
     }
+    clockStep(state.clock, before, state.step, event.occurredAt);
   }
   slices.forEach((slice, index) => {
     // A slice opened by a PR record (no claim seen) still belongs to its issue.
@@ -497,7 +511,7 @@ export async function readTaskEvents({ executionId, events, readEvidence }: Read
     const envelope = json(evidence);
     if (envelope?.type !== kind || record(envelope?.source)?.id !== event.actorId || typeof envelope?.description !== "string") return null;
     const parsed = parseTaskEvent(kind, event.actorId, envelope.description);
-    return parsed === null ? null : { ...parsed, sequence: seq };
+    return parsed === null ? null : { ...parsed, sequence: seq, occurredAt: event.occurredAt };
   };
   // #185: a gh-team-sized run has ~1,250 envelopes, and reading them one round trip at a time
   // kept the Team tab empty for minutes. A few reads stay in flight at once; each result keeps

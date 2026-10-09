@@ -109,9 +109,17 @@ fn read_state(dir: &Path) -> Option<Value> {
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
 }
 
-/// The stored state as a reader judges it (#586), from `read` (the state file).
+/// The stored state as a reader judges it (#586), from `read` (the state file). A runner writes
+/// its last state and only then exits, so a reader that saw `running` and then finds the runner
+/// gone reads once more: what is stored now is what the runner left (`ready`, `failed`), and only
+/// a state still `running` belongs to a runner that died. Without the second read a run that
+/// finished between the read and the liveness check answered `failed / internal`.
 fn read_settled(mut read: impl FnMut() -> Option<Value>) -> Option<Value> {
-    read()
+    let state = read()?;
+    if state["state"] == "running" && !runner_alive(&state) {
+        return read();
+    }
+    Some(state)
 }
 
 fn save_state(dir: &Path, state: &Value) {
@@ -396,6 +404,13 @@ fn failed_reason(code: &str) -> &'static str {
         "watch.launcher_invalid" => "watch.launcher_invalid",
         "driver.observer_missing" | "replay.observer_missing" => "driver.observer_missing",
         "preview.budget_exceeded" => "preview.budget_exceeded",
+        // #586: what `preflight` refuses before any browser starts keeps its own code, so the
+        // owner reads which thing is missing or wrong in the flow.
+        "driver.secret_missing" => "driver.secret_missing",
+        "driver.secret_literal" => "driver.secret_literal",
+        "driver.unsupported_act" => "driver.unsupported_act",
+        "replay.act_value_missing" => "replay.act_value_missing",
+        "replay.entry_missing" => "replay.entry_missing",
         _ => "internal",
     }
 }

@@ -37,8 +37,8 @@ describe("JourneyFlowchart rejoin", () => {
   // Cost: three small jsdom renders, no network or browser process.
   it.each([
     ["ahead", "d", false, "M 808 412 H 830 V 266 H 974 V 252", "M 808 716 H 842 V 278 H 986 V 252"],
-    ["above", "c", false, "M 808 412 H 830 V 266 H 686 V 252", "M 808 716 H 842 V 278 H 698 V 252"],
-    ["behind", "c", true, "M 1096 412 H 1118 V 266 H 686 V 252", "M 1096 716 H 1130 V 278 H 698 V 252"],
+    ["above", "c", false, "M 808 412 H 830 V 278 H 686 V 252", "M 808 716 H 842 V 266 H 698 V 252"],
+    ["behind", "c", true, "M 1096 412 H 1118 V 278 H 686 V 252", "M 1096 716 H 1130 V 266 H 698 V 252"],
   ] as const)("keeps two returns %s separate and outside the intervening card", (_shape, target, longer, first, second) => {
     const chart = flow([]);
     chart.screens = ["a", "b", "c", "d", "x", "z", ...(longer ? ["y", "w"] : [])].map(screen);
@@ -50,6 +50,27 @@ describe("JourneyFlowchart rejoin", () => {
       side: ["ab", "bx", ...(longer ? ["xy"] : []), "first"],
       third: ["ab", "bz", ...(longer ? ["zw"] : []), "second"] };
     const view = render(<JourneyFlowchart flow={chart} />);
+    // Distinct paths can still cross: compare every pair of rendered axis-aligned segments.
+    // This catches the leftward band ordering defect that exact-path snapshots missed.
+    const segments = (id: string) => {
+      const path = arrow(view.container, id)!;
+      const commands = [...path.matchAll(/([MHV])\s+(-?\d+(?:\.\d+)?)(?:\s+(-?\d+(?:\.\d+)?))?/g)];
+      expect(commands).toHaveLength(5);
+      let x = 0, y = 0;
+      return commands.flatMap(([, command, a, b]) => {
+        const nextX = command === "V" ? x : Number(a);
+        const nextY = command === "M" ? Number(b) : command === "V" ? Number(a) : y;
+        const segment = { minX: Math.min(x, nextX), maxX: Math.max(x, nextX), minY: Math.min(y, nextY), maxY: Math.max(y, nextY) };
+        x = nextX; y = nextY;
+        return command === "M" ? [] : [segment];
+      });
+    };
+    for (const a of segments("first")) {
+      for (const b of segments("second")) {
+        expect(a.minX <= b.maxX && b.minX <= a.maxX && a.minY <= b.maxY && b.minY <= a.maxY,
+          `${_shape}: rejoin segments must not intersect`).toBe(false);
+      }
+    }
     expect(arrow(view.container, "first")).toBe(first);
     expect(arrow(view.container, "second")).toBe(second);
     // The rightmost gutter must fit in the chart rather than being clipped by its scroll box.

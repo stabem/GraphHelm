@@ -3973,7 +3973,7 @@ mod tests {
         let version =
             crate::commands::publish_loaded(&loaded, crate::commands::owner("owner-test")).unwrap();
         let execution_id = "exec-unit-one-open";
-        execution::start::execute(
+        let started = execution::start::execute(
             &version,
             &events,
             Some(&fixtures),
@@ -3981,8 +3981,8 @@ mod tests {
             Some(execution_id),
             execution::system_actor(),
             OpaqueId::parse("unit-start-key").unwrap(),
-        )
-        .unwrap();
+        );
+        assert!(started.is_ok(), "the fixture execution must start");
         let actor = PersistedActor::new(
             PersistedActorType::Agent,
             ActorId::parse("agent-one-open").unwrap(),
@@ -4053,7 +4053,9 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(opens, 2, "store opens for one signal request");
         let store = event_store(&events).unwrap();
-        let (_, _, history) = execution::resolve_stream(&store, Some(execution_id)).unwrap();
+        let Ok((_, _, history)) = execution::resolve_stream(&store, Some(execution_id)) else {
+            panic!("the history must remain readable");
+        };
         assert!(
             history
                 .iter()

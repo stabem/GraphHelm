@@ -325,8 +325,8 @@ fn open_live_at_a_step_replays_cached_edges_headed_and_stops_open_at_a_drifted_e
 
 /// #534: approving is the owner's; `graphhelm init` makes the project's owner store and token.
 fn owner_token(project: &Path) -> String {
-    // init ignores all of `.graphhelm/`; a real project keeps its flows tracked, so the
-    // project's own .gitignore is put back after the owner store is made.
+    // init ignores all of `.graphhelm/`; a real project keeps its flows tracked and its owner
+    // store (events, token, keys, owner records) out of git, so the test ignores exactly that.
     let gitignore = project.join(".gitignore");
     let kept = std::fs::read(&gitignore).ok();
     let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
@@ -340,10 +340,15 @@ fn owner_token(project: &Path) -> String {
         "{}",
         String::from_utf8_lossy(&out.stdout)
     );
-    match kept {
-        Some(bytes) => std::fs::write(&gitignore, bytes).unwrap(),
-        None => drop(std::fs::remove_file(&gitignore)),
-    }
+    let mut ignore = kept.unwrap_or_default();
+    ignore.extend_from_slice(
+        b"
+.graphhelm/*
+!.graphhelm/journeys/
+/.mcp.json
+",
+    );
+    std::fs::write(&gitignore, ignore).unwrap();
     project
         .join(".graphhelm/events.token")
         .to_string_lossy()

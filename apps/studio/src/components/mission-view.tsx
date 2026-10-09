@@ -1,12 +1,12 @@
 import "./mission-view.css";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { JourneyRunView, JourneyView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
 import type { Lane } from "../runtime/lane-bars";
 import { buildMission, toMissionTask, unlinkedTasks, type Mission } from "../runtime/mission";
 import { layoutMission } from "../runtime/mission-layout";
 import { testFrames } from "../runtime/test-frames";
-import { stageHealth } from "../runtime/stage-health";
+import { activity, stageHealth, stageProgress } from "../runtime/stage-health";
 import { buildWorkGroups, type WorkGroup } from "../runtime/work-groups";
 import { IssueGraph, MissionGraph, STATUS_LABEL, stageState } from "./mission-graph";
 import { ProofTable } from "./proof-table";
@@ -98,6 +98,15 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
   const [stageCol, setStageCol] = useState<number | null>(null);
   const [sub, setSub] = useState<Sub>("graph");
   const [frame, setFrame] = useState(0);
+  // #591: one shared one-second clock for the live card timers, anchored on the `now` the parent gave.
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const start = Date.now();
+    setTick(0);
+    const id = setInterval(() => setTick(Date.now() - start), 1000);
+    return () => clearInterval(id);
+  }, [now]);
+  const live = now + tick;
   const [unlinkedOpen, setUnlinkedOpen] = useState(false);
   const missions = useMemo(() => journeys.map((j) => buildMission(j, runFor(j.contractId), tasks)), [journeys, tasks, runFor]);
   const groups = useMemo(() => buildWorkGroups(tasks, journeys, runFor), [tasks, journeys, runFor]);
@@ -140,7 +149,12 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
   const group: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
   // #591: time in stage and the health flag of each PR card, from the same records the lanes read.
   const groupRows = group ? tasks.filter((t) => group.rows.some((r) => r.key === t.key)) : [];
-  const health = Object.fromEntries(groupRows.map((t) => [t.key, stageHealth(t, lanes, groupRows, now)]));
+  const health = Object.fromEntries(groupRows.map((t) => [t.key, stageHealth(t, lanes, groupRows, live)]));
+  // #591: progress against the usual time, and the last record of whoever is on the card's stage.
+  const pace = Object.fromEntries(groupRows.map((t) => [t.key, {
+    progress: stageProgress(t, groupRows, live, lanes),
+    activity: activity(t.step === "review" && !t.blockedBy ? t.reviewers[0] ?? null : t.lane, lanes, live),
+  }]));
   const knownIds = new Set(journeys.map((j) => j.contractId));
   // A group's Proof and Test follow its first linked journey; a journey selection is its own.
   const journey = sel.kind === "journey" ? journeys.find((j) => j.contractId === sel.id)!
@@ -314,7 +328,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
         )}
         <div className="mv-content">
           {sub === "graph" && group && <IssueGraph group={group} stepFor={stepFor} selectedTaskKey={shownTask} selectedCol={stageCol}
-            onSelectTask={(key) => { setTaskKey(key); setStageCol(null); }} onSelectCol={(c) => { setStageCol(c); setTaskKey(null); }} onOpenTest={openTest} health={health} />}
+            onSelectTask={(key) => { setTaskKey(key); setStageCol(null); }} onSelectCol={(c) => { setStageCol(c); setTaskKey(null); }} onOpenTest={openTest} health={health} pace={pace} />}
           {sub === "graph" && !group && mission && <MissionGraph mission={mission} selectedStepId={stepId} selectedTaskKey={taskKey ?? null}
             onSelectStep={(id) => { setStepId(id); setTaskKey(null); }} onSelectTask={pickTask} onOpenTest={openTest} />}
           {sub === "proof" && (mission && contractId ? <ProofTable mission={mission} onOpenTest={openTest} frameUrl={(id) => frameUrl(id, contractId)}

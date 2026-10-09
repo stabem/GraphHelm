@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SLOW_FACTOR, SLOW_MIN_SAMPLES, stageDuration, stageHealth, stageSince } from "./stage-health";
+import { ACTIVE_MS, EXPECTED_FALLBACK_MS, SLOW_FACTOR, SLOW_MIN_SAMPLES, activity, liveDuration, stageDuration, stageHealth, stageProgress, stageSince } from "./stage-health";
 import { STALL_MS, type Lane } from "./lane-bars";
 import type { TaskState } from "./team-tasks";
 
@@ -60,4 +60,40 @@ describe("stageHealth", () => {
     expect(stageHealth(at(10 * H), [], [others[0]!], NOW)?.flag).toBe("moving");
   });
   it("Moving otherwise, in muted green", () => expect(stageHealth(ts("a"), [], [], NOW)).toMatchObject({ flag: "moving", text: "Moving", tone: "green" }));
+});
+
+describe("liveDuration", () => {
+  it("ticks seconds, pads under an hour", () => {
+    expect(liveDuration(12_000)).toBe("12s");
+    expect(liveDuration(4 * M + 3000)).toBe("4m 03s");
+    expect(liveDuration(5 * H + 28 * M + 12_000)).toBe("5h 28m 12s");
+  });
+});
+
+describe("stageProgress", () => {
+  it("falls back to the named stage constant under two samples, and caps the fill", () => {
+    const fix = ts("f", { step: "review", blockedBy: { reviewer: "r", headSha: "a", commentUrl: "" } });
+    const p = stageProgress(fix, [fix, done("x", H)], NOW)!;
+    expect(p).toEqual({ elapsedMs: H, expectedMs: EXPECTED_FALLBACK_MS.fix, ratio: 0.5, tone: "green" });
+    expect(stageProgress(ts("m", { step: "merge" }), [], NOW)).toMatchObject({ ratio: 1, tone: "red" });
+    expect(stageProgress(done("d", H), [], NOW)).toBeNull();
+  });
+  it("uses the group median: green under 75%, amber to 100%, red at 100%", () => {
+    const g = (since: number) => ts("a", { clock: { since: iso(NOW - since), spent: {} } });
+    const group = [done("x", 4 * H), done("y", 4 * H)];
+    expect(stageProgress(g(2.99 * H), group, NOW)!.tone).toBe("green");
+    expect(stageProgress(g(3 * H), group, NOW)!.tone).toBe("amber");
+    expect(stageProgress(g(4 * H - 1), group, NOW)!.tone).toBe("amber");
+    expect(stageProgress(g(4 * H), group, NOW)).toMatchObject({ expectedMs: 4 * H, ratio: 1, tone: "red" });
+  });
+});
+
+describe("activity", () => {
+  it("green under 30m, amber to STALL_MS, red at it or with no lane", () => {
+    expect(activity("l", [lane("l", NOW - ACTIVE_MS + 1)], NOW)).toEqual({ sinceMs: ACTIVE_MS - 1, tone: "green" });
+    expect(activity("l", [lane("l", NOW - ACTIVE_MS)], NOW).tone).toBe("amber");
+    expect(activity("l", [lane("l", NOW - STALL_MS + 1)], NOW).tone).toBe("amber");
+    expect(activity("l", [lane("l", NOW - STALL_MS)], NOW).tone).toBe("red");
+    expect(activity("z", [lane("l", NOW)], NOW)).toEqual({ sinceMs: null, tone: "red" });
+  });
 });

@@ -172,3 +172,27 @@ describe("IssueGraph (#591)", () => {
     expect(card).toHaveAttribute("data-dense", "true");
   });
 });
+
+describe("IssueGraph live pace (#591)", () => {
+  it("the shared clock ticks the card timer and the progressbar reports the share of the usual time", async () => {
+    vi.useFakeTimers();
+    try {
+      const { MissionView } = await import("./mission-view");
+      const { act } = await import("@testing-library/react");
+      const NOW = Date.parse("2026-10-09T12:00:00Z");
+      const task = ts("o", { pr: 12, prTitle: "Open one", step: "review", lane: "gh-claude-6", reviewers: ["gh-claude-7"],
+        blockedBy: { reviewer: "gh-claude-7", headSha: "a", commentUrl: "" }, clock: { since: new Date(NOW - 3_600_000 - 4_000).toISOString(), spent: {} } });
+      const lanes = [{ lane: "gh-claude-6", bars: [], silent: false, lastEventAt: NOW - 12 * 60_000 }];
+      render(<MissionView journeys={[]} tasks={[task]} runFor={() => null} lanes={lanes} now={NOW} frameUrl={() => ""} onMarkSafe={vi.fn()} />);
+      const bars = screen.getAllByRole("progressbar");
+      expect(bars.length).toBe(2); // the card and the inspector header
+      const bar = bars[0]!;
+      expect(bar).toHaveAttribute("aria-valuenow", "50");
+      expect(bar).toHaveAttribute("aria-label", "Fixing for 1h, expected about 2h");
+      expect(screen.getAllByText("1h 00m 04s").length).toBe(2);
+      expect(screen.getAllByText("last activity 12m ago").length).toBe(2);
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(screen.getAllByText("1h 00m 05s").length).toBe(2);
+    } finally { vi.useRealTimers(); }
+  });
+});

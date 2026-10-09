@@ -63,3 +63,53 @@ export function stageHealth(t: TaskState, lanes: Lane[], groupTasks: TaskState[]
   }
   return { ...base, flag: "moving", text: "Moving", tone: "green" };
 }
+
+/** "5h 28m 12s"; under an hour "4m 03s"; under a minute "12s". The live card timer. */
+export function liveDuration(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  const ss = String(r).padStart(2, "0");
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m ${ss}s`;
+  if (m > 0) return `${m}m ${ss}s`;
+  return `${r}s`;
+}
+
+export type PaceStage = "plan" | "implement" | "review" | "fix" | "merge";
+/** The usual time of a stage when the group has fewer than SLOW_MIN_SAMPLES finished samples. */
+export const EXPECTED_FALLBACK_MS: Record<PaceStage, number> = {
+  plan: 60 * 60_000, implement: 3 * 60 * 60_000, review: 60 * 60_000, fix: 2 * 60 * 60_000, merge: 15 * 60_000,
+};
+/** Under this share of the usual time the bar is green; up to 1 it is amber; at or over 1 red. */
+export const PACE_AMBER = 0.75;
+export type PaceTone = "green" | "amber" | "red";
+export interface StageProgress { elapsedMs: number; expectedMs: number; ratio: number; tone: PaceTone }
+
+export const paceStage = (t: TaskState): PaceStage | null =>
+  t.step === "merged" ? null : t.blockedBy ? "fix" : t.step === "critic" ? "plan" : t.step;
+
+/** Elapsed in the stage against the usual time for it: the median the group's other PRs spent in
+ * the same stage, else the stage's named fallback. `ratio` is capped at 1 (the bar's fill). */
+export function stageProgress(t: TaskState, groupTasks: TaskState[], now: number, lanes: Lane[] = []): StageProgress | null {
+  const stage = paceStage(t);
+  if (!stage) return null;
+  const since = stageSince(t, lanes);
+  if (since === null) return null;
+  const elapsedMs = Math.max(0, now - since);
+  const steps = timed(t);
+  const samples = groupTasks.filter((o) => o.key !== t.key)
+    .map((o) => steps.reduce((sum, s) => sum + (o.clock?.spent?.[s] ?? 0), 0)).filter((ms) => ms > 0);
+  const expectedMs = samples.length >= SLOW_MIN_SAMPLES ? median(samples) : EXPECTED_FALLBACK_MS[stage];
+  const raw = expectedMs > 0 ? elapsedMs / expectedMs : 1;
+  return { elapsedMs, expectedMs, ratio: Math.min(1, raw), tone: raw >= 1 ? "red" : raw >= PACE_AMBER ? "amber" : "green" };
+}
+
+/** Under this the lane counts as active right now (pulsing green dot). */
+export const ACTIVE_MS = 30 * 60_000;
+export interface Activity { sinceMs: number | null; tone: PaceTone }
+/** How long since the lane's latest record: green under ACTIVE_MS, amber under STALL_MS, red at or over. */
+export function activity(lane: string | null | undefined, lanes: Lane[], now: number): Activity {
+  const l = lane ? lanes.find((x) => x.lane === lane) : undefined;
+  if (!l || !(l.lastEventAt > 0)) return { sinceMs: null, tone: "red" };
+  const sinceMs = Math.max(0, now - l.lastEventAt);
+  return { sinceMs, tone: sinceMs < ACTIVE_MS ? "green" : sinceMs < STALL_MS ? "amber" : "red" };
+}

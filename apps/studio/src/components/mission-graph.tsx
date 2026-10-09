@@ -2,7 +2,7 @@ import "./mission-graph.css";
 import { useState, type CSSProperties } from "react";
 import { custodyRows, sha8, TRUST_LABELS, type Mission, type MissionStep, type MissionTask, type StepStatus } from "../runtime/mission";
 import { layoutMission, type PlacedTask } from "../runtime/mission-layout";
-import type { StageHealth } from "../runtime/stage-health";
+import { liveDuration, stageDuration, type Activity, type StageHealth, type StageProgress } from "../runtime/stage-health";
 import { WORK_STAGES, type PrRow, type WorkGroup, type WorkStage } from "../runtime/work-groups";
 
 export const STATUS_LABEL: Record<StepStatus, string> = {
@@ -150,7 +150,9 @@ export function MissionGraph({ mission, selectedStepId, selectedTaskKey, onSelec
 
 /** The selected work: who touched it and the evidence on its head. `step` is the journey step the
  * task serves, when it serves one; without it the inspector offers no test. */
-export function TaskInspector({ task: t, step, onOpenTest, health = null }: { task: MissionTask; step: MissionStep | undefined; onOpenTest(stepId: string): void; health?: StageHealth | null }) {
+export function TaskInspector({ task: t, step, onOpenTest, health = null, pace = null, paceLabel = "" }: {
+  task: MissionTask; step: MissionStep | undefined; onOpenTest(stepId: string): void; health?: StageHealth | null; pace?: Pace | null; paceLabel?: string;
+}) {
   const st = nodeState(t, step);
   const note = t.blockedBy ? `BLOCK by ${t.blockedBy.reviewer || "a reviewer"} at ${sha8(t.blockedBy.headSha) ?? "an unrecorded head"}`
     : t.step === "merged" && step?.status !== "proven" ? "Merged, not proven yet" : null;
@@ -161,6 +163,7 @@ export function TaskInspector({ task: t, step, onOpenTest, health = null }: { ta
         <span className="mg-kick"><span className="mg-dot" data-state={st} />{`${nodeLabel(t, step)} · ${prText(t)}`}</span>
         <h3>{t.title}</h3>
         {health && <HealthFlag health={health} />}
+        {pace && <PaceBlock pace={pace} label={paceLabel} stuck={health?.flag === "stuck"} size="large" />}
         {step && <span className="mg-muted">{`Proves step ${step.index + 1} · `}<button type="button" className="mg-link" onClick={open}>open its test</button></span>}
       </div>
       <div className="mg-section">
@@ -211,7 +214,7 @@ const STAGE_LABEL: Record<WorkStage, string> = {
 export const stageLabel = (stage: WorkStage, t: MissionTask) => (t.step === "critic" && stage === "plan" ? "Design in review" : STAGE_LABEL[stage]);
 
 /** #591 geometry: a 120px row header, then the seven stage columns; each PR owns one 112px band. */
-export const ROW_HEAD = 120, X0 = ROW_HEAD + 12, BAND = 112, CARD_TOP = 12, CELL_TOP = 36, MID = CARD_TOP + NODE_H / 2, FOLD_H = 44;
+export const ROW_HEAD = 120, X0 = ROW_HEAD + 12, BAND = 128, CUR_H = 104, CARD_TOP = 12, CELL_TOP = 36, MID = CARD_TOP + NODE_H / 2, FOLD_H = 44;
 const colX = (col: number) => X0 + col * PITCH;
 
 /** The arrows inside one row: forward ones run straight along the row's middle; the loop from Fix
@@ -241,6 +244,32 @@ interface IssueProps {
   onOpenTest(stepId: string): void;
   /** #591: time in stage and the health flag of each open PR, by task key. */
   health?: Record<string, StageHealth | null>;
+  /** #591: live progress against the usual time and the last activity, by task key. */
+  pace?: Record<string, Pace>;
+}
+export interface Pace { progress: StageProgress | null; activity: Activity }
+
+/** #591: the live timer, the progress bar against the usual stage time, and the last-activity line. */
+export function PaceBlock({ pace, label, stuck, size = "card" }: { pace: Pace; label: string; stuck: boolean; size?: "card" | "large" }) {
+  const p = pace.progress, a = pace.activity;
+  const tone = p ? (stuck ? "red" : p.tone) : null;
+  const act = a.sinceMs === null ? "no activity recorded" : a.tone === "red" ? `no activity ${stageDuration(a.sinceMs)}` : `last activity ${stageDuration(a.sinceMs)} ago`;
+  return (
+    <span className="mg-pace" data-size={size}>
+      <span className="mg-pace-line">
+        <span className="mg-act-dot" data-tone={a.tone} aria-hidden="true" />
+        <span className="mg-act" data-tone={a.tone}>{act}</span>
+        {p && <span className="mg-timer">{liveDuration(p.elapsedMs)}</span>}
+      </span>
+      {p && tone && (
+        <span className="mg-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(p.ratio * 100)}
+          aria-label={`${label} for ${stageDuration(p.elapsedMs)}, expected about ${stageDuration(p.expectedMs)}`}
+          data-tone={tone} data-overdue={p.elapsedMs >= p.expectedMs}>
+          <span className="mg-bar-fill" style={{ width: `${Math.round(p.ratio * 100)}%` }} />
+        </span>
+      )}
+    </span>
+  );
 }
 
 /** #591: the plain health flag plus the time in stage, on the card and in the inspector header. */
@@ -255,8 +284,8 @@ export function HealthFlag({ health, time = true }: { health: StageHealth; time?
 
 /** #591: the current card. A BLOCK opens a Fixing card for the author (amber, red only when the
  * stall rule trips); the health flag gets its own line and the time in stage sits right on the who line. */
-function CurrentCard({ cell: c, stage, task: t, health, selected, left, top, onSelect }: {
-  cell: PrRow["cells"][number]; stage: WorkStage; task: MissionTask; health: StageHealth | null; selected: boolean; left: number; top: number; onSelect(): void;
+function CurrentCard({ cell: c, stage, task: t, health, pace, selected, left, top, onSelect }: {
+  cell: PrRow["cells"][number]; stage: WorkStage; task: MissionTask; health: StageHealth | null; pace: Pace | null; selected: boolean; left: number; top: number; onSelect(): void;
 }) {
   const stuck = health?.flag === "stuck";
   const fixing = stage === "fix" && t.blocked;
@@ -267,7 +296,7 @@ function CurrentCard({ cell: c, stage, task: t, health, selected, left, top, onS
   const flag = health && !(fixing && health.flag === "blocked") ? health : null;
   return (
     <button type="button" className="mg-node" data-state={st} data-stage={stage} data-blocked={t.blocked} data-current="true" data-dense={Boolean(c.sub || flag)}
-      aria-pressed={selected} style={{ left, top }} onClick={onSelect}>
+      data-pace={Boolean(pace)} aria-pressed={selected} style={{ left, top }} onClick={onSelect}>
       <span className="mg-node-head">
         <span className="mg-dot" data-state={st} />
         <span className="mg-node-label">{c.count > 1 ? `${base} ×${c.count}` : base}</span>
@@ -278,15 +307,16 @@ function CurrentCard({ cell: c, stage, task: t, health, selected, left, top, onS
       {flag && <HealthFlag health={flag} time={false} />}
       <span className="mg-node-foot">
         <span className="mg-node-who">{who}</span>
-        {health?.elapsed && <span className="mg-node-time">{health.elapsed}</span>}
+        {!pace && health?.elapsed && <span className="mg-node-time">{health.elapsed}</span>}
       </span>
+      {pace && <PaceBlock pace={pace} label={stageLabel(stage, t)} stuck={stuck} />}
     </button>
   );
 }
 
 /** #591: an issue's graph, one row per PR along the stage columns: the stages it passed as small
  * cells, the stage it is in as the full card, arrows only inside its own row. Merged rows fold below. */
-export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSelectTask, onSelectCol, onOpenTest, health = {} }: IssueProps) {
+export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSelectTask, onSelectCol, onOpenTest, health = {}, pace = {} }: IssueProps) {
   const [showMerged, setShowMerged] = useState(false);
   const open = group.rows.filter((r) => r.open), merged = group.rows.filter((r) => !r.open);
   const shown = showMerged ? [...open, ...merged] : open;
@@ -339,7 +369,7 @@ export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSel
                       <div key={i} className="mg-seg" data-dir={sg.dir} data-done={sg.done} style={sg.style} aria-hidden="true" />
                     ))}
                     {r.cells.map((c) => c.state === "current" ? (
-                      <CurrentCard key={c.stage} cell={c} stage={stage} task={t} health={health[t.key] ?? null} selected={t.key === selectedTaskKey}
+                      <CurrentCard key={c.stage} cell={c} stage={stage} task={t} health={health[t.key] ?? null} pace={pace[t.key] ?? null} selected={t.key === selectedTaskKey}
                         left={colX(c.col)} top={top + CARD_TOP} onSelect={() => onSelectTask(t.key)} />
                     ) : (
                       <button key={c.stage} type="button" className="mg-cell" data-cell={c.state} data-stage={c.stage} tabIndex={c.state === "ahead" ? -1 : 0}
@@ -368,7 +398,8 @@ export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSel
             <span className="mg-legend-note">Merged is not done. Done = the replay proves the step.</span>
           </div>
         </section>
-        {selected ? <TaskInspector task={selected.task} step={stepFor(selected.key)} onOpenTest={onOpenTest} health={health[selected.key] ?? null} />
+        {selected ? <TaskInspector task={selected.task} step={stepFor(selected.key)} onOpenTest={onOpenTest} health={health[selected.key] ?? null}
+            pace={selected.open ? pace[selected.key] ?? null : null} paceLabel={stageLabel(group.stages[selected.key]!, selected.task)} />
           : <aside className="mg-inspector" aria-label="Selected work"><p className="mg-muted">Pick a PR to see who touched it.</p></aside>}
       </div>
     </div>

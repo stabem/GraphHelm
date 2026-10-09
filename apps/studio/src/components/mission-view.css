@@ -1,10 +1,42 @@
-/* Journey rail beside the content; stacks when the area is too narrow for both. */
+/* The mission view (design: Main, Proof, TestRun, Lanes and Glance artboards).
+ * The design's state colours are tokens local to .mv; each view reads --mv-tone / --mv-tint /
+ * --mv-ring off the element's data-state or data-status. */
 .mv {
+  --mv-proven: #4ADE9B;
+  --mv-merged: #8FB3D9;
+  --mv-work: #F5A524;
+  --mv-stalled: #FF6B5E;
+  --mv-ready: #9AA7FF;
+  --mv-implement: #6F8CFF;
+  --mv-tone: #A9AEB8;
+  --mv-tint: transparent;
+  --mv-ring: #2A2D34;
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 0.75rem;
+  flex-direction: column;
+  gap: 14px;
   min-width: 0;
+  padding: 14px 4px;
+  background: #0B0C0F;
+  color: #E9E7E2;
+  font-family: var(--sans);
+  font-size: 13px;
+}
+
+/* State colour families. Steps (data-status) and nodes (data-state) share them. */
+.mv [data-state="proven"], .mv [data-status="proven"], .mv [data-status="passed"], .mv [data-tone="proven"] {
+  --mv-tone: var(--mv-proven); --mv-tint: rgba(74, 222, 155, 0.06); --mv-ring: rgba(74, 222, 155, 0.33);
+}
+.mv [data-state="merged"], .mv [data-status="preview_only"] {
+  --mv-tone: var(--mv-merged); --mv-tint: rgba(143, 179, 217, 0.06); --mv-ring: rgba(143, 179, 217, 0.33);
+}
+.mv [data-state="work"], .mv [data-status="waits_for_you"], .mv [data-tone="work"] {
+  --mv-tone: var(--mv-work); --mv-tint: rgba(245, 165, 36, 0.05); --mv-ring: rgba(245, 165, 36, 0.33);
+}
+.mv [data-state="stalled"], .mv [data-status="failed"], .mv [data-status="needs_you"], .mv [data-tone="stalled"] {
+  --mv-tone: var(--mv-stalled); --mv-tint: rgba(255, 107, 94, 0.06); --mv-ring: rgba(255, 107, 94, 0.33);
+}
+.mv [data-state="ready"], .mv [data-status="not_run"], .mv [data-tone="ready"] {
+  --mv-tone: var(--mv-ready); --mv-tint: rgba(154, 167, 255, 0.08); --mv-ring: rgba(154, 167, 255, 0.4);
 }
 
 /* The Graph tab takes the whole main area: the chat column and right panel step aside. */
@@ -13,46 +45,51 @@
   display: none;
 }
 
-.mv-journeys {
-  display: flex;
-  flex-direction: column;
-  flex: 0 0 260px;
-  width: 260px;
-  max-width: 100%;
-  gap: 0.25rem;
-}
+/* Header: the sub-tabs as the design's segmented nav. */
+.mv-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.mv-tabs { display: flex; gap: 4px; padding: 3px; background: #131419; border: 1px solid #1E2026; border-radius: 8px; }
+.mv-tab { padding: 6px 12px; border: 0; border-radius: 6px; background: transparent; color: #A9AEB8; font: inherit; cursor: pointer; }
+.mv-tab[aria-selected="true"] { background: #22252D; color: #E9E7E2; font-weight: 500; }
+.mv-back { padding: 6px 12px; border: 1px solid #2A2D34; border-radius: 8px; background: transparent; color: #E9E7E2; font: inherit; cursor: pointer; }
 
-.mv-journey {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-  text-align: left;
-}
+.mv-body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 20px; min-width: 0; }
 
-.mv-journey-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
+/* Journey rail */
+.mv-journeys { flex: 1 1 250px; max-width: 290px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mv-cap { padding: 0 2px 6px; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #8D929C; }
+.mv-jcard { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 10px; border: 1px solid transparent; }
+.mv-jcard[data-selected="true"] { gap: 10px; padding: 12px; background: #121318; border-color: #23262D; }
+.mv-journey { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; min-width: 0; padding: 0; border: 0; background: none; color: #C7CBD3; font: inherit; text-align: left; cursor: pointer; }
+.mv-jcard[data-selected="true"] .mv-journey { color: #E9E7E2; font-weight: 600; }
+.mv-journey-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mv-journey-count { flex: none; font-family: var(--mono); font-size: 11px; font-weight: 400; color: #A9AEB8; }
+.mv-journey-meta { font-family: var(--mono); font-size: 11px; color: #8D929C; }
+.mv-chips { display: flex; gap: 3px; }
+.mv-chip { flex: 1 1 0; height: 18px; padding: 0; border: 0; border-radius: 4px; cursor: pointer; font: 500 10px var(--mono); color: #0B0C0F; background: var(--mv-tone); opacity: .6; }
+.mv-chip[data-status="not_run"] { background: transparent; border: 1px dashed var(--mv-tone); color: var(--mv-tone); opacity: 1; }
+.mv-chip[aria-pressed="true"] { opacity: 1; outline: 2px solid #E9E7E2; outline-offset: 1px; }
+.mv-steps { display: flex; flex-direction: column; gap: 2px; margin: 0 -6px; }
+.mv-step { display: flex; align-items: center; gap: 8px; padding: 6px; border: 0; border-radius: 6px; background: transparent; color: #E9E7E2; font: 400 12px var(--sans); text-align: left; cursor: pointer; }
+.mv-step:hover { background: #15171C; }
+.mv-step[aria-pressed="true"] { background: #1C1E24; }
+.mv-step:focus-visible, .mv-chip:focus-visible, .mv-tab:focus-visible { outline: 2px solid #9AB8FF; outline-offset: 2px; }
+.mv-tick { width: 3px; height: 14px; border-radius: 2px; flex: none; background: var(--mv-tone); }
+.mv-step-n { width: 12px; flex: none; font-family: var(--mono); font-size: 11px; color: #8D929C; }
+.mv-step-title { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mv-step-ids { flex: none; font-family: var(--mono); font-size: 11px; color: #A9AEB8; }
 
-.mv-journey-count {
-  flex: none;
-  color: var(--dim);
-  font-family: var(--mono);
-}
+.mv-unlinked { margin-top: 8px; padding-top: 12px; border-top: 1px solid #1E2026; }
+.mv-fold { padding: 0; border: 0; background: none; color: #A9AEB8; font: 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
+.mv-unlinked ul { margin: 0.5rem 0 0; padding-left: 1rem; color: #A9AEB8; font-size: 12px; }
 
-.mv-content {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 320px;
-  min-width: 0;
-  gap: 0.75rem;
-}
+.mv-content { display: flex; flex-direction: column; flex: 999 1 640px; min-width: 0; gap: 12px; }
 
-.mv-unlinked ul {
-  margin: 0.25rem 0 0;
-  color: var(--dim);
+/* Phone width (design: Glance): the rail stacks on top, the graph scrolls, the inspector goes below. */
+@media (max-width: 700px) {
+  .mv-body { flex-direction: column; align-items: stretch; }
+  .mv-journeys { max-width: none; flex: none; }
+  .mv-content { flex: none; width: 100%; }
+  .mv .mg-body { flex-direction: column; align-items: stretch; }
+  .mv .mg-graph { flex: none; }
+  .mv .mg-inspector { max-width: none; flex: none; }
 }

@@ -21,7 +21,7 @@ describe("TestCanvas", () => {
   it("shows the recorded frame in the emulated browser", () => {
     setup(0);
     expect(screen.getByRole("img", { name: "Frame 1: Journey tab" })).toHaveAttribute("src", "blob:a");
-    expect(screen.getByText("frame 1/2")).toBeInTheDocument();
+    expect(screen.getByText("emulated · frame 1/2")).toBeInTheDocument();
   });
 
   it("card click and next button move the frame", async () => {
@@ -56,6 +56,13 @@ describe("TestCanvas", () => {
     render(<TestCanvas frames={frames} selected={1} onSelect={vi.fn()} frameUrl={() => null} onMarkSafe={onMarkSafe} />);
     await userEvent.click(screen.getByRole("button", { name: "I watched it — mark safe" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Mark safe failed: owner token refused");
+  });
+
+  it("restyled inspector: code box, console placeholder, and a scrubber that jumps", async () => {
+    const p = setup(0);
+    expect(screen.getByText("No console captured")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Jump to frame 2" }));
+    expect(p.onSelect).toHaveBeenCalledWith(1);
   });
 
   it("a passed frame offers no decision buttons", () => {

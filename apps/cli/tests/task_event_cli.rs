@@ -96,8 +96,9 @@ fn as_actor(mut document: Value) -> Value {
             document[key] = json!(ACTOR);
         }
     }
-    // A verdict is signed by its reviewer; an assignment names someone else and stays as it is.
-    if document.get("verdict").is_some() {
+    // A review verdict is signed by its reviewer; an assignment names someone else and stays as it
+    // is, and a critic verdict (#467) has no reviewer at all.
+    if document.get("verdict").is_some() && document.get("reviewer").is_some() {
         document["reviewer"] = json!(ACTOR);
     }
     document
@@ -333,4 +334,93 @@ fn a_claim_may_name_its_parent_issue_and_a_malformed_one_is_refused() {
         &opened,
     );
     assert_eq!(reply["ok"], json!(false), "{reply}");
+}
+
+/// #467: the design critic's round is a `task.critic_verdict` record, signed by the lane, and the
+/// Runtime refuses a verdict that disagrees with its score and round, so running out of rounds can
+/// never be recorded as a pass. Credible regressions: an under-threshold `pass`, a `revise` on the
+/// last round (an endless loop), an `exhausted` with rounds left, or another lane signing it.
+/// Cost: one held run, eleven CLI calls.
+#[test]
+fn a_critic_verdict_must_agree_with_its_score_and_round() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let valid = as_actor(package_fixture("critic-verdict"));
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "critic-ok",
+        "task.critic_verdict",
+        ACTOR,
+        &valid,
+    );
+    assert_eq!(reply["ok"], json!(true), "{reply}");
+    for (id, patch) in [
+        ("pass-below", json!({"verdict": "pass", "score": 7})),
+        (
+            "revise-last",
+            json!({"verdict": "revise", "score": 5, "round": 3}),
+        ),
+        (
+            "exhausted-early",
+            json!({"verdict": "exhausted", "score": 5, "round": 2}),
+        ),
+        ("round-over", json!({"verdict": "pass", "round": 4})),
+    ] {
+        let mut document = valid.clone();
+        for (key, value) in patch.as_object().unwrap() {
+            document[key] = value.clone();
+        }
+        let reply = signal(
+            scratch.path(),
+            &events,
+            id,
+            "task.critic_verdict",
+            ACTOR,
+            &document,
+        );
+        assert_eq!(reply["ok"], json!(false), "{id}: {reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["code"],
+            json!("GHCLI003_SIGNAL_INVALID"),
+            "{id}: {reply}"
+        );
+    }
+    // Limits count characters, as the schema does, not UTF-8 bytes (#541 review): a reason of 500
+    // accented characters is 1000 bytes and must be admitted; 501 is refused, and so is a control
+    // character. The same for `designRef` at 256.
+    for (id, key, value, accepted) in [
+        ("reason-500", "reasons", json!(["ç".repeat(500)]), true),
+        ("reason-501", "reasons", json!(["ç".repeat(501)]), false),
+        ("reason-newline", "reasons", json!(["a\nb"]), false),
+        ("design-256", "designRef", json!("ã".repeat(256)), true),
+        ("design-257", "designRef", json!("ã".repeat(257)), false),
+    ] {
+        let mut document = valid.clone();
+        document[key] = value;
+        let reply = signal(
+            scratch.path(),
+            &events,
+            id,
+            "task.critic_verdict",
+            ACTOR,
+            &document,
+        );
+        assert_eq!(reply["ok"], json!(accepted), "{id}: {reply}");
+    }
+    let mut other = valid.clone();
+    other["lane"] = json!("gh-claude-4");
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "critic-spoof",
+        "task.critic_verdict",
+        ACTOR,
+        &other,
+    );
+    assert_eq!(
+        reply["diagnostics"][0]["code"],
+        json!("GHCLI038_ACTOR_MISMATCH"),
+        "{reply}"
+    );
 }

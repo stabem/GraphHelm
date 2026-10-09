@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/task-event.schema.json",
   "title": "Task Event",
-  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.pr_opened, task.review_assigned, task.review_verdict, task.merged); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
+  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.pr_opened, task.review_assigned, task.review_verdict, task.merged, task.critic_verdict); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
   "oneOf": [
     {
       "title": "task.claimed",
@@ -90,6 +90,27 @@
         "mergeSha": {"$ref": "#/$defs/sha"},
         "closes": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/positive"}},
         "merger": {"$ref": "#/$defs/actor"}
+      }
+    },
+    {
+      "title": "task.critic_verdict",
+      "description": "#467: one round of the blind design critic, recorded by the lane. The Runtime also refuses a verdict that disagrees with its score and round: pass needs score >= passScore; revise needs score < passScore and round < maxRounds; exhausted needs score < passScore and round == maxRounds. Running out of rounds is never a pass.",
+      "type": "object",
+      "required": ["schema", "taskId", "revision", "at", "round", "score", "passScore", "maxRounds", "verdict", "designRef", "lane", "reasons"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "graphhelm-task-event-v1"},
+        "taskId": {"$ref": "#/$defs/taskId"},
+        "revision": {"$ref": "#/$defs/positive"},
+        "at": {"$ref": "#/$defs/at"},
+        "round": {"type": "integer", "minimum": 1, "maximum": 5},
+        "score": {"type": "integer", "minimum": 0, "maximum": 10},
+        "passScore": {"type": "integer", "minimum": 1, "maximum": 10},
+        "maxRounds": {"type": "integer", "minimum": 1, "maximum": 5},
+        "verdict": {"enum": ["pass", "revise", "exhausted"]},
+        "designRef": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\u0000-\u001f\u007f]+$"},
+        "lane": {"$ref": "#/$defs/actor"},
+        "reasons": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^[^\u0000-\u001f\u007f]+$"}}
       }
     }
   ],

@@ -1,0 +1,1 @@
+{"schema":"graphhelm-task-event-v1","taskId":"issue-467","revision":2,"at":"2026-10-08T12:00:00Z","round":2,"score":9,"passScore":8,"maxRounds":3,"verdict":"pass","designRef":"docs/specs/critic-loop.md","lane":"gh-claude-3","reasons":["The design names the promise and the card's paths.","Each round is bounded and recorded."]}

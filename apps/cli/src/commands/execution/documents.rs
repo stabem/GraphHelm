@@ -160,7 +160,7 @@ pub(crate) fn validate_task_event(
     // #419: the lane, reviewer or merger a record names is an identity, refused as one (DELIVERY.md
     // "Task records"), before the shape check, so a wrong name is never reported as a wrong shape.
     let identity = match kind {
-        "task.claimed" | "task.pr_opened" => Some("lane"),
+        "task.claimed" | "task.pr_opened" | "task.critic_verdict" => Some("lane"),
         "task.review_verdict" => Some("reviewer"),
         "task.merged" => Some("merger"),
         _ => None,
@@ -272,6 +272,57 @@ pub(crate) fn validate_task_event(
             count("pr") && sha("mergeSha") && numbers("closes") && is_actor("merger"),
             &["pr", "mergeSha", "closes", "merger"],
         ),
+        // #467: one round of the blind design critic. Running out of rounds is never a pass: the
+        // verdict must agree with the score and the round, so `pass` needs the pass score,
+        // `revise` needs a round left, and the last round below the pass score is `exhausted`.
+        "task.critic_verdict" => {
+            let bounded = |key: &str, low: u64, high: u64| {
+                document[key].as_u64().filter(|n| (low..=high).contains(n))
+            };
+            let consistent = match (
+                bounded("round", 1, 5),
+                bounded("score", 0, 10),
+                bounded("passScore", 1, 10),
+                bounded("maxRounds", 1, 5),
+                document["verdict"].as_str(),
+            ) {
+                (Some(round), Some(score), Some(pass), Some(max), Some(verdict)) => {
+                    round <= max
+                        && match verdict {
+                            "pass" => score >= pass,
+                            "revise" => score < pass && round < max,
+                            "exhausted" => score < pass && round == max,
+                            _ => false,
+                        }
+                }
+                _ => false,
+            };
+            // CHARACTERS, as the schema's `maxLength` counts them, not UTF-8 bytes (the #486
+            // rule): an accented reason within the limit must not lose the round.
+            let prose = |value: &serde_json::Value, max: usize| {
+                value.as_str().is_some_and(|text| {
+                    !text.is_empty()
+                        && text.chars().count() <= max
+                        && !text.chars().any(char::is_control)
+                })
+            };
+            let reasons = document["reasons"].as_array().is_some_and(|items| {
+                (1..=8).contains(&items.len()) && items.iter().all(|item| prose(item, 500))
+            });
+            (
+                consistent && prose(&document["designRef"], 256) && is_actor("lane") && reasons,
+                &[
+                    "round",
+                    "score",
+                    "passScore",
+                    "maxRounds",
+                    "verdict",
+                    "designRef",
+                    "lane",
+                    "reasons",
+                ],
+            )
+        }
         _ => (false, &[]),
     };
     let known = document.as_object().is_some_and(|object| {

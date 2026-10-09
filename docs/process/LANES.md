@@ -71,6 +71,21 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   the CLI tests that wait on a child process (`apps/cli/tests/support/time_scale.rs`, #549), which
   otherwise go red on a machine other lanes are building on. It scales test waits only, never a
   product budget; a whole number from 1 to 20, anything else is refused.
+- **Where the owner set a build-directory rule, the slot picks the directory and the script does
+  not export one (#360).** The rule is `<root>\.graphhelm-workspaces\slot-targets.json`:
+
+      {"targetRoot": "C:/gh", "cap": 3}
+
+  With it the slot runs the command with
+  `CARGO_TARGET_DIR=<targetRoot>\<lane>\<worktree directory name>\target`, records that
+  directory, and holds each lane to `cap` of them (default 3): a run that would start one more is
+  refused before it queues, naming the ones the lane holds. A build directory whose worktree no
+  longer exists is reclaimed by that lane's next slot run and by `graphhelm workspace sweep
+  --apply`; one whose worktree exists is never deleted. So removing a finished worktree is what
+  frees its build directory. `graphhelm workspace slot status` shows how many each lane holds. An
+  `export CARGO_TARGET_DIR=...` inside the script overrides the slot and puts the build back where
+  the rule says not to: leave it out. The worktree's directory name must be a workspace id
+  (lowercase letters, digits, `.`, `_`, `-`).
 - Write Git Bash's full path in the slot command, as above. A bare `bash` or `sh` resolves to WSL.
 - A `cargo` run allowed outside the slot (`check`, `clippy`) uses
   `CARGO_TARGET_DIR=D:\gh\<lane>\target-check`.

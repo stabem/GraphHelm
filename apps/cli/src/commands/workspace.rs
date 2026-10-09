@@ -378,6 +378,279 @@ fn remove_tree(path: &Path) -> std::io::Result<()> {
     std::fs::remove_file(path)
 }
 
+/// The owner's build-directory rule for the slot (#360): `<root>/.graphhelm-workspaces/
+/// slot-targets.json`, `{"targetRoot": "<absolute directory>", "cap": <1..=16, default 3>}`.
+/// With it the slot builds in `<targetRoot>/<lane>/<worktree directory name>/target`, records
+/// each such directory, and holds a lane to `cap` of them. Without the file nothing changes.
+pub(crate) const SLOT_TARGETS: &str = "slot-targets.json";
+const TARGET_SCHEMA: &str = "graphhelm.slot-target/1";
+const TARGET_RECORDS: &str = "targets";
+const DEFAULT_TARGET_CAP: u64 = 3;
+
+pub(crate) struct TargetRule {
+    pub root: PathBuf,
+    pub cap: u64,
+}
+
+/// `Ok(None)`: no rule file. A file that cannot be read or does not say where to build is an
+/// error, never a silent fall back to the worktree's own disk: the owner wrote a rule.
+pub(crate) fn target_rule(root: &Path) -> Result<Option<TargetRule>, String> {
+    let file = root.join(LEDGER).join(SLOT_TARGETS);
+    let bytes = match std::fs::read(&file) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(format!("{LEDGER}/{SLOT_TARGETS} could not be read")),
+    };
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|_| format!("{LEDGER}/{SLOT_TARGETS} is not JSON"))?;
+    let target_root = value["targetRoot"]
+        .as_str()
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .ok_or_else(|| {
+            format!("{LEDGER}/{SLOT_TARGETS}: targetRoot must be an absolute directory")
+        })?;
+    let cap = match &value["cap"] {
+        Value::Null => DEFAULT_TARGET_CAP,
+        cap => cap
+            .as_u64()
+            .filter(|cap| (1..=16).contains(cap))
+            .ok_or_else(|| format!("{LEDGER}/{SLOT_TARGETS}: cap must be a number from 1 to 16"))?,
+    };
+    Ok(Some(TargetRule {
+        root: target_root,
+        cap,
+    }))
+}
+
+fn target_record_file(root: &Path, lane: &str, name: &str) -> PathBuf {
+    root.join(LEDGER)
+        .join(TARGET_RECORDS)
+        .join(lane)
+        .join(format!("{name}.json"))
+}
+
+/// One lane's recorded build directories: `(name, worktree)`. A record whose own lane or name
+/// disagrees with where it sits, or whose `worktree` is not an absolute path, is not a record:
+/// nothing is counted for it and nothing is deleted for it.
+fn target_records(root: &Path, lane: &str) -> Vec<(String, PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(root.join(LEDGER).join(TARGET_RECORDS).join(lane)) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(String, PathBuf)> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let file = entry.path();
+            let value: Value = serde_json::from_slice(&std::fs::read(&file).ok()?).ok()?;
+            let name = value["name"].as_str().filter(|name| valid_id(name))?;
+            let worktree = value["worktree"]
+                .as_str()
+                .map(PathBuf::from)
+                .filter(|path| path.is_absolute())?;
+            (value["schema"] == TARGET_SCHEMA
+                && value["lane"] == lane
+                && file.file_name().and_then(|n| n.to_str()) == Some(&format!("{name}.json")))
+            .then(|| (name.to_owned(), worktree))
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// Whether a recorded worktree is POSITIVELY gone: the path is not found, and some directory
+/// above it answers. "Could not be read" is not "gone": a worktree on a volume that is offline or
+/// not ready, or behind a permission or I/O error, still exists, and its build directory is kept.
+/// On Windows a missing drive reports every path on it as not found, the drive's own root
+/// included, which is why an ancestor has to answer before the path counts as gone.
+fn worktree_gone(path: &Path) -> bool {
+    use std::io::ErrorKind::NotFound;
+    if !path.is_absolute() {
+        return false;
+    }
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => false,
+        Err(error) if error.kind() == NotFound => path
+            .ancestors()
+            .skip(1)
+            .find_map(|above| match std::fs::symlink_metadata(above) {
+                Ok(_) => Some(true),
+                Err(error) if error.kind() == NotFound => None,
+                Err(_) => Some(false),
+            })
+            .unwrap_or(false),
+        Err(_) => false,
+    }
+}
+
+/// The build directory is always derived from the rule and the ids, never read back from a
+/// record: a record cannot point the delete at another path.
+fn target_dir(rule: &TargetRule, lane: &str, name: &str) -> PathBuf {
+    rule.root.join(lane).join(name).join("target")
+}
+
+/// Removes one recorded build directory and its record. Refuses when the lane or worktree-name
+/// directory on the way to it is a link, so the delete never leaves the target root; the target
+/// itself is deleted without following links.
+fn reclaim_target(root: &Path, rule: &TargetRule, lane: &str, name: &str) -> Result<(), String> {
+    let holder = rule.root.join(lane).join(name);
+    // The record was written under another target root: the directory this rule derives is not
+    // the one that was built in. Deleting nothing and saying "reclaimed" would drop the record
+    // and leak the real directory, so the record stays and says why.
+    let recorded = std::fs::read(target_record_file(root, lane, name))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|value| value["target"].as_str().map(PathBuf::from));
+    if recorded.as_deref() != Some(holder.join("target").as_path()) {
+        return Err("target_root_changed".to_owned());
+    }
+    for step in [rule.root.join(lane), holder.clone()] {
+        if std::fs::symlink_metadata(&step).is_ok_and(|metadata| is_link(&metadata)) {
+            return Err("linked_path".to_owned());
+        }
+    }
+    remove_tree(&holder.join("target")).map_err(|_| "remove_failed".to_owned())?;
+    let _ = std::fs::remove_dir(&holder);
+    std::fs::remove_file(target_record_file(root, lane, name))
+        .map_err(|_| "record_not_removed".to_owned())
+}
+
+/// The slot's build directory for `worktree` under the owner's rule (#360), and the directories
+/// reclaimed on the way. `record: false` only answers "would this lane go over its cap?", before
+/// the caller queues; `record: true` is called while holding the slot, so it is serialized: it
+/// reclaims the lane's build directories whose worktree is positively gone, enforces the cap, and
+/// records this one. A build directory whose worktree still exists is never deleted here.
+pub(crate) fn slot_target(
+    root: &Path,
+    rule: &TargetRule,
+    lane: &str,
+    worktree: &Path,
+    record: bool,
+) -> Result<(PathBuf, Vec<Value>), String> {
+    let name = worktree
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| valid_id(name))
+        .ok_or("the worktree directory name must be a workspace id (lowercase letters, digits, . _ -) to get a build directory")?
+        .to_owned();
+    let same = |other: &Path| {
+        other == worktree
+            || (other.canonicalize().ok().is_some()
+                && other.canonicalize().ok() == worktree.canonicalize().ok())
+    };
+    let mut held = Vec::new();
+    let mut reclaimed = Vec::new();
+    let mut first_used = None;
+    for (other, path) in target_records(root, lane) {
+        if other == name {
+            if same(&path) {
+                first_used = std::fs::read(target_record_file(root, lane, &name))
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                    .and_then(|value| value["firstUsedAt"].as_u64());
+                continue;
+            }
+            if !worktree_gone(&path) {
+                return Err(format!(
+                    "another worktree of lane {lane} already builds as {name}: {}",
+                    path.display()
+                ));
+            }
+        }
+        if !worktree_gone(&path) {
+            held.push(other);
+        } else if record {
+            match reclaim_target(root, rule, lane, &other) {
+                Ok(()) => reclaimed.push(json!({"lane": lane, "name": other})),
+                Err(_) => held.push(other),
+            }
+        }
+    }
+    if first_used.is_none() && held.len() as u64 >= rule.cap {
+        return Err(format!(
+            "lane {lane} already holds {} build directories ({}); remove a worktree it no longer needs (its build directory is reclaimed by the next slot run or by workspace sweep), then run again",
+            rule.cap,
+            held.join(", ")
+        ));
+    }
+    let target = target_dir(rule, lane, &name);
+    if record {
+        std::fs::create_dir_all(&target)
+            .map_err(|_| "the build directory could not be created".to_owned())?;
+        let stamp = now();
+        write_record(
+            &target_record_file(root, lane, &name),
+            &json!({"schema": TARGET_SCHEMA, "lane": lane, "name": name,
+                "worktree": worktree.to_string_lossy(), "target": target.to_string_lossy(),
+                "firstUsedAt": first_used.unwrap_or(stamp), "lastUsedAt": stamp}),
+        )
+        .map_err(|_| "the build directory could not be recorded".to_owned())?;
+    }
+    Ok((target, reclaimed))
+}
+
+/// Every lane's recorded build directories for `workspace sweep` and `workspace slot status`.
+fn all_target_records(root: &Path) -> Vec<(String, String, PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(root.join(LEDGER).join(TARGET_RECORDS)) else {
+        return Vec::new();
+    };
+    let mut lanes: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|lane| valid_id(lane))
+        .collect();
+    lanes.sort();
+    lanes
+        .into_iter()
+        .flat_map(|lane| {
+            target_records(root, &lane)
+                .into_iter()
+                .map(move |(name, worktree)| (lane.clone(), name, worktree))
+        })
+        .collect()
+}
+
+/// How many build directories each lane holds, for `workspace slot status`.
+pub(crate) fn target_counts(root: &Path) -> Value {
+    let mut counts = serde_json::Map::new();
+    for (lane, _, _) in all_target_records(root) {
+        let count = counts.get(&lane).and_then(Value::as_u64).unwrap_or(0);
+        counts.insert(lane, json!(count + 1));
+    }
+    Value::Object(counts)
+}
+
+/// The sweep's half of the rule: a recorded build directory whose worktree is gone is removed
+/// (listed only, without `--apply`); one whose worktree still exists is kept.
+fn sweep_targets(root: &Path, apply: bool) -> Value {
+    let mut removed = Vec::new();
+    let mut kept = Vec::new();
+    let rule = target_rule(root).ok().flatten();
+    for (lane, name, worktree) in all_target_records(root) {
+        let entry = |reason: &str| json!({"lane": lane, "name": name, "reason": reason});
+        if !worktree_gone(&worktree) {
+            kept.push(entry(if std::fs::symlink_metadata(&worktree).is_ok() {
+                "worktree_exists"
+            } else {
+                "worktree_unreadable"
+            }));
+            continue;
+        }
+        let Some(rule) = &rule else {
+            kept.push(entry("no_target_root"));
+            continue;
+        };
+        if !apply {
+            removed.push(json!({"lane": lane, "name": name}));
+            continue;
+        }
+        match reclaim_target(root, rule, &lane, &name) {
+            Ok(()) => removed.push(json!({"lane": lane, "name": name})),
+            Err(reason) => kept.push(entry(&reason)),
+        }
+    }
+    json!({"removed": removed, "kept": kept})
+}
+
 fn live(root: &Path, record: &Value) -> Value {
     let (lane, task) = (
         record["lane"].as_str().unwrap_or_default(),
@@ -518,6 +791,7 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
     }
     Outcome::success(
         COMMAND,
-        json!({"root": root.to_string_lossy(), "applied": apply, "removed": removed, "kept": kept}),
+        json!({"root": root.to_string_lossy(), "applied": apply, "removed": removed, "kept": kept,
+            "targets": sweep_targets(root, apply)}),
     )
 }

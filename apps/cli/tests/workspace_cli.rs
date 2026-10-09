@@ -1020,3 +1020,278 @@ fn slot_status_does_not_trust_a_stale_holder_file() {
         "the slot is held, by someone unnamed: {status}"
     );
 }
+
+/// One slot run in `worktree` that writes the `CARGO_TARGET_DIR` it was given to `log`.
+fn slot_in(root: &Path, lane: &str, worktree: &Path, log: &Path) -> (i32, Value) {
+    let _ = std::fs::remove_file(log);
+    let out = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .current_dir(worktree)
+        .args(["--json", "workspace", "slot", "--root"])
+        .arg(root)
+        .args(["--lane", lane, "--"])
+        .args(target_command(log))
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap_or(-1),
+        serde_json::from_slice(&out.stdout).unwrap_or(Value::Null),
+    )
+}
+
+/// #360 (`keel.invariant.persistence`, destructive operation): with the owner's rule file the
+/// slot, the one door every build uses, puts the build directory on the configured root, holds a
+/// lane to its cap, and reclaims a build directory when its worktree is gone. Defects named: the
+/// build still landing in the worktree (the slow disk) although the owner configured a fast one;
+/// a lane piling up build directories past the cap; a build directory deleted while its worktree
+/// still exists; a reclaim that follows a link out of the target root; an unreadable rule read as
+/// "no rule". No existing cell knows the rule file. Cost: a dozen short child commands, tempdirs.
+#[test]
+fn the_slot_builds_on_the_owners_target_root_caps_a_lane_and_reclaims_orphans() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let fast = dir.path().join("fast");
+    let rules = root.join(".graphhelm-workspaces");
+    std::fs::create_dir_all(&rules).unwrap();
+    let log = dir.path().join("target.txt");
+    let worktree = |name: &str| {
+        let path = dir.path().join("trees").join(name);
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    };
+    let built = || std::fs::read_to_string(&log).unwrap().trim().to_owned();
+    let (one, two, three) = (worktree("wt-one"), worktree("wt-two"), worktree("wt-three"));
+
+    // Control: no rule file, the worktree's own target, and nothing recorded.
+    let (code, reply) = slot_in(&root, "lane-a", &one, &log);
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(Path::new(&built()), one.join("target"));
+    assert!(!rules.join("targets").exists());
+
+    // A rule the slot cannot read is refused, not ignored.
+    std::fs::write(rules.join("slot-targets.json"), r#"{"cap": 2}"#).unwrap();
+    let (code, reply) = slot_in(&root, "lane-a", &one, &log);
+    assert_eq!(code, 3, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["path"], "/targetRoot", "{reply}");
+    assert!(!log.exists());
+
+    std::fs::write(
+        rules.join("slot-targets.json"),
+        serde_json::json!({"targetRoot": fast, "cap": 2}).to_string(),
+    )
+    .unwrap();
+    for tree in [&one, &two] {
+        let (code, reply) = slot_in(&root, "lane-a", tree, &log);
+        assert_eq!(code, 0, "{reply}");
+        let name = tree.file_name().unwrap();
+        assert_eq!(
+            Path::new(&built()),
+            fast.join("lane-a").join(name).join("target")
+        );
+        assert!(
+            rules
+                .join("targets/lane-a")
+                .join(format!("{}.json", name.to_string_lossy()))
+                .is_file()
+        );
+    }
+    // Running a worktree that already has its build directory is not a third one.
+    assert_eq!(slot_in(&root, "lane-a", &one, &log).0, 0);
+    // Another lane has its own cap.
+    assert_eq!(slot_in(&root, "lane-b", &three, &log).0, 0);
+
+    // The third worktree of the lane is refused before the command runs; both are named.
+    std::fs::write(fast.join("lane-a/wt-one/target/built.bin"), b"x").unwrap();
+    let (code, reply) = slot_in(&root, "lane-a", &three, &log);
+    assert_eq!(code, 3, "{reply}");
+    let message = reply["diagnostics"][0]["message"].as_str().unwrap();
+    assert!(
+        message.contains("wt-one") && message.contains("wt-two"),
+        "{message}"
+    );
+    assert!(!log.exists(), "the command ran over the cap");
+    assert!(fast.join("lane-a/wt-one/target/built.bin").is_file());
+
+    let (code, status) = run(&["slot", "status", "--root", root.to_str().unwrap()]);
+    assert_eq!(code, 0, "{status}");
+    assert_eq!(
+        status["data"]["targets"],
+        serde_json::json!({"lane-a": 2, "lane-b": 1})
+    );
+
+    // A worktree that is gone frees its place: its build directory is reclaimed by the next run.
+    std::fs::remove_dir_all(&one).unwrap();
+    let (code, reply) = slot_in(&root, "lane-a", &three, &log);
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(
+        reply["data"]["reclaimedTargets"],
+        serde_json::json!([{"lane": "lane-a", "name": "wt-one"}])
+    );
+    assert!(!fast.join("lane-a/wt-one").exists());
+    assert!(!rules.join("targets/lane-a/wt-one.json").exists());
+    assert!(fast.join("lane-a/wt-two/target").is_dir());
+
+    // The rule, the records and the cap belong to one slot root. A second slot (its own root,
+    // its own target root) counts the same lane from zero, although this root has it at its cap.
+    let (second, second_fast) = (dir.path().join("root-b"), dir.path().join("fast-b"));
+    std::fs::create_dir_all(second.join(".graphhelm-workspaces")).unwrap();
+    std::fs::write(
+        second.join(".graphhelm-workspaces/slot-targets.json"),
+        serde_json::json!({"targetRoot": second_fast, "cap": 1}).to_string(),
+    )
+    .unwrap();
+    let (code, reply) = slot_in(&second, "lane-a", &two, &log);
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(
+        Path::new(&built()),
+        second_fast.join("lane-a/wt-two/target")
+    );
+    assert_eq!(slot_in(&second, "lane-a", &three, &log).0, 3);
+    assert!(fast.join("lane-a/wt-three/target").is_dir());
+
+    // Sweep: a dry run lists the orphan and deletes nothing; --apply removes it; a build
+    // directory reached through a link is kept, and what the link points at survives.
+    let outside = dir.path().join("outside");
+    std::fs::create_dir_all(outside.join("target")).unwrap();
+    std::fs::write(outside.join("target/keep.txt"), b"keep").unwrap();
+    std::fs::remove_dir_all(&two).unwrap();
+    std::fs::remove_dir_all(&three).unwrap();
+    std::fs::remove_dir_all(fast.join("lane-a/wt-three")).unwrap();
+    // `mklink` reads a forward slash as a switch: the link path is joined part by part.
+    link_dir(&fast.join("lane-a").join("wt-three"), &outside);
+    let sweep = |apply: bool| {
+        let mut args = vec!["sweep", "--root", root.to_str().unwrap()];
+        if apply {
+            args.push("--apply");
+        }
+        let (code, reply) = run(&args);
+        assert_eq!(code, 0, "{reply}");
+        reply["data"]["targets"].clone()
+    };
+    let dry = sweep(false);
+    assert_eq!(dry["removed"].as_array().map(Vec::len), Some(3), "{dry}");
+    assert!(fast.join("lane-a/wt-two/target").is_dir());
+    let applied = sweep(true);
+    assert_eq!(
+        applied["removed"],
+        serde_json::json!([{"lane": "lane-a", "name": "wt-two"}, {"lane": "lane-b", "name": "wt-three"}]),
+        "{applied}"
+    );
+    assert_eq!(
+        applied["kept"],
+        serde_json::json!([{"lane": "lane-a", "name": "wt-three", "reason": "linked_path"}]),
+        "{applied}"
+    );
+    assert!(!fast.join("lane-a/wt-two").exists());
+    assert_eq!(
+        std::fs::read(outside.join("target/keep.txt")).unwrap(),
+        b"keep"
+    );
+}
+
+/// #360, review BLOCK on `18a2759e` (gh-claude-7): "the worktree is gone" was "it is not a
+/// directory I can see", which is also true of a worktree on a volume that is offline, and of a
+/// record with no worktree at all; the build directory was then deleted although its worktree
+/// existed. Defects named: a build directory reclaimed because its worktree could not be READ; a
+/// record without an absolute worktree treated as an orphan; a sweep that deletes the build
+/// directory of a worktree that exists; a changed target root reported as reclaimed while the
+/// real directory leaks. Cost: a few short child commands, temp directories.
+#[test]
+fn a_build_directory_is_reclaimed_only_when_its_worktree_is_positively_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let fast = dir.path().join("fast");
+    let rules = root.join(".graphhelm-workspaces");
+    std::fs::create_dir_all(&rules).unwrap();
+    let rule = |target_root: &Path| {
+        std::fs::write(
+            rules.join("slot-targets.json"),
+            serde_json::json!({"targetRoot": target_root, "cap": 3}).to_string(),
+        )
+        .unwrap();
+    };
+    rule(&fast);
+    let log = dir.path().join("target.txt");
+    let tree = dir.path().join("trees").join("wt-one");
+    std::fs::create_dir_all(&tree).unwrap();
+    assert_eq!(slot_in(&root, "lane-a", &tree, &log).0, 0);
+    let record = rules.join("targets").join("lane-a").join("wt-one.json");
+    let built = fast
+        .join("lane-a")
+        .join("wt-one")
+        .join("target")
+        .join("built.bin");
+    std::fs::write(&built, b"x").unwrap();
+    let original = std::fs::read_to_string(&record).unwrap();
+    let with_worktree = |worktree: &str| {
+        let mut value: Value = serde_json::from_str(&original).unwrap();
+        value["worktree"] = worktree.into();
+        std::fs::write(&record, value.to_string()).unwrap();
+    };
+    let sweep = || {
+        let (code, reply) = run(&["sweep", "--root", root.to_str().unwrap(), "--apply"]);
+        assert_eq!(code, 0, "{reply}");
+        reply["data"]["targets"].clone()
+    };
+    let kept =
+        |reason: &str| serde_json::json!([{"lane": "lane-a", "name": "wt-one", "reason": reason}]);
+
+    // The worktree exists: an applied sweep keeps its build directory.
+    let swept = sweep();
+    assert_eq!(swept["kept"], kept("worktree_exists"), "{swept}");
+    assert!(built.is_file());
+
+    // No worktree, or a relative one: not a record, so nothing is deleted for it.
+    for worktree in ["", "trees/wt-one"] {
+        with_worktree(worktree);
+        let swept = sweep();
+        assert_eq!(swept["removed"], serde_json::json!([]), "{swept}");
+        assert!(built.is_file(), "deleted for worktree {worktree:?}");
+    }
+
+    // A worktree on a volume that does not answer cannot be read, which is not "gone". A second
+    // worktree of the lane does not reclaim it either.
+    #[cfg(windows)]
+    {
+        let offline = ('D'..='Z')
+            .rev()
+            .map(|letter| format!("{letter}:\\"))
+            .find(|drive| !Path::new(drive).exists())
+            .expect("a drive letter that is not mounted");
+        with_worktree(&format!("{offline}trees\\wt-one"));
+        let swept = sweep();
+        assert_eq!(swept["kept"], kept("worktree_unreadable"), "{swept}");
+        assert!(built.is_file());
+        let other = dir.path().join("trees").join("wt-two");
+        std::fs::create_dir_all(&other).unwrap();
+        let (code, reply) = slot_in(&root, "lane-a", &other, &log);
+        assert_eq!(code, 0, "{reply}");
+        assert_eq!(reply["data"]["reclaimedTargets"], serde_json::json!([]));
+        assert!(built.is_file());
+        std::fs::remove_dir_all(&other).unwrap();
+        let _ = sweep();
+    }
+
+    // The record names a build directory under another target root: nothing is deleted, the
+    // record stays, and the sweep says why.
+    with_worktree(
+        dir.path()
+            .join("trees")
+            .join("never-there")
+            .to_str()
+            .unwrap(),
+    );
+    rule(&dir.path().join("fast-moved"));
+    let swept = sweep();
+    assert_eq!(swept["kept"], kept("target_root_changed"), "{swept}");
+    assert!(built.is_file() && record.is_file());
+
+    // Positively gone, on a volume that answers, under the rule it was built with: reclaimed.
+    rule(&fast);
+    let swept = sweep();
+    assert_eq!(
+        swept["removed"],
+        serde_json::json!([{"lane": "lane-a", "name": "wt-one"}]),
+        "{swept}"
+    );
+    assert!(!built.exists() && !record.exists());
+}

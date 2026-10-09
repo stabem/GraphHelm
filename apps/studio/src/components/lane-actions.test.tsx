@@ -31,13 +31,13 @@ describe("LaneActions", () => {
   });
   it("a failed ask shows the error as an alert", async () => {
     const send = vi.fn().mockRejectedValue(new Error("Runtime has no keyring"));
-    render(<LaneActions {...base} askedAt={null} onAsked={vi.fn()} send={send} />);
+    render(<LaneActions {...base} askedAt={null} onAsked={vi.fn()} send={send} assignReview={vi.fn().mockResolvedValue(undefined)} />);
     await userEvent.click(screen.getByRole("button", { name: "Ask gh-claude-7 for status" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Runtime has no keyring");
   });
   it("Hand to… is a Studio button opening an accessible menu; it confirms inline and sends the same two notes", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
-    render(<LaneActions {...base} askedAt={null} onAsked={vi.fn()} send={send} />);
+    render(<LaneActions {...base} askedAt={null} onAsked={vi.fn()} send={send} assignReview={vi.fn().mockResolvedValue(undefined)} />);
     expect(screen.queryByRole("combobox")).toBeNull();
     const hand = screen.getByRole("button", { name: "Hand to…" });
     expect(hand).toHaveClass("mg-secondary");
@@ -66,11 +66,42 @@ describe("LaneActions", () => {
   });
   it("Cancel drops the hand-off without sending", async () => {
     const send = vi.fn();
-    render(<LaneActions {...base} askedAt={null} onAsked={vi.fn()} send={send} />);
+    render(<LaneActions {...base} askedAt={null} onAsked={vi.fn()} send={send} assignReview={vi.fn().mockResolvedValue(undefined)} />);
     await userEvent.click(screen.getByRole("button", { name: "Hand to…" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "gh-claude-3" }));
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByText(/Hand review of/)).toBeNull();
     expect(send).not.toHaveBeenCalled();
   });
+  // Contract: a review record must succeed before either hand-off note. Existing coverage
+  // observes notes only; the I/O callback is also used by the real Runtime caller. Cost: jsdom only.
+  it.each(["Review", "Re-review"])("%s records before notes and refuses without claiming success", async (step) => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const assignReview = vi.fn().mockRejectedValue(new Error("GHCLI038: owner refused"));
+    render(<LaneActions {...base} step={step} askedAt={null} onAsked={vi.fn()} send={send} assignReview={assignReview} />);
+    await userEvent.click(screen.getByRole("button", { name: /Hand to/ }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "gh-claude-3" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("GHCLI038: owner refused");
+    expect(send).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Hand-off to .* requested/)).toBeNull();
+    assignReview.mockImplementation(async () => { expect(send).not.toHaveBeenCalled(); });
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(assignReview).toHaveBeenCalledWith("gh-claude-3");
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText("Hand-off to gh-claude-3 requested")).toBeInTheDocument();
+  });
+
+  it.each(["Implement", "Fix", "Merge"])("%s announces the hand-off and explains the unchanged record", async (step) => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const assignReview = vi.fn();
+    render(<LaneActions {...base} step={step} askedAt={null} onAsked={vi.fn()} send={send} assignReview={assignReview} />);
+    await userEvent.click(screen.getByRole("button", { name: /Hand to/ }));
+    expect(screen.getByText("Hand-off is announced; the record stays with gh-claude-7")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("menuitem", { name: "gh-claude-3" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(assignReview).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
 });

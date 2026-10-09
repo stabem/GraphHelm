@@ -1812,7 +1812,7 @@ export class RuntimeClient {
   async signal(
     executionId: string,
     message: string,
-    options: MutationOptions & { emittedAt?: string; to?: string; replyTo?: string; task?: string; kind?: "operator_note" | "native_persona_linked" | "actor_alias" | "owner_refusal" } = {},
+    options: MutationOptions & { emittedAt?: string; to?: string; replyTo?: string; task?: string; kind?: "operator_note" | "native_persona_linked" | "actor_alias" | "owner_refusal" | "task.review_assigned" } = {},
   ): Promise<MutationEvidence> {
     const id = checkedId(executionId, "executionId");
     if (typeof message !== "string" || message.trim().length === 0) {
@@ -1823,7 +1823,7 @@ export class RuntimeClient {
     }
     const actor = options.actor ?? OPERATOR_ACTOR;
     const kind = options.kind ?? "operator_note";
-    if (kind !== "operator_note" && kind !== "native_persona_linked" && kind !== "actor_alias" && kind !== "owner_refusal") {
+    if (kind !== "operator_note" && kind !== "native_persona_linked" && kind !== "actor_alias" && kind !== "owner_refusal" && kind !== "task.review_assigned") {
       throw new RuntimeError("The signal kind is unsupported.", 0, []);
     }
     if (kind === "native_persona_linked" && actor.type !== "owner") {

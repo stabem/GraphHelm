@@ -12,6 +12,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import re
 import socket
 import statistics
 import subprocess
@@ -113,8 +114,9 @@ def main():
                         samples["tabGraph"].append(click_time(page,
                             page.get_by_role("tab", name="Graph", exact=True),
                             page.locator("#studio-panel-graph").get_by_text("No journeys in this project yet", exact=True)))
+                        stage = f"run {run + 1}: chat setup"
                         page.locator("#studio-panel-graph").get_by_role("tab", name="Team", exact=True).click()
-                        page.get_by_role("tab", name="Everyone", exact=True).click()
+                        page.get_by_role("tab", name=re.compile(r"^Everyone(?:, \d+ unread)?$")).click()
                         message = f"Studio speed sample {run + 1}"
                         panel = page.get_by_role("tabpanel", name="Everyone", exact=True)
                         expect(panel.get_by_text(message, exact=True)).to_have_count(0)
@@ -128,7 +130,7 @@ def main():
                         page.reload()
                         page.get_by_label("Bearer token", exact=True).fill(token)
                         page.get_by_role("button", name="Connect", exact=True).click()
-                        page.get_by_role("tab", name="Everyone", exact=True).click()
+                        page.get_by_role("tab", name=re.compile(r"^Everyone(?:, \d+ unread)?$")).click()
                         expect(panel.get_by_text(message, exact=True)).to_be_visible()
                     finally:
                         context.close()

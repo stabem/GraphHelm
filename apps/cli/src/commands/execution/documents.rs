@@ -297,18 +297,20 @@ pub(crate) fn validate_task_event(
                 }
                 _ => false,
             };
+            // CHARACTERS, as the schema's `maxLength` counts them, not UTF-8 bytes (the #486
+            // rule): an accented reason within the limit must not lose the round.
+            let prose = |value: &serde_json::Value, max: usize| {
+                value.as_str().is_some_and(|text| {
+                    !text.is_empty()
+                        && text.chars().count() <= max
+                        && !text.chars().any(char::is_control)
+                })
+            };
             let reasons = document["reasons"].as_array().is_some_and(|items| {
-                (1..=8).contains(&items.len())
-                    && items.iter().all(|item| {
-                        item.as_str().is_some_and(|text| {
-                            !text.is_empty()
-                                && text.len() <= 500
-                                && !text.chars().any(char::is_control)
-                        })
-                    })
+                (1..=8).contains(&items.len()) && items.iter().all(|item| prose(item, 500))
             });
             (
-                consistent && short("designRef", 256) && is_actor("lane") && reasons,
+                consistent && prose(&document["designRef"], 256) && is_actor("lane") && reasons,
                 &[
                     "round",
                     "score",

@@ -58,7 +58,12 @@ fn first_unused<L>(mut offer: impl FnMut() -> (L, u16)) -> u16 {
 fn a_port_the_os_offers_again_is_never_handed_out_twice() {
     // Ports 1 and 2 are far below the dynamic range, so no real `free_port` call took them.
     let mut offers = [1_u16, 1, 1, 2].into_iter();
-    let mut offer = || ((), offers.next().expect("an offer the helper should not need"));
+    let mut offer = || {
+        (
+            (),
+            offers.next().expect("an offer the helper should not need"),
+        )
+    };
     assert_eq!(first_unused(&mut offer), 1);
     assert_eq!(first_unused(&mut offer), 2, "port 1 was handed out twice");
 }

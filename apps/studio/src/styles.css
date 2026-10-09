@@ -2899,6 +2899,8 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .journey-sees-details { font-size: 12px; color: var(--dim); overflow-wrap: anywhere; }
 .journey-sees-details > summary { cursor: pointer; width: fit-content; }
 .journey-flow-watch { margin: 8px 0 0; font-size: 0.85rem; }
+/* #505: the same words the watch browser shows over the app, for the owner reading the Studio. */
+.journey-flow-watch-caption { margin: 2px 0 0; font-size: 0.85rem; color: var(--dim); }
 .journey-flow-watch-failure { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 10px; border-left: 3px solid var(--danger); font-size: 0.85rem; }
 .journey-flow-watch-failure p { margin: 0; flex: 1 1 200px; }
 .journey-flow-path-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }

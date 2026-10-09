@@ -40,6 +40,12 @@ export interface JourneyFlowsProps {
   run?: JourneyRunSource;
 }
 
+/** #505 review: the row's caption is the watch browser's own words, which start with the edge id
+ * ("cart.checkout: Clicks …"); the owner reads only what the step does. */
+export function captionWords(caption: string, edge: string | null | undefined): string {
+  return typeof edge === "string" && caption.startsWith(`${edge}: `) ? caption.slice(edge.length + 2) : caption;
+}
+
 /** A title's trailing parenthetical is a note for the reader (`Name (draft: why)`), not the name. */
 export function splitTitle(title: string): { name: string; note: string | null } {
   const match = /^(.*\S)\s*\(([^()]*)\)\s*$/.exec(title);
@@ -273,6 +279,9 @@ function Detail({ flow, onApprove, onWatch, session, source }: { flow: JourneyFl
       ))}
       <JourneyFlowchart flow={flow} run={run} frames={frames} current={watched[current]?.screen.id ?? null} liveFrame={liveFrame} />
       {session !== undefined && <p className="journey-flow-watch" role="status">{watchWords(session, watched, current)}</p>}
+      {session?.state === "playing" && typeof session.caption === "string" && session.caption !== "" && (
+        <p className="journey-flow-watch-caption">{captionWords(session.caption, session.edge)}</p>
+      )}
     </article>
   );
 }

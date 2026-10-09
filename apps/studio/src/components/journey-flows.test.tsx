@@ -401,3 +401,19 @@ describe("JourneyFlows run", () => {
     expect(cards[0]!.querySelector("img")).toBeNull();
   });
 });
+
+// #505: the owner reads both screens; the Studio shows what the act the watch is about to run does.
+describe("JourneyFlows watch caption", () => {
+  it("shows the act's caption under the readout while playing, and nothing between acts or after", () => {
+    const { container, rerender } = render(<JourneyFlows view={view} onApprove={vi.fn()} onWatch={vi.fn()}
+      sessions={[watchRow({ edge: "cart.checkout", actIndex: 0, caption: "cart.checkout: Clicks “Checkout”" })]} />);
+    const caption = () => container.querySelector(".journey-flow-watch-caption");
+    // The owner reads what the step does, never the edge id (#505 review).
+    expect(caption()?.textContent).toBe("Clicks “Checkout”");
+    rerender(<JourneyFlows view={view} onApprove={vi.fn()} onWatch={vi.fn()} sessions={[watchRow({ screen: "pay", stepIndex: 1, caption: null })]} />);
+    expect(caption()).toBeNull();
+    rerender(<JourneyFlows view={view} onApprove={vi.fn()} onWatch={vi.fn()}
+      sessions={[watchRow({ state: "pass", caption: "pay.submit: Clicks “Pay”" })]} />);
+    expect(caption()).toBeNull();
+  });
+});

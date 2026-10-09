@@ -708,7 +708,7 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     };
     if args.watch {
         safe_directory(&progress.dir, true)?;
-        progress.show(&visited[0], 0, None, None);
+        progress.show(&visited[0], 0, None, None, None);
         data["sessionId"] = session_id.clone().into();
     }
     let pace = Duration::from_millis(args.pace_ms);
@@ -725,14 +725,15 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
                     if Instant::now() + pace >= play_deadline {
                         return Err(failure("watch.budget_exceeded", format!("/edges/{at}"), 1));
                     }
+                    // #491: caption the step and outline its control, then wait the pace.
+                    let caption = caption_bounded(format!("{edge_id}: {}", act_caption(act)));
                     progress.show(
                         &visited[index - 1],
                         index - 1,
                         Some(edge_id),
                         Some(act_index),
+                        Some(&caption),
                     );
-                    // #491: caption the step and outline its control, then wait the pace.
-                    let caption = caption_bounded(format!("{edge_id}: {}", act_caption(act)));
                     let _ = driver.call(
                         "show",
                         json!({"caption":caption,"role":act["role"],"name":act["name"]}),
@@ -771,7 +772,7 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
             Ok(_) => {
                 current = Some(screen_id.clone());
                 if args.watch {
-                    progress.show(screen_id, index, None, None);
+                    progress.show(screen_id, index, None, None, None);
                 }
             }
             Err((code, _, _)) if survivable(code) => {
@@ -1051,8 +1052,17 @@ struct Progress {
 }
 
 impl Progress {
-    fn show(&self, screen: &str, index: usize, edge: Option<&str>, act: Option<usize>) {
+    fn show(
+        &self,
+        screen: &str,
+        index: usize,
+        edge: Option<&str>,
+        act: Option<usize>,
+        caption: Option<&str>,
+    ) {
         let mut record = self.base.clone();
+        // #505: the words the watch browser shows for this act, for the Studio's readout.
+        record["caption"] = caption.map_or(Value::Null, Value::from);
         record["screen"] = screen.into();
         record["stepIndex"] = index.into();
         record["edge"] = edge.map_or(Value::Null, Value::from);
@@ -1482,5 +1492,33 @@ mod caption_tests {
             assert!(caption.ends_with('…'));
         }
         assert_eq!(super::caption_bounded("short".into()), "short");
+    }
+
+    /// #505: the watch row carries the caption of the act about to run, and null between acts,
+    /// so the Studio can show the same words as the watch browser. Cost: one temp file.
+    #[test]
+    fn the_watch_row_carries_the_caption_of_the_act_about_to_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let progress = super::Progress {
+            dir: dir.path().to_path_buf(),
+            id: "live-0123456789abcdef".into(),
+            base: serde_json::json!({"sessionId": "live-0123456789abcdef", "mode": "watch"}),
+        };
+        let row = || -> serde_json::Value {
+            serde_json::from_slice(
+                &std::fs::read(dir.path().join("live-0123456789abcdef.json")).unwrap(),
+            )
+            .unwrap()
+        };
+        progress.show(
+            "run",
+            0,
+            Some("run.details"),
+            Some(0),
+            Some("run.details: Clicks \"Details\""),
+        );
+        assert_eq!(row()["caption"], "run.details: Clicks \"Details\"");
+        progress.show("bot", 1, None, None, None);
+        assert_eq!(row()["caption"], serde_json::Value::Null);
     }
 }

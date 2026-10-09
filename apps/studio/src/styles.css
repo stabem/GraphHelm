@@ -2879,6 +2879,10 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .journey-card-result[data-state="fail"], .journey-card-result[data-state="drift"] { color: var(--danger); border-color: var(--danger); }
 .journey-card .journey-flow-step-text { padding: 0 8px; overflow: hidden; }
 .journey-card .journey-does, .journey-card .journey-sees { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+/* #518: the steps the guard skipped, each with the owner's Mark safe. */
+.journey-flow-skipped { display: grid; gap: 8px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 0.85rem; }
+.journey-flow-skipped li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 10px; border-left: 3px solid var(--signal); background: var(--signal-wash); }
+.journey-flow-skipped p { margin: 0; flex: 1 1 320px; overflow-wrap: anywhere; }
 .journey-flow-run { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; font-size: 0.85rem; }
 .journey-flow-run p { margin: 0; }
 .journey-flow-run p[data-result="fail"], .journey-flow-run p[data-result="drift"], .journey-flow-run p[data-state="failed"] { color: var(--danger); }
@@ -2888,8 +2892,9 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .journey-zoom-head { display: flex; align-items: center; gap: 10px; }
 .journey-zoom-head h4 { margin: 0; flex: 1 1 auto; font-size: 15px; }
 .journey-zoom-why { margin: 0; color: var(--danger); font-size: 13px; }
-.journey-zoom-frame { min-height: 120px; border: 1px solid var(--edge); background: var(--signal-wash); }
-.journey-zoom-frame img { display: block; max-width: 100%; height: auto; }
+.journey-zoom-frame { flex: 0 0 auto; min-height: 120px; border: 1px solid var(--edge); background: var(--signal-wash); }
+/* A real frame is 1280x800: it fits the height the window leaves, so the lines under it stay under it. */
+.journey-zoom-frame img { display: block; max-width: 100%; max-height: calc(100vh - 230px); width: auto; height: auto; margin: 0 auto; }
 .journey-zoom-frame p { margin: 0; padding: 40px 16px; text-align: center; color: var(--dim); }
 .journey-zoom p { margin: 0; }
 .journey-flow-step-number { display: inline-grid; place-items: center; flex: 0 0 auto; width: 22px; height: 22px; border-radius: var(--r-pill); border: 1px solid var(--edge); font-size: 12px; color: var(--dim); }

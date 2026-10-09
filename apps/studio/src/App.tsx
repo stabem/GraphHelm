@@ -2165,6 +2165,16 @@ export default function App({
       liveFrame: async (sessionId, etag) => client().liveFrame(sessionId, etag),
     };
   }, []);
+  // #518: the owner marks a draft's skipped step safe; the flows are read again to show the mark.
+  const markFlowEdgeSafe = useCallback(async (flowId: string, edgeId: string) => {
+    const client = clientRef.current;
+    if (client === null) throw new Error("Not connected.");
+    try {
+      await client.markJourneyEdgeSafe(flowId, edgeId);
+    } finally {
+      setFlowsRevision((revision) => revision + 1);
+    }
+  }, []);
   const watchFlow = useCallback(async (flowId: string, path?: string) => {
     const client = clientRef.current;
     if (client === null) throw new Error("Not connected.");
@@ -3030,7 +3040,7 @@ export default function App({
             </div>
             <div id="studio-panel-journeys" role="tabpanel" aria-labelledby="studio-tab-journeys" hidden={canvasTab !== "journey"}>
             {canvasTab === "journey" && <JourneyFlows view={flowsRead.view} failure={flowsRead.failure} onApprove={approveFlow} focusFlowId={journeyContract}
-              sessions={liveSessions} onSelect={selectFlow} run={journeyRun} {...(liveSessions === null ? {} : { onWatch: watchFlow })} />}
+              sessions={liveSessions} onSelect={selectFlow} run={journeyRun} onMarkSafe={markFlowEdgeSafe} {...(liveSessions === null ? {} : { onWatch: watchFlow })} />}
             {/* #465: the proof map follows the journey chosen in the list; a draft has nothing proven
               * yet, so its owner sees Watch and Approve above instead of capture labels. */}
             {canvasTab === "journey" && (chosenFlow === null || chosenFlow.status !== "draft") && (

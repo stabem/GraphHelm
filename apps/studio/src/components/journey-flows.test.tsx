@@ -428,3 +428,54 @@ describe("JourneyFlows watch caption", () => {
     expect(caption()).toBeNull();
   });
 });
+
+// #518: the owner marks a draft's skipped step safe to watch. Regressions caught: a Mark safe
+// that hides one of the edge's acts (one mark covers them all), a mark offered on an approved
+// flow or to a Studio without the door, a stale mark read as valid, a refusal swallowed, and a
+// skipped step of the journey's own run left without the button. Cost: jsdom render, no network.
+describe("JourneyFlows mark safe", () => {
+  const one = (extra: Partial<JourneyFlowView> = {}): JourneyFlowsView => ({ flows: [flow("checkout", extra)] });
+  const stopped = watchRow({ state: "skipped", edge: null, screen: "pay", stepIndex: 1,
+    skipped: { edge: "pay.submit", actIndex: 1, kind: "submit", role: "button", name: "Pay now", would: "pay" } });
+  const marked = (base: JourneyFlowView) => base.edges.map((edge) => edge.id === "pay.submit" ? { ...edge, safe: { digest: `sha256:${"c".repeat(64)}` } } : edge);
+
+  it("shows every act of the skipped step before the owner marks it safe, then says it is marked", async () => {
+    const onMarkSafe = vi.fn(async () => undefined);
+    const { rerender } = render(<JourneyFlows view={one()} onApprove={vi.fn()} onWatch={vi.fn()} onMarkSafe={onMarkSafe} sessions={[stopped]} />);
+    const item = within(screen.getByRole("list", { name: "Skipped steps" })).getByRole("listitem");
+    expect(item).toHaveTextContent("This step does: Fills in “Password”, then Submits with “Pay now”.");
+    await userEvent.click(within(item).getByRole("button", { name: "Mark safe" }));
+    expect(onMarkSafe).toHaveBeenCalledWith("checkout", "pay.submit");
+
+    const base = flow("checkout");
+    rerender(<JourneyFlows view={one({ edges: marked(base) })} onApprove={vi.fn()} onWatch={vi.fn()} onMarkSafe={onMarkSafe} sessions={[stopped]} />);
+    const after = within(screen.getByRole("list", { name: "Skipped steps" })).getByRole("listitem");
+    expect(after).toHaveTextContent("Marked safe. Watch it again to play this step.");
+    expect(within(after).queryByRole("button")).toBeNull();
+
+    // The edge changed after the mark: the Runtime says the mark is void, so it is offered again.
+    rerender(<JourneyFlows view={one({ edges: marked(base), findings: [{ code: "flow.safe_stale", pointer: "/edges/1/safe", message: "void", severity: "warning" }] })}
+      onApprove={vi.fn()} onWatch={vi.fn()} onMarkSafe={onMarkSafe} sessions={[stopped]} />);
+    expect(within(screen.getByRole("list", { name: "Skipped steps" })).getByRole("button", { name: "Mark safe" })).toBeEnabled();
+  });
+
+  it("offers the mark for a step the journey's own run skipped, and shows the Runtime's refusal", async () => {
+    const onMarkSafe = vi.fn(async () => { throw new Error("only a draft's act is marked safe"); });
+    const run: JourneyRunSource = {
+      start: vi.fn(async () => ({ state: "ready" as const, kind: "preview" as const, result: "pass" as const, screens: {}, edges: { "cart.checkout": { result: "skipped" as const, reason: "guard_refused" } } })),
+      read: vi.fn(async () => ({ state: "none" as const })), screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null),
+    };
+    render(<JourneyFlows view={one()} onApprove={vi.fn()} onMarkSafe={onMarkSafe} run={run} />);
+    const item = await screen.findByText(/This step does: Clicks “Checkout”\./);
+    await userEvent.click(within(item.closest("li")!).getByRole("button", { name: "Mark safe" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't mark this step safe: only a draft's act is marked safe");
+  });
+
+  it("offers no mark on an approved flow, or without the owner's door", () => {
+    const approved = one({ status: "approved", approvable: false, approved: { revision: "a".repeat(40), digest: `sha256:${"b".repeat(64)}` } });
+    const { rerender } = render(<JourneyFlows view={approved} onApprove={vi.fn()} onWatch={vi.fn()} onMarkSafe={vi.fn()} sessions={[stopped]} />);
+    expect(screen.queryByRole("list", { name: "Skipped steps" })).toBeNull();
+    rerender(<JourneyFlows view={one()} onApprove={vi.fn()} onWatch={vi.fn()} sessions={[stopped]} />);
+    expect(screen.queryByRole("list", { name: "Skipped steps" })).toBeNull();
+  });
+});

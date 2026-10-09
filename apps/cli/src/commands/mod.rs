@@ -21,7 +21,7 @@ mod journeys;
 mod keel;
 mod lint;
 mod mcp;
-mod observers;
+pub(crate) mod observers;
 mod quality;
 pub(crate) mod remediation;
 mod replay;

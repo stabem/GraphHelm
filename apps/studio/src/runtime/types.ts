@@ -491,6 +491,11 @@ export interface JourneyRunEdge { result?: JourneyStepResult | "skipped" | null;
 /** The run a journey gets when it is opened: `GET|POST /v1/journey-flows/{id}/preview`. `replay` is
  * an approved flow's real replay; `preview` is a draft's and is never proof. While `running`,
  * `screens` holds only the screens reached so far and `current` is the one being played. */
+/** What `POST /v1/journey-observer/setup` did (#519): each project file it created or changed. */
+export interface ObserverSetupView {
+  changed: { path: string; change: "created" | "modified" }[];
+}
+
 export interface JourneyRunView {
   preview?: boolean;
   digest?: string;

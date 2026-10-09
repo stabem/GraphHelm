@@ -2334,6 +2334,105 @@ pub(super) async fn journey_preview(
     preview_status(response).await
 }
 
+/// One observer setup at a time per Runtime: two concurrent `npm install`s in one project corrupt
+/// its `node_modules`.
+static OBSERVER_SETUP_RUNNING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// npm plus the Chromium download (~150 MB) on a slow link; past this the steps are killed.
+const OBSERVER_SETUP_BUDGET: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// `POST /v1/journey-observer/setup` (#519): exactly `graphhelm setup --install-observer
+/// playwright` in this Runtime's project, so a project with no browser player can get one from the
+/// Studio. The body must be empty: no caller input reaches the commands, and the package version
+/// is pinned. It edits the project's `package.json` (creating one when there is none) and
+/// downloads Chromium; the result names every file it created or changed. Owner credential only
+/// (not on the agent allow-list), one at a time (409 `observer.setup_busy`), bounded by
+/// `OBSERVER_SETUP_BUDGET` (`observer.setup_timeout`).
+pub(super) async fn setup_journey_observer(
+    State(state): State<ServeState>,
+    body: Bytes,
+) -> Response {
+    const COMMAND: &str = "journey.observer_setup";
+    use std::sync::atomic::Ordering;
+    if !body.is_empty() {
+        return bad_request(COMMAND, "this route takes no body", "/body");
+    }
+    let Some(project) = state.project.as_deref().map(Path::to_path_buf) else {
+        return respond_failure(
+            COMMAND,
+            execution::execution_state(
+                "observer setup requires an explicit --project on this Runtime",
+                "/project",
+            ),
+        );
+    };
+    let Some(home) = std::env::home_dir() else {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(COMMAND, "no home directory to look for Chromium in").output,
+        );
+    };
+    if OBSERVER_SETUP_RUNNING
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return respond(
+            StatusCode::CONFLICT,
+            Outcome::domain(
+                COMMAND,
+                vec![Diagnostic::error(
+                    "observer.setup_busy",
+                    "an observer setup is already running on this Runtime",
+                    "/",
+                    "serve",
+                )],
+            )
+            .output,
+        );
+    }
+    let ran = off_reactor(move || {
+        crate::commands::observers::install_playwright_bounded(
+            &project,
+            &home,
+            OBSERVER_SETUP_BUDGET,
+        )
+    })
+    .await;
+    OBSERVER_SETUP_RUNNING.store(false, Ordering::Release);
+    use crate::commands::observers::Installed;
+    let failed = |code: &'static str, message: String| {
+        respond(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Outcome::domain(
+                COMMAND,
+                vec![Diagnostic::error(
+                    code,
+                    message,
+                    "/observers/install",
+                    "serve",
+                )],
+            )
+            .output,
+        )
+    };
+    match ran {
+        Some((data, Installed::Ok)) => respond_outcome(Outcome::success(COMMAND, data)),
+        Some((data, Installed::Failed)) => failed(
+            "observer.setup_failed",
+            format!("an install step failed: {data}"),
+        ),
+        Some((data, Installed::TimedOut)) => failed(
+            "observer.setup_timeout",
+            format!("the install outlived its budget and was stopped: {data}"),
+        ),
+        None => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(COMMAND, "the observer setup task failed").output,
+        ),
+    }
+}
+
 /// A preview still running answers 202, as agreed with the Studio (#519); everything else as is.
 async fn preview_status(response: Response) -> Response {
     if response.status() != StatusCode::OK {

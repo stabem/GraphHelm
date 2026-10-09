@@ -30,7 +30,8 @@ const PLAYWRIGHT: Spec = Spec {
     id: "playwright",
     package: "@playwright/test",
     install: [
-        "npm install --save-dev @playwright/test",
+        // Pinned (#519): the Studio's setup button runs exactly this, so it must not float.
+        "npm install --save-dev @playwright/test@1.64.0",
         "npx playwright install chromium",
     ],
     runner: "python .graphhelm/observers/playwright_observe.py --project <project>",
@@ -178,7 +179,18 @@ fn write_script(spec: &Spec, project: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn run_step(command: &str, project: &Path) -> std::io::Result<std::process::ExitStatus> {
+/// What running one install step came to.
+enum Step {
+    Exited(Option<i32>),
+    /// The step outlived the deadline and was killed, with its process tree.
+    TimedOut,
+}
+
+fn run_step(
+    command: &str,
+    project: &Path,
+    deadline: Option<std::time::Instant>,
+) -> std::io::Result<Step> {
     let mut words = command.split_whitespace();
     let program = words.next().unwrap_or_default();
     let mut process = if cfg!(windows) {
@@ -189,12 +201,38 @@ fn run_step(command: &str, project: &Path) -> std::io::Result<std::process::Exit
         std::process::Command::new(program)
     };
     // The child's output would corrupt the JSON on stdout; it goes to stderr for the owner.
-    process
+    let mut child = process
         .args(words)
         .current_dir(project)
         .stdin(std::process::Stdio::null())
         .stdout(std::io::stderr())
-        .status()
+        .spawn()?;
+    let Some(deadline) = deadline else {
+        return Ok(Step::Exited(child.wait()?.code()));
+    };
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Step::Exited(status.code()));
+        }
+        if std::time::Instant::now() >= deadline {
+            kill_tree(&mut child);
+            return Ok(Step::TimedOut);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+/// `cmd /C npm` leaves npm and node as children of `cmd`; killing `cmd` alone would orphan them.
+fn kill_tree(child: &mut std::process::Child) {
+    if cfg!(windows) {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// Runs each requested observer's install commands in `project`, stopping at the first failure,
@@ -204,8 +242,82 @@ pub(super) fn install(
     project: &Path,
     home: &Path,
 ) -> (serde_json::Value, bool) {
+    let (data, outcome) = install_until(kinds, project, home, None);
+    (data, matches!(outcome, Installed::Ok))
+}
+
+/// How an install ended.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Installed {
+    Ok,
+    Failed,
+    TimedOut,
+}
+
+/// The files an install may write in the project, reported back to the owner by name (#519):
+/// the button says up front that it edits `package.json`, and the result says what it did.
+const TOUCHED: [&str; 5] = [
+    "package.json",
+    "package-lock.json",
+    "node_modules/@playwright/test/package.json",
+    ".graphhelm/observers/journey_driver.mjs",
+    ".graphhelm/observers/playwright_observe.py",
+];
+
+fn snapshot(project: &Path) -> Snapshot {
+    TOUCHED
+        .iter()
+        .map(|path| {
+            std::fs::metadata(project.join(path))
+                .ok()
+                .map(|meta| (meta.len(), meta.modified().ok()))
+        })
+        .collect()
+}
+
+/// The Studio's one-button setup (#519): exactly `setup --install-observer playwright`, bounded
+/// by `budget`, and naming each file it created or changed. No caller input reaches the commands.
+pub(crate) fn install_playwright_bounded(
+    project: &Path,
+    home: &Path,
+    budget: std::time::Duration,
+) -> (serde_json::Value, Installed) {
+    let before = snapshot(project);
+    let (mut data, outcome) = install_until(
+        &[ObserverKind::Playwright],
+        project,
+        home,
+        Some(std::time::Instant::now() + budget),
+    );
+    data["changed"] = changed(&before, &snapshot(project)).into();
+    (data, outcome)
+}
+
+type Snapshot = Vec<Option<(u64, Option<std::time::SystemTime>)>>;
+
+/// Each `TOUCHED` file that appeared or changed between two snapshots.
+fn changed(before: &Snapshot, after: &Snapshot) -> Vec<serde_json::Value> {
+    TOUCHED
+        .iter()
+        .zip(before.iter().zip(after))
+        .filter_map(|(path, (old, new))| match (old, new) {
+            (None, Some(_)) => Some(serde_json::json!({"path": path, "change": "created"})),
+            (Some(_), Some(_)) if old != new => {
+                Some(serde_json::json!({"path": path, "change": "modified"}))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn install_until(
+    kinds: &[ObserverKind],
+    project: &Path,
+    home: &Path,
+    deadline: Option<std::time::Instant>,
+) -> (serde_json::Value, Installed) {
     let mut steps = Vec::new();
-    let mut ok = true;
+    let mut outcome = Installed::Ok;
     let mut seen = Vec::new();
     'outer: for kind in kinds {
         let spec = spec(*kind);
@@ -220,19 +332,24 @@ pub(super) fn install(
             "error": written.as_ref().err().map(ToString::to_string),
         }));
         if written.is_err() {
-            ok = false;
+            outcome = Installed::Failed;
             break;
         }
         for command in spec.install {
-            let (exit, error) = match run_step(command, project) {
-                Ok(status) => (status.code(), None),
-                Err(error) => (None, Some(error.to_string())),
+            let (exit, error, timed_out) = match run_step(command, project, deadline) {
+                Ok(Step::Exited(code)) => (code, None, false),
+                Ok(Step::TimedOut) => (None, Some("timed out".to_owned()), true),
+                Err(error) => (None, Some(error.to_string()), false),
             };
             steps.push(serde_json::json!({
                 "observer": spec.id, "command": command, "exitCode": exit, "error": error,
             }));
+            if timed_out {
+                outcome = Installed::TimedOut;
+                break 'outer;
+            }
             if exit != Some(0) {
-                ok = false;
+                outcome = Installed::Failed;
                 break 'outer;
             }
         }
@@ -242,7 +359,7 @@ pub(super) fn install(
             "installed": steps,
             "observers": readiness(project, home),
         }),
-        ok,
+        outcome,
     )
 }
 
@@ -257,6 +374,51 @@ mod tests {
         std::fs::create_dir_all(&project).expect("project");
         std::fs::create_dir_all(&home).expect("home");
         (root, project, home)
+    }
+
+    #[test]
+    fn a_step_past_its_deadline_is_killed_and_reported_as_timed_out() {
+        let (_root, project, _home) = fixture();
+        let slow = if cfg!(windows) {
+            "ping -n 30 127.0.0.1"
+        } else {
+            "sleep 30"
+        };
+        let started = std::time::Instant::now();
+        let step = run_step(
+            slow,
+            &project,
+            Some(started + std::time::Duration::from_secs(1)),
+        )
+        .expect("spawned");
+        assert!(matches!(step, Step::TimedOut));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(15),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn the_result_names_each_file_the_install_created_or_changed() {
+        let (_root, project, _home) = fixture();
+        std::fs::write(project.join("package.json"), "{}").expect("manifest");
+        let before = snapshot(&project);
+        write_script(&PLAYWRIGHT, &project).expect("script");
+        std::fs::write(project.join("package.json"), r#"{"devDependencies":{}}"#).expect("edit");
+        let changed = changed(&before, &snapshot(&project));
+        assert_eq!(
+            serde_json::Value::from(changed),
+            serde_json::json!([
+                {"path": "package.json", "change": "modified"},
+                {"path": ".graphhelm/observers/journey_driver.mjs", "change": "created"},
+                {"path": ".graphhelm/observers/playwright_observe.py", "change": "created"},
+            ])
+        );
+        assert!(
+            PLAYWRIGHT.install[0].ends_with("@playwright/test@1.64.0"),
+            "unpinned"
+        );
     }
 
     #[test]

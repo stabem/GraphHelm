@@ -32,6 +32,7 @@ import type {
   JourneyFlowsView,
   JourneyFrame,
   JourneyRunView,
+  ObserverSetupView,
   ModelRouteSummary,
   NativeChatPage,
   NativeChatRequest,
@@ -87,6 +88,8 @@ export const RUNTIME_READ_TIMEOUT_MS = 60_000;
  * answer a slow runtime; the Studio waits longer, so a slow but alive runtime reads as its real
  * health. A Rust test reads this number and fails when it is not above the probe's bound. */
 export const GATEWAY_PROBE_WAIT_MS = 45_000;
+/** The Runtime stops the observer setup at 15 minutes; the Studio waits a little past that. */
+export const OBSERVER_SETUP_TIMEOUT_MS = 16 * 60_000;
 /** A live open replays cached acts in a real browser before it answers (#409): the Runtime bounds
  * it at its own run budget (180 s), so the request waits longer than a read. */
 const RUNTIME_LIVE_TIMEOUT_MS = 200_000;
@@ -1991,6 +1994,13 @@ export class RuntimeClient {
     const id = checkedId(flowId, "flowId");
     const body = { ...(confirm ? { confirm: true } : force ? { force: true } : {}), ...(executionId ? { executionId: checkedId(executionId, "executionId") } : {}) };
     return this.#request<JourneyRunView>({ method: "POST", path: `/v1/journey-flows/${encodeURIComponent(id)}/preview`, body, timeoutMs: RUNTIME_READ_TIMEOUT_MS });
+  }
+
+  /** Install the browser player in the Runtime's project (#519): `POST /v1/journey-observer/setup`,
+   * exactly `graphhelm setup --install-observer playwright`. No body: nothing the Studio sends
+   * reaches npm. It edits package.json and downloads Chromium, so it may take minutes. */
+  async setupJourneyObserver(): Promise<ObserverSetupView> {
+    return this.#request<ObserverSetupView>({ method: "POST", path: "/v1/journey-observer/setup", timeoutMs: OBSERVER_SETUP_TIMEOUT_MS });
   }
 
   /** One screen as the run rendered it (#519): `GET /v1/journey-flows/{id}/screens/{screen}/frame`.

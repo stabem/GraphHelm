@@ -671,6 +671,10 @@ fn build_router(state: ServeState) -> Router {
             post(routes::start_journey_preview).get(routes::journey_preview),
         )
         .route(
+            "/v1/journey-observer/setup",
+            post(routes::setup_journey_observer),
+        )
+        .route(
             "/v1/journey-flows/{id}/screens/{screen}/frame",
             get(routes::journey_screen_frame),
         )

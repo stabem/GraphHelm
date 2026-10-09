@@ -7,8 +7,10 @@
 //! so opening the journey again shows it without a new run; a changed flow or a new commit makes it
 //! stale, and `--force` (the Studio's Run again) runs it anew.
 //!
-//! A preview is never proof: it records no capture signal, walks no arrow and writes no cache.
-//! Drafts are played too; an act that would destroy something on a draft is not sent unless the
+//! A draft's preview is never proof: it records no capture signal, walks no arrow and writes no
+//! cache. An approved flow's run is the real replay (#519 slice 3): when the Runtime names an
+//! execution, each screen reached is recorded as a capture and each arrow as walked, exactly as
+//! `journey replay` records them. Drafts are played too; an act that would destroy something on a draft is not sent unless the
 //! preview started the app under test itself (#515's rule, `would_destroy`).
 
 use std::path::{Path, PathBuf};
@@ -20,9 +22,9 @@ use serde_json::{Value, json};
 use super::journey_live::{Launched, LaunchedStop, base_reachable, launch, would_destroy};
 use super::journey_replay::{
     Driver, Failure, Result, SURVIVABLE, TemporaryOutput, failure, observe, observer_ready,
-    preflight, safe_directory, safe_node,
+    preflight, record, safe_directory, safe_node, walked,
 };
-use crate::args::JourneyPreviewArgs;
+use crate::args::{JourneyPreviewArgs, JourneyReplayArgs};
 use crate::output::{CommandOutput, Outcome};
 
 const COMMAND: &str = "journey.preview";
@@ -211,6 +213,9 @@ fn answer(data: Value, failed: Option<Failure>) -> Outcome {
     let message = match code {
         "preview.flow_unknown" => "no journey flow with this id",
         "preview.project_invalid" => "the project directory cannot be read",
+        "preview.keyring_missing" => {
+            "recording an approved flow's proof requires the Runtime's sealed keyring"
+        }
         _ => "the journey flow cannot be previewed",
     };
     Outcome {
@@ -279,8 +284,15 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
         busy["reason"] = "preview.busy".into();
         return answer(busy, None);
     }
-    if !args.force && matches!(current["state"].as_str(), Some("ready" | "failed")) {
+    if !args.force && !args.confirm && matches!(current["state"].as_str(), Some("ready" | "failed"))
+    {
         return answer(current, None);
+    }
+    if unsealed_proof(args, &flow) {
+        return answer(
+            current,
+            Some(failure("preview.keyring_missing", "/keyring", 2)),
+        );
     }
     if safe_directory(&project.join(".graphhelm"), false).is_err()
         || std::fs::create_dir_all(&dir).is_err()
@@ -302,7 +314,20 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
             "--run",
             "--project",
         ])
-        .arg(&project)
+        .arg(&project);
+    if args.confirm {
+        command.arg("--confirm");
+    }
+    if let Some(proof) = proof_args(args, &flow, &project) {
+        command
+            .arg("--events")
+            .arg(proof.events.as_ref().unwrap())
+            .args(["--execution", proof.execution.as_deref().unwrap()])
+            .arg("--keyring")
+            .arg(proof.keyring.as_ref().unwrap())
+            .args(["--key-id", proof.key_id.as_deref().unwrap()]);
+    }
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -325,17 +350,6 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
             answer(current, Some(failure("preview.unwritable", "/runner", 1)))
         }
     }
-}
-
-/// Whether this run guards destructive acts (#515's rule): a draft, on an app the run did not
-/// start itself. An approved flow carries its owner's approval of every act.
-fn guarded(flow: &Value, launched: bool) -> bool {
-    flow["status"] != "approved" && !launched
-}
-
-/// The deny word that keeps `act` from being sent in a guarded run, if any.
-fn refused(guarded: bool, act: &Value) -> Option<&'static str> {
-    if guarded { would_destroy(act) } else { None }
 }
 
 /// The budget watchdog (#560 review): a thread that, at `deadline`, records `failed /
@@ -407,9 +421,72 @@ struct Run {
     dir: PathBuf,
     state: Value,
     frames: usize,
+    /// Set only for an approved flow with an execution to record into (slice 3).
+    proof: Option<JourneyReplayArgs>,
+    /// The path being played: its contract id and the last capture recorded on it.
+    contract: String,
+    last: Option<(String, String)>,
+    /// The owner clicked "Run it?" for this run: an approved flow's destructive acts are played.
+    confirmed: bool,
+}
+
+/// An approved flow asked to record into an execution on a Runtime with no sealed keyring: refused,
+/// as `journey open` refuses it. A draft never records, so its execution is ignored, not refused.
+fn unsealed_proof(args: &JourneyPreviewArgs, flow: &Value) -> bool {
+    flow["status"] == "approved"
+        && args.execution.is_some()
+        && (args.keyring.is_none() || args.key_id.is_none())
+}
+
+/// The replay arguments an approved flow's run records with, or `None` (a draft, or no execution
+/// named: all four recording arguments or none, as replay requires).
+fn proof_args(
+    args: &JourneyPreviewArgs,
+    flow: &Value,
+    project: &Path,
+) -> Option<JourneyReplayArgs> {
+    if flow["status"] != "approved" {
+        return None;
+    }
+    Some(JourneyReplayArgs {
+        id: args.id.clone(),
+        project: Some(project.to_path_buf()),
+        events: Some(args.events.clone()?),
+        execution: Some(args.execution.clone()?),
+        keyring: Some(args.keyring.clone()?),
+        key_id: Some(args.key_id.clone()?),
+        allow_origin: Vec::new(),
+        replay_worker: false,
+        heal: false,
+        model: Default::default(),
+        allow_act: Vec::new(),
+    })
 }
 
 impl Run {
+    /// Slice 3: an approved flow's screen, reached and observed, is recorded as a capture of its
+    /// frame, and the arrow from the previous one on this path as walked (replay's order: the
+    /// capture commits before the walk).
+    fn prove(&mut self, screen: &str, frame: Option<&Value>) -> Result<()> {
+        let Some(args) = self.proof.as_ref() else {
+            return Ok(());
+        };
+        let Some(file) = frame.and_then(|frame| frame["file"].as_str()) else {
+            return Err(failure(
+                "replay.record_failed",
+                format!("/screens/{screen}/capture"),
+                1,
+            ));
+        };
+        let image = self.dir.join("frames").join(file);
+        let signal = record(args, &self.contract, screen, &image, None)?;
+        if let Some((from, from_capture)) = &self.last {
+            walked(args, &self.contract, from, screen, from_capture, &signal)?;
+        }
+        self.last = Some((screen.to_owned(), signal));
+        Ok(())
+    }
+
     fn save(&self) {
         save_state(&self.dir, &self.state);
     }
@@ -489,10 +566,17 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     }
     .into();
     state["pid"] = std::process::id().into();
+    if let Some(object) = state.as_object_mut() {
+        object.remove("held");
+    }
     let mut run = Run {
         dir,
         state,
         frames: 0,
+        proof: proof_args(args, &flow, &project),
+        contract: String::new(),
+        last: None,
+        confirmed: args.confirm,
     };
     run.save();
     let deadline = Instant::now() + PREVIEW_BUDGET;
@@ -563,7 +647,11 @@ fn play(
     if let (Some(app), Ok(mut slot)) = (&launched, stopper.lock()) {
         *slot = Some(app.stopper());
     }
-    let guarded = guarded(flow, launched.is_some());
+    let guard = Guard {
+        approved: flow["status"] == "approved",
+        launched: launched.is_some(),
+        confirmed: run.confirmed,
+    };
     let screens: std::collections::BTreeMap<&str, &Value> = flow["screens"]
         .as_array()
         .unwrap()
@@ -578,7 +666,15 @@ fn play(
         .collect();
     let mut paths: Vec<_> = flow["paths"].as_object().unwrap().iter().collect();
     paths.sort_by(|(a, _), (b, _)| (a.as_str() != "main", a).cmp(&(b.as_str() != "main", b)));
-    for (_, path_edges) in paths {
+    for (name, path_edges) in paths {
+        // Replay's contract id: the flow for `main`, `<flow>.<path>` for any other path.
+        let id = run.proof.as_ref().map_or("", |proof| proof.id.as_str());
+        run.contract = if name == "main" {
+            id.to_owned()
+        } else {
+            format!("{id}.{name}")
+        };
+        run.last = None;
         if Instant::now() >= deadline {
             return Err(failure("preview.budget_exceeded", "/paths", 1));
         }
@@ -588,15 +684,40 @@ fn play(
             .iter()
             .map(|id| id.as_str().unwrap())
             .collect();
-        play_path(
-            project, &base, &secrets, &screens, &edges, &ids, guarded, run,
-        )?;
+        play_path(project, &base, &secrets, &screens, &edges, &ids, guard, run)?;
+        if !run.state["held"].is_null() {
+            // Waiting for the owner's click: nothing after the held act is played.
+            break;
+        }
     }
     if let Ok(mut slot) = stopper.lock() {
         slot.take();
     }
     drop(launched);
     Ok(())
+}
+
+/// Which acts a run plays. A draft keeps #515's rule: an act that would destroy something is not
+/// sent unless the preview started the app itself. An approved flow (#519, coordinator's decision)
+/// stops before its first destructive act on any base and waits for the owner's click, which comes
+/// back as `--confirm`; only that run plays it.
+#[derive(Clone, Copy)]
+struct Guard {
+    approved: bool,
+    launched: bool,
+    confirmed: bool,
+}
+
+impl Guard {
+    /// The step reason an act is not sent with, or `None` when it is played.
+    fn stops_before(self, act: &Value) -> Option<&'static str> {
+        would_destroy(act)?;
+        if self.approved {
+            (!self.confirmed).then_some("confirm_needed")
+        } else {
+            (!self.launched).then_some("guard_refused")
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -607,7 +728,7 @@ fn play_path(
     screens: &std::collections::BTreeMap<&str, &Value>,
     edges: &std::collections::BTreeMap<&str, &Value>,
     ids: &[&str],
-    guarded: bool,
+    guard: Guard,
     run: &mut Run,
 ) -> Result<()> {
     let output = TemporaryOutput::create()?;
@@ -628,6 +749,7 @@ fn play_path(
         match observe(driver, screens[screen], base, &format!("/screens/{screen}")) {
             Ok(_) => {
                 let frame = run.capture(driver, output.path(), screen);
+                run.prove(screen, frame.as_ref())?;
                 run.screen(screen, "pass", None, frame);
                 Ok(true)
             }
@@ -644,8 +766,12 @@ fn play_path(
             let edge = edges[id];
             let to = edge["to"].as_str().unwrap();
             for act in edge["acts"].as_array().unwrap() {
-                if refused(guarded, act).is_some() {
-                    run.edge(id, "skipped", Some("guard_refused"));
+                if let Some(reason) = guard.stops_before(act) {
+                    run.edge(id, "skipped", Some(reason));
+                    if reason == "confirm_needed" {
+                        run.state["held"] = json!({"edge":id,"act":act["name"],"base":base});
+                        run.save();
+                    }
                     break 'edges;
                 }
                 let mut request = json!({"kind":act["kind"],"role":act["role"],"name":act["name"]});
@@ -730,10 +856,11 @@ fn sha_of(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        body, guarded, plain_id, read_state, refused, runner_alive, save_state, severity,
-        step_reason, watch_budget,
+        Guard, JourneyPreviewArgs, body, plain_id, proof_args, read_state, runner_alive,
+        save_state, severity, step_reason, unsealed_proof, watch_budget,
     };
     use serde_json::json;
+    use std::path::Path;
 
     /// #519: a stored preview answers only for the flow and commit it ran on; a changed flow or a
     /// new commit reads as `none` (the Studio then starts a new run), and the runner's pid and the
@@ -761,22 +888,6 @@ mod tests {
             body(None, &json!({"status":"approved"}), "sha256:aa", "c1")["kind"],
             "replay"
         );
-    }
-
-    /// #560 review: a preview of a draft never sends an act `would_destroy` names, unless the run
-    /// started the app itself; an approved flow is played whole; acts that commit nothing are
-    /// always sent. Catches the guard dropped, inverted, or widened to approved flows.
-    /// Cost: microseconds.
-    #[test]
-    fn a_draft_preview_holds_back_a_destructive_act_unless_it_launched_the_app() {
-        let draft = json!({"status":"draft"});
-        let approved = json!({"status":"approved"});
-        let pay = json!({"kind":"submit","role":"button","name":"Pay now"});
-        let checkout = json!({"kind":"activate","role":"button","name":"Checkout"});
-        assert_eq!(refused(guarded(&draft, false), &pay), Some("pay"));
-        assert_eq!(refused(guarded(&draft, false), &checkout), None);
-        assert_eq!(refused(guarded(&draft, true), &pay), None);
-        assert_eq!(refused(guarded(&approved, false), &pay), None);
     }
 
     /// #560 review: a `running` state past the budget reads as a dead runner even when its pid is
@@ -844,6 +955,78 @@ mod tests {
         save_state(dir.path(), &state(me.wrapping_add(1), "running"));
         watch(false);
         assert_eq!(read_state(dir.path()).unwrap()["state"], "running");
+    }
+
+    /// #519 (coordinator's decision): an approved flow never plays a destructive act without the
+    /// owner's click, on any base, even when the run started the app itself; with the click it
+    /// does. A draft keeps #515's rule. Fails if a destructive act on an approved flow is sent
+    /// without `--confirm`. Cost: microseconds.
+    #[test]
+    fn an_approved_flow_holds_before_a_destructive_act_until_the_owner_confirms() {
+        let pay = json!({"kind":"click","role":"button","name":"Pay now"});
+        let look = json!({"kind":"click","role":"link","name":"Details"});
+        assert!(
+            super::would_destroy(&pay).is_some(),
+            "the fixture must be destructive"
+        );
+        for launched in [false, true] {
+            let held = Guard {
+                approved: true,
+                launched,
+                confirmed: false,
+            };
+            assert_eq!(held.stops_before(&pay), Some("confirm_needed"));
+            assert_eq!(held.stops_before(&look), None);
+            let clicked = Guard {
+                confirmed: true,
+                ..held
+            };
+            assert_eq!(clicked.stops_before(&pay), None);
+        }
+        let draft = |launched| Guard {
+            approved: false,
+            launched,
+            confirmed: false,
+        };
+        assert_eq!(draft(false).stops_before(&pay), Some("guard_refused"));
+        assert_eq!(draft(true).stops_before(&pay), None);
+    }
+
+    /// #519 slice 3: only an approved flow with all four recording arguments records proof; a
+    /// draft never does, and a partial set records nothing rather than half a replay.
+    #[test]
+    fn only_an_approved_flow_with_an_execution_records_proof() {
+        let project = Path::new("p");
+        let full = JourneyPreviewArgs {
+            id: "checkout".into(),
+            project: None,
+            force: false,
+            read: false,
+            run: true,
+            confirm: false,
+            events: Some("e".into()),
+            execution: Some("x".into()),
+            keyring: Some("k".into()),
+            key_id: Some("id".into()),
+        };
+        let approved = json!({"status":"approved"});
+        let proof = proof_args(&full, &approved, project).expect("approved + execution records");
+        assert_eq!(proof.id, "checkout");
+        assert_eq!(proof.execution.as_deref(), Some("x"));
+        assert!(proof_args(&full, &json!({"status":"draft"}), project).is_none());
+        let partial = JourneyPreviewArgs {
+            key_id: None,
+            ..full
+        };
+        assert!(proof_args(&partial, &approved, project).is_none());
+        // A Runtime with no keyring: an approved flow is refused, a draft plays as a preview.
+        assert!(unsealed_proof(&partial, &approved));
+        assert!(!unsealed_proof(&partial, &json!({"status":"draft"})));
+        let no_execution = JourneyPreviewArgs {
+            execution: None,
+            ..partial
+        };
+        assert!(!unsealed_proof(&no_execution, &approved));
     }
 
     /// #519: ids become file names only within the schema's identifier characters, and step

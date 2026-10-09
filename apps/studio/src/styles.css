@@ -2889,6 +2889,8 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .journey-flow-skipped p { margin: 0; flex: 1 1 320px; overflow-wrap: anywhere; }
 .journey-flow-run { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; font-size: 0.85rem; }
 .journey-flow-run p { margin: 0; }
+.journey-player-setup { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; font-size: 0.85rem; color: var(--text); }
+.journey-player-setup p { margin: 0; flex-basis: 100%; overflow-wrap: anywhere; }
 .journey-flow-run p[data-result="fail"], .journey-flow-run p[data-result="drift"], .journey-flow-run p[data-state="failed"] { color: var(--danger); }
 /* The expanded card: over the Studio, never a window outside it. */
 .journey-zoom-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: rgba(0, 0, 0, 0.55); cursor: zoom-out; }

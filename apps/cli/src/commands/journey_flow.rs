@@ -1156,19 +1156,131 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
 pub(crate) fn run_approve(args: &crate::args::JourneyApproveArgs) -> Outcome {
     const COMMAND: &str = "journey.approve";
     let project = args.project.clone().unwrap_or_else(|| ".".into());
-    let owner = super::secret_file::token_path(&super::journey_owner::store(&project));
-    let given = args
-        .token_file
-        .as_deref()
-        .and_then(|path| super::secret_file::read_existing(path, "bearer token").ok());
-    let expected = super::secret_file::read_existing(&owner, "bearer token").ok();
-    if given.is_none() || given != expected {
+    if !owner_token_matches(&project, args.token_file.as_deref()) {
         return input_error(
             COMMAND,
             "approving is the owner's: give --token-file with the project's owner token (.graphhelm/events.token)",
         );
     }
     approve_owned(&args.id, project)
+}
+
+/// Whether `token_file` holds the project's owner token (#534): the owner's doors ask for it.
+fn owner_token_matches(project: &Path, token_file: Option<&Path>) -> bool {
+    let owner = super::secret_file::token_path(&super::journey_owner::store(project));
+    let given =
+        token_file.and_then(|path| super::secret_file::read_existing(path, "bearer token").ok());
+    given.is_some() && given == super::secret_file::read_existing(&owner, "bearer token").ok()
+}
+
+/// `graphhelm journey sign-legacy` (#534 slice 3): approvals made before the owner's record
+/// existed read as `flow.approval_unsigned` on the owner's machine. Any lane can also write an
+/// `approved` block into a YAML (the digest is a plain sha256), and this command cannot tell the
+/// two apart by itself (#597 review). So it never signs in bulk: it lists each unsigned approval
+/// with the commit, author and date that introduced it (git's pickaxe on the digest), and signs
+/// one flow per `--id` the owner names after reading that. An approval that no commit introduced
+/// (only in the working tree), or a flow whose approval no longer matches its content, is listed
+/// as not signable and is never signed. The YAML is not changed. Owner door: owner token.
+pub(crate) fn run_sign_legacy(args: &crate::args::JourneySignLegacyArgs) -> Outcome {
+    const COMMAND: &str = "journey.sign_legacy";
+    let project = args.project.clone().unwrap_or_else(|| ".".into());
+    if !owner_token_matches(&project, args.token_file.as_deref()) {
+        return input_error(
+            COMMAND,
+            "signing approvals is the owner's: give --token-file with the project's owner token (.graphhelm/events.token)",
+        );
+    }
+    let Some(files) = files(&project, &[]) else {
+        return input_error(COMMAND, "unsafe journeys directory");
+    };
+    let (mut unsigned, mut not_signable) = (Vec::new(), Vec::new());
+    for file in files {
+        let Ok((text, flow)) = read(&file) else {
+            continue;
+        };
+        if flow["status"] != "approved" {
+            continue;
+        }
+        let id = flow["id"].as_str().unwrap_or_default().to_owned();
+        let findings = check_snapshot(&file, &text, &flow, &project);
+        if !findings.iter().any(|f| f.code == "flow.approval_unsigned") {
+            continue;
+        }
+        let mut blocking: Vec<&str> = findings
+            .iter()
+            .filter(|f| !f.is_warning() && f.code != "flow.approval_unsigned")
+            .map(|f| f.code)
+            .collect();
+        let digest = flow["approved"]["digest"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let revision = flow["approved"]["revision"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let introduced = introduced_by(&project, &file, &digest);
+        if introduced.is_none() {
+            blocking.push("flow.approval_uncommitted");
+        }
+        if blocking.is_empty() {
+            unsigned.push((id, digest, revision, introduced.unwrap_or(Value::Null)));
+        } else {
+            not_signable.push(json!({"id": id, "findings": blocking}));
+        }
+    }
+    let unknown: Vec<_> = args
+        .ids
+        .iter()
+        .filter(|id| !unsigned.iter().any(|(candidate, ..)| candidate == *id))
+        .collect();
+    let mut signed = Vec::new();
+    for (id, digest, revision, _) in unsigned.iter().filter(|(id, ..)| args.ids.contains(id)) {
+        if let Err(message) = super::journey_owner::record(&project, id, digest, revision) {
+            return input_error(COMMAND, &message);
+        }
+        signed.push(id.clone());
+    }
+    Outcome::success(
+        COMMAND,
+        json!({
+            "unsigned": unsigned.iter().map(|(id, digest, revision, introduced)| json!({
+                "id": id, "digest": digest, "revision": revision, "introducedBy": introduced,
+            })).collect::<Vec<_>>(),
+            "signed": signed,
+            "notSignable": not_signable,
+            "notUnsigned": unknown,
+        }),
+    )
+}
+
+/// The commit that introduced `digest` into the flow file (git's pickaxe), as
+/// `{commit, author, date, subject}`; `None` when no commit did (the approval only exists in the
+/// working tree) or git cannot answer.
+fn introduced_by(project: &Path, file: &Path, digest: &str) -> Option<Value> {
+    let relative = file
+        .strip_prefix(project)
+        .ok()?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let hex = digest.strip_prefix("sha256:")?;
+    let line = super::journey::git(
+        project,
+        &[
+            "log",
+            "-1",
+            "--format=%H%x09%an%x09%aI%x09%s",
+            "-S",
+            hex,
+            "--",
+            &relative,
+        ],
+    )?;
+    let mut fields = line.trim().splitn(4, '\t');
+    let commit = fields.next().filter(|commit| !commit.is_empty())?;
+    Some(
+        json!({"commit": commit, "author": fields.next(), "date": fields.next(), "subject": fields.next()}),
+    )
 }
 
 /// The approval itself, for a caller that has already authenticated the owner (#534).

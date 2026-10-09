@@ -36,6 +36,7 @@ pub fn run(args: &JourneyArgs) -> Outcome {
         JourneyCommand::Validate(validate) => journey_validate::run(validate),
         JourneyCommand::Compile(compile) => super::journey_flow::run_compile(compile),
         JourneyCommand::Approve(approve) => super::journey_flow::run_approve(approve),
+        JourneyCommand::SignLegacy(sign) => super::journey_flow::run_sign_legacy(sign),
         JourneyCommand::MarkSafe(mark) => super::journey_flow::run_mark_safe(mark),
         JourneyCommand::Replay(replay) => super::journey_replay::run(replay),
         JourneyCommand::Open(open) => super::journey_live::open(open),
@@ -106,7 +107,7 @@ fn step_index(contract: &ContractInput, step: &str, pointer: &str) -> Result<usi
 }
 
 /// One git read with a fixed argument list (Ruling 5's invocation rules).
-fn git(project: &Path, args: &[&str]) -> Option<String> {
+pub(super) fn git(project: &Path, args: &[&str]) -> Option<String> {
     let output = Command::new("git")
         .arg("-C")
         .arg(project)

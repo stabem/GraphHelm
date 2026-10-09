@@ -143,6 +143,8 @@ fn body(state: Option<Value>, flow: &Value, digest: &str, commit: &str) -> Value
     if state["digest"] != digest || state["commit"] != commit {
         return none;
     }
+    // The kind follows the flow as it is now: approving it turns the same run into a replay's.
+    state["kind"] = kind.into();
     if state["state"] == "running" && !state["pid"].as_u64().is_some_and(alive) {
         // A runner that died without finishing never reports; say so instead of "running" forever.
         state["state"] = "failed".into();

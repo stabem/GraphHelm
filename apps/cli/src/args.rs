@@ -166,6 +166,9 @@ pub enum JourneyCommand {
     /// Play a flow, draft or approved, from its entry to its last screen in a visible browser,
     /// paced for a person to follow (about 1.5 s per act), without a model. A look at what the
     /// flow does before approving it: never proof, never a capture, never an approval.
+    /// A draft's act that looks destructive (delete, remove, drop, pay, purchase, transfer,
+    /// send) is not performed, and the play stops there naming it, unless watch itself started
+    /// the project's declared fixture (#515).
     Watch(JourneyWatchArgs),
     /// Send one act to an open live session and report the screen it lands on.
     Act(JourneyActArgs),

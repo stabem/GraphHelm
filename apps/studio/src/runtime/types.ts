@@ -444,7 +444,7 @@ export interface JourneyFlowsView {
 /** One live journey session (#409, phase C #398): `GET /v1/journeys/sessions`. A closed or expired
  * session is simply absent from the list; `at` is the edge act (`cart.checkout/0`) on drift, else
  * the screen id. */
-export type LiveState = "pass" | "fail" | "drift" | "unknown" | "playing";
+export type LiveState = "pass" | "fail" | "drift" | "unknown" | "playing" | "skipped";
 export interface LiveSession {
   sessionId: string;
   contractId: string;
@@ -470,6 +470,10 @@ export interface LiveSession {
   stepCount?: number;
   /** The Runtime holds page frames for this session (#519): a headless Watch. */
   frame?: boolean;
+  /** #515: the act a Watch of a DRAFT did not perform because its name looks destructive
+   * (`would` is the word that matched: delete, pay, send…). The play stopped there, `state:
+   * "skipped"`. Null or absent otherwise. */
+  skipped?: { edge: string; actIndex: number; kind: string; role: string; name: string; would: string } | null;
 }
 export interface LiveSessionsView { sessions: LiveSession[] }
 

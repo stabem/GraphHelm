@@ -221,6 +221,17 @@ describe("JourneyFlows watch", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Stopped at step 2: the app no longer matches this step.");
   });
 
+  // #515: a draft's destructive-looking act is not performed in a watch. The owner must read WHAT
+  // was skipped and that it did not happen; defect: the row's new state falls to the default
+  // words ("Step 2 of 3") and the play looks like it merely paused.
+  it("says which act a watch of a draft skipped, on the step that act leads to", () => {
+    render(<JourneyFlows view={view} onApprove={vi.fn()} onWatch={vi.fn()} sessions={[watchRow({ state: "skipped", code: "watch.act_skipped_destructive", at: "pay.submit/1", screen: "pay", stepIndex: 1,
+      skipped: { edge: "pay.submit", actIndex: 1, kind: "submit", role: "button", name: "Pay now", would: "pay" } })]} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Stopped at step 3 — skipped: would pay (“Pay now”). A draft never does that when watched.");
+    expect(within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem").map((step) => step.getAttribute("aria-current"))).toEqual([null, null, "step"]);
+    expect(screen.getByRole("button", { name: "Watch" })).toBeEnabled();
+  });
+
   // Owner report: Watch answered 400 `replay.observer_missing` and the button "did nothing": the
   // message sat under the whole step list in a scrolling box, in the Runtime's own words.
   it("says why a watch could not start right under the buttons, in words, and retries", async () => {

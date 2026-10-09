@@ -338,3 +338,36 @@ fn a_stale_generated_contract_does_not_stop_watch() {
         "replay.observer_missing",
     );
 }
+
+/// #515: a DRAFT is written by agents, so watching it must not be able to pay or delete. The
+/// watch names, before any browser starts, the acts it will not perform (`data.guarded`): the
+/// fixture's `Pay now` submit, and not the `Checkout` click or the password field. An APPROVED
+/// flow carries the owner's approval of its acts and is played whole (`guarded` empty). Credible
+/// defect: the guard is dropped, or widened to approved flows, and nothing else goes red because
+/// every other watch cell stops before the first act. Cost: seconds, offline, no browser (the
+/// tripwire observer never starts).
+#[test]
+fn watch_names_the_destructive_acts_of_a_draft_it_will_not_perform() {
+    let dir = draft();
+    let reply = refuses(
+        dir.path(),
+        &["watch", "checkout"],
+        "journey.watch",
+        3,
+        "replay.observer_missing",
+    );
+    assert_eq!(
+        reply["data"]["guarded"],
+        serde_json::json!([{"edge":"pay.submit","actIndex":1,"kind":"submit","role":"button","name":"Pay now","would":"pay"}]),
+        "{reply}"
+    );
+    let dir = approved();
+    let reply = refuses(
+        dir.path(),
+        &["watch", "checkout"],
+        "journey.watch",
+        3,
+        "replay.observer_missing",
+    );
+    assert_eq!(reply["data"]["guarded"], serde_json::json!([]), "{reply}");
+}

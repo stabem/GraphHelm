@@ -82,7 +82,8 @@ function stepsOf(flow: JourneyFlowView, path = "main"): Step[] {
 /** The step a watch is on: the destination of the edge being played, else the screen just seen. */
 function currentStep(steps: Step[], session: LiveSession | undefined): number {
   if (!session) return -1;
-  if (typeof session.edge === "string") return steps.findIndex((step) => step.arrivedBy?.id === session.edge);
+  const edge = session.skipped?.edge ?? session.edge;
+  if (typeof edge === "string") return steps.findIndex((step) => step.arrivedBy?.id === edge);
   const seen = typeof session.screen === "string" ? session.screen : session.stepId;
   return steps.findIndex((step) => step.screen.id === seen);
 }
@@ -199,6 +200,9 @@ function watchWords(session: LiveSession, steps: Step[], current: number): strin
     case "pass": return "Played to the end — everything it should show was there.";
     case "drift": return `Stopped at step ${at}: the app no longer matches this step.`;
     case "fail": return `Stopped at step ${at}: something it should show was not there.`;
+    case "skipped": return session.skipped
+      ? `Stopped at step ${at} — skipped: would ${session.skipped.would} (“${session.skipped.name}”). A draft never does that when watched.`
+      : `Stopped at step ${at} — skipped an act a draft never does when watched.`;
     default: return `Step ${at} of ${total}`;
   }
 }

@@ -167,9 +167,21 @@ class CliModules(unittest.TestCase):
         src = root / "apps/cli/src"
         (src / "commands").mkdir(parents=True)
         (src / "commands/keel.rs").write_text("pub fn check() {}", encoding="utf-8")
-        (src / "main.rs").write_text("fn main() { commands::keel::check(); }", encoding="utf-8")
+        (src / "output.rs").write_text("fn print() { commands::keel::check(); }", encoding="utf-8")
         whole, _, *_ = rt.reach(["apps/cli/src/commands/keel.rs"], packages, {}, root)
         self.assertEqual(whole, {"graphhelm-cli"})
+
+    def test_the_dispatchers_do_not_widen_a_module_to_the_whole_package(self):
+        # main.rs and commands/mod.rs call every module to run it; that is not building on it.
+        root, packages = self.tree()
+        src = root / "apps/cli/src"
+        (src / "commands").mkdir(parents=True)
+        (src / "commands/keel.rs").write_text("pub fn check() {}", encoding="utf-8")
+        (src / "commands/mod.rs").write_text("mod keel; fn run() { keel::check(); }", encoding="utf-8")
+        (src / "main.rs").write_text("fn main() { commands::keel::check(); }", encoding="utf-8")
+        whole, single, *_ = rt.reach(["apps/cli/src/commands/keel.rs"], packages, {}, root)
+        self.assertEqual(whole, set())
+        self.assertIn(("graphhelm-cli", "bin:graphhelm", "commands::keel"), single)
 
     def test_shared_files_and_unmatched_modules_still_reach_the_whole_package(self):
         root, packages = self.tree()

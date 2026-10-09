@@ -56,6 +56,7 @@ BROWSER_REACHERS = ("tools/journey-driver/", "apps/cli/src/commands/journey_repl
                     "apps/cli/tests/journey_live_browser.rs")
 INCLUDE = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*\)')
 CLI, CLI_BIN = "graphhelm-cli", "graphhelm"
+DISPATCH = {"src/main.rs", "src/commands/mod.rs"}
 SOURCE_READ = re.compile(r'"src/|join\("src"\)')
 BUNDLE_MOD = re.compile(r'#\[path\s*=\s*"([^"]+)\.rs"\]\s*mod\s+(\w+)\s*;')
 
@@ -141,28 +142,48 @@ def cli_module(packages, p, rel, root):
     """#361: a change to one `apps/cli/src/commands/<module>` reaches that module's unit tests, the
     integration tests that read the crate's own source, and the ones that name its command (every
     word of the module path as a quoted literal: `journey_explore` -> "journey" and "explore").
-    None (the whole package) for shared files (`main.rs`, any `mod.rs`, anything outside
-    `commands/`), for a module no test names, and when the tree cannot be read."""
+    Modules that import it directly (`<name>::` in their source; one level, not transitively) add their own unit
+    and command tests (#530 review); `main.rs` and the `mod.rs` files only dispatch, so they are not
+    importers. None (the whole package) for a change to a shared file (`main.rs`, any `mod.rs`,
+    anything outside `commands/`), for a module that shared code outside `commands/` uses, for a
+    changed module no test names, and when the tree cannot be read."""
     if p["name"] != CLI or root is None or not rel.startswith("src/commands/") or rel.endswith("/mod.rs"):
         return None
-    module = rel[len("src/commands/"):-len(".rs")]
-    words = [w for part in module.split("/") for w in part.split("_") if w]
-    tests = root / p["dir"] / "tests"
-    if not words or not tests.is_dir():
+    crate = root / p["dir"]
+    tests, src = crate / "tests", crate / "src"
+    if not tests.is_dir():
         return None
-    named, readers = set(), set()
-    for f in sorted(tests.glob("*.rs")):
-        text = f.read_text(encoding="utf-8", errors="replace")
-        target = target_of(packages, p["name"], f.stem)
-        if target is None:
-            continue
-        if "CARGO_MANIFEST_DIR" in text and SOURCE_READ.search(text):
-            readers.add(target)
-        if all(f'"{w}"' in text for w in words):
-            named.add(target)
-    if not named:
+    texts = {f: f.read_text(encoding="utf-8", errors="replace") for f in sorted(tests.glob("*.rs"))}
+    sources = {f.relative_to(crate).as_posix(): f.read_text(encoding="utf-8", errors="replace")
+               for f in sorted(src.rglob("*.rs"))} if src.is_dir() else {}
+    readers = {t for f, text in texts.items() if "CARGO_MANIFEST_DIR" in text and SOURCE_READ.search(text)
+               for t in [target_of(packages, p["name"], f.stem)] if t is not None}
+
+    def named(module):
+        words = [w for part in module.split("/") for w in part.split("_") if w]
+        return {t for f, text in texts.items() if words and all(f'"{w}"' in text for w in words)
+                for t in [target_of(packages, p["name"], f.stem)] if t is not None}
+
+    start = rel[len("src/commands/"):-len(".rs")]
+    if not named(start):
         return None
-    return {(p["name"], f"bin:{CLI_BIN}", "commands::" + module.replace("/", "::"))} | named | readers
+    reached, queue, out = {start}, [start], set(readers)
+    while queue:
+        module = queue.pop()
+        out |= {(p["name"], f"bin:{CLI_BIN}", "commands::" + module.replace("/", "::"))} | named(module)
+        use = re.compile(r"\b" + re.escape(module.split("/")[-1]) + r"::")
+        for path, text in sources.items():
+            if path == f"src/commands/{module}.rs" or path in DISPATCH or path.endswith("/mod.rs") or not use.search(text):
+                continue  # the dispatchers call every module to run it; they do not build on it
+            if module != start:
+                continue  # direct importers only: an importer's own importers are not followed
+            if not path.startswith("src/commands/"):
+                return None  # used from shared code (args, output, ...): anything behind it can be reached
+            importer = path[len("src/commands/"):-len(".rs")]
+            if importer not in reached:
+                reached.add(importer)
+                queue.append(importer)  # one level: past it, hub modules (journey.rs, serve) reach nearly every test
+    return out
 
 
 def reach(changed, packages, embedded, repo=None):

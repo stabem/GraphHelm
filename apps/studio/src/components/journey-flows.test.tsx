@@ -361,6 +361,19 @@ describe("JourneyFlows run", () => {
     expect(run.start).toHaveBeenLastCalledWith("checkout", true);
   });
 
+  it("says a step the guard stopped was skipped, with the reason in words, not that it was lost", async () => {
+    urls();
+    const start = vi.fn(async () => ({ state: "ready" as const, kind: "preview" as const, digest: "d1", result: "pass" as const,
+      screens: { cart: { frame: true, result: "pass" as const }, pay: { frame: false, reason: "not_reached" }, done: { frame: false, reason: "not_reached" } },
+      edges: { "cart.checkout": { result: "skipped" as const, reason: "guard_refused" }, "pay.submit": { result: null, reason: "not_reached" } } }));
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start })} />);
+    const cards = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
+    await waitFor(() => expect(cards[1]).toHaveTextContent(/^2Skipped/));
+    expect(cards[2]).toHaveTextContent(/^3Not reached/);
+    await userEvent.click(within(cards[1]!).getByRole("button"));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Why: the test stopped before an action that would delete or cancel something.");
+  });
+
   it("says in words why the test could not run", async () => {
     render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start: vi.fn(async () => ({ state: "failed" as const, reason: "watch.app_down" })) })} />);
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Couldn't run this journey's test: the app it opens isn't running."));

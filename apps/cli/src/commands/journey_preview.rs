@@ -31,7 +31,9 @@ const STATE: &str = "state.json";
 /// The page size a preview plays at; the frames the Studio shows are this size.
 const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 800;
-/// A whole preview, every path, ends within this.
+/// No path of a preview BEGINS after this from its start; the path in flight is bounded by the
+/// driver's own per-call timeouts. A `running` state older than this plus `RUNNER_GRACE` has no
+/// live runner, whatever its pid now names.
 const PREVIEW_BUDGET: Duration = Duration::from_secs(300);
 /// The largest frame the route serves.
 const FRAME_LIMIT: u64 = 8 * 1024 * 1024;
@@ -112,17 +114,22 @@ fn save_state(dir: &Path, state: &Value) {
 }
 
 /// Whether a `running` state still has a runner. The runner writes its own pid when it starts;
-/// before that, a just-started run counts as alive for `RUNNER_GRACE`.
+/// before that, a just-started run counts as alive for `RUNNER_GRACE`. Past the budget plus that
+/// grace no runner is alive, even when the pid now names another process (#560 review: a hard
+/// kill, then pid reuse, would otherwise read `running` for ever).
 fn runner_alive(state: &Value) -> bool {
+    let age = state["startedAt"]
+        .as_str()
+        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+        .map(|at| chrono::Utc::now().signed_duration_since(at));
+    let within =
+        |limit: Duration| age.is_some_and(|age| age < chrono::Duration::from_std(limit).unwrap());
+    if !within(PREVIEW_BUDGET + RUNNER_GRACE) {
+        return false;
+    }
     match state["pid"].as_u64() {
         Some(pid) => alive(pid),
-        None => state["startedAt"]
-            .as_str()
-            .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-            .is_some_and(|at| {
-                chrono::Utc::now().signed_duration_since(at)
-                    < chrono::Duration::from_std(RUNNER_GRACE).unwrap()
-            }),
+        None => within(RUNNER_GRACE),
     }
 }
 
@@ -304,6 +311,17 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
     }
 }
 
+/// Whether this run guards destructive acts (#515's rule): a draft, on an app the run did not
+/// start itself. An approved flow carries its owner's approval of every act.
+fn guarded(flow: &Value, launched: bool) -> bool {
+    flow["status"] != "approved" && !launched
+}
+
+/// The deny word that keeps `act` from being sent in a guarded run, if any.
+fn refused(guarded: bool, act: &Value) -> Option<&'static str> {
+    if guarded { would_destroy(act) } else { None }
+}
+
 /// The top-level `reason` a failed preview carries (the closed list agreed on #519).
 fn failed_reason(code: &str) -> &'static str {
     match code {
@@ -480,7 +498,7 @@ fn play(project: &Path, flow: &Value, run: &mut Run, deadline: Instant) -> Resul
     } else {
         Some(launch(project, &base)?)
     };
-    let guarded = flow["status"] != "approved" && launched.is_none();
+    let guarded = guarded(flow, launched.is_some());
     let screens: std::collections::BTreeMap<&str, &Value> = flow["screens"]
         .as_array()
         .unwrap()
@@ -558,7 +576,7 @@ fn play_path(
             let edge = edges[id];
             let to = edge["to"].as_str().unwrap();
             for act in edge["acts"].as_array().unwrap() {
-                if guarded && would_destroy(act).is_some() {
+                if refused(guarded, act).is_some() {
                     run.edge(id, "skipped", Some("guard_refused"));
                     break 'edges;
                 }
@@ -643,7 +661,7 @@ fn sha_of(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{body, plain_id, severity, step_reason};
+    use super::{body, guarded, plain_id, refused, runner_alive, severity, step_reason};
     use serde_json::json;
 
     /// #519: a stored preview answers only for the flow and commit it ran on; a changed flow or a
@@ -672,6 +690,43 @@ mod tests {
             body(None, &json!({"status":"approved"}), "sha256:aa", "c1")["kind"],
             "replay"
         );
+    }
+
+    /// #560 review: a preview of a draft never sends an act `would_destroy` names, unless the run
+    /// started the app itself; an approved flow is played whole; acts that commit nothing are
+    /// always sent. Catches the guard dropped, inverted, or widened to approved flows.
+    /// Cost: microseconds.
+    #[test]
+    fn a_draft_preview_holds_back_a_destructive_act_unless_it_launched_the_app() {
+        let draft = json!({"status":"draft"});
+        let approved = json!({"status":"approved"});
+        let pay = json!({"kind":"submit","role":"button","name":"Pay now"});
+        let checkout = json!({"kind":"activate","role":"button","name":"Checkout"});
+        assert_eq!(refused(guarded(&draft, false), &pay), Some("pay"));
+        assert_eq!(refused(guarded(&draft, false), &checkout), None);
+        assert_eq!(refused(guarded(&draft, true), &pay), None);
+        assert_eq!(refused(guarded(&approved, false), &pay), None);
+    }
+
+    /// #560 review: a `running` state past the budget reads as a dead runner even when its pid is
+    /// alive (here: this test's own process, as after pid reuse), so the next start runs anew; a
+    /// fresh one with a live pid is still running. Cost: one process listing.
+    #[test]
+    fn a_running_preview_older_than_its_budget_has_no_runner() {
+        let pid = std::process::id();
+        let fresh =
+            json!({"state":"running","pid":pid,"startedAt":chrono::Utc::now().to_rfc3339()});
+        assert!(runner_alive(&fresh));
+        let old = json!({"state":"running","pid":pid,
+            "startedAt":(chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339()});
+        assert!(!runner_alive(&old));
+        let flow = json!({"status":"draft"});
+        let mut stored = old.clone();
+        stored["digest"] = "sha256:aa".into();
+        stored["commit"] = "c1".into();
+        let answer = body(Some(stored), &flow, "sha256:aa", "c1");
+        assert_eq!(answer["state"], "failed");
+        assert_eq!(answer["reason"], "internal");
     }
 
     /// #519: ids become file names only within the schema's identifier characters, and step

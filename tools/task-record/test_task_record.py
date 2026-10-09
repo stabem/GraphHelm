@@ -3,6 +3,7 @@
 A fake Runtime on loopback answers like the real one: a key already committed to a different body
 is GHE003_IDEMPOTENCY_CONFLICT, the same key with the same body replays its first answer.
 """
+import hashlib
 import http.server
 import io
 import json
@@ -32,7 +33,10 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
         FakeRuntime.seen.append((key, body))
         identity = json.dumps(body, sort_keys=True)  # a retry carries a new emittedAt: a different body
         described = json.loads(body["signal"]["description"])
-        if FakeRuntime.old and ("title" in described or "summary" in described):
+        if len(key) > 64:
+            status, reply = 400, {"ok": False, "diagnostics": [{"code": "GHCLI001_ARGUMENT_INVALID", "severity": "error",
+                                                                  "path": "/idempotencyKey", "message": "Idempotency-Key must be at most 64 characters"}]}
+        elif FakeRuntime.old and ("title" in described or "summary" in described):
             status, reply = 400, {"ok": False, "diagnostics": [{"code": "GHCLI003_SIGNAL_INVALID", "severity": "error",
                                                                   "path": "/signal/description", "message": "one document for its kind"}]}
         elif key in FakeRuntime.keys and FakeRuntime.keys[key] != identity:
@@ -117,6 +121,46 @@ class TaskRecordTest(unittest.TestCase):
             code, out = self.run_step("--lane", "lane-a", "review_assigned", "--issue", "9", "--pr", "19",
                                       "--head", HEAD_A, "--reviewer", reviewer)
             self.assertEqual((code, out.split()[0]), (0, "recorded"), out)
+
+    def test_long_lane_keys_fit_the_runtime_without_losing_retry_identity(self):
+        # #623: long lane/review keys were refused. Cost: bounded local HTTP calls, no real Runtime.
+        keys = set()
+        cases = [
+            ("gh-claude-orquestrador", "623", "review_assigned", "lane-b"),
+            ("gh-claude-orquestrador", "623", "review_assigned", "lane-c"),
+            ("gh-claude-orquestrador", "624", "review_assigned", "lane-b"),
+            ("gh-claude-orquestrador", "625", "pr_opened", "lane-b"),
+            ("lane-" + "x" * 100, "623", "review_assigned", "lane-b"),
+            ("lane-" + "x" * 100 + "y", "623", "review_assigned", "lane-b"),
+            ("x" * 21, "623", "review_assigned", "lane-b"),  # legacy key exactly 64
+            ("lane-a", "623", "review_assigned", "lane-b"),
+        ]
+        for lane, issue, kind, reviewer in cases:
+            with self.subTest(lane=lane, issue=issue, kind=kind, reviewer=reviewer):
+                step = ("--lane", lane, kind, "--issue", issue, "--pr", "19",
+                        "--head", HEAD_A, "--reviewer", reviewer, "--no-github")
+                start = len(FakeRuntime.seen)
+                code, out = self.run_step(*step)
+                self.assertEqual(code, 0, out)
+                sent = FakeRuntime.seen[start:]
+                for key, body in sent:
+                    self.assertLessEqual(len(key), 64)
+                    self.assertNotIn(key, keys)
+                    keys.add(key)
+                    self.assertEqual(key, body["signal"]["id"])
+                    doc = json.loads(body["signal"]["description"])
+                    record_kind = body["signal"]["type"].removeprefix("task.")
+                    content = json.dumps({k: v for k, v in doc.items() if k != "at"}, sort_keys=True, separators=(",", ":"))
+                    digest = hashlib.sha256("\n".join((lane, record_kind, content)).encode()).hexdigest()[:16]
+                    legacy = f"{lane}-issue-{issue}-{record_kind}-{digest}"
+                    if len(legacy) <= 64:
+                        self.assertEqual(key, legacy)
+                    FakeRuntime.keys[key] = "an earlier body"
+                code, out = self.run_step(*step)
+                self.assertEqual(code, 0, out)
+                self.assertEqual(out.count("already recorded "), len(sent), out)
+                self.assertEqual([key for key, _ in FakeRuntime.seen[start + len(sent):]],
+                                 [key for key, _ in sent])
 
     def test_a_changed_verdict_on_the_same_head_is_a_new_record(self):
         # E: BLOCK, a body-only fix, then APPROVE by the same reviewer on the same head.

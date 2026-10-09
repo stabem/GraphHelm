@@ -355,7 +355,7 @@ class Planned(unittest.TestCase):
 
     def test_the_older_steps_keep_their_default_revisions(self):
         for kind, extra, revision in (("claimed", ["--branch", "b"], 1),
-                                      ("pr_opened", ["--pr", "1", "--head", HEAD_A], 2),
+                                      ("pr_opened", ["--pr", "1", "--head", HEAD_A, "--reviewer", "r"], 2),
                                       ("merged", ["--pr", "1", "--merge-sha", HEAD_A], 5)):
             args = task_record.parse(["--lane", "l", kind, "--issue", "9", *extra])
             self.assertEqual(task_record.document(args, "t")["revision"], revision, kind)

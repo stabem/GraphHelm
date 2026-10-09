@@ -120,7 +120,9 @@ function arrowPath(from: ChartNode, to: ChartNode, track?: number): string {
       const x1 = left(from.col) + CARD_W;
       const y1 = top(from.row) + CARD_H / 2 + track;
       const gutter = x1 + GAP_X / 2 + track;
-      const band = top(to.row) + CARD_H + GAP_Y / 2 + track;
+      // Leftward bands need the opposite nesting order, including returns directly above.
+      const bandTrack = to.col <= from.col ? -track : track;
+      const band = top(to.row) + CARD_H + GAP_Y / 2 + bandTrack;
       const port = left(to.col) + CARD_W / 2 + track;
       return `M ${x1} ${y1} H ${gutter} V ${band} H ${port} V ${top(to.row) + CARD_H}`;
     }

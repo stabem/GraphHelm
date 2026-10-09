@@ -149,7 +149,7 @@ const CLI_ONLY_DEVELOPMENT_LEAVES: &[&str] = &["dream-shadow"];
 ///
 /// Order follows `TOOLS`'s own declaration order ("the closed list, in the plan's order"), not
 /// alphabetical, so a reader can diff the two surfaces by eye.
-const NON_DEVELOPMENT_TOOLS: [&str; 35] = [
+const NON_DEVELOPMENT_TOOLS: [&str; 36] = [
     // #382 phase B. The task planner reads keel.yaml and the journey map; it is a Keel read,
     // not a development-contract operation family.
     "keel_plan",
@@ -174,6 +174,8 @@ const NON_DEVELOPMENT_TOOLS: [&str; 35] = [
     "journey_open",
     "journey_act",
     "journey_watch",
+    // #519: a flow run headless with each screen's result kept, an owner verb beside watch.
+    "journey_preview",
     "journey_close",
     "journey_sessions",
     "events",

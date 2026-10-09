@@ -111,6 +111,24 @@ fn save_state(dir: &Path, state: &Value) {
     let _ = super::journey_flow::atomic_write(&dir.join(STATE), &bytes);
 }
 
+/// Whether a `running` state still has a runner. The runner writes its own pid when it starts;
+/// before that, a just-started run counts as alive for `RUNNER_GRACE`.
+fn runner_alive(state: &Value) -> bool {
+    match state["pid"].as_u64() {
+        Some(pid) => alive(pid),
+        None => state["startedAt"]
+            .as_str()
+            .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+            .is_some_and(|at| {
+                chrono::Utc::now().signed_duration_since(at)
+                    < chrono::Duration::from_std(RUNNER_GRACE).unwrap()
+            }),
+    }
+}
+
+/// How long a started run may take to write its own pid.
+const RUNNER_GRACE: Duration = Duration::from_secs(60);
+
 fn alive(pid: u64) -> bool {
     #[cfg(windows)]
     {
@@ -145,7 +163,7 @@ fn body(state: Option<Value>, flow: &Value, digest: &str, commit: &str) -> Value
     }
     // The kind follows the flow as it is now: approving it turns the same run into a replay's.
     state["kind"] = kind.into();
-    if state["state"] == "running" && !state["pid"].as_u64().is_some_and(alive) {
+    if state["state"] == "running" && !runner_alive(&state) {
         // A runner that died without finishing never reports; say so instead of "running" forever.
         state["state"] = "failed".into();
         state["reason"] = "internal".into();
@@ -224,11 +242,11 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
     };
     let dir = dir_of(&project, &args.id);
     let stored = read_state(&dir);
-    let runner_alive = stored.as_ref().is_some_and(|state| {
-        state["state"] == "running" && state["pid"].as_u64().is_some_and(alive)
-    });
+    let running_now = stored
+        .as_ref()
+        .is_some_and(|state| state["state"] == "running" && runner_alive(state));
     let current = body(stored.clone(), &flow, &digest, &commit);
-    if runner_alive {
+    if running_now {
         if current["state"] == "running" {
             return answer(current, None);
         }
@@ -270,16 +288,19 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
     {
         command.env(key, value);
     }
-    let mut running = json!({"preview":true,"kind":current["kind"],"digest":digest,"commit":commit,
+    // The running state is written before the runner starts and never after: a runner that ends
+    // quickly (no observer, app down) must not have its result overwritten by this answer. The
+    // runner writes its own pid.
+    let running = json!({"preview":true,"kind":current["kind"],"digest":digest,"commit":commit,
         "state":"running","startedAt":chrono::Utc::now().to_rfc3339(),"current":null,
         "screens":{},"edges":{}});
+    save_state(&dir, &running);
     match command.spawn() {
-        Ok(child) => {
-            running["pid"] = child.id().into();
-            save_state(&dir, &running);
-            answer(body(Some(running), &flow, &digest, &commit), None)
+        Ok(_) => answer(body(Some(running), &flow, &digest, &commit), None),
+        Err(_) => {
+            let _ = std::fs::remove_file(dir.join(STATE));
+            answer(current, Some(failure("preview.unwritable", "/runner", 1)))
         }
-        Err(_) => answer(current, Some(failure("preview.unwritable", "/runner", 1))),
     }
 }
 

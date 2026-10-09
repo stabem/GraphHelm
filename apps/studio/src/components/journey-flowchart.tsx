@@ -97,8 +97,15 @@ const left = (col: number): number => col * (CARD_W + GAP_X);
 const top = (row: number): number => row * (CARD_H + GAP_Y);
 
 /** An arrow between two cards, at the height of the picture: straight along a row, an elbow to a
- * branch, and a loop under the cards when it goes back. */
+ * branch, and a loop under the cards when it goes back. A branch that REJOINS a row above it (the
+ * owner's sketch: the lower card feeds back into the main row) leaves its card from the top,
+ * crosses in the empty band between the two rows, and enters the card it rejoins from below: it
+ * never runs behind a card or merges into the arrow already entering that card from the left. */
 function arrowPath(from: ChartNode, to: ChartNode): string {
+  if (to.row < from.row) {
+    const band = top(to.row) + CARD_H + GAP_Y / 2;
+    return `M ${left(from.col) + CARD_W / 2} ${top(from.row)} V ${band} H ${left(to.col) + CARD_W / 2} V ${top(to.row) + CARD_H}`;
+  }
   const x1 = left(from.col) + CARD_W;
   const y1 = top(from.row) + FRAME_H / 2;
   const x2 = left(to.col);
@@ -181,7 +188,7 @@ export function JourneyFlowchart({ flow, run = null, frames = {}, current = null
             </marker>
           </defs>
           {layout.arrows.map((edge) => (
-            <path key={edge.id} d={arrowPath(byId.get(edge.from)!, byId.get(edge.to)!)} data-result={run?.edges?.[edge.id]?.result} markerEnd="url(#journey-chart-head)" />
+            <path key={edge.id} d={arrowPath(byId.get(edge.from)!, byId.get(edge.to)!)} data-edge={edge.id} data-result={run?.edges?.[edge.id]?.result} markerEnd="url(#journey-chart-head)" />
           ))}
         </svg>
         <ol className="journey-flow-steps" aria-label="Steps">

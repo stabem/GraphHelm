@@ -739,3 +739,270 @@ fn the_slot_builds_in_the_worktrees_own_target_unless_shared_is_asked() {
         root.join("target-shared")
     );
 }
+
+fn slot_with(
+    root: &str,
+    lane: &str,
+    label: &str,
+    extra: &[&str],
+    command: &[String],
+) -> std::process::Child {
+    Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "--json",
+            "workspace",
+            "slot",
+            "--root",
+            root,
+            "--lane",
+            lane,
+            "--label",
+            label,
+            "--jobs",
+            "3",
+        ])
+        .args(extra)
+        .arg("--")
+        .args(command)
+        .current_dir(Path::new(root).parent().unwrap())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap()
+}
+
+fn log_tags(log: &Path) -> Vec<String> {
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| line.trim().ends_with(" end"))
+        .map(|line| line.trim().trim_end_matches(" end").to_owned())
+        .collect()
+}
+
+/// #540 (1): `workspace slot status` names the holder (lane, label, since when) and the waiters
+/// in order with their wait. Credible regression: lanes reading stale ticket files or asking in
+/// chat, because nothing says who holds the slot. Cost: two short child commands.
+#[test]
+fn slot_status_names_the_holder_and_the_waiters_in_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let root_s = root.to_str().unwrap();
+    let log = dir.path().join("log.txt");
+    let holder = slot_with(
+        root_s,
+        "lane-a",
+        "hold",
+        &[],
+        &marker_command(&log, "a", 3000),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    let waiter = slot_with(
+        root_s,
+        "lane-b",
+        "wait",
+        &[],
+        &marker_command(&log, "b", 100),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    let (code, status) = run(&["slot", "status", "--root", root_s]);
+    let _ = holder.wait_with_output().unwrap();
+    let _ = waiter.wait_with_output().unwrap();
+    assert_eq!(code, 0, "{status}");
+    let data = &status["data"];
+    assert_eq!(data["holder"]["lane"], "lane-a", "{status}");
+    assert_eq!(data["holder"]["label"], "hold", "{status}");
+    assert!(data["holder"]["heldSeconds"].as_u64().is_some(), "{status}");
+    let waiting = data["waiting"].as_array().expect("waiting list");
+    assert_eq!(waiting.len(), 1, "{status}");
+    assert_eq!(waiting[0]["lane"], "lane-b", "{status}");
+    assert_eq!(waiting[0]["label"], "wait", "{status}");
+    assert!(waiting[0]["waitedSeconds"].as_u64().is_some(), "{status}");
+}
+
+/// #540 (2): a waiter has no wait limit unless it asks (`--max-wait`), and one that timed out keeps
+/// its original place when the same lane and label queue again. Credible regression: the old fixed
+/// 120-minute limit that dropped a waiter to the back of the queue. Cost: four short commands.
+#[test]
+fn a_waiter_that_timed_out_keeps_its_place_when_it_queues_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let root_s = root.to_str().unwrap();
+    let log = dir.path().join("log.txt");
+    let holder = slot_with(
+        root_s,
+        "lane-a",
+        "hold",
+        &[],
+        &marker_command(&log, "a", 5000),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    // 0.02 min = 1.2 s: lane-b gives up while lane-a still holds the slot.
+    let gave_up = slot_with(
+        root_s,
+        "lane-b",
+        "pr1",
+        &["--max-wait", "0.02"],
+        &marker_command(&log, "b", 100),
+    )
+    .wait_with_output()
+    .unwrap();
+    assert!(!gave_up.status.success(), "lane-b was meant to time out");
+    let reply: Value = serde_json::from_slice(&gave_up.stdout).unwrap();
+    assert!(
+        reply["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("place"),
+        "{reply}"
+    );
+    // lane-c arrives after lane-b first queued, then lane-b queues again with the same label.
+    let later = slot_with(
+        root_s,
+        "lane-c",
+        "pr2",
+        &[],
+        &marker_command(&log, "c", 100),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let again = slot_with(
+        root_s,
+        "lane-b",
+        "pr1",
+        &[],
+        &marker_command(&log, "b", 100),
+    );
+    for child in [holder, later, again] {
+        assert!(child.wait_with_output().unwrap().status.success());
+    }
+    assert_eq!(
+        log_tags(&log),
+        ["a", "b", "c"],
+        "lane-b kept its place ahead of lane-c"
+    );
+}
+
+/// #540 (3): `--priority` puts a job next after the holder, never preempting it, and only for a
+/// lane the owner listed in `<root>/.graphhelm-workspaces/slot-priority-lanes`; any other lane is
+/// refused and its command never runs. Credible regression: any agent lane jumping the queue.
+/// Cost: four short commands.
+#[test]
+fn priority_goes_next_for_a_listed_lane_and_is_refused_for_any_other() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let root_s = root.to_str().unwrap();
+    std::fs::create_dir_all(root.join(".graphhelm-workspaces")).unwrap();
+    std::fs::write(
+        root.join(".graphhelm-workspaces")
+            .join("slot-priority-lanes"),
+        "coordinator\n",
+    )
+    .unwrap();
+    let log = dir.path().join("log.txt");
+    let refused = slot_with(
+        root_s,
+        "lane-x",
+        "jump",
+        &["--priority"],
+        &marker_command(&log, "x", 100),
+    )
+    .wait_with_output()
+    .unwrap();
+    assert!(
+        !refused.status.success(),
+        "an unlisted lane's --priority is refused"
+    );
+    let holder = slot_with(
+        root_s,
+        "lane-a",
+        "hold",
+        &[],
+        &marker_command(&log, "a", 2500),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let normal = slot_with(
+        root_s,
+        "lane-b",
+        "wait",
+        &[],
+        &marker_command(&log, "b", 100),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let urgent = slot_with(
+        root_s,
+        "coordinator",
+        "owner-asked",
+        &["--priority"],
+        &marker_command(&log, "p", 100),
+    );
+    for child in [holder, normal, urgent] {
+        assert!(child.wait_with_output().unwrap().status.success());
+    }
+    assert_eq!(
+        log_tags(&log),
+        ["a", "p", "b"],
+        "priority went next, after the holder, never inside it"
+    );
+}
+
+/// #557 review: a finite but huge `--max-wait` overflows a Duration; it is refused with the
+/// argument's own words, never a panic. Cost: one CLI run, no command started.
+#[test]
+fn a_huge_max_wait_is_refused_not_a_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let log = dir.path().join("log.txt");
+    let out = slot_with(
+        root.to_str().unwrap(),
+        "lane-a",
+        "huge",
+        &["--max-wait", "1e300"],
+        &marker_command(&log, "a", 10),
+    )
+    .wait_with_output()
+    .unwrap();
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
+    assert!(
+        reply["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("--max-wait must be"),
+        "status {:?}, reply {reply}",
+        out.status
+    );
+    assert!(!log.exists(), "the command never ran");
+}
+
+/// #557 review: a `holder.json` left by a holder killed hard names a ticket that is no longer
+/// live; `status` must not name that dead lane as the holder. Cost: one CLI run.
+#[test]
+fn slot_status_does_not_trust_a_stale_holder_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let slot_dir = root.join(".graphhelm-workspaces").join("slot");
+    std::fs::create_dir_all(&slot_dir).unwrap();
+    std::fs::write(
+        slot_dir.join("holder.json"),
+        r#"{"lane":"ghost","label":"dead","pid":1,"sinceNanos":"1","ticket":"000000000000000000000001-ghost-1.ticket"}"#,
+    )
+    .unwrap();
+    // A live holder that wrote no holder.json (an older binary): it holds slot.lock.
+    let lock = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(slot_dir.join("slot.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let (code, status) = run(&["slot", "status", "--root", root.to_str().unwrap()]);
+    drop(lock);
+    assert_eq!(code, 0, "{status}");
+    assert_ne!(
+        status["data"]["holder"]["lane"], "ghost",
+        "a stale holder.json was trusted: {status}"
+    );
+    assert!(
+        status["data"]["holder"].is_object(),
+        "the slot is held, by someone unnamed: {status}"
+    );
+}

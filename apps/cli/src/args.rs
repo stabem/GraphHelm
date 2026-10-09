@@ -2074,11 +2074,15 @@ pub struct WorkspaceSweepArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
 pub struct WorkspaceSlotArgs {
-    #[arg(long)]
-    pub root: PathBuf,
-    #[arg(long)]
-    pub lane: String,
+    /// `status`: who holds the slot and who waits (#540). Without it, run a command.
+    #[command(subcommand)]
+    pub action: Option<WorkspaceSlotAction>,
+    #[arg(long, required = true)]
+    pub root: Option<PathBuf>,
+    #[arg(long, required = true)]
+    pub lane: Option<String>,
     /// What this build is for, shown to the other waiters (e.g. `pr405-review`).
     #[arg(long, default_value = "build")]
     pub label: String,
@@ -2093,7 +2097,24 @@ pub struct WorkspaceSlotArgs {
     /// it did not build (#361). Opt-in only, for builds whose result does not vouch for a tree.
     #[arg(long)]
     pub shared_target: bool,
+    /// Give up after this many minutes of waiting (fractions allowed). Without it a waiter waits
+    /// as long as it takes (#540). A waiter that gives up keeps its place for 30 minutes: the
+    /// same lane and label queueing again within that time are served where they first arrived.
+    #[arg(long)]
+    pub max_wait: Option<f64>,
+    /// Go next after the current holder, ahead of every other waiter; never preempts the holder.
+    /// Only for a lane listed in `<root>/.graphhelm-workspaces/slot-priority-lanes` (one lane per
+    /// line, written by the owner); any other lane is refused and its command never runs (#540).
+    #[arg(long)]
+    pub priority: bool,
     /// The command and its arguments, after `--`.
     #[arg(last = true, required = true)]
     pub command: Vec<String>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WorkspaceSlotAction {
+    /// Who holds the build slot (lane, label, for how long) and who waits, in order, with their
+    /// wait. Read-only apart from removing a dead waiter's ticket.
+    Status(WorkspaceRootArgs),
 }

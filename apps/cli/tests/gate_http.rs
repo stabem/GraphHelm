@@ -58,18 +58,24 @@ fn serve_with(events: &Path, extra: &ServeExtra) -> (ServerGuard, String, String
     for (key, value) in &extra.env {
         command.env(key, value);
     }
-    let mut child = command.spawn().unwrap();
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    // #549: the guard owns the child BEFORE any wait that can panic. A panic between the spawn and
+    // the guard (a deadline, a refused GRAPHHELM_TEST_TIME_SCALE) used to leave the server running
+    // with this test's output pipe in its hands, and the whole run hung on it.
+    let mut server = ServerGuard {
+        child: command.spawn().unwrap(),
+    };
+    let mut stdout = BufReader::new(server.child.stdout.take().unwrap());
     let mut line = String::new();
     let read = stdout.read_line(&mut line).unwrap();
     if read == 0 {
         let mut stderr_text = String::new();
-        let _ = child
+        let _ = server
+            .child
             .stderr
             .take()
             .unwrap()
             .read_to_string(&mut stderr_text);
-        let status = child.wait().unwrap();
+        let status = server.child.wait().unwrap();
         panic!("serve exited before startup (status: {status}); stderr:\n{stderr_text}");
     }
     let started: Value = serde_json::from_str(line.trim()).unwrap();
@@ -78,7 +84,7 @@ fn serve_with(events: &Path, extra: &ServeExtra) -> (ServerGuard, String, String
     let token = read_token(&token_path(events));
     let base = format!("http://{address}");
     wait_for_health(&base);
-    (ServerGuard { child }, base, token)
+    (server, base, token)
 }
 
 fn read_token(path: &Path) -> String {
@@ -1098,7 +1104,10 @@ fn a_refused_time_scale_is_a_quick_named_red_that_leaves_no_server_behind() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(!output.status.success(), "a refused knob must fail the test: {text}");
+    assert!(
+        !output.status.success(),
+        "a refused knob must fail the test: {text}"
+    );
     assert!(
         text.contains("GRAPHHELM_TEST_TIME_SCALE=\"fast\" is not a whole number from 1 to 20"),
         "the red must name the knob and its value: {text}"

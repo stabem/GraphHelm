@@ -1965,6 +1965,41 @@ pub(super) async fn sweep_workspaces(State(state): State<ServeState>) -> Respons
     .await
 }
 
+/// `GET /v1/workspaces/slots` (#612): the build-slot queues the Studio shows as "waiting for a build
+/// (Nth)" / "building". For each `--slot-root`, in the order given, exactly what
+/// `graphhelm workspace slot status --root <root>` reports: the holder and the live waiters in
+/// serving order. Read-only: it never queues, cancels or reorders a ticket. Nothing in the request
+/// names a path. Owner credentials only (the agent allow-list admits `/v1/workspaces` alone).
+pub(super) async fn slot_queues(State(state): State<ServeState>) -> Response {
+    const COMMAND: &str = "workspace.slots";
+    let roots = state.slot_roots.clone();
+    let read = off_reactor(move || {
+        roots
+            .iter()
+            .map(|root| {
+                let outcome = crate::commands::workspace_slot::run_status(root);
+                let mut entry = outcome.output.data.unwrap_or(serde_json::Value::Null);
+                entry["root"] = root.to_string_lossy().into_owned().into();
+                if !outcome.output.ok {
+                    entry["error"] = serde_json::json!(outcome.output.diagnostics);
+                }
+                entry
+            })
+            .collect::<Vec<_>>()
+    })
+    .await;
+    match read {
+        Some(slots) => respond_outcome(Outcome::success(
+            COMMAND,
+            serde_json::json!({"slots": slots}),
+        )),
+        None => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(COMMAND, "the slot read failed").output,
+        ),
+    }
+}
+
 /// `GET /v1/journey-flows` (#353): `graphhelm journey flows`'s own envelope for the Runtime's
 /// `--project`; nothing from the request names a path. Owner credentials only
 /// (`agent_route_allowed` admits no `/v1/journey-flows`).
@@ -6403,6 +6438,7 @@ mod tests {
             project_id: None,
             project: None,
             workspace_root: None,
+            slot_roots: std::sync::Arc::from(Vec::<std::path::PathBuf>::new()),
             events,
             runtime: None,
             sealing: None,

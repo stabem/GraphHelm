@@ -145,6 +145,32 @@ class CliModules(unittest.TestCase):
         self.assertIn("cargo +1.97.1 test --locked -p graphhelm-cli --bin graphhelm commands::journey_explore::",
                       rt.commands(whole, single, []))
 
+    def test_a_module_other_modules_import_reaches_their_tests_too(self):
+        # #530 review (gh-claude-6): journey_live.rs imports Driver/preflight from journey_replay.rs,
+        # so a journey_replay change must reach journey_live's tests as well.
+        root, packages = self.tree()
+        src = root / "apps/cli/src/commands"
+        src.mkdir(parents=True)
+        (src / "journey_replay.rs").write_text("pub struct Driver;", encoding="utf-8")
+        (src / "journey_live.rs").write_text("use super::journey_replay::Driver;", encoding="utf-8")
+        (src / "mod.rs").write_text("mod journey_live; mod journey_replay;", encoding="utf-8")
+        (root / "apps/cli/tests/journey_live_cli.rs").write_text('cmd.args(["journey", "live"]);', encoding="utf-8")
+        (root / "apps/cli/tests/journey_replay_cli.rs").write_text('cmd.args(["journey", "replay"]);', encoding="utf-8")
+        packages[0]["tests"] += [{"name": n, "src": f"apps/cli/tests/{n}.rs"} for n in ("journey_live_cli", "journey_replay_cli")]
+        whole, single, *_ = rt.reach(["apps/cli/src/commands/journey_replay.rs"], packages, {}, root)
+        self.assertEqual(whole, set())
+        self.assertTrue({("graphhelm-cli", "bin:graphhelm", "commands::journey_replay"), ("graphhelm-cli", "journey_replay_cli", None),
+                         ("graphhelm-cli", "bin:graphhelm", "commands::journey_live"), ("graphhelm-cli", "journey_live_cli", None)} <= single, single)
+
+    def test_a_module_used_outside_commands_reaches_the_whole_package(self):
+        root, packages = self.tree()
+        src = root / "apps/cli/src"
+        (src / "commands").mkdir(parents=True)
+        (src / "commands/keel.rs").write_text("pub fn check() {}", encoding="utf-8")
+        (src / "main.rs").write_text("fn main() { commands::keel::check(); }", encoding="utf-8")
+        whole, _, *_ = rt.reach(["apps/cli/src/commands/keel.rs"], packages, {}, root)
+        self.assertEqual(whole, {"graphhelm-cli"})
+
     def test_shared_files_and_unmatched_modules_still_reach_the_whole_package(self):
         root, packages = self.tree()
         for path in ("apps/cli/src/main.rs", "apps/cli/src/commands/mod.rs", "apps/cli/src/commands/hash.rs"):

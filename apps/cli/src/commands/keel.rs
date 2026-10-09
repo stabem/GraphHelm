@@ -1064,8 +1064,14 @@ mod tests {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        let started = std::time::Instant::now();
         let result = graphhelm_process_tree::run_bounded(command, bound).unwrap();
         assert!(result.is_none(), "inherited pipe bypassed the deadline");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= bound,
+            "run_bounded reported its deadline after {elapsed:?}, before the {bound:?} it was given"
+        );
         // The tree is dead: a holder that had not connected by now never will.
         killed.store(true, Ordering::SeqCst);
         // A hang catcher on the observer thread itself, past its own read bound.

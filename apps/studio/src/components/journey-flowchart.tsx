@@ -112,7 +112,7 @@ function arrowPath(from: ChartNode, to: ChartNode): string {
   return `M ${x1} ${y1} h ${GAP_X / 4} V ${under} H ${x2 - GAP_X / 4} V ${y2} H ${x2}`;
 }
 
-type StepState = "pass" | "fail" | "drift" | "running" | "not_reached" | null;
+type StepState = "pass" | "fail" | "drift" | "skipped" | "running" | "not_reached" | null;
 
 /** How a screen's step fared: its own result, or the arriving edge's when the act itself failed. */
 function stepState(node: ChartNode, run: JourneyRunView | null): { state: StepState; from: JourneyRunScreen | JourneyRunEdge | null } {
@@ -121,6 +121,8 @@ function stepState(node: ChartNode, run: JourneyRunView | null): { state: StepSt
   const edge = node.arrivedBy ? run.edges?.[node.arrivedBy.id] : undefined;
   if (edge?.result === "fail" || edge?.result === "drift") return { state: edge.result, from: edge.reason !== undefined || screen === undefined ? edge : screen };
   if (screen?.result) return { state: screen.result, from: screen };
+  // The guard stopped the act that leads here: the step was skipped on purpose, not lost.
+  if (edge?.result === "skipped") return { state: "skipped", from: edge };
   if (run.state === "running") return { state: run.current === node.screen.id ? "running" : null, from: null };
   if (screen !== undefined && !screen.frame) return { state: screen.reason === "not_reached" || screen.reason === undefined ? "not_reached" : "fail", from: screen };
   return { state: null, from: null };
@@ -130,6 +132,7 @@ const STATE_WORDS: Record<Exclude<StepState, null>, string> = {
   pass: "Passed",
   fail: "Failed",
   drift: "Changed",
+  skipped: "Skipped",
   running: "Running…",
   not_reached: "Not reached",
 };

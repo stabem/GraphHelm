@@ -1094,9 +1094,11 @@ mod tests {
     /// with the next, longer bound; only "never ready at any bound" is a failure, and it names
     /// the harness.
     fn pipe_holder_is_killed(bounds: &[Duration], holder_delay: Duration) {
-        // One attempt only, as the cell was before #549: a late arrangement is reported.
-        if run_pipe_holder(bounds[0], holder_delay) == HolderRun::Killed {
-            return;
+        for bound in bounds {
+            match run_pipe_holder(*bound, holder_delay) {
+                HolderRun::Killed => return,
+                HolderRun::NotReady => {}
+            }
         }
         panic!(
             "HARNESS-BROKE: the pipe holder was never ready before the bound, up to {:?} \

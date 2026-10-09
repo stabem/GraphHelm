@@ -20,7 +20,7 @@ const fields = {
   act: ['kind', 'role', 'name', 'text', 'secretEnv', 'locator'],
   capture: ['path', 'maskSecrets'], close: [],
 };
-const roles = new Set(['banner','complementary','contentinfo','form','main','navigation','region','search','heading','button','checkbox','combobox','link','menuitem','menuitemcheckbox','menuitemradio','option','radio','searchbox','slider','spinbutton','switch','tab','textbox','treeitem']);
+const roles = new Set(['dialog','alertdialog','banner','complementary','contentinfo','form','main','navigation','region','search','heading','button','checkbox','combobox','link','menuitem','menuitemcheckbox','menuitemradio','option','radio','searchbox','slider','spinbutton','switch','tab','textbox','treeitem']);
 const landmarks = new Set(['banner','complementary','contentinfo','form','main','navigation','region','search']);
 const secrets = Object.entries(process.env).filter(([key]) => /^GRAPHHELM_SECRET_[A-Za-z0-9_]+$/.test(key));
 let browser, context, page, baseOrigin, allowed = new Set(), hostRefused = false, networkFailure;

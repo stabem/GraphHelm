@@ -19,6 +19,9 @@ From the changed paths and the workspace graph (`cargo metadata --no-deps`, no b
   observers' command (`BROWSER_OBSERVERS`) for a lane with a browser to run;
 - a changed file under `tools/<tool>/` reaches that tool's `test_*.py` / `*.test.mjs` (not browser);
 - changed Studio files reach `npx vitest related <files>` and `npx tsc -b`;
+- a change to one `apps/cli/src/commands` module reaches its unit tests (`--bin graphhelm
+  commands::<module>::`), the tests that read the crate's own source, and the integration tests
+  that name its command; shared files and modules no test names reach the whole package;
 - any reached Rust crate adds `cargo fmt --check`, clippy on the reached crates, and the
   workspace authored-strings guard (DELIVERY.md, "One review").
 Nothing else is reached by a docs-only diff. When `graphhelm` is on PATH, the Keel plan's class and
@@ -52,6 +55,9 @@ BROWSER_REACHERS = ("tools/journey-driver/", "apps/cli/src/commands/journey_repl
                     "apps/cli/tests/journey_replay_browser.rs", "apps/cli/tests/journey_explore_browser.rs",
                     "apps/cli/tests/journey_live_browser.rs")
 INCLUDE = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*\)')
+CLI, CLI_BIN = "graphhelm-cli", "graphhelm"
+DISPATCH = {"src/main.rs", "src/commands/mod.rs"}
+SOURCE_READ = re.compile(r'"src/|join\("src"\)')
 BUNDLE_MOD = re.compile(r'#\[path\s*=\s*"([^"]+)\.rs"\]\s*mod\s+(\w+)\s*;')
 
 
@@ -132,6 +138,54 @@ def target_of(packages, package, stem):
     return None
 
 
+def cli_module(packages, p, rel, root):
+    """#361: a change to one `apps/cli/src/commands/<module>` reaches that module's unit tests, the
+    integration tests that read the crate's own source, and the ones that name its command (every
+    word of the module path as a quoted literal: `journey_explore` -> "journey" and "explore").
+    Modules that import it directly (`<name>::` in their source; one level, not transitively) add their own unit
+    and command tests (#530 review); `main.rs` and the `mod.rs` files only dispatch, so they are not
+    importers. None (the whole package) for a change to a shared file (`main.rs`, any `mod.rs`,
+    anything outside `commands/`), for a module that shared code outside `commands/` uses, for a
+    changed module no test names, and when the tree cannot be read."""
+    if p["name"] != CLI or root is None or not rel.startswith("src/commands/") or rel.endswith("/mod.rs"):
+        return None
+    crate = root / p["dir"]
+    tests, src = crate / "tests", crate / "src"
+    if not tests.is_dir():
+        return None
+    texts = {f: f.read_text(encoding="utf-8", errors="replace") for f in sorted(tests.glob("*.rs"))}
+    sources = {f.relative_to(crate).as_posix(): f.read_text(encoding="utf-8", errors="replace")
+               for f in sorted(src.rglob("*.rs"))} if src.is_dir() else {}
+    readers = {t for f, text in texts.items() if "CARGO_MANIFEST_DIR" in text and SOURCE_READ.search(text)
+               for t in [target_of(packages, p["name"], f.stem)] if t is not None}
+
+    def named(module):
+        words = [w for part in module.split("/") for w in part.split("_") if w]
+        return {t for f, text in texts.items() if words and all(f'"{w}"' in text for w in words)
+                for t in [target_of(packages, p["name"], f.stem)] if t is not None}
+
+    start = rel[len("src/commands/"):-len(".rs")]
+    if not named(start):
+        return None
+    reached, queue, out = {start}, [start], set(readers)
+    while queue:
+        module = queue.pop()
+        out |= {(p["name"], f"bin:{CLI_BIN}", "commands::" + module.replace("/", "::"))} | named(module)
+        use = re.compile(r"\b" + re.escape(module.split("/")[-1]) + r"::")
+        for path, text in sources.items():
+            if path == f"src/commands/{module}.rs" or path in DISPATCH or path.endswith("/mod.rs") or not use.search(text):
+                continue  # the dispatchers call every module to run it; they do not build on it
+            if module != start:
+                continue  # direct importers only: an importer's own importers are not followed
+            if not path.startswith("src/commands/"):
+                return None  # used from shared code (args, output, ...): anything behind it can be reached
+            importer = path[len("src/commands/"):-len(".rs")]
+            if importer not in reached:
+                reached.add(importer)
+                queue.append(importer)  # one level: past it, hub modules (journey.rs, serve) reach nearly every test
+    return out
+
+
 def reach(changed, packages, embedded, repo=None):
     """The plan for one diff: whole packages, single test targets/modules, Studio files, tool
     tests, extension packages to validate, and what no rule maps."""
@@ -179,7 +233,12 @@ def reach(changed, packages, embedded, repo=None):
                 whole.add(p["name"])  # support modules and fixtures serve the package's tests
                 hit = True
             elif rel.startswith(("src/", "build.rs", "Cargo.toml")) or rel.endswith(".rs"):
-                whole |= dependents(packages, {p["name"]})
+                narrow = cli_module(packages, p, rel, root)
+                if narrow is None:
+                    whole |= dependents(packages, {p["name"]})
+                else:
+                    single |= narrow
+                    whole |= dependents(packages, {p["name"]}) - {p["name"]}
                 hit = True
         if not hit and not path.endswith(".md") and not path.startswith("docs/"):
             other.append(path)
@@ -192,7 +251,8 @@ def commands(whole, single, studio, tools=(), validate=()):
     for name in sorted(whole):
         cmds.append(f"cargo {TOOLCHAIN} test --locked -p {name}")
     for package, target, module in sorted(single, key=lambda s: (s[0], s[1], s[2] or "")):
-        cmds.append(f"cargo {TOOLCHAIN} test --locked -p {package} --test {target}" + (f" {module}::" if module else ""))
+        kind = f"--bin {target[4:]}" if target.startswith("bin:") else f"--test {target}"
+        cmds.append(f"cargo {TOOLCHAIN} test --locked -p {package} {kind}" + (f" {module}::" if module else ""))
     rust = sorted(whole | {s[0] for s in single})
     if rust:
         cmds.append(f"cargo {TOOLCHAIN} fmt --all -- --check")

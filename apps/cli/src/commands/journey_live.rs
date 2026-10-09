@@ -1221,7 +1221,10 @@ pub(crate) fn read_frame(project: &Path, id: &str) -> FrameRead {
                             .is_some_and(|name| name.starts_with("graphhelm-replay-"))
                 })
         });
-    if !inside_an_output {
+    // A junction or symlink named like an output (or its `screencast`) resolves elsewhere, so its
+    // canonical path differs from the one recorded; only a real directory is read (#559 review).
+    let real = |path: &Path| path.canonicalize().ok().as_deref() == Some(path);
+    if !inside_an_output || !real(&dir) || !dir.parent().is_some_and(real) {
         return FrameRead::Pending;
     }
     let read = |name: &str, limit: u64| -> Option<Vec<u8>> {
@@ -1819,6 +1822,40 @@ mod frame_tests {
 
         session(project.path(), serde_json::Value::Null, 5);
         assert_eq!(read_frame(project.path(), ID), FrameRead::Pending);
+    }
+
+    /// #559 review: a junction in the temp directory named like a replay output, pointing at a
+    /// directory that holds a frame, is not read: its canonical path is not the recorded one.
+    /// Cost: milliseconds, temp files only. Windows only (junctions).
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_named_like_a_replay_output_reads_nothing() {
+        let project = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        frame(&target.path().join("screencast"), 1);
+        let temp = std::env::temp_dir().canonicalize().unwrap();
+        let link = temp.join(format!(
+            "graphhelm-replay-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link.to_string_lossy().trim_start_matches(r"\\?\"))
+            .arg(target.path())
+            .output()
+            .unwrap();
+        assert!(
+            made.status.success(),
+            "ARRANGEMENT: junction made: {made:?}"
+        );
+        session(
+            project.path(),
+            json!(link.join("screencast").to_string_lossy()),
+            5,
+        );
+        let read = read_frame(project.path(), ID);
+        let _ = std::fs::remove_dir(&link);
+        assert_eq!(read, FrameRead::Pending);
     }
 
     /// #519: the record names the frame directory, but only a `screencast` directly inside one of

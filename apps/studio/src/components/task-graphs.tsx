@@ -241,6 +241,13 @@ function Graph({ task, changed, onOpenJourney, timing }: { task: TaskState; chan
       <ol className="task-graph-steps">
         {nodesOf(task).map((node) => <Node key={node.key} task={task} node={node} timing={timing} />)}
       </ol>
+      {task.critic !== null && (
+        <p className="task-graph-summary">
+          {task.critic.verdict === "pass" ? `design approved in round ${task.critic.round}, ${task.critic.score}/10`
+            : task.critic.verdict === "revise" ? `design in revision: round ${task.critic.round} of ${task.critic.maxRounds}, ${task.critic.score}/10`
+            : `design not approved after ${task.critic.maxRounds} rounds, ${task.critic.score}/10: needs a person`}
+        </p>
+      )}
       {task.blockedBy !== null && (GITHUB_URL.test(task.blockedBy.commentUrl)
         ? <a className="task-graph-blocked" href={task.blockedBy.commentUrl} target="_blank" rel="noreferrer">
             blocked by {task.blockedBy.reviewer} at {task.blockedBy.headSha.slice(0, 8)}

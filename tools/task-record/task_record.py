@@ -9,6 +9,7 @@ need a per-lane environment or a session relaunch:
     python tools/task-record/task_record.py --lane gh-claude-2 review_assigned --issue 355 --pr 357 --head <sha> --reviewer gh-claude-6
     python tools/task-record/task_record.py --lane gh-claude-6 review_verdict --issue 355 --pr 357 --head <sha> --verdict APPROVE --comment-url <url>
     python tools/task-record/task_record.py --lane gh-claude-6 merged --issue 355 --pr 357 --merge-sha <sha>
+    python tools/task-record/task_record.py --lane gh-claude-2 critic_verdict --issue 355 --round 1 --score 6 --design-ref <path> --reason "<why>"
 
 It POSTs `/v1/executions/<execution>/signal` with the Runtime's AGENT SESSION token
 (`<events>.agent.token`, beside the Runtime's events directory; D-058) and
@@ -28,7 +29,7 @@ import urllib.request
 from pathlib import Path
 
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
-KINDS = ("claimed", "pr_opened", "review_assigned", "review_verdict", "merged")
+KINDS = ("claimed", "pr_opened", "review_assigned", "review_verdict", "merged", "critic_verdict")
 # #477: what the naming standard asks (DELIVERY.md "Naming") and what the Runtime accepts.
 STANDARD = {"claimed": 50, "pr_opened": 60, "summary": 100}
 ACCEPTED = {"title": 200, "summary": 300}
@@ -90,6 +91,12 @@ def parse(argv):
     p.add_argument("--closes", type=int, nargs="*", default=[],
                    help="exactly the issues the merge closed (what ci/closing-keywords.ps1 checked); none for a Refs PR")
     p.add_argument("--journeys", nargs="*", default=[])
+    p.add_argument("--round", type=int, help="critic_verdict: which round of the design critic this is, from 1")
+    p.add_argument("--score", type=int, help="critic_verdict: the critic's grade, 0 to 10")
+    p.add_argument("--pass-score", type=int, default=8)
+    p.add_argument("--max-rounds", type=int, default=3)
+    p.add_argument("--design-ref", help="critic_verdict: the design that was graded (a path or a URL)")
+    p.add_argument("--reason", action="append", default=[], help="critic_verdict: one reason; repeat for more (1 to 8)")
     p.add_argument("--repo", default="stabem/GraphHelm",
                    help="owner/name; pass '' to omit it (a Runtime older than #420 refuses the field)")
     p.add_argument("--execution", default="gh-team")
@@ -111,7 +118,7 @@ def need(args, *names):
 
 def document(args, now):
     doc = {"schema": "graphhelm-task-event-v1", "taskId": f"issue-{args.issue}",
-           "revision": args.revision or KINDS.index(args.kind) + 1, "at": now}
+           "revision": args.revision or (1 if args.kind == "critic_verdict" else KINDS.index(args.kind) + 1), "at": now}
     if args.kind == "claimed":
         need(args, "branch")
         doc.update(issue=args.issue, lane=args.lane, branch=args.branch)
@@ -128,6 +135,14 @@ def document(args, now):
         need(args, "pr", "head", "verdict", "comment-url")
         doc.update(pr=args.pr, headSha=args.head, reviewer=args.lane, verdict=args.verdict,
                    commentUrl=args.comment_url)
+    elif args.kind == "critic_verdict":
+        # #467: the verdict is not an argument. It follows from the score and the round, the way
+        # the Runtime checks it, so running out of rounds can never be sent as a pass.
+        need(args, "round", "score", "design-ref", "reason")
+        verdict = ("pass" if args.score >= args.pass_score
+                   else "revise" if args.round < args.max_rounds else "exhausted")
+        doc.update(round=args.round, score=args.score, passScore=args.pass_score, maxRounds=args.max_rounds,
+                   verdict=verdict, designRef=args.design_ref, lane=args.lane, reasons=args.reason)
     else:
         need(args, "pr", "merge-sha")
         doc.update(pr=args.pr, mergeSha=args.merge_sha, closes=args.closes,

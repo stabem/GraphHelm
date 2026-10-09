@@ -228,6 +228,30 @@ describe("TaskGraphs titles (#477)", () => {
     expect(rows[0]).toHaveClass("task-graph-changed");
     expect(rows[1]).not.toHaveClass("task-graph-changed");
   });
+
+  // #467: the design critic's rounds are read off `task.critic_verdict` records. Catches a view that
+  // drops the round or the score, shows an older round, or draws a verdict that disagrees with its
+  // own score (an under-threshold "pass", which the Runtime refuses and an old log must not draw).
+  // Cost: jsdom only, no I/O.
+  it("says which round approved the design and its score, from the newest critic record", () => {
+    const critic = (sequence: number, fields: Record<string, unknown>) => record(sequence, "issue-467", "task.critic_verdict", "gh-claude-3",
+      { designRef: "docs/specs/critic-loop.md", lane: "gh-claude-3", passScore: 8, maxRounds: 3, reasons: ["names the promise"], ...fields });
+    const claimed = record(1, "issue-467", "task.claimed", "gh-claude-3", { issue: 467, lane: "gh-claude-3", branch: "issue-467-critic" });
+    const revise = critic(2, { round: 1, score: 5, verdict: "revise" });
+    const { rerender } = render(<TaskGraphs tasks={foldTaskEvents([claimed, revise])} onOpenJourney={vi.fn()} />);
+    expect(screen.getByText("design in revision: round 1 of 3, 5/10")).toBeInTheDocument();
+    rerender(<TaskGraphs tasks={foldTaskEvents([claimed, revise, critic(3, { round: 2, score: 9, verdict: "pass" })])} onOpenJourney={vi.fn()} />);
+    expect(screen.getByText("design approved in round 2, 9/10")).toBeInTheDocument();
+    expect(screen.queryByText(/in revision/)).toBeNull();
+    expect(screen.getAllByRole("group")).toHaveLength(1);
+    rerender(<TaskGraphs tasks={foldTaskEvents([claimed, critic(4, { round: 3, score: 6, verdict: "exhausted" })])} onOpenJourney={vi.fn()} />);
+    expect(screen.getByText("design not approved after 3 rounds, 6/10: needs a person")).toBeInTheDocument();
+    const document = (fields: Record<string, unknown>) => JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-467", revision: 2, at: "2026-10-08T12:00:00Z",
+      designRef: "d.md", lane: "gh-claude-3", passScore: 8, maxRounds: 3, reasons: ["x"], ...fields });
+    expect(parseTaskEvent("task.critic_verdict", "gh-claude-3", document({ round: 1, score: 7, verdict: "pass" }))).toBeNull();
+    expect(parseTaskEvent("task.critic_verdict", "gh-claude-3", document({ round: 3, score: 5, verdict: "revise" }))).toBeNull();
+    expect(parseTaskEvent("task.critic_verdict", "gh-claude-4", document({ round: 2, score: 9, verdict: "pass" }))).toBeNull();
+  });
 });
 
 /* #508 (owner: "tinha q ta o nome dele ali se n ta tem algo indo errado"): a lit Review with no

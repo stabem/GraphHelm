@@ -194,6 +194,7 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 | ask a reviewer (§4) | `task.review_assigned` | `pr`, `headSha`, `reviewer`, `ordinal` (1 or 2) |
 | post the verdict (§4) | `task.review_verdict` | `pr`, `headSha`, `reviewer`, `verdict`, `commentUrl` |
 | merge and read what landed (§5) | `task.merged` | `pr`, `mergeSha`, `closes`, `merger` |
+| grade the design, once per round, when the plan says `critic: design` (#467) | `task.critic_verdict` | `round`, `score`, `passScore`, `maxRounds`, `verdict`, `designRef`, `lane`, `reasons` |
 
 `taskId` is `issue-<N>` for the whole life of the task. An issue worked in several PRs is one
 task with one slice per PR (#460): record `task.claimed` with the new slice's own branch before its
@@ -214,7 +215,12 @@ python tools/task-record/task_record.py --lane <you> pr_opened       --issue <N>
 python tools/task-record/task_record.py --lane <you> review_assigned --issue <N> --pr <P> --head <sha> --reviewer <other>   # only when the reviewer changes
 python tools/task-record/task_record.py --lane <you> review_verdict  --issue <N> --pr <P> --head <sha> --verdict APPROVE --comment-url <url>
 python tools/task-record/task_record.py --lane <you> merged          --issue <N> --pr <P> --merge-sha <sha>
+python tools/task-record/task_record.py --lane <you> critic_verdict  --issue <N> --round <R> --score <0-10> --design-ref <path> --reason "<why>"
 ```
+
+A critic round's verdict is not an argument: the script derives it from the score and the round
+(`pass` at `--pass-score`, default 8; `revise` while a round is left of `--max-rounds`, default 3;
+`exhausted` on the last round), which is the rule the Runtime checks. `exhausted` needs a person.
 
 - **Token.** The Runtime's agent session token, `<events>.agent.token` beside its events directory:
   `<the Runtime's --project>/.graphhelm/events.agent.token`. The default `--token-file` is that

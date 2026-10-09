@@ -152,7 +152,10 @@ const TASK_EVENT_SCHEMA = "graphhelm-task-event-v1";
 const VERDICTS = ["APPROVE", "APPROVE-WITH-RISK", "BLOCK"] as const;
 type Verdict = typeof VERDICTS[number];
 
-export type TaskEventKind = "task.claimed" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged";
+export type TaskEventKind = "task.claimed" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged" | "task.critic_verdict";
+
+/** #467: one round of the blind design critic, as its `task.critic_verdict` record states it. */
+export interface CriticRound { round: number; score: number; passScore: number; maxRounds: number; verdict: "pass" | "revise" | "exhausted" }
 
 export interface TaskEventRecord {
   kind: TaskEventKind;
@@ -179,6 +182,8 @@ export interface TaskEventRecord {
   parent?: number;
   /** #502: when the Runtime appended the record (its own clock, not the lane's `at`). */
   occurredAt?: string | null;
+  /** #467: the round a `task.critic_verdict` states. */
+  critic?: CriticRound;
 }
 
 /** #477: optional words for the Team tab. Absent is `{}`; present but malformed is `false` (the
@@ -273,6 +278,21 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
       const closes = Array.isArray(document.closes) && document.closes.every((n) => count(n) !== null) ? document.closes as number[] : null;
       return pr !== null && mergeSha !== null && closes !== null && document.merger === actorId ? { ...base, kind, pr, mergeSha, closes } : null;
     }
+    case "task.critic_verdict": {
+      // The same rule as the Runtime's admission: the verdict agrees with the score and the round,
+      // so an old or foreign log cannot draw an under-threshold pass.
+      const within = (value: unknown, low: number, high: number) =>
+        typeof value === "number" && Number.isSafeInteger(value) && value >= low && value <= high ? value : null;
+      const round = within(document.round, 1, 5);
+      const score = within(document.score, 0, 10);
+      const passScore = within(document.passScore, 1, 10);
+      const maxRounds = within(document.maxRounds, 1, 5);
+      if (round === null || score === null || passScore === null || maxRounds === null || round > maxRounds || document.lane !== actorId) return null;
+      const verdict = document.verdict === "pass" && score >= passScore ? "pass"
+        : document.verdict === "revise" && score < passScore && round < maxRounds ? "revise"
+        : document.verdict === "exhausted" && score < passScore && round === maxRounds ? "exhausted" : null;
+      return verdict === null ? null : { ...base, kind, lane: actorId, critic: { round, score, passScore, maxRounds, verdict } };
+    }
     default:
       return null;
   }
@@ -326,6 +346,8 @@ export interface TaskState {
   summary: string | null;
   prTitle: string | null;
   prSummary: string | null;
+  /** #467: the design critic's newest recorded round, or `null` when the task has none. */
+  critic: CriticRound | null;
   /** Every head a `pr_opened` named, in order. */
   recordedHeads: string[];
   /** #514: the issue whose work turned this task up; the Studio draws it inside that issue's card. */
@@ -369,7 +391,7 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
     const slice: TaskState = {
       key: "", taskId: event.taskId, branch: null, issue: null, pr: event.kind === "task.claimed" ? null : event.pr ?? null,
       lane: null, headSha: null, journeys: [], step: "implement", blockedBy: null, reviewers: [], mergeSha: null,
-      repoUrl: null, title: null, summary: null, prTitle: null, prSummary: null, strayVerdicts: [], recordedHeads: [], parent: null, rounds: [], clock: emptyClock(), lastSequence: 0,
+      repoUrl: null, title: null, summary: null, prTitle: null, prSummary: null, strayVerdicts: [], critic: null, recordedHeads: [], parent: null, rounds: [], clock: emptyClock(), lastSequence: 0,
     };
     slices.push(slice);
     return slice;
@@ -451,6 +473,9 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
           break;
         }
         applyVerdict(state, event);
+        break;
+      case "task.critic_verdict":
+        state.critic = event.critic ?? state.critic;
         break;
       case "task.merged":
         state.pr = event.pr ?? state.pr;

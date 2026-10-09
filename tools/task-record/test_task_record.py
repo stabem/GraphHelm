@@ -180,6 +180,23 @@ class ClosesAsGiven(unittest.TestCase):
                                   "--merge-sha", "c" * 40, *extra])
         return task_record.document(args, "2026-10-08T00:00:00Z")["closes"]
 
+    def critic(self, *extra):
+        args = task_record.parse(["--lane", "gh-claude-3", "critic_verdict", "--issue", "467",
+                                  "--design-ref", "docs/specs/critic-loop.md", "--reason", "names the promise", *extra])
+        return task_record.document(args, "2026-10-08T00:00:00Z")
+
+    def test_a_critic_verdict_follows_from_the_score_and_the_round(self):
+        # #467: the Runtime refuses a verdict that disagrees with its score and round; the recipe
+        # derives it, so the last round below the pass score is `exhausted`, never a pass.
+        self.assertEqual(self.critic("--round", "2", "--score", "9")["verdict"], "pass")
+        self.assertEqual(self.critic("--round", "1", "--score", "7")["verdict"], "revise")
+        self.assertEqual(self.critic("--round", "3", "--score", "7")["verdict"], "exhausted")
+        self.assertEqual(self.critic("--round", "2", "--score", "6", "--pass-score", "6", "--max-rounds", "2")["verdict"], "pass")
+        doc = self.critic("--round", "1", "--score", "0", "--reason", "no proof named")
+        self.assertEqual((doc["lane"], doc["passScore"], doc["maxRounds"], doc["reasons"]),
+                         ("gh-claude-3", 8, 3, ["names the promise", "no proof named"]))
+        self.assertEqual(doc["verdict"], "revise")  # a score of 0 is a score, not a missing argument
+
     def test_a_merge_without_closes_closes_nothing(self):
         self.assertEqual(self.closes(), [])
         self.assertEqual(self.closes("--closes"), [])

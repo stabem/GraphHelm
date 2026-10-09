@@ -306,6 +306,9 @@ def send(args, doc, now):
     content = json.dumps({k: v for k, v in doc.items() if k != "at"}, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256("\n".join((args.lane, args.kind, content)).encode()).hexdigest()[:16]
     signal_id = f"{args.lane}-{doc['taskId']}-{args.kind}-{digest}"
+    if len(signal_id) > 64:
+        # Keep accepted keys stable; the digest still covers the full lane, kind and record.
+        signal_id = f"{signal_id[:47]}-{digest}"
     evidence = args.comment_url or (f"https://github.com/{args.repo}/pull/{args.pr}" if args.pr
                                     else f"https://github.com/{args.repo}/issues/{args.issue}")
     body = {"signal": {"id": signal_id, "type": f"task.{args.kind}",

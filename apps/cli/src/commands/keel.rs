@@ -1149,7 +1149,7 @@ mod tests {
     /// control line proves that bound really is too short here (so the cell cannot pass by the
     /// holder happening to be early); the second call must then succeed at the longer bound.
     /// Defect named: a late holder reported as a failed kill. Cost: about four seconds, three
-    /// short child processes.
+    /// short child processes; longer only on a machine too starved for the three-second bound.
     #[test]
     fn a_pipe_holder_that_is_late_for_one_bound_is_tried_at_the_next() {
         let late = Duration::from_secs(1);
@@ -1159,9 +1159,10 @@ mod tests {
             HolderRun::NotReady,
             "ARRANGEMENT: a holder that waits {late:?} cannot be ready within {short:?}"
         );
-        pipe_holder_is_killed(
-            &[short, crate::test_time::scaled(Duration::from_secs(3))],
-            late,
-        );
+        // The later bounds escalate like the real cell's: this cell must not become the next one
+        // that reports a slow machine. On one CPU the holder took more than three seconds.
+        let later =
+            [3, 9, 27].map(|seconds| crate::test_time::scaled(Duration::from_secs(seconds)));
+        pipe_holder_is_killed(&[short, later[0], later[1], later[2]], late);
     }
 }

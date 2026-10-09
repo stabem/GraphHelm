@@ -637,9 +637,16 @@ fn the_owner_marks_a_draft_edge_safe_and_editing_its_acts_voids_the_mark() {
     // The mark names every act it covers and lands on that edge only, in canonical bytes.
     let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
     assert_eq!(out.status.code(), Some(0), "{reply}");
-    assert_eq!(reply["data"]["acts"].as_array().map(Vec::len), Some(2), "{reply}");
+    assert_eq!(
+        reply["data"]["acts"].as_array().map(Vec::len),
+        Some(2),
+        "{reply}"
+    );
     let digest = reply["data"]["safe"]["acts"].as_str().unwrap().to_owned();
-    assert!(digest.starts_with("sha256:") && digest.len() == 71, "{digest}");
+    assert!(
+        digest.starts_with("sha256:") && digest.len() == 71,
+        "{digest}"
+    );
     let marked = text();
     assert_eq!(
         marked,
@@ -653,7 +660,10 @@ fn the_owner_marks_a_draft_edge_safe_and_editing_its_acts_voids_the_mark() {
     assert!(!stale(&reply), "{reply}");
 
     // Editing a covered act voids the mark: validate says so as a warning, never an error.
-    write_flow(dir.path(), &marked.replace("name: Pay now", "name: Delete account"));
+    write_flow(
+        dir.path(),
+        &marked.replace("name: Pay now", "name: Delete account"),
+    );
     let (out, reply) = run(dir.path(), &["validate", "--all"]);
     assert_eq!(out.status.code(), Some(0), "{reply}");
     assert!(stale(&reply), "{reply}");
@@ -670,7 +680,11 @@ fn the_owner_marks_a_draft_edge_safe_and_editing_its_acts_voids_the_mark() {
     let (out, reply) = run(dir.path(), &["mark-safe", "checkout", "pay.submit"]);
     assert_eq!(out.status.code(), Some(0), "{reply}");
     assert_ne!(reply["data"]["safe"]["acts"], digest.as_str(), "{reply}");
-    assert_eq!(reply["data"]["acts"].as_array().map(Vec::len), Some(3), "{reply}");
+    assert_eq!(
+        reply["data"]["acts"].as_array().map(Vec::len),
+        Some(3),
+        "{reply}"
+    );
     assert!(!stale(&run(dir.path(), &["validate", "--all"]).1));
 
     // Approve drops the mark, so the approval binds no mark and is not stale.
@@ -678,10 +692,27 @@ fn the_owner_marks_a_draft_edge_safe_and_editing_its_acts_voids_the_mark() {
     for args in [
         vec!["init", "-q", "--object-format=sha1"],
         vec!["add", "-A"],
-        vec!["-c", "user.name=Flow Test", "-c", "user.email=flow@example.test", "commit", "-q", "-m", "fixture"],
+        vec![
+            "-c",
+            "user.name=Flow Test",
+            "-c",
+            "user.email=flow@example.test",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
     ] {
-        let out = Command::new("git").current_dir(dir.path()).args(args).output().unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let out = Command::new("git")
+            .current_dir(dir.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
     let (out, reply) = run(dir.path(), &["approve", "checkout"]);
     assert_eq!(out.status.code(), Some(0), "{reply}");

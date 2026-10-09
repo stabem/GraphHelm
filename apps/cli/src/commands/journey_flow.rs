@@ -1233,9 +1233,11 @@ pub(crate) fn run_mark_safe(args: &crate::args::JourneyMarkSafeArgs) -> Outcome 
             "only a draft's act is marked safe; an approved flow is not guarded",
         ));
     }
-    let index = flow["edges"]
-        .as_array()
-        .and_then(|edges| edges.iter().position(|edge| edge["id"] == args.edge.as_str()));
+    let index = flow["edges"].as_array().and_then(|edges| {
+        edges
+            .iter()
+            .position(|edge| edge["id"] == args.edge.as_str())
+    });
     if index.is_none() {
         findings.push(Finding::new(
             "flow.edge_unknown",
@@ -1349,11 +1351,7 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
                     out.push_str(&prefix);
                     out.push_str("acts:\n");
                     for act in v.as_array().unwrap() {
-                        out.push_str(&format!(
-                            "{:6}- {}\n",
-                            "",
-                            inline(act, ACT_FIELDS)
-                        ));
+                        out.push_str(&format!("{:6}- {}\n", "", inline(act, ACT_FIELDS)));
                     }
                 } else {
                     out.push_str(&format!(
@@ -1412,7 +1410,11 @@ mod tests {
     #[test]
     fn the_agent_writer_refuses_a_flow_that_carries_a_safe_mark() {
         let project = tempfile::tempdir().unwrap();
-        for file in ["app/cart/page.tsx", "app/checkout/page.tsx", "app/api/pay/route.ts"] {
+        for file in [
+            "app/cart/page.tsx",
+            "app/checkout/page.tsx",
+            "app/api/pay/route.ts",
+        ] {
             let path = project.path().join(file);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, "export {}").unwrap();

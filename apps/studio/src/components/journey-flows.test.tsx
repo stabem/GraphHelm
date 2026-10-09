@@ -75,6 +75,22 @@ describe("JourneyFlows", () => {
     }
   });
 
+  // #517: a titled screen read as its selector list ("the “Cart” heading, …") instead of its
+  // plain title; the list is what the replay checks and belongs behind a toggle.
+  it("says what a titled screen shows by its title and folds the checked controls under details", () => {
+    const base = flow("checkout");
+    const titled: JourneyFlowsView = { flows: [{ ...base, screens: base.screens.map((item) => item.id === "cart" ? { ...item, title: "Your cart, with the total" } : item) }] };
+    render(<JourneyFlows view={titled} onApprove={vi.fn()} />);
+    const [first, second] = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
+    expect(within(first!).getByText("Sees").parentElement).toHaveTextContent(/^Sees Your cart, with the total$/);
+    const details = within(first!).getByRole("group");
+    expect(details).not.toHaveAttribute("open");
+    expect(details).toHaveTextContent(/^detailsthe “Cart” heading$/);
+    // A screen without a title still reads by what is checked, with nothing to fold.
+    expect(second).toHaveTextContent("Sees the “Password” field");
+    expect(within(second!).queryByRole("group")).toBeNull();
+  });
+
   it("offers Approve only where the Runtime would accept it, and says why not in words", async () => {
     render(<JourneyFlows view={view} onApprove={vi.fn()} />);
     expect(within(screen.getByRole("article")).getByRole("button", { name: "Approve" })).toBeEnabled();

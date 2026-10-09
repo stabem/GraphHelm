@@ -56,10 +56,9 @@ function actWords(act: { kind: string; name: string }): string {
   return `${VERB[act.kind] ?? act.kind.replace(/_/g, " ")} “${act.name}”`;
 }
 
-function seesWords(screen: JourneyFlowScreen): string {
-  const expect = screen.expect ?? [];
-  if (expect.length === 0) return screen.title ?? screen.id;
-  return expect.map((item) => `the “${item.name}” ${ROLE[item.role] ?? item.role}`).join(", ");
+/** What the replay checks on a screen, from its selectors: the detail behind the plain title. */
+function expectWords(screen: JourneyFlowScreen): string {
+  return (screen.expect ?? []).map((item) => `the “${item.name}” ${ROLE[item.role] ?? item.role}`).join(", ");
 }
 
 interface Step { screen: JourneyFlowScreen; arrivedBy: JourneyFlowEdge | null }
@@ -180,7 +179,12 @@ function Detail({ flow, onApprove, onWatch, session }: { flow: JourneyFlowView; 
                     {step.arrivedBy && (step.arrivedBy.acts ?? []).length > 0 && (
                       <span className="journey-does"><span className="journey-label">Does</span> {(step.arrivedBy.acts ?? []).map(actWords).join(", then ")}</span>
                     )}
-                    <span className="journey-sees"><span className="journey-label">Sees</span> {seesWords(step.screen)}</span>
+                    {/* #517: the screen's own title is what the owner reads; what the replay checks
+                        folds behind "details". A screen without a title reads by those checks. */}
+                    <span className="journey-sees"><span className="journey-label">Sees</span> {step.screen.title ?? (expectWords(step.screen) || step.screen.id)}</span>
+                    {step.screen.title !== undefined && expectWords(step.screen) !== "" && (
+                      <details className="journey-sees-details"><summary>details</summary>{expectWords(step.screen)}</details>
+                    )}
                   </span>
                 </li>
               ))}

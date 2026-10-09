@@ -1118,10 +1118,13 @@ describe("the window", () => {
     await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByTitle("can sleep"));
     // #549: the editor closes when the selection lands, a render later; checked at once, a loaded
     // machine read it still open (the known flake of this cell). Wait for the condition instead.
-    await waitFor(() => expect(screen.queryByLabelText("Project document editor")).not.toBeInTheDocument());
-    // The saved file is not a draft: leaving it asks nothing. The prompt was the flake's cause
-    // (the App still held "draft" for a render after the save), and it answers "no" in jsdom.
-    expect(confirm).not.toHaveBeenCalled();
+    // The saved file is not a draft: leaving it asks nothing. The prompt is checked first, inside
+    // the wait, so a red run says which it was: a discard prompt for a saved file (the App still
+    // held "draft"; jsdom answers "no" and the editor never closes), or the editor only being slow.
+    await waitFor(() => {
+      expect(confirm).not.toHaveBeenCalled();
+      expect(screen.queryByLabelText("Project document editor")).not.toBeInTheDocument();
+    });
     confirm.mockRestore();
   });
 

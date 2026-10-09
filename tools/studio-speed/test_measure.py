@@ -1,11 +1,14 @@
 """Report contract: reject incomplete/non-finite samples and retain the slow tail.
 
-No browser or Runtime needed; <1 second. Existing journey observers do not check
-the measurement report's percentile convention or reject partial distributions.
+No browser or Runtime needed; about 1 second, Python and Node. Existing journey
+observers do not check timing-state isolation or the report's distributions.
 """
 import importlib.util
+import json
 from pathlib import Path
+import subprocess
 import unittest
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location("measure", Path(__file__).with_name("measure.py"))
 measure = importlib.util.module_from_spec(spec)
@@ -13,6 +16,35 @@ spec.loader.exec_module(measure)
 
 
 class ReportTests(unittest.TestCase):
+    def test_click_without_own_start_rejects_stale_previous_start(self):
+        # Execute the actual observer JS, with browser I/O and clock substituted.
+        # Node only, <1 second; covers timing state absent from report tests.
+        for fires in (True, False):
+            with self.subTest(click_reaches_listener=fires):
+                scripts = ["global.window = {__speedStart: 7};",
+                           "global.performance = {now: () => 0};",
+                           "const control = new EventTarget();"]
+
+                def evaluate(expression):
+                    script = "\n".join(scripts + [
+                        f"console.log(JSON.stringify(({expression}) ?? null));"])
+                    value = subprocess.check_output(["node", "-e", script], text=True)
+                    scripts.append(f"{expression};")
+                    return json.loads(value)
+
+                page = Mock(evaluate=evaluate)
+                control = Mock()
+                control.evaluate.side_effect = lambda js: evaluate(f"({js})(control)")
+                control.click.side_effect = lambda: evaluate(
+                    "control.dispatchEvent(new Event('click'))" if fires else "null")
+                with patch.object(measure, "painted", return_value=100):
+                    if fires:
+                        # Zero is a valid fresh timestamp, not a missing start.
+                        self.assertEqual(measure.click_time(page, control, Mock()), 100)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "start"):
+                            measure.click_time(page, control, Mock())
+
     def test_even_median_and_nearest_rank_p95_keep_slow_tail(self):
         result = measure.summarize([100, 1, 9, 2, 8, 3, 7, 4, 6, 5])
         self.assertEqual(result["medianMs"], 5.5)

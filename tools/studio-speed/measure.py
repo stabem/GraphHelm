@@ -39,12 +39,16 @@ def painted(page, locator):
 
 
 def click_time(page, control, result):
+    page.evaluate("window.__speedStart = null")
     control.scroll_into_view_if_needed()
     # Start at the browser's input event, excluding Playwright auto-wait/IPC.
     control.evaluate("el => el.addEventListener('click', () => { window.__speedStart = performance.now(); }, {capture: true, once: true})")
     control.click()
     end = painted(page, result)
-    return end - page.evaluate("window.__speedStart")
+    start = page.evaluate("window.__speedStart")
+    if start is None:
+        raise RuntimeError("Measurement ended without its own click start")
+    return end - start
 
 
 def main():

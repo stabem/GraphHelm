@@ -109,5 +109,48 @@ class Reach(unittest.TestCase):
         self.assertEqual(rt.dependents(PACKAGES, {"graphhelm-policy"}), {"graphhelm-policy", "graphhelm-execution", "graphhelm-cli"})
 
 
+class CliModules(unittest.TestCase):
+    """#361 (gh-claude-7's review): a change in one `apps/cli/src/commands` module used to reach the
+    whole graphhelm-cli package, so every CLI review ran the full battery. Now it reaches that
+    module's unit tests, the tests that read the crate's own source, and the integration tests that
+    name its command; shared files and unmatched modules still reach the whole package."""
+
+    def tree(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        tests = root / "apps/cli/tests"
+        tests.mkdir(parents=True)
+        files = {
+            "journey_explore_cli.rs": 'cmd.args(["--json", "journey", "explore", "--project"]);',
+            "keel_check.rs": 'cmd.args(["keel", "check"]);',
+            "surface_completeness.rs": 'let root = env!("CARGO_MANIFEST_DIR"); read(root.join("src/commands/mod.rs"));',
+            "extension_cli.rs": 'cmd.args(["extension", "validate"]);',
+        }
+        for name, body in files.items():
+            (tests / name).write_text(body, encoding="utf-8")
+        packages = [dict(PACKAGES[2], tests=PACKAGES[2]["tests"] + [
+            {"name": n[:-3], "src": f"apps/cli/tests/{n}"} for n in ("journey_explore_cli.rs", "surface_completeness.rs")],
+            bundles=dict(PACKAGES[2]["bundles"], keel_check="development"))]
+        return root, packages
+
+    def test_a_command_module_reaches_its_unit_tests_source_readers_and_command_tests(self):
+        root, packages = self.tree()
+        # #487's diff: one command module.
+        whole, single, *_ = rt.reach(["apps/cli/src/commands/journey_explore.rs"], packages, {}, root)
+        self.assertEqual(whole, set())
+        self.assertEqual(single, {("graphhelm-cli", "bin:graphhelm", "commands::journey_explore"),
+                                  ("graphhelm-cli", "journey_explore_cli", None),
+                                  ("graphhelm-cli", "surface_completeness", None)})
+        self.assertIn("cargo +1.97.1 test --locked -p graphhelm-cli --bin graphhelm commands::journey_explore::",
+                      rt.commands(whole, single, []))
+
+    def test_shared_files_and_unmatched_modules_still_reach_the_whole_package(self):
+        root, packages = self.tree()
+        for path in ("apps/cli/src/main.rs", "apps/cli/src/commands/mod.rs", "apps/cli/src/commands/hash.rs"):
+            whole, _, *_ = rt.reach([path], packages, {}, root)
+            self.assertEqual(whole, {"graphhelm-cli"}, path)
+
+
 if __name__ == "__main__":
     unittest.main()

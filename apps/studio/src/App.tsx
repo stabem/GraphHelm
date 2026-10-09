@@ -2194,39 +2194,53 @@ export default function App({
     }
     return () => { cancelled = true; };
   }, [canvasTab, journeysView, missionRunsRevision]);
+  // Frames are fetched once per (journey, screen, run state); a URL is revoked only when its frame is
+  // replaced or the Studio unmounts, never while it may still be on screen.
+  const missionFrameKeys = useRef(new Map<string, { key: string; url: string | null }>());
   useEffect(() => {
     const client = clientRef.current;
-    if (client === null || canvasTab !== "graph") return undefined;
-    let cancelled = false;
-    const made: string[] = [];
+    if (client === null || canvasTab !== "graph") return;
     for (const [contractId, run] of Object.entries(missionRuns)) {
       for (const [screenId, screen] of Object.entries(run?.screens ?? {})) {
         if (!screen.frame) continue;
+        const slot = `${contractId} ${screenId}`;
+        const key = `${run?.digest ?? ""}:${run?.commit ?? ""}:${screen.result ?? ""}`;
+        const held = missionFrameKeys.current.get(slot);
+        if (held?.key === key) continue;
+        missionFrameKeys.current.set(slot, { key, url: held?.url ?? null });
         client.journeyScreenFrame(contractId, screenId).then((frame) => {
-          if (cancelled || frame === null) return;
+          const entry = missionFrameKeys.current.get(slot);
+          if (frame === null || entry === undefined || entry.key !== key) return;
           const url = URL.createObjectURL(frame.blob);
-          made.push(url);
-          setMissionFrames((before) => ({ ...before, [`${contractId} ${screenId}`]: url }));
-        }, () => undefined);
+          if (entry.url !== null) URL.revokeObjectURL(entry.url);
+          entry.url = url;
+          setMissionFrames((before) => ({ ...before, [slot]: url }));
+        }, () => { missionFrameKeys.current.delete(slot); });
       }
     }
-    return () => { cancelled = true; for (const url of made) URL.revokeObjectURL(url); };
   }, [canvasTab, missionRuns]);
+  useEffect(() => {
+    const kept = missionFrameKeys.current;
+    return () => { for (const entry of kept.values()) if (entry.url !== null) URL.revokeObjectURL(entry.url); kept.clear(); };
+  }, []);
   const missionRunFor = useCallback((contractId: string) => missionRuns[contractId] ?? null, [missionRuns]);
   const missionFrameUrl = useCallback((stepId: string, contractId: string) => {
     const step = journeysView?.journeys.find((j) => j.contractId === contractId)?.steps.find((s) => s.stepId === stepId);
     return missionFrames[`${contractId} ${step?.screen?.screenId ?? stepId}`] ?? null;
   }, [journeysView, missionFrames]);
   // The test canvas's "mark safe" is #518's mark: the skipped edge into that step, on that flow.
-  const markMissionStepSafe = useCallback((stepId: string, contractId: string) => {
+  const markMissionStepSafe = useCallback(async (stepId: string, contractId: string) => {
     const journey = journeysView?.journeys.find((j) => j.contractId === contractId);
     const edge = journey === undefined ? undefined : skippedEdgeInto(missionRuns[contractId] ?? null, stepId, journey.steps.map((s) => s.stepId));
-    if (edge === undefined) return;
-    void markFlowEdgeSafe(contractId, edge[0]).catch(() => undefined).finally(() => setMissionRunsRevision((r) => r + 1));
+    if (edge === undefined) throw new Error("No skipped step to mark here.");
+    try {
+      await markFlowEdgeSafe(contractId, edge[0]);
+    } finally {
+      setMissionRunsRevision((r) => r + 1);
+    }
   }, [journeysView, missionRuns, markFlowEdgeSafe]);
-  // The Runtime has no route that sends a journey step back to its author; leaving the step unmarked
-  // keeps it waiting, which is what "send back" means until such a route exists.
-  const sendMissionStepBack = useCallback((_stepId: string, _contractId: string) => undefined, []);
+  // No Runtime route sends a journey step back to its author, so the Graph tab passes no onSendBack
+  // and the Test canvas shows that button disabled with the reason.
   const missionLanes = useMemo(() => {
     const records = taskGraphs?.executionId === selected ? taskGraphs.records : [];
     const timed: TimedTaskEvent[] = records.flatMap((r) => (r.occurredAt ? [{ ...r, at: r.occurredAt }] : []));
@@ -3114,7 +3128,7 @@ export default function App({
             {canvasTab === "graph" && (
               <div id="studio-panel-graph" role="tabpanel" aria-label="Graph">
                 <MissionView journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} runFor={missionRunFor}
-                  lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe} onSendBack={sendMissionStepBack} />
+                  lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe} />
               </div>
             )}
             {citedRecords !== null && citedRecords.executionId === selected && (

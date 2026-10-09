@@ -21,8 +21,9 @@ interface Props {
   now: number;
   frameUrl(stepId: string, contractId: string): string | null;
   /** The step and the journey it belongs to: the mark is recorded against that journey's flow. */
-  onMarkSafe(stepId: string, contractId: string): void;
-  onSendBack(stepId: string, contractId: string): void;
+  onMarkSafe(stepId: string, contractId: string): void | Promise<void>;
+  /** Absent: the Test canvas shows Send back as not available yet. */
+  onSendBack?: (stepId: string, contractId: string) => void;
 }
 
 export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack }: Props) {
@@ -68,7 +69,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
       {sub === "graph" && <MissionGraph mission={mission} selectedStepId={stepId} selectedTaskKey={taskKey} onSelectStep={setStepId} onSelectTask={setTaskKey} onOpenTest={openTest} />}
       {sub === "proof" && <ProofTable mission={mission} onOpenTest={openTest} />}
       {sub === "test" && <TestCanvas frames={testFrames(journey, runFor(contractId))} selected={frame} onSelect={setFrame}
-        frameUrl={(id) => frameUrl(id, contractId)} onMarkSafe={(id) => onMarkSafe(id, contractId)} onSendBack={(id) => onSendBack(id, contractId)} />}
+        frameUrl={(id) => frameUrl(id, contractId)} onMarkSafe={(id) => onMarkSafe(id, contractId)} {...(onSendBack ? { onSendBack: (id: string) => onSendBack(id, contractId) } : {})} />}
       {sub === "lanes" && <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} />}
     </div>
   );

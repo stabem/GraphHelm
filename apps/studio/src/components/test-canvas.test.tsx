@@ -46,6 +46,18 @@ describe("TestCanvas", () => {
     expect(p.onSendBack).toHaveBeenCalledWith("b");
   });
 
+  it("without a send-back handler, Send back is disabled and says why", () => {
+    render(<TestCanvas frames={frames} selected={1} onSelect={vi.fn()} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Send back — not available yet" })).toBeDisabled();
+  });
+
+  it("a mark safe that fails shows the error beside the buttons", async () => {
+    const onMarkSafe = vi.fn().mockRejectedValue(new Error("owner token refused"));
+    render(<TestCanvas frames={frames} selected={1} onSelect={vi.fn()} frameUrl={() => null} onMarkSafe={onMarkSafe} />);
+    await userEvent.click(screen.getByRole("button", { name: "I watched it — mark safe" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Mark safe failed: owner token refused");
+  });
+
   it("a passed frame offers no decision buttons", () => {
     setup(0);
     expect(screen.queryByRole("button", { name: "I watched it — mark safe" })).toBeNull();

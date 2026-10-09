@@ -1,3 +1,4 @@
+import { useState } from "react";
 import "./test-canvas.css";
 import type { FrameStatus, TestFrame } from "../runtime/test-frames";
 
@@ -9,12 +10,15 @@ interface Props {
   selected: number;
   onSelect(n: number): void;
   frameUrl(stepId: string): string | null;
-  onMarkSafe(stepId: string): void;
-  onSendBack(stepId: string): void;
+  /** May return a promise; a rejection is shown beside the decision buttons. */
+  onMarkSafe(stepId: string): void | Promise<void>;
+  /** Absent: no route sends a step back yet, so the button is shown disabled with that reason. */
+  onSendBack?: (stepId: string) => void;
 }
 
 export function TestCanvas({ frames, selected, onSelect, frameUrl, onMarkSafe, onSendBack }: Props) {
   const cur = frames[selected];
+  const [failure, setFailure] = useState<{ stepId: string; message: string } | null>(null);
   if (!cur) return <p className="tc-empty">This journey has no steps to test</p>;
   const src = frameUrl(cur.stepId);
   return (
@@ -52,8 +56,17 @@ export function TestCanvas({ frames, selected, onSelect, frameUrl, onMarkSafe, o
           {cur.reason && <p className="tc-reason">{cur.reason}</p>}
           {cur.status === "waits_for_you" && (
             <div className="tc-decide">
-              <button type="button" onClick={() => onMarkSafe(cur.stepId)}>I watched it — mark safe</button>
-              <button type="button" onClick={() => onSendBack(cur.stepId)}>Send back</button>
+              <button type="button" onClick={() => {
+                const stepId = cur.stepId;
+                setFailure(null);
+                Promise.resolve().then(() => onMarkSafe(stepId)).catch((cause: unknown) => {
+                  setFailure({ stepId, message: cause instanceof Error ? cause.message : String(cause) });
+                });
+              }}>I watched it — mark safe</button>
+              {onSendBack
+                ? <button type="button" onClick={() => onSendBack(cur.stepId)}>Send back</button>
+                : <button type="button" disabled>Send back — not available yet</button>}
+              {failure?.stepId === cur.stepId && <p role="alert">{`Mark safe failed: ${failure.message}`}</p>}
             </div>
           )}
         </aside>

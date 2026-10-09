@@ -56,6 +56,12 @@ otherwise. When it says `design`, the design is graded before any implementation
 
 Implementation starts only after a `pass` record.
 
+When a graph is synthesized for the task, hand the plan to the graph builder so it decides:
+`graphhelm graph synthesize --plan <plan.json>` (the `keel plan` output as printed; MCP
+`synthesize` takes it as `plan`). A plan that says `design` puts the design step and the critic
+step in front of the work, with the plan's own bounds, and the reply's `critic` says the plan
+decided. Pass `--critic` only to overrule the plan, and say why in the PR body.
+
 ## Completion
 
 Done when one plan record exists for the task (or the hand-written card, outside an execution)

@@ -111,7 +111,7 @@ def parse(argv):
 
 
 def need(args, *names):
-    missing = [n for n in names if getattr(args, n.replace("-", "_")) in (None, "")]
+    missing = [n for n in names if getattr(args, n.replace("-", "_")) in (None, "", [])]
     if missing:
         sys.exit(f"task_record: {args.kind} needs --" + ", --".join(missing))
 

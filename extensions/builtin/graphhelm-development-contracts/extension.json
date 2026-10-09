@@ -958,7 +958,7 @@
           "id": "skill/task-plan",
           "kind": "skill",
           "path": "skills/task-plan/SKILL.md",
-          "sha256": "sha256:c75d64be079bb439a9772fcdfcaacf2b274c092f78d7f467c5b6c740c530551d",
+          "sha256": "sha256:1be580336756df66769e13406b970215070fabdb959f4dcdd0dbefe7af1f5f44",
           "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
           "permissions": ["network.loopback", "package.read", "runtime.read"],
           "requires": {"capabilities": [], "observers": []},

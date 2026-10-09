@@ -197,6 +197,15 @@ class ClosesAsGiven(unittest.TestCase):
                          ("gh-claude-3", 8, 3, ["names the promise", "no proof named"]))
         self.assertEqual(doc["verdict"], "revise")  # a score of 0 is a score, not a missing argument
 
+    def test_a_critic_verdict_without_a_reason_is_stopped_by_the_recipe(self):
+        # #547 review: an omitted --reason is an empty list, which the recipe let through, so the
+        # lane met the Runtime's refusal instead of the recipe's own line naming the argument.
+        args = task_record.parse(["--lane", "gh-claude-3", "critic_verdict", "--issue", "467",
+                                  "--round", "1", "--score", "5", "--design-ref", "d.md"])
+        with self.assertRaises(SystemExit) as stopped:
+            task_record.document(args, "2026-10-08T00:00:00Z")
+        self.assertIn("--reason", str(stopped.exception))
+
     def test_a_merge_without_closes_closes_nothing(self):
         self.assertEqual(self.closes(), [])
         self.assertEqual(self.closes("--closes"), [])

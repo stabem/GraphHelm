@@ -21,7 +21,8 @@
         "repo": {"$ref": "#/$defs/repo"},
         "title": {"$ref": "#/$defs/title"},
         "summary": {"$ref": "#/$defs/summary"},
-        "parent": {"description": "The issue whose work turned this task up (#514); the Studio draws this task inside that issue's card.", "$ref": "#/$defs/positive"}
+        "parent": {"description": "The issue whose work turned this task up (#514); the Studio draws this task inside that issue's card.", "$ref": "#/$defs/positive"},
+        "journeys": {"description": "The journey contract ids the issue serves (#577); the Studio Graph tab links the task to them from the claim on.", "type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/taskId"}}
       }
     },
     {

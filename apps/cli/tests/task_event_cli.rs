@@ -336,6 +336,32 @@ fn a_claim_may_name_its_parent_issue_and_a_malformed_one_is_refused() {
     assert_eq!(reply["ok"], json!(false), "{reply}");
 }
 
+/// #577: a claim may name the journeys its issue serves, so the Studio links the task from the
+/// claim on. Optional; a list holding anything but ids is refused.
+#[test]
+fn a_claim_may_name_its_journeys_and_a_malformed_list_is_refused() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    for (case, journeys, accepted) in [
+        ("ok", json!(["studio-graph-tab"]), true),
+        ("empty", json!([]), true),
+        ("not-a-list", json!("studio-graph-tab"), false),
+        ("bad-id", json!(["bad id!"]), false),
+    ] {
+        let mut document = as_actor(package_fixture("claimed"));
+        document["journeys"] = journeys;
+        let reply = signal(
+            scratch.path(),
+            &events,
+            &format!("journeys-{case}"),
+            "task.claimed",
+            ACTOR,
+            &document,
+        );
+        assert_eq!(reply["ok"], json!(accepted), "{case}: {reply}");
+    }
+}
+
 /// #467: the design critic's round is a `task.critic_verdict` record, signed by the lane, and the
 /// Runtime refuses a verdict that disagrees with its score and round, so running out of rounds can
 /// never be recorded as a pass. Credible regressions: an under-threshold `pass`, a `revise` on the

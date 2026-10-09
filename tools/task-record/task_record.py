@@ -90,7 +90,10 @@ def parse(argv):
     p.add_argument("--merge-sha")
     p.add_argument("--closes", type=int, nargs="*", default=[],
                    help="exactly the issues the merge closed (what ci/closing-keywords.ps1 checked); none for a Refs PR")
-    p.add_argument("--journeys", nargs="*", default=[])
+    p.add_argument("--journeys", nargs="*", default=[],
+                   help="claimed/pr_opened: the journey contract ids the issue serves (#577)")
+    p.add_argument("--journeys-dir", default=str(JOURNEYS_DIR),
+                   help="where <id>.journey.yaml contracts live; default: the repository's .graphhelm/journeys")
     p.add_argument("--round", type=int, help="critic_verdict: which round of the design critic this is, from 1")
     p.add_argument("--score", type=int, help="critic_verdict: the critic's grade, 0 to 10")
     p.add_argument("--pass-score", type=int, default=8)
@@ -110,6 +113,22 @@ def parse(argv):
     return p.parse_args(argv)
 
 
+JOURNEYS_DIR = Path(__file__).resolve().parents[2] / ".graphhelm" / "journeys"
+
+
+def known_journeys(args):
+    """#577: a journey id is the stem of an existing contract; an unknown one stops the step before any send."""
+    if not args.journeys:
+        return []
+    folder = Path(args.journeys_dir)
+    known = sorted(f.name[:-len(".journey.yaml")] for f in folder.glob("*.journey.yaml")) if folder.is_dir() else []
+    unknown = [j for j in args.journeys if j not in known]
+    if unknown:
+        sys.exit(f"task_record: unknown journey {', '.join(unknown)}; no {folder}/<id>.journey.yaml. "
+                 f"Known: {', '.join(known) or '(none)'}")
+    return list(args.journeys)
+
+
 def need(args, *names):
     missing = [n for n in names if getattr(args, n.replace("-", "_")) in (None, "", [])]
     if missing:
@@ -124,10 +143,13 @@ def document(args, now):
         doc.update(issue=args.issue, lane=args.lane, branch=args.branch)
         if args.parent:
             doc["parent"] = args.parent
+        journeys = known_journeys(args)
+        if journeys:
+            doc["journeys"] = journeys
     elif args.kind == "pr_opened":
         # #508: the reviewer is part of opening the PR, so the Review step is never drawn unnamed.
         need(args, "pr", "head", "reviewer")
-        doc.update(pr=args.pr, headSha=args.head, journeys=args.journeys, lane=args.lane)
+        doc.update(pr=args.pr, headSha=args.head, journeys=known_journeys(args), lane=args.lane)
     elif args.kind == "review_assigned":
         need(args, "pr", "head", "reviewer")
         doc.update(pr=args.pr, headSha=args.head, reviewer=args.reviewer, ordinal=args.ordinal)

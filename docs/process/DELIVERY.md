@@ -189,7 +189,7 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 
 | Step | Kind | Fields besides `schema`, `taskId`, `revision`, `at` |
 |---|---|---|
-| take the issue (§1) | `task.claimed` | `issue`, `lane`, `branch`, optional `plan`, optional `repo` |
+| take the issue (§1) | `task.claimed` | `issue`, `lane`, `branch`, optional `plan`, optional `repo`, optional `journeys` |
 | open the PR (§3), and **again after every push** to it | `task.pr_opened` | `pr`, `headSha`, `journeys`, `lane`, optional `repo` |
 | ask a reviewer (§4) | `task.review_assigned` | `pr`, `headSha`, `reviewer`, `ordinal` (1 or 2) |
 | post the verdict (§4) | `task.review_verdict` | `pr`, `headSha`, `reviewer`, `verdict`, `commentUrl` |
@@ -201,6 +201,7 @@ task with one slice per PR (#460): record `task.claimed` with the new slice's ow
 `pr_opened`, and the Studio draws each slice as its own graph, so merging one slice never hides the
 next. `repo` is the GitHub `owner/name` (here
 `stabem/GraphHelm`); the Studio links the task's issue and PR from it, so name it on `task.claimed`.
+Name the journey the issue serves; the Studio Graph tab links the task to it. Ids are the stems of .graphhelm/journeys/*.journey.yaml.
 The Runtime refuses a `task.*` signal whose `source.id`, or whose `lane` / `reviewer` (on a
 verdict) / `merger`, is not the actor recording it (`GHCLI038_ACTOR_MISMATCH`).
 
@@ -210,8 +211,8 @@ with `tools/task-record/task_record.py` (Python 3 standard library), which POSTs
 `/v1/executions/<execution>/signal` with `X-GraphHelm-Actor: <lane>`:
 
 ```sh
-python tools/task-record/task_record.py --lane <you> claimed         --issue <N> --branch <branch>
-python tools/task-record/task_record.py --lane <you> pr_opened       --issue <N> --pr <P> --head <sha> --reviewer <reviewer>
+python tools/task-record/task_record.py --lane <you> claimed         --issue <N> --branch <branch> --journeys <contractId>
+python tools/task-record/task_record.py --lane <you> pr_opened       --issue <N> --pr <P> --head <sha> --reviewer <reviewer> --journeys <contractId>
 python tools/task-record/task_record.py --lane <you> review_assigned --issue <N> --pr <P> --head <sha> --reviewer <other>   # only when the reviewer changes
 python tools/task-record/task_record.py --lane <you> review_verdict  --issue <N> --pr <P> --head <sha> --verdict APPROVE --comment-url <url>
 python tools/task-record/task_record.py --lane <you> merged          --issue <N> --pr <P> --merge-sha <sha>

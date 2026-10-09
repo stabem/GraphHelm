@@ -59,6 +59,10 @@ function taskIdentity(value: unknown): string | null {
   return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value) ? value : null;
 }
 
+function journeyIds(value: unknown): string[] | null {
+  return Array.isArray(value) && value.every((id) => taskIdentity(id) !== null) ? value as string[] : null;
+}
+
 function json(content: EvidenceContent): Record<string, unknown> | null {
   if (content.mediaType !== "application/json" || typeof content.content !== "string") return null;
   if (new TextEncoder().encode(content.content).byteLength > MAX_ENVELOPE_BYTES) return null;
@@ -244,8 +248,10 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
       if (said === false) return null;
       const parent = document.parent === undefined ? undefined : count(document.parent);
       if (parent === null) return null;
+      // #577: a claim may name its journeys; a malformed list drops the field, never the claim.
+      const journeys = journeyIds(document.journeys);
       return issue !== null && lane === actorId && branch !== null
-        ? { ...base, kind, issue, lane, branch, ...said, ...(repo === null ? {} : { repo }), ...(parent === undefined ? {} : { parent }) } : null;
+        ? { ...base, kind, issue, lane, branch, ...said, ...(repo === null ? {} : { repo }), ...(parent === undefined ? {} : { parent }), ...(journeys === null ? {} : { journeys }) } : null;
     }
     case "task.pr_opened": {
       const repo = repository(document.repo);
@@ -253,7 +259,7 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
       const pr = count(document.pr);
       const headSha = sha(document.headSha);
       const lane = text(document.lane, 128);
-      const journeys = Array.isArray(document.journeys) && document.journeys.every((id) => taskIdentity(id) !== null) ? document.journeys as string[] : null;
+      const journeys = journeyIds(document.journeys);
       const said = words(document);
       if (said === false) return null;
       return pr !== null && headSha !== null && lane === actorId && journeys !== null ? { ...base, kind, pr, headSha, lane, journeys, ...said, ...(repo === null ? {} : { repo }) } : null;
@@ -443,6 +449,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         state.repoUrl = event.repo !== undefined ? `https://github.com/${event.repo}` : state.repoUrl;
         state.issue = event.issue ?? state.issue;
         state.lane = event.lane ?? state.lane;
+        state.journeys = event.journeys?.length ? event.journeys : state.journeys;
         break;
       case "task.pr_opened":
         state.repoUrl = event.repo !== undefined ? `https://github.com/${event.repo}` : state.repoUrl;
@@ -451,7 +458,8 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         state.prTitle = event.title ?? state.prTitle;
         state.prSummary = event.summary ?? state.prSummary;
         state.headSha = event.headSha ?? state.headSha;
-        state.journeys = event.journeys ?? state.journeys;
+        // #577: an empty list on pr_opened does not erase the journeys named at claim.
+        state.journeys = event.journeys?.length ? event.journeys : state.journeys;
         state.step = "review";
         // #514: a newer head after a BLOCK is the author's fix; its review is the re-review.
         {

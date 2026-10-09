@@ -234,9 +234,11 @@ pub(crate) fn validate_task_event(
                 && repo()
                 && words()
                 // #514: the issue whose work turned this task up; optional, a positive number.
-                && (document.get("parent").is_none() || count("parent")),
+                && (document.get("parent").is_none() || count("parent"))
+                // #577: the journeys the issue serves; optional, the same ids as pr_opened.
+                && (document.get("journeys").is_none() || ids("journeys")),
             &[
-                "issue", "lane", "branch", "plan", "repo", "title", "summary", "parent",
+                "issue", "lane", "branch", "plan", "repo", "title", "summary", "parent", "journeys",
             ],
         ),
         "task.pr_opened" => (

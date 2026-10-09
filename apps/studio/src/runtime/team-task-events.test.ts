@@ -37,6 +37,21 @@ describe("foldTaskEvents", () => {
     expect(states[4]).toMatchObject({ taskId: "pr-384", pr: 384, lane: "gh-claude-4", mergeSha: "cccccccc" });
   });
 
+  it("links the task to the journeys its claim names, and an empty pr_opened list keeps them (#577)", () => {
+    const claimed = record(1, "task.claimed", "gh-claude-4", { issue: 577, lane: "gh-claude-4", branch: "issue-577-x", journeys: ["studio-graph-tab"] });
+    expect(foldTaskEvents([claimed])[0].journeys).toEqual(["studio-graph-tab"]);
+    const opened = record(2, "task.pr_opened", "gh-claude-4", { pr: 600, headSha: "aaaaaaaa", journeys: [], lane: "gh-claude-4" });
+    expect(foldTaskEvents([claimed, opened])[0].journeys).toEqual(["studio-graph-tab"]);
+    const renamed = record(3, "task.pr_opened", "gh-claude-4", { pr: 600, headSha: "bbbbbbbb", journeys: ["studio-connect"], lane: "gh-claude-4" });
+    expect(foldTaskEvents([claimed, opened, renamed])[0].journeys).toEqual(["studio-connect"]);
+  });
+
+  it("keeps a claim whose journeys field is malformed and drops only the field (#577)", () => {
+    const claimed = record(1, "task.claimed", "gh-claude-4", { issue: 577, lane: "gh-claude-4", branch: "issue-577-x", journeys: ["ok", "bad id!"] });
+    expect(claimed).not.toHaveProperty("journeys");
+    expect(foldTaskEvents([claimed])[0]).toMatchObject({ issue: 577, journeys: [] });
+  });
+
   it("refuses a record whose lane field names another lane than the actor that recorded it", () => {
     expect(parseTaskEvent("task.pr_opened", "agent-chat", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "pr-1", revision: 1, at: "2026-10-07T20:00:00Z", pr: 1, headSha: "aaaaaaaa", journeys: [], lane: "gh-claude-4" }))).toBeNull();
   });

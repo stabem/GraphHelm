@@ -87,8 +87,11 @@ describe("needsYou", () => {
 
   // #511: a run used only as the team's bus showed "1 decision needs you" for a graph step nobody asked about.
   it("does not count a waiting graph step as a decision while agents record work and nothing else is open", () => {
-    const status = { ...STATUS, attention: "needs_you" as const, attentionReasons: [{ kind: "waiting_input_node", node: "implementation" }] };
+    const status = { ...STATUS, executor: "fixture" as const, attention: "needs_you" as const, attentionReasons: [{ kind: "waiting_input_node", node: "implementation" }] };
     expect(needsYou(base({ status, agentWorkRecorded: true }))).toEqual({ state: { kind: "dark" }, items: [] });
+    // A real executor's waiting step is the owner's to answer, with or without recorded agent work.
+    expect(needsYou(base({ status: { ...status, executor: "gateway" }, agentWorkRecorded: true })).state).toEqual({ kind: "lit", count: 1 });
+    expect(needsYou(base({ status: { ...status, executor: null }, agentWorkRecorded: true })).state).toEqual({ kind: "lit", count: 1 });
     expect(needsYou(base({ status })).state).toEqual({ kind: "lit", count: 1 });
     expect(needsYou(base({ status, agentWorkRecorded: true, events: question, envelopes: asked })).items.map((item) => item.kind)).toEqual(["question", "waiting_step"]);
     expect(needsYou(base({ status: { ...status, status: "paused" }, agentWorkRecorded: true })).state).toEqual({ kind: "lit", count: 1 });

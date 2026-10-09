@@ -47,9 +47,11 @@ export function needsYou(input: NeedsYouInput): { state: BeaconState; items: Nee
     if (step === null) continue;
     items.push({ kind: step, key: `${kind}:${node}`, nodeId: node, name: input.nodeNames[node] ?? node, reason: kind });
   }
-  // A running graph step that waits while agents record work and nothing else is open is a technical
-  // fact, not an owner request (#511): the run tag already reads it as calm, so the beacon does too.
-  const graphWaitOnly = input.status?.status === "running" && input.agentWorkRecorded === true
+  // A demonstration run's scripted wait, while agents record work and nothing else is open, is a
+  // technical fact, not an owner request (#511). Only the fixture executor: a real executor's
+  // waiting step is the owner's to answer, whatever else the run records.
+  const graphWaitOnly = input.status?.status === "running" && input.status.executor === "fixture"
+    && input.agentWorkRecorded === true
     && items.length > 0 && items.every((item) => item.kind === "waiting_step");
   if (graphWaitOnly) items.length = 0;
   const state: BeaconState = input.status === null || input.stale || input.nativeRequests === null

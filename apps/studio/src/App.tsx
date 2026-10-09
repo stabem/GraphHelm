@@ -86,7 +86,7 @@ import { RightPanel } from "./components/right-panel";
 import { JourneyCanvas } from "./components/journey-canvas";
 import { beforeAfterPairs, captureDocuments, type BeforeAfterPair } from "./runtime/journeys";
 import type { JourneyFlowsView, JourneysView, LiveSession } from "./runtime/types";
-import { JourneyFlows } from "./components/journey-flows";
+import { JourneyFlows, type JourneyRunSource } from "./components/journey-flows";
 import { SaidLinks, type SaidLinkContext } from "./components/said";
 import { ChatColumn, NEEDS_YOU } from "./components/chat-column";
 import { botKeyOf, teamLinks, teamModel } from "./runtime/team";
@@ -2149,6 +2149,19 @@ export default function App({
   const [watchingFlow, setWatchingFlow] = useState<string | null>(null);
   const [chosenFlow, setChosenFlow] = useState<{ id: string; status: string } | null>(null);
   const selectFlow = useCallback((id: string, status: string) => setChosenFlow({ id, status }), []);
+  // #519: opening a journey runs its test; the flowchart reads the run and its frames from here.
+  const journeyRun = useMemo<JourneyRunSource>(() => {
+    const client = () => {
+      if (clientRef.current === null) throw new Error("Not connected.");
+      return clientRef.current;
+    };
+    return {
+      start: async (flowId, force) => client().startJourneyRun(flowId, force),
+      read: async (flowId) => client().journeyRun(flowId),
+      screenFrame: async (flowId, screenId) => client().journeyScreenFrame(flowId, screenId),
+      liveFrame: async (sessionId, etag) => client().liveFrame(sessionId, etag),
+    };
+  }, []);
   const watchFlow = useCallback(async (flowId: string, path?: string) => {
     const client = clientRef.current;
     if (client === null) throw new Error("Not connected.");
@@ -3014,7 +3027,7 @@ export default function App({
             </div>
             <div id="studio-panel-journeys" role="tabpanel" aria-labelledby="studio-tab-journeys" hidden={canvasTab !== "journey"}>
             {canvasTab === "journey" && <JourneyFlows view={flowsRead.view} failure={flowsRead.failure} onApprove={approveFlow} focusFlowId={journeyContract}
-              sessions={liveSessions} onSelect={selectFlow} {...(liveSessions === null ? {} : { onWatch: watchFlow })} />}
+              sessions={liveSessions} onSelect={selectFlow} run={journeyRun} {...(liveSessions === null ? {} : { onWatch: watchFlow })} />}
             {/* #465: the proof map follows the journey chosen in the list; a draft has nothing proven
               * yet, so its owner sees Watch and Approve above instead of capture labels. */}
             {canvasTab === "journey" && (chosenFlow === null || chosenFlow.status !== "draft") && (

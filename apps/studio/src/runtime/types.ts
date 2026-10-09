@@ -465,8 +465,35 @@ export interface LiveSession {
   actIndex?: number | null;
   stepIndex?: number;
   stepCount?: number;
+  /** The Runtime holds page frames for this session (#519): a headless Watch. */
+  frame?: boolean;
 }
 export interface LiveSessionsView { sessions: LiveSession[] }
+
+/** How one screen or edge fared in a journey's run (#519). The reason codes are the Runtime's
+ * closed list; the Studio says them in words. */
+export type JourneyStepResult = "pass" | "fail" | "drift";
+export interface JourneyRunScreen { frame: boolean; width?: number; height?: number; result?: JourneyStepResult; reason?: string; seen?: string }
+export interface JourneyRunEdge { result?: JourneyStepResult; reason?: string; seen?: string }
+/** The run a journey gets when it is opened: `GET|POST /v1/journey-flows/{id}/preview`. `replay` is
+ * an approved flow's real replay; `preview` is a draft's and is never proof. While `running`,
+ * `screens` holds only the screens reached so far and `current` is the one being played. */
+export interface JourneyRunView {
+  preview?: boolean;
+  digest?: string;
+  state: "none" | "running" | "ready" | "failed";
+  kind?: "replay" | "preview";
+  commit?: string;
+  startedAt?: string;
+  ranAt?: string;
+  current?: string;
+  result?: JourneyStepResult;
+  reason?: string;
+  screens?: Record<string, JourneyRunScreen>;
+  edges?: Record<string, JourneyRunEdge>;
+}
+/** One frame's bytes and the tag to ask for a newer one with. */
+export interface JourneyFrame { blob: Blob; etag: string | null }
 /** One act sent into a live session: `POST /v1/journeys/sessions/{id}/act`. */
 export interface LiveAct { kind: string; role: string; name: string; text?: string; secret?: string }
 

@@ -2857,6 +2857,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 /* #519: the selected journey is a flowchart. Cards sit on a fixed grid (the component sets each
    card's left/top/size), arrows are one SVG under them, and the chart scrolls in its own box. */
 .journey-chart-scroll { margin-top: 10px; overflow: auto; padding: 4px 20px; }
+.journey-chart-more { margin: 0 0 6px; font-size: 12px; color: var(--dim); text-align: right; }
 .journey-chart { position: relative; }
 .journey-chart-arrows { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
 .journey-chart-arrows path { fill: none; stroke: var(--edge); stroke-width: 1.5; }

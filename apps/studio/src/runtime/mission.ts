@@ -35,7 +35,7 @@ function stepStatus(stepId: string, run: JourneyRunView | null, stepIds: string[
 export function toMissionTask(t: TaskState): MissionTask {
   const trust: TrustLevel = t.step === "merged" ? 3 : t.step === "merge" ? 2 : 1;
   return {
-    key: t.key, pr: t.pr, issue: t.issue, title: t.prTitle ?? t.title ?? t.taskId, lane: t.lane,
+    key: t.key, pr: t.pr, issue: t.issue, title: t.prTitle || t.title || t.taskId, lane: t.lane,
     reviewers: t.reviewers, step: t.step, blocked: t.blockedBy !== null, trust,
   };
 }

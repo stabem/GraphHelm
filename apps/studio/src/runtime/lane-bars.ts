@@ -18,6 +18,9 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
   };
   const label = (taskId: string) => (prOf.has(taskId) ? `#${prOf.get(taskId)}` : taskId);
   const start = (lane: string, kind: BarKind, taskId: string, t: number) => {
+    for (const [k, v] of open) {
+      if (k === `${kind}:${taskId}:${lane}`) { v.bar.end = t; v.bar.open = false; open.delete(k); }
+    }
     const bar: LaneBar = { kind, label: label(taskId), start: t, end: now, open: true };
     laneOf(lane).bars.push(bar);
     open.set(`${kind}:${taskId}:${lane}`, { lane, bar });
@@ -31,6 +34,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
   };
   for (const e of [...events].sort((a, b) => a.sequence - b.sequence)) {
     const t = Date.parse(e.at);
+    if (!Number.isFinite(t)) continue;
     if (e.pr !== undefined) prOf.set(e.taskId, e.pr);
     const actor = e.kind === "task.claimed" ? e.lane : e.reviewer;
     if (actor) laneOf(actor).last = Math.max(laneOf(actor).last, t);
@@ -39,9 +43,9 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       case "task.review_assigned": close("implement", e.taskId, t); if (e.reviewer) start(e.reviewer, "review", e.taskId, t); break;
       case "task.review_verdict":
         close("review", e.taskId, t, e.reviewer);
-        if (e.reviewer && String(e.verdict) === "APPROVE") start(e.reviewer, "merge", e.taskId, t);
+        if (e.reviewer && String(e.verdict).startsWith("APPROVE")) start(e.reviewer, "merge", e.taskId, t);
         break;
-      case "task.merged": close("merge", e.taskId, t); break;
+      case "task.merged": for (const k of ["implement", "review", "merge"] as const) close(k, e.taskId, t); break;
       default: break;
     }
   }

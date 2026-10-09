@@ -74,4 +74,9 @@ describe("buildMission", () => {
   it("ladder labels are verbatim", () => {
     expect(TRUST_LABELS).toEqual(["Written", "Reviewed", "Merged", "Proven", "Seen by you"]);
   });
+
+  it("empty prTitle falls through to title", () => {
+    const m = buildMission(journey, null, [task({ prTitle: "", title: "Real title" })]);
+    expect(m.tasks[0].title).toBe("Real title");
+  });
 });

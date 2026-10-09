@@ -45,4 +45,37 @@ describe("laneBars", () => {
     expect(lanes.find((l) => l.lane === "old")!.bars).toEqual([]);
     expect(lanes.find((l) => l.lane === "x")!.bars[0].start).toBe(T0 + 400);
   });
+
+  it("APPROVE-WITH-RISK opens a merge bar, BLOCK does not", () => {
+    for (const [v, n] of [["APPROVE-WITH-RISK", 1], ["BLOCK", 0]] as const) {
+      const lanes = laneBars([
+        ev({ kind: "task.review_assigned", reviewer: "rev", at: at(0) }),
+        ev({ kind: "task.review_verdict", reviewer: "rev", verdict: v as never, at: at(10) }),
+      ], T0 + 20, 1000);
+      expect(lanes.find((l) => l.lane === "rev")!.bars.filter((b) => b.kind === "merge")).toHaveLength(n);
+    }
+  });
+
+  it("a repeated assign closes the first bar", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.review_assigned", reviewer: "rev", at: at(0) }),
+      ev({ kind: "task.review_assigned", reviewer: "rev", at: at(10) }),
+      ev({ kind: "task.review_verdict", reviewer: "rev", verdict: "BLOCK" as never, at: at(20) }),
+    ], T0 + STALL_MS * 2, STALL_MS * 4);
+    expect(lanes[0].bars.some((b) => b.open)).toBe(false);
+    expect(lanes[0].silent).toBe(false);
+  });
+
+  it("merged closes every open bar of the task", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "dev", at: at(0) }),
+      ev({ kind: "task.merged", at: at(50) }),
+    ], T0 + 100, 1000);
+    expect(lanes[0].bars[0]).toMatchObject({ end: T0 + 50, open: false });
+  });
+
+  it("skips events with an invalid timestamp", () => {
+    const lanes = laneBars([ev({ kind: "task.claimed", lane: "dev", at: "garbage" })], T0, 1000);
+    expect(lanes).toEqual([]);
+  });
 });

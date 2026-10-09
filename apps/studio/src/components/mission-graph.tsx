@@ -1,8 +1,8 @@
 import "./mission-graph.css";
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import { custodyRows, sha8, TRUST_LABELS, type Mission, type MissionStep, type MissionTask, type StepStatus } from "../runtime/mission";
 import { layoutMission, type PlacedTask } from "../runtime/mission-layout";
-import { layoutWorkGroup, WORK_STAGES, type WorkGroup, type WorkStage } from "../runtime/work-groups";
+import { WORK_STAGES, type PrRow, type WorkGroup, type WorkStage } from "../runtime/work-groups";
 
 export const STATUS_LABEL: Record<StepStatus, string> = {
   proven: "Proven", failed: "Failed", needs_you: "Needs you", preview_only: "Preview only", not_run: "Not run",
@@ -208,6 +208,26 @@ const STAGE_LABEL: Record<WorkStage, string> = {
 };
 export const stageLabel = (stage: WorkStage, t: MissionTask) => (stage === "fix" && t.blocked ? "Blocked" : t.step === "critic" ? "Design in review" : STAGE_LABEL[stage]);
 
+/** #591 geometry: a 120px row header, then the seven stage columns; each PR owns one 112px band. */
+export const ROW_HEAD = 120, X0 = ROW_HEAD + 12, BAND = 112, CARD_TOP = 12, CELL_TOP = 36, MID = CARD_TOP + NODE_H / 2, FOLD_H = 44;
+const colX = (col: number) => X0 + col * PITCH;
+
+/** The arrows inside one row: forward ones run straight along the row's middle; the loop from Fix
+ * back to the re-review rides above the row's cells, inside its band, so no arrow leaves its row. */
+export function rowSegs(row: PrRow, top: number): Seg[] {
+  const cellTop = (col: number) => top + (row.cells.find((c) => c.col === col)?.state === "current" ? CARD_TOP : CELL_TOP);
+  return row.edges.flatMap((e): Seg[] => {
+    const done = e.kind === "done";
+    if (e.to > e.from) {
+      const sx = colX(e.from) + COL_W, dx = colX(e.to) - 6, y = top + MID;
+      return [line(sx, y, dx, y, done), { dir: "right", done, style: { left: dx, top: y - 5 } }];
+    }
+    const ax = colX(e.from) + COL_W / 2, bx = colX(e.to) + COL_W / 2, high = top + 4;
+    return [line(ax, cellTop(e.from), ax, high, done), line(bx, high, ax, high, done), line(bx, high, bx, cellTop(e.to) - 6, done),
+      { dir: "down", done, style: { left: bx - 5, top: cellTop(e.to) - 6 } }];
+  });
+}
+
 interface IssueProps {
   group: WorkGroup;
   /** The journey step a task serves, when one of the group's journeys places it. */
@@ -219,14 +239,22 @@ interface IssueProps {
   onOpenTest(stepId: string): void;
 }
 
-/** #583: an issue's PRs as nodes in the six stage columns, edges in PR order, the same inspector. */
+/** #591: an issue's graph, one row per PR along the stage columns: the stages it passed as small
+ * cells, the stage it is in as the full card, arrows only inside its own row. Merged rows fold below. */
 export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSelectTask, onSelectCol, onOpenTest }: IssueProps) {
-  const layout = layoutWorkGroup(group);
-  const at = new Map(layout.placed.map((p) => [p.task.key, p]));
-  const placed = selectedTaskKey ? at.get(selectedTaskKey) ?? null : null;
-  const col = placed ? placed.col : selectedCol;
-  const width = WORK_STAGES.length * PITCH - 18;
-  const height = HEAD + layout.rows * ROW + 16;
+  const [showMerged, setShowMerged] = useState(false);
+  const open = group.rows.filter((r) => r.open), merged = group.rows.filter((r) => !r.open);
+  const shown = showMerged ? [...open, ...merged] : open;
+  const tops = new Map<string, number>();
+  let y = HEAD;
+  for (const r of open) { tops.set(r.key, y); y += BAND; }
+  const foldTop = y;
+  if (merged.length) y += FOLD_H;
+  if (showMerged) for (const r of merged) { tops.set(r.key, y); y += BAND; }
+  const selected = group.rows.find((r) => r.key === selectedTaskKey) ?? null;
+  const col = selected ? WORK_STAGES.findIndex((s) => s.id === group.stages[selected.key]) : selectedCol;
+  const width = colX(WORK_STAGES.length) - 18;
+  const height = y + 8;
   return (
     <div className="mg">
       <div className="mg-title"><h1>{group.label}</h1>{group.summary && <span className="mg-desc">{group.summary}</span>}</div>
@@ -234,10 +262,10 @@ export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSel
         <section className="mg-graph" aria-label="Work graph">
           <div className="mg-scroll">
             <div className="mg-canvas" style={{ width, height }}>
-              {col !== null && col >= 0 && <div className="mg-colhi" style={{ left: col * PITCH - 8, height: height + 12 }} />}
-              <div className="mg-cols" style={{ gridTemplateColumns: `repeat(${WORK_STAGES.length}, ${COL_W}px)` }}>
+              {col !== null && col >= 0 && <div className="mg-colhi" style={{ left: colX(col) - 8, height: height + 12 }} />}
+              <div className="mg-cols" style={{ left: X0, gridTemplateColumns: `repeat(${WORK_STAGES.length}, ${COL_W}px)` }}>
                 {WORK_STAGES.map((s, i) => {
-                  const n = layout.placed.filter((p) => p.col === i).length;
+                  const n = group.tasks.filter((t) => group.stages[t.key] === s.id).length;
                   return (
                     <button key={s.id} type="button" className="mg-col" data-stage={s.id} data-selected={i === col}
                       aria-label={`Column ${s.label}: ${n}`} onClick={() => onSelectCol(i)}>
@@ -246,26 +274,50 @@ export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSel
                   );
                 })}
               </div>
-              {layout.edges.flatMap((e) => {
-                const a = at.get(e.from), b = at.get(e.to);
-                return a && b ? route(a, b, e.done).map((sg, i) => (
-                  <div key={`${e.from}-${e.to}-${i}`} className="mg-seg" data-dir={sg.dir} data-done={sg.done} style={sg.style} aria-hidden="true" />
-                )) : [];
-              })}
-              {layout.placed.map(({ task: t, col: c, row }) => {
-                const stage = group.stages[t.key]!;
-                const st = stageState(stage, t);
+              {merged.length > 0 && (
+                <button type="button" className="mg-fold" aria-expanded={showMerged} style={{ top: foldTop + 8 }} onClick={() => setShowMerged((v) => !v)}>
+                  {`Merged · ${merged.length}`}
+                </button>
+              )}
+              {shown.map((r) => {
+                const top = tops.get(r.key)!;
+                const t = r.task, stage = group.stages[t.key]!, st = stageState(stage, t);
+                const pr = t.pr ? `PR #${t.pr}` : "No PR";
                 return (
-                  <button key={t.key} type="button" className="mg-node" data-state={st} data-stage={stage} data-blocked={t.blocked}
-                    aria-pressed={t.key === selectedTaskKey} style={{ left: c * PITCH, top: HEAD + row * ROW }} onClick={() => onSelectTask(t.key)}>
-                    <span className="mg-node-head">
-                      <span className="mg-dot" data-state={st} />
-                      <span className="mg-node-label">{stageLabel(stage, t)}</span>
-                      <span className="mg-node-pr">{prText(t)}</span>
-                    </span>
-                    <span className="mg-node-title">{t.title}</span>
-                    <span className="mg-node-who">{t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : "nobody yet"}</span>
-                  </button>
+                  <div key={r.key} className="mg-row" data-row={r.key} data-open={r.open}>
+                    <button type="button" className="mg-rowhead" aria-pressed={t.key === selectedTaskKey} style={{ top: top + CARD_TOP }}
+                      aria-label={`Row ${pr}: ${t.title}`} title={t.title} onClick={() => onSelectTask(t.key)}>
+                      <span className="mg-rowhead-pr">{pr}</span>
+                      <span className="mg-rowhead-title">{t.title}</span>
+                    </button>
+                    {rowSegs(r, top).map((sg, i) => (
+                      <div key={i} className="mg-seg" data-dir={sg.dir} data-done={sg.done} style={sg.style} aria-hidden="true" />
+                    ))}
+                    {r.cells.map((c) => c.state === "current" ? (
+                      <button key={c.stage} type="button" className="mg-node" data-state={st} data-stage={stage} data-blocked={t.blocked} data-current="true"
+                        aria-pressed={t.key === selectedTaskKey} style={{ left: colX(c.col), top: top + CARD_TOP }} onClick={() => onSelectTask(t.key)}>
+                        <span className="mg-node-head">
+                          <span className="mg-dot" data-state={st} />
+                          <span className="mg-node-label">{c.count > 1 ? `${stageLabel(stage, t)} ×${c.count}` : stageLabel(stage, t)}</span>
+                          <span className="mg-node-pr">{prText(t)}</span>
+                        </span>
+                        <span className="mg-node-title">{t.title}</span>
+                        <span className="mg-node-who">{t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : "nobody yet"}</span>
+                      </button>
+                    ) : (
+                      <button key={c.stage} type="button" className="mg-cell" data-cell={c.state} data-stage={c.stage} tabIndex={c.state === "ahead" ? -1 : 0}
+                        aria-label={`${pr} ${[c.label, c.who, c.mark, c.time].filter(Boolean).join(" · ")}`} style={{ left: colX(c.col), top: top + CELL_TOP }}
+                        onClick={() => onSelectTask(t.key)}>
+                        {c.state !== "ahead" && <>
+                          <span className="mg-cell-line">
+                            <span className="mg-cell-label">{c.label}</span>
+                            {c.mark && <span className="mg-cell-mark" data-tone={c.mark === "BLOCK" ? "block" : c.mark === "✓" ? "ok" : "skip"}>{c.mark}</span>}
+                          </span>
+                          <span className="mg-cell-line mg-cell-sub">{[c.who, c.time].filter(Boolean).join(" · ")}</span>
+                        </>}
+                      </button>
+                    ))}
+                  </div>
                 );
               })}
             </div>
@@ -279,7 +331,7 @@ export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSel
             <span className="mg-legend-note">Merged is not done. Done = the replay proves the step.</span>
           </div>
         </section>
-        {placed ? <TaskInspector task={placed.task} step={stepFor(placed.task.key)} onOpenTest={onOpenTest} />
+        {selected ? <TaskInspector task={selected.task} step={stepFor(selected.key)} onOpenTest={onOpenTest} />
           : <aside className="mg-inspector" aria-label="Selected work"><p className="mg-muted">Pick a PR to see who touched it.</p></aside>}
       </div>
     </div>

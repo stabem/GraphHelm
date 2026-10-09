@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
-import { MissionGraph } from "./mission-graph";
+import { IssueGraph, MissionGraph } from "./mission-graph";
+import { buildWorkGroups } from "../runtime/work-groups";
+import type { TaskState } from "../runtime/team-tasks";
 import type { Mission, MissionTask } from "../runtime/mission";
 const userEvent = fastUserEvent();
 
@@ -89,7 +91,7 @@ describe("MissionGraph", () => {
     expect(p.onOpenTest).toHaveBeenCalledWith("mark");
   });
 
-  it("draws edges between consecutive tasks with an arrow", () => {
+  it("draws edges between journey tasks with an arrow", () => {
     const { container } = setup({ mission: { ...mission, tasks: [merged, { ...blocked, pr: 600, key: "k600" }] } });
     expect(container.querySelectorAll(".mg-seg").length).toBeGreaterThan(1);
     expect(container.querySelector('.mg-seg[data-done="true"]')).not.toBeNull();
@@ -100,5 +102,44 @@ describe("MissionGraph", () => {
     expect(screen.getAllByRole("button", { name: /^Column / })).toHaveLength(2);
     expect(screen.getByText("No work linked to this journey yet")).toBeInTheDocument();
     expect(screen.getByText("Merged is not done. Done = the replay proves the step.")).toBeInTheDocument();
+  });
+});
+
+const ts = (key: string, over: Partial<TaskState>): TaskState => ({
+  key, taskId: key, branch: null, issue: 1, pr: null, lane: "gh-claude-1", headSha: null, journeys: [], step: "implement",
+  blockedBy: null, reviewers: [], mergeSha: null, repoUrl: null, strayVerdicts: [], title: "T", summary: null, prTitle: null,
+  prSummary: null, critic: null, recordedHeads: [], parent: null, rounds: [], clock: { since: null, spent: {} }, lastSequence: 0, ...over,
+});
+
+describe("IssueGraph (#591)", () => {
+  const rnd = { reviewer: "gh-claude-7", headSha: "a", commentUrl: "", fixHead: "b", blockedAt: null, fixedAt: null };
+  const group = buildWorkGroups([
+    ts("m1", { pr: 10, prTitle: "Merged one", step: "merged", mergeSha: "9a9a9a9a11", rounds: [rnd], reviewers: ["gh-claude-7"] }),
+    ts("m2", { pr: 11, prTitle: "Merged two", step: "merged", mergeSha: "8b8b8b8b22" }),
+    ts("o", { pr: 12, prTitle: "Open one", step: "review", blockedBy: { reviewer: "gh-claude-7", headSha: "a", commentUrl: "" }, rounds: [{ ...rnd, fixHead: null }] }),
+  ], [])[0]!;
+  const draw = (sel: string | null = null) => {
+    const onSelectTask = vi.fn();
+    const view = render(<IssueGraph group={group} stepFor={() => undefined} selectedTaskKey={sel} selectedCol={null} onSelectTask={onSelectTask} onSelectCol={vi.fn()} onOpenTest={vi.fn()} />);
+    return { onSelectTask, ...view };
+  };
+  it("open rows show; merged rows fold under Merged · N, collapsed by default and expandable", async () => {
+    const { container } = draw();
+    expect(Array.from(container.querySelectorAll(".mg-row")).map((r) => r.getAttribute("data-row"))).toEqual(["o"]);
+    const fold = screen.getByRole("button", { name: "Merged · 2" });
+    expect(fold).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(fold);
+    expect(fold).toHaveAttribute("aria-expanded", "true");
+    expect(Array.from(container.querySelectorAll(".mg-row")).map((r) => r.getAttribute("data-row"))).toEqual(["o", "m1", "m2"]);
+  });
+  it("a row draws done cells, BLOCK in red, the current stage as the card, and selects its PR on click", async () => {
+    const { container, onSelectTask } = draw("o");
+    const row = container.querySelector('.mg-row[data-row="o"]')!;
+    expect(row.querySelector('.mg-cell[data-stage="review"] .mg-cell-mark')).toHaveAttribute("data-tone", "block");
+    expect(row.querySelector('.mg-node[data-current="true"]')).toHaveAttribute("data-stage", "fix");
+    expect(row.querySelectorAll('.mg-cell[data-cell="ahead"]').length).toBe(3);
+    await userEvent.click(within(row as HTMLElement).getByRole("button", { name: "PR #12 Implement · gh-claude-1 · ✓" }));
+    await userEvent.click(within(row as HTMLElement).getByRole("button", { name: "Row PR #12: Open one" }));
+    expect(onSelectTask.mock.calls).toEqual([["o"], ["o"]]);
   });
 });

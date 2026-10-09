@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildWorkGroups, layoutWorkGroup, workStage } from "./work-groups";
+import { buildWorkGroups, prPath, workStage } from "./work-groups";
 import type { TaskState } from "./team-tasks";
 import type { JourneyRunView, JourneyView } from "./types";
 
@@ -63,14 +63,50 @@ describe("buildWorkGroups", () => {
   });
 });
 
-describe("layoutWorkGroup", () => {
-  it("stacks rows within a column and joins tasks in PR order", () => {
+describe("prPath (#591)", () => {
+  const blocked = { reviewer: "gh-claude-7", headSha: "a", commentUrl: "" };
+  const r1 = { reviewer: "gh-claude-7", headSha: "a", commentUrl: "", fixHead: "b", blockedAt: null, fixedAt: null };
+  const cells = (t: TaskState, proven = false) => prPath(t, proven).cells.map((c) => [c.stage, c.state, c.label, c.mark]);
+  it("BLOCK -> fix -> re-review -> approve -> merged, done stages included", () => {
+    const base = { pr: 7, plan: { summary: "p" } as TaskState["plan"], reviewers: ["gh-claude-7"] };
+    expect(cells(task("a", { ...base, step: "review", blockedBy: blocked, rounds: [{ ...r1, fixHead: null }] }))).toEqual([
+      ["plan", "done", "Plan", "✓"], ["implement", "done", "Implement", "✓"], ["review", "block", "Review", "BLOCK"], ["fix", "current", "Fix", null],
+      ["merge", "ahead", "Merge", null], ["merged", "ahead", "Merged", null], ["proven", "ahead", "Proven", null],
+    ]);
+    expect(cells(task("a", { ...base, step: "review", rounds: [r1] })).slice(2, 4)).toEqual([["review", "block", "Review", "BLOCK"], ["fix", "current", "Fix", null]]);
+    const done = task("a", { ...base, step: "merged", mergeSha: "9a9a9a9a11", rounds: [r1] });
+    expect(cells(done)).toEqual([
+      ["plan", "done", "Plan", "✓"], ["implement", "done", "Implement", "✓"], ["review", "done", "Review ×2", "✓"], ["fix", "done", "Fix", "✓"],
+      ["merge", "done", "Merge", "✓"], ["merged", "current", "Merged", "✓"], ["proven", "ahead", "Proven", null],
+    ]);
+    expect(prPath(done, false).edges).toContainEqual({ row: "a", from: 3, to: 2, kind: "done" });
+    expect(cells(done, true).slice(-1)).toEqual([["proven", "current", "Proven", "✓"]]);
+  });
+  it("an unrecorded plan the work moved past reads skipped; no BLOCK draws no Fix cell", () => {
+    const c = cells(task("a", { step: "merge", reviewers: ["r"] }));
+    expect(c[0]).toEqual(["plan", "done", "Plan", "skipped"]);
+    expect(c.map((x) => x[0])).not.toContain("fix");
+  });
+  it("arrows stay inside their row, left to right except the Fix loop back to Review", () => {
     const [g] = buildWorkGroups([
-      task("c", { issue: 1, pr: 30, step: "review" }), task("a", { issue: 1, pr: 10, step: "merged" }), task("b", { issue: 1, pr: 20, step: "review" }),
+      task("x", { issue: 1, pr: 1, step: "merged", rounds: [r1], mergeSha: "m" }), task("y", { issue: 1, pr: 2, step: "review", blockedBy: blocked, rounds: [r1] }),
+      task("z", { issue: 1, pr: 3, step: "implement" }),
     ], []);
-    const l = layoutWorkGroup(g!);
-    expect(Object.fromEntries(l.placed.map((p) => [p.task.key, [p.col, p.row]]))).toEqual({ a: [5, 0], b: [2, 0], c: [2, 1] });
-    expect(l.edges).toEqual([{ from: "a", to: "b", done: true }, { from: "b", to: "c", done: false }]);
-    expect(l.rows).toBe(2);
+    for (const row of g!.rows) {
+      const cols = new Set(row.cells.map((c) => c.col));
+      for (const e of row.edges) {
+        expect(e.row).toBe(row.key);
+        expect(cols.has(e.from) && cols.has(e.to)).toBe(true);
+        if (e.to < e.from) expect([e.from, e.to]).toEqual([3, 2]);
+      }
+    }
+    expect(g!.rows.flatMap((r) => r.edges).some((e) => !g!.rows.find((r) => r.key === e.row)!.edges.includes(e))).toBe(false);
+  });
+  it("rows: open work first, most urgent first, merged last", () => {
+    const [g] = buildWorkGroups([
+      task("m", { issue: 1, pr: 1, step: "merged", lastSequence: 99 }), task("w", { issue: 1, pr: 2, step: "implement", lastSequence: 5 }),
+      task("n", { issue: 1, pr: 3, step: "review", lastSequence: 9 }), task("b", { issue: 1, pr: 4, step: "review", blockedBy: blocked, lastSequence: 1 }),
+    ], []);
+    expect(g!.rows.map((r) => [r.key, r.open])).toEqual([["b", true], ["n", true], ["w", true], ["m", false]]);
   });
 });

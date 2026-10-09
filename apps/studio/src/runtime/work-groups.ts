@@ -1,7 +1,8 @@
 import type { JourneyRunView, JourneyView } from "./types";
 import type { TaskState } from "./team-tasks";
 import { buildMission, toMissionTask, type MissionTask } from "./mission";
-import { layoutMission, type LayoutEdge, type PlacedTask } from "./mission-layout";
+import { layoutMission } from "./mission-layout";
+import { duration, type TimedStep } from "./step-timing";
 
 /** #583 (+ #554 Plan): the columns of an issue's graph, in the order work moves through them. */
 export type WorkStage = "plan" | "implement" | "review" | "fix" | "merge" | "merged" | "proven";
@@ -31,7 +32,31 @@ export interface WorkGroup {
   summary: string | null;
   /** #591: the task that most needs the owner (blocked, else in flight, else the newest). */
   focus: string | null;
+  /** #591: one row per PR, each with its own path along the stage columns; open rows first
+   * (most urgent first, the `focusTask` rule), merged rows last. */
+  rows: PrRow[];
 }
+
+/** #591: where a cell sits on its PR's own path. */
+export type CellState = "done" | "block" | "current" | "ahead";
+export interface PathCell {
+  stage: WorkStage;
+  col: number;
+  state: CellState;
+  /** Mono label: the stage, with a counter when it repeated (`Review ×2`). */
+  label: string;
+  /** Who acted there (lane, reviewer, merge sha), when recorded. */
+  who: string | null;
+  /** `✓`, `BLOCK`, `skipped`, or `null` for the current and ahead cells. */
+  mark: string | null;
+  /** Time spent there, when the Runtime's clock recorded it. */
+  time: string | null;
+  count: number;
+}
+/** An arrow inside one row: `col` to `col`, solid between done cells, dashed into the current one;
+ * `loop` is the Fix back to the re-review in the Review column. */
+export interface PathEdge { row: string; from: number; to: number; kind: "done" | "next" | "loop" }
+export interface PrRow { key: string; task: MissionTask; open: boolean; cells: PathCell[]; edges: PathEdge[] }
 
 /** #591: blocked work first, then work in flight, then the newest record; ties keep PR order. */
 export function focusTask(rows: TaskState[]): string | null {
@@ -94,23 +119,62 @@ export function buildWorkGroups(tasks: TaskState[], journeys: JourneyView[], run
       latest: Math.max(...rows.map((r) => r.lastSequence ?? 0)),
       summary: sorted.find((r) => r.summary)?.summary ?? null,
       focus: focusTask(rows),
+      rows: orderRows(rows).map((t) => ({ ...prPath(t, proven.has(t.key)), task: toMissionTask(t) })),
     };
   });
   return groups.sort((a, b) => Number(b.open) - Number(a.open) || b.latest - a.latest);
 }
 
-export interface WorkLayout { placed: PlacedTask[]; edges: LayoutEdge[]; rows: number }
+const COL: Record<WorkStage, number> = Object.fromEntries(WORK_STAGES.map((s, i) => [s.id, i])) as Record<WorkStage, number>;
+const spent = (t: TaskState, ...steps: TimedStep[]) => {
+  const ms = steps.reduce((sum, s) => sum + (t.clock?.spent?.[s] ?? 0), 0);
+  return ms > 0 ? duration(ms) : null;
+};
+const counted = (label: string, n: number) => (n > 1 ? `${label} ×${n}` : label);
 
-/** Each task in its stage's column, stacked in PR order; edges join consecutive tasks in PR order,
- * solid when the source is merged. */
-export function layoutWorkGroup(group: WorkGroup): WorkLayout {
-  const rowsInCol = new Map<number, number>();
-  const placed = group.tasks.map((task) => {
-    const col = WORK_STAGES.findIndex((s) => s.id === group.stages[task.key]);
-    const row = rowsInCol.get(col) ?? 0;
-    rowsInCol.set(col, row + 1);
-    return { task, col, row };
-  });
-  const edges = placed.slice(1).map((b, i) => ({ from: placed[i]!.task.key, to: b.task.key, done: placed[i]!.task.step === "merged" }));
-  return { placed, edges, rows: Math.max(1, ...rowsInCol.values()) };
+/**
+ * #591: the stages one PR has passed, read only from its own records. Plan: a recorded plan or
+ * critic round, else `skipped` once the work moved past it. Review: one round per BLOCK, plus the
+ * approving (or pending) review; Fix: one per fix pushed after a BLOCK. Merge: reached once approved;
+ * Merged: `mergeSha`; Proven: the linked journey's replay passed the step (`proven`).
+ */
+export function prPath(t: TaskState, proven: boolean): Omit<PrRow, "task"> {
+  const current = workStage(t, proven);
+  const cur = COL[current];
+  const rounds = t.rounds ?? [];
+  const fixes = rounds.filter((r) => r.fixHead).length;
+  const approved = t.step === "merge" || t.step === "merged";
+  const stateAt = (col: number): CellState => (col < cur ? "done" : col === cur ? "current" : "ahead");
+  const cells: PathCell[] = [];
+  const add = (stage: WorkStage, c: Partial<PathCell>) => {
+    const col = COL[stage], state = c.state ?? stateAt(col);
+    cells.push({ stage, col, label: WORK_STAGES[col]!.label, who: null, mark: state === "done" ? "✓" : null, time: null, count: 1, ...c, state });
+  };
+  const planned = Boolean(t.plan || t.critic || t.clock?.spent?.plan || t.clock?.spent?.critic);
+  add("plan", { mark: cur > 0 ? (planned ? "✓" : "skipped") : null, time: spent(t, "plan", "critic"), who: t.critic ? `critic ${t.critic.score}/${t.critic.passScore}` : null });
+  add("implement", { who: t.lane, time: spent(t, "implement") });
+  const reviews = rounds.length + (t.blockedBy ? 0 : approved || t.step === "review" ? 1 : 0);
+  const lastReviewer = t.blockedBy?.reviewer || (approved ? t.reviewers[t.reviewers.length - 1] : null) || rounds[rounds.length - 1]?.reviewer || null;
+  if (t.blockedBy) add("review", { state: "block", mark: "BLOCK", who: lastReviewer, count: Math.max(1, reviews), label: counted("Review", reviews) });
+  else if (current === "fix") add("review", { state: "block", mark: "BLOCK", who: lastReviewer, count: rounds.length, label: counted("Review", rounds.length) });
+  else add("review", { who: lastReviewer, count: Math.max(1, reviews), label: counted("Review", reviews), time: spent(t, "review") });
+  if (fixes > 0 || current === "fix") {
+    const fixState = stateAt(COL.fix);
+    add("fix", { state: fixState, mark: fixState === "done" ? "✓" : null, count: Math.max(1, fixes), label: counted("Fix", fixes), who: t.lane });
+  } else if (cur > COL.fix) {
+    // No BLOCK was ever recorded: the PR went straight past Fix; draw nothing there.
+  } else add("fix", { state: "ahead" });
+  add("merge", { time: spent(t, "merge") });
+  add("merged", { who: t.mergeSha ? t.mergeSha.slice(0, 8) : null, mark: t.mergeSha ? "✓" : null });
+  add("proven", { mark: proven ? "✓" : null });
+  const lit = cells.filter((c) => c.state !== "ahead");
+  const edges: PathEdge[] = lit.slice(1).map((b, i) => ({ row: t.key, from: lit[i]!.col, to: b.col, kind: b.state === "current" ? "next" : "done" }));
+  if (fixes > 0) edges.push({ row: t.key, from: COL.fix, to: COL.review, kind: current === "fix" && !t.blockedBy ? "next" : "done" });
+  return { key: t.key, open: t.step !== "merged", cells, edges };
+}
+
+/** #591: open rows first by the `focusTask` rank, then merged rows; ties keep PR order. */
+export function orderRows(rows: TaskState[]): TaskState[] {
+  const rank = (t: TaskState) => (t.blockedBy !== null ? 0 : t.step !== "merged" ? 1 : 2);
+  return [...rows].sort(byPr).sort((a, b) => rank(a) - rank(b) || (b.lastSequence ?? 0) - (a.lastSequence ?? 0));
 }

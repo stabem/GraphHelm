@@ -105,7 +105,8 @@ describe("MissionView", () => {
     expect(Array.from(graph.querySelectorAll(".mg-col-head")).map((h) => h.textContent))
       .toEqual(["PLAN · 0", "IMPLEMENT · 0", "REVIEW · 0", "FIX · 1", "MERGE · 0", "MERGED · 1", "PROVEN · 0"]);
     expect(graph.querySelectorAll(".mg-seg").length).toBeGreaterThan(0);
-    await userEvent.click(within(graph).getByRole("button", { name: /#548/ }));
+    expect(within(graph).getByRole("button", { name: "Merged · 1" })).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(within(graph).getByRole("button", { name: "Row PR #548: Proof recorded like replay" }));
     expect(screen.getByRole("button", { name: "Column Fix: 1" })).toHaveAttribute("data-selected", "true");
     const ins = screen.getByRole("complementary", { name: "Selected work" });
     expect(within(ins).getByRole("list", { name: "Who touched it" })).toHaveTextContent("BLOCK");

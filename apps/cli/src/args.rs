@@ -1083,6 +1083,12 @@ pub struct ServeArgs {
     /// tool half below, `serve` stays the fixture-only 05a server.
     #[arg(long)]
     pub manifest: Option<PathBuf>,
+    /// A route manifest the Studio's Models panel lists and writes (`GET`/`PUT
+    /// /v1/gateway/routes`) WITHOUT wiring any executor: cognitive nodes stay on node fixtures
+    /// (#585: the journey fixture shows the Add model form this way). `--manifest` names the
+    /// manifest itself, so the two are refused together.
+    #[arg(long = "gateway-manifest", conflicts_with = "manifest")]
+    pub gateway_manifest: Option<PathBuf>,
     /// The credential broker directory the model half leases from. See `--manifest`.
     #[arg(long)]
     pub broker: Option<PathBuf>,

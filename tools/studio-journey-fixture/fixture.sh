@@ -36,8 +36,12 @@ up)
   # `--project` is the repository: the Runtime's GET /v1/journeys and /v1/journeys/flows read
   # <project>/.graphhelm/journeys, where the studio-* flows and contracts live. Events, token,
   # key and keyring stay under the fixture directory.
+  # #585: a route manifest of the fixture's own, listed and written by the Studio's Models panel
+  # (Add model). Listing only: `--gateway-manifest` wires no executor, so nodes stay on fixtures.
+  cp "$repo/examples/gateway/astra-routes.json" "$dir/.graphhelm/routes.json"
   nohup "$bin" serve --events "$dir/.graphhelm/events" --bind "127.0.0.1:$rport" --project "$repo" \
-    --keyring "$dir/.graphhelm/keyring" --key-id studio > "$dir/.graphhelm/serve.out" 2> "$dir/.graphhelm/serve.err" &
+    --keyring "$dir/.graphhelm/keyring" --key-id studio --gateway-manifest "$dir/.graphhelm/routes.json" \
+    > "$dir/.graphhelm/serve.out" 2> "$dir/.graphhelm/serve.err" &
   echo "ports $rport $sport" > "$pids"
   echo "serve $!" >> "$pids"
   for _ in $(seq 1 30); do curl -sf --max-time 10 "http://127.0.0.1:$rport/health" > /dev/null && break; sleep 1; done

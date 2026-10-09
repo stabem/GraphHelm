@@ -702,28 +702,31 @@ fn an_agent_cannot_squat_the_owner_record_execution_and_the_owner_still_approves
     };
     // A squat sent exactly as a lane sends a note (`source.type` user), under that id and under a
     // plain id: both refused by the owner-execution rule itself.
-    for id in [wanted.as_str(), "agent-note-into-owner"] {
-        let body = json!({"signal": {"id": id, "type": "operator_note", "severity": "low",
-            "source": {"type": "user", "id": "agent-chat"}, "description": "squat",
-            "evidence": ["squat"], "emittedAt": "2026-10-09T00:00:00Z"}})
-        .to_string();
-        let (status, refused) = signal_as_agent(&base, agent, id, &body);
-        assert_ne!(
-            status, 200,
-            "an agent recorded into the owner execution: {refused}"
-        );
-        assert!(
-            refused.to_string().contains("owner record execution"),
-            "{refused}"
-        );
-    }
-    // The owner's approval of another flow still succeeds and is signed.
+    let squats: Vec<(u16, Value)> = [wanted.as_str(), "agent-note-into-owner"]
+        .into_iter()
+        .map(|id| {
+            let body = json!({"signal": {"id": id, "type": "operator_note", "severity": "low",
+                "source": {"type": "user", "id": "agent-chat"}, "description": "squat",
+                "evidence": ["squat"], "emittedAt": "2026-10-09T00:00:00Z"}})
+            .to_string();
+            signal_as_agent(&base, agent, id, &body)
+        })
+        .collect();
+    // The owner then approves the flow whose id was squatted. Its outcome is in every message
+    // below, so a run with the guard off shows what the squat did to the owner.
     let (status, approved) = http(
         &base,
         "POST",
         "/v1/journey-flows/checkout/approve",
         Some(&owner),
     );
+    for (squat_status, reply) in &squats {
+        assert!(
+            *squat_status != 200 && reply.to_string().contains("owner record execution"),
+            "an agent's squat was not refused by the owner-execution rule: {squat_status} {reply}; \
+             the owner's approval afterwards: {status} {approved}"
+        );
+    }
     assert_eq!(status, 200, "{approved}");
     let (_, validated) = harness.cli(&["validate", "--all"]);
     assert!(

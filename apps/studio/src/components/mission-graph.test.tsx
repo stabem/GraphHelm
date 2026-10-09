@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fastUserEvent } from "../test/user-event";
 import { MissionGraph } from "./mission-graph";
 import type { Mission } from "../runtime/mission";
+const userEvent = fastUserEvent();
 
 const mission: Mission = {
   contractId: "watch", title: "Watch plays inside the Studio",

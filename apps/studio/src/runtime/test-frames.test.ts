@@ -24,6 +24,11 @@ describe("testFrames", () => {
     expect(f[1].status).toBe("waits_for_you");
   });
 
+  it("a dotted id from another pair does not match the wrong step", () => {
+    const f = testFrames(journey, { state: "ready", kind: "replay", edges: { "x.y.b": { result: "skipped" }, "cart.checkout/0": { result: "skipped" } } });
+    expect(f.every((x) => x.status === "not_run")).toBe(true);
+  });
+
   it("no run: all not_run", () => {
     expect(testFrames(journey, null).every((x) => x.status === "not_run")).toBe(true);
   });

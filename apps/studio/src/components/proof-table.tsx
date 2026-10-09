@@ -1,3 +1,4 @@
+import "./test-canvas.css";
 import type { Mission } from "../runtime/mission";
 import { STATUS_LABEL } from "./mission-graph";
 

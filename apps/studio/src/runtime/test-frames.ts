@@ -11,7 +11,7 @@ export function testFrames(journey: JourneyView, run: JourneyRunView | null): Te
     const title = s.screen?.title ?? s.stepId;
     const expected = s.expectedStates ?? [];
     const verb: TestFrame["verb"] = s.action ? "DOES" : i === last && expected.length > 0 ? "EXPECT" : "SEES";
-    const skipped = skippedEdgeInto(run, s.stepId);
+    const skipped = skippedEdgeInto(run, s.stepId, journey.steps.map((x) => x.stepId));
     const screen = run?.screens?.[s.stepId];
     let status: FrameStatus = "not_run";
     let reason: string | null = null;

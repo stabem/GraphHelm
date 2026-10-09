@@ -13,16 +13,18 @@ export interface Mission { contractId: string; title: string; steps: MissionStep
 const STEP_ORDER: Record<TaskState["step"], number> = { implement: 0, review: 1, merge: 2, merged: 3 };
 
 /** Run-edge keys are the flow's own edge ids (free-form; `graphhelm journey explore` writes
- * `<from>.<to>`, fixtures use `<from>-><to>`), not a fixed "from->to". An edge leads into a step
- * when the key is, or ends with `->` or `.` followed by, that step id. */
-export function skippedEdgeInto(run: JourneyRunView | null, stepId: string) {
-  return Object.entries(run?.edges ?? {}).find(([id, e]) =>
-    e.result === "skipped" && (id === stepId || id.endsWith(`->${stepId}`) || id.endsWith(`.${stepId}`)));
+ * `<from>.<to>`, fixtures use `<from>-><to>`). They cannot be resolved through JourneyView.arrows:
+ * an arrow's `transitionSignalId` is a ledger signal id, unrelated to a flow edge id. So an edge
+ * leads into a step only on an exact `<from>.<to>` or `<from>-><to>` match, where `from` is one of
+ * the journey's other steps (or the key is the step id). Anything else is unmatched, never guessed. */
+export function skippedEdgeInto(run: JourneyRunView | null, stepId: string, stepIds: string[]) {
+  const keys = new Set([stepId, ...stepIds.filter((f) => f !== stepId).flatMap((f) => [`${f}.${stepId}`, `${f}->${stepId}`])]);
+  return Object.entries(run?.edges ?? {}).find(([id, e]) => e.result === "skipped" && keys.has(id));
 }
 
-function stepStatus(stepId: string, run: JourneyRunView | null): { status: StepStatus; reason: string | null } {
+function stepStatus(stepId: string, run: JourneyRunView | null, stepIds: string[]): { status: StepStatus; reason: string | null } {
   if (!run || run.state === "none") return { status: "not_run", reason: null };
-  const skipped = skippedEdgeInto(run, stepId);
+  const skipped = skippedEdgeInto(run, stepId, stepIds);
   if (skipped) return { status: "needs_you", reason: skipped[1].reason ?? null };
   const screen = run.screens?.[stepId];
   if (!screen?.result) return { status: "not_run", reason: null };
@@ -40,7 +42,7 @@ export function toMissionTask(t: TaskState): MissionTask {
 
 export function buildMission(journey: JourneyView, run: JourneyRunView | null, tasks: TaskState[]): Mission {
   const steps = journey.steps.map((s, index) => ({
-    stepId: s.stepId, index, title: s.screen?.title ?? s.stepId, ...stepStatus(s.stepId, run),
+    stepId: s.stepId, index, title: s.screen?.title ?? s.stepId, ...stepStatus(s.stepId, run, journey.steps.map((x) => x.stepId)),
   }));
   const linked = tasks
     .filter((t) => t.journeys.includes(journey.contractId))

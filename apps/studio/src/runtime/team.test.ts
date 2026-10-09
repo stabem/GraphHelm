@@ -144,4 +144,10 @@ describe("teamLinks", () => {
     expect(lane?.state).toBe("quiet");
     expect(team.bots.find((bot) => bot.key === "old-noter")?.doingNow).toBe("still here");
   });
+
+  it("#536: a lane whose newest slice is merged reads as last delivered", () => {
+    const merged = { lane: "gh-claude-9", reviewers: [], title: "Every lane shows", issue: 532, lastSequence: 7, step: "merged" } as unknown as TaskState;
+    const team = teamModel(input({ events: [record(1, "gh-claude-9", minutesAgo(600), "task.merged")], taskStates: [merged] }));
+    expect(team.bots.find((bot) => bot.key === "gh-claude-9")?.doingNow).toBe("Last delivered #532 Every lane shows");
+  });
 });

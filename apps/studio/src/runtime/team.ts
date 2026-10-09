@@ -171,7 +171,11 @@ export function teamModel(input: TeamInput): TeamModel {
 }
 
 function doingNow(task: TaskState | undefined, note: string | undefined): string {
-  if (task?.title) return firstLine(task.issue === null ? task.title : `#${task.issue} ${task.title}`);
+  if (task?.title) {
+    const named = task.issue === null ? task.title : `#${task.issue} ${task.title}`;
+    // #536: a merged slice is delivered work, never what the lane is doing now.
+    return firstLine(task.step === "merged" ? `Last delivered ${named}` : named);
+  }
   return note ?? "No note yet";
 }
 

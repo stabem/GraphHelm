@@ -685,12 +685,26 @@ fn an_agent_cannot_squat_the_owner_record_execution_and_the_owner_still_approves
     assert_eq!(status, 200, "{first}");
     let agent = std::fs::read_to_string(events.with_extension("agent.token")).unwrap();
     let agent = agent.trim();
-    for id in [
-        "journey-approved-0123456789abcdef0123456789abcdef",
-        "agent-note-into-owner",
-    ] {
+    // The id the owner's approval of `checkout` will use: the digest depends only on the flow, so
+    // approving an identical copy of the project tells the test (and an attacker) what it is.
+    let twin = prepared();
+    let twin_owner = owner_token(&twin.project);
+    let (code, twin_approved) = twin.cli(&["approve", "checkout", "--token-file", &twin_owner]);
+    assert_eq!(code, Some(0), "{twin_approved}");
+    let digest = twin_approved["data"]["approved"]["digest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let wanted = {
+        use sha2::{Digest, Sha256};
+        let hash = Sha256::digest(format!("checkout\n{digest}").as_bytes());
+        format!("journey-approved-{}", &hex::encode(hash)[..32])
+    };
+    // A squat sent exactly as a lane sends a note (`source.type` user), under that id and under a
+    // plain id: both refused by the owner-execution rule itself.
+    for id in [wanted.as_str(), "agent-note-into-owner"] {
         let body = json!({"signal": {"id": id, "type": "operator_note", "severity": "low",
-            "source": {"type": "agent", "id": "agent-chat"}, "description": "squat",
+            "source": {"type": "user", "id": "agent-chat"}, "description": "squat",
             "evidence": ["squat"], "emittedAt": "2026-10-09T00:00:00Z"}})
         .to_string();
         let (status, refused) = signal_as_agent(&base, agent, id, &body);
@@ -698,7 +712,6 @@ fn an_agent_cannot_squat_the_owner_record_execution_and_the_owner_still_approves
             status, 200,
             "an agent recorded into the owner execution: {refused}"
         );
-        // Refused by the owner-execution rule itself, not by a missing header or an unknown run.
         assert!(
             refused.to_string().contains("owner record execution"),
             "{refused}"

@@ -149,8 +149,10 @@ up)
   for pid in $(fixture_listeners record "$sport"); do
     if [ -r /proc/$$/winpid ]; then echo "studio-listener 0 $pid"; else echo "studio-listener $pid"; fi >> "$pids"
   done
+  # R6: the launcher reads this private data file after up; never echo the minted token.
+  (umask 077; printf 'GRAPHHELM_SECRET_STUDIO_TOKEN=%s\n' "$(head -1 "$dir/.graphhelm/events.token")" > "$dir/.graphhelm/secrets.env")
+  chmod 600 "$dir/.graphhelm/secrets.env"
   echo "fixture up: runtime http://127.0.0.1:$rport, studio http://127.0.0.1:$sport/?session=studio-fixture"
-  echo "replay secret: export GRAPHHELM_SECRET_STUDIO_TOKEN=\"\$(head -1 '$dir/.graphhelm/events.token')\""
   ;;
 down)
   # Each record is `<name> <shell pid> [<OS pid>]`. On Windows (Git Bash) the shell pid is an MSYS

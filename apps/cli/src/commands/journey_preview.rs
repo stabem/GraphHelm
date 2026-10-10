@@ -708,7 +708,6 @@ fn play(
     deadline: Instant,
     stopper: &std::sync::Arc<std::sync::Mutex<Option<LaunchedStop>>>,
 ) -> Result<()> {
-    let secrets = preflight(flow)?;
     observer_ready(project)?;
     let mut base = flow["base"].as_str().unwrap().to_owned();
     // The app under test is started when it is down, and stopped when the preview ends. An
@@ -738,6 +737,13 @@ fn play(
     if let Some(own) = launched.as_ref().and_then(|app| app.base.clone()) {
         base = own;
     }
+    let secrets = preflight(
+        flow,
+        &launched
+            .as_ref()
+            .map(|app| app.secrets.clone())
+            .unwrap_or_default(),
+    )?;
     let guard = Guard {
         approved: flow["status"] == "approved",
         launched: launched.is_some(),

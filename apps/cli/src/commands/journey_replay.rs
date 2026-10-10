@@ -808,7 +808,10 @@ pub(super) fn load_cache(path: &Path, flow: &Value) -> Result<Option<Value>> {
     Ok(Some(value))
 }
 
-pub(super) fn preflight(flow: &Value) -> Result<BTreeMap<String, String>> {
+pub(super) fn preflight(
+    flow: &Value,
+    launched: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>> {
     let supported = [
         "activate",
         "submit",
@@ -842,8 +845,14 @@ pub(super) fn preflight(flow: &Value) -> Result<BTreeMap<String, String>> {
             }
             if let Some(secret) = act["secret"].as_str() {
                 let name = format!("GRAPHHELM_SECRET_{secret}");
-                let value = std::env::var(&name)
-                    .ok()
+                // Fixture values win over the caller's environment: this run uses its own
+                // freshly minted token. Flows name lowercase ids; launchers may use uppercase
+                // environment keys. The driver still receives the exact name the act uses.
+                let value = launched
+                    .get(&name)
+                    .or_else(|| launched.get(&name.to_ascii_uppercase()))
+                    .cloned()
+                    .or_else(|| std::env::var(&name).ok())
                     .filter(|v| !v.is_empty() && v.len() <= 4096)
                     .ok_or_else(|| failure("driver.secret_missing", path.clone(), 3))?;
                 secrets.insert(name, value);
@@ -1288,7 +1297,7 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
     }
     let target = directory.join(format!("{}.json", args.id));
     let previous = load_cache(&target, &flow)?;
-    let secrets = preflight(&flow)?;
+    let secrets = preflight(&flow, &BTreeMap::new())?;
     let mut disk = flow.clone();
     let mut healer = if args.heal {
         let model =

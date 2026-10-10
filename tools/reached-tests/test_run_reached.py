@@ -13,6 +13,151 @@ import run_reached as rr
 
 
 class RunnerContracts(unittest.TestCase):
+    def test_batch_order_hoists_only_fmt_and_keeps_selector_indices(self):
+        steps, error = rr._steps({"steps": [
+            {"argv": ["python", "-c", "pass"], "cwd": ".", "slot": False},
+            {"argv": ["cargo", "+1.97.1", "test", "--lib"], "cwd": ".", "slot": True},
+            {"argv": ["cargo", "+1.97.1", "fmt", "--all", "--", "--check"], "cwd": ".", "slot": False},
+            {"argv": ["cargo", "+1.97.1", "clippy", "-p", "x"], "cwd": ".", "slot": True},
+        ]})
+        self.assertIsNone(error)
+        ordered = rr._execution_order(steps, True)
+        self.assertEqual([entry["index"] for entry in ordered], [0, 2, 1, 3])
+
+    def test_batch_result_rejects_old_cli_and_requires_exact_prefix(self):
+        parsed, error = rr._batch_result(None, 2, 0)
+        self.assertIsNone(parsed)
+        self.assertIn("malformed", error)
+        parsed, error = rr._batch_result({"schema": "graphhelm.slot-batch-result/1",
+                                          "completed": [{"index": 1, "exitCode": 0, "elapsedSeconds": 1}],
+                                          "remaining": [1], "stopReason": "leaseBoundary"}, 2, 0)
+        self.assertIsNone(parsed)
+        self.assertIn("ordered prefix", error)
+
+    def test_batch_result_rejects_false_green_shapes(self):
+        base = {"schema": "graphhelm.slot-batch-result/1", "completed": [], "remaining": [0], "stopReason": "leaseBoundary"}
+        for mutation, message in [
+            ({"stopReason": "exhausted", "remaining": [], "completed": [{"index": 0, "exitCode": 3, "elapsedSeconds": 1}]}, "successfully"),
+            ({"stopReason": "leaseBoundary", "completed": [{"index": True, "exitCode": 0, "elapsedSeconds": 1}]}, "ordered prefix"),
+            ({"stopReason": "leaseBoundary", "remaining": [0, 0]}, "exact complement"),
+            ({"stopReason": "leaseBoundary", "remaining": [], "completed": []}, "exact complement"),
+        ]:
+            value = dict(base)
+            value.update(mutation)
+            parsed, error = rr._batch_result(value, 1, 0)
+            self.assertIsNone(parsed)
+            self.assertIn(message, error)
+        child = {"schema": "graphhelm.slot-batch-result/1",
+                 "completed": [{"index": 0, "exitCode": 4, "elapsedSeconds": 1}],
+                 "remaining": [], "stopReason": "childFailure"}
+        parsed, error = rr._batch_result(child, 1, 4)
+        self.assertEqual(error, None)
+        self.assertEqual(parsed["stopReason"], "childFailure")
+
+    def test_batch_envelope_rejects_contradictory_outer_exit(self):
+        with tempfile.TemporaryDirectory() as temp:
+            log = Path(temp) / "slot.log"
+            valid = {"command": "workspace.slot", "ok": True,
+                     "data": {"waitedSeconds": 1, "heldSeconds": 1, "exitCode": 7, "batch": {}}}
+            log.write_text(json.dumps(valid) + "\n", encoding="utf-8")
+            self.assertEqual(rr._batch_envelope(log, 7)[1:], (1.0, 1.0))
+            for mutation in (
+                {"ok": False},
+                {"data": {**valid["data"], "exitCode": 0}},
+                {"data": {key: value for key, value in valid["data"].items() if key != "exitCode"}},
+                {"data": {**valid["data"], "exitCode": True}},
+            ):
+                invalid = {**valid, **mutation}
+                log.write_text(json.dumps(invalid) + "\n", encoding="utf-8")
+                self.assertEqual(rr._batch_envelope(log, 7), (None, None, None))
+
+    def test_batch_runner_resumes_boundary_without_duplicate_prefix(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            (repo / "x").write_text("x", encoding="utf-8")
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            output = Path(temp).parent / (Path(temp).name + "-batch-report.json")
+            plan = {"steps": [
+                {"argv": ["cargo", "+1.97.1", "test", "--lib"], "cwd": ".", "slot": True},
+                {"argv": ["cargo", "+1.97.1", "clippy", "-p", "x"], "cwd": ".", "slot": True},
+                {"argv": [sys.executable, "-c", "pass"], "cwd": ".", "slot": False},
+            ]}
+            calls = []
+
+            def fake_git(_repo, *args):
+                return "HEAD" if args[0] == "rev-parse" else ""
+
+            def fake_run(command, **kwargs):
+                if command[0] == "git":
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                calls.append((command, kwargs["env"]))
+                batch = {"schema": "graphhelm.slot-batch-result/1",
+                         "completed": [{"index": 0, "exitCode": 0, "elapsedSeconds": 1}],
+                         "remaining": [1], "stopReason": "leaseBoundary"} if len(calls) == 1 else {
+                         "schema": "graphhelm.slot-batch-result/1",
+                         "completed": [{"index": 0, "exitCode": 0, "elapsedSeconds": 1}],
+                         "remaining": [], "stopReason": "exhausted"}
+                kwargs["stdout"].write(json.dumps({"command": "workspace.slot", "ok": True, "data": {
+                    "waitedSeconds": 1, "heldSeconds": 2, "exitCode": 0, "batch": batch}}) + "\n")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
+                                      "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                                      "allow_whole_package": None, "plan": False, "batch_slot": True,
+                                      "graphhelm": sys.executable})()
+            with patch.object(rr, "_selector", return_value=plan), patch.object(rr, "_git", side_effect=fake_git), \
+                    patch.object(rr.subprocess, "run", side_effect=fake_run):
+                self.assertEqual(rr.run(args), 0)
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(report["status"], "passed")
+            self.assertEqual([item["index"] for item in report["completed"]], [0, 1, 2])
+            first = json.loads(calls[0][1]["GRAPHHELM_SLOT_BATCH"])
+            second = json.loads(calls[1][1]["GRAPHHELM_SLOT_BATCH"])
+            self.assertEqual(len(first["commands"]), 2)
+            self.assertEqual(len(second["commands"]), 1)
+            self.assertEqual(second["commands"][0], plan["steps"][1]["argv"])
+            self.assertEqual(first["deadlineUnixMs"], second["deadlineUnixMs"])
+
+    def test_batch_runner_observes_deadline_and_final_child_failure(self):
+        def run_case(batch, cli_code):
+            with tempfile.TemporaryDirectory() as temp:
+                repo = Path(temp)
+                subprocess = __import__("subprocess")
+                subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+                (repo / "x").write_text("x", encoding="utf-8")
+                subprocess.run(["git", "add", "x"], cwd=repo, check=True)
+                subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+                output = Path(temp).parent / (Path(temp).name + "-report.json")
+                plan = {"steps": [{"argv": ["cargo", "+1.97.1", "test", "--lib"], "cwd": ".", "slot": True}]}
+                def fake_run(command, **kwargs):
+                    if command[0] == "git":
+                        return subprocess.CompletedProcess(command, 0, "", "")
+                    kwargs["stdout"].write(json.dumps({"command": "workspace.slot", "ok": True,
+                        "data": {"waitedSeconds": 1, "heldSeconds": 1, "exitCode": cli_code, "batch": batch}}) + "\n")
+                    return subprocess.CompletedProcess(command, cli_code, "", "")
+                args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
+                    "root": "D:/gh", "lane": "test", "budget_seconds": 180, "allow_whole_package": None,
+                    "plan": False, "batch_slot": True, "graphhelm": sys.executable})()
+                def fake_git(_repo, *git_args):
+                    return "HEAD" if git_args[0] == "rev-parse" else ""
+                with patch.object(rr, "_selector", return_value=plan), patch.object(rr, "_git", side_effect=fake_git), \
+                        patch.object(rr.subprocess, "run", side_effect=fake_run):
+                    self.assertEqual(rr.run(args), 1)
+                return json.loads(output.read_text(encoding="utf-8"))
+
+        deadline = run_case({"schema": "graphhelm.slot-batch-result/1", "completed": [],
+                             "remaining": [0], "stopReason": "deadline"}, 0)
+        self.assertEqual(deadline["status"], "budgetExceeded")
+        self.assertEqual(deadline["completed"], [])
+        failed = run_case({"schema": "graphhelm.slot-batch-result/1",
+                           "completed": [{"index": 0, "exitCode": 7, "elapsedSeconds": 1}],
+                           "remaining": [], "stopReason": "childFailure"}, 7)
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["completed"][0]["returncode"], 7)
+
     def test_steps_preserve_cwd_and_slot_without_shell(self):
         steps, error = rr._steps({"steps": [{"argv": ["cargo", "+1.97.1", "test", "--lib"], "cwd": ".", "slot": True},
                                    {"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio", "slot": False}]})
@@ -246,11 +391,13 @@ class RunnerContracts(unittest.TestCase):
             plan = {"steps": [{"argv": ["cargo", "+1.97.1", "test", "--lib"], "cwd": ".", "slot": True},
                                {"argv": ["python", "-c", "pass"], "cwd": ".", "slot": False}]}
             calls = []
+            envs = []
 
             def fake_run(command, **kwargs):
                 if command[0] == "git":
                     return subprocess.CompletedProcess(command, 0, "HEAD\n" if command[1] == "rev-parse" else "", "")
                 calls.append(command)
+                envs.append(kwargs["env"])
                 stream = kwargs["stdout"]
                 stream.write('{"command":"workspace.slot","data":{"waitedSeconds":1,"heldSeconds":2}}')
                 return subprocess.CompletedProcess(command, 0, "", "")
@@ -264,6 +411,7 @@ class RunnerContracts(unittest.TestCase):
             self.assertEqual(len(calls), 2)
             self.assertEqual(calls[0][0:4], [sys.executable, "--json", "workspace", "slot"])
             self.assertEqual(calls[1][0], sys.executable)
+            self.assertNotIn("GRAPHHELM_SLOT_BATCH", envs[1])
             self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["heldSeconds"], 2.0)
 
     def test_unsupported_targets_are_incomplete_before_any_step(self):

@@ -232,6 +232,13 @@ fn an_approved_journey_holds_before_its_destructive_act_and_plays_it_only_when_c
     git(&project, &["init", "--quiet", "--object-format=sha1"]);
     let (code, value) = cli(&project, &["init", "--harness", "claude-code"]);
     assert_eq!(code, 0, "{value}");
+    // `graphhelm init` owns the ignore file; restore the fixture's reviewed boundary before
+    // committing so the journey remains tracked while owner/runtime material stays private.
+    std::fs::write(
+        project.join(".gitignore"),
+        "node_modules/\n.graphhelm/*\n!.graphhelm/journeys/\n!.graphhelm/journeys/**\n",
+    )
+    .unwrap();
     git(&project, &["add", "."]);
     git(
         &project,

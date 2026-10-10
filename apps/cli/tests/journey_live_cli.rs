@@ -4,6 +4,10 @@
 //! reaches, and `act` reaching a session that is not there. Real CLI/tempdir/Git boundary, the
 //! installed observer is a tripwire that must never start; cost: seconds after build, offline,
 //! no Node/browser/provider.
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use std::path::Path;
 use std::process::Command;
 
@@ -436,7 +440,7 @@ fn launcher_secrets_reach_preflight_without_exporting_other_keys_or_values() {
         let stop = Arc::new(AtomicBool::new(false));
         let done = stop.clone();
         let server = std::thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(15);
+            let deadline = Instant::now() + scaled(Duration::from_secs(15));
             while !ready.exists() && !done.load(Ordering::Relaxed) && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(10));
             }

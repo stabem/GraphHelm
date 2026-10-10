@@ -6,6 +6,10 @@
 //! credential that can approve. Cost: one `serve` subprocess plus CLI/MCP subprocesses on
 //! tempdirs; no network beyond loopback, no browser, model or credentials; seconds after the build.
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -194,7 +198,7 @@ impl Harness {
             .unwrap()
             .trim()
             .to_owned();
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + scaled(Duration::from_secs(10));
         while http(&base, "GET", "/health", None).0 != 200 {
             assert!(Instant::now() < deadline, "the server never became healthy");
             std::thread::sleep(Duration::from_millis(50));
@@ -236,7 +240,7 @@ impl Harness {
             .arg(&token_file)
             .args(["--actor", "agent-chat", "--actor-type", actor_type])
             .write_stdin(input)
-            .timeout(Duration::from_secs(60))
+            .timeout(scaled(Duration::from_secs(60)))
             .output()
             .unwrap();
         let reply = String::from_utf8(output.stdout)
@@ -286,7 +290,7 @@ fn http_body(
         return (0, Value::Null);
     };
     stream
-        .set_read_timeout(Some(Duration::from_secs(60)))
+        .set_read_timeout(Some(scaled(Duration::from_secs(60))))
         .unwrap();
     stream.write_all(head.as_bytes()).unwrap();
     let mut raw = Vec::new();
@@ -754,7 +758,7 @@ fn signal_as_agent(base: &str, bearer: &str, key: &str, body: &str) -> (u16, Val
     let request = format!("{head}\r\n\r\n{body}");
     let mut stream = TcpStream::connect(address).unwrap();
     stream
-        .set_read_timeout(Some(Duration::from_secs(60)))
+        .set_read_timeout(Some(scaled(Duration::from_secs(60))))
         .unwrap();
     stream.write_all(request.as_bytes()).unwrap();
     let mut raw = Vec::new();

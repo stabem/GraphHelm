@@ -117,7 +117,7 @@ fn post_json(url: &str, token: &str, key: &str, actor_type: &str, body: &Value) 
     let (host, port, path) = split_url(url);
     let mut stream = TcpStream::connect((host.as_str(), port)).unwrap();
     stream
-        .set_read_timeout(Some(Duration::from_secs(60)))
+        .set_read_timeout(Some(scaled(Duration::from_secs(60))))
         .unwrap();
     let payload = serde_json::to_vec(body).unwrap();
     let request = format!(

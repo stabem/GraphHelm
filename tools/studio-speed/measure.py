@@ -72,7 +72,7 @@ def main():
             probe.bind(("127.0.0.1", port))
     bash = "C:/Program Files/Git/bin/bash.exe" if os.name == "nt" else "bash"
     fixture = [bash, str(repo / "tools/studio-journey-fixture/fixture.sh")]
-    samples = {name: [] for name in ("connectFirstUsablePaint", "tabTeam", "tabJourney", "tabGraph", "openJourney", "sendChat")}
+    samples = {name: [] for name in ("connectFirstUsablePaint", "tabLanes", "tabProof", "openJourneys", "tabGraph", "openJourney", "openChat", "sendChat")}
     title = "Read the team chat and message everyone"
     stage = "fixture startup"
     try:
@@ -98,14 +98,23 @@ def main():
                         stage = f"run {run + 1}: connect"
                         samples["connectFirstUsablePaint"].append(click_time(page,
                             page.get_by_role("button", name="Connect", exact=True),
-                            page.locator("#studio-panel-graph").get_by_role("tab", name="Team", exact=True)))
+                            page.locator("#studio-panel-graph").get_by_text("No journeys in this project yet", exact=True)))
                         expect(page.get_by_label("Selected run identity")).to_contain_text("Run: demo")
+                        graph = page.locator("#studio-panel-graph")
+                        views = graph.get_by_role("tablist", name="Mission views", exact=True)
+                        expect(views.get_by_role("tab", name="Graph", exact=True)).to_have_attribute("aria-selected", "true")
                         stage = f"run {run + 1}: tabs"
-                        samples["tabTeam"].append(click_time(page,
-                            page.locator("#studio-panel-graph").get_by_role("tab", name="Team", exact=True),
-                            page.locator("#studio-panel-team").get_by_text("planner", exact=True).first))
-                        samples["tabJourney"].append(click_time(page,
-                            page.get_by_role("tab", name="Journey", exact=True),
+                        samples["tabLanes"].append(click_time(page,
+                            views.get_by_role("tab", name="Lanes", exact=True),
+                            graph.get_by_role("list", name="Agent board", exact=True).get_by_text("planner", exact=True)))
+                        expect(views.get_by_role("tab", name="Lanes", exact=True)).to_have_attribute("aria-selected", "true")
+                        samples["tabProof"].append(click_time(page,
+                            views.get_by_role("tab", name="Proof", exact=True),
+                            graph.get_by_text("No journeys in this project yet", exact=True)))
+                        expect(views.get_by_role("tab", name="Proof", exact=True)).to_have_attribute("aria-selected", "true")
+                        expect(graph.get_by_role("list", name="Agent board", exact=True)).to_have_count(0)
+                        samples["openJourneys"].append(click_time(page,
+                            graph.get_by_role("button", name=re.compile(r"^Journeys(?: · \d+ to approve)?$")),
                             page.get_by_role("list", name="Journeys", exact=True).get_by_role("button").first))
                         stage = f"run {run + 1}: journey"
                         detail = page.get_by_role("article", name=f"Journey {title}", exact=True)
@@ -119,7 +128,13 @@ def main():
                             page.get_by_role("tab", name="Graph", exact=True),
                             page.locator("#studio-panel-graph").get_by_text("No journeys in this project yet", exact=True)))
                         stage = f"run {run + 1}: chat setup"
-                        page.locator("#studio-panel-graph").get_by_role("tab", name="Team", exact=True).click()
+                        chat = graph.get_by_role("button", name="Chat", exact=True)
+                        everyone = page.get_by_role("tab", name=re.compile(r"^Everyone(?:, \d+ unread)?$"))
+                        expect(chat).to_have_attribute("aria-pressed", "false")
+                        expect(everyone).not_to_be_visible()
+                        samples["openChat"].append(click_time(page, chat, everyone))
+                        expect(chat).to_have_attribute("aria-pressed", "true")
+                        expect(graph).to_be_visible()
                         page.get_by_role("tab", name=re.compile(r"^Everyone(?:, \d+ unread)?$")).click()
                         message = f"Studio speed sample {run + 1}"
                         panel = page.get_by_role("tabpanel", name="Everyone", exact=True)
@@ -134,6 +149,8 @@ def main():
                         page.reload()
                         page.get_by_label("Bearer token", exact=True).fill(token)
                         page.get_by_role("button", name="Connect", exact=True).click()
+                        graph.get_by_role("button", name="Chat", exact=True).click()
+                        expect(graph.get_by_role("button", name="Chat", exact=True)).to_have_attribute("aria-pressed", "true")
                         page.get_by_role("tab", name=re.compile(r"^Everyone(?:, \d+ unread)?$")).click()
                         expect(panel.get_by_text(message, exact=True)).to_be_visible()
                     finally:
@@ -151,7 +168,7 @@ def main():
                     "preview": "404 stub: journey details only, no replay or approval",
                     "clock": "browser click event to visible DOM plus two animation frames",
                     "p95Method": "nearest rank (maximum for ten samples)",
-                    "correctness": "selected demo; planner visible; two journey steps; chat reread after reload",
+                    "correctness": "selected demo; Graph/Lanes/Proof selected; planner visible in Lanes; Proof empty state; two journey steps; Chat toggle opens beside Graph; chat reread after reload",
                     "metrics": {key: summarize(values) for key, values in samples.items()},
                 }
             finally:

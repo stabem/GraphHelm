@@ -5,9 +5,7 @@
 
 mod support;
 
-#[path = "support/time_scale.rs"]
-mod time_scale;
-use time_scale::scaled;
+use support::time_scale::scaled;
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;

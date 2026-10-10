@@ -223,6 +223,15 @@ Studio's **Ask for status** appends an `operator_note` addressed with `to: <lane
 team execution. SendMessage is not its delivery mechanism. Every active lane must maintain
 this loop; the coordinator does not nudge it:
 
+When deploying a Runtime version that adds addressed-note routing fields, upgrade and verify
+all active event-store readers first: PATH-installed or versioned `graphhelm` CLIs, direct-store
+status/inbox tools, and sidecars that read the event log. HTTP-only hooks are not direct-store
+readers; update them with the host plugins after the Runtime writer is switched. Do not switch
+the writer until readers can replay events containing `to` and `replyTo`. Old readers cannot
+roll back after such an event is appended. Never delete or rewrite events; restore compatible
+readers instead. Track source release, Runtime writer activation, host activation, and observed
+autonomous wake as separate statuses.
+
 1. Bind the host/plugin to the **team execution**. On Desktop, put `executionId`, `runtimeUrl`,
    and the agent token file path in the repository's ignored `.graphhelm/team.json`; SessionStart
    saves the valid Desktop `session_title` by `session_id`, and Stop resolves the lane from that

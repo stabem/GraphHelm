@@ -1542,7 +1542,7 @@ fn a_build_directory_is_reclaimed_only_when_its_worktree_is_positively_gone() {
 /// #612: the Runtime reports the build-slot queues so the Studio can say "waiting for a build
 /// (Nth)" instead of "Slow". `GET /v1/workspaces/slots` returns, per `--slot-root`, exactly what
 /// `workspace slot status` sees: here one holder and one waiter on a temp root, plus an empty
-/// second root. Read-only: the holder and waiter both still finish their own commands. Owner only:
+/// second root and a missing root reported as an error. Read-only: the holder and waiter both still finish their own commands. Owner only:
 /// the agent session token is refused. Credible regression: no route at all (the Studio guesses
 /// from elapsed time), or one that agents can read. Cost: one Runtime, two short slot commands.
 #[test]
@@ -1551,6 +1551,8 @@ fn the_runtime_reports_each_slot_roots_holder_and_waiters_to_the_owner_only() {
     let root = dir.path().join("slot-a");
     let root_s = root.to_str().unwrap();
     let empty = dir.path().join("slot-b");
+    std::fs::create_dir(&empty).unwrap();
+    let missing = dir.path().join("slot-missing");
     let log = dir.path().join("log.txt");
     let holder = slot_with(
         root_s,
@@ -1575,6 +1577,8 @@ fn the_runtime_reports_each_slot_roots_holder_and_waiters_to_the_owner_only() {
             root_s,
             "--slot-root",
             empty.to_str().unwrap(),
+            "--slot-root",
+            missing.to_str().unwrap(),
         ],
     );
     let owner = std::fs::read_to_string(owner).unwrap();
@@ -1589,7 +1593,7 @@ fn the_runtime_reports_each_slot_roots_holder_and_waiters_to_the_owner_only() {
     assert_eq!(reply.status, 200, "{}", reply.body);
     let body: Value = serde_json::from_str(&reply.body).unwrap();
     let slots = body["data"]["slots"].as_array().expect("slots");
-    assert_eq!(slots.len(), 2, "{body}");
+    assert_eq!(slots.len(), 3, "{body}");
     assert_eq!(slots[0]["root"], root_s, "{body}");
     assert_eq!(slots[0]["holder"]["lane"], "lane-a", "{body}");
     assert_eq!(slots[0]["holder"]["label"], "hold", "{body}");
@@ -1599,6 +1603,15 @@ fn the_runtime_reports_each_slot_roots_holder_and_waiters_to_the_owner_only() {
     assert!(waiting[0]["waitedSeconds"].as_u64().is_some(), "{body}");
     assert_eq!(slots[1]["holder"], Value::Null, "{body}");
     assert_eq!(slots[1]["waiting"], serde_json::json!([]), "{body}");
+    assert!(slots[1].get("error").is_none(), "{body}");
+    assert_eq!(slots[2]["root"], missing.to_str().unwrap(), "{body}");
+    assert_eq!(
+        slots[2]["error"][0]["code"],
+        "workspace.slot_root_missing",
+        "{body}"
+    );
+    assert!(slots[2].get("holder").is_none(), "{body}");
+    assert!(slots[2].get("waiting").is_none(), "{body}");
     // Read-only: both queued commands still ran to their end.
     assert_eq!(log_tags(&log), ["a", "b"], "the read disturbed the queue");
     assert_eq!(refused.status, 403, "{}", refused.body);

@@ -46,6 +46,9 @@ const SET_ELSEWHERE: Record<string, string> = {
  * why the wrapper remains readable through its styled descendants or an ancestor rule. */
 const NO_RULE_NEEDED: Record<string, string> = {};
 
+// #86: these handoff-tree classes are included by the component/CSS globs below:
+// delegation-tree, delegation-note, delegation-roots, delegation-label, delegation-source.
+
 /**
  * Every component's source, as text.
  *

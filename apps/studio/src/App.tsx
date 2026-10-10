@@ -83,6 +83,7 @@ import { DocumentEditor, type DocumentSaveRequest } from "./components/document-
 import { NativeChats } from "./components/native-chats";
 import { MainChat } from "./components/main-chat";
 import { TeamCanvas } from "./components/team-canvas";
+import { DelegationTree } from "./components/delegation-tree";
 import { GraphFileRow } from "./components/graph-file-row";
 import { Beacon, NEEDS_YOU_ID, QuestionCards } from "./components/beacon";
 import { HandoverCard } from "./components/handover-card";
@@ -3119,6 +3120,9 @@ export default function App({
               style={dockReservePx === null ? undefined : ({ "--dock-reserve": `${dockReservePx}px` } as CSSProperties)}
             >
             <div id="studio-panel-team" role="tabpanel" aria-labelledby="studio-tab-team" hidden={canvasTab !== "team"}>
+            {canvasTab === "team" && taskGraphs?.executionId === selected && (
+              <DelegationTree tasks={taskGraphs.tasks} />
+            )}
             {canvasTab === "team" && taskGraphs?.executionId === selected && (
               <TaskGraphs tasks={taskGraphs.tasks}
                 onOpenJourney={(contractId) => { setJourneyContract(contractId); setJourneyDetail(null); chooseCanvas("journey"); }} />

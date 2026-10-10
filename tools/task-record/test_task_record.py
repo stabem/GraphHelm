@@ -57,6 +57,13 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
 
 
 class TaskRecordTest(unittest.TestCase):
+    def test_claim_transports_reported_assigner(self):
+        # Wire gap: no existing test carries assignment provenance. Local HTTP only.
+        code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "86",
+                                  "--branch", "issue-86-tree", "--assigned-by", "coord")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(FakeRuntime.seen[-1][1]["signal"]["description"])["assignedBy"], "coord")
+
     @classmethod
     def setUpClass(cls):
         cls.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeRuntime)

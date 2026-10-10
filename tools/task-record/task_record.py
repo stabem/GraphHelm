@@ -87,6 +87,7 @@ def parse(argv):
     p.add_argument("--revision", type=int, help="defaults to the step's position: claimed 1 (planned 1) ... merged 5")
     p.add_argument("--branch")
     p.add_argument("--parent", type=int, help="claimed: the issue whose work turned this task up (#514)")
+    p.add_argument("--assigned-by", help="claimed: who ordered the work, as reported by this lane")
     p.add_argument("--pr", type=int)
     p.add_argument("--head", help="the PR head sha the step is about")
     p.add_argument("--reviewer")
@@ -229,6 +230,10 @@ def document(args, now):
     if args.kind == "claimed":
         need(args, "branch")
         doc.update(issue=args.issue, lane=args.lane, branch=args.branch)
+        if args.assigned_by is not None:
+            if not args.assigned_by or len(args.assigned_by) > 128 or not args.assigned_by.isprintable() or args.assigned_by == args.lane:
+                sys.exit("task_record: --assigned-by must name someone other than the lane in 1-128 printable characters")
+            doc["assignedBy"] = args.assigned_by
         if args.parent:
             doc["parent"] = args.parent
         journeys = known_journeys(args)

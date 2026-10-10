@@ -1041,7 +1041,7 @@
           "id": "schema/task-event",
           "kind": "schema",
           "path": "schemas/task-event.schema.json",
-          "sha256": "sha256:426e7564a18dcfabadf275db844b369c1475821e23d08ba1d6c0897c1c2df80c",
+          "sha256": "sha256:d32a1540aeff2bbb6777bfb0170e00e75423f83fba3ffed4875d3bbca1017262",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -1054,7 +1054,7 @@
           "id": "fixture/task-event-valid-claimed",
           "kind": "fixture",
           "path": "fixtures/task-event/valid/claimed.json",
-          "sha256": "sha256:728441f821454b7d9df7a90999dbf392210cd9df2420aaa2944e31edb79e3083",
+          "sha256": "sha256:4f532745e085fcdad14893f1ae70955b3855b2dc94bf8694fe903f7fdc5386ff",
           "effects": [],
           "permissions": [],
           "requires": {

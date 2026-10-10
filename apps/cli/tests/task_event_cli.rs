@@ -153,6 +153,47 @@ fn each_of_the_six_task_kinds_is_accepted_from_its_recording_actor() {
     }
 }
 
+/// #86: assignment provenance is optional, bounded text and cannot name the claimant.
+/// Existing claim fixtures cover no assigner. Cost: one temp store and seven CLI calls.
+#[test]
+fn claimed_assigner_is_admitted_but_self_or_malformed_assigners_are_refused() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    for (case, assigner, accepted) in [
+        ("reported", json!("coord"), true),
+        ("unicode-boundary", json!("é".repeat(128)), true),
+        ("self", json!(ACTOR), false),
+        ("long", json!("x".repeat(129)), false),
+        ("empty", json!(""), false),
+        ("null", Value::Null, false),
+        ("control", json!("bad\nname"), false),
+    ] {
+        let mut document = as_actor(package_fixture("claimed"));
+        document["assignedBy"] = assigner;
+        let reply = signal(
+            scratch.path(),
+            &events,
+            &format!("assigner-{case}"),
+            "task.claimed",
+            ACTOR,
+            &document,
+        );
+        assert_eq!(reply["ok"], json!(accepted), "{case}: {reply}");
+        if !accepted {
+            assert_eq!(
+                reply["diagnostics"][0]["code"],
+                json!("GHCLI003_SIGNAL_INVALID")
+            );
+            assert!(
+                !scratch
+                    .path()
+                    .join(format!("assigner-{case}-evidence.json"))
+                    .exists()
+            );
+        }
+    }
+}
+
 #[test]
 fn a_malformed_task_document_is_refused_as_invalid() {
     let scratch = tempfile::tempdir().unwrap();

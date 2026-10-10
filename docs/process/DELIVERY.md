@@ -202,6 +202,7 @@ task with one slice per PR (#460): record `task.claimed` with the new slice's ow
 `pr_opened`, and the Studio draws each slice as its own graph, so merging one slice never hides the
 next. `repo` is the GitHub `owner/name` (here
 `stabem/GraphHelm`); the Studio links the task's issue and PR from it, so name it on `task.claimed`.
+Pass `--assigned-by` on `claimed` when an order came from someone; the Studio labels it as the lane's report.
 Name the journey the issue serves; the Studio Graph tab links the task to it. Ids are the stems of .graphhelm/journeys/*.journey.yaml.
 
 **Plan is a recorded step (#480).** A claimed task shows **Plan** lit until its `task.planned`

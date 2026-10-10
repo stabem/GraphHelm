@@ -29,7 +29,7 @@ export interface TeamCanvasProps {
   onNameBot?: (actorId: string, displayName: string) => void | Promise<unknown>;
 }
 
-function NameBot({ bot, onSave }: { bot: Bot; onSave: (actorId: string, displayName: string) => void | Promise<unknown> }) {
+export function NameBot({ bot, onSave }: { bot: Bot; onSave: (actorId: string, displayName: string) => void | Promise<unknown> }) {
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState("");
   if (bot.actorId === null) return null;

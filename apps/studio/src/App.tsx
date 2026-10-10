@@ -3089,7 +3089,7 @@ export default function App({
                   key={`agent-${selected}-${focus.id}`}
                   agentId={focus.id}
                   charter={nativePersonaLinks[focus.id]?.charter ?? personas[focus.id] ?? null}
-                  name={nativePersonaLinks[focus.id]?.chat.title}
+                  name={actorAliases[focus.id] ?? nativePersonaLinks[focus.id]?.chat.title}
                   nativeChats={nativePersonaLinks[focus.id] === undefined ? undefined : (
                     <NativeChats
                       client={clientRef.current}

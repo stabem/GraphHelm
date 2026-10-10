@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-see-team
-title: See agents, their timeline and details in Lanes
+title: "See agents, their timeline and details in Lanes"
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -27,16 +27,16 @@ screens:
     expect: [{role: region, name: Canvas}, {role: tablist, name: Mission views}, {role: tab, name: Lanes}]
     scope: [apps/studio/src/components/mission-view.tsx]
 edges:
-  - id: run.lanes
-    from: run
-    to: lanes
-    acts:
-      - {kind: activate, role: tab, name: Lanes}
   - id: lanes.details
     from: lanes
     to: agent
     acts:
       - {kind: activate, role: button, name: Details}
+  - id: run.lanes
+    from: run
+    to: lanes
+    acts:
+      - {kind: activate, role: tab, name: Lanes}
 paths:
   main: [run.lanes, lanes.details]
 drift: []

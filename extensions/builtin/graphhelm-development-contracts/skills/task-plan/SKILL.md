@@ -31,11 +31,14 @@ how much process the change needs. It never writes code.
      (add `test-audit` to `skills`);
    - both kinds of promise → `both`; docs only → `none`.
 4. Reviews: 1 for every class today (owner order). `keel` is always in `skills` for code.
-5. Run the planner: `graphhelm keel plan --paths <p>... --promise "<text>"` (MCP `keel_plan`).
-   **Not implemented yet (Phase B).** Until it lands, write the document by hand with
-   `decidedBy: "rules"` and record it with `graphhelm execution signal --signal <file>` (or the MCP
-   `signal` tool) on the team execution, as an `operator_note` whose description is the JSON
-   document. Say in the PR body that the plan was written by hand.
+5. Run the shipped planner: `graphhelm keel plan --task <task-id> --paths <p>... --promise "<text>"`
+   (or the MCP `keel_plan` tool). It prints a `graphhelm-task-plan-v1` plan. When recording is
+   configured, pass `--events`, `--execution`, `--keyring` and `--key-id` to also append that plan
+   as a `keel.plan` signal to the execution. This planner output and signal are distinct from the
+   team's `task.planned` lifecycle record: use `tools/task-record/task_record.py` as documented in
+   `docs/process/DELIVERY.md` to record that step. If no Runtime-backed task record is available,
+   keep the plan as a card in the PR body; do not describe a hand-written card as a persisted
+   record.
 6. Put the promise, paths and proof command in the PR body as the Keel card.
 
 ## Design critic (`critic: design`)

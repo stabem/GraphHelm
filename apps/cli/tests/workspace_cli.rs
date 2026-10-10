@@ -1606,8 +1606,7 @@ fn the_runtime_reports_each_slot_roots_holder_and_waiters_to_the_owner_only() {
     assert!(slots[1].get("error").is_none(), "{body}");
     assert_eq!(slots[2]["root"], missing.to_str().unwrap(), "{body}");
     assert_eq!(
-        slots[2]["error"][0]["code"],
-        "workspace.slot_root_missing",
+        slots[2]["error"][0]["code"], "workspace.slot_root_missing",
         "{body}"
     );
     assert!(slots[2].get("holder").is_none(), "{body}");

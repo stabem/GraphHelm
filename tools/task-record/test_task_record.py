@@ -628,6 +628,35 @@ class MergedRequiresGithub(unittest.TestCase):
         self.assertFalse(self.calls.exists())
 
 
+class ClosedRequiresGithub(unittest.TestCase):
+    """#747: a closure must not end a task slice while its PR is still open or merged.
+    The task-record tests otherwise observe only document shape, not GitHub state. Fake gh is a
+    local child and send is the I/O boundary. Cost: one child process, no network.
+    """
+
+    def test_open_pr_is_refused_without_sending_a_closed_record(self):
+        with patch.object(task_record.subprocess, "run", return_value=subprocess.CompletedProcess(
+                ["gh"], 0, json.dumps({"state": "OPEN", "mergedAt": None}), "")) as run, \
+                patch.object(task_record, "send") as send, patch("task_record.time.sleep"):
+            with self.assertRaises(SystemExit) as error:
+                task_record.main(["--lane", "test", "--issue", "747", "closed", "--pr", "685",
+                                  "--reason", "superseded", "--by", "740"])
+        self.assertIn("state=OPEN", str(error.exception))
+        self.assertEqual(run.call_args.args[0], ["gh", "pr", "view", "685", "--json", "state,mergedAt",
+                                                 "--repo", "stabem/GraphHelm"])
+        send.assert_not_called()
+
+    def test_closed_unmerged_pr_sends_the_requested_close_record(self):
+        with patch.object(task_record.subprocess, "run", return_value=subprocess.CompletedProcess(
+                ["gh"], 0, json.dumps({"state": "CLOSED", "mergedAt": None}), "")), \
+                patch.object(task_record, "send", return_value=(0, "record", {})) as send:
+            self.assertEqual(task_record.main(["--lane", "test", "--issue", "747", "closed", "--pr", "685",
+                                               "--reason", "superseded", "--by", "740"]), 0)
+        self.assertEqual(send.call_args.args[1]["pr"], 685)
+        self.assertEqual(send.call_args.args[1]["reason"], "superseded")
+        self.assertEqual(send.call_args.args[1]["by"], 740)
+
+
 class GithubWordsDecodeUtf8(unittest.TestCase):
     """#526: `gh` answers in UTF-8. Read with the platform default, a curly quote (byte 0x9d in
     UTF-8, unmapped in cp1252) killed the reader on Windows and the record was never sent. The fake

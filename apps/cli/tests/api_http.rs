@@ -2225,6 +2225,63 @@ fn a_task_record_in_another_lanes_name_is_a_403_actor_mismatch() {
     assert_eq!(recorded(), before, "a refused task record appends nothing");
 }
 
+/// `task.closed` ends the Studio slice for a closed PR. The Runtime must admit the same record
+/// shape the task-record tool emits, and persist it through the served signal path. Cost: one
+/// temporary event store and one local HTTP POST.
+#[test]
+fn a_task_closed_signal_is_accepted_over_http() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-task-closed";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let document = serde_json::json!({
+        "schema": "graphhelm-task-event-v1",
+        "taskId": "issue-747",
+        "revision": 1,
+        "at": "2026-10-10T12:00:00Z",
+        "pr": 750,
+        "reason": "superseded",
+        "by": 751,
+    });
+    let body = serde_json::json!({"signal": {
+        "id": "close-record-750",
+        "source": {"type": "user", "id": "lane-alpha"},
+        "type": "task.closed",
+        "severity": "low",
+        "description": document.to_string(),
+        "evidence": ["task"],
+        "emittedAt": "2026-10-10T12:00:00Z"
+    }});
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        &token,
+        &[
+            ("Idempotency-Key", "close-record-750"),
+            ("X-GraphHelm-Actor", "lane-alpha"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &body,
+    );
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["data"]["signalId"], "close-record-750");
+    let event = last_event_of_kind(&base, &token, execution, "signal_recorded");
+    assert_eq!(event["kind"]["type"], "signal_recorded");
+    assert_eq!(event["actor"]["id"], "lane-alpha");
+}
+
 /// A scoped agent bearer is the principal. Caller supplied actor headers cannot turn it into an
 /// owner or another seat, and the same credential cannot cross its one execution binding. This
 /// observes the real HTTP middleware plus the durable event actor, rather than checking a parser

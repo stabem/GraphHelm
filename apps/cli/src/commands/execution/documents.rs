@@ -335,6 +335,15 @@ pub(crate) fn validate_task_event(
             count("pr") && sha("mergeSha") && numbers("closes") && is_actor("merger"),
             &["pr", "mergeSha", "closes", "merger"],
         ),
+        "task.closed" => (
+            count("pr")
+                && matches!(
+                    document["reason"].as_str(),
+                    Some("superseded" | "abandoned")
+                )
+                && count("by"),
+            &["pr", "reason", "by"],
+        ),
         // #467: one round of the blind design critic. Running out of rounds is never a pass: the
         // verdict must agree with the score and the round, so `pass` needs the pass score,
         // `revise` needs a round left, and the last round below the pass score is `exhausted`.

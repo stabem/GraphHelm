@@ -249,13 +249,15 @@ fn without_head_sequence(mut data: Value) -> Value {
 }
 
 /// #134: `dispatch` and `dispatchUnavailable` depend on the graph the COMMAND holds, not on the
-/// stream -- `start` has it and publishes the view, bare `status` does not and says so -- so a
-/// start-versus-status equality strips both before comparing what the stream alone determines.
+/// stream -- `start` has it and publishes the view, bare `status` does not and says so. Bare
+/// `status` also reports live wake listeners, while the `start` reply does not. A
+/// start-versus-status equality strips these views before comparing the stream projection.
 /// Each command's own value is pinned where it is produced, never through this helper.
 fn without_graph_derived(mut data: Value) -> Value {
     if let Some(object) = data.as_object_mut() {
         object.remove("dispatch");
         object.remove("dispatchUnavailable");
+        object.remove("wakeListeners");
     }
     data
 }

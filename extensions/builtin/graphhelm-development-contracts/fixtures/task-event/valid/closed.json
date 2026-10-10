@@ -1,0 +1,9 @@
+{
+  "schema": "graphhelm-task-event-v1",
+  "taskId": "issue-747",
+  "revision": 1,
+  "at": "2026-10-10T12:00:00Z",
+  "pr": 750,
+  "reason": "superseded",
+  "by": 751
+}

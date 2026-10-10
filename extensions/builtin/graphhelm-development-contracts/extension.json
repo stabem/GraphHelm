@@ -1041,7 +1041,7 @@
           "id": "schema/task-event",
           "kind": "schema",
           "path": "schemas/task-event.schema.json",
-          "sha256": "sha256:d32a1540aeff2bbb6777bfb0170e00e75423f83fba3ffed4875d3bbca1017262",
+          "sha256": "sha256:876d10879235e279e6dfdf5821d1a5c5a6226aa576761ffb7a36c0e60cd29f2b",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -1139,6 +1139,20 @@
           "kind": "fixture",
           "path": "fixtures/task-event/valid/critic-verdict.json",
           "sha256": "sha256:28ebef64c017a219b83494010ae1f7a9d7e485674b546220d2ed86be2a2b120b",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
+        },
+        {
+          "id": "fixture/task-event-valid-closed",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/closed.json",
+          "sha256": "sha256:fafe347a684cdf1106c52a9dfab33be281aeba847ef79552b4c55cb2532ae72a",
           "effects": [],
           "permissions": [],
           "requires": {

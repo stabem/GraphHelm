@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/task-event.schema.json",
   "title": "Task Event",
-  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.planned, task.pr_opened, task.review_assigned, task.review_verdict, task.merged, task.critic_verdict); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
+  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.planned, task.pr_opened, task.review_assigned, task.review_verdict, task.merged, task.closed, task.critic_verdict); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
   "oneOf": [
     {
       "title": "task.claimed",
@@ -120,6 +120,22 @@
         "mergeSha": {"$ref": "#/$defs/sha"},
         "closes": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/positive"}},
         "merger": {"$ref": "#/$defs/actor"}
+      }
+    },
+    {
+      "title": "task.closed",
+      "description": "The PR was closed without merging; the reason distinguishes replacement from abandonment, and by names the superseding issue or PR.",
+      "type": "object",
+      "required": ["schema", "taskId", "revision", "at", "pr", "reason", "by"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "graphhelm-task-event-v1"},
+        "taskId": {"$ref": "#/$defs/taskId"},
+        "revision": {"$ref": "#/$defs/positive"},
+        "at": {"$ref": "#/$defs/at"},
+        "pr": {"$ref": "#/$defs/positive"},
+        "reason": {"enum": ["superseded", "abandoned"]},
+        "by": {"$ref": "#/$defs/positive"}
       }
     },
     {

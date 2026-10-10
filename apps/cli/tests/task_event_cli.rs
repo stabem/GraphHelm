@@ -130,7 +130,7 @@ fn a_task_signal_naming_another_actor_is_refused_and_records_nothing() {
 }
 
 #[test]
-fn each_of_the_six_task_kinds_is_accepted_from_its_recording_actor() {
+fn each_task_kind_is_accepted_from_its_recording_actor() {
     let scratch = tempfile::tempdir().unwrap();
     let events = start(scratch.path());
     for (name, kind) in [
@@ -140,6 +140,7 @@ fn each_of_the_six_task_kinds_is_accepted_from_its_recording_actor() {
         ("review-assigned", "task.review_assigned"),
         ("review-verdict", "task.review_verdict"),
         ("merged", "task.merged"),
+        ("closed", "task.closed"),
     ] {
         let reply = signal(
             scratch.path(),

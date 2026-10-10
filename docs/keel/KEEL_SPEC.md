@@ -23,6 +23,21 @@ Work starts from a **contract card**: scope as a list of paths (no globs, no `..
 
 Kept from: design-by-contract (the card is a contract), Pragmatic Programmer's tracer bullet (a card is one thin promise, end to end), JPD (the unit of work is an observable promise). Discarded: the narrative repository overview in always-loaded context (measured dead weight), and any prose-only "definition of done".
 
+**Retiring a consumer (2026-10-10, #711).** Law 1 also applies when a consumer disappears. In this
+repository, a change that removes, replaces or redirects a production caller inspects the displaced
+path: declarations, exclusive helpers/types, UI selectors, dependencies and tests. Remove only
+candidates whose production reachability and contract obligations have been checked; do not leave
+an old path alive solely because its tests still pass. A public or wire contract, platform-specific
+path, dynamic registration or manual tool may remain live without a local static caller.
+
+The author records the evidence and disposition in the PR's `Retirement:` entry; the existing
+reviewer checks it on the pinned head (`docs/process/DELIVERY.md` §3). Incomplete or stale coverage
+is unobserved, never proof of absence. A retained item needs a named consumer or contract; a
+speculative future use is not a consumer. Review uncertainty explicitly rather than deleting to
+satisfy a count. The record is scoped to the change, not a periodic repository sweep. This is a
+repository author/reviewer obligation, not a new automated classifier, hook, schema field or
+installed-plugin behavior; `keel check` does not certify absence of dead code.
+
 ### Law 2 — The write surface is declared, spent, and refused by name
 
 A node spends from a budget vector {new module, new type, new public function, new dependency, new test}. Zero is a budget. A promise may declare an allowance at planning time, capped by `maxAllowance`. The classifier (`core/policy/src/keel.rs`, `classify_write`) reads the unified diff and charges each declaration it can recognise on one added line in Rust, TypeScript/JavaScript and Python; every overrun is a finding by name (`keel.surface.<kind>_over_budget`, detail `charged N, budget M`) that refuses the diff only under `surfaceEnforcement: block` — by default it is a signal for the reviewer — and never a score, because a score lets a large win on one kind buy sprawl on another — the same averaging refusal `token-efficiency.yaml` already makes. A file that gains more than `body.maxFileLinesDelta` lines in one diff is `keel.body.oversized_change`.
@@ -67,6 +82,10 @@ Owner order 2026-09-23: *keel also serves to optimise time.* The unit of cost is
 | 2 | `gate-keel` registered in `quality.rs` with its pathogen suite; evidence = diff + card + test report; mutant-kill admission for tests | `apps/cli/commands/quality.rs`, `tools/pathogens` |
 | 3 | `KeelDebit` events; the ladder folded per actor from the Event Store; wired to `amend_budget` and route eligibility; repair cost charged to the offender | runtime driver (after #1204 lands) |
 | 4 | Contract index generated deterministically from the AST per unit (the read half of Law 1), served through `compile_context` instead of files | `core/architect`, context compiler |
+
+The optional [`keel test validation`](KEEL_TEST_VALIDATION.md) command collects journey execution
+evidence. It distinguishes generated functions observed in the browser from unobserved candidates
+and unknown source coverage; it cannot establish that a declaration is safe to delete.
 
 ## 5. Gaps the research names, kept open on purpose
 

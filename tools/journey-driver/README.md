@@ -23,10 +23,11 @@ only replies. No raw exception, input, stack, or secret is logged to stderr.
 
 | `op` | Additional request fields | `result` on success |
 |---|---|---|
-| `open` | `base`, `viewport: {width,height}`, `allowOrigins: []`; optional `headed: boolean` (default false) | `url` |
+| `open` | `base`, `viewport: {width,height}`, `allowOrigins: []`; optional `headed: boolean` (default false), `coverage: boolean` (default false) | `url` |
 | `snapshot` | `expect: [{role,name}]` (0–8) | `url`, `ariaYaml`, `fingerprint`, `controls` |
 | `act` | `kind`, `role`, `name`; `text` or `secretEnv` for `enter_text`; optional `locator` | `url`, `locator` |
 | `capture` | relative `.png` `path`, `maskSecrets: true` | relative `path`, `width`, `height`, `masked: true` |
+| `coverage` | none; only after `open`, once per session | `path: "coverage.json"`, `schema: "graphhelm-js-coverage/1"` |
 | `close` | none | `closed: true` |
 
 Success is `{protocol,requestId,ok:true,result}`. Failure is
@@ -43,6 +44,19 @@ Codes include `driver.protocol_invalid`, `driver.frame_too_large`, `driver.obser
 `driver.locator_missing`, `driver.locator_ambiguous`, `driver.expectation_failed`,
 `driver.host_refused`, `driver.unsupported_act`, `driver.snapshot_too_large`,
 `driver.capture_refused`, `driver.timeout`, and `driver.action_failed`.
+
+When `open` includes `coverage: true`, the Chromium JavaScript coverage observer starts before
+the initial navigation. `coverage` stops it once and writes an exclusively-created,
+supervisor-owned `coverage.json`. The bounded artifact uses schema `graphhelm-js-coverage/1` and
+reports `collection: "captured"`, `navigationCount`, `negativeEvidenceEligible`, `complete`, and machine-readable
+`completeness`, alongside generated script SHA-256 hashes, generated function ranges and counts,
+and hashes of inline source-map `sourcesContent` only. It never stores source text, source
+map text, source-map paths, hosts, queries, or secrets. A missing or unsupported coverage API is
+reported as `driver.observer_missing`; a session opened without coverage produces an explicit
+`collection: "unavailable"` artifact rather than zero coverage. This is page JavaScript evidence:
+backend, CSS, worker coverage, and source attribution beyond the recorded hashes remain unknown.
+Main-frame navigations after the initial load are recorded as a limitation because Chromium may
+lose coverage data across them.
 
 ## Browser and locator boundaries
 

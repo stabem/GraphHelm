@@ -19,6 +19,7 @@ mod journey_replay;
 mod journey_validate;
 mod journeys;
 mod keel;
+mod keel_validation;
 mod lint;
 mod mcp;
 pub(crate) mod observers;
@@ -48,8 +49,9 @@ use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator};
 
 use crate::args::{
     CredentialCommand, DevelopmentCommand, DraftCommand, EventsCommand, ExecutionCommand,
-    ExtensionCommand, GateCommand, GatewayCommand, GraphCommand, KeelCommand, KeyringCommand,
-    QualityCommand, RouteCommand, SchemaCommand, SynthesizeArgs, ToolCommand, TopLevel,
+    ExtensionCommand, GateCommand, GatewayCommand, GraphCommand, KeelCommand, KeelTestCommand,
+    KeyringCommand, QualityCommand, RouteCommand, SchemaCommand, SynthesizeArgs, ToolCommand,
+    TopLevel,
 };
 use crate::output::Outcome;
 
@@ -617,6 +619,9 @@ pub fn run(command: TopLevel) -> Outcome {
         TopLevel::Backup(args) => adoption::backup(&args),
         TopLevel::Restore(args) => adoption::restore(&args),
         TopLevel::Keel(args) => match args.command {
+            KeelCommand::Test { command } => match command {
+                KeelTestCommand::Validation { repo } => keel_validation::run(&repo),
+            },
             KeelCommand::Index { repo, out } => {
                 keel::run(keel_contract_index::Operation::Scan { repo, out })
             }

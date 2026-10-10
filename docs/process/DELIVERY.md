@@ -58,6 +58,33 @@ only the surface the promise needs, prove with the smallest adequate observer. B
 PR, the author runs the tests the change can reach and lists them, with their result, in the PR
 body.
 
+**Retire the path you replace (Keel Law 1, #711).** When a change removes, replaces or redirects
+a production caller, check the displaced declarations and their exclusive helpers/types, styles,
+dependencies and tests before opening the PR. A rename alone does not make its target dead. Search
+from the actual entry points and check dynamic registrations, public consumers, manual commands,
+other platforms and persisted/wire contracts before calling a candidate unused. Test-only calls
+and a search with zero hits are leads, not deletion proof. Read source when an index is stale or
+partial and report any remaining coverage gap.
+
+When journey execution evidence is useful, [`keel test validation`](../keel/KEEL_TEST_VALIDATION.md)
+can collect it in isolated fixtures. It is optional, not another gate; missing coverage is unknown.
+
+Add a short `Retirement:` entry to the PR body (not a new card/schema field), only for changes that
+trigger this rule. Name the inspected paths/symbols and the evidence at the committed head, then
+record each candidate as **removed**, **retained** (name its live consumer or contract), or
+**unobserved** (name the coverage gap, risk and follow-up). If nothing became orphaned, say what
+was checked; an unexplained "none" is not evidence. Remove confirmed dead candidates in the same
+change, widening the card to their exact paths when needed; unrelated pre-existing debt gets a
+separate task. Do not keep speculative scaffolding under a generic future-use excuse. A documented
+compatibility or migration obligation is a reason to retain it, with its retirement condition.
+
+Test removal still requires the existing `test-audit` deletion record and covering observer. Keep
+checks proportional: run only reached checks, do not add a test to keep a dead export alive, and
+do not add a full build, whole-repository scan or a new tool dependency just for this record. For
+example, replacing an old team reader names that reader and its remaining calls, removes its
+exclusive parser/styles when proven unused, and retains the wire type if the active reader still
+consumes that contract. This is a human/agent review check; `keel check` has no dead-code detector.
+
 **Which tests a change reaches** is computed, not guessed (#361):
 `python tools/reached-tests/reached_tests.py [--base origin/main] [--head HEAD]` reads the diff and
 the workspace graph (`cargo metadata --no-deps`, no build) and prints the commands. Its rules:
@@ -192,6 +219,11 @@ merged like any other, and the review says what was not observed.
   reviewer target remains valid when the handoff cannot be made, but its cold cost is explicit.
 - Run tests from the **committed** head, not a dirty tree: a check that compares the branch with
   `main` (the freeze rule) sees nothing before the commit exists.
+- For a change that displaces a production caller, check its `Retirement:` record against the
+  pinned diff and source. Answer missing evidence or known dead leftovers before approving;
+  uncertainty may receive `APPROVE-WITH-RISK` only with the specific gap and follow-up named.
+  Do not infer deletion safety from a zero-hit search, green tests or a green Keel check. Use the
+  existing review, not another reviewer or a new build gate.
 - The verdict is a word in the comment text: `APPROVE`, `APPROVE-WITH-RISK` (name the risk) or
   `BLOCK` (name the defect). GitHub review state stays `COMMENTED`, because every session shares
   one account.

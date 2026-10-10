@@ -219,6 +219,9 @@ pub struct JourneyPreviewArgs {
     pub keyring: Option<PathBuf>,
     #[arg(long, hide = true)]
     pub key_id: Option<String>,
+    /// Internal validation-owned result directory. Ordinary preview cache is never reused.
+    #[arg(long, hide = true)]
+    pub validation_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -570,6 +573,11 @@ pub struct KeelArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum KeelCommand {
+    /// Execute all journey flows in isolated validation mode and report browser coverage.
+    Test {
+        #[command(subcommand)]
+        command: KeelTestCommand,
+    },
     /// Scan tracked repository files into an index outside the repository.
     Index {
         #[arg(long)]
@@ -663,6 +671,15 @@ pub enum KeelCommand {
         keyring: Option<PathBuf>,
         #[arg(long, requires = "events")]
         key_id: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum KeelTestCommand {
+    /// Discover and execute journey validation flows for a repository.
+    Validation {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
     },
 }
 

@@ -719,7 +719,7 @@ fn play(
         Some(launch(
             project,
             &base,
-            flow["id"].as_str().unwrap(),
+            flow["id"].as_str().unwrap_or_default(),
             |stop| {
                 // A dead runner cannot clean up itself, even if it dies before up returns.
                 run.state["launched"] = stop.record();

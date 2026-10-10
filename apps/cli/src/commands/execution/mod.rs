@@ -1199,6 +1199,61 @@ mod tests {
         )
     }
 
+    /// Decision-time guard: recovery cannot observe a snapshot replaced after it returns.
+    /// In-memory plus two local fixture reads; no store, process, or network (under 1 second).
+    #[test]
+    fn a_snapshot_replaced_after_recovery_is_refused_at_decision_time() {
+        let mut graph = graphhelm_schema::load_graph(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../examples/graphs/software-feature.yaml"),
+        )
+        .unwrap()
+        .graph;
+        graph.metadata.version = 2;
+        let version = GraphVersion::publish(
+            graph,
+            None,
+            crate::commands::owner("owner-fixture"),
+            Utc.with_ymd_and_hms(2026, 8, 20, 12, 0, 0).unwrap(),
+        )
+        .unwrap();
+        let published: graphhelm_protocols::PersistedGraphVersion = serde_json::from_str(
+            include_str!("../../../../../conformance/schemas/valid/persisted-graph-version.json"),
+        )
+        .unwrap();
+        let hash = published.semantic_hash().clone();
+        let projection = ExecutionProjection {
+            execution_id: Some("execution-fixture".to_owned()),
+            current_graph: Some(published),
+            ..ExecutionProjection::default()
+        };
+        let mut event = event_at(1);
+        let mut snapshot = graphhelm_protocols::GraphAuthoringSnapshotStored {
+            execution_id: OpaqueId::parse("execution-fixture").unwrap(),
+            graph_version: 2,
+            graph_hash: hash.clone(),
+        };
+        event.kind = EventKind::GraphAuthoringSnapshotStored(snapshot.clone());
+        assert!(
+            verify_snapshot_matches_execution(
+                &version,
+                &hash,
+                &projection,
+                &[event.clone()],
+                "claim",
+            )
+            .is_ok()
+        );
+
+        snapshot.graph_version = 1;
+        event.kind = EventKind::GraphAuthoringSnapshotStored(snapshot);
+        let failure =
+            verify_snapshot_matches_execution(&version, &hash, &projection, &[event], "claim")
+                .expect_err("a replaced snapshot must refuse at decision time");
+        assert_eq!(failure.code, EXECUTION_STATE_CODE);
+        assert_eq!(failure.pointer, "/execution/graph");
+    }
+
     /// The guard this module exists for: an empty history has NO vantage point, and the
     /// absence must survive as `None`. The defect being locked out is `map_or(0, …)` wrapped
     /// in `Some`, which answers "I looked, at sequence zero" — a legal-looking value standing

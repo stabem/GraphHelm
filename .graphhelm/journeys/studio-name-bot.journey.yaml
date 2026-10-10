@@ -32,6 +32,12 @@ screens:
     state: stable
     expect: [{role: region, name: Agents}, {role: list, name: Agent board}, {role: button, name: Name this bot}]
     scope: [apps/studio/src/components/lanes-timeline.tsx, apps/studio/src/runtime/team.ts]
+  - id: saved
+    title: The name form closes after saving
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: region, name: Agents}, {role: button, name: Name this bot}]
+    scope: [apps/studio/src/components/lanes-timeline.tsx]
 edges:
   - id: mission.lanes
     from: mission
@@ -40,16 +46,20 @@ edges:
       - {kind: activate, role: tab, name: Lanes}
   - id: naming.save
     from: naming
-    to: named
+    to: saved
     acts:
       - {kind: enter_text, role: textbox, name: Name for planner, text: Planny}
       - {kind: submit, role: button, name: Save}
-      - {kind: activate, role: button, name: Name this bot}
   - id: run.name
     from: run
     to: naming
     acts:
       - {kind: activate, role: button, name: Name this bot}
+  - id: saved.reopen
+    from: saved
+    to: named
+    acts:
+      - {kind: activate, role: button, name: Name this bot}
 paths:
-  main: [mission.lanes, run.name, naming.save]
+  main: [mission.lanes, run.name, naming.save, saved.reopen]
 drift: []

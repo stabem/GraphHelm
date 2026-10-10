@@ -76,7 +76,10 @@ def _steps(plan: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
                 return [], f"Cargo {command} must use a build slot in selector step {index}"
             if command == "fmt" and step["slot"]:
                 return [], f"Cargo fmt must run outside the build slot in selector step {index}"
-        result.append({"argv": argv, "cwd": cwd, "slot": step["slot"]})
+        observer = step.get("observer")
+        if observer not in (None, "browser"):
+            return [], f"invalid observer in selector step {index}"
+        result.append({"argv": argv, "cwd": cwd, "slot": step["slot"], "observer": observer})
     return result, None
 
 
@@ -126,6 +129,11 @@ def _resolve_argv(repo: Path, cwd: Path, argv: list[str]) -> list[str]:
     return ["node", str(entry), *argv[2:]]
 
 
+def _browser_toolchain_ready() -> bool:
+    project = os.environ.get("GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT")
+    return bool(project) and (Path(project) / "node_modules" / "@playwright" / "test").is_dir()
+
+
 def run(args: argparse.Namespace) -> int:
     started = time.monotonic()
     repo = Path(args.repo).resolve()
@@ -170,6 +178,11 @@ def run(args: argparse.Namespace) -> int:
                 raise RuntimeError(error)
             report["plan"] = {"steps": steps}
             report["pending"] = list(range(len(steps)))
+            browser_steps = [i for i, step in enumerate(steps) if step["observer"] == "browser"]
+            if browser_steps and not getattr(args, "include_browser", False):
+                raise RuntimeError("browser observer steps require --include-browser; they remain pending")
+            if browser_steps and not _browser_toolchain_ready():
+                raise RuntimeError("--include-browser requires GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT with local @playwright/test")
             queue: float | None = 0.0
             held: float | None = 0.0
             for index, step in enumerate(steps):
@@ -245,6 +258,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--output", required=True)
     ap.add_argument("--budget-seconds", type=float, default=180)
     ap.add_argument("--allow-whole-package")
+    ap.add_argument("--include-browser", action="store_true",
+                    help="allow selector steps marked observer=browser when local Playwright is installed")
     ap.add_argument("--plan", action="store_true")
     return run(ap.parse_args(argv))
 

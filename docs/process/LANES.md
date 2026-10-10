@@ -154,6 +154,10 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   build jobs and two test threads. Fmt, Python, Node, Studio checks and standalone journey tools
   run outside the Cargo slot, serially. Existing root target rules remain authoritative. The
   runner does not install dependencies, clean targets, bypass the queue or add holders.
+  Reached browser observers require `--include-browser` and an installed local toolchain named
+  by `GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT`. Without that explicit opt-in the report is incomplete
+  and lists pending checks; it does not silently skip them or start browsers. Their Cargo test
+  commands retain the slot and thread limits; standalone preview commands stay outside it.
 
   The default 180-second budget starts before planning and includes waiting. The report lists
   completed and pending checks and available slot wait/hold times. A late, failed or incomplete

@@ -64,6 +64,16 @@ BROWSER_REACHERS = ("tools/journey-driver/", "apps/cli/src/commands/journey_repl
 INCLUDE = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*\)')
 DISPATCH = {"src/main.rs", "src/commands/mod.rs"}
 SOURCE_READ = re.compile(r'"src/|join\("src"\)')
+# Audited exceptions for CLI integration tests that mention `src` while reading a fixture or a
+# deliberately bounded production surface. `None` means the test reads the whole CLI source tree;
+# an empty tuple means its `src` strings are fixture-only. Unknown readers remain conservative.
+SOURCE_READER_SCOPES = {
+    "source_invariants": None,
+    "attention_inputs_one_feed": None,
+    "surface_completeness": ("src/commands/serve/mod.rs", "src/commands/mcp/tools.rs"),
+    "api_http": (),
+    "runtime_http": (),
+}
 BUNDLE_MOD = re.compile(r'#\[path\s*=\s*"([^"]+)\.rs"\]\s*mod\s+(\w+)\s*;')
 
 
@@ -144,6 +154,21 @@ def target_of(packages, package, stem):
     return None
 
 
+def source_reader_targets(texts, packages, package, changed_source):
+    """Map audited source readers; unknown readers stay broad until reviewed."""
+    readers = set()
+    for f, text in texts.items():
+        if "CARGO_MANIFEST_DIR" not in text or not SOURCE_READ.search(text):
+            continue
+        scope = SOURCE_READER_SCOPES.get(f.stem, "unknown")
+        if scope == () or (scope not in (None, "unknown") and changed_source not in scope):
+            continue
+        target = target_of(packages, package, f.stem)
+        if target is not None:
+            readers.add(target)
+    return readers
+
+
 def cli_module(packages, p, rel, root):
     """#361: a change to one `apps/cli/src/commands/<module>` reaches that module's unit tests, the
     integration tests that read the crate's own source, and the ones that name its command (every
@@ -162,15 +187,15 @@ def cli_module(packages, p, rel, root):
     texts = {f: f.read_text(encoding="utf-8", errors="replace") for f in sorted(tests.glob("*.rs"))}
     sources = {f.relative_to(crate).as_posix(): f.read_text(encoding="utf-8", errors="replace")
                for f in sorted(src.rglob("*.rs"))} if src.is_dir() else {}
-    readers = {t for f, text in texts.items() if "CARGO_MANIFEST_DIR" in text and SOURCE_READ.search(text)
-               for t in [target_of(packages, p["name"], f.stem)] if t is not None}
+    start = rel[len("src/commands/"):-len(".rs")]
+    changed_source = f"src/commands/{start}.rs"
+    readers = source_reader_targets(texts, packages, p["name"], changed_source)
 
     def named(module):
         words = [w for part in module.split("/") for w in part.split("_") if w]
         return {t for f, text in texts.items() if words and all(f'"{w}"' in text for w in words)
                 for t in [target_of(packages, p["name"], f.stem)] if t is not None}
 
-    start = rel[len("src/commands/"):-len(".rs")]
     if not named(start):
         return None
     reached, queue, out = {start}, [start], set(readers)
@@ -294,7 +319,7 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
     out = []
     for tool in tools:
         if tool == BROWSER_OBSERVERS:
-            out.append({"argv": BROWSER_ARGV[:], "cwd": ".", "slot": True})
+            out.append({"argv": BROWSER_ARGV[:], "cwd": ".", "slot": True, "observer": "browser"})
         elif tool == "graphhelm --json journey validate --all":
             out.append({"argv": ["graphhelm", "--json", "journey", "validate", "--all"], "cwd": ".", "slot": False})
         elif tool.startswith("python -m unittest "):

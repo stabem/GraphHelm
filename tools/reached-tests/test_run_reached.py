@@ -1,5 +1,6 @@
 """Focused contract tests for run_reached.py; no Cargo, Runtime, browser, or shell."""
 import json
+import os
 import sys
 import tempfile
 import time
@@ -29,6 +30,45 @@ class RunnerContracts(unittest.TestCase):
     def test_whole_package_requires_explicit_reason(self):
         self.assertIn("requires", rr._whole_reason({"packages": ["graphhelm-cli"]}, None))
         self.assertIsNone(rr._whole_reason({"packages": ["graphhelm-cli"]}, "shared parser change"))
+
+    def test_browser_observer_is_pending_by_default_and_never_started(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            (repo / "x").write_text("x", encoding="utf-8")
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            output = Path(temp).parent / (Path(temp).name + "-browser-report.json")
+            plan = {"steps": [{"argv": ["python", "-c", "raise SystemExit(99)"], "cwd": ".", "slot": False, "observer": "browser"}]}
+            args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
+                                      "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                                      "allow_whole_package": None, "plan": False, "include_browser": False})()
+            with patch.object(rr, "_selector", return_value=plan):
+                self.assertEqual(rr.run(args), 1)
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(report["completed"], [])
+            self.assertEqual(report["pending"], [0])
+            self.assertIn("--include-browser", report["error"])
+
+    def test_browser_opt_in_requires_local_playwright_toolchain(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            (repo / "x").write_text("x", encoding="utf-8")
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            output = Path(temp).parent / (Path(temp).name + "-browser-optin-report.json")
+            plan = {"steps": [{"argv": ["node", "browser.test.mjs"], "cwd": ".", "slot": False, "observer": "browser"}]}
+            args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
+                                      "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                                      "allow_whole_package": None, "plan": False, "include_browser": True})()
+            with patch.object(rr, "_selector", return_value=plan), patch.dict(os.environ, {"GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT": ""}):
+                self.assertEqual(rr.run(args), 1)
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(report["completed"], [])
+            self.assertIn("local @playwright/test", report["error"])
 
     def test_runner_uses_separate_direct_subprocesses_and_reports_failure(self):
         with tempfile.TemporaryDirectory() as temp:

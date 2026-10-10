@@ -93,7 +93,9 @@ Execute the plan with `python tools/reached-tests/run_reached.py --repo . --base
 the existing slot between Cargo commands instead of holding it for the entire proof script.
 Its 180-second target includes planning, queue and execution. Record the report and any pending
 checks in the PR; a budget miss is never green. This replaces the long-script slot pattern, not
-the existing review or load limits. Broad audits and all-journey coverage remain explicit work,
+the existing review or load limits. Reached browser observers additionally require
+`--include-browser` and a configured local observer toolchain; otherwise the report stays incomplete.
+Broad audits and all-journey coverage remain explicit work,
 not mandatory feedback for every edit. See LANES.md §3 for warm targets and queue limits.
 
 The script prints fmt, clippy and workspace-guard commands whenever Rust is reached. Apply the

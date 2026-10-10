@@ -54,7 +54,7 @@ class Reach(unittest.TestCase):
     def test_steps_keep_argv_and_slot_metadata_without_shell_parsing(self):
         records = rt.steps({"graphhelm-cli"}, set(), ["apps/studio/src/runtime/team-tasks.ts"],
                            [rt.BROWSER_OBSERVERS], [])
-        self.assertEqual(records[0], {"argv": rt.BROWSER_ARGV, "cwd": ".", "slot": True})
+        self.assertEqual(records[0], {"argv": rt.BROWSER_ARGV, "cwd": ".", "slot": True, "observer": "browser"})
         self.assertEqual(records[1]["argv"], ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli",
                                                "--", "--test-threads=2"])
         self.assertEqual(records[-2], {"argv": ["npx", "vitest", "related", "--run", "--maxWorkers=1",
@@ -156,7 +156,7 @@ class CliModules(unittest.TestCase):
         files = {
             "journey_explore_cli.rs": 'cmd.args(["--json", "journey", "explore", "--project"]);',
             "keel_check.rs": 'cmd.args(["keel", "check"]);',
-            "surface_completeness.rs": 'let root = env!("CARGO_MANIFEST_DIR"); read(root.join("src/commands/mod.rs"));',
+            "surface_completeness.rs": 'let root = env!("CARGO_MANIFEST_DIR"); read(root.join("src/commands/serve/mod.rs"));',
             "extension_cli.rs": 'cmd.args(["extension", "validate"]);',
         }
         for name, body in files.items():
@@ -172,10 +172,54 @@ class CliModules(unittest.TestCase):
         whole, single, *_ = rt.reach(["apps/cli/src/commands/journey_explore.rs"], packages, {}, root)
         self.assertEqual(whole, set())
         self.assertEqual(single, {("graphhelm-cli", "bin:graphhelm", "commands::journey_explore"),
-                                  ("graphhelm-cli", "journey_explore_cli", None),
-                                  ("graphhelm-cli", "surface_completeness", None)})
+                                  ("graphhelm-cli", "journey_explore_cli", None)})
         self.assertIn("cargo +1.97.1 test --locked -p graphhelm-cli --bin graphhelm commands::journey_explore:: -- --test-threads=2",
                       rt.commands(whole, single, []))
+
+    def test_fixture_source_strings_do_not_reach_as_readers(self):
+        root, packages = self.tree()
+        tests = root / "apps/cli/tests"
+        (tests / "api_http.rs").write_text(
+            'let _root = env!("CARGO_MANIFEST_DIR"); let _fixture = "src/lib.rs";', encoding="utf-8")
+        (tests / "runtime_http.rs").write_text(
+            'let _root = env!("CARGO_MANIFEST_DIR"); project.join("src");', encoding="utf-8")
+        packages[0]["tests"] += [{"name": name, "src": f"apps/cli/tests/{name}.rs"}
+                                  for name in ("api_http", "runtime_http")]
+        whole, single, *_ = rt.reach(["apps/cli/src/commands/journey_explore.rs"], packages, {}, root)
+        self.assertNotIn(("graphhelm-cli", "api_http", None), single)
+        self.assertNotIn(("graphhelm-cli", "runtime_http", None), single)
+
+    def test_unknown_source_reader_stays_conservative(self):
+        root, packages = self.tree()
+        tests = root / "apps/cli/tests"
+        (tests / "future_reader.rs").write_text(
+            'let _root = env!("CARGO_MANIFEST_DIR"); let _source = "src/unknown.rs";', encoding="utf-8")
+        packages[0]["tests"].append({"name": "future_reader", "src": "apps/cli/tests/future_reader.rs"})
+        whole, single, *_ = rt.reach(["apps/cli/src/commands/journey_explore.rs"], packages, {}, root)
+        self.assertIn(("graphhelm-cli", "future_reader", None), single)
+
+    def test_scoped_reader_reaches_when_its_real_source_is_touched(self):
+        texts = {
+            Path("surface_completeness.rs"): 'env!("CARGO_MANIFEST_DIR"); "src/commands/serve/mod.rs";',
+        }
+        packages = [dict(PACKAGES[2], tests=PACKAGES[2]["tests"] + [
+            {"name": "surface_completeness", "src": "apps/cli/tests/surface_completeness.rs"}])]
+        self.assertIn(("graphhelm-cli", "surface_completeness", None),
+                      rt.source_reader_targets(texts, packages, "graphhelm-cli", "src/commands/serve/mod.rs"))
+        self.assertNotIn(("graphhelm-cli", "surface_completeness", None),
+                         rt.source_reader_targets(texts, packages, "graphhelm-cli", "src/commands/journey_explore.rs"))
+
+    def test_audited_broad_readers_stay_broad(self):
+        texts = {
+            Path("source_invariants.rs"): 'env!("CARGO_MANIFEST_DIR"); "src/any.rs";',
+            Path("attention_inputs_one_feed.rs"): 'env!("CARGO_MANIFEST_DIR"); join("src");',
+        }
+        packages = [dict(PACKAGES[2], tests=PACKAGES[2]["tests"] + [
+            {"name": name, "src": f"apps/cli/tests/{name}.rs"}
+            for name in ("source_invariants", "attention_inputs_one_feed")])]
+        readers = rt.source_reader_targets(texts, packages, "graphhelm-cli", "src/commands/journey_explore.rs")
+        self.assertEqual(readers, {("graphhelm-cli", "source_invariants", None),
+                                   ("graphhelm-cli", "attention_inputs_one_feed", None)})
 
     def test_a_module_other_modules_import_reaches_their_tests_too(self):
         # #530 review (gh-claude-6): journey_live.rs imports Driver/preflight from journey_replay.rs,

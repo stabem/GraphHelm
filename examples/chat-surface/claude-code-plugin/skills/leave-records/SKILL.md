@@ -142,12 +142,9 @@ On exit 3 (timeout), perform that fallback read too, then re-arm and restart the
 On other exits, diagnose the failure and restore the loop. Never advance the read cursor to
 an unseen head: a note can land between reading and arming. Restart the loop after reboot.
 
-The plugin Stop hook blocks with "read the notes addressed to you" while an addressed note
-has no reply from this lane; it does not consume notes itself and repeated Stop does not bypass
-it. Restore a failed binding/read rather than treating it as an empty inbox. The check bounds
-its scan to 4096 events and eight seconds; exceeding either is unverified and blocks. Reload
-the installed plugin after updating. A host without background completion notification reports
+A host without background completion notification reports
 `OBSERVER_MISSING: host wake notification`, rather than claiming a detached waiter is autonomous.
+A bounded Stop reminder is a separate follow-up; keep this loop running independently.
 
 **Arm and wait must be the SAME MCP session.** A lease belongs to the session that armed it, and
 a second `graphhelm mcp` process is a different session against the same Runtime and execution.

@@ -18,7 +18,7 @@ screens:
     title: The mission graph opens first
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: tablist, name: Mission views}, {role: tab, name: Team}]
+    expect: [{role: tablist, name: Mission views}, {role: button, name: Journeys · 21 to approve}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/mission-view.tsx]
   - id: node
     title: "The step's window, with what it delivered"
@@ -50,7 +50,8 @@ edges:
     from: mission
     to: run
     acts:
-      - {kind: activate, role: tab, name: Team}
+      - {kind: activate, role: button, name: Journeys · 21 to approve}
+      - {kind: activate, role: tab, name: Team (live)}
   - id: node.open-document
     from: node
     to: editor

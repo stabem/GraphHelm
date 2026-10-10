@@ -45,6 +45,8 @@ try {
             cancelAnimationFrame(frame);
             resolve(result);
           };
+          // Cooperative ceiling: a blocked page can delay this timer; late frames
+          // are still rejected below rather than reported as numeric observations.
           const timer = setTimeout(() => finish({ status: 'timeout' }), 10000);
           const check = () => {
             if (performance.now() - started >= 10000) return finish({ status: 'timeout' });

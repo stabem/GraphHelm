@@ -58,7 +58,7 @@ Each observation has a 10-second page-side cap and reports `timeout`, never a
 numeric substitute. This cap is cooperative: a blocked browser main thread can
 delay its timer; a late frame is still rejected. Navigation also has a Playwright
 10-second timeout. Missing setup controls cause an error instead of fabricated
-measurements. A load timeout skips the dependent clicks for that run.
+measurements. A load timeout skips both clicks; a node timeout skips Chat for that run.
 
 The JSON contains individual observations, completed/timeout/skipped counts and
 median, nearest-rank p90 (`ceil(0.9 * N)`) and maximum in milliseconds. Median

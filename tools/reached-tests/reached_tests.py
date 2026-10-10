@@ -241,8 +241,10 @@ def reach(changed, packages, embedded, repo=None):
         if path.startswith("tools/") and path.count("/") >= 2 and root is not None:
             tool = root / "/".join(path.split("/")[:2])
             py = sorted(f.relative_to(root).as_posix() for f in tool.glob("test_*.py"))
+            pytest = [f for f in py if "def test_" in (root / f).read_text(encoding="utf-8", errors="replace")]
+            unittest = [f for f in py if f not in pytest]
             js = sorted(f.relative_to(root).as_posix() for f in tool.glob("*.test.mjs") if ".browser." not in f.name)
-            tools |= {f"python -m unittest {f}" for f in py} | ({f"node --test {' '.join(js)}"} if js else set())
+            tools |= {f"python -m pytest {f}" for f in pytest} | {f"python -m unittest {f}" for f in unittest} | ({f"node --test {' '.join(js)}"} if js else set())
             hit = hit or bool(py or js)
         if path in embedded:
             whole |= embedded[path]
@@ -325,6 +327,9 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
         elif tool.startswith("python -m unittest "):
             test_path = tool[len("python -m unittest "):]
             out.append({"argv": ["python", "-m", "unittest", test_path], "cwd": ".", "slot": False})
+        elif tool.startswith("python -m pytest "):
+            test_path = tool[len("python -m pytest "):]
+            out.append({"argv": ["python", "-m", "pytest", test_path], "cwd": ".", "slot": False})
         elif tool.startswith("node --test "):
             if repo is None:
                 raise ValueError("node test paths require the repository root")

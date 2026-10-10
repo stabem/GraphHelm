@@ -133,6 +133,23 @@ class Reach(unittest.TestCase):
         self.assertEqual(tools, ["python -m unittest tools/task-record/test_task_record.py"])
         self.assertEqual(other, [])
 
+    def test_pytest_tool_contract_is_selected_explicitly_without_importing_tests(self):
+        with tempfile.TemporaryDirectory() as repo:
+            tool = Path(repo, "tools", "example")
+            tool.mkdir(parents=True)
+            (tool / "tool.py").write_text("", encoding="utf-8")
+            (tool / "test_pytest_contract.py").write_text("def test_contract(): pass\n", encoding="utf-8")
+            (tool / "test_unittest_contract.py").write_text("import unittest\nclass T(unittest.TestCase): pass\n", encoding="utf-8")
+            *_, tools, _, other = reach("tools/example/tool.py", repo=repo)
+            records = rt.steps(set(), set(), [], tools, repo=Path(repo))
+        self.assertEqual(tools, ["python -m pytest tools/example/test_pytest_contract.py",
+                                 "python -m unittest tools/example/test_unittest_contract.py"])
+        self.assertEqual([step["argv"] for step in records], [
+            ["python", "-m", "pytest", "tools/example/test_pytest_contract.py"],
+            ["python", "-m", "unittest", "tools/example/test_unittest_contract.py"],
+        ])
+        self.assertEqual(other, [])
+
     def test_a_path_no_rule_maps_is_reported(self):
         *_, other = reach("ci/gate.ps1")
         self.assertEqual(other, ["ci/gate.ps1"])

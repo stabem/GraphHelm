@@ -100,10 +100,13 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   (lowercase letters, digits, `.`, `_`, `-`).
   `minFreeGb` is an integer from 0 to 4096, defaults to 20 when absent, and 0 disables the
   free-space floor. With the floor enabled the target root's volume must report its free space.
-  Before queueing and again while holding the slot, a run below the floor
-  refuses and names the free GB, the floor and `graphhelm workspace sweep`; it never evicts a
-  live target. GB here means 1024 cubed bytes. Reclaim still runs only while holding the slot,
-  before the second floor check; a pre-queue refusal does not reclaim anything. Free space is a
+  A run below the floor refuses before queueing when no other lane has target records to
+  inspect. Otherwise it queues, then, while holding the slot and still below the floor, applies
+  the target-only sweep to other lanes and rechecks free space once. It never reclaims this
+  lane's targets or the worktree it is about to build in, even if another lane recorded it.
+  When space remains below the floor it refuses and names the free GB, the floor and
+  `graphhelm workspace sweep`; no child runs. GB here means 1024 cubed bytes. Reclaim runs only
+  while holding the slot; a pre-queue refusal does not reclaim anything. Free space is a
   sample, not a reservation, so another writer can consume space after the check. Slot status
   adds `targetSpace: {targetRoot, freeGb, minFreeGb}` alongside the existing lane counts;
   unreadable free space is `null`, never a claim that enough space remains. No-rule and

@@ -539,7 +539,8 @@ def cmd_run(a: argparse.Namespace) -> None:
             else:
                 result, _stderr, wall = runner.run_agent(wt, prompt, "a", model, a.timeout_min, {},
                     a.max_budget_usd if a.max_budget_usd is not None else 1.0, None, claude_cli, effort=effort)
-            row = score_checkout(wt, task, str(result.get("result") or ""), a.prove)
+            if result.get("agentError") != "model_refused":
+                row = score_checkout(wt, task, str(result.get("result") or ""), a.prove)
         except Exception as exc:  # the row still records what was observed
             row["evaluatorError"] = f"{type(exc).__name__}: {exc}"[:500]
         finally:
@@ -573,7 +574,9 @@ def cmd_run(a: argparse.Namespace) -> None:
             row.pop("claudeCli")
             row.update({"codexCli": claude_cli, "tokens": result.get("tokens"),
                         "costProvenance": "declared_price_table" if observed_cost(row) is not None else "unavailable"})
-        if row.get("evaluatorError"):
+        if agent_error == "model_refused":
+            row["verdict"], row["verdictReasons"] = "INCOMPLETE", ["model_refused"]
+        elif row.get("evaluatorError"):
             row["verdict"], row["verdictReasons"] = "INCOMPLETE", ["evaluator_error"]
         else:
             row["verdict"], row["verdictReasons"] = do_less_verdict(row)
@@ -608,6 +611,8 @@ def cmd_run(a: argparse.Namespace) -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         print(json.dumps({k: row.get(k) for k in ("task", "arm", "run", "verdict", "verdictReasons", "oracle",
                                                   "regression", "changedLines", "costUsd", "wallSeconds")}), flush=True)
+        if agent_error == "model_refused":
+            break
 
 
 def summarise(rows: list[dict]) -> dict:

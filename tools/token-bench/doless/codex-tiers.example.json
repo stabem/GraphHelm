@@ -13,10 +13,10 @@
     "version": 1,
     "host": "codex",
     "provider": "openai",
-    "model": "gpt-6.1-sol",
+    "model": "gpt-6-sol",
     "effort": "medium",
     "supportedEfforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
-    "capabilitySource": "Local codex-cli 0.157.1 models_cache.json, checked 2026-10-10. Copy this tier object to a separate file for all-standard runs. Fill prices before use; no model was called to verify this declaration.",
+    "capabilitySource": "Account probe reported in https://github.com/stabem/GraphHelm/issues/137#issuecomment-6096881751 (2026-10-10): gpt-6.1-sol returned a model-not-supported 400; use gpt-6-sol as standard. Efforts from local codex-cli 0.157.1 models_cache.json. Copy this tier object to a separate file for all-standard runs. Fill prices before use.",
     "pricesUsdPerMillion": {"input": null, "cachedInput": null, "output": null}
   },
   "large": {

@@ -72,6 +72,26 @@ def test_codex_incomplete_keeps_observed_tokens(tmp_path, monkeypatch, ending):
         {"input_tokens": 100, "cached_input_tokens": 40, "output_tokens": 20})
 
 
+@pytest.mark.parametrize("kind", ["turn.failed", "error"])
+@pytest.mark.parametrize("observed_usage", [False, True])
+def test_codex_model_refusal_is_distinct_and_keeps_usage(tmp_path, monkeypatch, kind, observed_usage):
+    """Catch unsupported-model errors being treated as retryable failures; mocked I/O, <1s."""
+    message = ('unexpected status 400 Bad Request: {"detail":"The gpt-6.1-sol model is not '
+               'supported when using Codex with a ChatGPT account."}')
+    event = {"type": kind, **({"error": {"message": message}} if kind == "turn.failed"
+                             else {"message": message})}
+    stream = ('{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":20}}\n'
+              if observed_usage else '') + json.dumps(event)
+    # A later generic failure must not erase the refusal that stops the batch.
+    stream += '\n{"type":"turn.failed","error":{"message":"request failed"}}'
+    monkeypatch.setattr(runner, "_run_captured", lambda *a, **kw:
+                        (subprocess.CompletedProcess([], 1, stream, ""), False))
+    result, _, _ = runner.run_codex_agent(tmp_path, "prompt", "gpt-6.1-sol", "medium", 1, {"path": "fixture"})
+    assert result["agentError"] == "model_refused"
+    assert result["tokens"] == ({"input_tokens": 100, "cached_input_tokens": 40, "output_tokens": 20}
+                                if observed_usage else None)
+
+
 def test_acceptance_and_regression_are_both_required_for_pass():
     """Catches the old false green where the hidden oracle passed after a regression broke."""
     verdict, reasons = runner.evaluate_outcome("PASS", "FAIL", usage(), 0.2, "session", {"regression": {"command": ["test"]}})

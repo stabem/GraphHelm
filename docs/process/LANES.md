@@ -140,7 +140,10 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   `CARGO_TARGET_DIR=D:\gh\<lane>\target-check`.
 - Benchmarks and store seeding run inside the slot too: they load the machine like
   a build does.
-- Do not run CPU stress tests or load generators on the shared machine.
+- Benchmarks, load generators and store seeding run inside the slot too: they load the machine like
+  a build does.
+- Urgency does not exempt cargo builds, tests or clippy from the slot.
+- Do not run CPU stress tests on the shared machine.
 - After the machine reboots, every background run is dead. Queue it again; do not wait for it.
 - **One waiting ticket per lane.** Put everything the diff needs in one script instead of queueing
   several.

@@ -192,7 +192,9 @@ export function ProjectRail({
 
       {connected && previousExit && previousExit.state !== "clean" && (
         <p className="hint" aria-label="Previous Runtime exit" style={{ overflowWrap: "anywhere" }}>
-          Last stop: {({ vanished: "vanished", serve_error: "serve error", panicked: "panicked" })[previousExit.state] ?? "unknown"} (pid {previousExit.pid}, {new Date(previousExit.at * 1000).toISOString()})
+          Runtime restarted · last stop <time dateTime={new Date(previousExit.at * 1000).toISOString()} title={`PID ${previousExit.pid} · ${new Date(previousExit.at * 1000).toISOString()}`}>
+            {new Date(previousExit.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}
+          </time> ({({ vanished: "killed", serve_error: "failed", panicked: "crashed" })[previousExit.state] ?? "stopped"})
           {previousExit.location !== undefined && <> · location: {previousExit.location}</>}
           {previousExit.lastPanic && <> · last panic: {previousExit.lastPanic.location}</>}
         </p>

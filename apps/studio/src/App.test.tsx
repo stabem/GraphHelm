@@ -4953,10 +4953,17 @@ it.each(["vanished", "panicked", "clean", null])("shows Last stop only for an un
   const client = stubClient({ health: vi.fn(async () => state === null ? null : { state, pid: 1, at: 2, ...(state === "panicked" ? { location: "runtime/src/driver.rs:42", lastPanic: { location: "unknown" } } : {}) }) });
   render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null} session={async () => ({ token: "local-token", project: "GraphHelm" })} />);
   await screen.findByText("live");
-  if (state === "vanished") expect(screen.getByText("Last stop: vanished (pid 1, 1970-01-01T00:00:02.000Z)")).toBeInTheDocument();
+  if (state === "vanished") {
+    const line = screen.getByLabelText("Previous Runtime exit");
+    expect(line).toHaveTextContent(`Runtime restarted · last stop ${new Date(2000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })} (killed)`);
+    expect(line).not.toHaveTextContent("pid 1");
+    expect(line).not.toHaveTextContent("1970-");
+    expect(line.querySelector("time")).toHaveAttribute("title", expect.stringContaining("PID 1"));
+  }
   else if (state === "panicked") {
     const line = screen.getByLabelText("Previous Runtime exit");
-    expect(line).toHaveTextContent("Last stop: panicked (pid 1, 1970-01-01T00:00:02.000Z)");
+    expect(line).toHaveTextContent(/Runtime restarted · last stop .* \(crashed\)/);
+    expect(line.querySelector("time")).toHaveAttribute("title", expect.stringContaining("PID 1"));
     expect(line).toHaveTextContent("location: runtime/src/driver.rs:42");
     expect(line).toHaveTextContent("last panic: unknown");
   } else expect(screen.queryByText(/Last stop:/)).not.toBeInTheDocument();

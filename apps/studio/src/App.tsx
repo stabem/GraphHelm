@@ -412,13 +412,16 @@ export default function App({
   }
   const unverifiedResults = pendingAcceptanceCount(model.nodes, status?.nodeStateCounts.succeeded ?? 0);
   const focusedNode = focus.kind === "node" ? focus.id : null;
-  const node = useMemo(
-    () =>
-      focusedNode === null
-        ? null
-        : (model.nodes.find((candidate) => candidate.id === focusedNode) ?? null),
-    [model, focusedNode],
-  );
+  const node = useMemo(() => {
+    const current = model.nodes.find((candidate) => candidate.id === focusedNode);
+    if (current === undefined) return null;
+    // Clearance changes the Runtime projection without another node_outcome_recorded event.
+    // Use its current state only when the status covers the journal shown in this panel.
+    const state = status?.executionId === selected && status.headSequence >= (events?.head ?? 0)
+      ? status.nodeStates?.[current.id]
+      : undefined;
+    return state === undefined || state === current.state ? current : { ...current, state };
+  }, [model, focusedNode, status, selected, events?.head]);
   const nodeThread = useMemo(
     () => (focusedNode === null ? [] : conversationFor(eventList, focusedNode)),
     [events, focusedNode],

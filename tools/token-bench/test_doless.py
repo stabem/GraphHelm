@@ -573,3 +573,75 @@ def test_configured_run_records_requested_effort_and_incomplete_usage(tmp_path, 
     assert recorded["costProvenance"] == "cli_estimate"
     assert recorded["verdict"] == "INCOMPLETE"
     assert "usage_incomplete" in recorded["verdictReasons"]
+
+
+@pytest.mark.parametrize("kind,tier,effort", [
+    ("explorer", "small", "low"), ("implementer", "standard", "medium"),
+    ("reviewer", "standard", "high"), ("verifier", "small", "medium"),
+])
+def test_routed_run_selects_per_kind_and_keeps_one_pareto_arm(tmp_path, monkeypatch, capsys, kind, tier, effort):
+    """Catches uniform dispatch and split/pool errors; mocked process/file I/O only, <1s."""
+    configs = {t: inference_config() | {"model": f"claude-{t}-exact",
+               "supportedEfforts": ["low", "medium", "high"]} for t in ("small", "standard", "large")}
+    config = tmp_path / "routing.json"
+    config.write_text(json.dumps(configs), encoding="utf-8")
+    result_path = tmp_path / "rows.jsonl"
+    cli = tmp_path / "claude"
+    cli.write_bytes(b"pinned")
+    task_id, task = next(iter(doless.load_tasks().items()))
+    assert all(t.get("kind") in {"explorer", "implementer", "reviewer", "verifier"}
+               for t in doless.load_tasks().values())
+    monkeypatch.setattr(doless, "load_tasks", lambda: {task_id: task | {"kind": kind}})
+    monkeypatch.setattr(doless, "RESULTS", result_path)
+    monkeypatch.setattr(doless.runner, "validate_prerequisites", lambda _: {"path": str(cli), "sha256": doless.runner.digest_file(cli)})
+    monkeypatch.setattr(doless, "observe_effort_flag", lambda _: {"flag": "--effort"})
+    monkeypatch.setattr(doless.runner, "make_worktree", lambda *_: tmp_path)
+    monkeypatch.setattr(doless, "score_checkout", lambda *_: green_row())
+    monkeypatch.setattr(doless.runner, "transcript_usage", lambda _: {
+        "models": [f"claude-{tier}-exact"], "userMessages": 1, "assistantMessages": 1,
+        "input": 10, "output": 5, "cacheRead": 0, "cacheWrite": 0})
+    calls = []
+    def agent(*args, **kwargs):
+        calls.append((args[3], kwargs["effort"]))
+        return {"result": "fixture", "num_turns": 1, "total_cost_usd": 0.1,
+                "usage": {"input_tokens": 10, "output_tokens": 5,
+                          "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}, "", 0.0
+    monkeypatch.setattr(doless.runner, "run_agent", agent)
+    monkeypatch.setattr(sys, "argv", ["doless.py", "run", "--task", task_id, "--arm", "a",
+                        "--treatment", "routed", "--inference-config", str(config), "--runs", "1", "--keep"])
+    doless.main()
+    recorded = json.loads(result_path.read_text())
+    assert calls == [(f"claude-{tier}-exact", effort)]
+    assert recorded["verdict"] == "PASS"
+    inference = recorded["inferenceConfig"]
+    assert inference["selection"] == {"kind": kind, "tier": tier, "model": f"claude-{tier}-exact", "effort": effort}
+    uniform = tmp_path / "uniform.json"
+    uniform_rows = []
+    for uniform_tier in ("standard", "large"):
+        uniform.write_text(json.dumps(configs[uniform_tier]), encoding="utf-8")
+        uniform_inference = doless.load_inference_config(uniform, None)
+        assert inference["digest"] != uniform_inference["digest"]
+        uniform_rows.append(row("a", "PASS", 0.2) | {"task": task_id, "inferenceConfig": uniform_inference})
+    other = doless.load_routed_config(config, {"kind": "reviewer"})
+    assert other["digest"] == inference["digest"]
+    result_path.write_text("\n".join(json.dumps(r) for r in [recorded, *uniform_rows]) + "\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["doless.py", "pareto"])
+    doless.main()
+    output = capsys.readouterr().out
+    assert f"a@{inference['digest']}" in output
+    assert all(doless.comparison_arm(r) in output for r in uniform_rows)
+    assert len(doless.arm_scores([recorded, *uniform_rows])) == 3
+    assert doless.arm_scores([recorded, *uniform_rows])[doless.comparison_arm(recorded)]["frontier"] is True
+
+
+@pytest.mark.parametrize("kind", [None, "unknown", "", []])
+def test_routed_refuses_undeclared_kind_before_any_process(tmp_path, monkeypatch, kind):
+    """Catches defaulting a missing/unknown kind; real run entry, no process or network, <1s."""
+    import argparse
+    monkeypatch.setattr(doless, "load_tasks", lambda: {"task": {} if kind is None else {"kind": kind}})
+    def forbidden(*args, **kwargs):
+        pytest.fail("process reached before route validation")
+    monkeypatch.setattr(doless.runner, "validate_prerequisites", forbidden)
+    args = argparse.Namespace(task="task", treatment="routed", model=None, arm="a", inference_config=str(tmp_path / "absent.json"))
+    with pytest.raises(ValueError, match="kind"):
+        doless.cmd_run(args)

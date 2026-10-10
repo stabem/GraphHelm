@@ -127,6 +127,26 @@ describe("foldTaskEvents", () => {
     expect(foldTaskEvents([claimed(10), released, claimed(12)] as TaskEventRecord[]).map((task) => [task.branch, task.releasedBy ?? null]))
       .toEqual([["same", "lane-a"], ["same", null]]);
   });
+
+  it("a claim after release reopens the same branch", () => {
+    const claimed = (sequence: number) => ({
+      ...parseTaskEvent("task.claimed", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 1, at: "now", issue: 729, lane: "lane-a", branch: "same" }))!,
+      sequence,
+    });
+    const released = { ...parseTaskEvent("task.released", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 2, at: "now", lane: "lane-a", claimSequence: 10, reason: "Stopped" }))!, sequence: 11 };
+    expect(foldTaskEvents([claimed(10), released, claimed(12)] as TaskEventRecord[]).map((task) => task.releasedBy ?? null))
+      .toEqual(["lane-a", null]);
+  });
+
+  it("a release ends every earlier claim by the lane", () => {
+    const claimed = (sequence: number) => ({
+      ...parseTaskEvent("task.claimed", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 1, at: "now", issue: 729, lane: "lane-a", branch: "same" }))!,
+      sequence,
+    });
+    const released = { ...parseTaskEvent("task.released", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 2, at: "now", lane: "lane-a", claimSequence: 10, reason: "Stopped" }))!, sequence: 12 };
+    expect(foldTaskEvents([claimed(10), claimed(11), released] as TaskEventRecord[]).map((task) => task.releasedBy ?? null))
+      .toEqual(["lane-a", "lane-a"]);
+  });
 });
 
 describe("readTaskEventRecords composed with foldTaskEvents", () => {

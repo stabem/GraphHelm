@@ -479,12 +479,15 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
   };
   // A claim names its branch: the same branch is the same slice (a re-claim), any other opens one.
   if (event.kind === "task.claimed") {
+    // Once this lane released a claim on the branch, a later claim starts a new slice.
+    // Otherwise claimSequence stays pinned to the earlier record and later releases can
+    // either miss this claim or close the wrong slice.
     // A critic round recorded before the claim belongs to this task: the claim adopts it (#562).
     return group.find((slice) => slice.releasedBy === undefined && slice.branch !== null && slice.branch === event.branch)
       ?? group.find(isUnclaimedCritic) ?? add();
   }
   if (event.kind === "task.released") {
-    return group.find((slice) => slice.pr === null && slice.lane === event.lane && slice.claimSequence === event.claimSequence)
+    return group.find((slice) => slice.pr === null && slice.lane === event.lane && slice.claimSequence === event.claimSequence && slice.claimSequence < event.sequence)
       ?? (group[group.length - 1] ?? add());
   }
   const own = event.pr === undefined ? undefined : group.find((slice) => slice.pr === event.pr);
@@ -542,7 +545,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         state.claimSequence ??= event.sequence;
         break;
       case "task.released":
-        if (state.pr === null && state.lane === event.lane && state.claimSequence === event.claimSequence) {
+        if (state.pr === null && state.lane === event.lane && state.claimSequence !== undefined && state.claimSequence <= event.sequence) {
           state.releasedBy = event.lane;
         }
         break;

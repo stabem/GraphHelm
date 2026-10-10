@@ -71,8 +71,8 @@ describe("buildMission", () => {
 
   it("a merged record closing a claim removes its open slice; a claim without a PR is not Written", () => {
     const records = [
-      { ...parseTaskEvent("task.claimed", "gh-claude-3", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-478", revision: 1, at: "2026-10-09T00:00:00Z", issue: 478, lane: "gh-claude-3", journeys: ["watch"] }))!, sequence: 1 },
-      { ...parseTaskEvent("task.merged", "gh-claude-10", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "pr-479", revision: 1, at: "2026-10-09T01:00:00Z", pr: 479, mergeSha: "m", closes: [478], merger: "gh-claude-10" }))!, sequence: 2 },
+      { ...parseTaskEvent("task.claimed", "gh-claude-3", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-478", revision: 1, at: "2026-10-09T00:00:00Z", issue: 478, lane: "gh-claude-3", branch: "issue-478-mission", journeys: ["watch"] }))!, sequence: 1 },
+      { ...parseTaskEvent("task.merged", "gh-claude-10", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "pr-479", revision: 1, at: "2026-10-09T01:00:00Z", pr: 479, mergeSha: "abcdef0", closes: [478], merger: "gh-claude-10" }))!, sequence: 2 },
     ];
     const m = buildMission(journey, null, foldTaskEvents(records), records);
     expect(m.tasks).toHaveLength(0);

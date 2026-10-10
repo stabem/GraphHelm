@@ -23,7 +23,7 @@ describe("#647 MissionView: the Team canvas controls on the Graph page", () => {
     const userEvent = fastUserEvent();
     const delegation = foldTaskEvents([
       { kind: "task.claimed", actorId: "lane-a", sequence: 1, taskId: "issue-901", issue: 901,
-        lane: "lane-a", branch: "issue-901-fixture", assignedBy: "coord" },
+        lane: "lane-a", branch: "issue-901-fixture", assignedBy: "lead-901" },
       { kind: "task.review_assigned", actorId: "lane-a", sequence: 2, taskId: "issue-901",
         pr: 903, headSha: "aaaaaaaa", reviewer: "lane-b" },
       { kind: "task.claimed", actorId: "lane-c", sequence: 3, taskId: "issue-902", issue: 902,
@@ -33,8 +33,8 @@ describe("#647 MissionView: the Team canvas controls on the Graph page", () => {
     const { rerender } = render(<MissionView {...props} />);
     await userEvent.click(screen.getByRole("tab", { name: "Lanes" }));
     const tree = within(screen.getByRole("region", { name: "Delegation" })).getByRole("tree");
-    const coord = within(tree).getByRole("treeitem", { name: "coord" });
-    const lane = within(coord).getByRole("treeitem", { name: /^lane-a/ });
+    const assigner = within(tree).getByRole("treeitem", { name: "lead-901" });
+    const lane = within(assigner).getByRole("treeitem", { name: /^lane-a/ });
     const issue = within(lane).getByRole("treeitem", { name: /^#901/ });
     expect(within(issue).getByRole("treeitem", { name: /^lane-b\s*review_assigned$/ })).toBeInTheDocument();
     const unknown = within(tree).getByRole("treeitem", { name: "assigner unrecorded" });

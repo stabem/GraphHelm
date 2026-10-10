@@ -13,7 +13,7 @@ screens:
     title: Recorded handoffs keep reported and unknown assigners distinct
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: Delegation}, {role: treeitem, name: coord}, {role: treeitem, name: lane-a claimed.assignedBy · reported by lane-a}, {role: treeitem, name: "#901 plan · PR #903 claimed.assignedBy · reported by lane-a"}, {role: treeitem, name: lane-b review_assigned}, {role: treeitem, name: assigner unrecorded}, {role: treeitem, name: lane-c assigner unrecorded}]
+    expect: [{role: region, name: Delegation}, {role: treeitem, name: lead-901}, {role: treeitem, name: lane-a claimed.assignedBy · reported by lane-a}, {role: treeitem, name: "#901 plan · PR #903 claimed.assignedBy · reported by lane-a"}, {role: treeitem, name: lane-b review_assigned}, {role: treeitem, name: assigner unrecorded}, {role: treeitem, name: lane-c assigner unrecorded}]
     scope: [apps/studio/src/components/delegation-tree.tsx, apps/studio/src/components/mission-view.tsx]
   - id: run
     title: The open run offers Lanes

@@ -123,7 +123,7 @@ up)
 const fs = require('fs');
 const [dir, at] = process.argv.slice(2);
 const records = [
-  ['901-claimed', 'lane-a', 'task.claimed', { taskId: 'issue-901', issue: 901, lane: 'lane-a', branch: 'issue-901-fixture', assignedBy: 'coord' }],
+  ['901-claimed', 'lane-a', 'task.claimed', { taskId: 'issue-901', issue: 901, lane: 'lane-a', branch: 'issue-901-fixture', assignedBy: 'lead-901' }],
   ['901-review', 'lane-a', 'task.review_assigned', { taskId: 'issue-901', pr: 903, headSha: 'aaaaaaaa', reviewer: 'lane-b', ordinal: 1 }],
   ['902-claimed', 'lane-c', 'task.claimed', { taskId: 'issue-902', issue: 902, lane: 'lane-c', branch: 'issue-902-fixture' }],
 ];

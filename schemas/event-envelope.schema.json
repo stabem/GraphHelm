@@ -523,7 +523,8 @@
           },
           "additionalProperties": false
         },
-        "reason": {"$ref": "#/$defs/nodeOutcomeReason"}
+        "reason": {"$ref": "#/$defs/nodeOutcomeReason"},
+        "crashSite": {"enum": ["wait_failed", "exit_status_unreadable", "stdin_writer_unclean", "timeout_cleanup_unobserved", "stdout_truncated", "exit_nonzero_with_reply", "stream_malformed", "stream_without_error_text", "error_text_unclassified", "claude_unparsed"]}
       },
       "additionalProperties": false
     },

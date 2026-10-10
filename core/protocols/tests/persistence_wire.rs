@@ -1785,3 +1785,49 @@ fn every_refusal_reason_code_is_a_legal_safe_code_and_unique() {
         "an empty registry would satisfy every assertion above"
     );
 }
+
+// Wire compatibility: absent sites round-trip byte-for-byte; new sites are a closed vocabulary.
+// Defect: emitting null rewrites old event hashes; free text leaks provider material. Existing
+// all-variant rows have no site. Cost: offline schema validation and serde only, no new seam.
+#[test]
+fn crash_sites_preserve_legacy_bytes_and_reject_free_text() {
+    let legacy = json!({"type":"node_outcome_recorded","data":{
+        "executionId":"execution-1", "nodeId":"node-1", "outcome":"retryable_failure",
+        "nextState":"ready", "reason":"runtime_crashed"
+    }});
+    let legacy = event_fixture(legacy, false);
+    let validate = validator(EVENT_ID);
+    assert!(validate.is_valid(&legacy));
+    let decoded: EventEnvelope = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(
+        serde_json::to_vec(&serde_json::to_value(&decoded).unwrap()).unwrap(),
+        serde_json::to_vec(&legacy).unwrap()
+    );
+    for site in [
+        "wait_failed",
+        "exit_status_unreadable",
+        "stdin_writer_unclean",
+        "timeout_cleanup_unobserved",
+        "stdout_truncated",
+        "exit_nonzero_with_reply",
+        "stream_malformed",
+        "stream_without_error_text",
+        "error_text_unclassified",
+        "claude_unparsed",
+    ] {
+        let mut current = legacy.clone();
+        current["kind"]["data"]["crashSite"] = json!(site);
+        assert!(validate.is_valid(&current), "schema must accept {site}");
+        let decoded: EventEnvelope = serde_json::from_value(current.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), current);
+    }
+    for invalid in [
+        json!("provider-private-text"),
+        json!({"site":"wait_failed"}),
+        json!(null),
+    ] {
+        let mut current = legacy.clone();
+        current["kind"]["data"]["crashSite"] = invalid;
+        assert!(!validate.is_valid(&current));
+    }
+}

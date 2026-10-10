@@ -280,7 +280,7 @@ fn a_current_codex_retry_recovers_only_with_terminal_completion_and_zero_exit() 
     let adapter = RuntimeAdapter::new(route, mode_env("current-codex-retry-nonzero"));
     assert_eq!(
         adapter.call(&call("retry recovery prompt")).unwrap_err(),
-        GatewayError::RuntimeCrashed
+        GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::ExitNonzeroWithReply)
     );
 }
 
@@ -302,7 +302,10 @@ fn a_current_codex_auth_failure_is_runtime_crashed() {
     let adapter = RuntimeAdapter::new(route, mode_env("current-codex-auth"));
 
     let error = adapter.call(&call("hi")).unwrap_err();
-    assert_eq!(error, GatewayError::RuntimeCrashed);
+    assert_eq!(
+        error,
+        GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::ErrorTextUnclassified)
+    );
 }
 
 #[test]
@@ -313,7 +316,10 @@ fn corrupt_output_after_a_failed_turn_does_not_pause_subscription_capacity() {
         mode_env("current-codex-quota-then-corruption"),
     );
     let error = adapter.call(&call("hi")).unwrap_err();
-    assert_eq!(error, GatewayError::RuntimeCrashed);
+    assert_eq!(
+        error,
+        GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::StreamMalformed)
+    );
     assert_ne!(outcome_for_error(error), NodeOutcome::NeedsCapacity);
 }
 
@@ -325,7 +331,10 @@ fn invalid_item_lifecycle_payload_does_not_pause_subscription_capacity() {
         mode_env("current-codex-invalid-lifecycle"),
     );
     let error = adapter.call(&call("hi")).unwrap_err();
-    assert_eq!(error, GatewayError::RuntimeCrashed);
+    assert_eq!(
+        error,
+        GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::StreamMalformed)
+    );
     assert_ne!(outcome_for_error(error), NodeOutcome::NeedsCapacity);
 }
 
@@ -336,7 +345,10 @@ fn a_current_codex_failed_turn_is_failure_even_on_zero_exit() {
     let adapter = RuntimeAdapter::new(route, mode_env("current-codex-failed-zero"));
 
     let error = adapter.call(&call("hi")).unwrap_err();
-    assert_eq!(error, GatewayError::RuntimeCrashed);
+    assert_eq!(
+        error,
+        GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::ErrorTextUnclassified)
+    );
 }
 
 #[test]
@@ -356,7 +368,10 @@ fn legacy_codex_nonzero_exit_classifies_the_last_error_when_it_is_not_quota() {
     let adapter = RuntimeAdapter::new(route, mode_env("legacy-codex-errors-nonquota-last"));
 
     let error = adapter.call(&call("hi")).unwrap_err();
-    assert_eq!(error, GatewayError::RuntimeCrashed);
+    assert_eq!(
+        error,
+        GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::ErrorTextUnclassified)
+    );
 }
 
 #[test]
@@ -388,7 +403,7 @@ fn a_truncated_codex_stream_cannot_hide_a_failure_after_completion() {
     );
     assert_eq!(
         adapter.call(&call("hi")).unwrap_err(),
-        GatewayError::RuntimeCrashed
+        GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::StdoutTruncated)
     );
 }
 
@@ -443,7 +458,10 @@ fn a_crashed_runtime_is_runtime_crashed_not_malformed() {
     );
 
     let error = adapter.call(&call("hi")).unwrap_err();
-    assert_eq!(error, GatewayError::RuntimeCrashed);
+    assert_eq!(
+        error,
+        GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::ClaudeUnparsed)
+    );
 }
 
 #[test]
@@ -572,7 +590,10 @@ fn an_exit_0_error_report_is_not_a_model_reply() {
     let error = adapter.call(&call("hi")).unwrap_err();
     // No quota marker in the fixture's error text ("permission denied") — an explicit error
     // report with no recognizable quota shape is a crash, not a parked-capacity signal.
-    assert_eq!(error, GatewayError::RuntimeCrashed);
+    assert_eq!(
+        error,
+        GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::ErrorTextUnclassified)
+    );
 }
 
 /// IMPORTANT 4 (i): a genuinely SUCCESSFUL reply whose TEXT happens to contain "rate limit" (the
@@ -633,7 +654,10 @@ fn unparseable_output_mentioning_quota_is_runtime_crashed_not_quota_exhausted() 
     );
 
     let error = adapter.call(&call("hi")).unwrap_err();
-    assert_eq!(error, GatewayError::RuntimeCrashed);
+    assert_eq!(
+        error,
+        GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::ClaudeUnparsed)
+    );
 }
 
 // -------------------------------------------------------------------------------------------
@@ -910,4 +934,82 @@ fn a_missing_non_versioned_program_never_resolves_to_a_sibling() {
         .join("0a1b2c3d4e5f6071")
         .join(name);
     assert_eq!(resolve_program(&not_bin), not_bin);
+}
+
+// Contract: distinguish crash sites; regression: collapse them into runtime_crashed.
+// Existing observers assert only the class. No production seam. Cost: eight local fake
+// processes, bounded output, and two sleeping Windows holders; no service or credentials.
+#[test]
+fn crash_sites_distinguish_parse_and_exit_failures() {
+    let mut failures = Vec::new();
+    for (runtime, mode, site) in [
+        (
+            "codex",
+            "current-codex-hidden-failure-nonzero",
+            "StdoutTruncated",
+        ),
+        (
+            "codex",
+            "current-codex-retry-nonzero",
+            "ExitNonzeroWithReply",
+        ),
+        ("codex", "crash", "StreamMalformed"),
+        ("codex", "legacy-without-error", "StreamWithoutErrorText"),
+        ("codex", "current-codex-auth", "ErrorTextUnclassified"),
+        ("claude_code", "crash", "ClaudeUnparsed"),
+    ] {
+        let manifest = native_manifest(runtime, None);
+        let error = RuntimeAdapter::new(&manifest.routes()[0], mode_env(mode))
+            .call(&call("hi"))
+            .unwrap_err();
+        let expected = format!("RuntimeCrashed({site})");
+        if format!("{error:?}") != expected {
+            failures.push((site, format!("{error:?}")));
+        }
+        assert_eq!(outcome_for_error(error), NodeOutcome::RetryableFailure);
+        assert_eq!(error.to_string(), "the runtime crashed");
+    }
+    assert!(failures.is_empty(), "missing crash sites: {failures:?}");
+}
+
+#[cfg(windows)]
+#[test]
+fn crash_sites_distinguish_unclean_writer_and_timeout_cleanup() {
+    struct Holder(std::process::Child);
+    impl Drop for Holder {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut failures = Vec::new();
+    for (mode, site) in [
+        ("hold-stdin-exit", "StdinWriterUnclean"),
+        ("hold-stdin-timeout", "TimeoutCleanupUnobserved"),
+    ] {
+        let holder = Holder(
+            Command::new(fake_runtime_path())
+                .env("FAKE_RUNTIME_MODE", "hang")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        let manifest = native_manifest("codex", Some(1));
+        let mut env = mode_env(mode);
+        env.push((
+            "FAKE_RUNTIME_HOLDER_PID".to_owned(),
+            holder.0.id().to_string(),
+        ));
+        let error = RuntimeAdapter::new(&manifest.routes()[0], env)
+            .call(&call(&"x".repeat(1024 * 1024)))
+            .unwrap_err();
+        let expected = format!("RuntimeCrashed({site})");
+        if format!("{error:?}") != expected {
+            failures.push((site, format!("{error:?}")));
+        }
+        assert_eq!(outcome_for_error(error), NodeOutcome::RetryableFailure);
+    }
+    assert!(failures.is_empty(), "missing cleanup sites: {failures:?}");
 }

@@ -237,6 +237,7 @@ fn strand_node_running(events: &Path, execution: &str, node: &str) {
                         node_id: graphhelm_protocols::OpaqueId::parse(node).unwrap(),
                         outcome,
                         next_state,
+                        crash_site: None,
                         reason: None,
                     },
                 ),

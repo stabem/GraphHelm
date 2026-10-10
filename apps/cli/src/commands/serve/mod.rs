@@ -3257,6 +3257,7 @@ mod tests {
                 node_id: OpaqueId::parse(node).unwrap(),
                 outcome: NodeOutcome::Approved,
                 next_state: NodeState::Ready,
+                crash_site: None,
                 reason: None,
             })
         };

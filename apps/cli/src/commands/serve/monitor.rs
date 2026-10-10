@@ -715,6 +715,7 @@ mod tests {
                     node_id: OpaqueId::parse(node.to_owned()).unwrap(),
                     outcome: NodeOutcome::Succeeded,
                     next_state: NodeState::Succeeded,
+                    crash_site: None,
                     reason: None,
                 }),
                 vec![],

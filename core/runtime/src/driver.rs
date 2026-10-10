@@ -128,6 +128,7 @@ pub async fn record_outcome_with_evidence(
                     kind,
                     route_id: work.model_route_id.clone(),
                 }),
+            crash_site: work.crash_site,
             reason: work.reason,
         }),
         sealed_work.references.clone(),
@@ -333,6 +334,7 @@ fn bare(outcome: NodeOutcome) -> WorkOutcome {
         // IS its own cause — the triage rule reads that outcome directly
         // (`last_outcome == Interrupted`), so a restated reason here would be noise, which
         // is the other half of what M07 F3 is about.
+        crash_site: None,
         reason: None,
         executor_kind: None,
         model_route_id: None,

@@ -53,6 +53,7 @@ impl AsyncNodeExecutor for FixtureAsyncExecutor {
                 gate_verdict: None,
                 // A fixture failure is scripted, not observed. Naming it as such keeps a
                 // simulated red from being triaged as a provider defect (M07 F3).
+                crash_site: None,
                 reason: (outcome != graphhelm_protocols::NodeOutcome::Succeeded)
                     .then_some(graphhelm_protocols::NodeOutcomeReason::FixtureScripted),
                 executor_kind: Some(graphhelm_protocols::AttemptExecutorKind::Fixture),

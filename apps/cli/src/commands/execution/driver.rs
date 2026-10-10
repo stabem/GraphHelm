@@ -444,6 +444,7 @@ fn record_outcome(
                 node_id,
                 outcome,
                 next_state,
+                crash_site: None,
                 reason,
             }),
             vec![],

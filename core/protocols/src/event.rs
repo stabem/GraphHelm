@@ -896,6 +896,9 @@ pub struct ExecutionModeChanged {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeOutcomeRecorded {
+    /// Closed crash location; absence preserves pre-site event bytes during replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crash_site: Option<CrashSite>,
     pub execution_id: OpaqueId,
     pub node_id: OpaqueId,
     pub outcome: NodeOutcome,
@@ -942,8 +945,8 @@ pub struct AttemptExecutor {
 /// The closed cause vocabulary for a node outcome (M07 F3).
 ///
 /// Deliberately an enum and never free text. The durable stream must not carry provider
-/// prose, paths or anything a secret could ride in on; `GatewayError` is itself a
-/// field-free enum of static classes, so naming the class is lossless for triage while the
+/// prose, paths or anything a secret could ride in on; `GatewayError` carries only
+/// closed enums of static classes, so naming the class is lossless for triage while the
 /// human-readable material goes to Evidence under D-036. Successes carry no reason at all:
 /// a cause on a success is noise, and noise is what the judge's finding is ultimately about.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1586,4 +1589,22 @@ pub struct ClearanceIdentityRegistered {
 pub struct ClearanceIdentityRevoked {
     pub execution_id: OpaqueId,
     pub identity: OpaqueId,
+}
+
+/// The native runtime failure location, never provider text, paths, or exit output.
+/// This names where classification occurred, not the underlying cause.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CrashSite {
+    WaitFailed,
+    ExitStatusUnreadable,
+    StdinWriterUnclean,
+    TimeoutCleanupUnobserved,
+    StdoutTruncated,
+    ExitNonzeroWithReply,
+    StreamMalformed,
+    StreamWithoutErrorText,
+    ErrorTextUnclassified,
+    ClaudeUnparsed,
 }

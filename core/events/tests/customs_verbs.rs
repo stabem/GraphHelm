@@ -135,6 +135,7 @@ fn outcome_event(key: &str, outcome: Outcome, next_state: NodeState) -> NewEvent
             node_id: OpaqueId::parse(CUSTOMS_NODE).unwrap(),
             outcome,
             next_state,
+            crash_site: None,
             reason: None,
         }),
     )

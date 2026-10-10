@@ -629,6 +629,7 @@ mod tests {
                 node_id: OpaqueId::parse(node).unwrap(),
                 outcome,
                 next_state,
+                crash_site: None,
                 reason,
             }),
         )

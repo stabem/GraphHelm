@@ -593,6 +593,7 @@ fn running_node_repository_started_by(
                 node_id: OpaqueId::parse(NODE).unwrap(),
                 outcome,
                 next_state,
+                crash_site: None,
                 reason: None,
             }),
         )]);
@@ -603,6 +604,7 @@ fn running_node_repository_started_by(
 fn succeeded_work(reuse: Option<ReuseSummary>) -> WorkOutcome {
     WorkOutcome {
         outcome: NodeOutcome::Succeeded,
+        crash_site: None,
         reason: None,
         sealables: vec![
             Sealable {
@@ -933,6 +935,7 @@ fn an_unsafe_provider_token_count_refuses_before_sealing_or_append() {
     let before = repository.next_sequence(&scope, DRIVER_STREAM).unwrap();
     let work = WorkOutcome {
         outcome: NodeOutcome::Succeeded,
+        crash_site: None,
         reason: None,
         summary: WorkSummary {
             input_tokens: Some(9_007_199_254_740_992),
@@ -978,6 +981,7 @@ fn a_no_observation_fixture_outcome_does_not_require_evidence_sealing() {
     let scope = driver_scope();
     let work = WorkOutcome {
         outcome: NodeOutcome::Succeeded,
+        crash_site: None,
         reason: None,
         sealables: Vec::new(),
         summary: WorkSummary {
@@ -1020,6 +1024,7 @@ fn sealed_work_without_provider_usage_still_emits_an_unavailable_receipt() {
     let protector = EvidenceProtector::new(InMemoryKeyProvider::default());
     let work = WorkOutcome {
         outcome: NodeOutcome::Succeeded,
+        crash_site: None,
         reason: None,
         sealables: vec![Sealable {
             local_ref_suffix: "reply",
@@ -4654,4 +4659,96 @@ fn an_overflowing_fresh_call_fails_without_a_retry() {
     assert!(drive.calls[2].history.is_empty());
     assert_eq!(drive.b.len(), 2);
     assert_eq!(drive.b_state, graphhelm_protocols::NodeState::Failed);
+}
+
+// Contract: each gateway crash site survives the executor, atomic writer and replay.
+// Regression: dropping the site at either boundary. Existing cause tests stop at reason.
+// No production seam; twenty tiny local stores and a fake model port, no network.
+#[test]
+fn crash_sites_survive_outcome_persistence() {
+    let mut failures = Vec::new();
+    for (error, site) in [
+        (
+            GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::WaitFailed),
+            "wait_failed",
+        ),
+        (
+            GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::ExitStatusUnreadable),
+            "exit_status_unreadable",
+        ),
+        (
+            GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::StdinWriterUnclean),
+            "stdin_writer_unclean",
+        ),
+        (
+            GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::TimeoutCleanupUnobserved),
+            "timeout_cleanup_unobserved",
+        ),
+        (
+            GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::StdoutTruncated),
+            "stdout_truncated",
+        ),
+        (
+            GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::ExitNonzeroWithReply),
+            "exit_nonzero_with_reply",
+        ),
+        (
+            GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::StreamMalformed),
+            "stream_malformed",
+        ),
+        (
+            GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::StreamWithoutErrorText),
+            "stream_without_error_text",
+        ),
+        (
+            GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::ErrorTextUnclassified),
+            "error_text_unclassified",
+        ),
+        (
+            GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::ClaudeUnparsed),
+            "claude_unparsed",
+        ),
+    ] {
+        for judge in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let (repository, execution_id) = running_node_repository(directory.path());
+            let scope = driver_scope();
+            let mut request = cognitive_work();
+            if judge {
+                request.judge = Some(serde_json::from_value(serde_json::json!({
+                "judgeId":"judge-output", "userStory":"a complete answer", "mcpSurface":"fixture"
+            })).unwrap());
+            }
+            let work = block_on(
+                executor(Err(error), ToolDisposition::Completed { exit_code: 0 }).execute(&request),
+            )
+            .unwrap();
+            block_on(record_outcome_with_evidence(
+                &repository,
+                &EvidenceProtector::new(InMemoryKeyProvider::default()),
+                &SequenceIds::default(),
+                &scope,
+                &OpaqueId::parse(DRIVER_STREAM).unwrap(),
+                &execution_id,
+                &driver_actor(),
+                NODE,
+                &work,
+            ))
+            .unwrap();
+            let history = repository
+                .read_replay_stream(&scope, DRIVER_STREAM)
+                .unwrap();
+            replay(&scope, DRIVER_STREAM, &history).unwrap();
+            let EventKind::NodeOutcomeRecorded(recorded) = &history.last().unwrap().kind else {
+                panic!("expected outcome");
+            };
+            let value = serde_json::to_value(recorded).unwrap();
+            if value["crashSite"] != site {
+                failures.push((site, value["crashSite"].clone()));
+            }
+            assert_eq!(value["reason"], "runtime_crashed");
+            assert_eq!(value["outcome"], "retryable_failure");
+        }
+    }
+    assert!(failures.is_empty(), "lost recorded sites: {failures:?}");
 }

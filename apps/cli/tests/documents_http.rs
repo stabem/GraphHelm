@@ -4,6 +4,11 @@
 //! started with the documented `--project` plus a keyring but without `--staging`/`--allow-program`
 //! answered every document read with "requires an explicit --project". The document root is now
 //! carried in server state on its own; this test pins that with the smallest real server.
+#[path = "support/time_scale.rs"]
+mod time_scale;
+
+use time_scale::scaled;
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -120,7 +125,7 @@ fn serve(events: &Path, extra: &[&str]) -> (Server, String, String) {
     let mut token_name = events.file_name().unwrap().to_os_string();
     token_name.push(".token");
     let token_path = events.with_file_name(token_name);
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
     let token = loop {
         if let Ok(token) = std::fs::read_to_string(&token_path)
             && !token.is_empty()
@@ -137,10 +142,10 @@ fn post_json(base: &str, token: &str, path: &str, body: &Value) -> (u16, Value) 
     let authority = base.strip_prefix("http://").unwrap();
     let mut stream = TcpStream::connect(authority).unwrap();
     stream
-        .set_read_timeout(Some(Duration::from_secs(30)))
+        .set_read_timeout(Some(scaled(Duration::from_secs(30))))
         .unwrap();
     stream
-        .set_write_timeout(Some(Duration::from_secs(30)))
+        .set_write_timeout(Some(scaled(Duration::from_secs(30))))
         .unwrap();
     let payload = serde_json::to_vec(body).unwrap();
     let request = format!(

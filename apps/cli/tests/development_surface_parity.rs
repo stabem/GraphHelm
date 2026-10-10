@@ -17,6 +17,11 @@
 //! Grows by one line in [`DEVELOPMENT_OPERATION_FAMILIES`] per operation family landed. A family
 //! present on this list and missing from any one surface fails on exactly that surface, naming it.
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+
+use time_scale::scaled;
+
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
@@ -353,7 +358,7 @@ fn real_mcp_tool_names() -> Vec<String> {
         .args(["mcp", "--url", "http://127.0.0.1:9", "--actor", "agent-x"])
         .env("GRAPHHELM_API_TOKEN", "test-token")
         .write_stdin(input)
-        .timeout(Duration::from_secs(30))
+        .timeout(scaled(Duration::from_secs(30)))
         .output()
         .expect("the mcp server runs to EOF");
     let replies: Vec<Value> = String::from_utf8(output.stdout)
@@ -404,7 +409,7 @@ fn probe_http_route_exists(method_path: &str) {
 
     let mut stdout = child.stdout.take().expect("stdout is piped");
     let mut buffer = Vec::new();
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + scaled(Duration::from_secs(30));
     let started: Value = loop {
         let mut byte = [0u8; 1];
         match stdout.read(&mut byte) {
@@ -476,7 +481,7 @@ fn token_file_path(events: &Path) -> std::path::PathBuf {
 }
 
 fn read_token(path: &Path) -> String {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     loop {
         if let Ok(contents) = std::fs::read_to_string(path)
             && !contents.is_empty()
@@ -497,10 +502,10 @@ fn send_request(address: &str, method: &str, path: &str, token: &str) -> u16 {
     let mut stream = TcpStream::connect((host, port.parse::<u16>().unwrap()))
         .expect("the server accepts a connection right after startup");
     stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
+        .set_read_timeout(Some(scaled(Duration::from_secs(5))))
         .unwrap();
     stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
+        .set_write_timeout(Some(scaled(Duration::from_secs(5))))
         .unwrap();
     let body = b"{}";
     let request = format!(

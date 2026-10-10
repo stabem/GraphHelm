@@ -226,6 +226,10 @@ fn named_cli_targets_do_not_bypass_scaled_deadlines() {
     let mut violations = Vec::new();
     // Coordinator-approved scope; other test targets remain a recorded residual.
     for target in [
+        "development_context_budget",
+        "development_surface_parity",
+        "documents_http",
+        "event_store_local_backup",
         "mcp_discovery",
         "mcp_stdio",
         "monitor_http",

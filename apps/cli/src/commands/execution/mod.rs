@@ -1066,6 +1066,17 @@ pub(in crate::commands) fn render_with_context(
         // map all along -- only the aggregate was rendered. Same labels as the counts, so the
         // two never disagree on vocabulary; kept OFF `execution list` rows (see list.rs).
         "nodeStates": node_states_map(&projection.node_states),
+        // Recorded choices only: reading status never selects a route or defaults a node.
+        "delegation": projection.delegation_choices.iter().map(|(node, record)| (
+            node.clone(),
+            serde_json::json!({
+                "kind": record.chosen.kind,
+                "tier": record.chosen.tier,
+                "effort": record.chosen.effort,
+                "escalated": record.chosen.escalated,
+                "seq": record.at_sequence,
+            }),
+        )).collect::<BTreeMap<String, serde_json::Value>>(),
         // Assignment is an event-backed fact. Keep it beside node states so the Studio can say
         // who owns a proposed node without guessing from the recorder or executor route.
         "nodeAssignments": projection
@@ -1276,6 +1287,59 @@ mod tests {
     fn a_non_empty_history_reports_the_head_it_actually_read() {
         assert_eq!(at_sequence(&[event_at(1)]), Some(1));
         assert_eq!(at_sequence(&[event_at(1), event_at(7)]), Some(7));
+    }
+
+    /// Status must expose recorded routing, never invent a choice for an unassigned node.
+    /// In-memory rendering only; no model, filesystem or network, under one second.
+    #[test]
+    fn status_exposes_recorded_delegation_without_defaulting_other_nodes() {
+        let mut history = Vec::new();
+        let mut previous_hash = GENESIS.to_owned();
+        for (node, tier, effort, escalated, seq) in [
+            ("implement", "small", "low", false, 1),
+            ("implement", "standard", "medium", false, 2),
+            ("retry", "large", "high", true, 3),
+        ] {
+            let mut event = event_at(seq);
+            event.kind = EventKind::DelegationChosen(
+                serde_json::from_value(
+                    serde_json::json!({"nodeId": node, "kind": "implementer", "tier": tier,
+                    "effort": effort, "escalated": escalated, "redChecks": 0}),
+                )
+                .unwrap(),
+            );
+            event.previous_hash = EventHash::parse(previous_hash.clone()).unwrap();
+            previous_hash = graphhelm_events::compute_event_hash(&event, &previous_hash).unwrap();
+            event.event_hash = EventHash::parse(previous_hash.clone()).unwrap();
+            history.push(event);
+        }
+        let mut projection =
+            graphhelm_events::replay(&history[0].scope, "stream-1", &history).unwrap();
+        projection
+            .node_states
+            .insert("unassigned".into(), NodeState::Ready);
+        let value = render(
+            &projection,
+            &AttentionInputs::default(),
+            &Liveness::measured(&[]),
+            None,
+        );
+        assert_eq!(
+            value["delegation"],
+            serde_json::json!({
+                "implement": {"kind": "implementer", "tier": "standard", "effort": "medium", "escalated": false, "seq": 2},
+                "retry": {"kind": "implementer", "tier": "large", "effort": "high", "escalated": true, "seq": 3}
+            })
+        );
+        assert_eq!(
+            render(
+                &ExecutionProjection::default(),
+                &AttentionInputs::default(),
+                &Liveness::measured(&[]),
+                None
+            )["delegation"],
+            serde_json::json!({})
+        );
     }
 
     /// #163: `render()` is the one door `execution status` and `GET /v1/executions/{id}` both

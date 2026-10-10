@@ -118,6 +118,10 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
 Execute the plan with `python tools/reached-tests/run_reached.py --repo . --base <base>
 --head HEAD --root <root> --lane <lane> --output <outside-repo>/feedback.json`. The runner releases
 the existing slot between Cargo commands instead of holding it for the entire proof script.
+The CLI enforces direct, package-scoped Cargo admission before creating a ticket; scripts and
+workspace-wide commands are refused. Test invocations name targets. Explicit whole-package
+plans enumerate their target obligations and release between them; authorization never silently
+narrows coverage. This enforcement requires an upgraded CLI binary.
 Its 180-second target includes planning, queue and execution. Record the report and any pending
 checks in the PR; a budget miss is never green. This replaces the long-script slot pattern, not
 the existing review or load limits. Reached browser observers additionally require

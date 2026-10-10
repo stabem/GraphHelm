@@ -22,11 +22,10 @@ bash tools/studio-journey-fixture/fixture.sh up "$fixture" 18815 15815
 node tools/studio-perf/measure.mjs --base http://127.0.0.1:15815 --runs 5 --out D:/gh/cx/codex-15/perf-185.json
 ```
 
-On the shared machine, run that script through the workspace build slot:
-
-```powershell
-graphhelm workspace slot --root D:\gh --lane codex-15 --jobs 6 --label studio-perf-185 -- "C:\Program Files\Git\bin\bash.exe" D:/gh/cx/codex-15/measure-185.sh
-```
+Run this experiment only on capacity explicitly reserved for it, after ordinary agent work
+has stopped using that capacity. Do not submit the outer script to the Cargo slot: it contains
+fixture startup, browser work and measurement, and the slot now refuses wrapper scripts.
+A quiet window is a prerequisite for interpreting timings, not permission to add local holders.
 
 Never use ports 5183, 5196 or 8793, including for the fixture Runtime. The tool
 refuses those Studio ports and non-local URLs, but cannot verify which Runtime

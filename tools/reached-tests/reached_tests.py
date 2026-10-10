@@ -35,6 +35,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 TOOLCHAIN = "+1.97.1"
@@ -75,6 +76,10 @@ SOURCE_READER_SCOPES = {
     "runtime_http": (),
 }
 BUNDLE_MOD = re.compile(r'#\[path\s*=\s*"([^"]+)\.rs"\]\s*mod\s+(\w+)\s*;')
+PRIVATE_TEST_PATH = (
+    re.compile(r'#\[cfg\s*\(\s*test\s*\)\]\s*#\[path\s*=\s*"([^"]+\.rs)"\]\s*mod\s+\w+\s*;', re.S),
+    re.compile(r'#\[path\s*=\s*"([^"]+\.rs)"\]\s*#\[cfg\s*\(\s*test\s*\)\]\s*mod\s+\w+\s*;', re.S),
+)
 
 
 def run(cmd, cwd):
@@ -82,13 +87,54 @@ def run(cmd, cwd):
 
 
 def workspace(repo):
-    """Packages as {name, dir, deps, tests: [{name, src}], bundles: {file stem: bundle}}."""
+    """Packages plus Cargo target metadata needed to expand whole-package plans safely."""
     meta = json.loads(run(["cargo", TOOLCHAIN, "metadata", "--format-version", "1", "--no-deps", "--offline"], repo))
     root = Path(meta["workspace_root"]).resolve()
     packages = []
     for p in meta["packages"]:
         pdir = Path(p["manifest_path"]).resolve().parent
-        tests = [{"name": t["name"], "src": Path(t["src_path"]).resolve()} for t in p["targets"] if "test" in t["kind"]]
+        manifest_ok = True
+        try:
+            manifest = tomllib.loads(Path(p["manifest_path"]).read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError):
+            manifest = {}
+            manifest_ok = False
+        manifest_targets = []
+        for kind, key in (("lib", "lib"), ("bin", "bin"), ("test", "test"),
+                          ("example", "example"), ("bench", "bench")):
+            values = manifest.get(key, {}) if key == "lib" else manifest.get(key, [])
+            if isinstance(values, dict):
+                values = [values]
+            if isinstance(values, list):
+                manifest_targets.extend((kind, value) for value in values if isinstance(value, dict))
+
+        def target_config(target):
+            kind = next(iter(target["kind"]), "")
+            if kind == "proc-macro":
+                kind = "lib"
+            src = Path(target["src_path"]).resolve()
+            for config_kind, config in manifest_targets:
+                if config_kind != kind:
+                    continue
+                if kind == "lib":
+                    return config
+                config_name = config.get("name")
+                config_path = config.get("path")
+                if config_name == target["name"]:
+                    return config
+                if config_path and (pdir / config_path).resolve() == src:
+                    return config
+            return {}
+
+        targets = []
+        for t in p["targets"]:
+            config = target_config(t)
+            targets.append({"name": t["name"], "kind": next(iter(t["kind"]), ""),
+                            "src": Path(t["src_path"]).resolve(), "test": bool(t.get("test")),
+                            "doctest": bool(t.get("doctest")),
+                            "harness": config.get("harness", True), "harnessKnown": manifest_ok,
+                            "requiredFeatures": list(t.get("required-features", []))})
+        tests = [{"name": t["name"], "src": t["src"]} for t in targets if t["kind"] == "test"]
         bundles = {}
         for t in tests:
             text = t["src"].read_text(encoding="utf-8", errors="replace") if t["src"].is_file() else ""
@@ -100,6 +146,7 @@ def workspace(repo):
             "deps": sorted(d["name"] for d in p["dependencies"] if d.get("path")),
             "tests": [{"name": t["name"], "src": t["src"].relative_to(root).as_posix()} for t in tests],
             "bundles": bundles,
+            "targets": [{**t, "src": t["src"].relative_to(root).as_posix()} for t in targets],
         })
     return packages
 
@@ -154,6 +201,14 @@ def target_of(packages, package, stem):
     return None
 
 
+def python_test_tool(root, path):
+    """Choose the module's declared Python test framework without running it."""
+    text = (root / path).read_text(encoding="utf-8", errors="replace")
+    if re.search(r"^(?:import pytest|from pytest)", text, re.M) or re.search(r"^def\s+test_\w+\s*\(", text, re.M):
+        return f"python -m pytest {path}"
+    return f"python -m unittest {path}"
+
+
 def source_reader_targets(texts, packages, package, changed_source):
     """Map audited source readers; unknown readers stay broad until reviewed."""
     readers = set()
@@ -167,6 +222,29 @@ def source_reader_targets(texts, packages, package, changed_source):
         if target is not None:
             readers.add(target)
     return readers
+
+
+def private_test_parent(sources, changed_path):
+    """Return the unique production module that includes a cfg(test) path child."""
+    parents = set()
+    for source_path, text in sources.items():
+        for pattern in PRIVATE_TEST_PATH:
+            for child in pattern.findall(text):
+                candidate = (Path(source_path).parent / child).as_posix()
+                if candidate == changed_path:
+                    parents.add(source_path[:-len(".rs")])
+    return next(iter(parents)) if len(parents) == 1 else None
+
+
+def private_test_children(sources, parent):
+    """Return cfg(test) path children belonging to one production source."""
+    children = set()
+    parent_source = parent + ".rs"
+    text = sources.get(parent_source, "")
+    for pattern in PRIVATE_TEST_PATH:
+        for child in pattern.findall(text):
+            children.add((Path(parent_source).parent / child).as_posix())
+    return children
 
 
 def cli_module(packages, p, rel, root):
@@ -188,8 +266,26 @@ def cli_module(packages, p, rel, root):
     sources = {f.relative_to(crate).as_posix(): f.read_text(encoding="utf-8", errors="replace")
                for f in sorted(src.rglob("*.rs"))} if src.is_dir() else {}
     start = rel[len("src/commands/"):-len(".rs")]
+    parent = private_test_parent(sources, rel)
+    audited_parent = "src/commands/workspace_slot" if start == "workspace_slot" else parent
+    if parent is not None and parent.startswith("src/commands/"):
+        start = parent[len("src/commands/"):]
     changed_source = f"src/commands/{start}.rs"
     readers = source_reader_targets(texts, packages, p["name"], changed_source)
+
+    if audited_parent == "src/commands/workspace_slot":
+        cli_bin = any(t.get("kind") == "bin" and t.get("name") == CLI_BIN for t in p.get("targets", []))
+        workspace_target = target_of(packages, p["name"], "workspace_cli")
+        allowed = {audited_parent + ".rs", *private_test_children(sources, audited_parent), "src/main.rs", "src/commands/mod.rs",
+                   "src/commands/workspace.rs", "src/commands/serve/routes.rs"}
+        unknown_caller = any(
+            path not in allowed and re.search(r"\bworkspace_slot\b", text)
+            for path, text in sources.items()
+        )
+        if not cli_bin or workspace_target is None or unknown_caller:
+            return None
+        return {(p["name"], f"bin:{CLI_BIN}", "commands::" + start.replace("/", "::")),
+                workspace_target, *readers}
 
     def named(module):
         words = [w for part in module.split("/") for w in part.split("_") if w]
@@ -241,10 +337,8 @@ def reach(changed, packages, embedded, repo=None):
         if path.startswith("tools/") and path.count("/") >= 2 and root is not None:
             tool = root / "/".join(path.split("/")[:2])
             py = sorted(f.relative_to(root).as_posix() for f in tool.glob("test_*.py"))
-            pytest = [f for f in py if "def test_" in (root / f).read_text(encoding="utf-8", errors="replace")]
-            unittest = [f for f in py if f not in pytest]
             js = sorted(f.relative_to(root).as_posix() for f in tool.glob("*.test.mjs") if ".browser." not in f.name)
-            tools |= {f"python -m pytest {f}" for f in pytest} | {f"python -m unittest {f}" for f in unittest} | ({f"node --test {' '.join(js)}"} if js else set())
+            tools |= {python_test_tool(root, f) for f in py} | ({f"node --test {' '.join(js)}"} if js else set())
             hit = hit or bool(py or js)
         if path in embedded:
             whole |= embedded[path]
@@ -279,10 +373,92 @@ def reach(changed, packages, embedded, repo=None):
     return whole, single, studio, sorted(tools), sorted(validate), other
 
 
-def commands(whole, single, studio, tools=(), validate=(), lint_packages=None):
+def _target_argv(package, target):
+    """One explicit Cargo invocation for a target that a package-wide test would cover."""
+    kind, name = target["kind"], target["name"]
+    base = ["cargo", TOOLCHAIN, "test", "--locked", "-p", package]
+    if kind in ("lib", "proc-macro"):
+        return base + ["--lib", *TEST_THREADS.split()]
+    if kind == "bin":
+        return base + ["--bin", name, *TEST_THREADS.split()]
+    if kind == "test":
+        return base + ["--test", name, *TEST_THREADS.split()]
+    if kind == "example":
+        return base + ["--example", name, "--no-run", *TEST_THREADS.split()]
+    return None
+
+
+def expand_whole_packages(whole, packages):
+    """Expand package-wide Cargo test semantics into target steps and explicit unsupported items."""
+    by_name = {p["name"]: p for p in packages}
+    plans, unsupported = {}, []
+    for name in sorted(whole):
+        package = by_name.get(name)
+        targets = package.get("targets") if package else None
+        if not targets:
+            unsupported.append({"package": name, "reason": "Cargo target metadata unavailable"})
+            plans[name] = []
+            continue
+        package_steps = []
+        doc_added = False
+        for target in targets:
+            required = target.get("requiredFeatures", [])
+            if required:
+                unsupported.append({"package": name, "target": target["name"],
+                                    "kind": target["kind"],
+                                    "reason": "target requires features: " + ", ".join(required)})
+                continue
+            if not target.get("harnessKnown", True):
+                unsupported.append({"package": name, "target": target["name"],
+                                    "kind": target["kind"],
+                                    "reason": "Cargo manifest unavailable; harness setting unresolved"})
+                continue
+            if not target.get("harness", True):
+                unsupported.append({"package": name, "target": target["name"],
+                                    "kind": target["kind"],
+                                    "reason": "custom harness target cannot inherit bounded test arguments"})
+                continue
+            if target["kind"] == "example" and target.get("test"):
+                unsupported.append({"package": name, "target": target["name"],
+                                    "kind": target["kind"],
+                                    "reason": "test-enabled example execution is not represented by compile-only step"})
+                continue
+            if target["kind"] in ("lib", "proc-macro", "bin", "test") and not target.get("test") \
+                    and not (target["kind"] in ("lib", "proc-macro") and target.get("doctest")):
+                continue
+            argv = _target_argv(name, target)
+            if argv is None:
+                if target["kind"] not in ("custom-build", "bench"):
+                    unsupported.append({"package": name, "target": target["name"],
+                                        "kind": target["kind"], "reason": "unsupported Cargo target kind"})
+                continue
+            if target["kind"] in ("lib", "proc-macro") and target.get("doctest") and target.get("test"):
+                package_steps.append({"argv": argv, "cwd": ".", "slot": True})
+            if target["kind"] in ("lib", "proc-macro") and target.get("doctest") and not doc_added:
+                package_steps.append({"argv": ["cargo", TOOLCHAIN, "test", "--locked", "-p", name,
+                                                "--doc", *TEST_THREADS.split()], "cwd": ".", "slot": True})
+                doc_added = True
+            elif not (target["kind"] in ("lib", "proc-macro") and target.get("doctest")):
+                package_steps.append({"argv": argv, "cwd": ".", "slot": True})
+        plans[name] = package_steps
+    return plans, unsupported
+
+
+def _argv_text(argv):
+    return " ".join(argv)
+
+
+def commands(whole, single, studio, tools=(), validate=(), lint_packages=None, package_plans=None):
+    if whole and package_plans is not None:
+        missing = sorted(set(whole) - set(package_plans))
+        if missing:
+            raise ValueError("whole-package target metadata missing for: " + ", ".join(missing))
     cmds = list(tools) + [f"graphhelm --json extension validate {v}" for v in validate]
     for name in sorted(whole):
-        cmds.append(f"cargo {TOOLCHAIN} test --locked -p {name} {TEST_THREADS}")
+        if package_plans is not None and name in package_plans:
+            cmds.extend(_argv_text(step["argv"]) for step in package_plans[name])
+        else:
+            cmds.append(f"cargo {TOOLCHAIN} test --locked -p {name} {TEST_THREADS}")
     for package, target, module in sorted(single, key=lambda s: (s[0], s[1], s[2] or "")):
         kind = f"--bin {target[4:]}" if target.startswith("bin:") else f"--test {target}"
         cmds.append(f"cargo {TOOLCHAIN} test --locked -p {package} {kind}" + (f" {module}::" if module else "") + f" {TEST_THREADS}")
@@ -316,8 +492,14 @@ def _node_test_paths(command, repo):
     return paths
 
 
-def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo=None):
+def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo=None, package_plans=None):
     """Return executable argv records without interpreting the legacy shell command strings."""
+    if whole and package_plans is None:
+        raise ValueError("whole-package steps require Cargo target metadata")
+    if whole:
+        missing = sorted(set(whole) - set(package_plans))
+        if missing:
+            raise ValueError("whole-package target metadata missing for: " + ", ".join(missing))
     out = []
     for tool in tools:
         if tool == BROWSER_OBSERVERS:
@@ -340,8 +522,11 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
     for path in validate:
         out.append({"argv": ["graphhelm", "--json", "extension", "validate", path], "cwd": ".", "slot": False})
     for name in sorted(whole):
-        out.append({"argv": ["cargo", TOOLCHAIN, "test", "--locked", "-p", name, *TEST_THREADS.split()],
-                    "cwd": ".", "slot": True})
+        if package_plans is not None and name in package_plans:
+            out.extend(package_plans[name])
+        else:
+            out.append({"argv": ["cargo", TOOLCHAIN, "test", "--locked", "-p", name, *TEST_THREADS.split()],
+                        "cwd": ".", "slot": True})
     for package, target, module in sorted(single, key=lambda s: (s[0], s[1], s[2] or "")):
         kind = ["--bin", target[4:]] if target.startswith("bin:") else ["--test", target]
         argv = ["cargo", TOOLCHAIN, "test", "--locked", "-p", package, *kind]
@@ -404,13 +589,15 @@ def main(argv):
     packages = workspace(repo)
     embedded = embeds(repo, packages)
     whole, single, studio, tools, validate, other = reach(changed, packages, embedded, repo)
+    package_plans, unsupported = expand_whole_packages(whole, packages)
     lint = lint_scope(changed, packages, embedded)
     result = {"changed": changed, "packages": sorted(whole), "broadPackages": sorted(whole),
               "targets": [{"package": p, "test": t, "module": m} for p, t, m in sorted(single, key=lambda s: (s[0], s[1], s[2] or ""))],
               "studio": studio, "tools": tools, "validate": validate, "unmapped": other,
-              "commands": commands(whole, single, studio, tools, validate, lint),
-              "steps": steps(whole, single, studio, tools, validate, lint, repo),
+              "commands": commands(whole, single, studio, tools, validate, lint, package_plans),
+              "steps": steps(whole, single, studio, tools, validate, lint, repo, package_plans),
               "lintPackages": sorted(lint),
+              "unsupported": unsupported,
               "keelPlan": keel_plan(repo, changed)}
     if args.json:
         print(json.dumps(result, indent=1))

@@ -150,8 +150,9 @@ fn priority_allowed(root: &Path, lane: &str) -> bool {
 
 /// The workspace's own package names, for `--clean-workspace` (`cargo metadata --no-deps`, run
 /// in the current directory). `None` when the directory is no cargo workspace or cargo fails.
-fn workspace_packages(cargo: &str) -> Option<Vec<String>> {
+fn workspace_packages(cargo: &str, cwd: &Path) -> Option<Vec<String>> {
     let output = Command::new(cargo)
+        .current_dir(cwd)
         .args(["metadata", "--no-deps", "--format-version", "1"])
         .output()
         .ok()?;
@@ -170,21 +171,27 @@ fn workspace_packages(cargo: &str) -> Option<Vec<String>> {
 /// `--clean-workspace` before the command: clean every workspace package out of the shared
 /// target. Fails closed (#417 review): a clean that cannot run or fails is a refusal, never a
 /// silent `cleaned: null` followed by a build against another lane's artifacts.
-fn clean_workspace_packages(cargo: &str, target: &Path) -> Result<serde_json::Value, String> {
-    let cwd = std::env::current_dir()
-        .map_or_else(|_| "<unknown>".to_owned(), |dir| dir.display().to_string());
-    let packages = workspace_packages(cargo).ok_or_else(|| {
-        format!("--clean-workspace: no cargo workspace at the current directory {cwd}; run the slot from the worktree root")
+fn clean_workspace_packages(
+    cargo: &str,
+    target: &Path,
+    cwd: &Path,
+) -> Result<serde_json::Value, String> {
+    let directory = cwd.display();
+    let packages = workspace_packages(cargo, cwd).ok_or_else(|| {
+        format!("--clean-workspace: no cargo workspace at the current directory {directory}; run the slot from the worktree root")
     })?;
     let mut clean = Command::new(cargo);
-    clean.arg("clean").env("CARGO_TARGET_DIR", target);
+    clean
+        .current_dir(cwd)
+        .arg("clean")
+        .env("CARGO_TARGET_DIR", target);
     for package in &packages {
         clean.args(["-p", package]);
     }
     match clean.status() {
         Ok(status) if status.success() => Ok(json!({"packages": packages.len(), "ok": true})),
         Ok(status) => Err(format!(
-            "--clean-workspace: cargo clean failed ({status}) in {cwd}"
+            "--clean-workspace: cargo clean failed ({status}) in {directory}"
         )),
         Err(error) => Err(format!(
             "--clean-workspace: cargo clean could not start: {}",
@@ -207,7 +214,293 @@ pub(crate) struct SlotRequest<'a> {
     pub command: &'a [String],
 }
 
+/// The slot is a Cargo build resource, not a general purpose process queue. Keep this check pure
+/// and before target discovery, ticket creation, or any filesystem effect. Callers that need a
+/// script must split it into direct, reached steps and acquire the slot for each Cargo step.
+fn admit_command(command: &[String]) -> Result<(), String> {
+    let Some(program) = command.first() else {
+        return Err("a direct Cargo command is required after --".into());
+    };
+    let basename = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    if !matches!(basename, "cargo" | "cargo.exe") {
+        return Err("workspace slot accepts direct cargo commands only; run the outer script outside the slot".into());
+    }
+    let mut cursor = 1;
+    if command
+        .get(cursor)
+        .is_some_and(|arg| arg.starts_with('+') && arg.len() > 1)
+    {
+        cursor += 1;
+    }
+    let Some(kind @ ("build" | "test" | "clippy")) = command.get(cursor).map(String::as_str) else {
+        return Err("workspace slot accepts cargo build, test, or clippy only".into());
+    };
+    cursor += 1;
+    let mut package = false;
+    let mut target = false;
+    let mut filter = false;
+    while let Some(raw) = command.get(cursor) {
+        cursor += 1;
+        if raw == "--" {
+            // Cargo stops parsing here. Remaining arguments belong to libtest or clippy.
+            break;
+        }
+        let (flag, inline) = if let Some((flag, value)) = raw.split_once('=') {
+            (flag, Some(value))
+        } else if raw.starts_with("-p") && raw.len() > 2 {
+            ("-p", Some(&raw[2..]))
+        } else if raw.starts_with("-j") && raw.len() > 2 {
+            ("-j", Some(&raw[2..]))
+        } else if raw.starts_with("-F") && raw.len() > 2 {
+            ("-F", Some(&raw[2..]))
+        } else {
+            (raw.as_str(), None)
+        };
+        match flag {
+            "--workspace" | "--all" | "--target-dir" | "--manifest-path" | "--config"
+            | "--exclude" | "-j" | "--jobs" | "--tests" | "--bins" | "--examples" | "--benches" => {
+                return Err("workspace-wide commands and target overrides cannot occupy the ordinary slot; name each package and test target".into());
+            }
+            "--lib" | "--doc" if inline.is_none() => target = true,
+            "--all-targets" if kind == "clippy" && inline.is_none() => {}
+            "--locked"
+            | "--offline"
+            | "--frozen"
+            | "--release"
+            | "-r"
+            | "--all-features"
+            | "--no-default-features"
+            | "--quiet"
+            | "-q"
+            | "--verbose"
+            | "-v"
+            | "-vv"
+            | "--no-run"
+            | "--keep-going"
+                if inline.is_none() => {}
+            "--timings" => {}
+            "-p" | "--package" | "--test" | "--bin" | "--example" | "--bench" | "-F"
+            | "--features" | "--target" | "--profile" | "--message-format" | "--color" => {
+                let value = if let Some(value) = inline {
+                    value
+                } else {
+                    let value = command
+                        .get(cursor)
+                        .ok_or("Cargo option is missing its value")?;
+                    cursor += 1;
+                    value.as_str()
+                };
+                if value.is_empty() || value.starts_with('-') {
+                    return Err("Cargo option is missing its value".into());
+                }
+                if matches!(
+                    flag,
+                    "-p" | "--package" | "--test" | "--bin" | "--example" | "--bench"
+                ) && value.contains(['*', '?', '['])
+                {
+                    return Err("package and target globs are not bounded slot commands".into());
+                }
+                if matches!(flag, "-p" | "--package") {
+                    package = true;
+                } else if matches!(flag, "--test" | "--bin" | "--example" | "--bench") {
+                    target = true;
+                }
+            }
+            _ if !raw.starts_with('-') && kind == "test" && !filter => filter = true,
+            _ => {
+                return Err(format!(
+                    "unsupported Cargo slot option {raw}; use direct scoped Cargo commands"
+                ));
+            }
+        }
+    }
+    if !package {
+        return Err("workspace slot requires an explicit package".into());
+    }
+    if kind == "test" && !target {
+        return Err("workspace slot test requires an explicit test target".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::admit_command;
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|part| (*part).to_owned()).collect()
+    }
+
+    #[test]
+    fn admits_one_explicit_cargo_test_target() {
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "+1.97.1",
+                "test",
+                "--locked",
+                "-p",
+                "graphhelm-cli",
+                "--test",
+                "workspace_cli",
+            ]))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn refuses_script_before_any_slot_effect() {
+        let error = admit_command(&argv(&["powershell", "-Command", "marker"])).unwrap_err();
+        assert!(error.contains("direct cargo"));
+    }
+
+    #[test]
+    fn refuses_unscoped_and_target_overrides() {
+        assert!(admit_command(&argv(&["cargo", "+1.97.1", "test", "--workspace"])).is_err());
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "+1.97.1",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--target-dir",
+                "else",
+                "--test",
+                "cli",
+            ]))
+            .is_err()
+        );
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "+1.97.1",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--test",
+            ]))
+            .is_err()
+        );
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "+1.97.1",
+                "test",
+                "--test",
+                "workspace_cli"
+            ]))
+            .is_err()
+        );
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "+1.97.1",
+                "test",
+                "-pfoo",
+                "--test",
+                "workspace_cli",
+            ]))
+            .is_ok()
+        );
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "+1.97.1",
+                "test",
+                "--package=foo",
+                "--test",
+                "workspace_cli",
+            ]))
+            .is_ok()
+        );
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "+1.97.1",
+                "test",
+                "-p",
+                "foo",
+                "--test",
+                "workspace_cli",
+                "--",
+                "--test-threads=2",
+            ]))
+            .is_ok()
+        );
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "+1.97.1",
+                "test",
+                "-p",
+                "foo",
+                "--test",
+                "workspace_cli",
+                "--config",
+                "target-dir=bad",
+            ]))
+            .is_err()
+        );
+    }
+    #[test]
+    fn parses_scope_without_treating_option_values_as_filters() {
+        for args in [
+            vec![
+                "C:/toolchain/bin/cargo.exe",
+                "test",
+                "-pfoo",
+                "--test=workspace_cli",
+            ],
+            vec!["cargo", "test", "-p", "foo", "--lib"],
+            vec!["cargo", "test", "-p", "foo", "--doc"],
+            vec![
+                "cargo",
+                "clippy",
+                "-pfoo",
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ],
+        ] {
+            assert!(admit_command(&argv(&args)).is_ok(), "{args:?}");
+        }
+        for args in [
+            vec!["cargo", "test", "-pfoo", "--features", "feature"],
+            vec!["cargo", "test", "-pfoo", "filter_only"],
+            vec!["cargo", "test", "-pfoo", "--all-targets"],
+            vec!["cargo", "test", "-pfoo", "--test=*"],
+            vec!["cargo", "test", "-pfoo", "--test", "--lib"],
+            vec!["cargo", "test", "-pfoo", "--lib", "-j32"],
+        ] {
+            assert!(admit_command(&argv(&args)).is_err(), "{args:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "workspace_slot_target_tests.rs"]
+mod workspace_slot_target_tests;
+#[cfg(test)]
+#[path = "workspace_slot_tests.rs"]
+mod workspace_slot_tests;
+
 pub(crate) fn run_slot(request: &SlotRequest<'_>) -> Outcome {
+    if let Err(message) = admit_command(request.command) {
+        return refuse(&message, "/command");
+    }
+    run_admitted_slot(request)
+}
+
+fn run_admitted_slot(request: &SlotRequest<'_>) -> Outcome {
+    let Ok(cwd) = std::env::current_dir() else {
+        return refuse("the current directory could not be read", "/target");
+    };
+    run_admitted_slot_in(request, &cwd)
+}
+
+fn run_admitted_slot_in(request: &SlotRequest<'_>, cwd: &Path) -> Outcome {
     let (root, lane, label) = (request.root, request.lane, request.label);
     if !super::workspace::valid_id(lane) {
         return refuse("lane must be a workspace id", "/lane");
@@ -246,6 +539,7 @@ pub(crate) fn run_slot(request: &SlotRequest<'_>) -> Outcome {
             "/priority",
         );
     }
+
     // #360: the owner's build-directory rule. A lane over its cap or below the floor refuses before it
     // queues, so nobody waits for a turn the slot would then refuse.
     let rule = if request.shared {
@@ -256,13 +550,7 @@ pub(crate) fn run_slot(request: &SlotRequest<'_>) -> Outcome {
             Err(message) => return refuse(&message, "/targetRoot"),
         }
     };
-    let worktree = match (&rule, std::env::current_dir()) {
-        (None, _) => None,
-        (Some(_), Ok(dir)) => Some(dir),
-        (Some(_), Err(_)) => {
-            return refuse("the current directory could not be read", "/target");
-        }
-    };
+    let worktree = rule.as_ref().map(|_| cwd.to_owned());
     if let (Some(rule), Some(worktree)) = (&rule, &worktree)
         && let Err(message) = super::workspace::slot_target(root, rule, lane, worktree, false)
     {
@@ -289,7 +577,7 @@ pub(crate) fn run_slot(request: &SlotRequest<'_>) -> Outcome {
     }
     let info = json!({"lane": lane, "label": label, "pid": std::process::id(),
         "arrivedNanos": arrival.to_string(), "priority": request.priority,
-        "worktree": std::env::current_dir().ok()});
+        "worktree": cwd});
     let _ = std::fs::write(info_path(&mine), info.to_string());
     let started = Instant::now();
     let slot = loop {
@@ -331,7 +619,7 @@ pub(crate) fn run_slot(request: &SlotRequest<'_>) -> Outcome {
     let _ = std::fs::write(
         dir.join(HOLDER),
         json!({"lane": lane, "label": label, "pid": std::process::id(),
-            "sinceNanos": held_since.to_string(), "worktree": std::env::current_dir().ok(), "ticket": mine.file_name().map(|n| n.to_string_lossy().into_owned())})
+            "sinceNanos": held_since.to_string(), "worktree": cwd, "ticket": mine.file_name().map(|n| n.to_string_lossy().into_owned())})
         .to_string(),
     );
     let release = |slot: File, ticket: File| {
@@ -356,18 +644,12 @@ pub(crate) fn run_slot(request: &SlotRequest<'_>) -> Outcome {
             }
         }
     } else {
-        match std::env::current_dir() {
-            Ok(dir) => dir.join("target"),
-            Err(_) => {
-                release(slot, ticket);
-                return refuse("the current directory could not be read", "/target");
-            }
-        }
+        cwd.join("target")
     };
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let mut cleaned = None;
     if request.clean_workspace {
-        match clean_workspace_packages(&cargo, &target) {
+        match clean_workspace_packages(&cargo, &target, cwd) {
             Ok(report) => cleaned = Some(report),
             Err(reason) => {
                 release(slot, ticket);
@@ -376,6 +658,7 @@ pub(crate) fn run_slot(request: &SlotRequest<'_>) -> Outcome {
         }
     }
     let status = Command::new(program)
+        .current_dir(cwd)
         .args(arguments)
         .env("CARGO_TARGET_DIR", &target)
         .env("CARGO_BUILD_JOBS", request.jobs.to_string())

@@ -76,25 +76,22 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 
 ## 3. Builds: one slot for the whole machine
 
-- Every `cargo` build, test or clippy invocation runs under the build slot, one at a time in arrival order:
+- Every Cargo build, test or clippy invocation runs under the existing build slot, with a direct
+  Cargo command and an explicit package. Tests also name a target:
 
-      graphhelm workspace slot --root D:\gh --lane <lane> --label <what> -- "C:\Program Files\Git\bin\bash.exe" D:\gh\<lane>\<script>.sh
+      graphhelm workspace slot --root D:\gh --lane <lane> --jobs 6 --label <what> -- cargo +1.97.1 test --locked -p graphhelm-cli --test keel_check -- --test-threads=2
 
-- **The slot wraps Cargo only.** Run `npm ci --prefer-offline --no-audit --no-fund`,
-  `vitest --maxWorkers=1`, `tsc`, and journey previews outside it, from your own worktree.
-  A Cargo script must end before starting a preview or waiting for a browser; otherwise it
-  holds the machine's only build slot while every other lane waits.
-
-- The script exports the worktree's own target and never cleans it:
-
-      export CARGO_TARGET_DIR="<your worktree>/target"
-
-  Never use or export `D:\gh\target-shared` (`--shared-target`): cargo can treat another worktree's
-  artifacts as fresh, so the run vouches for bytes it did not build (#361). No `cargo clean`.
-- The script also exports `GRAPHHELM_TEST_TIME_SCALE=3`: it multiplies the hang-catcher ceilings of
-  the CLI tests that wait on a child process (`apps/cli/tests/support/time_scale.rs`, #549), which
-  otherwise go red on a machine other lanes are building on. It scales test waits only, never a
-  product budget; a whole number from 1 to 20, anything else is refused.
+- The CLI refuses shell, PowerShell and Python wrappers before creating a ticket. Keep the outer
+  script outside the slot and acquire once for each direct Cargo command. Unscoped package tests,
+  workspace-wide commands and target-directory overrides are refused too. This is enforced by
+  upgraded CLI binaries; an old installed binary retains the old behavior until upgraded.
+- Run `npm ci --prefer-offline --no-audit --no-fund`, `vitest --maxWorkers=1`, `tsc`, and standalone
+  journey previews outside the Cargo slot, serially within the lane. Cargo-based browser observers
+  remain in the slot with two test threads; this change does not add execution capacity.
+- Keep the isolated target chosen by the slot warm. Do not override its `CARGO_TARGET_DIR`, use
+  `--shared-target`, or run `cargo clean`: shared mutable artifacts can vouch for another worktree's
+  code (#361). The outer script may set `GRAPHHELM_TEST_TIME_SCALE=3` before invoking the slot. This
+  scales child-test hang catchers, never product budgets; supported values are integers 1 through 20.
 - **Where the owner set a build-directory rule, the slot picks the directory and the script does
   not export one (#360).** The rule is `<root>\.graphhelm-workspaces\slot-targets.json`:
 
@@ -135,7 +132,7 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   adds `targetSpace: {targetRoot, freeGb, minFreeGb}` alongside the existing lane counts;
   unreadable free space is `null`, never a claim that enough space remains. No-rule and
   `--shared-target` runs keep their existing behavior.
-- Write Git Bash's full path in the slot command, as above. A bare `bash` or `sh` resolves to WSL.
+- Shells may orchestrate slot calls, but cannot themselves be the command submitted to the slot.
 - A `cargo check` run allowed outside the slot uses
   `CARGO_TARGET_DIR=D:\gh\<lane>\target-check`.
 - Benchmarks, load generators and store seeding run inside the slot too: they load the machine like

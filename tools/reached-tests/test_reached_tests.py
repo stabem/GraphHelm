@@ -3,10 +3,12 @@
 A small fake workspace, no cargo and no git: policy <- execution <- cli, an adapter nobody depends
 on, a cli test bundle, and one embedded schema. Each case is a real diff shape from this repository.
 """
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import reached_tests as rt  # noqa: E402
@@ -52,8 +54,11 @@ class Reach(unittest.TestCase):
         self.assertIn(rt.GUARD, commands)
 
     def test_steps_keep_argv_and_slot_metadata_without_shell_parsing(self):
+        package_plans = {"graphhelm-cli": [{"argv": ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli",
+                                                       "--", "--test-threads=2"],
+                                             "cwd": ".", "slot": True}]}
         records = rt.steps({"graphhelm-cli"}, set(), ["apps/studio/src/runtime/team-tasks.ts"],
-                           [rt.BROWSER_OBSERVERS], [])
+                           [rt.BROWSER_OBSERVERS], [], package_plans=package_plans)
         self.assertEqual(records[0], {"argv": rt.BROWSER_ARGV, "cwd": ".", "slot": True, "observer": "browser"})
         self.assertEqual(records[1]["argv"], ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli",
                                                "--", "--test-threads=2"])
@@ -62,12 +67,92 @@ class Reach(unittest.TestCase):
                                        "cwd": "apps/studio", "slot": False})
         self.assertEqual(records[-1], {"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio", "slot": False})
 
+    def test_whole_package_steps_without_metadata_refuse_unscoped_cargo(self):
+        with self.assertRaisesRegex(ValueError, "target metadata"):
+            rt.steps({"graphhelm-cli"}, set(), [], package_plans=None)
+
     def test_lint_scope_does_not_follow_test_dependents(self):
         self.assertEqual(rt.lint_scope(["core/policy/src/keel_plan.rs"], PACKAGES, EMBEDDED), {"graphhelm-policy"})
         commands = rt.commands({"graphhelm-policy", "graphhelm-execution", "graphhelm-cli"}, set(), [],
                                lint_packages={"graphhelm-policy"})
         self.assertIn("cargo +1.97.1 clippy --locked -p graphhelm-policy --all-targets --all-features -- -D warnings", commands)
         self.assertNotIn("-p graphhelm-execution", next(c for c in commands if " clippy " in c))
+
+    def test_whole_package_expands_to_explicit_targets_and_doc_examples(self):
+        packages = [{"name": "graphhelm-cli", "targets": [
+            {"name": "graphhelm_cli", "kind": "lib", "test": True, "doctest": True},
+            {"name": "graphhelm", "kind": "bin", "test": True, "doctest": False},
+            {"name": "cli", "kind": "test", "test": True, "doctest": False},
+            {"name": "fixture", "kind": "example", "test": False, "doctest": False},
+            {"name": "bench", "kind": "bench", "test": False, "doctest": False},
+        ]}]
+        plans, unsupported = rt.expand_whole_packages({"graphhelm-cli"}, packages)
+        self.assertEqual(unsupported, [])
+        argv = [step["argv"] for step in plans["graphhelm-cli"]]
+        self.assertIn(["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli",
+                       "--lib", "--", "--test-threads=2"], argv)
+        self.assertIn(["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli",
+                       "--doc", "--", "--test-threads=2"], argv)
+        self.assertIn(["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli",
+                       "--example", "fixture", "--no-run", "--", "--test-threads=2"], argv)
+        self.assertFalse(any(step["argv"] == ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli",
+                                               "--", "--test-threads=2"] for step in plans["graphhelm-cli"]))
+        commands = rt.commands({"graphhelm-cli"}, set(), [], package_plans=plans)
+        self.assertNotIn("cargo +1.97.1 test --locked -p graphhelm-cli -- --test-threads=2", commands)
+
+    def test_whole_package_required_features_are_explicitly_unsupported(self):
+        plans, unsupported = rt.expand_whole_packages({"graphhelm-cli"}, [{"name": "graphhelm-cli", "targets": [
+            {"name": "feature_test", "kind": "test", "test": True, "doctest": False,
+             "requiredFeatures": ["special"]},
+        ]}])
+        self.assertEqual(plans["graphhelm-cli"], [])
+        self.assertEqual(unsupported[0]["reason"], "target requires features: special")
+
+    def test_missing_target_metadata_has_empty_plan_without_broad_fallback(self):
+        plans, unsupported = rt.expand_whole_packages({"graphhelm-cli"}, [])
+        self.assertEqual(plans, {"graphhelm-cli": []})
+        self.assertIn("metadata unavailable", unsupported[0]["reason"])
+        with self.assertRaisesRegex(ValueError, "target metadata"):
+            rt.steps({"graphhelm-cli"}, set(), [], package_plans={})
+
+    def test_custom_harness_and_test_enabled_examples_are_explicitly_unsupported(self):
+        packages = [{"name": "graphhelm-cli", "targets": [
+            {"name": "custom", "kind": "test", "test": True, "harness": False},
+            {"name": "example_test", "kind": "example", "test": True, "harness": True},
+        ]}]
+        plans, unsupported = rt.expand_whole_packages({"graphhelm-cli"}, packages)
+        self.assertEqual(plans["graphhelm-cli"], [])
+        reasons = {item["target"]: item["reason"] for item in unsupported}
+        self.assertIn("custom harness", reasons["custom"])
+        self.assertIn("compile-only", reasons["example_test"])
+
+    def test_workspace_reads_harness_from_manifest_fixture(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = root / "Cargo.toml"
+            source = root / "src" / "lib.rs"
+            source.parent.mkdir()
+            source.write_text("", encoding="utf-8")
+            manifest.write_text('[package]\nname = "fixture"\nversion = "0.0.0"\n\n[lib]\nharness = false\n',
+                                encoding="utf-8")
+            metadata = {"workspace_root": str(root), "packages": [{
+                "name": "fixture", "manifest_path": str(manifest), "dependencies": [],
+                "targets": [{"name": "fixture", "kind": ["lib"], "src_path": str(source),
+                              "test": True, "doctest": False, "required-features": []}],
+            }]}
+            with patch.object(rt, "run", return_value=json.dumps(metadata)):
+                packages = rt.workspace(root)
+            self.assertFalse(packages[0]["targets"][0]["harness"])
+            self.assertTrue(packages[0]["targets"][0]["harnessKnown"])
+
+    def test_library_doctest_without_library_tests_emits_only_doc_step(self):
+        packages = [{"name": "graphhelm-cli", "targets": [
+            {"name": "graphhelm_cli", "kind": "lib", "test": False, "doctest": True,
+             "harness": True, "harnessKnown": True},
+        ]}]
+        plans, unsupported = rt.expand_whole_packages({"graphhelm-cli"}, packages)
+        self.assertEqual(unsupported, [])
+        self.assertEqual([step["argv"][6] for step in plans["graphhelm-cli"]], ["--doc"])
 
     def test_node_test_path_with_space_is_recovered_from_filesystem(self):
         with tempfile.TemporaryDirectory() as repo:
@@ -132,6 +217,19 @@ class Reach(unittest.TestCase):
             *_, tools, _, other = reach("tools/task-record/task_record.py", repo=repo)
         self.assertEqual(tools, ["python -m unittest tools/task-record/test_task_record.py"])
         self.assertEqual(other, [])
+
+    def test_pytest_function_module_is_selected_with_pytest_runner(self):
+        with tempfile.TemporaryDirectory() as repo:
+            tool = Path(repo, "tools", "token-bench")
+            tool.mkdir(parents=True)
+            (tool / "test_run.py").write_text("def test_reaches_pytest():\n    assert True\n", encoding="utf-8")
+            *_, tools, _, other = reach("tools/token-bench/run.py", repo=repo)
+        self.assertEqual(tools, ["python -m pytest tools/token-bench/test_run.py"])
+        self.assertEqual(other, [])
+
+    def test_structured_pytest_step_keeps_direct_argv(self):
+        records = rt.steps(set(), set(), [], ["python -m pytest tools/token-bench/test_run.py"], [])
+        self.assertEqual(records[0]["argv"], ["python", "-m", "pytest", "tools/token-bench/test_run.py"])
 
     def test_pytest_tool_contract_is_selected_explicitly_without_importing_tests(self):
         with tempfile.TemporaryDirectory() as repo:
@@ -214,6 +312,100 @@ class CliModules(unittest.TestCase):
         packages[0]["tests"].append({"name": "future_reader", "src": "apps/cli/tests/future_reader.rs"})
         whole, single, *_ = rt.reach(["apps/cli/src/commands/journey_explore.rs"], packages, {}, root)
         self.assertIn(("graphhelm-cli", "future_reader", None), single)
+
+    def test_private_cfg_test_path_reaches_parent_module_and_readers(self):
+        root, packages = self.tree()
+        source = root / "apps/cli/src/commands"
+        source.mkdir(parents=True, exist_ok=True)
+        (source / "workspace_slot.rs").write_text(
+            '#[cfg(test)]\n#[path = "workspace_slot_tests.rs"]\nmod workspace_slot_tests;\n', encoding="utf-8")
+        (source / "workspace_slot_tests.rs").write_text("", encoding="utf-8")
+        tests = root / "apps/cli/tests"
+        (tests / "workspace_cli.rs").write_text(
+            'cmd.args(["workspace", "slot"]);', encoding="utf-8")
+        (tests / "source_invariants.rs").write_text(
+            'env!("CARGO_MANIFEST_DIR"); "src/any.rs";', encoding="utf-8")
+        packages[0]["tests"] += [
+            {"name": "workspace_cli", "src": "apps/cli/tests/workspace_cli.rs"},
+            {"name": "source_invariants", "src": "apps/cli/tests/source_invariants.rs"},
+        ]
+        packages[0]["targets"] = [{"name": "graphhelm", "kind": "bin"}]
+        whole, single, *_ = rt.reach(
+            ["apps/cli/src/commands/workspace_slot_tests.rs"], packages, {}, root)
+        self.assertEqual(whole, set())
+        self.assertIn(("graphhelm-cli", "bin:graphhelm", "commands::workspace_slot"), single)
+        self.assertIn(("graphhelm-cli", "workspace_cli", None), single)
+        self.assertIn(("graphhelm-cli", "source_invariants", None), single)
+
+    def test_private_cfg_test_unknown_caller_falls_back_to_whole_package(self):
+        root, packages = self.tree()
+        source = root / "apps/cli/src/commands"
+        source.mkdir(parents=True, exist_ok=True)
+        (source / "workspace_slot.rs").write_text(
+            '#[cfg(test)]\n#[path = "workspace_slot_tests.rs"]\nmod workspace_slot_tests;\n', encoding="utf-8")
+        (source / "workspace_slot_tests.rs").write_text("", encoding="utf-8")
+        (source / "unrelated.rs").write_text("use crate::workspace_slot;\n", encoding="utf-8")
+        tests = root / "apps/cli/tests"
+        (tests / "workspace_cli.rs").write_text('cmd.args(["workspace", "slot"]);', encoding="utf-8")
+        packages[0]["tests"] += [{"name": "workspace_cli", "src": "apps/cli/tests/workspace_cli.rs"}]
+        packages[0]["targets"] = [{"name": "graphhelm", "kind": "bin"}]
+        whole, *_ = rt.reach(["apps/cli/src/commands/workspace_slot_tests.rs"], packages, {}, root)
+        self.assertEqual(whole, {"graphhelm-cli"})
+
+    def test_private_cfg_test_without_bin_or_workspace_target_falls_back(self):
+        root, packages = self.tree()
+        source = root / "apps/cli/src/commands"
+        source.mkdir(parents=True, exist_ok=True)
+        (source / "workspace_slot.rs").write_text(
+            '#[cfg(test)]\n#[path = "workspace_slot_tests.rs"]\nmod workspace_slot_tests;\n', encoding="utf-8")
+        (source / "workspace_slot_tests.rs").write_text("", encoding="utf-8")
+        packages[0]["targets"] = []
+        whole, *_ = rt.reach(["apps/cli/src/commands/workspace_slot_tests.rs"], packages, {}, root)
+        self.assertEqual(whole, {"graphhelm-cli"})
+
+    def test_workspace_production_change_keeps_normal_narrow_coverage(self):
+        root, packages = self.tree()
+        source = root / "apps/cli/src/commands"
+        source.mkdir(parents=True, exist_ok=True)
+        (source / "workspace.rs").write_text("", encoding="utf-8")
+        tests = root / "apps/cli/tests"
+        (tests / "workspace_cli.rs").write_text('cmd.args(["workspace"]);', encoding="utf-8")
+        packages[0]["tests"] += [{"name": "workspace_cli", "src": "apps/cli/tests/workspace_cli.rs"}]
+        packages[0]["targets"] = [{"name": "graphhelm", "kind": "bin"}]
+        whole, single, *_ = rt.reach(["apps/cli/src/commands/workspace.rs"], packages, {}, root)
+        self.assertEqual(whole, set())
+        self.assertIn(("graphhelm-cli", "bin:graphhelm", "commands::workspace"), single)
+
+    def test_workspace_slot_production_file_uses_audited_narrow_coverage(self):
+        root, packages = self.tree()
+        source = root / "apps/cli/src/commands"
+        source.mkdir(parents=True, exist_ok=True)
+        (source / "workspace_slot.rs").write_text(
+            '#[cfg(test)]\n#[path = "workspace_slot_tests.rs"]\nmod workspace_slot_tests;\n', encoding="utf-8")
+        (source / "workspace_slot_tests.rs").write_text("", encoding="utf-8")
+        tests = root / "apps/cli/tests"
+        (tests / "workspace_cli.rs").write_text('cmd.args(["workspace", "slot"]);', encoding="utf-8")
+        packages[0]["tests"] += [{"name": "workspace_cli", "src": "apps/cli/tests/workspace_cli.rs"}]
+        packages[0]["targets"] = [{"name": "graphhelm", "kind": "bin"}]
+        whole, single, *_ = rt.reach(["apps/cli/src/commands/workspace_slot.rs"], packages, {}, root)
+        self.assertEqual(whole, set())
+        self.assertIn(("graphhelm-cli", "bin:graphhelm", "commands::workspace_slot"), single)
+        self.assertIn(("graphhelm-cli", "workspace_cli", None), single)
+
+    def test_other_private_cfg_test_parent_keeps_normal_module_selection(self):
+        root, packages = self.tree()
+        source = root / "apps/cli/src/commands"
+        source.mkdir(parents=True, exist_ok=True)
+        (source / "other_module.rs").write_text(
+            '#[cfg(test)]\n#[path = "other_module_tests.rs"]\nmod other_module_tests;\n', encoding="utf-8")
+        (source / "other_module_tests.rs").write_text("", encoding="utf-8")
+        tests = root / "apps/cli/tests"
+        (tests / "other_module_cli.rs").write_text('cmd.args(["other", "module"]);', encoding="utf-8")
+        packages[0]["tests"] += [{"name": "other_module_cli", "src": "apps/cli/tests/other_module_cli.rs"}]
+        whole, single, *_ = rt.reach(
+            ["apps/cli/src/commands/other_module_tests.rs"], packages, {}, root)
+        self.assertEqual(whole, set())
+        self.assertIn(("graphhelm-cli", "bin:graphhelm", "commands::other_module"), single)
 
     def test_scoped_reader_reaches_when_its_real_source_is_touched(self):
         texts = {

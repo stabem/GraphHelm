@@ -3,7 +3,9 @@
 
 The selector owns reachability. This runner owns only orchestration: every Cargo
 step gets its own slot invocation, while format, Python, and Studio steps run
-directly. No command is passed through a shell.
+directly. No command is passed through a shell. Whole-package plans are expanded
+by the selector into explicit Cargo targets; targets requiring features are
+reported as unsupported and remain incomplete rather than being silently skipped.
 """
 from __future__ import annotations
 
@@ -14,12 +16,17 @@ import os
 import subprocess
 import sys
 import time
+import re
 from pathlib import Path
 from typing import Any
 
 
 SELECTOR = Path(__file__).with_name("reached_tests.py")
 MAX_CAPTURE = 4000
+_SHELL_MARKERS = ("&&", "||", "|", ">", "<", "`", "$(")
+_SHELL_EXECUTABLES = {"sh", "bash", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe"}
+_CARGO_TEST_TARGET_FLAGS = ("--test", "--bin", "--lib", "--doc", "--example")
+_UNITTEST_ZERO = re.compile(r"\bRan\s+0\s+tests?\b")
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -61,6 +68,10 @@ def _steps(plan: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
             return [], f"invalid selector step {index}"
         if any(not isinstance(arg, str) or not arg for arg in step["argv"]):
             return [], f"invalid argv in selector step {index}"
+        if step["argv"][0].lower() in _SHELL_EXECUTABLES or any(
+            any(marker in arg for marker in _SHELL_MARKERS) for arg in step["argv"]
+        ):
+            return [], f"shell syntax is forbidden in selector step {index}; use argv entries"
         cwd = step.get("cwd", ".")
         if cwd not in (".", "apps/studio"):
             return [], f"invalid cwd in selector step {index}: {cwd!r}"
@@ -76,6 +87,8 @@ def _steps(plan: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
                 return [], f"Cargo {command} must use a build slot in selector step {index}"
             if command == "fmt" and step["slot"]:
                 return [], f"Cargo fmt must run outside the build slot in selector step {index}"
+            if command == "test" and not any(flag in argv for flag in _CARGO_TEST_TARGET_FLAGS):
+                return [], f"unscoped Cargo test is forbidden in selector step {index}; use an explicit target"
         observer = step.get("observer")
         if observer not in (None, "browser"):
             return [], f"invalid observer in selector step {index}"
@@ -169,6 +182,10 @@ def run(args: argparse.Namespace) -> int:
             plan = _selector(repo, args.base, args.head, logs / "selector.log")
             reason = _whole_reason(plan, args.allow_whole_package)
             report["wholePackageReason"] = args.allow_whole_package
+            unsupported = plan.get("unsupported", [])
+            if not isinstance(unsupported, list):
+                raise RuntimeError("selector unsupported field must be a list")
+            report["unsupported"] = unsupported
             if plan.get("unmapped"):
                 raise RuntimeError("selector returned unmapped paths")
             if reason:
@@ -176,8 +193,14 @@ def run(args: argparse.Namespace) -> int:
             steps, error = _steps(plan)
             if error:
                 raise RuntimeError(error)
-            report["plan"] = {"steps": steps}
+            report["plan"] = {"steps": steps, "unsupported": unsupported}
             report["pending"] = list(range(len(steps)))
+            if unsupported:
+                reasons = "; ".join(
+                    str(item.get("reason", item)) if isinstance(item, dict) else str(item)
+                    for item in unsupported
+                )
+                raise RuntimeError(f"selector returned unsupported targets; no steps executed: {reasons}")
             browser_steps = [i for i, step in enumerate(steps) if step["observer"] == "browser"]
             if browser_steps and not getattr(args, "include_browser", False):
                 raise RuntimeError("browser observer steps require --include-browser; they remain pending")
@@ -222,7 +245,14 @@ def run(args: argparse.Namespace) -> int:
                 if no_pytest_tests:
                     entry["returncode"] = proc.returncode or 1
                     entry["error"] = "pytest collected no tests"
+                zero_tests = "-m" in argv and "unittest" in argv and bool(_UNITTEST_ZERO.search(entry["tail"]))
+                if zero_tests:
+                    entry["zeroTests"] = True
                 report["completed"].append(entry)
+                if zero_tests:
+                    report["status"] = "incomplete"
+                    report["error"] = f"step {index} unittest discovered zero tests"
+                    break
                 if entry["returncode"]:
                     report["status"] = "failed"
                     break

@@ -148,4 +148,21 @@ describe("LanesTimeline", () => {
     expect(row.querySelector(".ab-doing")).toHaveTextContent("D:/gh");
     expect(row.querySelector(".ab-doing")).not.toHaveTextContent("building");
   });
+
+  it("shows queued position and wait duration once with the build location", () => {
+    render(<LanesTimeline lanes={[lanes[1]!]} now={now} windowMs={1000} slots={[{
+      root: "D:/gh", ok: true, holder: { lane: "gh-claude-5", label: null, pid: 1, worktree: null, heldSeconds: 240 },
+      waiting: [
+        { lane: "gh-claude-5", label: null, pid: 3, worktree: null, priority: null, ticket: null, waitedSeconds: 180 },
+        { lane: "gh-claude-6", label: null, pid: 2, worktree: null, priority: null, ticket: null, waitedSeconds: 120 },
+      ],
+    }]} />);
+    const row = within(screen.getByRole("list", { name: "Agent board" })).getByText("gh-claude-6").closest("li")!;
+    expect(row.querySelector(".ab-pill")).toHaveTextContent("Waiting for build");
+    expect(row.querySelector(".ab-tag")).toHaveTextContent("2nd · 2m");
+    expect(row.querySelectorAll(".ab-tag")).toHaveLength(1);
+    expect(row.querySelector(".ab-doing")).toHaveTextContent("D:/gh");
+    expect(row.querySelector(".ab-doing")).not.toHaveTextContent("Waiting for build");
+    expect(row.textContent?.match(/Waiting for build/g)).toHaveLength(1);
+  });
 });

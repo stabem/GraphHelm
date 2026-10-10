@@ -26,7 +26,7 @@ const landmarks = new Set(['banner','complementary','contentinfo','form','main',
 const secrets = Object.entries(process.env).filter(([key]) => /^GRAPHHELM_SECRET_[A-Za-z0-9_]+$/.test(key));
 let browser, context, page, baseOrigin, allowed = new Set(), hostRefused = false, networkFailure;
 let requestId = 0, opened = false, closed = false, headed = false, survive = false, showing = false;
-let coverageEnabled = false, coverageStarted = false, coverageStopped = false, mainframeNavigations = 0;
+let coverageEnabled = false, coverageStarted = false, coverageStopped = false, mainframeNavigations = 0, coverageCdp;
 // A headed (live) session survives an observation failure so the owner sees where the journey
 // broke (#398); so does a healing replay's session, which repairs the broken edge in place
 // (#356). Protocol, privacy and host failures still end it.
@@ -110,6 +110,40 @@ function coveragePath(raw) {
 function hashSource(source) {
   return createHash('sha256').update(source).digest('hex');
 }
+function validSourceMapMappings(map) {
+  if (map.mappings === '') return false;
+  const decode = (text, at) => {
+    let value = 0, multiplier = 1;
+    for (let i = at; i < text.length; i++) {
+      const code = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'.indexOf(text[i]);
+      if (code < 0) return null;
+      value += (code & 31) * multiplier;
+      if (!Number.isSafeInteger(value)) return null;
+      if (!(code & 32)) return {value: (value & 1) ? -Math.floor(value / 2) : Math.floor(value / 2), next: i + 1};
+      multiplier *= 32;
+      if (!Number.isSafeInteger(multiplier)) return null;
+    }
+    return null;
+  };
+  let sourceIndex = 0, nameIndex = 0, originalLine = 0, originalColumn = 0, mappedSegment = false;
+  for (const line of map.mappings.split(';')) {
+    let generatedColumn = 0;
+    if (!line) continue;
+    for (const segment of line.split(',')) {
+      if (!segment) return false;
+      const values = []; let at = 0;
+      while (at < segment.length) { const decoded = decode(segment, at); if (!decoded) return false; values.push(decoded.value); at = decoded.next; }
+      if (![1, 4, 5].includes(values.length) || values[0] < 0) return false;
+      generatedColumn += values[0]; if (!Number.isSafeInteger(generatedColumn) || generatedColumn < 0) return false;
+      if (values.length === 1) continue;
+      mappedSegment = true;
+      sourceIndex += values[1]; originalLine += values[2]; originalColumn += values[3];
+      if (![sourceIndex, originalLine, originalColumn].every(Number.isSafeInteger) || sourceIndex < 0 || sourceIndex >= map.sources.length || originalLine < 0 || originalColumn < 0) return false;
+      if (values.length === 5) { if (!Array.isArray(map.names)) return false; nameIndex += values[4]; if (!Number.isSafeInteger(nameIndex) || nameIndex < 0 || nameIndex >= map.names.length) return false; }
+    }
+  }
+  return mappedSegment;
+}
 function inlineSourceHashes(source) {
   if (typeof source !== 'string') return { hashes: [], mapped: false };
   const match = source.match(/(?:\/\/|\/\*)[#@]\s*sourceMappingURL=data:application\/json;base64,([^*\s]+)(?:\*\/)?\s*$/m);
@@ -125,7 +159,7 @@ function inlineSourceHashes(source) {
     if (decoded.length > COVERAGE_MAP_MAX) return { hashes: [], mapped: true };
     map = JSON.parse(decoded.toString('utf8'));
   } catch { return { hashes: [], mapped: true }; }
-  if (map.version !== 3 || !Array.isArray(map.sources) || map.sources.length === 0 || !map.sources.every(value => typeof value === 'string') || typeof map.mappings !== 'string' || !Array.isArray(map.sourcesContent) || map.sourcesContent.length !== map.sources.length) return { hashes: [], mapped: true };
+  if (map.version !== 3 || !Array.isArray(map.sources) || map.sources.length === 0 || !map.sources.every(value => typeof value === 'string') || typeof map.mappings !== 'string' || !validSourceMapMappings(map) || !Array.isArray(map.sourcesContent) || map.sourcesContent.length !== map.sources.length) return { hashes: [], mapped: true };
   if (!map.sourcesContent.every(value => typeof value === 'string' && Buffer.byteLength(value) <= COVERAGE_SOURCE_MAX)) return { hashes: [], mapped: true };
   const hashes = map.sourcesContent.map(hashSource);
   return { hashes, mapped: true };
@@ -360,9 +394,13 @@ async function run(r) {
         socket.connectToServer();
       });
       page=await context.newPage();
-      page.on('framenavigated', frame => { if (frame === page.mainFrame()) mainframeNavigations += 1; });
       if (coverageEnabled) {
         if (!page.coverage || typeof page.coverage.startJSCoverage !== 'function') fail('driver.observer_missing');
+        try {
+          coverageCdp=await context.newCDPSession(page);
+          await coverageCdp.send('Page.enable');
+          coverageCdp.on('Page.frameNavigated', event => { if (!event.frame.parentId) mainframeNavigations += 1; });
+        } catch { fail('driver.observer_missing'); }
         await page.coverage.startJSCoverage({resetOnNavigation:false});
         coverageStarted = true;
       }

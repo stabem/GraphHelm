@@ -255,9 +255,12 @@ test('coverage captures called and untouched generated functions without source 
 
 test('coverage keeps inline source hashes, refuses source-map attribution gaps, and marks navigation incomplete',async t=>{
   const original='function originalMapped(){return "original-source-canary"}';
-  const encoded=Buffer.from(JSON.stringify({version:3,sources:['src/original.js'],sourcesContent:[original],names:[],mappings:''})).toString('base64');
-  const multi=Buffer.from(JSON.stringify({version:3,sources:['a.js','b.js'],sourcesContent:['function a(){return 1}','function b(){return 2}'],names:[],mappings:''})).toString('base64');
+  const encoded=Buffer.from(JSON.stringify({version:3,sources:['src/original.js'],sourcesContent:[original],names:[],mappings:'AAAA'})).toString('base64');
+  const multi=Buffer.from(JSON.stringify({version:3,sources:['a.js','b.js'],sourcesContent:['function a(){return 1}','function b(){return 2}'],names:[],mappings:'AAAA,CCAA'})).toString('base64');
   const partial=Buffer.from(JSON.stringify({version:3,sources:['a.js','b.js'],sourcesContent:['function a(){return 1}'],names:[],mappings:''})).toString('base64');
+  const invalidVlq=Buffer.from(JSON.stringify({version:3,sources:['bad.js'],sourcesContent:['function bad(){return 1}'],names:[],mappings:'!'})).toString('base64');
+  const outOfBounds=Buffer.from(JSON.stringify({version:3,sources:['one.js'],sourcesContent:['function one(){return 1}'],names:[],mappings:'ACAA'})).toString('base64');
+  const noAttribution=Buffer.from(JSON.stringify({version:3,sources:['none.js'],sourcesContent:['function none(){return 1}'],names:[],mappings:'A'})).toString('base64');
   const server=createServer((req,res)=>{
     res.setHeader('Content-Type','text/html; charset=utf-8');
     if(req.url==='/valid') return res.end(`<script>function generatedMapped(){return 1}generatedMapped();//# sourceMappingURL=data:application/json;base64,${encoded}</script>`);
@@ -265,7 +268,11 @@ test('coverage keeps inline source hashes, refuses source-map attribution gaps, 
     if(req.url==='/malformed') return res.end('<script>function malformedMap(){return 1}malformedMap();//# sourceMappingURL=data:application/json;base64,not-json</script>');
     if(req.url==='/multi') return res.end(`<script>function multiMap(){return 1}multiMap();//# sourceMappingURL=data:application/json;base64,${multi}</script>`);
     if(req.url==='/partial') return res.end(`<script>function partialMap(){return 1}partialMap();//# sourceMappingURL=data:application/json;base64,${partial}</script>`);
+    if(req.url==='/invalid-vlq') return res.end(`<script>function invalidVlq(){return 1}invalidVlq();//# sourceMappingURL=data:application/json;base64,${invalidVlq}</script>`);
+    if(req.url==='/out-of-bounds') return res.end(`<script>function outOfBounds(){return 1}outOfBounds();//# sourceMappingURL=data:application/json;base64,${outOfBounds}</script>`);
+    if(req.url==='/no-attribution') return res.end(`<script>function noAttribution(){return 1}noAttribution();//# sourceMappingURL=data:application/json;base64,${noAttribution}</script>`);
     if(req.url==='/nav') return res.end('<button>Navigate</button><script>document.querySelector("button").onclick=()=>location.href="/nav2"</script>');
+    if(req.url==='/spa') return res.end('<button>Push state</button><script>document.querySelector("button").onclick=()=>history.pushState({},"","#next")</script>');
     res.end('<h1>Navigation target</h1>');
   });
   await new Promise(done=>server.listen(0,'127.0.0.1',done));
@@ -277,11 +284,12 @@ test('coverage keeps inline source hashes, refuses source-map attribution gaps, 
     const artifact=JSON.parse(await readFile(join(c.output,'coverage.json'),'utf8'));
     assert.deepEqual(artifact.scripts.flatMap(s=>s.sources).map(s=>s.sha256),expectedSources);
     assert.ok(!JSON.stringify(artifact).includes('sourceContent'));
+    assert.equal((await c.send('close')).ok,true);
     return artifact;
   };
   const valid=await readArtifact('/valid',[createHash('sha256').update(original).digest('hex')]);
   assert.equal(valid.negativeEvidenceEligible,true);
-  for(const path of ['/external','/malformed','/partial']) {
+  for(const path of ['/external','/malformed','/partial','/invalid-vlq','/out-of-bounds','/no-attribution']) {
     const artifact=await readArtifact(path,[]);
     assert.equal(artifact.negativeEvidenceEligible,false);
     assert.equal(artifact.complete,false);
@@ -296,6 +304,7 @@ test('coverage keeps inline source hashes, refuses source-map attribution gaps, 
   assert.equal(unavailableArtifact.collection,'unavailable');
   assert.equal(unavailableArtifact.complete,false);
   assert.equal(unavailableArtifact.negativeEvidenceEligible,false);
+  assert.equal((await unavailable.send('close')).ok,true);
   const navigated=await client(t);await open(navigated,base+'/nav',[],{coverage:true});
   assert.equal((await act(navigated,'activate','button','Navigate')).ok,true);
   const navReply=await navigated.send('coverage');assert.equal(navReply.ok,true);
@@ -303,4 +312,12 @@ test('coverage keeps inline source hashes, refuses source-map attribution gaps, 
   assert.equal(navArtifact.navigationCount,2);
   assert.equal(navArtifact.negativeEvidenceEligible,false);
   assert.equal(navArtifact.complete,false);
+  assert.equal((await navigated.send('close')).ok,true);
+  const spa=await client(t);await open(spa,base+'/spa',[],{coverage:true});
+  assert.equal((await act(spa,'activate','button','Push state')).ok,true);
+  const spaReply=await spa.send('coverage');assert.equal(spaReply.ok,true);
+  const spaArtifact=JSON.parse(await readFile(join(spa.output,'coverage.json'),'utf8'));
+  assert.equal(spaArtifact.navigationCount,1);
+  assert.equal(spaArtifact.negativeEvidenceEligible,true);
+  assert.equal((await spa.send('close')).ok,true);
 });

@@ -121,6 +121,32 @@ systemctl start graphhelm.service
 
 Wait for `/health` to return successfully before reconnecting clients.
 
+The unauthenticated health envelope includes `data.previousExit`: `null` on the first
+start, otherwise `{state, at, pid, location?}` for the previous run on this events directory.
+`state` is `clean`, `serve_error`, `panicked`, or `vanished`. Times are Unix seconds;
+for `vanished`, `at` is the previous start time, not an inferred time of death.
+`location`, when present, is a sanitized crate-relative Rust file and line or `unknown`.
+Panic payloads and thread names are never stored or returned.
+
+`<events>/runtime-lifecycle.json` is replaced atomically after bind and on an ending.
+A lifetime lock prevents two listeners from claiming the same events directory. A live
+previous PID also refuses startup; PID reuse can cause a conservative refusal. Inspect
+the process and `runtime-lifecycle.json` before manually removing a stale record. The
+existing process helper does not supply a process start identity.
+
+A caught task panic records `panicked` with `fatal: false` while the Runtime can still
+serve requests. A later clean exit supersedes it and keeps `lastPanic` in the file.
+Thus a previous `panicked` record proves that a panic happened, not that it caused the
+process to end. A kill, abort, or power loss with no recorded ending reports `vanished`.
+Neither state establishes the root cause of an outage. The previous exit stays fixed
+for the current process; health does not report its own latest caught panic.
+
+The server normally runs until killed. Debug builds alone accept
+`GRAPHHELM_TEST_SHUTDOWN_FILE` (complete a graceful stop when this file exists) and
+`GRAPHHELM_TEST_PANIC_ON_BOOT=1` (main panic) or `task` (caught task panic) for isolated
+integration tests. Release builds ignore
+both. A crash between bind and the lifecycle write leaves the prior record unchanged.
+
 ### Let a failed smoke roll back
 
 Do not replace the binary manually when the candidate smoke fails. The helper automatically restores the old binary and the pre-upgrade recovery bundle, then repeats the smoke with the old version.

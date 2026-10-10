@@ -121,6 +121,9 @@ fn serve_with(events: &Path, extra: &ServeExtra) -> (ServerGuard, String, String
         "expected a successful startup: {started}"
     );
     let address = envelope_str(&started, "address", "the serve startup line").to_owned();
+    // Keep the reader open: a normal shutdown prints the final command envelope.
+    // Dropping it here would make that write panic with a broken pipe.
+    server.child.stdout = Some(stdout.into_inner());
 
     let token = read_token(&token_path(events));
     let base = format!("http://{address}");
@@ -130,6 +133,146 @@ fn serve_with(events: &Path, extra: &ServeExtra) -> (ServerGuard, String, String
 
 fn serve(events: &Path) -> (ServerGuard, String, String) {
     serve_with(events, &ServeExtra::default())
+}
+
+// Lifecycle observers: real isolated processes and ephemeral ports, no model calls.
+// These catch lost exit records and a second writer overwriting a live owner's record;
+// the existing HTTP cells never restart the same store. Cost: a few child starts per cell.
+#[test]
+fn lifecycle_killed_runtime_is_reported_as_vanished() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let (server, base, _) = serve(&events);
+    let first = json_body(&raw_request(&format!("{base}/health"), None).unwrap());
+    assert_eq!(first["data"].get("previousExit"), Some(&Value::Null));
+    let pid = server.child.id();
+    drop(server);
+    let (_next, base, _) = serve(&events);
+    let reply = json_body(&raw_request(&format!("{base}/health"), None).unwrap());
+    assert_eq!(reply["data"]["previousExit"]["state"], "vanished");
+    assert_eq!(reply["data"]["previousExit"]["pid"], pid);
+}
+
+#[test]
+fn lifecycle_clean_shutdown_is_reported_on_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let shutdown = dir.path().join("shutdown");
+    let extra = ServeExtra {
+        env: vec![
+            (
+                "GRAPHHELM_TEST_SHUTDOWN_FILE".into(),
+                shutdown.display().to_string(),
+            ),
+            ("GRAPHHELM_TEST_PANIC_ON_BOOT".into(), "task".into()),
+        ],
+        ..ServeExtra::default()
+    };
+    let (mut server, _, _) = serve_with(&events, &extra);
+    let record: Value =
+        serde_json::from_slice(&std::fs::read(events.join("runtime-lifecycle.json")).unwrap())
+            .unwrap();
+    assert_eq!(record["state"], "panicked");
+    assert_eq!(record["fatal"], false);
+    assert!(!record.to_string().contains("private-panic-payload"));
+    std::fs::write(&shutdown, "").unwrap();
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
+    loop {
+        if let Some(status) = server.child.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "normal shutdown did not complete"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let record: Value =
+        serde_json::from_slice(&std::fs::read(events.join("runtime-lifecycle.json")).unwrap())
+            .unwrap();
+    assert_eq!(record["state"], "clean");
+    assert!(
+        record["lastPanic"]["location"]
+            .as_str()
+            .unwrap()
+            .contains(".rs:")
+    );
+    assert!(record.get("location").is_none());
+    let (_next, base, _) = serve(&events);
+    let reply = json_body(&raw_request(&format!("{base}/health"), None).unwrap());
+    assert_eq!(reply["data"]["previousExit"]["state"], "clean");
+}
+
+#[test]
+fn lifecycle_main_panic_is_reported_without_payload_or_home_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    command
+        .args([
+            "serve",
+            "--events",
+            events.to_str().unwrap(),
+            "--bind",
+            "127.0.0.1:0",
+        ])
+        .env("GRAPHHELM_TEST_PANIC_ON_BOOT", "1")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    graphhelm_process_tree::configure(&mut command);
+    let (child, process_group) = create_process_group_or_terminate(command.spawn().unwrap());
+    let mut server = ServerGuard {
+        child,
+        process_group,
+    };
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
+    loop {
+        if let Some(status) = server.child.try_wait().unwrap() {
+            assert!(!status.success());
+            break;
+        }
+        assert!(Instant::now() < deadline, "main task did not panic");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let record: Value =
+        serde_json::from_slice(&std::fs::read(events.join("runtime-lifecycle.json")).unwrap())
+            .unwrap();
+    assert_eq!(record["fatal"], true);
+    assert!(!record.to_string().contains("private-panic-payload"));
+    let (_next, base, _) = serve(&events);
+    let reply = json_body(&raw_request(&format!("{base}/health"), None).unwrap());
+    let previous = &reply["data"]["previousExit"];
+    assert_eq!(previous["state"], "panicked");
+    let location = previous["location"].as_str().unwrap();
+    let (file, line) = location.rsplit_once(':').unwrap();
+    assert!(file.ends_with(".rs") && line.parse::<u32>().unwrap() > 0);
+    assert!(!location.contains(":\\"));
+    assert!(!reply.to_string().contains("private-panic-payload"));
+}
+
+#[test]
+fn lifecycle_second_runtime_refuses_without_changing_live_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let (_server, _, _) = serve(&events);
+    let path = events.join("runtime-lifecycle.json");
+    let before = std::fs::read(&path).unwrap();
+    let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let assertion = command
+        .args([
+            "serve",
+            "--events",
+            events.to_str().unwrap(),
+            "--bind",
+            "127.0.0.1:0",
+        ])
+        .timeout(scaled(Duration::from_secs(10)))
+        .assert()
+        .failure();
+    let refused: Value = serde_json::from_slice(&assertion.get_output().stdout).unwrap();
+    assert_eq!(refused["diagnostics"][0]["path"], "/events");
+    assert_eq!(std::fs::read(path).unwrap(), before);
 }
 
 /// Helper process used by `server_guard_closes_a_descendant_holding_stdout`.

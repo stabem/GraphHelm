@@ -37,9 +37,26 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   entry to the owner's `.claude/launch.json`.
 - No bare `git stash`: the stash is shared by every worktree of the repository, so another lane can
   pop yours. Commit to your branch instead.
-- One new worktree per task, cut from `origin/main`:
+- One new worktree per task, cut from `origin/main`. Use `workspace claim` so the Runtime
+  can manage its lifetime, then `workspace release` when the task is done:
 
-      git -C F:/github/GraphHelm worktree add D:/gh/<lane>/wt-<issue> -b issue-<N>-<slug> origin/main
+      graphhelm workspace claim --root D:/gh --lane <lane> --task <issue> --repo F:/github/GraphHelm --base origin/main --branch issue-<N>-<slug>
+      graphhelm workspace release --root D:/gh --lane <lane> --task <issue>
+
+  The worktree is `<root>/<lane>/<task>/wt`. Hand-created worktrees (`git worktree add`)
+  are outside the claim ledger and are never reclaimed as workspaces; their recorded slot
+  targets can still qualify for the target-only rules below.
+- `graphhelm serve --workspace-root <root>` runs the existing `workspace sweep --apply`
+  automatically every 1800 seconds. `--workspace-sweep-seconds 0` disables it; nonzero
+  values must be 60..=86400. It sleeps before each attempt and after completion; this period
+  does not bound the duration of Git or filesystem operations. No cleanup rules change.
+  CLI sweeps, HTTP sweeps, periodic sweeps and held-slot reclaim share
+  `<root>/.graphhelm-workspaces/sweep.lock`; contention refuses that attempt without waiting.
+  The lock covers the eligibility checks and delete loop, never the timer sleep or a build.
+  A failed tick is logged and retried next period, without stopping the Runtime.
+  `GET /v1/workspaces` adds `lastSweep` (`null` before the first tick), with Unix-seconds
+  `at`, `removed`, `kept`, target results and `ok`/`diagnostics`. Each tick logs this same
+  outcome on one stderr line; it is in memory and resets when the Runtime restarts.
 
 - A worktree's `node_modules` (for example `apps\studio\node_modules`) can be a junction into the
   owner's copy. `Remove-Item -Recurse`, `rm -rf` **and `git worktree remove --force`** all follow a

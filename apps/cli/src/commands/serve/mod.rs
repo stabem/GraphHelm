@@ -128,6 +128,8 @@ struct ServeState {
     project: Option<Arc<Path>>,
     /// The agent workspace root (#360), from `--workspace-root`.
     workspace_root: Option<Arc<Path>>,
+    workspace_sweep_seconds: Option<u64>,
+    last_workspace_sweep: Arc<tokio::sync::Mutex<serde_json::Value>>,
     /// The build-slot roots whose queues `GET /v1/workspaces/slots` reports (#612).
     slot_roots: Arc<[PathBuf]>,
     /// The events directory. Every handler opens a fresh `LocalEventRepository` against it via
@@ -194,6 +196,19 @@ pub fn run(args: &ServeArgs) -> Outcome {
 }
 
 fn execute(args: &ServeArgs) -> Result<(), Failure> {
+    if args.workspace_sweep_seconds != 0 && !(60..=86400).contains(&args.workspace_sweep_seconds) {
+        return Err(argument(
+            "--workspace-sweep-seconds must be 0 or from 60 to 86400",
+            "/workspaceSweepSeconds",
+        ));
+    }
+    let seconds = args.workspace_sweep_seconds;
+    #[cfg(debug_assertions)]
+    let seconds = if seconds == 0 {
+        0
+    } else {
+        args.workspace_sweep_test_seconds.unwrap_or(seconds)
+    };
     let address = parse_loopback_bind(&args.bind)?;
     std::fs::create_dir_all(&args.events)
         .map_err(|_| serve_invalid("the events directory could not be created", "/events"))?;
@@ -225,6 +240,8 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         project_id: project_id.map(Arc::from),
         project: args.project.as_deref().map(Arc::from),
         workspace_root: args.workspace_root.as_deref().map(Arc::from),
+        workspace_sweep_seconds: (args.workspace_root.is_some() && seconds != 0).then_some(seconds),
+        last_workspace_sweep: Arc::new(tokio::sync::Mutex::new(serde_json::Value::Null)),
         slot_roots: Arc::from(args.slot_roots.clone()),
         events: Arc::from(args.events.as_path()),
         runtime: runtime_wiring.map(Arc::new),
@@ -573,6 +590,13 @@ async fn serve_forever(
     if let Some(seconds) = state.sweep_interval {
         tokio::spawn(sweep_tick(Arc::clone(&state.events), seconds));
     }
+    if let (Some(root), Some(seconds)) = (&state.workspace_root, state.workspace_sweep_seconds) {
+        tokio::spawn(workspace_sweep_tick(
+            Arc::clone(root),
+            seconds,
+            Arc::clone(&state.last_workspace_sweep),
+        ));
+    }
 
     let app = build_router(state);
     axum::serve(listener, app)
@@ -630,6 +654,35 @@ async fn sweep_tick(events: Arc<Path>, seconds: u64) {
             }
         })
         .await;
+    }
+}
+
+/// One attempt after each sleep; a slow sweep never creates overlapping ticks. The period
+/// bounds when the next attempt begins, not the duration of filesystem or Git operations.
+/// Failures (including a busy shared lock) are reported and retried on the next tick.
+async fn workspace_sweep_tick(
+    root: Arc<Path>,
+    seconds: u64,
+    last: Arc<tokio::sync::Mutex<serde_json::Value>>,
+) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
+        let root = Arc::clone(&root);
+        let outcome =
+            tokio::task::spawn_blocking(move || crate::commands::workspace::run_sweep(&root, true))
+                .await
+                .unwrap_or_else(|_| {
+                    Outcome::internal("workspace.sweep", "the workspace sweep task failed")
+                });
+        let mut summary = outcome
+            .output
+            .data
+            .unwrap_or_else(|| serde_json::json!({"removed": [], "kept": []}));
+        summary["at"] = serde_json::json!(chrono::Utc::now().timestamp());
+        summary["ok"] = serde_json::json!(outcome.output.ok);
+        summary["diagnostics"] = serde_json::json!(outcome.output.diagnostics);
+        let _ = writeln!(std::io::stderr().lock(), "workspace.sweep {summary}");
+        *last.lock().await = summary;
     }
 }
 

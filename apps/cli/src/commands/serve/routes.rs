@@ -1948,11 +1948,14 @@ pub(super) async fn keel_plan(State(state): State<ServeState>, body: Bytes) -> R
 /// `--workspace-root`; nothing from the request names a path. Owner credentials only
 /// (`agent_route_allowed` admits no `/v1/workspaces`).
 pub(super) async fn workspaces(State(state): State<ServeState>) -> Response {
-    workspace_command(
-        state,
-        "workspace.list",
-        crate::commands::workspace::run_list,
-    )
+    let last_sweep = state.last_workspace_sweep.lock().await.clone();
+    workspace_command(state, "workspace.list", move |root| {
+        let mut outcome = crate::commands::workspace::run_list(root);
+        if let Some(data) = outcome.output.data.as_mut() {
+            data["lastSweep"] = last_sweep;
+        }
+        outcome
+    })
     .await
 }
 
@@ -6505,6 +6508,8 @@ mod tests {
             project_id: None,
             project: None,
             workspace_root: None,
+            workspace_sweep_seconds: None,
+            last_workspace_sweep: Arc::new(tokio::sync::Mutex::new(serde_json::Value::Null)),
             slot_roots: std::sync::Arc::from(Vec::<std::path::PathBuf>::new()),
             events,
             runtime: None,

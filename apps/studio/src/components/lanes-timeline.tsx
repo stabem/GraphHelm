@@ -1,5 +1,4 @@
 import "./lanes-timeline.css";
-import { NameBot } from "./team-canvas";
 import { packBars, placeholderLane, type Lane } from "../runtime/lane-bars";
 import { stageDuration } from "../runtime/stage-health";
 import type { MissionTask } from "../runtime/mission";
@@ -34,6 +33,23 @@ export interface BotActions {
 }
 
 interface Props extends BotActions { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[]; agents?: Bot[]; slots?: SlotView[] }
+
+/** #647: the Team canvas's rename control (same gate, labels and save path), on a board row. */
+export function NameBot({ bot, onSave }: { bot: Bot; onSave: (actorId: string, displayName: string) => void | Promise<unknown> }) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  if (bot.actorId === null) return null;
+  const actorId = bot.actorId;
+  if (!open) return <button type="button" className="ab-act" onClick={() => setOpen(true)}>Name this bot</button>;
+  const name = value.trim();
+  return (
+    <form className="ab-name-form" onSubmit={(event) => { event.preventDefault(); if (name.length === 0) return; void onSave(actorId, name); setOpen(false); setValue(""); }}>
+      <input aria-label={`Name for ${bot.name}`} placeholder="Display name" maxLength={80} value={value} onChange={(event) => setValue(event.target.value)} autoFocus />
+      <button type="submit" disabled={name.length === 0}>Save</button>
+      <button type="button" onClick={() => { setOpen(false); setValue(""); }}>Cancel</button>
+    </form>
+  );
+}
 
 /** The Team canvas showed the rename only for an unnamed, unshared, non-native actor. */
 const nameable = (b: Bot) => b.actorId !== null && b.role === null && !b.native && !b.shared;

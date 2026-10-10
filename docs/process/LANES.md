@@ -83,7 +83,8 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
       graphhelm workspace slot --root D:\gh --lane <lane> --jobs 6 --label <what> -- cargo +1.97.1 test --locked -p graphhelm-cli --test cli -- --test-threads=2 keel_check::
 
 - The CLI refuses shell, PowerShell and Python wrappers before creating a ticket. Keep the outer
-  script outside the slot and acquire once for each direct Cargo command. Unscoped package tests,
+  script outside the slot. The default acquires once per direct Cargo command; the bounded
+  feedback batch below may keep the same slot between short direct commands. Unscoped package tests,
   workspace-wide commands and target-directory overrides are refused too. Multiple package or
   target selectors in one `cargo test` command are refused before queueing; split different
   executables into separate leases. Clippy may still name multiple touched packages. This is enforced by
@@ -144,8 +145,9 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 - Do not run CPU stress tests on the shared machine.
 - After the machine reboots, every background run is dead. Queue it again; do not wait for it.
 - **One waiting ticket per lane.** An outer runner may contain all reached checks, but each
-  slot invocation runs one Cargo command and exits before the next one queues. Never put the
-  entire outer runner inside the slot. This lets another waiting lane run between commands.
+  default slot invocation runs one Cargo command and exits before the next one queues. The
+  opt-in feedback batch below yields at its time boundary instead. Never put the entire outer
+  runner inside the slot: scripts and unrestricted command lists remain refused.
 - **Use the reached-test runner for ordinary feedback (#718):**
 
       python tools/reached-tests/run_reached.py --repo . --base origin/main --head HEAD --root D:/gh --lane <lane> --output <outside-repo>/feedback.json
@@ -158,10 +160,33 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 
   Selected modules of the same Rust test executable share one invocation with multiple libtest
   filters. This preserves the selected test set and avoids queueing once per module. Different
-  executables still take separate leases. A broad selection is still a broad audit; bundling is
+  executables remain separate commands. A broad selection is still a broad audit; bundling is
   not permission to execute every module or to omit required checks to meet the time target.
 
-  It plans the committed diff and queues each Cargo test or clippy command separately, with six
+  **Short feedback batches (`--batch-slot`, requires an upgraded CLI):** after moving only the
+  read-only `cargo fmt --all -- --check` before Cargo, the runner groups at most four adjacent
+  Cargo steps with the same working directory. All checks remain in the plan, with their original
+  indices and individual results. No other check is reordered or crossed. They execute serially
+  inside one existing slot, with six build jobs and two test threads; there is no extra holder.
+
+  The runner sends `GRAPHHELM_SLOT_BATCH` as a versioned JSON request (`graphhelm.slot-batch/1`):
+  `commands` includes the ordinary argv command first, `budgetSeconds` is the remaining full-run
+  budget, `deadlineUnixMs` preserves the original deadline across CLI startup/requeue,
+  and `leaseSeconds` is 30 (accepted range greater than zero through 60). The CLI validates
+  every command with ordinary admission before creating a ticket, and clears this environment
+  variable from every child. Targets, reclaim protection, root ownership and queue order do not
+  change. A command failure stops the batch. At a command boundary, the CLI starts nothing more
+  after the lease threshold or the whole-run deadline, including queue time, and releases the slot.
+  An individual command may exceed the threshold; this does not kill a child or promise a hard
+  maximum occupancy. Unfinished steps queue again only while the original run still has time.
+
+  The versioned `graphhelm.slot-batch-result/1` result identifies the completed ordered prefix,
+  remaining indices, per-command exit status and duration, and the stop reason. Queue and total
+  held time are counted once per lease. Missing, malformed or legacy CLI output leaves unconfirmed
+  checks pending and the run incomplete; an exit code alone cannot prove a batch completed.
+  Without `--batch-slot`, existing single-command behavior is unchanged.
+
+  It plans the committed diff and queues Cargo tests or clippy commands (separately by default), with six
   build jobs and two test threads. Fmt, Python, Node, Studio checks and standalone journey tools
   run outside the Cargo slot, serially. Existing root target rules remain authoritative. The
   runner does not install dependencies, clean targets, bypass the queue or add holders.

@@ -28,6 +28,9 @@ _SHELL_MARKERS = ("&&", "||", "|", ">", "<", "`", "$(")
 _SHELL_EXECUTABLES = {"sh", "bash", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe"}
 _CARGO_TEST_TARGET_FLAGS = ("--test", "--bin", "--lib", "--doc", "--example")
 _UNITTEST_ZERO = re.compile(r"\bRan\s+0\s+tests?\b")
+_BATCH_SCHEMA = "graphhelm.slot-batch/1"
+_BATCH_RESULT_SCHEMA = "graphhelm.slot-batch-result/1"
+_BATCH_STOP_REASONS = {"exhausted", "leaseBoundary", "deadline", "childFailure", "spawnFailure"}
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -171,8 +174,101 @@ def _browser_toolchain_ready() -> bool:
     return bool(project) and (Path(project) / "node_modules" / "@playwright" / "test").is_dir()
 
 
+def _cargo(argv: list[str]) -> bool:
+    return len(argv) >= 3 and argv[0] == "cargo" and argv[1].startswith("+")
+
+
+def _fmt_check(argv: list[str]) -> bool:
+    return _cargo(argv) and argv[2:] == ["fmt", "--all", "--", "--check"]
+
+
+def _batchable(step: dict[str, Any]) -> bool:
+    argv = step["argv"]
+    return bool(step["slot"] and _cargo(argv) and not _fmt_check(argv))
+
+
+def _execution_order(steps: list[dict[str, Any]], batch_slot: bool) -> list[dict[str, Any]]:
+    """Return execution entries while retaining each selector index."""
+    entries = [{**step, "index": index} for index, step in enumerate(steps)]
+    if not batch_slot:
+        return entries
+    fmts = [entry for entry in entries if _fmt_check(entry["argv"])]
+    rest = [entry for entry in entries if not _fmt_check(entry["argv"])]
+    first_cargo = next((index for index, entry in enumerate(rest) if entry["slot"] and _cargo(entry["argv"])), len(rest))
+    return rest[:first_cargo] + fmts + rest[first_cargo:]
+
+
+def _batch_result(value: Any, count: int, cli_returncode: int) -> tuple[dict[str, Any] | None, str | None]:
+    """Strictly validate the CLI batch envelope and return local indices."""
+    if not isinstance(value, dict) or value.get("schema") != _BATCH_RESULT_SCHEMA:
+        return None, "missing or malformed batch telemetry"
+    completed = value.get("completed")
+    remaining = value.get("remaining")
+    stop = value.get("stopReason")
+    if not isinstance(completed, list) or not isinstance(remaining, list) or stop not in _BATCH_STOP_REASONS:
+        return None, "missing or malformed batch telemetry"
+    parsed: list[dict[str, Any]] = []
+    if len(completed) > count:
+        return None, "batch completed entries exceed command count"
+    for expected, item in enumerate(completed):
+        if not isinstance(item, dict) or type(item.get("index")) is not int or item.get("index") != expected:
+            return None, "batch completed entries must be an ordered prefix"
+        code = item.get("exitCode")
+        elapsed = item.get("elapsedSeconds")
+        if type(code) is not int or isinstance(code, bool) or not isinstance(elapsed, (int, float)) or isinstance(elapsed, bool) or not math.isfinite(elapsed) or elapsed <= 0:
+            return None, "invalid batch completion telemetry"
+        parsed.append(item)
+    if any(type(index) is not int for index in remaining) or remaining != list(range(len(parsed), count)):
+        return None, "batch remaining entries are not the exact complement"
+    codes = [item["exitCode"] for item in parsed]
+    if any(code != 0 for code in codes[:-1]):
+        return None, "only the final completed command may fail"
+    if stop == "exhausted" and (len(parsed) != count or remaining or cli_returncode or any(codes)):
+        return None, "exhausted batch must complete successfully"
+    if stop == "leaseBoundary" and (not parsed or not remaining or cli_returncode or any(codes)):
+        return None, "leaseBoundary must leave successful pending commands"
+    if stop == "deadline" and (not remaining or cli_returncode or any(codes)):
+        return None, "deadline must leave successful pending commands"
+    if stop == "childFailure" and (not parsed or codes[-1] == 0 or codes[-1] != cli_returncode):
+        return None, "childFailure must end with the CLI's nonzero child code"
+    if stop == "spawnFailure" and (not remaining or cli_returncode == 0 or any(codes)):
+        return None, "spawnFailure must leave pending commands without completed failures"
+    return {"completed": parsed, "remaining": remaining, "stopReason": stop}, None
+
+
+def _last_json(path: Path) -> Any:
+    lines = [line for line in _tail(path).splitlines() if line.strip()]
+    if not lines:
+        return None
+    try:
+        return json.loads(lines[-1])
+    except json.JSONDecodeError:
+        return None
+
+
+def _batch_envelope(path: Path, cli_returncode: int | None = None) -> tuple[dict[str, Any] | None, float | None, float | None]:
+    value = _last_json(path)
+    if not isinstance(value, dict) or value.get("command") != "workspace.slot":
+        return None, None, None
+    data = value.get("data")
+    if not isinstance(data, dict):
+        return None, None, None
+    waited, held = data.get("waitedSeconds"), data.get("heldSeconds")
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0 for v in (waited, held)):
+        return None, None, None
+    if cli_returncode is not None:
+        outer_ok = value.get("ok")
+        data_exit = data.get("exitCode")
+        if type(outer_ok) is not bool or outer_ok is not True:
+            return None, None, None
+        if type(data_exit) is not int or data_exit != cli_returncode:
+            return None, None, None
+    return data.get("batch"), float(waited), float(held)
+
+
 def run(args: argparse.Namespace) -> int:
     started = time.monotonic()
+    deadline_unix_ms = time.time() * 1000.0 + args.budget_seconds * 1000.0
     repo = Path(args.repo).resolve()
     output = Path(args.output).resolve()
     if not math.isfinite(args.budget_seconds) or args.budget_seconds <= 0:
@@ -244,57 +340,124 @@ def run(args: argparse.Namespace) -> int:
                 raise RuntimeError("--include-browser requires GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT with local @playwright/test")
             queue: float | None = 0.0
             held: float | None = 0.0
-            for index, step in enumerate(steps):
-                remaining = args.budget_seconds - (time.monotonic() - started)
-                if remaining <= 0:
+            batch_mode = bool(getattr(args, "batch_slot", False))
+            order = _execution_order(steps, batch_mode)
+            work = list(order)
+            while work:
+                remaining_budget = args.budget_seconds - (time.monotonic() - started)
+                if remaining_budget <= 0:
                     report["status"] = "budgetExceeded"
                     break
-                cwd = repo / step["cwd"]
-                argv = list(step["argv"])
-                command = _resolve_argv(repo, cwd, argv)
-                if command and command[0] in ("python", "python3"):
-                    command[0] = sys.executable
-                if selected_graphhelm is not None and command and Path(command[0]).name.lower() in ("graphhelm", "graphhelm.exe"):
-                    command[0] = str(selected_graphhelm)
-                if step["slot"]:
+                entry = work.pop(0)
+                group = [entry]
+                if batch_mode and _batchable(entry):
+                    while work and len(group) < 4 and _batchable(work[0]) and work[0]["cwd"] == entry["cwd"]:
+                        group.append(work.pop(0))
+                indices = [item["index"] for item in group]
+                cwd = repo / entry["cwd"]
+                logfile = logs / (f"batch-{indices[0]}.log" if len(group) > 1 else f"step-{indices[0]}.log")
+                print(f"[reached-tests] steps {indices}: {' | '.join(' '.join(item['argv']) for item in group)}", file=sys.stderr, flush=True)
+                commands = []
+                for item in group:
+                    command = _resolve_argv(repo, cwd, list(item["argv"]))
+                    if command and command[0] in ("python", "python3"):
+                        command[0] = sys.executable
+                    if selected_graphhelm is not None and command and Path(command[0]).name.lower() in ("graphhelm", "graphhelm.exe"):
+                        command[0] = str(selected_graphhelm)
+                    commands.append(command)
+                is_batch = batch_mode and len(group) > 1 or batch_mode and _batchable(entry)
+                if is_batch:
+                    # The CLI receives original argv; its Rust worker selects the child cwd/target.
                     command = [str(selected_graphhelm), "--json", "workspace", "slot", "--root", args.root,
-                               "--lane", args.lane, "--jobs", "6", "--label", f"reached-step-{index}",
-                               "--max-wait", repr(remaining / 60.0), "--", *command]
-                logfile = logs / f"step-{index}.log"
-                print(f"[reached-tests] step {index + 1}/{len(steps)}: {' '.join(argv)}", file=sys.stderr, flush=True)
+                               "--lane", args.lane, "--jobs", "6", "--label", f"reached-batch-{indices[0]}",
+                               "--max-wait", repr(remaining_budget / 60.0), "--", *commands[0]]
+                    # Batch commands are carried by the opt-in environment, never by the CLI argv.
+                    payload = {"schema": _BATCH_SCHEMA, "commands": commands,
+                               "budgetSeconds": remaining_budget, "deadlineUnixMs": deadline_unix_ms,
+                               "leaseSeconds": 30}
+                elif entry["slot"]:
+                    command = [str(selected_graphhelm), "--json", "workspace", "slot", "--root", args.root,
+                               "--lane", args.lane, "--jobs", "6", "--label", f"reached-step-{entry['index']}",
+                               "--max-wait", repr(remaining_budget / 60.0), "--", *commands[0]]
+                    payload = None
+                else:
+                    command = commands[0]
+                    payload = None
                 env = os.environ.copy()
                 env.update({"CARGO_BUILD_JOBS": "6", "RUST_TEST_THREADS": "2"})
+                env.pop("GRAPHHELM_SLOT_BATCH", None)
+                if payload is not None:
+                    env["GRAPHHELM_SLOT_BATCH"] = json.dumps(payload, separators=(",", ":"))
                 with logfile.open("w", encoding="utf-8") as stream:
                     proc = subprocess.run(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, text=True, env=env)
-                no_pytest_tests = command[1:3] == ["-m", "pytest"] and (
-                    proc.returncode == 5 or "no tests ran" in _tail(logfile).lower())
-                if step["slot"]:
+                elapsed = time.monotonic() - started
+                if entry["slot"]:
+                    if is_batch:
+                        batch, q, h = _batch_envelope(logfile, proc.returncode)
+                        parsed, error = _batch_result(batch, len(group), proc.returncode) if batch is not None else (None, "missing or malformed batch telemetry")
+                        if q is None or h is None:
+                            queue = held = None
+                        elif queue is not None and held is not None:
+                            queue += q
+                            held += h
+                        if parsed is None:
+                            report["error"] = error
+                            report["status"] = "incomplete"
+                            break
+                        report.setdefault("batches", []).append({"indices": indices, **parsed,
+                                                                  "log": str(logfile), "waitedSeconds": q,
+                                                                  "heldSeconds": h})
+                        completed_count = len(parsed["completed"])
+                        for local, child in enumerate(parsed["completed"]):
+                            index = indices[local]
+                            report["pending"].remove(index)
+                            report["completed"].append({"index": index, "batchLocalIndex": local,
+                                                         "argv": steps[index]["argv"], "cwd": steps[index]["cwd"], "slot": True,
+                                                         "returncode": child["exitCode"], "elapsedSeconds": child["elapsedSeconds"],
+                                                         "late": elapsed > args.budget_seconds,
+                                                         "log": str(logfile), "tail": _tail(logfile)})
+                        if parsed["stopReason"] in {"childFailure", "spawnFailure"}:
+                            report["status"] = "failed"
+                            break
+                        if parsed["remaining"]:
+                            pending_entries = group[completed_count:]
+                            work[0:0] = pending_entries
+                            if parsed["stopReason"] == "deadline":
+                                report["status"] = "budgetExceeded"
+                                break
+                            if completed_count == 0:
+                                report["status"] = "incomplete"
+                                report["error"] = "batch boundary made no progress"
+                                break
+                        continue
                     q, h = _slot_telemetry(logfile, command)
                     if q is None or h is None:
-                        queue = None
-                        held = None
+                        queue = held = None
                     elif queue is not None and held is not None:
                         queue += q
                         held += h
+                index = entry["index"]
+                tail = _tail(logfile)
+                no_pytest_tests = command[1:3] == ["-m", "pytest"] and (proc.returncode == 5 or "no tests ran" in tail.lower())
                 report["pending"].remove(index)
-                entry = {"index": index, "argv": argv, "cwd": step["cwd"], "slot": step["slot"],
-                         "returncode": proc.returncode, "late": time.monotonic() - started > args.budget_seconds,
-                         "log": str(logfile), "tail": _tail(logfile)}
+                result = {"index": index, "argv": entry["argv"], "cwd": entry["cwd"], "slot": entry["slot"],
+                          "returncode": proc.returncode, "late": elapsed > args.budget_seconds,
+                          "log": str(logfile), "tail": tail}
                 if no_pytest_tests:
-                    entry["returncode"] = proc.returncode or 1
-                    entry["error"] = "pytest collected no tests"
-                zero_tests = "-m" in argv and "unittest" in argv and bool(_UNITTEST_ZERO.search(entry["tail"]))
+                    result["returncode"] = proc.returncode or 1
+                    result["error"] = "pytest collected no tests"
+                zero_tests = "-m" in entry["argv"] and "unittest" in entry["argv"] and bool(_UNITTEST_ZERO.search(tail))
                 if zero_tests:
-                    entry["zeroTests"] = True
-                report["completed"].append(entry)
+                    result["zeroTests"] = True
+                report["completed"].append(result)
                 if zero_tests:
                     report["status"] = "incomplete"
                     report["error"] = f"step {index} unittest discovered zero tests"
                     break
-                if entry["returncode"]:
+                if result["returncode"]:
                     report["status"] = "failed"
                     break
-                if entry["late"]:
+                if elapsed > args.budget_seconds:
                     report["status"] = "budgetExceeded"
                     break
             else:
@@ -334,6 +497,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--allow-whole-package")
     ap.add_argument("--include-browser", action="store_true",
                     help="allow selector steps marked observer=browser when local Playwright is installed")
+    ap.add_argument("--batch-slot", action="store_true",
+                    help="opt in to the versioned serial Cargo slot batch protocol")
     ap.add_argument("--plan", action="store_true")
     return run(ap.parse_args(argv))
 

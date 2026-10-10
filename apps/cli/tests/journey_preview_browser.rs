@@ -218,7 +218,7 @@ fn an_approved_journey_holds_before_its_destructive_act_and_plays_it_only_when_c
     .unwrap();
     std::fs::write(
         project.join(".gitignore"),
-        "node_modules/\n.graphhelm/observers/\n.graphhelm/journey-cache/\n.graphhelm/journey-previews/\n",
+        "node_modules/\n.graphhelm/*\n!.graphhelm/journeys/\n!.graphhelm/journeys/**\n",
     )
     .unwrap();
     let observer = project.join(".graphhelm/observers");
@@ -230,12 +230,21 @@ fn an_approved_journey_holds_before_its_destructive_act_and_plays_it_only_when_c
     );
     assert_eq!(code, 0, "{value}");
     git(&project, &["init", "--quiet", "--object-format=sha1"]);
+    let (code, value) = cli(&project, &["init", "--harness", "claude-code"]);
+    assert_eq!(code, 0, "{value}");
     git(&project, &["add", "."]);
     git(
         &project,
         &["commit", "--quiet", "--no-verify", "-m", "fixture"],
     );
-    let (code, value) = cli(&project, &["journey", "approve", "account"]);
+    let token = project
+        .join(".graphhelm/events.token")
+        .to_string_lossy()
+        .into_owned();
+    let (code, value) = cli(
+        &project,
+        &["journey", "approve", "account", "--token-file", &token],
+    );
     assert_eq!(code, 0, "{value}");
     git(&project, &["add", "."]);
     git(

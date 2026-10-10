@@ -213,6 +213,29 @@ describe("foldTaskEvents slices (#460)", () => {
   });
 });
 
+describe("merges recorded by another lane (#765)", () => {
+  it("ends the opened PR slice even when the merge uses a PR task id", () => {
+    const tasks = foldTaskEvents([
+      record(1, "task.claimed", "codex-14", { taskId: "issue-691", issue: 691, lane: "codex-14", branch: "issue-691-fix" }),
+      record(2, "task.pr_opened", "codex-14", { taskId: "issue-691", pr: 722, headSha: "aaaaaaaa", journeys: [], lane: "codex-14" }),
+      record(3, "task.review_assigned", "codex-14", { taskId: "issue-691", pr: 722, headSha: "aaaaaaaa", reviewer: "gh-claude-1" }),
+      record(4, "task.merged", "coordinator", { taskId: "pr-722", pr: 722, mergeSha: "bbbbbbbb", closes: [691], merger: "coordinator" }),
+    ]);
+    expect(tasks.filter((task) => task.pr === 722)).toHaveLength(1);
+    expect(tasks.find((task) => task.pr === 722)).toMatchObject({ issue: 691, lane: "codex-14", step: "merged", mergeSha: "bbbbbbbb" });
+  });
+
+  it("ends a PR-less claim only when the merge closes its issue", () => {
+    const tasks = foldTaskEvents([
+      record(1, "task.claimed", "codex-13", { taskId: "issue-758", issue: 758, lane: "codex-13", branch: "issue-758-fix" }),
+      record(2, "task.claimed", "codex-12", { taskId: "issue-759", issue: 759, lane: "codex-12", branch: "issue-759-work" }),
+      record(3, "task.merged", "coordinator", { taskId: "pr-760", pr: 760, mergeSha: "cccccccc", closes: [758], merger: "coordinator" }),
+    ]);
+    expect(tasks.find((task) => task.issue === 758)).toMatchObject({ pr: null, step: "merged" });
+    expect(tasks.find((task) => task.issue === 759)).toMatchObject({ pr: null, step: "plan" });
+  });
+});
+
 /* #480: a claimed task is planning until the lane records its keel plan (`task.planned`); a
  * `design` plan then waits on its critic (#467) before Implement. Catches a fold that lights
  * Implement on the claim alone (no Plan step), one that skips the Critic a design plan asks for,

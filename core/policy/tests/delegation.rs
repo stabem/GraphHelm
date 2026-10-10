@@ -67,3 +67,13 @@ fn policy_is_data_and_refuses_unknown_fields() {
     bad_tier["explorer"]["tier"] = serde_json::json!("huge");
     assert!(serde_json::from_value::<DelegationPolicy>(bad_tier).is_err());
 }
+
+// Pins the benchmark's independent routing contract; file I/O only, milliseconds.
+#[test]
+fn benchmark_mapping_cannot_drift_from_routed_policy() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tools/token-bench/doless/routed.json");
+    let text = std::fs::read_to_string(path).expect("checked-in benchmark routing map");
+    let mapping: DelegationPolicy = serde_json::from_str(&text).unwrap();
+    assert_eq!(mapping, DelegationPolicy::routed());
+}

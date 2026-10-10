@@ -1,0 +1,8 @@
+{
+  "id": "routed",
+  "explorer": {"tier": "small", "effort": "low"},
+  "implementer": {"tier": "standard", "effort": "medium"},
+  "reviewer": {"tier": "standard", "effort": "high"},
+  "verifier": {"tier": "small", "effort": "medium"},
+  "escalateOnRedCheck": true
+}

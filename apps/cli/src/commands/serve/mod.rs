@@ -1834,6 +1834,7 @@ struct ExecutorWiring<'a> {
 
 impl<'a> ExecutorWiring<'a> {
     /// Neither half wired: every node is answered by fixtures — the 05a server.
+    #[cfg(test)]
     const FIXTURE_ONLY: Self = Self {
         model: false,
         tools: false,

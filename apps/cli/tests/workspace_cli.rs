@@ -990,12 +990,32 @@ fn sizes_count_files_and_recorded_targets_without_following_links_with_http_pari
     std::fs::write(root.join("unrecorded/large.bin"), vec![0; 2048]).unwrap();
     let fast = dir.path().join("fast");
     let rules = root.join(".graphhelm-workspaces");
+    std::fs::create_dir_all(&fast).unwrap();
     std::fs::write(
         rules.join("slot-targets.json"),
         serde_json::json!({"targetRoot": fast, "minFreeGb": 0}).to_string(),
     )
     .unwrap();
-    assert_eq!(slot_in(&root, "lane", &wt, &dir.path().join("log")).0, 0);
+    // Record creation is covered by the private slot-target tests; this public test observes the
+    // persisted record consumed by the CLI and HTTP size readers.
+    let target = fast.join("lane/wt/target");
+    std::fs::create_dir_all(&target).unwrap();
+    let records = rules.join("targets").join("lane");
+    std::fs::create_dir_all(&records).unwrap();
+    std::fs::write(
+        records.join("wt.json"),
+        serde_json::json!({
+            "schema": "graphhelm.slot-target/1",
+            "lane": "lane",
+            "name": "wt",
+            "worktree": wt,
+            "target": target,
+            "firstUsedAt": 1,
+            "lastUsedAt": 1
+        })
+        .to_string(),
+    )
+    .unwrap();
     std::fs::write(fast.join("lane/wt/target/built.bin"), vec![0; 4096]).unwrap();
     let unrecorded = fast.join("unrecorded");
     std::fs::create_dir_all(&unrecorded).unwrap();

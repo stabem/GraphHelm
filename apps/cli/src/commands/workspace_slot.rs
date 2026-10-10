@@ -584,17 +584,20 @@ fn run_admitted_slot_in(request: &SlotRequest<'_>, cwd: &Path) -> Outcome {
         if let Some(limit) = max_wait
             && started.elapsed() > limit
         {
+            let waited = started.elapsed().as_secs_f64();
             drop(ticket);
             remove_ticket(&mine);
             let expires = unix_now() + RESUME_GRACE.as_nanos();
             let _ = std::fs::write(&reservation, format!("{arrival} {expires}"));
-            return refuse(
+            let mut refusal = refuse(
                 &format!(
                     "not served within --max-wait; this lane and label keep their place for {} minutes if they queue again",
                     RESUME_GRACE.as_secs() / 60
                 ),
                 "/slot",
             );
+            refusal.output.data = Some(json!({"waitedSeconds": waited, "heldSeconds": 0}));
+            return refusal;
         }
         let first = live_tickets(&dir, Some(&mine))
             .ok()

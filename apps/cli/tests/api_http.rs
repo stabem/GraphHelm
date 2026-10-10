@@ -7787,7 +7787,7 @@ fn sealed_snapshot_claim_and_clear_need_no_graph_file() {
     )
     .unwrap();
     let provider = graphhelm_sealed_key_provider::SealedKeyProvider::open(
-        &events.with_extension("keyring"),
+        events.with_extension("keyring"),
         "signal-key",
         graphhelm_events::SecretBytes::new(vec![1; 32]),
     )

@@ -337,10 +337,15 @@ fn watch_and_preview_pass_the_selected_flow_to_the_launcher() {
         "if [ \"$1\" = up ]; then printf '%s' \"${GRAPHHELM_JOURNEY_FLOW:-}\" > selected-flow; exit 1; fi\n",
     )
     .unwrap();
-    for args in [vec!["watch", "checkout"], vec!["preview", "checkout", "--run"]] {
+    std::fs::create_dir_all(dir.path().join(".graphhelm/journey-previews/checkout")).unwrap();
+    for args in [
+        vec!["watch", "checkout"],
+        vec!["preview", "checkout", "--run"],
+    ] {
         let (_, reply) = cli(dir.path(), &args);
         assert_eq!(
-            std::fs::read_to_string(dir.path().join("selected-flow")).unwrap(),
+            std::fs::read_to_string(dir.path().join("selected-flow"))
+                .unwrap_or_else(|error| panic!("{args:?}: {reply}; {error}")),
             "checkout",
             "{args:?}: {reply}"
         );

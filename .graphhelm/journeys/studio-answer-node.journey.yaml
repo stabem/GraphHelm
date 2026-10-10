@@ -4,10 +4,10 @@ title: Answer a step that is waiting for you
 status: draft
 approved: null
 base: http://127.0.0.1:5184
-viewport: {width: 720, height: 900}
 actors: [owner]
 secrets: []
 risks: [irreversible_effect, ambiguous_behavior]
+viewport: {width: 720, height: 900}
 screens:
   - id: mission
     title: The mobile navigation opens first
@@ -31,7 +31,7 @@ screens:
     title: "A run is open, with its chat and its team on screen"
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: button, name: Deploy ? waiting input}]
+    expect: [{role: button, name: Deploy · waiting input}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts]
 edges:
   - id: mission.team

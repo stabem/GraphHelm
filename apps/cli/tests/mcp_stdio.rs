@@ -4,6 +4,10 @@
 //! `CommandOutput` envelope carries no `"jsonrpc"` member and is filtered out — stdout is
 //! shared between the protocol stream and the house CLI contract's closing envelope).
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use std::time::{Duration, Instant};
 
 /// One whole session: feed `lines` to `graphhelm mcp`, close stdin, wait for exit, return
@@ -60,7 +64,7 @@ fn mcp_session_inner(
     }
     let output = command
         .write_stdin(input)
-        .timeout(Duration::from_secs(30))
+        .timeout(scaled(Duration::from_secs(30)))
         .output()
         .expect("the mcp server runs to EOF");
     let replies = String::from_utf8(output.stdout.clone())
@@ -384,7 +388,7 @@ fn serve_with_keyring(
 }
 
 fn wait_for_health(address: &str) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
     loop {
         if let Ok(mut stream) = TcpStream::connect(address) {
             let request =
@@ -665,7 +669,7 @@ fn invalid_tool_arguments_are_refused_before_http_without_losing_valid_intents()
     let finished = Arc::new(AtomicBool::new(false));
     let stop = Arc::clone(&finished);
     let observer = std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(30);
+        let deadline = Instant::now() + scaled(Duration::from_secs(30));
         let mut captured = Vec::new();
         loop {
             let mut stream = match listener.accept() {
@@ -682,10 +686,10 @@ fn invalid_tool_arguments_are_refused_before_http_without_losing_valid_intents()
             };
             stream.set_nonblocking(false).unwrap();
             stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
+                .set_read_timeout(Some(scaled(Duration::from_secs(5))))
                 .unwrap();
             stream
-                .set_write_timeout(Some(Duration::from_secs(5)))
+                .set_write_timeout(Some(scaled(Duration::from_secs(5))))
                 .unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
             let mut request_line = String::new();
@@ -913,7 +917,7 @@ fn document_tools_forward_exact_bodies_actor_and_file_concurrency() {
     listener.set_nonblocking(true).unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let observer = std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(20);
+        let deadline = Instant::now() + scaled(Duration::from_secs(20));
         let mut captured = Vec::new();
         for _ in 0..4 {
             let mut stream = loop {
@@ -928,10 +932,10 @@ fn document_tools_forward_exact_bodies_actor_and_file_concurrency() {
             };
             stream.set_nonblocking(false).unwrap();
             stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
+                .set_read_timeout(Some(scaled(Duration::from_secs(5))))
                 .unwrap();
             stream
-                .set_write_timeout(Some(Duration::from_secs(5)))
+                .set_write_timeout(Some(scaled(Duration::from_secs(5))))
                 .unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
             let mut request_line = String::new();

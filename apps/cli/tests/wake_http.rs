@@ -4,6 +4,10 @@
 //! — the byte may only arrive after the append that caused it is readable in the store —
 //! and a consumed lease never rings twice.
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -245,15 +249,19 @@ impl From<String> for SequenceTransportError {
     }
 }
 
-fn sequence_io_timeout_at(deadline: Instant, now: Instant) -> Result<Duration, String> {
+fn sequence_io_timeout_at(
+    deadline: Instant,
+    now: Instant,
+    io_ceiling: Duration,
+) -> Result<Duration, String> {
     if now >= deadline {
         return Err("the sequence-conflict request deadline expired".to_owned());
     }
-    Ok((deadline - now).min(SEQUENCE_POST_IO_TIMEOUT))
+    Ok((deadline - now).min(io_ceiling))
 }
 
 fn sequence_io_timeout(deadline: Instant) -> Result<Duration, String> {
-    sequence_io_timeout_at(deadline, Instant::now())
+    sequence_io_timeout_at(deadline, Instant::now(), scaled(SEQUENCE_POST_IO_TIMEOUT))
 }
 
 fn write_until_sequence_deadline(
@@ -281,6 +289,7 @@ fn write_until_sequence_deadline(
 
 fn read_response_until_sequence_deadline<F, N>(
     deadline: Instant,
+    io_ceiling: Duration,
     mut read: F,
     mut now: N,
 ) -> Result<Vec<u8>, SequenceReadFailure>
@@ -288,12 +297,13 @@ where
     F: FnMut(Duration, &mut [u8]) -> std::io::Result<usize>,
     N: FnMut() -> Instant,
 {
-    // The two-second socket timeout is only a retryable wait slice. The one absolute request
+    // The socket timeout is only a retryable wait slice (scaled for real I/O, fixed for
+    // simulated clocks). The one absolute request
     // deadline remains authoritative across every TimedOut/WouldBlock result.
     let mut reply = Vec::new();
     let mut chunk = [0_u8; 8192];
     loop {
-        let timeout = sequence_io_timeout_at(deadline, now())
+        let timeout = sequence_io_timeout_at(deadline, now(), io_ceiling)
             .map_err(|error| SequenceReadFailure::new(reply.len(), error))?;
         let read = match read(timeout, &mut chunk) {
             Ok(read) => {
@@ -401,6 +411,7 @@ fn post_json_bounded(
 
     let reply = read_response_until_sequence_deadline(
         request.deadline,
+        scaled(SEQUENCE_POST_IO_TIMEOUT),
         |timeout, chunk| {
             stream.set_read_timeout(Some(timeout))?;
             stream.read(chunk)
@@ -489,7 +500,7 @@ where
     E: Into<SequenceTransportError>,
 {
     let started = Instant::now();
-    let deadline = started + SEQUENCE_POST_DEADLINE;
+    let deadline = started + scaled(SEQUENCE_POST_DEADLINE);
     let mut if_match = None;
     let mut trace = Vec::new();
     for attempt in 0..=SEQUENCE_CONFLICT_RETRY_LIMIT {
@@ -641,6 +652,7 @@ fn bounded_response_reader_preserves_partial_bytes_across_retryable_socket_reads
     let mut observed_timeouts = Vec::new();
     let reply = read_response_until_sequence_deadline(
         deadline,
+        SEQUENCE_POST_IO_TIMEOUT,
         |timeout, buffer| {
             observed_timeouts.push(timeout);
             match steps.pop_front().expect("the scripted reader has a step") {
@@ -707,6 +719,7 @@ fn bounded_response_reader_keeps_one_absolute_deadline_after_partial_retries() {
     let mut observed_timeouts = Vec::new();
     let failure = read_response_until_sequence_deadline(
         deadline,
+        SEQUENCE_POST_IO_TIMEOUT,
         |timeout, buffer| {
             observed_timeouts.push(timeout);
             match steps.pop_front().expect("the scripted reader has a step") {
@@ -743,6 +756,7 @@ fn bounded_response_reader_rejects_hard_errors_with_the_partial_byte_count() {
     let start = Instant::now();
     let failure = read_response_until_sequence_deadline(
         start + Duration::from_secs(20),
+        SEQUENCE_POST_IO_TIMEOUT,
         |_timeout, buffer| {
             if steps.pop_front().expect("the scripted reader has a step") {
                 buffer[..4].copy_from_slice(b"part");
@@ -767,6 +781,7 @@ fn bounded_response_reader_rejects_an_oversize_response() {
     let start = Instant::now();
     let failure = read_response_until_sequence_deadline(
         start + Duration::from_secs(20),
+        SEQUENCE_POST_IO_TIMEOUT,
         |_timeout, buffer| {
             buffer.fill(b'x');
             Ok(buffer.len())
@@ -791,6 +806,7 @@ fn bounded_response_reader_rejects_a_successful_read_after_the_deadline() {
     let mut clocks = VecDeque::from([start, deadline]);
     let failure = read_response_until_sequence_deadline(
         deadline,
+        SEQUENCE_POST_IO_TIMEOUT,
         |_timeout, buffer| {
             buffer[..4].copy_from_slice(b"late");
             Ok(4)
@@ -815,6 +831,7 @@ fn bounded_response_reader_caps_the_final_retry_slice_to_remaining_deadline() {
     let mut read_calls = 0;
     let failure = read_response_until_sequence_deadline(
         deadline,
+        SEQUENCE_POST_IO_TIMEOUT,
         |timeout, _buffer| {
             observed_timeouts.push(timeout);
             read_calls += 1;
@@ -1620,7 +1637,7 @@ fn an_append_beyond_the_cursor_rings_one_byte_only_after_the_trigger_is_durable(
     let _ = before;
 
     // The consumption lands (two-phase: the true reason is known only after the ring).
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     loop {
         let kinds = kinds_after(&events, before);
         if kinds.iter().any(|kind| kind == "wake_lease_consumed") {
@@ -1903,7 +1920,7 @@ fn a_missing_rendezvous_consumes_the_lease_without_a_serve_error() {
         "a wake failure must never fail the append: {reply}"
     );
 
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     loop {
         let kinds = kinds_after(&events, before);
         if kinds.iter().any(|kind| kind == "wake_lease_consumed") {
@@ -2364,7 +2381,7 @@ fn a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window() {
     // lease first, and a fixed sleep would be a guess about a cold binary's start-up on a
     // contended machine. It flaked once here before this loop existed -- a fixed sleep is a
     // timing assumption wearing the clothes of a step.
-    let appeared = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let appeared = std::time::Instant::now() + scaled(std::time::Duration::from_secs(10));
     let expected = format!("graphhelm-wake-{rendezvous}");
     while !std::fs::read_dir("//./pipe").is_ok_and(|entries| {
         entries.filter_map(Result::ok).any(|entry| {
@@ -2460,7 +2477,7 @@ fn a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window() {
     // "the lease burned on the ring" with live:true, lastConsumed:null. (Ringing only
     // AFTER the durable append would make the receipt instant — that is a product
     // decision about wake latency vs receipt strength, routed to the owner separately.)
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
     let answer = loop {
         let answer = get_json(
             &base,
@@ -2788,7 +2805,7 @@ fn concurrent_sweeps_never_double_consume_a_lease() {
         // per round, `consumed <= armed` overall) are satisfied by a component that never
         // writes. The bounded wait is the presence half that was missing: a recorder that
         // consumes nothing now fails HERE, at the first round, by name.
-        let settle = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let settle = std::time::Instant::now() + scaled(std::time::Duration::from_secs(10));
         loop {
             if consumption_ledger(&events)
                 .iter()
@@ -3472,7 +3489,7 @@ fn a_designed_phase3_delay_is_absorbed_by_the_receipt_wait() {
     assert_eq!(bytes.len(), 1, "exactly one content-free byte crossed");
     let rung_at = Instant::now();
 
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
     let answer = loop {
         let answer = get_json(
             &base,
@@ -3684,7 +3701,7 @@ fn pipe_is_present(rendezvous_id: &str) -> bool {
 
 #[cfg(windows)]
 fn wait_for_pipe(child: &mut Child, rendezvous_id: &str) {
-    let deadline = Instant::now() + Duration::from_secs(PIPE_STARTUP_HANG_CATCHER_SECONDS);
+    let deadline = Instant::now() + scaled(Duration::from_secs(PIPE_STARTUP_HANG_CATCHER_SECONDS));
     let expected = format!("graphhelm-wake-{rendezvous_id}");
     while !pipe_is_present(rendezvous_id) {
         // The child is asked BEFORE the deadline is judged, because a dead sidecar and a slow one

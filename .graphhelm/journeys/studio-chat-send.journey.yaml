@@ -31,7 +31,6 @@ edges:
     from: chat
     to: chat.sent
     acts:
-      - {kind: activate, role: tab, name: Everyone}
       - {kind: enter_text, role: textbox, name: Message, text: "Hello team, please report your status."}
       - {kind: activate, role: button, name: Send}
   - id: mission.chat
@@ -39,6 +38,7 @@ edges:
     to: chat
     acts:
       - {kind: activate, role: button, name: Chat}
+      - {kind: activate, role: tab, name: "Everyone, 22 unread"}
 paths:
   main: [mission.chat, chat.send]
 drift: []

@@ -569,6 +569,69 @@ def inference_config():
             "capabilitySource": "https://code.claude.com/docs/en/model-config"}
 
 
+def test_codex_config_refuses_missing_model_effort_and_prices():
+    """Protect pre-launch refusal and price digest; no I/O or new seams, <1s."""
+    config = inference_config() | {"host": "codex", "provider": "openai", "model": "gpt-6-luna",
+        "pricesUsdPerMillion": {"input": 2, "cachedInput": 0.5, "output": 8}}
+    frozen = doless.freeze_inference_config(config, None)
+    for changed in ({"model": ""}, {"effort": "ultra"}, {"pricesUsdPerMillion": None},
+                    {"pricesUsdPerMillion": {"input": -1, "cachedInput": 0.5, "output": 8}}):
+        with pytest.raises(ValueError):
+            doless.freeze_inference_config(config | changed, None)
+    changed = config | {"pricesUsdPerMillion": {"input": 3, "cachedInput": 0.5, "output": 8}}
+    assert doless.freeze_inference_config(changed, None)["digest"] != frozen["digest"]
+    base = row("a", "PASS") | {"inferenceConfig": frozen}
+    assert doless.comparison_arm(base | {"executor": "codex"}) != doless.comparison_arm(base)
+
+
+@pytest.mark.parametrize("kind,model,effort", [("explorer", "gpt-6-luna", "low"),
+    ("verifier", "gpt-6-luna", "medium"), ("reviewer", "gpt-6.1-sol", "high"),
+    ("implementer", "gpt-6.1-sol", "medium")])
+@pytest.mark.parametrize("failed", [False, True])
+def test_codex_routed_run_prices_tokens_even_on_failure(tmp_path, monkeypatch, capsys, kind, model, effort, failed):
+    """Protect route, oracle handoff, partial cost and report tokens; process/scoring I/O mocks, <1s."""
+    configs = {tier: inference_config() | {"host": "codex", "provider": "openai", "model": name,
+        "supportedEfforts": ["low", "medium", "high"],
+        "pricesUsdPerMillion": {"input": 2, "cachedInput": 0.5, "output": 8}}
+        for tier, name in [("small", "gpt-6-luna"), ("standard", "gpt-6.1-sol"), ("large", "gpt-6-astra")]}
+    config = tmp_path / "tiers.json"
+    config.write_text(json.dumps(configs))
+    cli = tmp_path / "codex"
+    cli.write_bytes(b"fixture")
+    task_id, task = next(iter(doless.load_tasks().items()))
+    monkeypatch.setattr(doless, "load_tasks", lambda: {task_id: task | {"kind": kind}})
+    monkeypatch.setattr(doless, "RESULTS", tmp_path / "rows.jsonl")
+    monkeypatch.setattr(doless.runner, "validate_prerequisites", lambda *a, **kw:
+        {"path": str(cli), "sha256": doless.runner.digest_file(cli)})
+    monkeypatch.setattr(doless.runner, "make_worktree", lambda *a: tmp_path)
+    def score(wt, task, answer, prove):
+        assert answer == "answer"
+        return green_row()
+    monkeypatch.setattr(doless, "score_checkout", score)
+    def capture(cmd, **kw):
+        assert cmd[cmd.index("-m") + 1] == model
+        assert cmd[cmd.index("-c") + 1] == f'model_reasoning_effort="{effort}"'
+        stream = '\n'.join(['{"type":"item.completed","item":{"type":"agent_message","text":"answer"}}',
+            '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":20}}'])
+        return subprocess.CompletedProcess(cmd, 1 if failed else 0, stream, ""), False
+    monkeypatch.setattr(doless.runner, "_run_captured", capture)
+    monkeypatch.setattr(sys, "argv", ["doless.py", "run", "--executor", "codex", "--task", task_id,
+        "--arm", "a", "--treatment", "routed", "--inference-config", str(config), "--runs", "1", "--keep"])
+    doless.main()
+    recorded = json.loads(doless.RESULTS.read_text())
+    assert recorded["executor"] == "codex"
+    assert recorded["costUsd"] == pytest.approx(0.0003)
+    assert recorded["costProvenance"] == "declared_price_table"
+    assert recorded["verdict"] == ("INCOMPLETE" if failed else "PASS")
+    assert recorded["tokens"]["cached_input_tokens"] == 40
+    assert recorded["requestedEffort"] == effort
+    assert doless.comparison_arm(recorded).startswith("codex:")
+    monkeypatch.setattr(sys, "argv", ["doless.py", "pareto"])
+    doless.main()
+    output = capsys.readouterr().out
+    assert "100/40/20" in output
+
+
 def test_inference_configuration_is_frozen_and_refuses_unsupported_controls(tmp_path):
     """Catches aliases, unsupported effort or conflicting CLI model reaching a paid run; <1s, files only."""
     import pytest

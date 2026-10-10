@@ -240,7 +240,7 @@ def make_worktree(task_id: str, arm: str, parent_sha: str) -> Path:
     return wt
 
 
-def validate_prerequisites(arm: str) -> dict:
+def validate_prerequisites(arm: str, executor: str = "claude") -> dict:
     """Reject missing launch inputs before creating expensive historical snapshots."""
     scratch_root()
     if arm in {"b", "c"}:
@@ -254,6 +254,17 @@ def validate_prerequisites(arm: str) -> dict:
             raise SystemExit("TOKEN_BENCH_GRAPHHELM_CLI is not launchable") from exc
         if not version.startswith("graphhelm "):
             raise SystemExit("TOKEN_BENCH_GRAPHHELM_CLI did not identify as GraphHelm")
+    if executor == "codex":
+        found = os.environ.get("TOKEN_BENCH_CODEX_CLI") or shutil.which("codex")
+        if not found:
+            raise RuntimeError("Codex CLI executable is unavailable")
+        path = Path(found).resolve(strict=True)
+        version = subprocess.run([str(path), "--version"], check=True, text=True,
+                                 capture_output=True, timeout=10).stdout.strip()
+        digest = digest_file(path)
+        if not digest or not version.startswith("codex-cli "):
+            raise RuntimeError("Codex CLI identity could not be verified")
+        return {"path": str(path), "sha256": digest, "version": version}
     return claude_cli_identity()
 
 
@@ -358,6 +369,62 @@ def run_agent(wt: Path, prompt: str, arm: str, model: str | None, timeout_min: i
     if result.get("session_id") and result["session_id"] != session_id:
         result["agentError"] = "session_id_mismatch"
     return result, proc.stderr, wall
+
+
+def run_codex_agent(wt: Path, prompt: str, model: str, effort: str, timeout_min: int,
+                    cli: dict) -> tuple[dict, str, float]:
+    """One fresh Codex exec; preserve observed usage even when a later event or process fails."""
+    cmd = [cli["path"], "exec", "--json", "-m", model, "-c",
+           f'model_reasoning_effort="{effort}"', "--sandbox", "workspace-write",
+           "--ignore-user-config", "--ephemeral", "-"]
+    t0 = time.monotonic()
+    proc, cleanup_unconfirmed = _run_captured(cmd, cwd=wt, input=prompt,
+                                             timeout=timeout_min * 60, env=bench_env({}))
+    timed_out = isinstance(proc, subprocess.TimeoutExpired)
+    raw, stderr = proc.stdout or "", proc.stderr or ""
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", errors="replace")
+    result = {"result": "", "tokens": None, "num_turns": 0}
+    if timed_out or cleanup_unconfirmed:
+        result["agentError"] = "timeout_exit_unconfirmed" if cleanup_unconfirmed else "timeout"
+    elif proc.returncode:
+        result["agentError"] = f"codex_exit_{proc.returncode}"
+    for line in raw.splitlines():
+        try:
+            event = json.loads(line)
+            if not isinstance(event, dict):
+                raise ValueError("event must be an object")
+            kind = event.get("type")
+            if kind == "thread.started":
+                result["session_id"] = event.get("thread_id")
+            elif kind == "item.completed":
+                item = event.get("item")
+                if not isinstance(item, dict):
+                    raise ValueError("item must be an object")
+                if item.get("type") == "agent_message":
+                    if not isinstance(item.get("text"), str):
+                        raise ValueError("message must be text")
+                    result["result"] = item["text"]
+            elif kind == "turn.completed":
+                usage = event.get("usage")
+                keys = ("input_tokens", "cached_input_tokens", "output_tokens")
+                if (not isinstance(usage, dict) or any(type(usage.get(k)) is not int or usage[k] < 0 for k in keys)
+                        or usage["cached_input_tokens"] > usage["input_tokens"]):
+                    raise ValueError("invalid usage")
+                if result["tokens"] is None:
+                    result["tokens"] = dict.fromkeys(keys, 0)
+                for key in keys:
+                    result["tokens"][key] += usage[key]
+                result["num_turns"] += 1
+            elif kind in {"turn.failed", "error"}:
+                result["agentError"] = "codex_failed"
+        except (ValueError, TypeError):
+            result["agentError"] = "invalid_codex_stream"
+    if result["tokens"] is None:
+        result["agentError"] = result.get("agentError", "codex_usage_missing")
+    return result, stderr, time.monotonic() - t0
 
 
 def transcript_usage(session_id: str | None) -> dict:

@@ -26,6 +26,52 @@ def usage():
     return {"input": 10, "output": 4, "cacheRead": 2, "cacheWrite": 1, "assistantMessages": 1}
 
 
+@pytest.mark.parametrize("model,effort", [("gpt-6-luna", "low"), ("gpt-6.1-sol", "high"),
+                                        ("gpt-6-astra", "medium")])
+def test_codex_exec_argv_and_usage_stream(tmp_path, monkeypatch, model, effort):
+    """Protect fresh sandboxed dispatch and cached-token accounting; mocked process I/O, <1s."""
+    # Same current-CLI stream shape/usage as the model-gateway adapter's advisory-item receipt.
+    stream = '\n'.join([
+        '{"type":"thread.started","thread_id":"thread-fixture"}',
+        '{"type":"item.completed","item":{"id":"warning","type":"error","message":"Skill descriptions were shortened"}}',
+        '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}',
+        '{"type":"turn.completed","usage":{"input_tokens":22982,"cached_input_tokens":1024,"output_tokens":9,"reasoning_tokens":2}}'])
+    def capture(cmd, **kw):
+        assert cmd == ["codex-fixture", "exec", "--json", "-m", model, "-c",
+                       f'model_reasoning_effort="{effort}"', "--sandbox", "workspace-write",
+                       "--ignore-user-config", "--ephemeral", "-"]
+        assert kw["cwd"] == tmp_path and kw["input"] == "prompt"
+        return subprocess.CompletedProcess(cmd, 0, stream, ""), False
+    monkeypatch.setattr(runner, "_run_captured", capture)
+    result, _, _ = runner.run_codex_agent(tmp_path, "prompt", model, effort, 1, {"path": "codex-fixture"})
+    assert result["result"] == "done" and result["session_id"] == "thread-fixture"
+    assert result["tokens"] == {"input_tokens": 22982, "cached_input_tokens": 1024, "output_tokens": 9}
+    assert not result.get("agentError")
+
+
+@pytest.mark.parametrize("ending", ["missing", "failed", "timeout", "malformed", "negative", "excess_cache"])
+def test_codex_incomplete_keeps_observed_tokens(tmp_path, monkeypatch, ending):
+    """Catches false PASS and discarded spend after errors; mocked process I/O, <1s."""
+    stream = '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":20}}\n'
+    if ending == "missing":
+        stream = '{"type":"thread.started","thread_id":"fixture"}\n'
+    elif ending == "failed":
+        stream += '{"type":"turn.failed","error":{"message":"failed"}}\n'
+    elif ending == "malformed":
+        stream += 'not json\n'
+    elif ending == "negative":
+        stream += '{"type":"turn.completed","usage":{"input_tokens":-1,"cached_input_tokens":0,"output_tokens":0}}\n'
+    elif ending == "excess_cache":
+        stream += '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":2,"output_tokens":0}}\n'
+    proc = (subprocess.TimeoutExpired("codex", 60, output=stream.encode()) if ending == "timeout"
+            else subprocess.CompletedProcess([], 0, stream, ""))
+    monkeypatch.setattr(runner, "_run_captured", lambda *a, **kw: (proc, False))
+    result, _, _ = runner.run_codex_agent(tmp_path, "prompt", "gpt-6-luna", "low", 1, {"path": "fixture"})
+    assert result.get("agentError")
+    assert result.get("tokens") == (None if ending == "missing" else
+        {"input_tokens": 100, "cached_input_tokens": 40, "output_tokens": 20})
+
+
 def test_acceptance_and_regression_are_both_required_for_pass():
     """Catches the old false green where the hidden oracle passed after a regression broke."""
     verdict, reasons = runner.evaluate_outcome("PASS", "FAIL", usage(), 0.2, "session", {"regression": {"command": ["test"]}})

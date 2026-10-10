@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-node-window
-title: Open a step's window from the team canvas
+title: Open a step's window from the Graph
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -15,11 +15,11 @@ screens:
     expect: [{role: region, name: Node deploy}, {role: heading, name: Deploy}, {role: button, name: Close this node}]
     scope: [apps/studio/src/components/panel.tsx, apps/studio/src/components/deliveries.tsx, apps/studio/src/runtime/keel-chain.ts]
   - id: run
-    title: "A run is open, with its chat and its team on screen"
+    title: The Graph shows the run steps without a bot
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: heading, name: Steps without a bot}, {role: button, name: Deploy · ready}]
-    scope: [apps/studio/src/components/team-canvas.tsx]
+    expect: [{role: region, name: Run graph}, {role: heading, name: Steps without a bot}, {role: button, name: Deploy · ready}]
+    scope: [apps/studio/src/components/mission-view.tsx]
 edges:
   - id: run.step
     from: run

@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-name-bot
-title: Give a bot a display name
+title: Give a bot a display name in Lanes
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -8,28 +8,45 @@ actors: [owner]
 secrets: []
 risks: [critical_ux]
 screens:
+  - id: mission
+    title: A run is open on its Mission graph
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: region, name: Canvas}, {role: tab, name: Lanes}]
+    scope: [apps/studio/src/components/mission-view.tsx]
   - id: named
-    title: "The name is saved and the bot shows it (demo: Planny)"
+    title: The reopened name box uses the saved display name
     url: /?session=studio-fixture
     state: success
-    expect: [{role: region, name: Team}, {role: button, name: Move Planny}]
-    scope: [apps/studio/src/components/team-canvas.tsx, apps/studio/src/runtime/team.ts, apps/studio/src/components/beacon.tsx]
+    expect: [{role: region, name: Agents}, {role: textbox, name: Name for Planny}, {role: button, name: Cancel}]
+    scope: [apps/studio/src/components/lanes-timeline.tsx, apps/studio/src/runtime/team.ts]
   - id: naming
-    title: The name box under the bot
+    title: The name box in the Lanes agent row
     url: /?session=studio-fixture
     state: stable
     expect: [{role: textbox, name: Name for planner}, {role: button, name: Save}, {role: button, name: Cancel}]
-    scope: [apps/studio/src/components/team-canvas.tsx]
+    scope: [apps/studio/src/components/lanes-timeline.tsx]
   - id: run
-    title: "A run is open, with its chat and its team on screen"
+    title: The Lanes agent board offers a name for planner
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: Team}, {role: button, name: Name this bot}, {role: button, name: Move planner}]
-    scope: [apps/studio/src/components/team-canvas.tsx, apps/studio/src/runtime/team.ts]
+    expect: [{role: region, name: Agents}, {role: list, name: Agent board}, {role: button, name: Name this bot}]
+    scope: [apps/studio/src/components/lanes-timeline.tsx, apps/studio/src/runtime/team.ts]
+  - id: saved
+    title: The name form closes after saving
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: region, name: Agents}, {role: button, name: Name this bot}]
+    scope: [apps/studio/src/components/lanes-timeline.tsx]
 edges:
+  - id: mission.lanes
+    from: mission
+    to: run
+    acts:
+      - {kind: activate, role: tab, name: Lanes}
   - id: naming.save
     from: naming
-    to: named
+    to: saved
     acts:
       - {kind: enter_text, role: textbox, name: Name for planner, text: Planny}
       - {kind: submit, role: button, name: Save}
@@ -38,6 +55,11 @@ edges:
     to: naming
     acts:
       - {kind: activate, role: button, name: Name this bot}
+  - id: saved.reopen
+    from: saved
+    to: named
+    acts:
+      - {kind: activate, role: button, name: Name this bot}
 paths:
-  main: [run.name, naming.save]
+  main: [mission.lanes, run.name, naming.save, saved.reopen]
 drift: []

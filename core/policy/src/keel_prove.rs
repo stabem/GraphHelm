@@ -939,24 +939,67 @@ fn run_test(
             };
         }
     };
-    // Libtest combines multiple filters with OR, so a separate module filter would also run
-    // every neighbour. Join the prefix to the name and pass exactly one filter.
-    let filter = if selector.last().is_some_and(|arg| arg.ends_with("::")) {
-        format!("{}{}", selector.pop().unwrap(), test.name)
+    let prefix = if selector.last().is_some_and(|arg| arg.ends_with("::")) {
+        selector.pop()
     } else {
-        test.name.clone()
+        None
     };
-    let mut command = Command::new("cargo");
-    command
-        .current_dir(tree)
-        .env("CARGO_TARGET_DIR", options.target_dir.join(side))
-        .args(["test", "-p", &package])
-        .args(&selector)
-        .args(["--", &filter, "--test-threads=1"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    match runner(command, options.timeout) {
+    let command = || {
+        let mut command = Command::new("cargo");
+        command
+            .current_dir(tree)
+            .env("CARGO_TARGET_DIR", options.target_dir.join(side))
+            .args(["test", "-p", &package])
+            .args(&selector)
+            .arg("--")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        command
+    };
+    let mut run = command();
+    if let Some(prefix) = prefix {
+        // Libtest ORs filters: prefix + bare name would run neighbours. Ask its own list for
+        // the qualified name, including nested modules (runtime_http::harness_tests, etc.).
+        let mut list = command();
+        list.args([prefix.as_str(), "--list", "--test-threads=1"]);
+        match runner(list, options.timeout) {
+            Ok(Some((true, stdout, _))) => {
+                let suffix = format!("::{}", test.name);
+                let names: Vec<_> = stdout
+                    .lines()
+                    .filter_map(|line| line.strip_suffix(": test"))
+                    .filter(|name| name.starts_with(&prefix) && name.ends_with(&suffix))
+                    .collect();
+                if names.is_empty() {
+                    return RunResult {
+                        outcome: RunOutcome::NotFound,
+                        detail: format!("no test named {} in {prefix}", test.name),
+                    };
+                }
+                run.args(names).arg("--exact");
+            }
+            Ok(Some((succeeded, stdout, stderr))) => {
+                return classify_run(&test.name, succeeded, &stdout, &stderr);
+            }
+            Ok(None) => {
+                return RunResult {
+                    outcome: RunOutcome::TimedOut,
+                    detail: format!("test listing killed after {}s", options.timeout.as_secs()),
+                };
+            }
+            Err(detail) => {
+                return RunResult {
+                    outcome: RunOutcome::NotRun,
+                    detail,
+                };
+            }
+        }
+    } else {
+        run.arg(&test.name);
+    }
+    run.arg("--test-threads=1");
+    match runner(run, options.timeout) {
         Ok(Some((succeeded, stdout, stderr))) => {
             classify_run(&test.name, succeeded, &stdout, &stderr)
         }
@@ -1052,6 +1095,23 @@ mod tests {
                 .get_args()
                 .map(|arg| arg.to_str().unwrap())
                 .collect();
+            if args.contains(&"--list") {
+                assert_eq!(
+                    args,
+                    [
+                        "test",
+                        "-p",
+                        "graphhelm-cli",
+                        "--test",
+                        "cli",
+                        "--",
+                        "keel_check::",
+                        "--list",
+                        "--test-threads=1"
+                    ]
+                );
+                return Ok(Some((true, "keel_check::nested::named_cell: test\nkeel_check::neighbour: test\nother::named_cell: test\n".into(), String::new())));
+            }
             assert_eq!(
                 args,
                 [
@@ -1061,13 +1121,14 @@ mod tests {
                     "--test",
                     "cli",
                     "--",
-                    "keel_check::named_cell",
+                    "keel_check::nested::named_cell",
+                    "--exact",
                     "--test-threads=1"
                 ]
             );
             Ok(Some((
                 true,
-                "running 1 test\ntest keel_check::named_cell ... ok\n".into(),
+                "running 1 test\ntest keel_check::nested::named_cell ... ok\n".into(),
                 String::new(),
             )))
         }

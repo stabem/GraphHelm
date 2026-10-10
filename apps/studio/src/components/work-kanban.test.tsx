@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
 import { MissionView } from "./mission-view";
-import { LIVENESS_MS } from "../runtime/stage-health";
+import { LIVENESS_MS } from "../runtime/lane-bars";
 import type { Lane } from "../runtime/lane-bars";
 import type { TaskState } from "../runtime/team-tasks";
 

@@ -50,9 +50,9 @@ Visibility uses `checkVisibility()` with opacity and CSS visibility checks, poll
 once per animation frame, then finishes on the following animation frame. This
 observes DOM visibility, not physical pixels on a display. Setup waits and closing
 the node window are outside the click measurements. Load starts with a performance
-clock read in the previous document immediately before Playwright dispatches
-navigation (so it includes that transport overhead). `performance.timeOrigin`
-bridges the document clocks. The load observer is installed before navigation.
+clock read in the previous document immediately before `location.assign()` in the
+same page task. `performance.timeOrigin` bridges the document clocks. The load
+observer is installed before navigation.
 
 Each observation has a 10-second page-side cap and reports `timeout`, never a
 numeric substitute. This cap is cooperative: a blocked browser main thread can

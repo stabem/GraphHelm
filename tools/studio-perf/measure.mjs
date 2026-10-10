@@ -69,12 +69,16 @@ try {
       });
       const page = await context.newPage();
       page.setDefaultTimeout(10000);
-      // Both endpoints use the browser performance clock. Include navigation dispatch,
-      // not just DOMContentLoaded; timeOrigin bridges the old and new document clocks.
-      const started = await page.evaluate(() => performance.timeOrigin + performance.now());
       let load;
       try {
-        await page.goto(base.href, { waitUntil: 'commit', timeout: 10000 });
+        // Dispatch navigation in the same page task as the clock read. timeOrigin
+        // bridges the old and new documents without including a driver round trip.
+        const started = await page.evaluate(url => {
+          const started = performance.timeOrigin + performance.now();
+          location.assign(url);
+          return started;
+        }, base.href);
+        await page.waitForURL(url => url.origin === base.origin, { waitUntil: 'commit', timeout: 10000 });
         const result = await page.evaluate(() => window.studioPerfLoad);
         const ms = result.ended - started;
         load = result.status === 'ok' && ms < 10000 ? { status: 'ok', ms } : { status: 'timeout' };

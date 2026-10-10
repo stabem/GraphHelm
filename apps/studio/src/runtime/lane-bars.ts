@@ -68,6 +68,8 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
           const [claim] = list.splice(i, 1);
           rekey(claim.key, key, `#${e.pr}`);
           if (claim.lane) authorOf.set(key, claim.lane);
+          const issue = issueOf.get(claim.key);
+          if (issue !== undefined) issueOf.set(key, issue);
         }
       }
     } else {
@@ -130,13 +132,17 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       case "task.merged": {
         for (const k of ["implement", "review", "merge"] as const) close(k, slice, t);
         if (author && pr !== undefined) laneOf(author).awaiting.delete(pr);
-        // #591: the author's other PR-less claims on the same task or issue end with the merge too
-        // ("Refs #N" leaves the issue open; the slice the lane worked on is delivered).
+        // #591: only issue closure ends PR-less claims across lanes. A Refs slice ends only
+        // its author's matching claims; other PR slices stay open.
         const issue = e.issue ?? issueOf.get(slice);
-        if (author) for (const [k, v] of [...open]) {
+        for (const [k, v] of [...open]) {
           const [kind, s] = k.split("|");
-          if (kind !== "implement" || v.lane !== author || !s!.includes("#claim-")) continue;
-          if (s!.startsWith(`${e.taskId}#`) || (issue !== undefined && v.bar.issue === issue)) { v.bar.end = t; v.bar.open = false; open.delete(k); }
+          if (kind !== "implement" || !s!.includes("#claim-")) continue;
+          if ((v.bar.issue !== undefined && e.closes?.includes(v.bar.issue))
+            || (v.lane === author && (s!.startsWith(`${e.taskId}#`)
+              || (issue !== undefined && v.bar.issue === issue)))) {
+            v.bar.end = t; v.bar.open = false; open.delete(k);
+          }
         }
         break;
       }

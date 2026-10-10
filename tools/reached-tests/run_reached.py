@@ -205,6 +205,8 @@ def run(args: argparse.Namespace) -> int:
                 env.update({"CARGO_BUILD_JOBS": "6", "RUST_TEST_THREADS": "2"})
                 with logfile.open("w", encoding="utf-8") as stream:
                     proc = subprocess.run(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, text=True, env=env)
+                no_pytest_tests = command[1:3] == ["-m", "pytest"] and (
+                    proc.returncode == 5 or "no tests ran" in _tail(logfile).lower())
                 if step["slot"]:
                     q, h = _slot_telemetry(logfile, command)
                     if q is None or h is None:
@@ -217,8 +219,11 @@ def run(args: argparse.Namespace) -> int:
                 entry = {"index": index, "argv": argv, "cwd": step["cwd"], "slot": step["slot"],
                          "returncode": proc.returncode, "late": time.monotonic() - started > args.budget_seconds,
                          "log": str(logfile), "tail": _tail(logfile)}
+                if no_pytest_tests:
+                    entry["returncode"] = proc.returncode or 1
+                    entry["error"] = "pytest collected no tests"
                 report["completed"].append(entry)
-                if proc.returncode:
+                if entry["returncode"]:
                     report["status"] = "failed"
                     break
                 if entry["late"]:

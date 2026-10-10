@@ -716,19 +716,24 @@ fn play(
     let launched: Option<Launched> = if !launcher_isolated(project) && base_reachable(&base) {
         None
     } else {
-        Some(launch(project, &base, |stop| {
-            // A dead runner cannot clean up itself, even if it dies before up returns.
-            run.state["launched"] = stop.record();
-            super::journey_flow::atomic_write(
-                &run.dir.join(STATE),
-                &serde_json::to_vec_pretty(&run.state).unwrap(),
-            )
-            .map_err(|_| failure("watch.launch_failed", "/launcher", 1))?;
-            if let Ok(mut slot) = stopper.lock() {
-                *slot = Some(stop.clone());
-            }
-            Ok(())
-        })?)
+        Some(launch(
+            project,
+            &base,
+            flow["id"].as_str().unwrap_or_default(),
+            |stop| {
+                // A dead runner cannot clean up itself, even if it dies before up returns.
+                run.state["launched"] = stop.record();
+                super::journey_flow::atomic_write(
+                    &run.dir.join(STATE),
+                    &serde_json::to_vec_pretty(&run.state).unwrap(),
+                )
+                .map_err(|_| failure("watch.launch_failed", "/launcher", 1))?;
+                if let Ok(mut slot) = stopper.lock() {
+                    *slot = Some(stop.clone());
+                }
+                Ok(())
+            },
+        )?)
     };
     if let Some(own) = launched.as_ref().and_then(|app| app.base.clone()) {
         base = own;

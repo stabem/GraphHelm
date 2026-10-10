@@ -19,7 +19,7 @@ use graphhelm_protocols::{
 use super::{
     Failure, argument, execution_state, finish, idempotency_key, load_claim_evidence, owner_actor,
     render, replay_failure, replay_projection, repository_failure, resolve_stream,
-    verify_graph_matches_execution,
+    verify_graph_matches_execution, verify_snapshot_matches_execution,
 };
 use crate::commands::{event_store, owner, publish_loaded};
 use crate::output::Outcome;
@@ -64,6 +64,7 @@ pub fn run(arguments: &Arguments<'_>) -> Outcome {
         let attestation = attestation(arguments.asserter, arguments.mode, &actor)?;
         execute(
             &version,
+            None,
             arguments.events,
             arguments.execution,
             arguments.node,
@@ -104,6 +105,7 @@ pub(crate) fn attestation(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute(
     version: &GraphVersion,
+    snapshot_hash: Option<&graphhelm_protocols::WireHash>,
     events: &Path,
     execution: Option<&str>,
     node: &str,
@@ -117,7 +119,11 @@ pub(crate) fn execute(
     let (scope, stream, history) = resolve_stream(&store, execution)?;
     let initial = graphhelm_events::replay(&scope, &stream, &history)
         .map_err(|error| replay_failure(&error))?;
-    verify_graph_matches_execution(version, &initial, &history, "claim")?;
+    if let Some(hash) = snapshot_hash {
+        verify_snapshot_matches_execution(version, hash, &initial, &history, "claim")?;
+    } else {
+        verify_graph_matches_execution(version, &initial, &history, "claim")?;
+    }
 
     // The declared budget comes from the GRAPH, not the projection: on the start path nothing
     // publishes a `PersistedGraphVersion`, so the fold holds no node spec to read it from (D2).

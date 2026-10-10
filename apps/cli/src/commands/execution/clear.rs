@@ -25,6 +25,7 @@ use super::{
     Failure, PreparedDrive, argument, execution_state, finish, idempotency_key,
     load_claim_evidence, load_fixtures, owner_actor, render, replay_failure, replay_projection,
     repository_failure, resolve_stream, system_actor, verify_graph_matches_execution,
+    verify_snapshot_matches_execution,
 };
 use crate::commands::{event_store, owner, publish_loaded};
 use crate::output::Outcome;
@@ -113,6 +114,7 @@ pub fn run(arguments: &Arguments<'_>) -> Outcome {
             )?;
             execute(
                 &version,
+                None,
                 arguments.events,
                 arguments.fixtures,
                 arguments.execution,
@@ -131,6 +133,7 @@ pub fn run(arguments: &Arguments<'_>) -> Outcome {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn decide(
     version: &GraphVersion,
+    snapshot_hash: Option<&graphhelm_protocols::WireHash>,
     events: &Path,
     fixtures: Option<&Path>,
     execution: Option<&str>,
@@ -144,7 +147,11 @@ pub(crate) fn decide(
     let (scope, stream, history) = resolve_stream(&store, execution)?;
     let initial = graphhelm_events::replay(&scope, &stream, &history)
         .map_err(|error| replay_failure(&error))?;
-    verify_graph_matches_execution(version, &initial, &history, "clear")?;
+    if let Some(hash) = snapshot_hash {
+        verify_snapshot_matches_execution(version, hash, &initial, &history, "clear")?;
+    } else {
+        verify_graph_matches_execution(version, &initial, &history, "clear")?;
+    }
 
     let Verifier::MachineReplay(manifest_hash) = verifier;
     let (outcome, _appended) = graphhelm_events::clear(
@@ -208,6 +215,7 @@ pub(crate) fn annotate(value: &mut serde_json::Value, outcome: &ClearanceOutcome
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute(
     version: &GraphVersion,
+    snapshot_hash: Option<&graphhelm_protocols::WireHash>,
     events: &Path,
     fixtures: Option<&Path>,
     execution: Option<&str>,
@@ -217,7 +225,15 @@ pub(crate) fn execute(
     key: OpaqueId,
 ) -> Result<serde_json::Value, Failure> {
     let (outcome, prepared) = decide(
-        version, events, fixtures, execution, claim_seq, verifier, actor, key,
+        version,
+        snapshot_hash,
+        events,
+        fixtures,
+        execution,
+        claim_seq,
+        verifier,
+        actor,
+        key,
     )?;
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let projection = if outcome == ClearanceOutcome::Cleared {

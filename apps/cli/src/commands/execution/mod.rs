@@ -328,6 +328,39 @@ pub(super) fn parse_claim_evidence(
     })
 }
 
+/// Recheck the authenticated snapshot against the decision's fresh stream projection.
+/// A publication or authoring snapshot change between recovery and decision must refuse.
+pub(super) fn verify_snapshot_matches_execution(
+    version: &GraphVersion,
+    semantic_hash: &WireHash,
+    initial: &ExecutionProjection,
+    history: &[EventEnvelope],
+    verb: &'static str,
+) -> Result<(), Failure> {
+    let latest = history.iter().rev().find_map(|event| match &event.kind {
+        EventKind::GraphAuthoringSnapshotStored(snapshot) => Some(snapshot),
+        _ => None,
+    });
+    let matches = initial.current_graph.as_ref().is_some_and(|published| {
+        published.number() == version.number()
+            && published.semantic_hash() == semantic_hash
+            && latest.is_some_and(|snapshot| {
+                snapshot.graph_version == published.number()
+                    && &snapshot.graph_hash == published.semantic_hash()
+                    && Some(snapshot.execution_id.as_str()) == initial.execution_id.as_deref()
+            })
+    });
+    if !matches {
+        return Err(execution_state(
+            &format!(
+                "{verb} refused: the recovered snapshot does not match the current published graph"
+            ),
+            "/execution/graph",
+        ));
+    }
+    Ok(())
+}
+
 /// The most an evidence bundle file may weigh before it is read as JSON.
 const MAX_EVIDENCE_BYTES: usize = 1 << 20;
 
@@ -1164,6 +1197,61 @@ mod tests {
             EventHash::parse(GENESIS).unwrap(),
             EventHash::parse(GENESIS).unwrap(),
         )
+    }
+
+    /// Decision-time guard: recovery cannot observe a snapshot replaced after it returns.
+    /// In-memory plus two local fixture reads; no store, process, or network (under 1 second).
+    #[test]
+    fn a_snapshot_replaced_after_recovery_is_refused_at_decision_time() {
+        let mut graph = graphhelm_schema::load_graph(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../examples/graphs/software-feature.yaml"),
+        )
+        .unwrap()
+        .graph;
+        graph.metadata.version = 2;
+        let version = GraphVersion::publish(
+            graph,
+            None,
+            crate::commands::owner("owner-fixture"),
+            Utc.with_ymd_and_hms(2026, 8, 20, 12, 0, 0).unwrap(),
+        )
+        .unwrap();
+        let published: graphhelm_protocols::PersistedGraphVersion = serde_json::from_str(
+            include_str!("../../../../../conformance/schemas/valid/persisted-graph-version.json"),
+        )
+        .unwrap();
+        let hash = published.semantic_hash().clone();
+        let projection = ExecutionProjection {
+            execution_id: Some("execution-fixture".to_owned()),
+            current_graph: Some(published),
+            ..ExecutionProjection::default()
+        };
+        let mut event = event_at(1);
+        let mut snapshot = graphhelm_protocols::GraphAuthoringSnapshotStored {
+            execution_id: OpaqueId::parse("execution-fixture").unwrap(),
+            graph_version: 2,
+            graph_hash: hash.clone(),
+        };
+        event.kind = EventKind::GraphAuthoringSnapshotStored(snapshot.clone());
+        assert!(
+            verify_snapshot_matches_execution(
+                &version,
+                &hash,
+                &projection,
+                &[event.clone()],
+                "claim",
+            )
+            .is_ok()
+        );
+
+        snapshot.graph_version = 1;
+        event.kind = EventKind::GraphAuthoringSnapshotStored(snapshot);
+        let failure =
+            verify_snapshot_matches_execution(&version, &hash, &projection, &[event], "claim")
+                .expect_err("a replaced snapshot must refuse at decision time");
+        assert_eq!(failure.code, EXECUTION_STATE_CODE);
+        assert_eq!(failure.pointer, "/execution/graph");
     }
 
     /// The guard this module exists for: an empty history has NO vantage point, and the

@@ -315,6 +315,44 @@ fn watch_starts_a_down_app_only_from_a_launcher_inside_the_project() {
     );
 }
 
+/// #585: flow-specific fixture seeds require the selected flow id at the launcher boundary.
+/// Existing launcher checks cover confinement, not its environment. The real shell records
+/// the id before deliberately failing, so no browser or long readiness wait is needed.
+/// Cost: two CLI/shell launches, seconds, offline; no production seam.
+#[test]
+fn watch_and_preview_pass_the_selected_flow_to_the_launcher() {
+    let dir = draft();
+    std::fs::write(
+        dir.path().join(".graphhelm/observers/journey_driver.mjs"),
+        include_bytes!("../../../tools/journey-driver/driver.mjs"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(".graphhelm/journey-fixture.json"),
+        r#"{"schema":"graphhelm-journey-fixture/1","script":"fixture.sh","isolated":true}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("fixture.sh"),
+        "if [ \"$1\" = up ]; then printf '%s' \"${GRAPHHELM_JOURNEY_FLOW:-}\" > selected-flow; exit 1; fi\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join(".graphhelm/journey-previews/checkout")).unwrap();
+    for args in [
+        vec!["watch", "checkout"],
+        vec!["preview", "checkout", "--run"],
+    ] {
+        let (_, reply) = cli(dir.path(), &args);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("selected-flow"))
+                .unwrap_or_else(|error| panic!("{args:?}: {reply}; {error}")),
+            "checkout",
+            "{args:?}: {reply}"
+        );
+        std::fs::remove_file(dir.path().join("selected-flow")).unwrap();
+    }
+}
+
 /// #490: a generated contract left over from an earlier compile and now stale (the flow changed
 /// since) makes `validate` report `flow.contract_stale`, and must not stop `journey watch`, which
 /// never reads it: the draft still passes every gate up to the observer. Cost: seconds, no browser.

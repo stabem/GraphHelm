@@ -37,6 +37,8 @@ class Reach(unittest.TestCase):
         # manifest that still auto-discovers individual targets or forgets a newly added file.
         repo = Path(__file__).resolve().parents[2]
         packages = rt.workspace(repo)
+        cli = next(package for package in packages if package["name"] == "graphhelm-cli")
+        self.assertEqual([target["name"] for target in cli["tests"]], ["cli"])
         for source in sorted((repo / "apps/cli/tests").glob("*.rs")):
             if source.stem == "cli":
                 continue

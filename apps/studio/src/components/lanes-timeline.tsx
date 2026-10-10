@@ -78,10 +78,12 @@ function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: 
         {shown.map((r) => {
           const full = r.doing ? r.doing : r.stage ? `${STAGE[r.stage]}${r.pr ? ` PR #${r.pr}` : ""}${r.title ? ` ${r.title}` : ""}` : "—";
           // The pill carries the plain status; a longer label (stale claim · #549, awaiting review #N) is a chip.
-          const tag = r.status !== "building" && r.label && r.label !== PILL[r.status] ? r.label : null;
+          const tag = r.status !== "building" && r.label && r.label !== PILL[r.status]
+            ? r.status === "build_wait" ? r.label.replace(/^Waiting for build · /, "") : r.label
+            : null;
           const pill = r.status === "building" && r.label ? r.label.replaceAll("Â·", "·") : PILL[r.status];
-          const what = r.status === "building" && full.startsWith("building in ")
-            ? full.slice("building in ".length)
+          const what = (r.status === "building" || r.status === "build_wait") && full.startsWith(r.status === "building" ? "building in " : "waiting for a build slot in ")
+            ? full.slice(r.status === "building" ? "building in ".length : "waiting for a build slot in ".length)
             : tag && full.startsWith(tag) ? full.slice(tag.length).trim() : full;
           const bot = agents.find((b) => b.name === r.name);
           return (

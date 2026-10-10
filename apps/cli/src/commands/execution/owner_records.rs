@@ -267,6 +267,8 @@ mod tests {
                 by.clone(),
                 Sensitivity::Internal,
                 EventKind::SignalRecorded(SignalRecorded {
+                    to: None,
+                    reply_to: None,
                     scoped_agent_authenticated: None,
                     execution_id: OpaqueId::parse("run-1").unwrap(),
                     signal_id: OpaqueId::parse(signal_id).unwrap(),

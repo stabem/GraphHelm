@@ -1,5 +1,14 @@
 # Schema Changelog
 
+## event-envelope 1.1.0 - operator-note routing hints (Refs #687)
+
+`signal_recorded` gains optional opaque `to` and `replyTo` fields. The Governor copies them
+from validated operator notes only when they are opaque identifiers; arbitrary address prose
+and message text stay sealed. Legacy events remain readable and are never rewritten. Legacy
+notes without hints are outside the Stop reminder; the normal inbox still opens their evidence.
+This is additive within the unreleased 1.1.0 candidate; the frozen release is unchanged.
+The catalog digest is updated from canonical JSON.
+
 ## graph-signal 1.2.0 - optional `task` (#393)
 
 A signal may name the task it belongs to (`issue-382`, `pr-384`): the `taskId` of the `task.*` records (journey-first spec §7–§8), so the Studio threads a conversation by task instead of by actor pair. Optional and additive: every 1.1.0 envelope stays valid, and a present value must match the task-id pattern. The Runtime's signal parser accepts it and refuses a malformed one.

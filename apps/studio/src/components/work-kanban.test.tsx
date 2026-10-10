@@ -35,13 +35,13 @@ describe("WorkKanban (#668)", () => {
     await renderLanes();
     const board = screen.getByRole("region", { name: "Work by stage" });
     expect(Array.from(board.querySelectorAll(".wk-head")).map((h) => h.textContent))
-      .toEqual(["IMPLEMENT · 1", "REVIEW · 1", "BLOCKED · 1", "WAITING FOR BUILD · 0", "SILENT · 1", "MERGE · 1"]);
+      .toEqual(["IMPLEMENT · 1", "REVIEW · 1", "BLOCKED · 1", "BUILD QUEUE · 0", "SILENT · 1", "MERGE · 1"]);
     expect(within(col(/^IMPLEMENT/)).getByText(LONG)).toBeInTheDocument();
     expect(within(col(/^REVIEW/)).getByText("Review me")).toBeInTheDocument();
     expect(within(col(/^BLOCKED/)).getByText("Blocked one")).toBeInTheDocument();
     expect(within(col(/^SILENT/)).getByText("Stalled review")).toBeInTheDocument();
     expect(within(col(/^MERGE/)).getByText("Merging now")).toBeInTheDocument();
-    expect(within(col(/^WAITING FOR BUILD/)).getByText("none")).toBeInTheDocument();
+    expect(within(col(/^Waiting for build · 0/)).getByText("none")).toBeInTheDocument();
     expect(board).not.toHaveTextContent("Done already");
   });
   it("renders full names: the title and the author → reviewer line are whole", async () => {

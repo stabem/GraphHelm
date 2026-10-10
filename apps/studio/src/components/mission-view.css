@@ -97,9 +97,9 @@
   /* Same as the rail: the Studio main area does not scroll, so the graph column scrolls itself. */
   max-height: calc(100vh - 170px); overflow-y: auto; overscroll-behavior: contain; padding-bottom: 72px; scrollbar-width: thin; }
 
-/* #706: under 1600px the rail gives 40px back so the graph's five columns keep their width. */
+/* #706, #716: under 1600px the rail gives 60px back so the graph's five columns stay >= 150px at 1440. */
 @media (max-width: 1600px) and (min-width: 701px) {
-  .mv-journeys { flex-basis: 260px; max-width: 260px; }
+  .mv-journeys { flex-basis: 240px; max-width: 240px; }
 }
 
 /* Phone width (design: Glance): the rail stacks on top, the graph scrolls, the inspector goes below. */

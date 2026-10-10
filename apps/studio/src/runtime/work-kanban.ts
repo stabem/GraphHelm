@@ -5,9 +5,9 @@ import type { StageHealth } from "./stage-health";
 import type { WorkStage } from "./work-groups";
 
 export type KanbanColumn = "implement" | "review" | "blocked" | "build" | "silent" | "merge";
-export const KANBAN_COLUMNS: readonly { id: KanbanColumn; label: string }[] = [
+export const KANBAN_COLUMNS: readonly { id: KanbanColumn; label: string; short?: string }[] = [
   { id: "implement", label: "Implement" }, { id: "review", label: "Review" }, { id: "blocked", label: "Blocked" },
-  { id: "build", label: "Waiting for build" }, { id: "silent", label: "Silent" }, { id: "merge", label: "Merge" },
+  { id: "build", label: "Waiting for build", short: "Build queue" }, { id: "silent", label: "Silent" }, { id: "merge", label: "Merge" },
 ];
 
 /** The column one PR sits in, or `null` for merged work (not shown). Waiting for build (the owner

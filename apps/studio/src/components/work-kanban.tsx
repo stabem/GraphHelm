@@ -22,9 +22,9 @@ export function WorkKanban({ items, onOpen }: { items: KanbanItem[]; onOpen(grou
         const list = cols[c.id], id = `wk-col-${c.id}`;
         return (
           <section key={c.id} className="wk-col" data-col={c.id} aria-labelledby={id}>
-            <h3 className="wk-head" id={id}>
+            <h3 className="wk-head" id={id} aria-label={c.short ? `${c.label} · ${list.length}` : undefined}>
               <span className="wk-dot" style={{ background: DOT[c.id] }} aria-hidden="true" />
-              <span className="wk-label">{c.label.toUpperCase()}</span>
+              <span className="wk-label" title={c.short ? c.label : undefined}>{(c.short ?? c.label).toUpperCase()}</span>
               <span className="wk-count">{` · ${list.length}`}</span>
             </h3>
             <div className="wk-cards">

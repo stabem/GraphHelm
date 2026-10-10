@@ -371,7 +371,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
                             onClick={() => pickGroup(g.key, t.key)}>
                             <span className="mv-tick" />
                             <span className="mv-step-n">{i + 1}</span>
-                            <span className="mv-step-title">{t.title}</span>
+                            <span className="mv-step-title" title={t.title}>{t.title}</span>
                             {t.step !== "merged" && <ProgressIcon alert={t.blocked || health[t.key]?.flag === "stalled"} />}
                             <span className="mv-step-ids">{t.pr ? `PR #${t.pr}` : "no PR"}</span>
                           </button>
@@ -408,7 +408,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
                           onClick={() => pickStep(m.contractId, s.stepId)}>
                           <span className="mv-tick" data-status={s.status} />
                           <span className="mv-step-n">{s.index + 1}</span>
-                          <span className="mv-step-title">{s.title}</span>
+                          <span className="mv-step-title" title={s.title}>{s.title}</span>
                           <span className="mv-step-ids">{ids[s.index] || "—"}</span>
                         </button>
                       ))}

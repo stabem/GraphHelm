@@ -114,7 +114,7 @@ export function MissionGraph({ mission, selectedStepId, selectedTaskKey, onSelec
                       <span className="mg-node-label">{nodeLabel(t, steps[col])}</span>
                       <span className="mg-node-pr">{prText(t)}</span>
                     </span>
-                    <span className="mg-node-title">{t.title}</span>
+                    <span className="mg-node-title" title={t.title}>{t.title}</span>
                     <span className="mg-node-who">{t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : "nobody yet"}</span>
                   </button>
                 );
@@ -341,7 +341,7 @@ export function CurrentCard({ cell: c, stage, task: t, health, pace, selected, l
         <span className="mg-node-label">{c.count > 1 ? `${base} ×${c.count}` : base}</span>
         <span className="mg-node-pr">{prText(t)}</span>
       </span>
-      <span className="mg-node-title">{t.title}</span>
+      <span className="mg-node-title" title={t.title}>{t.title}</span>
       {c.sub && <span className="mg-node-sub" title={c.sub}>{c.sub}</span>}
       {flag && <HealthFlag health={flag} time={false} />}
       <span className="mg-node-foot">

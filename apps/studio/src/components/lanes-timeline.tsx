@@ -86,11 +86,11 @@ function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: 
               <span className="ab-pill" data-status={r.status}>{PILL[r.status]}</span>
               <span className="ab-name">{r.name}</span>
               <span className="ab-what">
-                {tag && <span className="ab-tag">{tag}</span>}
-                {what.length > 0 && <span className="ab-doing">{r.href ? <a href={r.href} target="_blank" rel="noreferrer">{what}</a> : what}</span>}
+                {tag && <span className="ab-tag">{tag.split(" · ").map((part, i) => <span key={i}>{i > 0 ? ` · ${part}` : part}</span>)}</span>}
+                {what.length > 0 && <span className="ab-doing" title={what}>{r.href ? <a href={r.href} target="_blank" rel="noreferrer">{what}</a> : what}</span>}
               </span>
-              <span className="ab-for">{r.latest ?? "—"}</span>
-              <span className="ab-last">{r.lastDelivered ? `last delivered ${r.lastDelivered}` : "nothing delivered yet"}</span>
+              <span className="ab-for">{(r.latest ?? "—").split(" · ").map((part, i) => <span key={i}>{i > 0 ? ` · ${part}` : part}</span>)}</span>
+              <span className="ab-last" title={r.lastDelivered ? `last delivered ${r.lastDelivered}` : "nothing delivered yet"}>{r.lastDelivered ? `last delivered ${r.lastDelivered}` : "nothing delivered yet"}</span>
               {bot && (onOpenBotDetails || onNameBot) && (
                 <span className="ab-acts">
                   {onOpenBotDetails && <button type="button" className="ab-act" onClick={() => onOpenBotDetails(bot.key)}>Details</button>}
@@ -211,7 +211,7 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
                   );
                 })}
               </div>
-              <span className="lt-last">{delivered.get(l.lane) ?? "—"}</span>
+              <span className="lt-last" title={delivered.get(l.lane)}>{delivered.get(l.lane) ?? "—"}</span>
             </li>
           );
         })}

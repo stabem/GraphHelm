@@ -515,20 +515,162 @@ mod workspace_slot_target_tests;
 mod workspace_slot_tests;
 
 pub(crate) fn run_slot(request: &SlotRequest<'_>) -> Outcome {
+    let batch_started = Instant::now();
+    let raw = match std::env::var("GRAPHHELM_SLOT_BATCH") {
+        Ok(raw) => Some(raw),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => return refuse("GRAPHHELM_SLOT_BATCH is not valid UTF-8", "/batch"),
+    };
+    run_slot_with_batch_payload(request, raw.as_deref(), batch_started)
+}
+
+fn run_slot_with_batch_payload(
+    request: &SlotRequest<'_>,
+    raw: Option<&str>,
+    batch_started: Instant,
+) -> Outcome {
     if let Err(message) = admit_command(request.command) {
         return refuse(&message, "/command");
     }
-    run_admitted_slot(request)
+    if raw.is_some() && request.clean_workspace {
+        return refuse("a feedback batch cannot clean workspace targets", "/batch");
+    }
+    let batch = match raw {
+        Some(raw) => match parse_slot_batch(raw, request.command) {
+            Ok(batch) => Some(BatchRun {
+                spec: batch,
+                started: batch_started,
+            }),
+            Err(message) => return refuse(&message, "/batch"),
+        },
+        None => None,
+    };
+    run_admitted_slot_with_batch(request, batch)
 }
 
+#[cfg(test)]
 fn run_admitted_slot(request: &SlotRequest<'_>) -> Outcome {
+    run_admitted_slot_with_batch(request, None)
+}
+
+struct BatchSpec {
+    commands: Vec<Vec<String>>,
+    budget: Duration,
+    lease: Duration,
+}
+
+struct BatchRun {
+    spec: BatchSpec,
+    started: Instant,
+}
+
+fn parse_slot_batch(raw: &str, first: &[String]) -> Result<BatchSpec, String> {
+    let value: serde_json::Value = serde_json::from_str(raw)
+        .map_err(|_| "GRAPHHELM_SLOT_BATCH must be valid JSON".to_owned())?;
+    let object = value
+        .as_object()
+        .ok_or("GRAPHHELM_SLOT_BATCH must be a JSON object")?;
+    if object.get("schema").and_then(serde_json::Value::as_str) != Some("graphhelm.slot-batch/1") {
+        return Err("GRAPHHELM_SLOT_BATCH has an unsupported schema".into());
+    }
+    let commands = object
+        .get("commands")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("GRAPHHELM_SLOT_BATCH.commands must be an array")?;
+    if commands.is_empty() || commands.len() > 4 {
+        return Err("GRAPHHELM_SLOT_BATCH.commands must contain 1 to 4 commands".into());
+    }
+    let mut parsed = Vec::with_capacity(commands.len());
+    for command in commands {
+        let argv = command
+            .as_array()
+            .ok_or("GRAPHHELM_SLOT_BATCH.commands entries must be arrays")?;
+        let argv = argv
+            .iter()
+            .map(|arg| {
+                arg.as_str()
+                    .map(str::to_owned)
+                    .ok_or("batch arguments must be strings")
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if argv.is_empty() {
+            return Err("batch commands cannot be empty".into());
+        }
+        admit_command(&argv)?;
+        parsed.push(argv);
+    }
+    if parsed[0] != first {
+        return Err("GRAPHHELM_SLOT_BATCH.commands[0] must equal the requested command".into());
+    }
+    let positive_seconds = |name: &str| -> Result<Duration, String> {
+        let seconds = object
+            .get(name)
+            .and_then(serde_json::Value::as_f64)
+            .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+            .ok_or_else(|| format!("GRAPHHELM_SLOT_BATCH.{name} must be positive and finite"))?;
+        Duration::try_from_secs_f64(seconds)
+            .map_err(|_| format!("GRAPHHELM_SLOT_BATCH.{name} is too large"))
+    };
+    let budget = positive_seconds("budgetSeconds")?;
+    let deadline_ms = object
+        .get("deadlineUnixMs")
+        .and_then(serde_json::Value::as_f64)
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .ok_or("GRAPHHELM_SLOT_BATCH.deadlineUnixMs must be positive and finite")?;
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "the system clock precedes the Unix epoch")?
+        .as_secs_f64()
+        * 1000.0;
+    // Preserve the runner's original deadline across CLI startup and every requeue.
+    // Continue with a monotonic clock after admission; expired requests queue no child.
+    let remaining = Duration::try_from_secs_f64(((deadline_ms - now_ms) / 1000.0).max(0.0))
+        .map_err(|_| "GRAPHHELM_SLOT_BATCH.deadlineUnixMs is too large")?;
+    let budget = budget.min(remaining);
+    let lease = positive_seconds("leaseSeconds")?;
+    if lease > Duration::from_secs(60) {
+        return Err("GRAPHHELM_SLOT_BATCH.leaseSeconds must be at most 60".into());
+    }
+    Ok(BatchSpec {
+        commands: parsed,
+        budget,
+        lease,
+    })
+}
+
+fn batch_boundary(
+    deadline_elapsed: Duration,
+    slot_elapsed: Duration,
+    budget: Duration,
+    lease: Duration,
+    next_index: usize,
+) -> Option<&'static str> {
+    if deadline_elapsed >= budget {
+        Some("deadline")
+    } else if next_index > 0 && slot_elapsed >= lease {
+        Some("leaseBoundary")
+    } else {
+        None
+    }
+}
+
+fn run_admitted_slot_with_batch(request: &SlotRequest<'_>, batch: Option<BatchRun>) -> Outcome {
     let Ok(cwd) = std::env::current_dir() else {
         return refuse("the current directory could not be read", "/target");
     };
-    run_admitted_slot_in(request, &cwd)
+    run_admitted_slot_in_with_batch(request, &cwd, batch)
 }
 
+#[cfg(test)]
 fn run_admitted_slot_in(request: &SlotRequest<'_>, cwd: &Path) -> Outcome {
+    run_admitted_slot_in_with_batch(request, cwd, None)
+}
+
+fn run_admitted_slot_in_with_batch(
+    request: &SlotRequest<'_>,
+    cwd: &Path,
+    batch: Option<BatchRun>,
+) -> Outcome {
     let (root, lane, label) = (request.root, request.lane, request.label);
     if !super::workspace::valid_id(lane) {
         return refuse("lane must be a workspace id", "/lane");
@@ -608,15 +750,29 @@ fn run_admitted_slot_in(request: &SlotRequest<'_>, cwd: &Path) -> Outcome {
         "worktree": cwd});
     let _ = std::fs::write(info_path(&mine), info.to_string());
     let started = Instant::now();
+    let batch_started = batch.as_ref().map_or(started, |run| run.started);
     let slot = loop {
-        if let Some(limit) = max_wait
-            && started.elapsed() > limit
-        {
+        let batch_expired = batch
+            .as_ref()
+            .is_some_and(|run| run.started.elapsed() >= run.spec.budget);
+        if batch_expired || max_wait.is_some_and(|limit| started.elapsed() > limit) {
             let waited = started.elapsed().as_secs_f64();
             drop(ticket);
             remove_ticket(&mine);
             let expires = unix_now() + RESUME_GRACE.as_nanos();
             let _ = std::fs::write(&reservation, format!("{arrival} {expires}"));
+            if let Some(run) = batch.as_ref().filter(|_| batch_expired) {
+                return Outcome::success(
+                    COMMAND,
+                    json!({
+                        "lane": lane, "label": label, "exitCode": 0,
+                        "waitedSeconds": waited, "heldSeconds": 0,
+                        "batch": {"schema": "graphhelm.slot-batch-result/1", "completed": [],
+                            "remaining": (0..run.spec.commands.len()).collect::<Vec<_>>(),
+                            "stopReason": "deadline"}
+                    }),
+                );
+            }
             let mut refusal = refuse(
                 &format!(
                     "not served within --max-wait; this lane and label keep their place for {} minutes if they queue again",
@@ -647,6 +803,7 @@ fn run_admitted_slot_in(request: &SlotRequest<'_>, cwd: &Path) -> Outcome {
     let _ = holder.set_len(0);
     let _ = writeln!(holder, "{lane} {label} pid={}", std::process::id());
     let held_since = unix_now();
+    let held_clock = Instant::now();
     let _ = std::fs::write(
         dir.join(HOLDER),
         json!({"lane": lane, "label": label, "pid": std::process::id(),
@@ -688,24 +845,74 @@ fn run_admitted_slot_in(request: &SlotRequest<'_>, cwd: &Path) -> Outcome {
             }
         }
     }
-    let status = Command::new(program)
-        .current_dir(cwd)
-        .args(arguments)
-        .env("CARGO_TARGET_DIR", &target)
-        .env("CARGO_BUILD_JOBS", request.jobs.to_string())
-        .status();
+    let (code, batch_result) = if let Some(batch) = batch {
+        let mut completed = Vec::new();
+        let mut stop_reason = "exhausted";
+        let mut code = 0;
+        for (index, command) in batch.spec.commands.iter().enumerate() {
+            if let Some(reason) = batch_boundary(
+                batch_started.elapsed(),
+                held_clock.elapsed(),
+                batch.spec.budget,
+                batch.spec.lease,
+                index,
+            ) {
+                stop_reason = reason;
+                break;
+            }
+            let child_started = Instant::now();
+            let Some((program, arguments)) = command.split_first() else {
+                stop_reason = "spawnFailure";
+                code = 1;
+                break;
+            };
+            let status = Command::new(program)
+                .current_dir(cwd)
+                .args(arguments)
+                .env("CARGO_TARGET_DIR", &target)
+                .env("CARGO_BUILD_JOBS", request.jobs.to_string())
+                .env_remove("GRAPHHELM_SLOT_BATCH")
+                .status();
+            let elapsed = child_started.elapsed().as_secs_f64();
+            let Ok(status) = status else {
+                stop_reason = "spawnFailure";
+                code = 1;
+                break;
+            };
+            code = status.code().unwrap_or(1);
+            completed.push(json!({"index": index, "exitCode": code, "elapsedSeconds": elapsed}));
+            if code != 0 {
+                stop_reason = "childFailure";
+                break;
+            }
+        }
+        let remaining = (completed.len()..batch.spec.commands.len()).collect::<Vec<_>>();
+        let result = json!({"schema": "graphhelm.slot-batch-result/1", "completed": completed,
+            "remaining": remaining, "stopReason": stop_reason});
+        (code, Some(result))
+    } else {
+        let status = Command::new(program)
+            .current_dir(cwd)
+            .args(arguments)
+            .env("CARGO_TARGET_DIR", &target)
+            .env("CARGO_BUILD_JOBS", request.jobs.to_string())
+            .env_remove("GRAPHHELM_SLOT_BATCH")
+            .status();
+        let Ok(status) = status else {
+            release(slot, ticket);
+            return refuse("the command could not be started", "/command");
+        };
+        (status.code().unwrap_or(1), None)
+    };
     let held = started.elapsed().as_secs() - waited;
     release(slot, ticket);
-    let Ok(status) = status else {
-        return refuse("the command could not be started", "/command");
-    };
-    let code = status.code().unwrap_or(1);
-    let mut outcome = Outcome::success(
-        COMMAND,
-        json!({"lane": lane, "label": label, "exitCode": code, "waitedSeconds": waited,
-            "heldSeconds": held, "targetDir": target.to_string_lossy(), "cleaned": cleaned,
-            "priority": request.priority, "reclaimedTargets": reclaimed}),
-    );
+    let mut data = json!({"lane": lane, "label": label, "exitCode": code, "waitedSeconds": waited,
+        "heldSeconds": held, "targetDir": target.to_string_lossy(), "cleaned": cleaned,
+        "priority": request.priority, "reclaimedTargets": reclaimed});
+    if let Some(batch) = batch_result {
+        data["batch"] = batch;
+    }
+    let mut outcome = Outcome::success(COMMAND, data);
     outcome.exit_code = code;
     outcome
 }

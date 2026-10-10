@@ -150,4 +150,12 @@ describe("teamLinks", () => {
     const team = teamModel(input({ events: [record(1, "gh-claude-9", minutesAgo(600), "task.merged")], taskStates: [merged] }));
     expect(team.bots.find((bot) => bot.key === "gh-claude-9")?.doingNow).toBe("Last delivered #532 Every lane shows");
   });
+
+  it("#737: attributes a fresh verified task record to its lane when a shared actor signed it", () => {
+    const taskRecord = { kind: "task.pr_opened", actorId: "codex", sequence: 201, taskId: "issue-737", lane: "codex-8",
+      pr: 738, occurredAt: minutesAgo(2) } as const;
+    const team = teamModel(input({ events: [record(201, "codex", minutesAgo(2), "task.pr_opened")], taskRecords: [taskRecord],
+      taskStates: [{ lane: "codex-8", reviewers: [], title: "Active work", issue: 737, lastSequence: 201 } as unknown as TaskState] }));
+    expect(team.bots.find((bot) => bot.key === "codex-8")).toMatchObject({ state: "working", quietMinutes: 2, lastRecordAt: minutesAgo(2) });
+  });
 });

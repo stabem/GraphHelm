@@ -10,7 +10,7 @@
 import { hueOf } from "../components/format";
 import type { EnvelopeRecord } from "../graph/ledger";
 import type { GraphModel } from "../graph/model";
-import type { ClaudeTaskReadModel, TaskState } from "./team-tasks";
+import type { ClaudeTaskReadModel, TaskEventRecord, TaskState } from "./team-tasks";
 import type { NativeChatSummary, RuntimeEvent } from "./types";
 
 export const SHARED_CODEX_ACTOR = "codex";
@@ -42,6 +42,8 @@ export interface TeamInput {
   now: number;
   /** #532: the run's folded `task.*` slices; their lanes and reviewers are lanes the run knows. */
   taskStates?: TaskState[] | null;
+  /** #737: verified records retain the lane and event time when a shared actor signed them. */
+  taskRecords?: TaskEventRecord[] | null;
 }
 
 function signalKind(event: RuntimeEvent): string | null {
@@ -88,6 +90,19 @@ export function teamModel(input: TeamInput): TeamModel {
       if (text) notes.set(event.actorId, firstLine(text));
       else if (envelope === undefined && event.evidenceRefs.length > 0) notes.set(event.actorId, OPENING);
     }
+  }
+
+  // Attribute verified task records to their lane, not only to the signer actor (which may be shared).
+  for (const record of input.taskRecords ?? []) {
+    if (!record.lane) continue;
+    const tally = tallies.get(record.lane) ?? { count: 0, lastAt: null, lastSequence: 0 };
+    if (record.sequence >= tally.lastSequence) {
+      tally.lastSequence = record.sequence;
+      tally.lastAt = record.occurredAt ?? tally.lastAt;
+    }
+    tally.count += 1;
+    tallies.set(record.lane, tally);
+    known.add(record.lane);
   }
 
   const seeds = new Map<string, Seed>();

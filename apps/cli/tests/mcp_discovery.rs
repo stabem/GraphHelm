@@ -7,6 +7,10 @@
 //! different tokens. A stale record (nothing on the port, or a record another process did not
 //! write) is refused with a diagnostic that names the remedy, and no token ever reaches output.
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -70,7 +74,9 @@ fn a_port_the_os_offers_again_is_never_handed_out_twice() {
 
 fn health(port: u16) -> Option<serde_json::Value> {
     let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).ok()?;
-    stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
+    stream
+        .set_read_timeout(Some(scaled(Duration::from_secs(5))))
+        .ok()?;
     write!(
         stream,
         "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
@@ -103,7 +109,7 @@ fn serve_with_project(events: &Path, port: u16, registry: &Path, project: Option
         .spawn()
         .unwrap();
     let guard = Killed(child);
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + scaled(Duration::from_secs(60));
     loop {
         let record = std::fs::read(registry.join(format!("{port}.json")))
             .ok()
@@ -124,7 +130,7 @@ fn serve_with_project(events: &Path, port: u16, registry: &Path, project: Option
 fn stop(mut runtime: Killed, port: u16) {
     let _ = runtime.0.kill();
     let _ = runtime.0.wait();
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + scaled(Duration::from_secs(30));
     while std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
         assert!(Instant::now() < deadline, "port {port} never freed");
         std::thread::sleep(Duration::from_millis(100));
@@ -418,7 +424,7 @@ fn project_discovery_uses_the_runtime_assigned_loopback_port() {
         .unwrap();
     let _runtime = Killed(child);
 
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + scaled(Duration::from_secs(60));
     let (record, project_id) = loop {
         let found = std::fs::read_dir(registry.join("projects"))
             .ok()

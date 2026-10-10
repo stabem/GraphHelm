@@ -3156,7 +3156,8 @@ export default function App({
               <div id="studio-panel-graph" role="tabpanel" aria-label="Graph">
                 <MissionView journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} runFor={missionRunFor}
                   lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe}
-                  runName={selected} lastRecordAt={Date.parse(eventList[eventList.length - 1]?.occurredAt ?? "")} onTeam={() => chooseCanvas("team")}
+                  runName={selected} lastRecordAt={Date.parse(eventList[eventList.length - 1]?.occurredAt ?? "")} onTeam={() => chooseCanvas("team")} onJourneys={() => chooseCanvas("journey")}
+                  draftJourneys={flowsRead.view?.flows.filter((flow) => flow.status === "draft").length ?? 0}
                   agents={team.bots} away={handover ? { minutes: handover.gapMinutes, shipped: handover.shipped.length } : null}
                   onReviewAssigned={async (task, lane) => {
                     const client = clientRef.current;

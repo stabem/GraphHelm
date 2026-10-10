@@ -116,6 +116,10 @@
 .mv[data-page="full"] { min-height: 100%; padding: 0; gap: 0; }
 .mv[data-page="full"] > .mv-head { padding: 14px 24px; gap: 16px; border-bottom: 1px solid #1E2026; }
 .mv[data-page="full"] > .mv-body { padding: 18px 24px 24px; }
+/* #735: the full page sits under the Studio top bar, its own head and the summary line; the rail and the
+ * content stop above the stage's bottom edge so the stage itself never scrolls. */
+.mv[data-page="full"] > .mv-body > .mv-journeys, .mv[data-page="full"] > .mv-body > .mv-content { max-height: calc(100vh - 224px); }
+.mv[data-page="full"]:has(> .mv-run-graph) > .mv-body > .mv-journeys, .mv[data-page="full"]:has(> .mv-run-graph) > .mv-body > .mv-content { max-height: calc(100vh - 286px); }
 .mv-crumbs { display: flex; align-items: center; gap: 10px; }
 .mv-logo { width: 26px; height: 26px; border-radius: 7px; background: #E9E7E2; color: #0B0C0F; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; }
 .mv-brand { font-weight: 600; font-size: 14px; }

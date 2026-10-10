@@ -112,7 +112,12 @@ describe("MissionView", () => {
     expect(within(ins).getByRole("list", { name: "Who touched it" })).toHaveTextContent("BLOCK");
     expect(ins).toHaveTextContent("Evidence on this head");
     await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
-    expect(screen.getByRole("button", { name: "Open test for step 1" })).toBeInTheDocument();
+    // #735: issue work proves PR by PR; the blocked PR is open work and asks its author.
+    expect(screen.getByRole("heading", { name: "Can I trust “#519 Watch plays inside the Studio”?" })).toBeInTheDocument();
+    const open = within(screen.getByRole("list", { name: "PRs" })).getAllByRole("listitem");
+    expect(open[0]).toHaveTextContent("Fixing · #548");
+    expect(open[0]).toHaveTextContent("BLOCK at");
+    expect(screen.getByRole("button", { name: "▸ Merged · 1" })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("a group naming no journey: Proof says so", async () => {
@@ -121,7 +126,10 @@ describe("MissionView", () => {
     render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Issue #7");
     await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
-    expect(screen.getByText("This work names no journey yet — agents pass --journeys when they claim.")).toBeInTheDocument();
+    // #735: no journey is no longer an empty page: the PR row says so in its frame and still offers the PR.
+    const row = within(screen.getByRole("list", { name: "PRs" })).getByRole("listitem");
+    expect(row).toHaveTextContent("no journey linked");
+    expect(within(row).queryByRole("button", { name: /Open the test canvas/ })).toBeNull();
   });
 
   it("full page: breadcrumb, no Team in the nav, live indicator", () => {

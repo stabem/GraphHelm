@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
-import { IssueGraph, MissionGraph, PITCH } from "./mission-graph";
+import { COL_W, IssueGraph, MissionGraph, PITCH, colHighlight } from "./mission-graph";
 import { buildWorkGroups } from "../runtime/work-groups";
 import type { TaskState } from "../runtime/team-tasks";
 import type { Mission, MissionTask } from "../runtime/mission";
@@ -44,6 +44,20 @@ describe("MissionGraph", () => {
     await userEvent.click(screen.getByRole("button", { name: "Column 1: Open a journey" }));
     expect(p.onSelectStep).toHaveBeenCalledWith("open");
     expect(screen.getByRole("button", { name: "Column 2: Mark a skipped step safe" })).toHaveAttribute("data-selected", "true");
+  });
+
+  it("#735: the selected column's highlight wraps that column exactly: 8px past each side, columns PITCH apart", () => {
+    const { container } = setup({ selectedStepId: "mark" });
+    const hi = container.querySelector<HTMLElement>(".mg-colhi")!;
+    expect(hi.style.left).toBe(`${PITCH - 8}px`);
+    expect(hi.style.width).toBe(`${COL_W + 16}px`);
+    const cols = container.querySelector<HTMLElement>(".mg-canvas > .mg-cols")!;
+    expect(cols.style.gridTemplateColumns).toBe(`repeat(2, ${COL_W}px)`);
+    expect(cols.style.columnGap).toBe(`${PITCH - COL_W}px`);
+    const canvas = container.querySelector<HTMLElement>(".mg-canvas")!;
+    expect(canvas.style.width).toBe(`${2 * PITCH - (PITCH - COL_W)}px`);
+    expect(hi.style.height).toBe(`${parseInt(canvas.style.height, 10) + 20}px`);
+    expect(colHighlight(0, 100)).toEqual({ left: -8, width: COL_W + 16, height: 120 });
   });
 
   it("task node click selects the task; merged work sits past the first unproven step", async () => {

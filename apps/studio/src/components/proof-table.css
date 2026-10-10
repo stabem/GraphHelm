@@ -1,47 +1,77 @@
 /* Proof (design: Proof artboard). Colour tokens live on .mv (mission-view.css). */
-.proof { display: flex; flex-direction: column; gap: 18px; min-width: 0; color: #E9E7E2; font-family: var(--sans); font-size: 13px; }
+.proof { container: proof / inline-size; display: flex; flex-direction: column; gap: 18px; min-width: 0; color: #E9E7E2; font-family: var(--sans); font-size: 13px; }
 .proof-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px 24px; }
-.proof-title { display: flex; flex-direction: column; gap: 6px; flex: 1 1 320px; }
-.proof-title h2 { margin: 0; font-size: 24px; font-weight: 600; }
-.proof-cap { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #8D929C; }
-.proof-sub { color: #A9AEB8; line-height: 1.45; }
+.proof-title { display: flex; flex-direction: column; gap: 6px; flex: 1 1 320px; min-width: 0; }
+.proof-title h2 { margin: 0; font-size: 24px; font-weight: 600; overflow-wrap: break-word; }
+.proof-cap { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #8D929C; overflow-wrap: break-word; }
+.proof-sub { color: #A9AEB8; line-height: 1.45; overflow-wrap: break-word; }
+.proof-clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .proof-cols, .proof-row { display: grid; grid-template-columns: 48px minmax(200px, 280px) 220px minmax(0, 1fr) 210px; gap: 20px; }
-.proof-cols { padding: 0 16px; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #8D929C; }
-.proof-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.proof-row { align-items: center; padding: 12px 16px; border-radius: 12px; background: #111216; border: 1px solid #1E2026; }
-.proof-row[data-status="needs_you"], .proof-row[data-status="failed"] { background: #16110F; border-color: #3E2520; }
+.proof-cols { padding: 0 17px; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #8D929C; }
+.proof-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.proof-row { align-items: center; padding: 12px 16px; border-radius: 12px; background: #111216; border: 1px solid #1E2026; min-width: 0; }
+.proof-row[data-status="needs_you"], .proof-row[data-status="failed"], .proof-row[data-alarm="true"] { background: #16110F; border-color: #3E2520; }
 .proof-n { display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 22px; font-weight: 600; }
 .proof-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--mv-tone); }
 .proof-promise { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.proof-name { font-weight: 600; font-size: 14px; }
-.proof-badge { align-self: flex-start; font-family: var(--mono); font-size: 11px; padding: 3px 8px; border-radius: 999px; color: var(--mv-tone); border: 1px solid var(--mv-ring); }
-.proof-frame { height: 112px; padding: 0; border-radius: 8px; background: #0D0E11; border: 1px solid #23262D; display: flex; flex-direction: column; overflow: hidden; cursor: pointer; color: inherit; font: inherit; text-align: left; }
-.proof-frame[data-status="proven"] { border-color: #2F5A47; }
-.proof-frame[data-status="needs_you"], .proof-frame[data-status="failed"] { border-color: #5A2E27; }
+.proof-name { font-weight: 600; font-size: 14px; line-height: 1.35; overflow-wrap: break-word; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.proof-badge { align-self: flex-start; max-width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: 11px; padding: 3px 8px; border-radius: 999px; color: var(--mv-tone); border: 1px solid var(--mv-ring); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proof-frame { box-sizing: border-box; width: 100%; height: 112px; padding: 0; border-radius: 8px; background: #0D0E11; border: 1px solid #23262D; display: flex; flex-direction: column; overflow: hidden; cursor: pointer; color: inherit; font: inherit; text-align: left; }
+.proof-frame[data-static="true"] { cursor: default; }
+.proof-frame[data-status="proven"], .proof-frame[data-state="proven"] { border-color: #2F5A47; }
+.proof-frame[data-status="needs_you"], .proof-frame[data-status="failed"], .proof-frame[data-alarm="true"] { border-color: #5A2E27; }
 .proof-frame img { display: block; width: 100%; flex: 1 1 auto; min-height: 0; object-fit: cover; }
-.proof-mini { flex: 1 1 auto; display: flex; flex-direction: column; width: 100%; }
+.proof-mini { flex: 1 1 auto; display: flex; flex-direction: column; width: 100%; min-height: 0; }
 .proof-mini-bar { display: flex; gap: 4px; padding: 6px 8px; border-bottom: 1px solid #23262D; }
 .proof-mini-bar i { width: 5px; height: 5px; border-radius: 50%; background: #3A3D45; }
-.proof-mini-body { flex: 1 1 auto; display: flex; flex-direction: column; gap: 5px; padding: 8px; }
-.proof-mini-hl { height: 22px; border-radius: 4px; background: var(--mv-tint); border: 1px solid var(--mv-ring); }
-.proof-mini-hl[data-status="not_run"] { border-style: dashed; }
-.proof-mini-line { height: 4px; width: 70%; background: #262930; border-radius: 2px; }
-.proof-frame-txt { display: flex; justify-content: space-between; width: 100%; box-sizing: border-box; padding: 4px 8px 6px; font-family: var(--mono); font-size: 10px; color: #A9AEB8; }
-.proof-chain { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.proof-mini-body { flex: 1 1 auto; display: flex; gap: 6px; padding: 8px; }
+.proof-mini-side { width: 34px; display: flex; flex-direction: column; gap: 4px; }
+.proof-mini-side i { height: 4px; background: #262930; border-radius: 2px; }
+.proof-mini-main { flex: 1 1 auto; display: flex; flex-direction: column; gap: 5px; }
+.proof-mini-hl { height: 22px; box-sizing: border-box; border-radius: 4px; background: var(--mv-tint); border: 1px solid var(--mv-ring); }
+.proof-mini-hl[data-state="ready"] { border-style: dashed; }
+.proof-mini-line { height: 4px; width: 80%; background: #262930; border-radius: 2px; }
+.proof-mini-line[data-short="true"] { width: 60%; }
+.proof-frame-txt { display: flex; justify-content: space-between; gap: 8px; width: 100%; box-sizing: border-box; padding: 4px 8px 6px; font-family: var(--mono); font-size: 10px; color: #A9AEB8; white-space: nowrap; }
+.proof-frame-txt > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.proof-frame-go { color: #C7CBD3; flex: none; }
+.proof-chain { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.proof-chiprow { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .proof-chips { display: contents; }
-.proof-chip { font-family: var(--mono); font-size: 11px; padding: 3px 8px; border-radius: 6px; background: #0D0E11; border: 1px solid #23262D; color: #A9AEB8; }
+.proof-chip { max-width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: 11px; padding: 3px 8px; border-radius: 6px; background: #0D0E11; border: 1px solid #23262D; color: #A9AEB8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .proof-chip[data-tone="ok"] { color: var(--mv-proven); }
-.proof-chip[data-tone="run"] { color: var(--mv-work); }
+.proof-chip[data-tone="run"], .proof-chip[data-tone="warn"] { color: var(--mv-work); }
 .proof-chip[data-tone="no"] { color: #FF8A7E; }
 .proof-stage { color: #8D929C; }
-.proof-call { display: flex; flex-direction: column; gap: 8px; }
-.proof-hint { color: #A9AEB8; font-size: 12px; line-height: 1.4; }
-.proof-primary, .proof-secondary { min-height: 40px; padding: 0 14px; border-radius: 8px; font: 600 13px var(--sans); cursor: pointer; }
+.proof-ev { display: flex; gap: 10px; align-items: baseline; min-width: 0; font-family: var(--mono); font-size: 11.5px; }
+.proof-ev-mark { width: 12px; flex: none; color: #A9AEB8; }
+.proof-ev-mark[data-mark="ok"] { color: #4ADE9B; }
+.proof-ev-mark[data-mark="no"] { color: #FF8A7E; }
+.proof-ev-mark[data-mark="warn"] { color: #F5A524; }
+.proof-ev-txt { min-width: 0; color: #C7CBD3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.proof-ev-txt { color: #9AB8FF; }
+.proof-call { display: flex; flex-direction: column; gap: 8px; align-items: stretch; min-width: 0; }
+.proof-hint { color: #A9AEB8; font-size: 12px; line-height: 1.4; overflow-wrap: break-word; }
+.proof-primary, .proof-secondary { box-sizing: border-box; min-height: 40px; padding: 0 14px; border-radius: 8px; font: 600 13px var(--sans); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; text-align: center; text-decoration: none; }
 .proof-primary { border: 0; background: #E9E7E2; color: #0B0C0F; }
-.proof-primary:disabled { cursor: not-allowed; opacity: .55; }
+.proof-primary:disabled, .proof-secondary:disabled { cursor: not-allowed; opacity: .55; }
 .proof-secondary { border: 1px solid #2A2D34; background: transparent; color: #E9E7E2; font-weight: 500; }
-@media (max-width: 1100px) {
+.proof-fold { align-self: flex-start; height: 28px; padding: 0 12px; border-radius: 8px; border: 1px solid #262930; background: #14151A; color: #C7CBD3; font: 500 12px var(--mono); cursor: pointer; }
+/* #735: the Studio's content column, not the window, decides: at 1440 it is ~825px wide, which cannot hold
+ * the five tracks, so the row folds to two lines: promise and frame on top, custody and the call below. */
+@container proof (max-width: 1100px) {
   .proof-cols { display: none; }
+  .proof-row { grid-template-columns: 48px minmax(0, 1fr) 220px; row-gap: 14px; align-items: start; }
+  .proof-n { grid-row: 1 / span 2; align-self: center; }
+  .proof-promise { grid-column: 2; grid-row: 1; }
+  .proof-frame { grid-column: 3; grid-row: 1; }
+  .proof-chain { grid-column: 2; grid-row: 2; }
+  .proof-call { grid-column: 3; grid-row: 2; }
+}
+@container proof (max-width: 640px) {
   .proof-row { grid-template-columns: 48px minmax(0, 1fr); }
-  .proof-frame, .proof-chain, .proof-call { grid-column: 2; }
+  .proof-promise, .proof-frame, .proof-chain, .proof-call { grid-column: 2; grid-row: auto; }
+  .proof-n { grid-row: 1 / span 4; align-self: start; }
+  .proof-frame { max-width: 280px; }
 }

@@ -11,6 +11,9 @@ import { activity, ownerLane, ownerRole, stageHealth, stageProgress } from "../r
 import { buildWorkGroups, type WorkGroup } from "../runtime/work-groups";
 import { IssueGraph, MissionGraph, STATUS_LABEL, stageState } from "./mission-graph";
 import { ProofTable } from "./proof-table";
+import { IssueProof } from "./issue-proof";
+import { proofRows, type ProofLink, type ProofRowData } from "../runtime/proof-rows";
+import { sha8 } from "../runtime/mission";
 import { TestCanvas } from "./test-canvas";
 import { LanesTimeline } from "./lanes-timeline";
 import { WorkKanban, type KanbanItem } from "./work-kanban";
@@ -287,6 +290,38 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
     const placed = layoutMission(mission).placed.find((p) => p.task.key === key);
     return placed ? mission.steps[placed.col] : undefined;
   };
+  // #735: Proof for issue work, one row per PR; a PR that serves a journey step carries that step's replay.
+  const linkFor = (t: TaskState): ProofLink | null => {
+    for (const m of missions) {
+      if (!t.journeys.includes(m.contractId)) continue;
+      const placed = layoutMission(m).placed.find((p) => p.task.key === t.key);
+      const st = placed ? m.steps[placed.col] : undefined;
+      if (st) return { contractId: m.contractId, stepId: st.stepId, stepIndex: st.index, status: st.status, frame: frameUrl(st.stepId, m.contractId) };
+    }
+    return null;
+  };
+  const issueProof = group && sub === "proof" ? proofRows(group.rows.flatMap((r) => {
+    const t = groupRows.find((x) => x.key === r.key);
+    return t ? [{ task: t, stage: group.stages[r.key]!, health: health[r.key] ?? null, link: linkFor(t), open: r.open }] : [];
+  })) : [];
+  const issueCap = group ? [group.issue !== null ? `Issue #${group.issue}` : "No issue", "proof",
+    `${issueProof.filter((r) => r.open).length} open · ${issueProof.filter((r) => !r.open).length} merged`,
+    ...(() => { const heads = groupRows.filter((t) => t.step !== "merged" && t.headSha).map((t) => sha8(t.headSha)!); return heads.length ? [`head ${heads.slice(0, 3).join(" · ")}${heads.length > 3 ? " …" : ""}`] : []; })()].join(" · ") : "";
+  const openRowTest = (r: ProofRowData) => {
+    const cid = r.frame.contractId, sid = r.frame.stepId;
+    if (!cid || !sid) return;
+    if (cid === contractId) { openTest(sid); return; }
+    const j = journeys.find((x) => x.contractId === cid);
+    if (!j) return;
+    setChosen({ kind: "journey", id: cid }); setTaskKey(null); setStageCol(null);
+    setStepId(sid); setFrame(Math.max(0, j.steps.findIndex((x) => x.stepId === sid))); setSub("test");
+  };
+  const askRow = onSignal ? (r: ProofRowData) => {
+    const lane = r.call.lane ? realName(r.call.lane) : null;
+    if (!lane) return Promise.reject(new Error("no lane"));
+    const stage = WORK_STAGES.find((x) => x.id === group?.stages[r.key])?.label ?? "this step";
+    return onSignal({ type: "operator_note", to: lane, description: `Owner asks: status of ${stage} on ${r.pr !== null ? `#${r.pr}` : r.title}?` });
+  } : undefined;
   // #591: Nudge / Reassign the lane that owns the selected PR's current step.
   const roster = laneRoster(agents.map((b) => b.name), lanes);
   const inspectorActions = onSignal && group ? (key: string) => {
@@ -450,7 +485,8 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
             {...(inspectorActions ? { inspectorActions } : {})} />}
           {sub === "graph" && !group && mission && <MissionGraph mission={mission} selectedStepId={stepId} selectedTaskKey={taskKey ?? null}
             onSelectStep={(id) => { setStepId(id); setTaskKey(null); }} onSelectTask={pickTask} onOpenTest={openTest} />}
-          {sub === "proof" && (mission && contractId ? <ProofTable mission={mission} onOpenTest={openTest} frameUrl={(id) => frameUrl(id, contractId)}
+          {sub === "proof" && group && <IssueProof key={group.key} label={group.label} cap={issueCap} rows={issueProof} onOpenTest={openRowTest} {...(askRow ? { onAsk: askRow } : {})} />}
+          {sub === "proof" && !group && (mission && contractId ? <ProofTable mission={mission} onOpenTest={openTest} frameUrl={(id) => frameUrl(id, contractId)}
             {...(onReplay ? { onReplay: () => onReplay(contractId) } : {})} />
             : <p className="mv-empty">This work names no journey yet — agents pass --journeys when they claim.</p>)}
           {sub === "test" && journey && contractId && <TestCanvas frames={testFrames(journey, runFor(contractId))} selected={frame} onSelect={setFrame}

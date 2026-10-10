@@ -51,7 +51,9 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   values must be 60..=86400. It sleeps before each attempt and after completion; this period
   does not bound the duration of Git or filesystem operations. No cleanup rules change.
   CLI sweeps, HTTP sweeps, periodic sweeps and held-slot reclaim share
-  `<root>/.graphhelm-workspaces/sweep.lock`; contention refuses that attempt without waiting.
+  `<root>/.graphhelm-workspaces/sweep.lock`; contention refuses a sweep without waiting.
+  A held slot skips target reclaim when that lock is unavailable, counts those targets as held,
+  and continues with the existing cap and free-space checks before running the build.
   The lock covers the eligibility checks and delete loop, never the timer sleep or a build.
   A failed tick is logged and retried next period, without stopping the Runtime.
   `GET /v1/workspaces` adds `lastSweep` (`null` before the first tick), with Unix-seconds

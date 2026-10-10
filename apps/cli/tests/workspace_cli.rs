@@ -856,7 +856,8 @@ fn runtime_workspace_sweep_refuses_periods_outside_the_safe_range() {
 }
 
 /// Contract: CLI, HTTP and held-slot reclaim share the same OS lock. Regression: one
-/// door deletes while a sweep owns the lock. Existing slot tests only hold slot.lock.
+/// door deletes or refuses a build while a sweep owns the lock. Existing slot tests
+/// only hold slot.lock; this cell must observe the child still running under sweep.lock.
 /// No seam: hold the actual file lock; temp files, Git and short children only.
 #[test]
 fn workspace_sweep_lock_serializes_manual_http_and_slot_reclaim() {
@@ -891,8 +892,8 @@ fn workspace_sweep_lock_serializes_manual_http_and_slot_reclaim() {
     let reply = post(&format!("{base}/v1/workspaces/sweep"), token.trim());
     assert_ne!(reply.status, 200, "{}", reply.body);
     assert!(root.join("lane/done/wt/a.txt").is_file());
-    assert_ne!(slot_in(&root, "lane", &next, &log).0, 0);
-    assert!(!log.exists());
+    assert_eq!(slot_in(&root, "lane", &next, &log).0, 0);
+    assert!(log.exists());
     assert!(fast.join("lane/wt-old/target").is_dir());
     drop(lock);
     assert_eq!(run(&["sweep", "--root", root_s, "--apply"]).0, 0);

@@ -546,12 +546,9 @@ pub(crate) fn slot_target(
     record: bool,
 ) -> Result<(PathBuf, Vec<Value>), String> {
     // The caller holds slot.lock here. Never wait for sweep.lock: run_sweep takes these
-    // in the other order and only tries the slot. Contention refuses this attempt.
-    let _sweep_lock = if record {
-        Some(sweep_lock(root)?)
-    } else {
-        None
-    };
+    // in the other order and only tries the slot. Without the lock, skip reclaim;
+    // the build may still proceed if the held targets and free space allow it.
+    let sweep_lock = if record { sweep_lock(root).ok() } else { None };
     let name = worktree
         .file_name()
         .and_then(|name| name.to_str())
@@ -582,7 +579,7 @@ pub(crate) fn slot_target(
                 ));
             }
         }
-        if !worktree_gone(&path) {
+        if !worktree_gone(&path) || (record && sweep_lock.is_none()) {
             held.push(other);
         } else if record {
             match reclaim_target(root, rule, lane, &other) {
@@ -600,7 +597,7 @@ pub(crate) fn slot_target(
                 rule.root.display()
             )
         })?;
-        if free < rule.min_free_gb * 1024_u64.pow(3) && record {
+        if free < rule.min_free_gb * 1024_u64.pow(3) && sweep_lock.is_some() {
             let swept = sweep_targets(root, true, Some((lane, worktree)));
             if let Some(removed) = swept["removed"].as_array() {
                 reclaimed.extend(removed.iter().cloned());

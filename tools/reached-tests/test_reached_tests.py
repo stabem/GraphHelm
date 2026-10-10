@@ -45,8 +45,14 @@ class Reach(unittest.TestCase):
             whole, single, *_ = rt.reach([source.relative_to(repo).as_posix()], packages, {}, repo)
             self.assertEqual(whole, set())
             self.assertEqual(single, {("graphhelm-cli", "cli", source.stem)}, source.name)
-            self.assertIn(f"cargo +1.97.1 test --locked -p graphhelm-cli --test cli {source.stem}::",
+            self.assertIn(f"cargo +1.97.1 test --locked -p graphhelm-cli --test cli {source.stem}:: -- --test-threads=2",
                           rt.commands(whole, single, []))
+
+    def test_repository_cli_bundle_owns_registration_guard(self):
+        # Cost: reads one Rust source. Package-level Cargo tests must catch an unregistered file.
+        repo = Path(__file__).resolve().parents[2]
+        bundle = (repo / "apps/cli/tests/cli.rs").read_text(encoding="utf-8")
+        self.assertIn("fn every_top_level_test_file_is_registered()", bundle)
 
     def test_a_journey_flow_file_reaches_the_scope_guard_and_journey_validate(self):
         # #504 review: a flows-only diff (#430-style) printed no test, only "unmapped".
@@ -63,7 +69,7 @@ class Reach(unittest.TestCase):
             self.assertIn(rt.BROWSER_OBSERVERS, tools, path)
         *_, tools, _, _ = reach("core/policy/src/lib.rs")
         self.assertNotIn(rt.BROWSER_OBSERVERS, tools)
-        self.assertIn("-- --ignored --test-threads=2", rt.BROWSER_OBSERVERS)
+        self.assertIn("-- --ignored journey_replay_browser::", rt.BROWSER_OBSERVERS)
 
     def test_rust_package_and_workspace_guard_commands_bound_test_parallelism(self):
         commands = rt.commands({"graphhelm-cli"}, set(), [])

@@ -243,6 +243,21 @@ describe("MissionView", () => {
     expect(screen.getByText("14 h away · 42 shipped")).toBeInTheDocument();
   });
 
+  it("#737: folds lanes with no record in the last 24 hours under Gone quiet", async () => {
+    const userEvent = fastUserEvent();
+    const bot = (name: string, lastRecordAt: string | null) => ({ key: name, actorId: name, name, hue: 0, role: null, doingNow: "No note yet",
+      lastRecordAt, lastSequence: 1, state: "quiet", quietMinutes: lastRecordAt ? 3 * 24 * 60 : null, shared: false, native: false, tasks: [] });
+    render(<MissionView journeys={journeys} tasks={[wt("task", { issue: 737 })] as unknown as TaskState[]} lanes={[]} now={Date.parse("2026-10-05T12:00:00Z")}
+      runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} agents={[bot("codex-8", "2026-10-05T11:58:00Z"), bot("gh-claude-7", "2026-10-02T12:00:00Z")] as never} />);
+    const list = screen.getByRole("region", { name: "Agents right now" });
+    expect(within(list).getByText("codex-8")).toBeInTheDocument();
+    expect(within(list).queryByText("gh-claude-7")).toBeNull();
+    const fold = within(list).getByRole("button", { name: "Gone quiet · 1" });
+    expect(fold).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(fold);
+    expect(within(list).getByText("gh-claude-7")).toBeInTheDocument();
+  });
+
   it("#591: the inspector asks the owner lane for status; the asked time survives selecting another PR", async () => {
     const userEvent = fastUserEvent();
     const onSignal = vi.fn().mockResolvedValue(undefined);

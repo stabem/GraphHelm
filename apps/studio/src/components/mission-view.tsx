@@ -27,6 +27,7 @@ import { readable } from "./format";
 
 type Sub = "graph" | "proof" | "test" | "lanes";
 const WINDOW_MS = 14 * 3_600_000;
+const GONE_QUIET_MS = 24 * 3_600_000;
 
 interface Props {
   journeys: JourneyView[];
@@ -212,6 +213,7 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
   const live = now + tick;
   const [unlinkedOpen, setUnlinkedOpen] = useState(false);
   const missions = useMemo(() => journeys.map((j) => buildMission(j, runFor(j.contractId), tasks, taskRecords)), [journeys, tasks, taskRecords, runFor]);
+  const [goneQuietOpen, setGoneQuietOpen] = useState(false);
   const groups = useMemo(() => buildWorkGroups(tasks, journeys, runFor), [tasks, journeys, runFor]);
   const orphans = useMemo(() => unlinkedTasks(journeys, tasks), [journeys, tasks]);
   const allTasks = useMemo(() => tasks.map(toMissionTask), [tasks]);
@@ -336,6 +338,12 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
   };
   // #591: Nudge / Reassign the lane that owns the selected PR's current step.
   const roster = laneRoster(agents.map((b) => b.name), lanes);
+  const goneQuiet = agents.filter((b) => {
+    const at = b.lastRecordAt === null ? null : Date.parse(b.lastRecordAt);
+    return at !== null && !Number.isNaN(at) && now - at > GONE_QUIET_MS;
+  });
+  const goneQuietKeys = new Set(goneQuiet.map((b) => b.key));
+  const activeAgents = agents.filter((b) => !goneQuietKeys.has(b.key));
   const inspectorActions = onSignal && group ? (key: string) => {
     const t = groupRows.find((r) => r.key === key);
     const lane = t ? realName(ownerLane(t)) : null;
@@ -490,13 +498,27 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
             {agents.length > 0 && (
               <section aria-label="Agents right now" className="mv-agents">
                 <span className="mv-cap">Agents right now</span>
-                {agents.map((b) => (
+                {activeAgents.map((b) => (
                   <div key={b.key} className="mv-agent">
                     <span className="mv-agent-dot" data-tone={agentTone(b)} />
                     <span className="mv-agent-name">{b.name}</span>
                     <span className="mv-agent-doing">{agentActivity(b)}</span>
                   </div>
                 ))}
+                {goneQuiet.length > 0 && (
+                  <div className="mv-gone-quiet">
+                    <button type="button" className="mv-fold" aria-expanded={goneQuietOpen} onClick={() => setGoneQuietOpen((open) => !open)}>
+                      {`Gone quiet · ${goneQuiet.length}`}
+                    </button>
+                    {goneQuietOpen && goneQuiet.map((b) => (
+                      <div key={b.key} className="mv-agent">
+                        <span className="mv-agent-dot" data-tone={agentTone(b)} />
+                        <span className="mv-agent-name">{b.name}</span>
+                        <span className="mv-agent-doing">{agentActivity(b)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </section>
             )}
           </nav>

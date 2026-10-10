@@ -2064,7 +2064,8 @@ export default function App({
   const waitingAskers = useMemo(() => new Set(needs.items.flatMap((item) => item.kind === "question" ? [item.asker] : [])), [needs]);
   const team = useMemo(() => teamModel({ events: eventList, envelopes, personas, nativeLinks: nativePersonaLinks, aliases: actorAliases, model,
     claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null, waitingAskers, now: clock,
-    taskStates: taskGraphs?.executionId === selected ? taskGraphs.tasks : null }),
+    taskStates: taskGraphs?.executionId === selected ? taskGraphs.tasks : null,
+    taskRecords: taskGraphs?.executionId === selected ? taskGraphs.records : null }),
     [eventList, envelopes, personas, nativePersonaLinks, actorAliases, model, claudeTaskRead, selected, waitingAskers, clock, taskGraphs]);
   const links = useMemo(() => teamLinks(eventList, envelopes, team.bots, clock), [eventList, envelopes, team, clock]);
   const botNames = useMemo(() => namesOf(team.bots), [team]);

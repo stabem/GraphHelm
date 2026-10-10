@@ -10,7 +10,7 @@
 import { hueOf } from "../components/format";
 import type { EnvelopeRecord } from "../graph/ledger";
 import type { GraphModel } from "../graph/model";
-import type { ClaudeTaskReadModel, TaskState } from "./team-tasks";
+import type { ClaudeTaskReadModel, TaskEventRecord, TaskState } from "./team-tasks";
 import type { NativeChatSummary, RuntimeEvent } from "./types";
 
 export const SHARED_CODEX_ACTOR = "codex";
@@ -42,6 +42,8 @@ export interface TeamInput {
   now: number;
   /** #532: the run's folded `task.*` slices; their lanes and reviewers are lanes the run knows. */
   taskStates?: TaskState[] | null;
+  /** #737: verified records retain the lane and event time when a shared actor signed them. */
+  taskRecords?: TaskEventRecord[] | null;
 }
 
 function signalKind(event: RuntimeEvent): string | null {
@@ -88,6 +90,20 @@ export function teamModel(input: TeamInput): TeamModel {
       if (text) notes.set(event.actorId, firstLine(text));
       else if (envelope === undefined && event.evidenceRefs.length > 0) notes.set(event.actorId, OPENING);
     }
+  }
+
+  // An admitted assignment can name a reviewer lane even when a shared actor signed it.
+  for (const record of input.taskRecords ?? []) {
+    const lane = record.lane ?? (record.kind === "task.review_assigned" ? record.reviewer : undefined);
+    if (!lane) continue;
+    const tally = tallies.get(lane) ?? { count: 0, lastAt: null, lastSequence: 0 };
+    if (record.sequence >= tally.lastSequence) {
+      tally.lastSequence = record.sequence;
+      tally.lastAt = record.occurredAt ?? tally.lastAt;
+    }
+    tally.count += 1;
+    tallies.set(lane, tally);
+    known.add(lane);
   }
 
   const seeds = new Map<string, Seed>();

@@ -14,12 +14,20 @@ import run_reached as rr
 
 class RunnerContracts(unittest.TestCase):
     def test_steps_preserve_cwd_and_slot_without_shell(self):
-        steps, error = rr._steps({"steps": [{"argv": ["cargo", "+1.97.1", "test"], "cwd": ".", "slot": True},
+        steps, error = rr._steps({"steps": [{"argv": ["cargo", "+1.97.1", "test", "--lib"], "cwd": ".", "slot": True},
                                    {"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio", "slot": False}]})
         self.assertIsNone(error)
         self.assertTrue(steps[0]["slot"])
         self.assertEqual(steps[1]["cwd"], "apps/studio")
         self.assertIn("selector steps", rr._steps({"commands": ["cargo test"]})[1])
+
+    def test_steps_reject_unscoped_cargo_and_shell_strings(self):
+        _, error = rr._steps({"steps": [{"argv": ["cargo", "+1.97.1", "test", "-p", "graphhelm-cli"],
+                                           "cwd": ".", "slot": True}]})
+        self.assertIn("explicit target", error)
+        _, error = rr._steps({"steps": [{"argv": ["cmd", "/c", "echo bad"],
+                                           "cwd": ".", "slot": False}]})
+        self.assertIn("shell syntax", error)
 
     def test_slot_telemetry_uses_final_envelope_after_child_output(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -96,7 +104,7 @@ class RunnerContracts(unittest.TestCase):
             subprocess.run(["git", "add", "x"], cwd=repo, check=True)
             subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
             output = Path(temp).parent / (Path(temp).name + "-report.json")
-            plan = {"steps": [{"argv": ["cargo", "+1.97.1", "test"], "cwd": ".", "slot": True},
+            plan = {"steps": [{"argv": ["cargo", "+1.97.1", "test", "--lib"], "cwd": ".", "slot": True},
                                {"argv": ["python", "-c", "pass"], "cwd": ".", "slot": False}]}
             calls = []
 
@@ -117,6 +125,32 @@ class RunnerContracts(unittest.TestCase):
             self.assertEqual(calls[0][0:4], ["graphhelm", "--json", "workspace", "slot"])
             self.assertEqual(calls[1][0], sys.executable)
             self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["heldSeconds"], 2.0)
+
+    def test_unsupported_targets_are_incomplete_before_any_step(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            (repo / "x").write_text("x", encoding="utf-8")
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            output = Path(temp).parent / (Path(temp).name + "-unsupported-report.json")
+            marker = Path(temp).parent / (Path(temp).name + "-unsupported-marker")
+            plan = {"unsupported": [{"package": "graphhelm-cli", "target": "keel", "reason": "target requires features: keel"}],
+                    "steps": [{"argv": ["python", "-c", f"from pathlib import Path; Path(r'{marker}').write_text('ran')"],
+                               "cwd": ".", "slot": False}]}
+            args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
+                                      "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                                      "allow_whole_package": None, "plan": False})()
+            with patch.object(rr, "_selector", return_value=plan):
+                self.assertEqual(rr.run(args), 1)
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(report["status"], "incomplete")
+            self.assertEqual(report["completed"], [])
+            self.assertEqual(report["pending"], [0])
+            self.assertEqual(report["unsupported"], plan["unsupported"])
+            self.assertIn("target requires features", report["error"])
+            self.assertFalse(marker.exists())
 
     def test_a_child_that_finishes_after_deadline_is_recorded_and_stops_next_step(self):
         with tempfile.TemporaryDirectory() as temp:

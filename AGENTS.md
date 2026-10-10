@@ -89,15 +89,17 @@ For execution use `python tools/reached-tests/run_reached.py --repo . --base ori
 existing Cargo slot between commands and measures the 180-second target including queue time.
 A late or incomplete run is not success. Keep isolated targets warm; reviewers may sequentially
 reuse an unchanged worktree after verifying its identity (DELIVERY.md §4). Never share a mutable
-target across worktrees or wrap this outer runner in another slot.
+target across worktrees or wrap this outer runner in another slot. The CLI admits only direct,
+package-scoped Cargo commands; test commands also name a target. Scripts and workspace-wide
+commands are refused before queueing. Use an upgraded CLI; old installed binaries retain the old policy.
 
-The commands below are reference forms, not a default checklist. Workspace-wide test and clippy
-forms require the card's explicit scope and reason under that budget:
+The commands below are reference forms, not a default checklist. Broad test and clippy scopes
+require the card's reason and must be split into explicit package/target commands:
 
 ```powershell
 cargo +1.97.1 fmt --all -- --check
-cargo +1.97.1 clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo +1.97.1 test --workspace --all-features --locked
+cargo +1.97.1 clippy -p graphhelm-cli --all-targets --all-features --locked -- -D warnings
+cargo +1.97.1 test -p graphhelm-protocols --lib --all-features --locked -- --test-threads=2
 cargo +1.97.1 test -p graphhelm-cli --test cli_smoke --locked
 cargo +1.97.1 metadata --locked --no-deps --format-version 1
 git diff --check

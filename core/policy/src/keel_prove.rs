@@ -873,7 +873,18 @@ fn cargo_target(tree: &Path, path: &str) -> Result<(String, Vec<String>), String
                 .collect();
             let selector = match parts.first().map(String::as_str) {
                 Some("tests") if parts.len() == 2 => {
-                    vec!["--test".into(), parts[1].trim_end_matches(".rs").to_owned()]
+                    let stem = parts[1].trim_end_matches(".rs");
+                    // Old parents still have independent targets. Only select the bundle when
+                    // this tree declares the module, so parent/head proofs work across #691.
+                    let bundled = name == "graphhelm-cli"
+                        && std::fs::read_to_string(candidate.join("tests/cli.rs")).is_ok_and(
+                            |source| source.contains(&format!("#[path = \"{stem}.rs\"]")),
+                        );
+                    if bundled {
+                        vec!["--test".into(), "cli".into(), format!("{stem}::")]
+                    } else {
+                        vec!["--test".into(), stem.to_owned()]
+                    }
                 }
                 Some("tests") if parts.len() > 2 => vec!["--test".into(), parts[1].clone()],
                 Some("src") if candidate.join("src/lib.rs").exists() => vec!["--lib".into()],
@@ -919,7 +930,7 @@ fn run_test(
     options: &ProveOptions,
     runner: ProveRunner,
 ) -> RunResult {
-    let (package, selector) = match cargo_target(tree, &test.path) {
+    let (package, mut selector) = match cargo_target(tree, &test.path) {
         Ok(found) => found,
         Err(detail) => {
             return RunResult {
@@ -928,17 +939,67 @@ fn run_test(
             };
         }
     };
-    let mut command = Command::new("cargo");
-    command
-        .current_dir(tree)
-        .env("CARGO_TARGET_DIR", options.target_dir.join(side))
-        .args(["test", "-p", &package])
-        .args(&selector)
-        .args(["--", &test.name, "--test-threads=1"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    match runner(command, options.timeout) {
+    let prefix = if selector.last().is_some_and(|arg| arg.ends_with("::")) {
+        selector.pop()
+    } else {
+        None
+    };
+    let command = || {
+        let mut command = Command::new("cargo");
+        command
+            .current_dir(tree)
+            .env("CARGO_TARGET_DIR", options.target_dir.join(side))
+            .args(["test", "-p", &package])
+            .args(&selector)
+            .arg("--")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        command
+    };
+    let mut run = command();
+    if let Some(prefix) = prefix {
+        // Libtest ORs filters: prefix + bare name would run neighbours. Ask its own list for
+        // the qualified name, including nested modules (runtime_http::harness_tests, etc.).
+        let mut list = command();
+        list.args([prefix.as_str(), "--list", "--test-threads=1"]);
+        match runner(list, options.timeout) {
+            Ok(Some((true, stdout, _))) => {
+                let suffix = format!("::{}", test.name);
+                let names: Vec<_> = stdout
+                    .lines()
+                    .filter_map(|line| line.strip_suffix(": test"))
+                    .filter(|name| name.starts_with(&prefix) && name.ends_with(&suffix))
+                    .collect();
+                if names.is_empty() {
+                    return RunResult {
+                        outcome: RunOutcome::NotFound,
+                        detail: format!("no test named {} in {prefix}", test.name),
+                    };
+                }
+                run.args(names).arg("--exact");
+            }
+            Ok(Some((succeeded, stdout, stderr))) => {
+                return classify_run(&test.name, succeeded, &stdout, &stderr);
+            }
+            Ok(None) => {
+                return RunResult {
+                    outcome: RunOutcome::TimedOut,
+                    detail: format!("test listing killed after {}s", options.timeout.as_secs()),
+                };
+            }
+            Err(detail) => {
+                return RunResult {
+                    outcome: RunOutcome::NotRun,
+                    detail,
+                };
+            }
+        }
+    } else {
+        run.arg(&test.name);
+    }
+    run.arg("--test-threads=1");
+    match runner(run, options.timeout) {
         Ok(Some((succeeded, stdout, stderr))) => {
             classify_run(&test.name, succeeded, &stdout, &stderr)
         }
@@ -1003,6 +1064,100 @@ fn classify_run(name: &str, succeeded: bool, stdout: &str, stderr: &str) -> RunR
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Cost: temporary files and a captured process command, no compiler or child process.
+    // The old selector names a retired test target; independent target tests do not cover bundles.
+    #[test]
+    fn bundled_cli_tests_select_the_module_and_only_the_named_test() {
+        let root = temp_repo("cli-bundle");
+        let repo = root.join("repo");
+        let tests = repo.join("apps/cli/tests");
+        std::fs::create_dir_all(&tests).unwrap();
+        std::fs::write(
+            repo.join("apps/cli/Cargo.toml"),
+            "[package]\nname = \"graphhelm-cli\"\nautotests = false\n\n[[test]]\nname = \"cli\"\npath = \"tests/cli.rs\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tests.join("cli.rs"),
+            "#[path = \"keel_check.rs\"]\nmod keel_check;\n",
+        )
+        .unwrap();
+        assert_eq!(
+            cargo_target(&repo, "apps/cli/tests/keel_check.rs").unwrap(),
+            (
+                "graphhelm-cli".into(),
+                vec!["--test".into(), "cli".into(), "keel_check::".into()]
+            )
+        );
+        fn capture(command: Command, _: Duration) -> Result<Option<ProveOutput>, String> {
+            let args: Vec<_> = command
+                .get_args()
+                .map(|arg| arg.to_str().unwrap())
+                .collect();
+            if args.contains(&"--list") {
+                assert_eq!(
+                    args,
+                    [
+                        "test",
+                        "-p",
+                        "graphhelm-cli",
+                        "--test",
+                        "cli",
+                        "--",
+                        "keel_check::",
+                        "--list",
+                        "--test-threads=1"
+                    ]
+                );
+                return Ok(Some((true, "keel_check::nested::named_cell: test\nkeel_check::neighbour: test\nother::named_cell: test\n".into(), String::new())));
+            }
+            assert_eq!(
+                args,
+                [
+                    "test",
+                    "-p",
+                    "graphhelm-cli",
+                    "--test",
+                    "cli",
+                    "--",
+                    "keel_check::nested::named_cell",
+                    "--exact",
+                    "--test-threads=1"
+                ]
+            );
+            Ok(Some((
+                true,
+                "running 1 test\ntest keel_check::nested::named_cell ... ok\n".into(),
+                String::new(),
+            )))
+        }
+        let options = ProveOptions {
+            repo: repo.clone(),
+            base: "HEAD".into(),
+            head: "HEAD".into(),
+            target_dir: root.join("target"),
+            scratch_root: root.join("scratch"),
+            timeout: Duration::from_secs(1),
+            command: None,
+        };
+        let test = NewTest {
+            name: "named_cell".into(),
+            path: "apps/cli/tests/keel_check.rs".into(),
+            line: 1,
+            inline: false,
+        };
+        assert_eq!(
+            run_test(&repo, "head", &test, &options, capture).outcome,
+            RunOutcome::Passed
+        );
+        std::fs::remove_file(tests.join("cli.rs")).unwrap();
+        assert_eq!(
+            cargo_target(&repo, &test.path).unwrap().1,
+            vec!["--test", "keel_check"]
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     fn temp_repo(label: &str) -> PathBuf {
         let nanos = SystemTime::now()

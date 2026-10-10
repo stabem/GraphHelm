@@ -28,6 +28,7 @@ unsafe extern "system" {
 
 type SpawnObserver = Box<dyn FnOnce(&Child)>;
 
+#[path = "support/mod.rs"]
 mod support;
 use support::time_scale::scaled;
 use support::{RawResponse, parse_response, split_url};
@@ -504,7 +505,11 @@ fn server_guard_surfaces_a_panicking_childs_stderr_in_the_failure_report() {
     let this_binary = std::env::current_exe().unwrap();
     let output = Command::new(this_binary)
         .env(SABOTAGE_CONFIRM_ENV, "1")
-        .args(["server_guard_sabotage_ignored", "--exact", "--ignored"])
+        .args([
+            "api_http::server_guard_sabotage_ignored",
+            "--exact",
+            "--ignored",
+        ])
         .output()
         .unwrap();
     assert!(
@@ -576,7 +581,7 @@ fn server_guard_sabotage_ignored() {
     let mut child = Command::new(this_binary)
         .env(MARKER_ECHO_CONFIRM_ENV, "1")
         .args([
-            "server_guard_marker_echo_ignored",
+            "api_http::server_guard_marker_echo_ignored",
             "--exact",
             "--ignored",
             "--nocapture",

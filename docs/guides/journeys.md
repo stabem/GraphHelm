@@ -459,7 +459,7 @@ graphhelm journey replay checkout --heal --manifest <routes.json> --route <route
 Driver protocol `graphhelm-journey-driver/1` (`.graphhelm/observers/journey_driver.mjs` must be
 byte-identical to the binary's copy, else `replay.observer_missing`), Node 22.22, `@playwright/test`
 1.63.0 with its Chromium, on Windows 11. The browser tests are opt-in:
-`GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT=<dir with node_modules/@playwright/test> cargo test -p graphhelm-cli --test journey_replay_browser --test journey_explore_browser -- --ignored`.
+`GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT=<dir with node_modules/@playwright/test> cargo test -p graphhelm-cli --test cli -- --ignored journey_replay_browser:: journey_explore_browser:: journey_live_browser::`.
 
 ### Still open
 

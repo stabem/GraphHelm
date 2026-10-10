@@ -1,7 +1,8 @@
 """Observer for reached_tests.py (#361): `python -m unittest tools/reached-tests/test_reached_tests.py`.
 
-A small fake workspace, no cargo and no git: policy <- execution <- cli, an adapter nobody depends
-on, a cli test bundle, and one embedded schema. Each case is a real diff shape from this repository.
+Most cells use a small fake workspace, no cargo and no git: policy <- execution <- cli, an adapter
+nobody depends on, a cli test bundle, and one embedded schema. The repository-bundle cell reads
+offline Cargo metadata. Each case is a real diff shape from this repository.
 """
 import json
 import sys
@@ -31,6 +32,28 @@ def reach(*changed, repo=None):
 
 
 class Reach(unittest.TestCase):
+    def test_repository_cli_files_select_bundled_modules(self):
+        # Cost: offline cargo metadata and file reads. Fixture-only bundle coverage misses a
+        # manifest that still auto-discovers individual targets or forgets a newly added file.
+        repo = Path(__file__).resolve().parents[2]
+        packages = rt.workspace(repo)
+        cli = next(package for package in packages if package["name"] == "graphhelm-cli")
+        self.assertEqual([target["name"] for target in cli["tests"]], ["cli"])
+        for source in sorted((repo / "apps/cli/tests").glob("*.rs")):
+            if source.stem == "cli":
+                continue
+            whole, single, *_ = rt.reach([source.relative_to(repo).as_posix()], packages, {}, repo)
+            self.assertEqual(whole, set())
+            self.assertEqual(single, {("graphhelm-cli", "cli", source.stem)}, source.name)
+            self.assertIn(f"cargo +1.97.1 test --locked -p graphhelm-cli --test cli {source.stem}:: -- --test-threads=2",
+                          rt.commands(whole, single, []))
+
+    def test_repository_cli_bundle_owns_registration_guard(self):
+        # Cost: reads one Rust source. Package-level Cargo tests must catch an unregistered file.
+        repo = Path(__file__).resolve().parents[2]
+        bundle = (repo / "apps/cli/tests/cli.rs").read_text(encoding="utf-8")
+        self.assertIn("fn every_top_level_test_file_is_registered()", bundle)
+
     def test_a_journey_flow_file_reaches_the_scope_guard_and_journey_validate(self):
         # #504 review: a flows-only diff (#430-style) printed no test, only "unmapped".
         whole, single, studio, tools, validate, other = reach(".graphhelm/journeys/checkout.journey.yaml")
@@ -46,7 +69,7 @@ class Reach(unittest.TestCase):
             self.assertIn(rt.BROWSER_OBSERVERS, tools, path)
         *_, tools, _, _ = reach("core/policy/src/lib.rs")
         self.assertNotIn(rt.BROWSER_OBSERVERS, tools)
-        self.assertIn("-- --ignored --test-threads=2", rt.BROWSER_OBSERVERS)
+        self.assertIn("-- --ignored journey_replay_browser::", rt.BROWSER_OBSERVERS)
 
     def test_rust_package_and_workspace_guard_commands_bound_test_parallelism(self):
         commands = rt.commands({"graphhelm-cli"}, set(), [])

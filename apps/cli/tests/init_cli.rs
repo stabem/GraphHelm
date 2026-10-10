@@ -3,6 +3,7 @@
 //! refused with a code, neither secret is ever printed, and the paths it wrote are the paths
 //! `serve` runs from.
 
+#[path = "support/mod.rs"]
 mod support;
 
 use std::io::{BufRead, BufReader, Read, Write};

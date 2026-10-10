@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+#[path = "support/mod.rs"]
 mod support;
 use support::time_scale::scaled;
 use support::{RawResponse, parse_response, raw_request, split_url};
@@ -377,7 +378,7 @@ fn server_guard_closes_a_descendant_holding_stdout() {
     command
         .args([
             "--exact",
-            "runtime_http_pipe_holder_helper",
+            "runtime_http::runtime_http_pipe_holder_helper",
             "--ignored",
             "--nocapture",
         ])

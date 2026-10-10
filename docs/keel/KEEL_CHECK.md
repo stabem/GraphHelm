@@ -29,7 +29,7 @@ card of [`docs/process/DELIVERY.md`](../process/DELIVERY.md) §2 written down:
 {
   "promise": "graphhelm keel check refuses a diff that touches a path outside its card",
   "scopePaths": ["core/policy/src/keel.rs", "apps/cli/src/commands/keel.rs", "apps/cli/tests"],
-  "proof": "cargo test -p graphhelm-cli --test keel_check",
+  "proof": "cargo test -p graphhelm-cli --test cli keel_check::",
   "exportedSymbols": ["check", "Card"],
   "allowance": { "newModule": 1, "newType": 2, "newPublicFn": 2, "newDependency": 0, "newTest": 4 }
 }

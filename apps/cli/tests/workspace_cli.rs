@@ -403,11 +403,7 @@ fn the_public_slot_refuses_script_commands_before_any_effect() {
     );
 }
 
-/// #360 phase 2: the build slot serves one command at a time, in arrival order, with the
-/// worktree's own target (#361) and the job count, and a waiter that died does not hold the queue.
-/// Credible regressions: two builds overlap in the shared target (the stale-artifact and
-/// lock-contention failure), a later waiter overtakes, or a dead waiter's ticket blocks everyone
-/// (the lost-ticket failure of the script this replaces). Cost: three short child commands.
+#[path = "support/mod.rs"]
 mod support;
 
 struct Server(std::process::Child);

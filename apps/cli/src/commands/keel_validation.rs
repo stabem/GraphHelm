@@ -36,7 +36,7 @@ fn input_error(message: impl Into<String>, path: &str) -> Outcome {
 fn digest(bytes: &[u8]) -> String {
     let mut hash = Sha256::new();
     hash.update(bytes);
-    format!("{:x}", hash.finalize())
+    hex::encode(hash.finalize())
 }
 
 fn inventory_digest(inventory: &BTreeMap<String, String>) -> String {

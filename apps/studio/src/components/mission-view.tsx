@@ -2,6 +2,7 @@ import "./mission-view.css";
 import { useEffect, useMemo, useState } from "react";
 import type { JourneyRunView, JourneyView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
+import type { TaskEventRecord } from "../runtime/team-tasks";
 import type { Lane } from "../runtime/lane-bars";
 import { buildMission, toMissionTask, unlinkedTasks, withCurrentReviewer, type Mission } from "../runtime/mission";
 import { layoutMission } from "../runtime/mission-layout";
@@ -28,6 +29,7 @@ const WINDOW_MS = 14 * 3_600_000;
 interface Props {
   journeys: JourneyView[];
   tasks: TaskState[];
+  taskRecords?: TaskEventRecord[];
   runFor(contractId: string): JourneyRunView | null;
   lanes: Lane[];
   now: number;
@@ -145,7 +147,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, onJourneys, draftJourneys = 0, agents = [], away = null, onSignal, onReviewAssigned, wakeListeners, slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, onJourneys, draftJourneys = 0, agents = [], away = null, onSignal, onReviewAssigned, wakeListeners, slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
   const [chosen, setChosen] = useState<Selection | null>(null);
   const [stepId, setStepId] = useState<string | null>(null);
   // undefined: the group's default (the task that most needs the owner); null: none, a column is chosen.
@@ -167,7 +169,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
   }, [now]);
   const live = now + tick;
   const [unlinkedOpen, setUnlinkedOpen] = useState(false);
-  const missions = useMemo(() => journeys.map((j) => buildMission(j, runFor(j.contractId), tasks)), [journeys, tasks, runFor]);
+  const missions = useMemo(() => journeys.map((j) => buildMission(j, runFor(j.contractId), tasks, taskRecords)), [journeys, tasks, taskRecords, runFor]);
   const groups = useMemo(() => buildWorkGroups(tasks, journeys, runFor), [tasks, journeys, runFor]);
   const orphans = useMemo(() => unlinkedTasks(journeys, tasks), [journeys, tasks]);
   const allTasks = useMemo(() => tasks.map(toMissionTask), [tasks]);

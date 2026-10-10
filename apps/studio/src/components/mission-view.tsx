@@ -12,7 +12,6 @@ import { IssueGraph, MissionGraph, STATUS_LABEL, stageState } from "./mission-gr
 import { ProofTable } from "./proof-table";
 import { TestCanvas } from "./test-canvas";
 import { LanesTimeline } from "./lanes-timeline";
-import { DelegationTree } from "./delegation-tree";
 import type { Bot } from "../runtime/team";
 import { realName } from "../runtime/lane-bars";
 import { laneLiveness } from "../runtime/stage-health";
@@ -28,7 +27,6 @@ const WINDOW_MS = 14 * 3_600_000;
 interface Props {
   journeys: JourneyView[];
   tasks: TaskState[];
-  delegation?: TaskState[];
   runFor(contractId: string): JourneyRunView | null;
   lanes: Lane[];
   now: number;
@@ -144,7 +142,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ journeys, tasks, delegation, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, onJourneys, draftJourneys = 0, agents = [], away = null, onSignal, onReviewAssigned, slots = [], runNodes = [], unassignedNodeIds = [], onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, onJourneys, draftJourneys = 0, agents = [], away = null, onSignal, onReviewAssigned, slots = [], runNodes = [], unassignedNodeIds = [], onOpenNode, onOpenBotDetails, onNameBot }: Props) {
   const [chosen, setChosen] = useState<Selection | null>(null);
   const [stepId, setStepId] = useState<string | null>(null);
   // undefined: the group's default (the task that most needs the owner); null: none, a column is chosen.
@@ -215,11 +213,8 @@ export function MissionView({ journeys, tasks, delegation, runFor, lanes, now, f
       </header>
   );
   const page = onTeam ? "full" : undefined;
-  const lanesView = <>
-    {delegation && delegation.length > 0 && <DelegationTree tasks={delegation} />}
-    <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots}
-      {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
-  </>;
+  const lanesView = <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots}
+    {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />;
   const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds} {...(onOpenNode ? { onOpenNode } : {})} />;
   if (sel === null) return <div className="mv" data-wide="true" data-page={page} data-chat={chatOpen ? "open" : undefined}>{header}
     {sub === "lanes" ? <div className="mv-pad">{lanesView}</div>

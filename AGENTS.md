@@ -84,6 +84,13 @@ touched crates only unless the card names and justifies broader lint coverage. C
 `-- --test-threads=2`. Docs-only changes run only applicable existing docs guards and
 `git diff --check`.
 
+For execution use `python tools/reached-tests/run_reached.py --repo . --base origin/main
+--head HEAD --root <root> --lane <lane> --output <outside-repo>/feedback.json`. It releases the
+existing Cargo slot between commands and measures the 180-second target including queue time.
+A late or incomplete run is not success. Keep isolated targets warm; reviewers may sequentially
+reuse an unchanged worktree after verifying its identity (DELIVERY.md §4). Never share a mutable
+target across worktrees or wrap this outer runner in another slot.
+
 The commands below are reference forms, not a default checklist. Workspace-wide test and clippy
 forms require the card's explicit scope and reason under that budget:
 

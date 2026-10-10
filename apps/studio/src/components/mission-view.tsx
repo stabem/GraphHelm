@@ -214,7 +214,6 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
   const [unlinkedOpen, setUnlinkedOpen] = useState(false);
   const missions = useMemo(() => journeys.map((j) => buildMission(j, runFor(j.contractId), tasks, taskRecords)), [journeys, tasks, taskRecords, runFor]);
   const [goneQuietOpen, setGoneQuietOpen] = useState(false);
-  const missions = useMemo(() => journeys.map((j) => buildMission(j, runFor(j.contractId), tasks)), [journeys, tasks, runFor]);
   const groups = useMemo(() => buildWorkGroups(tasks, journeys, runFor), [tasks, journeys, runFor]);
   const orphans = useMemo(() => unlinkedTasks(journeys, tasks), [journeys, tasks]);
   const allTasks = useMemo(() => tasks.map(toMissionTask), [tasks]);

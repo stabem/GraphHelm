@@ -1042,12 +1042,17 @@ pub(crate) fn run_list(root: &Path, sizes: bool) -> Outcome {
     let mut data = json!({"root": root.to_string_lossy(), "workspaces": []});
     if sizes {
         let mut lanes = serde_json::Map::new();
-        let mut measure = |item: &mut Value, path: Option<&Path>| {
-            let bytes = match path.map_or_else(|| Err(".".to_owned()), measured_bytes) {
-                Ok(bytes) => Some(bytes),
-                Err(at) => {
-                    item["sizeError"] = json!(at);
-                    None
+        let mut measure = |item: &mut Value, path: Option<&Path>, invalid: Option<&str>| {
+            let bytes = if let Some(reason) = invalid {
+                item["sizeError"] = json!(reason);
+                None
+            } else {
+                match path.map_or_else(|| Err(".".to_owned()), measured_bytes) {
+                    Ok(bytes) => Some(bytes),
+                    Err(at) => {
+                        item["sizeError"] = json!(at);
+                        None
+                    }
                 }
             };
             item["bytes"] = json!(bytes);
@@ -1060,22 +1065,55 @@ pub(crate) fn run_list(root: &Path, sizes: bool) -> Outcome {
         };
         for item in &mut listed {
             let path = PathBuf::from(item["path"].as_str().unwrap_or_default());
-            measure(item, Some(&path));
+            measure(item, Some(&path), None);
         }
         let mut targets = Vec::new();
+        let rule = target_rule(root).ok().flatten();
         for (lane, name, worktree) in all_target_records(root) {
-            // Use the recorded build directory, including records made before a target-root change.
+            // Validate the recorded build directory against the current configured lane target.
             let file = target_record_file(root, &lane, &name);
             let record = std::fs::read(file)
                 .ok()
                 .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
-            let path = record
+            let recorded = record
                 .as_ref()
                 .and_then(|r| r["target"].as_str())
                 .map(PathBuf::from)
                 .filter(|p| p.is_absolute());
+            let path = rule.as_ref().and_then(|rule| {
+                let recorded = recorded.as_ref()?;
+                let expected = target_dir(rule, &lane, &name);
+                // A link is never walked: measured_bytes detects it before reading any entry.
+                // For a link-free path, canonical paths must match the lane's derived target
+                // and remain under the configured root before the size walk may start.
+                if recorded != &expected {
+                    return None;
+                }
+                match linked_ancestor(recorded) {
+                    Ok(true) | Err(()) => return Some(recorded.clone()),
+                    Ok(false) => {}
+                }
+                let Some(canonical_root) = rule.root.canonicalize().ok() else {
+                    return Some(recorded.clone());
+                };
+                let (Ok(canonical_recorded), Ok(canonical_expected)) =
+                    (recorded.canonicalize(), expected.canonicalize())
+                else {
+                    return Some(recorded.clone());
+                };
+                (canonical_recorded.starts_with(&canonical_root)
+                    && canonical_recorded == canonical_expected)
+                    .then_some(canonical_recorded)
+            });
             let mut item = json!({"lane": lane, "worktree": worktree});
-            measure(&mut item, path.as_deref());
+            let invalid = recorded.as_ref().filter(|_| path.is_none()).map(|_| {
+                if rule.is_some() {
+                    "target_outside_root"
+                } else {
+                    "target_root_unavailable"
+                }
+            });
+            measure(&mut item, path.as_deref(), invalid);
             targets.push(item);
         }
         data["targets"] = json!(targets);

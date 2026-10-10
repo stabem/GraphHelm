@@ -1879,4 +1879,14 @@ fn sizes_count_files_and_recorded_targets_without_following_links_with_http_pari
     assert!(missing["targets"][0]["bytes"].is_null());
     assert_eq!(missing["targets"][0]["sizeError"], ".");
     assert!(missing["lanes"]["lane"].is_null());
+
+    // A tampered record must not redirect the size walk outside the configured target root.
+    let record = root.join(".graphhelm-workspaces/targets/lane/wt.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+    value["target"] = serde_json::json!(outside);
+    std::fs::write(&record, serde_json::to_vec(&value).unwrap()).unwrap();
+    let redirected = sizes();
+    assert!(redirected["targets"][0]["bytes"].is_null());
+    assert_eq!(redirected["targets"][0]["sizeError"], "target_outside_root");
+    assert!(redirected["lanes"]["lane"].is_null());
 }

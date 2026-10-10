@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 
 use graphhelm_gateway::call::{InputTokenSemantics, ModelCall, ModelReply, Usage, UsageSource};
 use graphhelm_gateway::manifest::{ModelRoute, RuntimeKind, Transport};
-use graphhelm_gateway::taxonomy::GatewayError;
+use graphhelm_gateway::taxonomy::{CrashSite, GatewayError};
 use serde::Deserialize;
 
 use crate::env;
@@ -252,7 +252,7 @@ impl<'a> RuntimeAdapter<'a> {
             if !exited {
                 match graphhelm_process_tree::leader_exited(&mut child) {
                     Ok(status) => exited = status,
-                    Err(_) => break WaitOutcome::WaitFailed,
+                    Err(error) => break WaitOutcome::WaitFailed(wait_failed(error)),
                 }
             }
             if exited
@@ -272,13 +272,13 @@ impl<'a> RuntimeAdapter<'a> {
                 // Both readers already observed EOF/an error (that is what let the loop above
                 // reach this branch), so these joins are just cleanup, not a wait.
                 graphhelm_process_tree::close(&mut process_group);
-                let status = child.wait().map_err(|_| GatewayError::RuntimeCrashed)?;
+                let status = child.wait().map_err(exit_status_unreadable)?;
                 let writer_clean = join_writer_until(stdin_writer, Instant::now() + CLEANUP_GRACE);
                 cleanup_permit.release();
                 let stdout_complete = stdout_reader.handle.join().unwrap_or(false);
                 let _ = stderr_reader.handle.join();
                 if !writer_clean {
-                    return Err(GatewayError::RuntimeCrashed);
+                    return Err(GatewayError::RuntimeCrashed(CrashSite::StdinWriterUnclean));
                 }
                 Ok(RawInvocation {
                     status,
@@ -313,10 +313,12 @@ impl<'a> RuntimeAdapter<'a> {
                 if leader_clean && writer_clean {
                     Err(GatewayError::Timeout)
                 } else {
-                    Err(GatewayError::RuntimeCrashed)
+                    Err(GatewayError::RuntimeCrashed(
+                        CrashSite::TimeoutCleanupUnobserved,
+                    ))
                 }
             }
-            WaitOutcome::WaitFailed => {
+            WaitOutcome::WaitFailed(error) => {
                 let _ = graphhelm_process_tree::terminate(
                     child.id(),
                     graphhelm_process_tree::for_thread(process_group),
@@ -328,10 +330,17 @@ impl<'a> RuntimeAdapter<'a> {
                 let _ = join_writer_until(stdin_writer, cleanup_deadline);
                 drop(stdout_reader.handle);
                 drop(stderr_reader.handle);
-                Err(GatewayError::RuntimeCrashed)
+                Err(error)
             }
         }
     }
+}
+
+fn wait_failed(_: std::io::Error) -> GatewayError {
+    GatewayError::RuntimeCrashed(CrashSite::WaitFailed)
+}
+fn exit_status_unreadable(_: std::io::Error) -> GatewayError {
+    GatewayError::RuntimeCrashed(CrashSite::ExitStatusUnreadable)
 }
 
 /// The result of one non-reaping leader poll loop: the child exited AND both readers have seen EOF/an
@@ -340,7 +349,7 @@ impl<'a> RuntimeAdapter<'a> {
 enum WaitOutcome {
     Exited,
     TimedOut,
-    WaitFailed,
+    WaitFailed(GatewayError),
 }
 
 struct CleanupCapacity {
@@ -638,7 +647,7 @@ fn interpret_claude_code(invocation: &RawInvocation) -> Result<ModelReply, Gatew
 
     match parsed {
         Some(reply) => Err(classify_error_text(reply.error_text())),
-        None => Err(GatewayError::RuntimeCrashed),
+        None => Err(GatewayError::RuntimeCrashed(CrashSite::ClaudeUnparsed)),
     }
 }
 
@@ -649,26 +658,30 @@ fn interpret_codex(invocation: &RawInvocation) -> Result<ModelReply, GatewayErro
         return Err(if invocation.status.success() {
             GatewayError::MalformedOutput
         } else {
-            GatewayError::RuntimeCrashed
+            GatewayError::RuntimeCrashed(CrashSite::StdoutTruncated)
         });
     }
     match decode_codex_jsonl(&invocation.stdout) {
         Ok(DecodedCodexStream::CurrentReply(reply)) if invocation.status.success() => Ok(reply),
-        Ok(DecodedCodexStream::CurrentReply(_)) => Err(GatewayError::RuntimeCrashed),
+        Ok(DecodedCodexStream::CurrentReply(_)) => Err(GatewayError::RuntimeCrashed(
+            CrashSite::ExitNonzeroWithReply,
+        )),
         Ok(DecodedCodexStream::CurrentFailure(text)) => Err(classify_error_text(&text)),
         Ok(DecodedCodexStream::Legacy(legacy)) if invocation.status.success() => legacy
             .into_model_reply()
             .ok_or(GatewayError::MalformedOutput),
-        Ok(DecodedCodexStream::Legacy(legacy)) => legacy
-            .last_error_message
-            .as_deref()
-            .map_or(Err(GatewayError::RuntimeCrashed), |text| {
-                Err(classify_error_text(text))
-            }),
+        Ok(DecodedCodexStream::Legacy(legacy)) => legacy.last_error_message.as_deref().map_or(
+            Err(GatewayError::RuntimeCrashed(
+                CrashSite::StreamWithoutErrorText,
+            )),
+            |text| Err(classify_error_text(text)),
+        ),
         Err(CodexParseError::Malformed) if invocation.status.success() => {
             Err(GatewayError::MalformedOutput)
         }
-        Err(CodexParseError::Malformed) => Err(GatewayError::RuntimeCrashed),
+        Err(CodexParseError::Malformed) => {
+            Err(GatewayError::RuntimeCrashed(CrashSite::StreamMalformed))
+        }
         Err(CodexParseError::ReportedFailure(text)) => Err(classify_error_text(&text)),
     }
 }
@@ -679,7 +692,7 @@ fn classify_error_text(text: &str) -> GatewayError {
     if looks_like_quota_exhaustion(text) {
         GatewayError::QuotaExhausted
     } else {
-        GatewayError::RuntimeCrashed
+        GatewayError::RuntimeCrashed(CrashSite::ErrorTextUnclassified)
     }
 }
 
@@ -1699,5 +1712,31 @@ historical-non-json-noise
             "the first child must still be running when the second child is reaped"
         );
         drop(held);
+    }
+}
+
+#[cfg(test)]
+mod crash_site_tests {
+    use super::*;
+    // Coordinator-approved pure I/O mapping cells; no OS failure injection. Sub-millisecond.
+    #[test]
+    fn wait_failed_names_its_site() {
+        assert_eq!(
+            format!(
+                "{:?}",
+                wait_failed(std::io::Error::from(std::io::ErrorKind::Other))
+            ),
+            "RuntimeCrashed(WaitFailed)"
+        );
+    }
+    #[test]
+    fn exit_status_unreadable_names_its_site() {
+        assert_eq!(
+            format!(
+                "{:?}",
+                exit_status_unreadable(std::io::Error::from(std::io::ErrorKind::Other))
+            ),
+            "RuntimeCrashed(ExitStatusUnreadable)"
+        );
     }
 }

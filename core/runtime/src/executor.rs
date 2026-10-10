@@ -120,6 +120,7 @@ pub struct WorkOutcome {
     /// `NodeOutcomeRecorded` kind carries. `None` on success and NEVER on a failure: an
     /// outcome the operator cannot act on is the defect the blind judge named.
     pub reason: Option<NodeOutcomeReason>,
+    pub crash_site: Option<graphhelm_protocols::CrashSite>,
     pub executor_kind: Option<AttemptExecutorKind>,
     pub model_route_id: Option<String>,
 }
@@ -234,7 +235,7 @@ const fn reason_for_gateway_error(
         E::ContextTooLarge => NodeOutcomeReason::ContextTooLarge,
         E::MalformedOutput => NodeOutcomeReason::MalformedOutput,
         E::ToolDenied => NodeOutcomeReason::ToolDenied,
-        E::RuntimeCrashed => NodeOutcomeReason::RuntimeCrashed,
+        E::RuntimeCrashed(_) => NodeOutcomeReason::RuntimeCrashed,
         E::UnsupportedCapability => NodeOutcomeReason::UnsupportedCapability,
         E::PolicyDenied => NodeOutcomeReason::PolicyDenied,
         E::Cancelled => NodeOutcomeReason::Cancelled,
@@ -295,6 +296,7 @@ fn cognitive_outcome(
                     summary,
                     reuse: None,
                     gate_verdict: None,
+                    crash_site: None,
                     reason: if reply.is_incomplete() {
                         Some(NodeOutcomeReason::MalformedOutput)
                     } else {
@@ -329,6 +331,12 @@ fn cognitive_outcome(
                     },
                     reuse: None,
                     gate_verdict: None,
+                    crash_site: match error {
+                        graphhelm_gateway::taxonomy::GatewayError::RuntimeCrashed(site) => {
+                            Some(site)
+                        }
+                        _ => None,
+                    },
                     reason: Some(reason_for_gateway_error(error)),
                     executor_kind: None,
                     model_route_id: None,
@@ -404,6 +412,7 @@ fn tool_outcome(
             },
             reuse: result.reuse,
             gate_verdict: None,
+            crash_site: None,
             reason,
             executor_kind: None,
             model_route_id: None,
@@ -447,6 +456,7 @@ fn unserved_tier(
         },
         reuse: None,
         gate_verdict: None,
+        crash_site: None,
         reason: Some(NodeOutcomeReason::UnsupportedCapability),
         executor_kind: Some(AttemptExecutorKind::Model),
         model_route_id: None,
@@ -911,6 +921,10 @@ fn judge_outcome(
                 },
                 reuse: None,
                 gate_verdict: None,
+                crash_site: match error {
+                    graphhelm_gateway::taxonomy::GatewayError::RuntimeCrashed(site) => Some(site),
+                    _ => None,
+                },
                 reason: Some(reason_for_gateway_error(error)),
                 executor_kind: None,
                 model_route_id: None,
@@ -962,6 +976,7 @@ fn judge_outcome(
                     passed: verdict.passed,
                     findings: verdict.findings,
                 }),
+                crash_site: None,
                 reason: (!passed).then_some(NodeOutcomeReason::JudgeRefused),
                 executor_kind: None,
                 model_route_id: None,
@@ -979,6 +994,7 @@ fn judge_outcome(
             summary,
             reuse: None,
             gate_verdict: None,
+            crash_site: None,
             reason: Some(NodeOutcomeReason::MalformedJudgment),
             executor_kind: None,
             model_route_id: None,
@@ -1036,6 +1052,7 @@ fn gate_check_outcome(
             passed,
             findings,
         }),
+        crash_site: None,
         reason: (!passed).then_some(NodeOutcomeReason::GateRefused),
         executor_kind: None,
         model_route_id: None,

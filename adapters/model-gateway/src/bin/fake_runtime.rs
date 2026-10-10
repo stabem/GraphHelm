@@ -141,6 +141,20 @@ fn main() {
         "quota" => run_quota(),
         "usage-limit" => run_usage_limit(),
         "error-report" => run_error_report(),
+        "legacy-without-error" => {
+            println!(
+                "{}",
+                serde_json::json!({"msg":{"type":"session_started","session_id":"fixture"}})
+            );
+            std::process::exit(1);
+        }
+        #[cfg(windows)]
+        "hold-stdin-exit" | "hold-stdin-timeout" => {
+            transfer_stdin_to_holder();
+            if mode == "hold-stdin-timeout" {
+                run_hang();
+            }
+        }
         "crash" => run_crash(),
         "quota-marker-crash" => run_quota_marker_crash(),
         "hang" => run_hang(),
@@ -552,5 +566,51 @@ fn run_orphan_tree() {
 fn run_env_dump() {
     for (key, value) in std::env::vars() {
         println!("{key}={value}");
+    }
+}
+
+/// Transfer only the fixture's stdin handle to a test-owned process outside the adapter job.
+/// The holder never reads it and closes it on exit. This observes a blocked writer without
+/// changing production cleanup or injecting an OS failure. Windows-only process observer.
+#[cfg(windows)]
+fn transfer_stdin_to_holder() {
+    use std::ffi::c_void;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+        fn GetCurrentProcess() -> *mut c_void;
+        fn GetStdHandle(which: u32) -> *mut c_void;
+        fn DuplicateHandle(
+            source: *mut c_void,
+            handle: *mut c_void,
+            target: *mut c_void,
+            copy: *mut *mut c_void,
+            access: u32,
+            inherit: i32,
+            options: u32,
+        ) -> i32;
+        fn CloseHandle(handle: *mut c_void) -> i32;
+    }
+    let pid = std::env::var("FAKE_RUNTIME_HOLDER_PID")
+        .unwrap()
+        .parse()
+        .unwrap();
+    // SAFETY: the test owns this PID for the whole call; only PROCESS_DUP_HANDLE is requested.
+    // The duplicate belongs to the holder, and the local process handle is closed here.
+    unsafe {
+        let target = OpenProcess(0x0040, 0, pid);
+        assert!(!target.is_null(), "open fixture holder");
+        let mut copy = std::ptr::null_mut();
+        let result = DuplicateHandle(
+            GetCurrentProcess(),
+            GetStdHandle(-10_i32 as u32),
+            target,
+            &mut copy,
+            0,
+            0,
+            2,
+        );
+        CloseHandle(target);
+        assert_ne!(result, 0, "duplicate fixture stdin");
     }
 }

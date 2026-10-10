@@ -15,7 +15,7 @@ const EVERY_ERROR: &[GatewayError] = &[
     GatewayError::ContextTooLarge,
     GatewayError::MalformedOutput,
     GatewayError::ToolDenied,
-    GatewayError::RuntimeCrashed,
+    GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::ErrorTextUnclassified),
     GatewayError::UnsupportedCapability,
     GatewayError::PolicyDenied,
     GatewayError::Cancelled,
@@ -58,7 +58,7 @@ fn capacity_class_errors_park_the_node_and_only_them() {
     for e in [
         E::ProviderUnavailable,
         E::Timeout,
-        E::RuntimeCrashed,
+        E::RuntimeCrashed(graphhelm_protocols::CrashSite::ErrorTextUnclassified),
         E::MalformedOutput,
     ] {
         assert_eq!(outcome_for_error(e), O::RetryableFailure);

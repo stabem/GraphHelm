@@ -318,6 +318,7 @@ fn outcome_event(key: &str, outcome: Outcome, next_state: NodeState) -> NewEvent
             outcome,
             next_state,
             executor: None,
+            crash_site: None,
             reason: None,
         }),
     )

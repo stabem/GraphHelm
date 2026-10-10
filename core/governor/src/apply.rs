@@ -485,6 +485,7 @@ pub fn apply_draft_with_acceptance<'a>(
                         outcome: NodeOutcome::Approved,
                         next_state,
                         executor: None,
+                        crash_site: None,
                         reason: None,
                     }),
                     vec![],

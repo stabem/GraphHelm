@@ -219,6 +219,7 @@ fn record_outcome(
             node_id: OpaqueId::parse(node).unwrap(),
             outcome,
             next_state,
+            crash_site: None,
             reason: None,
         }),
     )]);

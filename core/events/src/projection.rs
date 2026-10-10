@@ -3131,6 +3131,7 @@ mod tests {
                     node_id: OpaqueId::parse("plan").unwrap(),
                     outcome: graphhelm_protocols::NodeOutcome::NeedsInput,
                     next_state: NodeState::WaitingInput,
+                    crash_site: None,
                     reason: None,
                 }),
                 vec![],

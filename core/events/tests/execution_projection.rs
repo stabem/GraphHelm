@@ -168,6 +168,7 @@ fn execution_events(outcomes: &[Outcome]) -> Vec<EventEnvelope> {
                 node_id: node_id.clone(),
                 outcome,
                 next_state,
+                crash_site: None,
                 reason: None,
             }),
         ));
@@ -777,6 +778,7 @@ fn ghost_proposal_over_existing_node() -> Vec<EventEnvelope> {
                 node_id: node_id.clone(),
                 outcome,
                 next_state,
+                crash_site: None,
                 reason: None,
             }),
         ),
@@ -1610,6 +1612,7 @@ fn outcome_event(key: &str, outcome: Outcome, next_state: NodeState) -> NewEvent
             node_id: OpaqueId::parse(CUSTOMS_NODE).unwrap(),
             outcome,
             next_state,
+            crash_site: None,
             reason: None,
         }),
     )

@@ -7,6 +7,7 @@
 //! 05b Tasks 3-5) call into this module rather than deciding consequences for themselves — the
 //! policy lives in one place.
 
+pub use graphhelm_protocols::CrashSite;
 use graphhelm_protocols::NodeOutcome;
 
 /// The closed error vocabulary a route adapter reports, per §17. Every variant here must have an
@@ -23,7 +24,7 @@ pub enum GatewayError {
     ContextTooLarge,
     MalformedOutput,
     ToolDenied,
-    RuntimeCrashed,
+    RuntimeCrashed(CrashSite),
     UnsupportedCapability,
     PolicyDenied,
     Cancelled,
@@ -31,7 +32,7 @@ pub enum GatewayError {
 }
 
 impl std::fmt::Display for GatewayError {
-    /// Every arm is fixed, static text: `GatewayError` carries no fields (it is a `Copy` enum),
+    /// Every arm is fixed, static text: `GatewayError` carries only closed, field-free classes,
     /// so there is nothing dynamic here for a redaction test to catch — but callers format this
     /// alongside adapter-level context (`adapters/model-gateway/src/byok.rs`), and every error
     /// type elsewhere in this workspace (`ManifestError`, `BrokerError`) implements `Display`, so
@@ -47,7 +48,7 @@ impl std::fmt::Display for GatewayError {
             Self::ContextTooLarge => "the context exceeds what the model accepts",
             Self::MalformedOutput => "the provider's reply could not be parsed",
             Self::ToolDenied => "the requested tool use was denied",
-            Self::RuntimeCrashed => "the runtime crashed",
+            Self::RuntimeCrashed(_) => "the runtime crashed",
             Self::UnsupportedCapability => "the route does not support this capability",
             Self::PolicyDenied => "the request was denied by policy",
             Self::Cancelled => "the call was cancelled",
@@ -90,7 +91,7 @@ pub const fn outcome_for_error(error: GatewayError) -> NodeOutcome {
     match error {
         E::QuotaExhausted | E::RateLimited | E::AuthRequired | E::AuthRevoked => O::NeedsCapacity,
 
-        E::ProviderUnavailable | E::Timeout | E::RuntimeCrashed | E::MalformedOutput => {
+        E::ProviderUnavailable | E::Timeout | E::RuntimeCrashed(_) | E::MalformedOutput => {
             O::RetryableFailure
         }
 

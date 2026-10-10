@@ -475,6 +475,7 @@ mod tests {
                     kind: AttemptExecutorKind::Gate,
                     route_id: None,
                 }),
+                crash_site: None,
                 reason: None,
             })
         };

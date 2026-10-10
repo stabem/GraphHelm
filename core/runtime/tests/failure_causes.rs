@@ -199,7 +199,7 @@ fn every_gateway_class_names_itself_as_the_cause() {
             NodeOutcomeReason::ProviderUnavailable,
         ),
         (
-            GatewayError::RuntimeCrashed,
+            GatewayError::RuntimeCrashed(graphhelm_protocols::CrashSite::ErrorTextUnclassified),
             NodeOutcomeReason::RuntimeCrashed,
         ),
         (

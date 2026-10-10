@@ -408,8 +408,8 @@ pub(crate) fn run(repo: &Path) -> Outcome {
         let mut args = vec!["--json", "journey", "preview", id, "--run", "--project"];
         let project_text = repo.to_string_lossy().to_string();
         args.push(&project_text);
-        let flow_dir_text = flow_dir.to_string_lossy().to_string();
-        args.extend(["--validation-dir", &flow_dir_text]);
+        let validation_root_text = result_root.to_string_lossy().to_string();
+        args.extend(["--validation-dir", &validation_root_text]);
         let execution =
             Command::new(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("graphhelm")))
                 .args(args)

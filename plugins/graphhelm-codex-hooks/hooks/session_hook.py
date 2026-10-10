@@ -123,7 +123,7 @@ def token_from_file(path: str) -> str:
     return token
 
 
-def request(url: str, token: str, method: str, body: dict | None = None, headers: dict | None = None, timeout: float = 1.0) -> dict:
+def request(url: str, token: str, method: str, body: dict | None = None, headers: dict | None = None, timeout: float = 1.0, max_reply: int = MAX_REPLY) -> dict:
     data = None if body is None else json.dumps(body, separators=(",", ":")).encode("utf-8")
     request_headers = {"Authorization": f"Bearer {token}"}
     if data is not None:
@@ -138,8 +138,8 @@ def request(url: str, token: str, method: str, body: dict | None = None, headers
     # This is socket inactivity, not a wall-time guarantee. The host hook timeout
     # bounds the whole process; SessionEnd allows one slower durable acknowledgement.
     with urllib.request.build_opener(NoRedirect).open(req, timeout=timeout) as response:
-        raw = response.read(MAX_REPLY + 1)
-    if len(raw) > MAX_REPLY:
+        raw = response.read(max_reply + 1)
+    if len(raw) > max_reply:
         raise ValueError("Runtime reply too large")
     result = json.loads(raw)
     if not isinstance(result, dict) or result.get("ok") is not True:

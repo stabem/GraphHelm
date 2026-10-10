@@ -152,7 +152,7 @@ with "read the notes addressed to you". Only a later reply recorded by that agen
 its note. The hook neither acknowledges notes nor sends messages.
 
 The scan reads only event pages: optional opaque `to` and `replyTo` on `signal_recorded`
-replace per-note evidence GETs. It reads the last 4096 events, at most 16 pages of 256,
+replace per-note evidence GETs. It reads the last 4096 events, at most 8 pages of 512 (one MiB maximum response per page),
 plus one head request. Notes older than the window and legacy notes without routing hints
 are outside this reminder; the normal inbox still reads their sealed evidence. Deploy the
 updated Runtime before reloading the plugin. Historical events are not rewritten.

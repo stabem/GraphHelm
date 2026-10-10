@@ -159,6 +159,10 @@ class LaneStopTests(unittest.TestCase):
                                 to = "codex-4" if n == 4097 else "codex-5"
                                 envelope = json.dumps({"id": f"note-{n}", "type": "operator_note", "to": to})
                                 note_digest = hashlib.sha256(envelope.encode()).hexdigest()
+                                event["scope"] = {"projectId": "test", "executionId": "lane-test"}
+                                event["correlationId"] = "x" * 128
+                                event["causationId"] = "y" * 128
+                                event["idempotencyKey"] = "z" * 128
                                 event.update(kind={"type": "signal_recorded", "data": {
                                     "kind": "operator_note", "executionId": "lane-test",
                                     "signalId": f"note-{n}", "to": to,
@@ -170,6 +174,8 @@ class LaneStopTests(unittest.TestCase):
                                      "signalId": "recent-note", "to": "codex-4", "envelopeSha256": digest}},
                             "evidenceRefs": [{"evidenceId": "recent-evidence", "contentSha256": digest}]}
                     body = json.dumps({"ok": True, "data": {"head": 4097, "events": events}}).encode()
+                    if mode == "busy" and events and events[-1]["sequence"] == 4097:
+                        assert len(body) > 256 * 1024  # realistic page exceeds the session-hook cap
                 try:
                     self.send_response(200)
                     self.end_headers()

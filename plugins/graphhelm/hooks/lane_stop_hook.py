@@ -34,10 +34,10 @@ def pending() -> bool:
     unanswered = set()
     # Size bound; the parent process imposes the wall-time bound even if a server
     # trickles bytes. request's timeout alone only bounds socket inactivity.
-    for _ in range(16):
-        data = request(f"{base}/events?after={after}&limit=256", token, "GET")["data"]
+    for _ in range(8):
+        data = request(f"{base}/events?after={after}&limit=512", token, "GET", max_reply=1024 * 1024)["data"]
         page, head = data["events"], data["head"]
-        if not isinstance(page, list) or type(head) is not int or head < after or len(page) > 256:
+        if not isinstance(page, list) or type(head) is not int or head < after or len(page) > 512:
             raise ValueError("invalid event page")
         if not page and head > after:
             raise ValueError("incomplete event page")

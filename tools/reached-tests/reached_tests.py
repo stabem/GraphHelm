@@ -35,6 +35,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 TOOLCHAIN = "+1.97.1"
@@ -92,11 +93,47 @@ def workspace(repo):
     packages = []
     for p in meta["packages"]:
         pdir = Path(p["manifest_path"]).resolve().parent
-        targets = [{"name": t["name"], "kind": next(iter(t["kind"]), ""),
-                    "src": Path(t["src_path"]).resolve(), "test": bool(t.get("test")),
-                    "doctest": bool(t.get("doctest")), "harness": t.get("harness", True),
-                    "requiredFeatures": list(t.get("required-features", []))}
-                   for t in p["targets"]]
+        manifest_ok = True
+        try:
+            manifest = tomllib.loads(Path(p["manifest_path"]).read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError):
+            manifest = {}
+            manifest_ok = False
+        manifest_targets = []
+        for kind, key in (("lib", "lib"), ("bin", "bin"), ("test", "test"),
+                          ("example", "example"), ("bench", "bench")):
+            values = manifest.get(key, {}) if key == "lib" else manifest.get(key, [])
+            if isinstance(values, dict):
+                values = [values]
+            if isinstance(values, list):
+                manifest_targets.extend((kind, value) for value in values if isinstance(value, dict))
+
+        def target_config(target):
+            kind = next(iter(target["kind"]), "")
+            if kind == "proc-macro":
+                kind = "lib"
+            src = Path(target["src_path"]).resolve()
+            for config_kind, config in manifest_targets:
+                if config_kind != kind:
+                    continue
+                if kind == "lib":
+                    return config
+                config_name = config.get("name")
+                config_path = config.get("path")
+                if config_name == target["name"]:
+                    return config
+                if config_path and (pdir / config_path).resolve() == src:
+                    return config
+            return {}
+
+        targets = []
+        for t in p["targets"]:
+            config = target_config(t)
+            targets.append({"name": t["name"], "kind": next(iter(t["kind"]), ""),
+                            "src": Path(t["src_path"]).resolve(), "test": bool(t.get("test")),
+                            "doctest": bool(t.get("doctest")),
+                            "harness": config.get("harness", True), "harnessKnown": manifest_ok,
+                            "requiredFeatures": list(t.get("required-features", []))})
         tests = [{"name": t["name"], "src": t["src"]} for t in targets if t["kind"] == "test"]
         bundles = {}
         for t in tests:
@@ -337,6 +374,11 @@ def expand_whole_packages(whole, packages):
                                     "kind": target["kind"],
                                     "reason": "target requires features: " + ", ".join(required)})
                 continue
+            if not target.get("harnessKnown", True):
+                unsupported.append({"package": name, "target": target["name"],
+                                    "kind": target["kind"],
+                                    "reason": "Cargo manifest unavailable; harness setting unresolved"})
+                continue
             if not target.get("harness", True):
                 unsupported.append({"package": name, "target": target["name"],
                                     "kind": target["kind"],
@@ -348,7 +390,7 @@ def expand_whole_packages(whole, packages):
                                     "reason": "test-enabled example execution is not represented by compile-only step"})
                 continue
             if target["kind"] in ("lib", "proc-macro", "bin", "test") and not target.get("test") \
-                    and not (target["kind"] == "lib" and target.get("doctest")):
+                    and not (target["kind"] in ("lib", "proc-macro") and target.get("doctest")):
                 continue
             argv = _target_argv(name, target)
             if argv is None:
@@ -356,12 +398,13 @@ def expand_whole_packages(whole, packages):
                     unsupported.append({"package": name, "target": target["name"],
                                         "kind": target["kind"], "reason": "unsupported Cargo target kind"})
                 continue
-            if target["kind"] == "lib" and target.get("doctest") and not doc_added:
+            if target["kind"] in ("lib", "proc-macro") and target.get("doctest") and target.get("test"):
                 package_steps.append({"argv": argv, "cwd": ".", "slot": True})
+            if target["kind"] in ("lib", "proc-macro") and target.get("doctest") and not doc_added:
                 package_steps.append({"argv": ["cargo", TOOLCHAIN, "test", "--locked", "-p", name,
                                                 "--doc", *TEST_THREADS.split()], "cwd": ".", "slot": True})
                 doc_added = True
-            else:
+            elif not (target["kind"] in ("lib", "proc-macro") and target.get("doctest")):
                 package_steps.append({"argv": argv, "cwd": ".", "slot": True})
         plans[name] = package_steps
     return plans, unsupported

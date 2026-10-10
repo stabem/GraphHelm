@@ -3,10 +3,12 @@
 A small fake workspace, no cargo and no git: policy <- execution <- cli, an adapter nobody depends
 on, a cli test bundle, and one embedded schema. Each case is a real diff shape from this repository.
 """
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import reached_tests as rt  # noqa: E402
@@ -123,6 +125,34 @@ class Reach(unittest.TestCase):
         reasons = {item["target"]: item["reason"] for item in unsupported}
         self.assertIn("custom harness", reasons["custom"])
         self.assertIn("compile-only", reasons["example_test"])
+
+    def test_workspace_reads_harness_from_manifest_fixture(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = root / "Cargo.toml"
+            source = root / "src" / "lib.rs"
+            source.parent.mkdir()
+            source.write_text("", encoding="utf-8")
+            manifest.write_text('[package]\nname = "fixture"\nversion = "0.0.0"\n\n[lib]\nharness = false\n',
+                                encoding="utf-8")
+            metadata = {"workspace_root": str(root), "packages": [{
+                "name": "fixture", "manifest_path": str(manifest), "dependencies": [],
+                "targets": [{"name": "fixture", "kind": ["lib"], "src_path": str(source),
+                              "test": True, "doctest": False, "required-features": []}],
+            }]}
+            with patch.object(rt, "run", return_value=json.dumps(metadata)):
+                packages = rt.workspace(root)
+            self.assertFalse(packages[0]["targets"][0]["harness"])
+            self.assertTrue(packages[0]["targets"][0]["harnessKnown"])
+
+    def test_library_doctest_without_library_tests_emits_only_doc_step(self):
+        packages = [{"name": "graphhelm-cli", "targets": [
+            {"name": "graphhelm_cli", "kind": "lib", "test": False, "doctest": True,
+             "harness": True, "harnessKnown": True},
+        ]}]
+        plans, unsupported = rt.expand_whole_packages({"graphhelm-cli"}, packages)
+        self.assertEqual(unsupported, [])
+        self.assertEqual([step["argv"][6] for step in plans["graphhelm-cli"]], ["--doc"])
 
     def test_node_test_path_with_space_is_recovered_from_filesystem(self):
         with tempfile.TemporaryDirectory() as repo:

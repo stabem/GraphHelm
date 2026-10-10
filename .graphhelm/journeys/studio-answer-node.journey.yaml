@@ -26,7 +26,7 @@ screens:
     url: /?session=studio-fixture
     state: success
     expect: [{role: button, name: Nothing needs you}]
-    scope: [apps/studio/src/components/answer.tsx, apps/studio/src/runtime/client.ts]
+    scope: [apps/studio/src/components/answer.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/client.ts]
   - id: run
     title: "A run is open, with its chat and its team on screen"
     url: /?session=studio-fixture

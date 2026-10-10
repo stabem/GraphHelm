@@ -31,6 +31,15 @@ const renderLanes = async () => {
 const col = (name: RegExp) => screen.getByRole("region", { name });
 
 describe("WorkKanban (#668)", () => {
+  it("shows a loading state instead of empty counts until history settles", async () => {
+    render(<MissionView journeys={[]} tasks={[]} lanes={[]} now={NOW} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} historyLoading />);
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Lanes" }));
+    expect(screen.getAllByRole("status")).toHaveLength(2);
+    expect(screen.getAllByText("Loading the team's history…")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /Free 0/ })).toBeNull();
+    expect(screen.queryByText(/· 0/)).toBeNull();
+  });
+
   it("shows every open PR in its column with counts, without clicks; merged work is absent", async () => {
     await renderLanes();
     const board = screen.getByRole("region", { name: "Work by stage" });

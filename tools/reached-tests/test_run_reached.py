@@ -95,6 +95,49 @@ class RunnerContracts(unittest.TestCase):
                 self.assertEqual(rr.run(args), 1)
             self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["status"], "failed")
 
+    def test_pytest_function_failure_is_executed_and_blocks_green(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            (repo / "test_function.py").write_text("def test_fails():\n    assert False\n", encoding="utf-8")
+            (repo / ".gitignore").write_text("__pycache__/\n.pytest_cache/\n", encoding="utf-8")
+            subprocess.run(["git", "add", "test_function.py", ".gitignore"], cwd=repo, check=True)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            output = Path(temp).parent / (Path(temp).name + "-pytest-report.json")
+            plan = {"steps": [{"argv": ["python", "-m", "pytest", "-q", "test_function.py"],
+                               "cwd": ".", "slot": False}]}
+            args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
+                                      "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                                      "allow_whole_package": None, "plan": False})()
+            with patch.object(rr, "_selector", return_value=plan):
+                self.assertEqual(rr.run(args), 1)
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(report["status"], "failed")
+            self.assertEqual(report["completed"][0]["returncode"], 1)
+
+    def test_empty_unittest_module_cannot_claim_green(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            (repo / "empty_test.py").write_text("# no unittest cases\n", encoding="utf-8")
+            (repo / ".gitignore").write_text("__pycache__/\n.pytest_cache/\n", encoding="utf-8")
+            subprocess.run(["git", "add", "empty_test.py", ".gitignore"], cwd=repo, check=True)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            output = Path(temp).parent / (Path(temp).name + "-empty-unittest-report.json")
+            plan = {"steps": [{"argv": ["python", "-m", "unittest", "empty_test.py"],
+                               "cwd": ".", "slot": False}]}
+            args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
+                                      "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                                      "allow_whole_package": None, "plan": False})()
+            with patch.object(rr, "_selector", return_value=plan):
+                self.assertEqual(rr.run(args), 1)
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(report["status"], "incomplete")
+            self.assertTrue(report["completed"][0]["zeroTests"])
+            self.assertIn("zero tests", report["error"])
+
     def test_each_slot_step_gets_its_own_slot_process(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)

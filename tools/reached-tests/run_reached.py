@@ -16,6 +16,7 @@ import os
 import subprocess
 import sys
 import time
+import re
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ MAX_CAPTURE = 4000
 _SHELL_MARKERS = ("&&", "||", "|", ">", "<", "`", "$(")
 _SHELL_EXECUTABLES = {"sh", "bash", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe"}
 _CARGO_TEST_TARGET_FLAGS = ("--test", "--bin", "--lib", "--doc", "--example")
+_UNITTEST_ZERO = re.compile(r"\bRan\s+0\s+tests?\b")
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -238,7 +240,14 @@ def run(args: argparse.Namespace) -> int:
                 entry = {"index": index, "argv": argv, "cwd": step["cwd"], "slot": step["slot"],
                          "returncode": proc.returncode, "late": time.monotonic() - started > args.budget_seconds,
                          "log": str(logfile), "tail": _tail(logfile)}
+                zero_tests = "-m" in argv and "unittest" in argv and bool(_UNITTEST_ZERO.search(entry["tail"]))
+                if zero_tests:
+                    entry["zeroTests"] = True
                 report["completed"].append(entry)
+                if zero_tests:
+                    report["status"] = "incomplete"
+                    report["error"] = f"step {index} unittest discovered zero tests"
+                    break
                 if proc.returncode:
                     report["status"] = "failed"
                     break

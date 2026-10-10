@@ -218,6 +218,19 @@ class Reach(unittest.TestCase):
         self.assertEqual(tools, ["python -m unittest tools/task-record/test_task_record.py"])
         self.assertEqual(other, [])
 
+    def test_pytest_function_module_is_selected_with_pytest_runner(self):
+        with tempfile.TemporaryDirectory() as repo:
+            tool = Path(repo, "tools", "token-bench")
+            tool.mkdir(parents=True)
+            (tool / "test_run.py").write_text("def test_reaches_pytest():\n    assert True\n", encoding="utf-8")
+            *_, tools, _, other = reach("tools/token-bench/run.py", repo=repo)
+        self.assertEqual(tools, ["python -m pytest -q tools/token-bench/test_run.py"])
+        self.assertEqual(other, [])
+
+    def test_structured_pytest_step_keeps_direct_argv(self):
+        records = rt.steps(set(), set(), [], ["python -m pytest -q tools/token-bench/test_run.py"], [])
+        self.assertEqual(records[0]["argv"], ["python", "-m", "pytest", "-q", "tools/token-bench/test_run.py"])
+
     def test_a_path_no_rule_maps_is_reported(self):
         *_, other = reach("ci/gate.ps1")
         self.assertEqual(other, ["ci/gate.ps1"])

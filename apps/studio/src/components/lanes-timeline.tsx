@@ -32,7 +32,7 @@ export interface BotActions {
   onNameBot?: (actorId: string, displayName: string) => void | Promise<unknown>;
 }
 
-interface Props extends BotActions { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[]; agents?: Bot[]; slots?: SlotView[] }
+interface Props extends BotActions { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[]; agents?: Bot[]; slots?: SlotView[]; historyLoading?: boolean }
 
 /** #647: the Team canvas's rename control (same gate, labels and save path), on a board row. */
 export function NameBot({ bot, onSave }: { bot: Bot; onSave: (actorId: string, displayName: string) => void | Promise<unknown> }) {
@@ -143,9 +143,10 @@ function useTrackWidth(ref: RefObject<HTMLElement | null>): number {
   return w;
 }
 
-export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], slots = [], onOpenBotDetails, onNameBot }: Props) {
+export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], slots = [], historyLoading = false, onOpenBotDetails, onNameBot }: Props) {
   const listRef = useRef<HTMLUListElement>(null);
   const trackW = useTrackWidth(listRef);
+  if (historyLoading) return <section className="lt-loading" role="status">Loading the team's history…</section>;
   lanes = lanes.filter((l) => !placeholderLane(l.lane));
   if (lanes.length === 0 && agents.length === 0) return <>{<SlotStrip slots={slots} />}<p className="lt-empty">No agent has recorded work in this window</p></>;
   const board = agentBoard(agents, lanes, tasks, now, slots);

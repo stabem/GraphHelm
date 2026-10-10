@@ -1,5 +1,6 @@
 /* Lanes (design: Lanes artboard). Colour tokens live on .mv (mission-view.css). */
 .lt { display: flex; flex-direction: column; gap: 16px; min-width: 0; color: #E9E7E2; font-family: var(--sans); font-size: 13px; }
+.lt-loading { color: #A9AEB8; font-family: var(--sans); font-size: 13px; }
 .lt-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 24px; }
 .lt-title { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; }
 .lt-title h2 { margin: 0; font-size: 24px; font-weight: 600; }

@@ -14,7 +14,8 @@ const DOT: Record<KanbanColumn, string> = {
 };
 
 /** #668: all open work by stage, no clicks needed; a card opens its PR on the Graph. */
-export function WorkKanban({ items, onOpen }: { items: KanbanItem[]; onOpen(groupKey: string, taskKey: string): void }) {
+export function WorkKanban({ items, onOpen, historyLoading = false }: { items: KanbanItem[]; onOpen(groupKey: string, taskKey: string): void; historyLoading?: boolean }) {
+  if (historyLoading) return <section className="wk-loading" role="status">Loading the team's history…</section>;
   const cols = bucketKanban(items, (i) => kanbanColumn(i.stage, i.health));
   return (
     <section className="wk" aria-label="Work by stage">

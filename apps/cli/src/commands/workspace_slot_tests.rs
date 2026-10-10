@@ -64,10 +64,12 @@ fn wait_for_ticket(root: &Path, lane: &str) {
             .flatten()
             .flatten()
             .any(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .contains(&format!("-{lane}-"))
+                entry.path().extension().is_some_and(|ext| ext == "ticket")
+                    && entry.path().with_extension("info").is_file()
+                    && entry
+                        .file_name()
+                        .to_string_lossy()
+                        .contains(&format!("-{lane}-"))
             })
         {
             return;
@@ -111,7 +113,7 @@ fn admitted_slot_serializes_real_children_in_arrival_order_and_cleans_tickets() 
         let request = request(&first_root, "lane-a", "first", &first_command);
         run_admitted_slot(&request)
     });
-    wait_for_ticket(&root, "lane-a");
+    wait_for_holder(&root, "lane-a");
     let second_command = marker_command(&log, "b", 20);
     let second_root = root.clone();
     let second = std::thread::spawn(move || {
@@ -180,7 +182,7 @@ fn timed_out_waiter_resumes_at_its_original_place() {
         let request = request(&holder_root, "lane-a", "hold", &holder_command);
         run_admitted_slot(&request)
     });
-    wait_for_ticket(&root, "lane-a");
+    wait_for_holder(&root, "lane-a");
     let timed_command = marker_command(&log, "b", 10);
     let timed = request(&root, "lane-b", "same", &timed_command);
     let timed = SlotRequest {
@@ -235,7 +237,7 @@ fn priority_is_allowed_only_for_listed_lanes_and_runs_next() {
     let holder = std::thread::spawn(move || {
         run_admitted_slot(&request(&holder_root, "lane-a", "hold", &holder_command))
     });
-    wait_for_ticket(&root, "lane-a");
+    wait_for_holder(&root, "lane-a");
     let normal_command = marker_command(&log, "b", 10);
     let normal_root = root.clone();
     let normal = std::thread::spawn(move || {

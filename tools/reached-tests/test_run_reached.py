@@ -34,8 +34,70 @@ class RunnerContracts(unittest.TestCase):
             log = Path(temp) / "slot.log"
             log.write_text("child output\n{\"command\":\"workspace.slot\",\"data\":{\"waitedSeconds\":1.5,\"heldSeconds\":2}}\n", encoding="utf-8")
             self.assertEqual(rr._slot_telemetry(log, ["graphhelm", "--json", "workspace", "slot"]), (1.5, 2))
+            self.assertEqual(rr._slot_telemetry(log, [str(Path(temp) / "graphhelm"), "--json", "workspace", "slot"]), (1.5, 2))
             log.write_text("child output\n{\"ok\":false,\"command\":\"workspace.slot\",\"data\":{\"waitedSeconds\":0.5,\"heldSeconds\":0},\"diagnostics\":[{\"code\":\"GHCLI037_WORKSPACE_REFUSED\"}]}\n", encoding="utf-8")
             self.assertEqual(rr._slot_telemetry(log, ["graphhelm", "--json", "workspace", "slot"]), (0.5, 0))
+
+    def test_explicit_graphhelm_overrides_configured_environment_and_path(self):
+        with tempfile.TemporaryDirectory() as temp:
+            explicit = Path(temp) / "chosen-graphhelm"
+            explicit.write_text("fixture", encoding="utf-8")
+            args = type("Args", (), {"graphhelm": str(explicit)})()
+            with patch.dict(os.environ, {"GRAPHHELM_CLI": str(Path(temp) / "missing")}), \
+                    patch.object(rr.shutil, "which", return_value=str(Path(temp) / "wrong")):
+                self.assertEqual(rr._resolve_graphhelm(args), explicit.resolve())
+
+    def test_missing_explicit_graphhelm_fails_before_selector_or_child(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            (repo / "x").write_text("x", encoding="utf-8")
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            output = Path(temp).parent / (Path(temp).name + "-missing-cli-report.json")
+            plan = {"steps": [{"argv": ["python", "-c", "pass"], "cwd": ".", "slot": True}]}
+            args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
+                                      "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                                      "allow_whole_package": None, "plan": False,
+                                      "graphhelm": str(Path(temp) / "does-not-exist")})()
+            with patch.object(rr, "_git", side_effect=["HEAD", "HEAD", "", "HEAD", ""]), \
+                    patch.object(rr, "_selector", side_effect=AssertionError("selector must not run")):
+                self.assertEqual(rr.run(args), 1)
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertIn("does-not-exist", report["error"])
+
+    def test_python_only_plan_does_not_require_graphhelm_on_path(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp).parent / (Path(temp).name + "-python-only-report.json")
+            plan = {"steps": [{"argv": ["python", "-c", "pass"], "cwd": ".", "slot": False}]}
+            subprocess = __import__("subprocess")
+            args = type("Args", (), {"repo": temp, "output": str(output), "base": "HEAD", "head": "HEAD",
+                                      "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                                      "allow_whole_package": None, "plan": False})()
+
+            def fake_child(command, **kwargs):
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with patch.dict(os.environ, {"GRAPHHELM_CLI": ""}), \
+                    patch.object(rr.shutil, "which", return_value=None), \
+                    patch.object(rr, "_git", side_effect=["HEAD", "HEAD", "", "HEAD", ""]), \
+                    patch.object(rr, "_selector", return_value=plan), \
+                    patch.object(rr.subprocess, "run", side_effect=fake_child):
+                self.assertEqual(rr.run(args), 0)
+            self.assertNotIn("graphhelmPath", json.loads(output.read_text(encoding="utf-8")))
+
+    def test_plan_rejects_missing_explicit_graphhelm_before_selector(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp).parent / (Path(temp).name + "-plan-report.json")
+            args = type("Args", (), {"repo": temp, "output": str(output), "base": "HEAD", "head": "HEAD",
+                                      "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                                      "allow_whole_package": None, "plan": True,
+                                      "graphhelm": str(Path(temp) / "missing")})()
+            with patch.object(rr, "_git", side_effect=["HEAD", "HEAD", ""]), \
+                    patch.object(rr, "_selector", side_effect=AssertionError("selector must not run")):
+                self.assertEqual(rr.run(args), 1)
+            self.assertIn("missing", json.loads(output.read_text(encoding="utf-8"))["error"])
 
     def test_whole_package_requires_explicit_reason(self):
         self.assertIn("requires", rr._whole_reason({"packages": ["graphhelm-cli"]}, None))
@@ -196,10 +258,11 @@ class RunnerContracts(unittest.TestCase):
             with patch.object(rr, "_selector", return_value=plan), patch.object(rr.subprocess, "run", side_effect=fake_run):
                 args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
                                           "root": "D:/gh", "lane": "test", "budget_seconds": 180,
-                                          "allow_whole_package": None, "plan": False})()
+                                          "allow_whole_package": None, "plan": False,
+                                          "graphhelm": sys.executable})()
                 self.assertEqual(rr.run(args), 0)
             self.assertEqual(len(calls), 2)
-            self.assertEqual(calls[0][0:4], ["graphhelm", "--json", "workspace", "slot"])
+            self.assertEqual(calls[0][0:4], [sys.executable, "--json", "workspace", "slot"])
             self.assertEqual(calls[1][0], sys.executable)
             self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["heldSeconds"], 2.0)
 

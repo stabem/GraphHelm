@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+#[path = "support/mod.rs"]
 mod support;
 use support::time_scale::scaled;
 use support::{RawResponse, parse_response, raw_request, split_url};

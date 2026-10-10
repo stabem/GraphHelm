@@ -873,7 +873,18 @@ fn cargo_target(tree: &Path, path: &str) -> Result<(String, Vec<String>), String
                 .collect();
             let selector = match parts.first().map(String::as_str) {
                 Some("tests") if parts.len() == 2 => {
-                    vec!["--test".into(), parts[1].trim_end_matches(".rs").to_owned()]
+                    let stem = parts[1].trim_end_matches(".rs");
+                    // Old parents still have independent targets. Only select the bundle when
+                    // this tree declares the module, so parent/head proofs work across #691.
+                    let bundled = name == "graphhelm-cli"
+                        && std::fs::read_to_string(candidate.join("tests/cli.rs")).is_ok_and(
+                            |source| source.contains(&format!("#[path = \"{stem}.rs\"]")),
+                        );
+                    if bundled {
+                        vec!["--test".into(), "cli".into(), format!("{stem}::")]
+                    } else {
+                        vec!["--test".into(), stem.to_owned()]
+                    }
                 }
                 Some("tests") if parts.len() > 2 => vec!["--test".into(), parts[1].clone()],
                 Some("src") if candidate.join("src/lib.rs").exists() => vec!["--lib".into()],
@@ -919,7 +930,7 @@ fn run_test(
     options: &ProveOptions,
     runner: ProveRunner,
 ) -> RunResult {
-    let (package, selector) = match cargo_target(tree, &test.path) {
+    let (package, mut selector) = match cargo_target(tree, &test.path) {
         Ok(found) => found,
         Err(detail) => {
             return RunResult {
@@ -928,13 +939,20 @@ fn run_test(
             };
         }
     };
+    // Libtest combines multiple filters with OR, so a separate module filter would also run
+    // every neighbour. Join the prefix to the name and pass exactly one filter.
+    let filter = if selector.last().is_some_and(|arg| arg.ends_with("::")) {
+        format!("{}{}", selector.pop().unwrap(), test.name)
+    } else {
+        test.name.clone()
+    };
     let mut command = Command::new("cargo");
     command
         .current_dir(tree)
         .env("CARGO_TARGET_DIR", options.target_dir.join(side))
         .args(["test", "-p", &package])
         .args(&selector)
-        .args(["--", &test.name, "--test-threads=1"])
+        .args(["--", &filter, "--test-threads=1"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1003,6 +1021,82 @@ fn classify_run(name: &str, succeeded: bool, stdout: &str, stderr: &str) -> RunR
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Cost: temporary files and a captured process command, no compiler or child process.
+    // The old selector names a retired test target; independent target tests do not cover bundles.
+    #[test]
+    fn bundled_cli_tests_select_the_module_and_only_the_named_test() {
+        let root = temp_repo("cli-bundle");
+        let repo = root.join("repo");
+        let tests = repo.join("apps/cli/tests");
+        std::fs::create_dir_all(&tests).unwrap();
+        std::fs::write(
+            repo.join("apps/cli/Cargo.toml"),
+            "[package]\nname = \"graphhelm-cli\"\nautotests = false\n\n[[test]]\nname = \"cli\"\npath = \"tests/cli.rs\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tests.join("cli.rs"),
+            "#[path = \"keel_check.rs\"]\nmod keel_check;\n",
+        )
+        .unwrap();
+        assert_eq!(
+            cargo_target(&repo, "apps/cli/tests/keel_check.rs").unwrap(),
+            (
+                "graphhelm-cli".into(),
+                vec!["--test".into(), "cli".into(), "keel_check::".into()]
+            )
+        );
+        fn capture(command: Command, _: Duration) -> Result<Option<ProveOutput>, String> {
+            let args: Vec<_> = command
+                .get_args()
+                .map(|arg| arg.to_str().unwrap())
+                .collect();
+            assert_eq!(
+                args,
+                [
+                    "test",
+                    "-p",
+                    "graphhelm-cli",
+                    "--test",
+                    "cli",
+                    "--",
+                    "keel_check::named_cell",
+                    "--test-threads=1"
+                ]
+            );
+            Ok(Some((
+                true,
+                "running 1 test\ntest keel_check::named_cell ... ok\n".into(),
+                String::new(),
+            )))
+        }
+        let options = ProveOptions {
+            repo: repo.clone(),
+            base: "HEAD".into(),
+            head: "HEAD".into(),
+            target_dir: root.join("target"),
+            scratch_root: root.join("scratch"),
+            timeout: Duration::from_secs(1),
+            command: None,
+        };
+        let test = NewTest {
+            name: "named_cell".into(),
+            path: "apps/cli/tests/keel_check.rs".into(),
+            line: 1,
+            inline: false,
+        };
+        assert_eq!(
+            run_test(&repo, "head", &test, &options, capture).outcome,
+            RunOutcome::Passed
+        );
+        std::fs::remove_file(tests.join("cli.rs")).unwrap();
+        assert_eq!(
+            cargo_target(&repo, &test.path).unwrap().1,
+            vec!["--test", "keel_check"]
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     fn temp_repo(label: &str) -> PathBuf {
         let nanos = SystemTime::now()

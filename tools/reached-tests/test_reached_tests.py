@@ -31,6 +31,20 @@ def reach(*changed, repo=None):
 
 
 class Reach(unittest.TestCase):
+    def test_repository_cli_files_select_bundled_modules(self):
+        # Cost: offline cargo metadata and file reads. Fixture-only bundle coverage misses a
+        # manifest that still auto-discovers individual targets or forgets a newly added file.
+        repo = Path(__file__).resolve().parents[2]
+        packages = rt.workspace(repo)
+        for source in sorted((repo / "apps/cli/tests").glob("*.rs")):
+            if source.stem == "cli":
+                continue
+            whole, single, *_ = rt.reach([source.relative_to(repo).as_posix()], packages, {}, repo)
+            self.assertEqual(whole, set())
+            self.assertEqual(single, {("graphhelm-cli", "cli", source.stem)}, source.name)
+            self.assertIn(f"cargo +1.97.1 test --locked -p graphhelm-cli --test cli {source.stem}::",
+                          rt.commands(whole, single, []))
+
     def test_a_journey_flow_file_reaches_the_scope_guard_and_journey_validate(self):
         # #504 review: a flows-only diff (#430-style) printed no test, only "unmapped".
         whole, single, studio, tools, validate, other = reach(".graphhelm/journeys/checkout.journey.yaml")

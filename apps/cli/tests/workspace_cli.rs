@@ -408,6 +408,68 @@ fn the_public_slot_refuses_script_commands_before_any_effect() {
 /// Credible regressions: two builds overlap in the shared target (the stale-artifact and
 /// lock-contention failure), a later waiter overtakes, or a dead waiter's ticket blocks everyone
 /// (the lost-ticket failure of the script this replaces). Cost: three short child commands.
+#[test]
+fn the_slot_serves_one_command_at_a_time_in_order_and_skips_dead_waiters() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let root_s = root.to_str().unwrap();
+    // A dead waiter: a ticket older than everyone, whose lock nobody holds.
+    let tickets = root.join(".graphhelm-workspaces").join("slot");
+    std::fs::create_dir_all(&tickets).unwrap();
+    std::fs::write(tickets.join(format!("{:024}-ghost-1.ticket", 1)), "").unwrap();
+    let log = dir.path().join("log.txt");
+    let first = slot(root_s, "lane-a", &marker_command(&log, "a", 1500));
+    // #549: wait for lane-a's ticket itself, not 400 ms and a hope. Under load lane-a could
+    // still be starting when lane-b took the older ticket, and the order asserted below inverted.
+    let waited = std::time::Instant::now();
+    let ceiling = support::time_scale::scaled(std::time::Duration::from_secs(30));
+    while !std::fs::read_dir(&tickets)
+        .unwrap()
+        .flatten()
+        .any(|entry| entry.file_name().to_string_lossy().contains("-lane-a-"))
+    {
+        assert!(
+            waited.elapsed() < ceiling,
+            "lane-a never took a slot ticket within {ceiling:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let second = slot(root_s, "lane-b", &marker_command(&log, "b", 100));
+    let first = first.wait_with_output().unwrap();
+    let second = second.wait_with_output().unwrap();
+    assert!(
+        first.status.success() && second.status.success(),
+        "{first:?} {second:?}"
+    );
+    let reply: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(reply["data"]["exitCode"], 0, "{reply}");
+    let text = std::fs::read_to_string(&log).unwrap();
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    assert_eq!(lines.len(), 4, "{text}");
+    assert!(lines[0].starts_with("a start"), "{text}");
+    assert_eq!(
+        lines[1], "a end",
+        "the second command ran inside the first: {text}"
+    );
+    assert!(lines[2].starts_with("b start"), "{text}");
+    assert_eq!(lines[3], "b end");
+    let own = dir.path().join("target");
+    assert!(
+        lines[0].contains(own.to_str().unwrap()) && lines[0].ends_with(" 3"),
+        "the command gets its own worktree's target and the job count: {text}"
+    );
+    let left: Vec<_> = std::fs::read_dir(&tickets)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "ticket"))
+        .collect();
+    assert!(
+        left.is_empty(),
+        "every ticket, the dead one included, is gone: {left:?}"
+    );
+}
+
+#[path = "support/mod.rs"]
 mod support;
 
 struct Server(std::process::Child);

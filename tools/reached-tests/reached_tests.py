@@ -53,10 +53,10 @@ RUNTIME_READERS = {
 # The `#[ignore]` browser observers (docs/guides/journeys.md): the real proof of a change to the
 # journey driver, replay, explore or live play. Printed, never run for you: they need a browser.
 BROWSER_OBSERVERS = ("GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT=<dir with node_modules/@playwright/test> "
-                     "cargo +1.97.1 test --locked -p graphhelm-cli --test journey_replay_browser "
-                     "--test journey_explore_browser --test journey_live_browser -- --ignored --test-threads=2")
-BROWSER_ARGV = ["cargo", TOOLCHAIN, "test", "--locked", "-p", CLI, "--test", "journey_replay_browser",
-                "--test", "journey_explore_browser", "--test", "journey_live_browser", "--", "--ignored",
+                     "cargo +1.97.1 test --locked -p graphhelm-cli --test cli "
+                     "-- --ignored journey_replay_browser:: journey_explore_browser:: journey_live_browser::")
+BROWSER_ARGV = ["cargo", TOOLCHAIN, "test", "--locked", "-p", CLI, "--test", "cli", "--", "--ignored",
+                "journey_replay_browser::", "journey_explore_browser::", "journey_live_browser::",
                 "--test-threads=2"]
 BROWSER_REACHERS = ("tools/journey-driver/", "apps/cli/src/commands/journey_replay.rs",
                     "apps/cli/src/commands/journey_explore.rs", "apps/cli/src/commands/journey_live.rs",

@@ -112,19 +112,6 @@ fn read_state(dir: &Path) -> Option<Value> {
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
 }
 
-/// The stored state as a reader judges it (#586), from `read` (the state file). A runner writes
-/// its last state and only then exits, so a reader that saw `running` and then finds the runner
-/// gone reads once more: what is stored now is what the runner left (`ready`, `failed`), and only
-/// a state still `running` belongs to a runner that died. Without the second read a run that
-/// finished between the read and the liveness check answered `failed / internal`.
-fn read_settled(mut read: impl FnMut() -> Option<Value>) -> Option<Value> {
-    let state = read()?;
-    if state["state"] == "running" && !runner_alive(&state) {
-        return read();
-    }
-    Some(state)
-}
-
 fn save_state(dir: &Path, state: &Value) {
     let mut bytes = serde_json::to_vec_pretty(state).unwrap();
     bytes.push(b'\n');
@@ -135,13 +122,25 @@ fn save_state(dir: &Path, state: &Value) {
 /// before that, a just-started run counts as alive for `RUNNER_GRACE`. Past the budget plus that
 /// grace no runner is alive, even when the pid now names another process (#560 review: a hard
 /// kill, then pid reuse, would otherwise read `running` for ever).
-fn runner_alive(state: &Value) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Liveness {
+    Alive,
+    Dead,
+    Unknown,
+}
+
+fn runner_liveness(state: &Value) -> Liveness {
+    runner_liveness_with(state, alive)
+}
+
+fn runner_liveness_with(state: &Value, probe: impl FnOnce(u64) -> Liveness) -> Liveness {
     if !within_budget(state) {
-        return false;
+        return Liveness::Dead;
     }
     match state["pid"].as_u64() {
-        Some(pid) => alive(pid),
-        None => younger_than(state, RUNNER_GRACE),
+        Some(pid) => probe(pid),
+        None if younger_than(state, RUNNER_GRACE) => Liveness::Alive,
+        None => Liveness::Unknown,
     }
 }
 
@@ -163,27 +162,64 @@ fn younger_than(state: &Value, limit: Duration) -> bool {
 /// How long a started run may take to write its own pid.
 const RUNNER_GRACE: Duration = Duration::from_secs(60);
 
-fn alive(pid: u64) -> bool {
+fn alive(pid: u64) -> Liveness {
     #[cfg(windows)]
     {
-        Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()
-            .and_then(|output| String::from_utf8(output.stdout).ok())
-            .is_some_and(|text| text.contains(&format!("\"{pid}\"")))
+        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, GetLastError};
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        let Ok(pid) = u32::try_from(pid) else {
+            return Liveness::Dead;
+        };
+        // SAFETY: OpenProcess returns an owned handle or null; the handle is closed below.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            // ERROR_INVALID_PARAMETER means the PID does not exist; access and other API
+            // failures do not prove that the runner is gone.
+            return if unsafe { GetLastError() } == ERROR_INVALID_PARAMETER {
+                Liveness::Dead
+            } else {
+                Liveness::Unknown
+            };
+        }
+        let mut exit_code = 0;
+        // SAFETY: handle is valid and exit_code points to writable storage.
+        let queried = unsafe { GetExitCodeProcess(handle, &mut exit_code) };
+        // SAFETY: this function owns the handle returned by OpenProcess.
+        unsafe { CloseHandle(handle) };
+        if queried == 0 {
+            Liveness::Unknown
+        } else if exit_code == 259 {
+            Liveness::Alive
+        } else {
+            Liveness::Dead
+        }
     }
     #[cfg(not(windows))]
     {
-        Path::new(&format!("/proc/{pid}")).exists()
+        let path = Path::new(&format!("/proc/{pid}"));
+        match std::fs::metadata(path) {
+            Ok(_) => Liveness::Alive,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Liveness::Dead,
+            Err(_) => Liveness::Unknown,
+        }
     }
 }
 
 /// The body every preview answer carries: the stored run when it is for this flow and commit,
 /// else `state: none`. Private fields (the runner's pid, frame files) never leave this module.
 fn body(state: Option<Value>, flow: &Value, digest: &str, commit: &str) -> Value {
+    body_with(state, flow, digest, commit, &runner_liveness)
+}
+
+fn body_with(
+    state: Option<Value>,
+    flow: &Value,
+    digest: &str,
+    commit: &str,
+    liveness: &impl Fn(&Value) -> Liveness,
+) -> Value {
     let kind = if flow["status"] == "approved" {
         "replay"
     } else {
@@ -197,7 +233,8 @@ fn body(state: Option<Value>, flow: &Value, digest: &str, commit: &str) -> Value
     }
     // The kind follows the flow as it is now: approving it turns the same run into a replay's.
     state["kind"] = kind.into();
-    if state["state"] == "running" && !runner_alive(&state) {
+    if state["state"] == "running" && (!within_budget(&state) || liveness(&state) == Liveness::Dead)
+    {
         // A runner that died without finishing never reports; say so instead of "running" forever.
         // Past its budget the run did not finish in time, whatever became of the runner (#560
         // review): its own watchdog ends it there.
@@ -287,9 +324,9 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
     };
     let dir = dir_of(&project, &args.id);
     let stored = reap_lost(&project, &dir);
-    let running_now = stored
-        .as_ref()
-        .is_some_and(|state| state["state"] == "running" && runner_alive(state));
+    let running_now = stored.as_ref().is_some_and(|state| {
+        state["state"] == "running" && runner_liveness(state) == Liveness::Alive
+    });
     let current = body(stored.clone(), &flow, &digest, &commit);
     if running_now {
         if current["state"] == "running" {
@@ -415,10 +452,22 @@ fn reap_lost_from(
     dir: &Path,
     read: impl FnMut() -> Option<Value>,
 ) -> Option<Value> {
+    reap_lost_from_with(project, dir, read, runner_liveness)
+}
+
+fn reap_lost_from_with(
+    project: &Path,
+    dir: &Path,
+    read: impl FnMut() -> Option<Value>,
+    liveness: impl Fn(&Value) -> Liveness,
+) -> Option<Value> {
     // Settled first (#586): a run that finished between the read and the liveness check is read
     // as it finished, and is never reaped.
-    let mut state = read_settled(read)?;
-    if state["state"] != "running" || runner_alive(&state) || state["launched"].is_null() {
+    let mut state = read_settled_with(read, &liveness)?;
+    if state["state"] != "running"
+        || liveness(&state) != Liveness::Dead
+        || state["launched"].is_null()
+    {
         return Some(state);
     }
     if let Some(stop) = LaunchedStop::from_record(project, &state["launched"]) {
@@ -436,6 +485,17 @@ fn reap_lost_from(
         object.remove("launched");
     }
     save_state(dir, &state);
+    Some(state)
+}
+
+fn read_settled_with(
+    mut read: impl FnMut() -> Option<Value>,
+    liveness: &impl Fn(&Value) -> Liveness,
+) -> Option<Value> {
+    let state = read()?;
+    if state["state"] == "running" && liveness(&state) == Liveness::Dead {
+        return read();
+    }
     Some(state)
 }
 
@@ -960,9 +1020,9 @@ fn sha_of(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        Guard, JourneyPreviewArgs, body, failed_reason, plain_id, proof_args, read_settled,
-        read_state, reap_lost, reap_lost_from, runner_alive, save_state, severity, step_reason,
-        unsealed_proof, watch_budget,
+        Guard, JourneyPreviewArgs, body, failed_reason, plain_id, proof_args, read_state,
+        reap_lost, reap_lost_from, reap_lost_from_with, runner_liveness, runner_liveness_with,
+        save_state, severity, step_reason, unsealed_proof, watch_budget,
     };
     use serde_json::{Value, json};
     use std::path::Path;
@@ -1097,10 +1157,10 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         let pid = std::process::id();
         let fresh =
             json!({"state":"running","pid":pid,"startedAt":chrono::Utc::now().to_rfc3339()});
-        assert!(runner_alive(&fresh));
+        assert_eq!(runner_liveness(&fresh), super::Liveness::Alive);
         let old = json!({"state":"running","pid":pid,
             "startedAt":(chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339()});
-        assert!(!runner_alive(&old));
+        assert_eq!(runner_liveness(&old), super::Liveness::Dead);
         let flow = json!({"status":"draft"});
         let mut stored = old.clone();
         stored["digest"] = "sha256:aa".into();
@@ -1109,6 +1169,46 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         assert_eq!(answer["state"], "failed");
         // #560 review (gh-claude-3's real run): past its budget the run did not finish in time.
         assert_eq!(answer["reason"], "preview.budget_exceeded");
+    }
+
+    /// #676: a failed process probe is not evidence that a running preview is dead, so its
+    /// launched app must not receive `down` and its state must remain running. Cost: one temp
+    /// fixture and one injected probe; no subprocess, browser or network.
+    #[test]
+    fn an_unavailable_liveness_probe_never_reaps_a_running_preview() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join(".graphhelm")).unwrap();
+        std::fs::write(
+            project.path().join(".graphhelm/journey-fixture.json"),
+            r#"{"schema":"graphhelm-journey-fixture/1","script":"fake.sh","isolated":true}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join("fake.sh"),
+            "#!/usr/bin/env bash\nif [ \"$1\" = down ]; then echo down >> down.log; fi\n",
+        )
+        .unwrap();
+        let previews = tempfile::tempdir().unwrap();
+        let app = project.path().join("fixture-app");
+        std::fs::create_dir(&app).unwrap();
+        let running = json!({"preview":true,"digest":"sha256:aa","commit":"c1","state":"running",
+            "pid":123,"startedAt":chrono::Utc::now().to_rfc3339(),"screens":{},"edges":{},
+            "launched":{"script":"fake.sh","dir":app.to_string_lossy()}});
+        save_state(previews.path(), &running);
+
+        let result = reap_lost_from_with(
+            project.path(),
+            previews.path(),
+            || read_state(previews.path()),
+            |state| runner_liveness_with(state, |_| super::Liveness::Unknown),
+        )
+        .unwrap();
+
+        assert_eq!(result["state"], "running", "{result}");
+        assert!(result["launched"].is_object(), "{result}");
+        assert!(!project.path().join("down.log").exists());
+        assert!(app.exists());
+        assert_eq!(read_state(previews.path()).unwrap()["state"], "running");
     }
 
     /// #560 review (gh-claude-3's real run: a runner still alive 15 minutes after a 300 s budget,
@@ -1248,11 +1348,24 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         let answer = |reads: Vec<Value>| {
             let mut reads = reads.into_iter();
             let mut count = 0;
-            let stored = read_settled(|| {
-                count += 1;
-                reads.next()
-            });
-            (body(stored, &flow, "sha256:aa", "c1"), count)
+            let probe = |state: &Value| {
+                if state["pid"] == std::process::id() {
+                    super::Liveness::Alive
+                } else {
+                    super::Liveness::Dead
+                }
+            };
+            let stored = super::read_settled_with(
+                || {
+                    count += 1;
+                    reads.next()
+                },
+                &probe,
+            );
+            (
+                super::body_with(stored, &flow, "sha256:aa", "c1", &probe),
+                count,
+            )
         };
 
         let (finished, _) = answer(vec![gone.clone(), ready]);

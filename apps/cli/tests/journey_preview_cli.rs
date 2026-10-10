@@ -120,6 +120,11 @@ fn a_preview_runs_once_keeps_its_result_and_runs_anew_only_when_asked() {
     let first = settled(dir.path());
     assert_eq!(first["state"], "failed", "{first}");
     assert_eq!(first["reason"], "driver.observer_missing", "{first}");
+    // #677: the closed reason must not replace the original refusal. No page text is kept.
+    assert_eq!(
+        first["detail"],
+        serde_json::json!({"code":"replay.observer_missing","pointer":"/observer"})
+    );
     assert!(first["ranAt"].is_string(), "{first}");
 
     // Kept: a second start answers the same run instead of running again.

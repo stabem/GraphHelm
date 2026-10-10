@@ -80,6 +80,11 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 
       graphhelm workspace slot --root D:\gh --lane <lane> --label <what> -- "C:\Program Files\Git\bin\bash.exe" D:\gh\<lane>\<script>.sh
 
+- **The slot wraps Cargo only.** Run `npm ci --prefer-offline --no-audit --no-fund`,
+  `vitest --maxWorkers=1`, `tsc`, and journey previews outside it, from your own worktree.
+  A Cargo script must end before starting a preview or waiting for a browser; otherwise it
+  holds the machine's only build slot while every other lane waits.
+
 - The script exports the worktree's own target and never cleans it:
 
       export CARGO_TARGET_DIR="<your worktree>/target"
@@ -136,9 +141,37 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 - Benchmarks, load generators and store seeding run inside the slot too: they load the machine like
   a build does.
 - Urgency does not exempt cargo builds, tests or clippy from the slot.
+- Do not run CPU stress tests on the shared machine.
 - After the machine reboots, every background run is dead. Queue it again; do not wait for it.
-- **One waiting ticket per lane.** Put everything the diff needs in one script instead of queueing
-  several.
+- **One waiting ticket per lane.** An outer runner may contain all reached checks, but each
+  slot invocation runs one Cargo command and exits before the next one queues. Never put the
+  entire outer runner inside the slot. This lets another waiting lane run between commands.
+- **Use the reached-test runner for ordinary feedback (#718):**
+
+      python tools/reached-tests/run_reached.py --repo . --base origin/main --head HEAD --root D:/gh --lane <lane> --output <outside-repo>/feedback.json
+
+  It plans the committed diff and queues each Cargo test or clippy command separately, with six
+  build jobs and two test threads. Fmt, Python, Node, Studio checks and standalone journey tools
+  run outside the Cargo slot, serially. Existing root target rules remain authoritative. The
+  runner does not install dependencies, clean targets, bypass the queue or add holders.
+  Reached browser observers require `--include-browser` and an installed local toolchain named
+  by `GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT`. Without that explicit opt-in the report is incomplete
+  and lists pending checks; it does not silently skip them or start browsers. Their Cargo test
+  commands retain the slot and thread limits; standalone preview commands stay outside it.
+
+  The default 180-second budget starts before planning and includes waiting. The report lists
+  completed and pending checks and available slot wait/hold times. A late, failed or incomplete
+  run is not a pass. A running command retains the slot until it exits; exceeding the budget never
+  kills only a parent and releases the lock over surviving children. No further check starts
+  after the budget is exhausted. Unmapped paths and whole-package plans require explicit handling;
+  a whole-package exception needs its reason in the card and the runner argument.
+
+  Keep the same isolated worktree target warm across edits. Cold preparation and explicit broad
+  audits may exceed 180 seconds and must be reported as such. Long experiments run as separate
+  commands in an agreed quiet window, not as one script ahead of ordinary changes. With twenty
+  concurrent requests, one local slot cannot guarantee every result within 180 seconds; report
+  the actual miss rather than hiding the queue or increasing CPU pressure.
+
 - Authors and reviewers share one test budget (DELIVERY.md §3). Run only what the diff reaches:
 
       python tools/reached-tests/reached_tests.py
@@ -183,6 +216,56 @@ so lands, also run `$T --issue N review_assigned --pr P --head SHA --reviewer <r
 Record only as yourself. Recording as another lane is a protocol violation the Runtime cannot stop.
 
 ## 5. Naming and messages
+
+### Autonomous lane wake loop
+
+Studio's **Ask for status** appends an `operator_note` addressed with `to: <lane>` on the
+team execution. SendMessage is not its delivery mechanism. Every active lane must maintain
+this loop; the coordinator does not nudge it:
+
+1. Bind the host/plugin to the **team execution**. On Desktop, put `executionId`, `runtimeUrl`,
+   and the agent token file path in the repository's ignored `.graphhelm/team.json`; SessionStart
+   saves the valid Desktop `session_title` by `session_id`, and Stop resolves the lane from that
+   saved session identity. Explicit `GRAPHHELM_*` environment variables still take precedence.
+   Codex sessions without a title use `GRAPHHELM_EXECUTION_ID`, `GRAPHHELM_RUNTIME_URL`,
+   `GRAPHHELM_TOKEN_FILE`, and `GRAPHHELM_ACTOR=<lane>`. Keep the actor distinct from the MCP
+   session identity.
+2. Read `events` through its head, opening sealed `operator_note` evidence with `evidence`.
+   Match the envelope's `to` exactly to your lane. Read notes from owners and agents;
+   do not filter only owner events. Act on each pending addressed note within your authority.
+   Reply as yourself with an `operator_note` whose `replyTo` is the original signal id.
+   A reply can report a blocker; it must not claim unperformed work. A note remains pending
+   until that lane replies. An unrelated task record or another lane's reply does not clear it.
+3. Arm `wake_arm` on that execution with `cursor` at the last sequence actually read,
+   a lane/session-specific opaque `rendezvousId`, and a finite `maturesInSeconds` (for example
+   60). Retain the returned `sessionId`; the lease belongs to that MCP session, not the lane name.
+4. Keep the co-located sidecar running as a **background task whose completion wakes the host**:
+
+       graphhelm wake-wait --events <team-events-directory> --execution <team-execution> --session-id <sessionId-from-wake_arm>
+
+   Do not occupy the Cargo slot. On Windows, a separate process started with `Start-Process`
+   must use `-WindowStyle Hidden`; a detached process alone is insufficient because its exit
+   does not resume an agent turn. Use the host's background-task completion notification.
+   A remote host without access to the store uses `wake_wait` in the same MCP session that
+   armed the lease, with equivalent completion notification.
+5. Exit **0** means ring: read from your last read cursor, act on addressed notes, reply, and
+   re-arm. Exit **3** means timeout: do the same fallback read, then re-arm and restart the
+   waiter. Never assume timeout means no note arrived. Other exits are a binding/wait failure:
+   diagnose it and restore the loop; do not silently retire the waiter. Always arm from the
+   last read cursor, not a newly fetched head, so a note arriving between read and arm rings.
+
+The plugin's `lane_stop_hook.py` runs on Stop in both host manifests. It reads the team log
+and sealed evidence, blocks with **"read the notes addressed to you"** while addressed notes
+remain unanswered, and never acknowledges them itself. Repeated Stop does not bypass it.
+An unbound session is unaffected; a bound lane with an unreadable log or missing actor blocks
+with a binding/read diagnostic. Each check scans at most 4096 events and has an eight-second
+child-process timeout; the host allows ten seconds. A larger or slow log remains unverified,
+not silently clear. No message text or credentials are printed by the hook.
+
+This hook prevents a pending ask from being abandoned at turn end. It cannot launch a dead
+host. After reboot, restart the host and the loop. A host without background completion
+notification must report `OBSERVER_MISSING: host wake notification`; it cannot claim autonomous
+wake merely because a lease exists. Reload the installed plugin to use the new Stop hook.
 
 - Issue title `<Area>: <what changes for the user>`, at most 50 characters; PR title
   `type(area): <what changes for the user>`, at most 60. Both bodies start with

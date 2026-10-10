@@ -123,7 +123,10 @@ function heldWords(flow: JourneyFlowView, held: NonNullable<JourneyRunView["held
 
 function runWords(run: JourneyRunView): string {
   if (run.state === "running") return "Running this journey's test…";
-  if (run.state === "failed") return `Couldn't run this journey's test: ${RUN_REASON[run.reason ?? ""] ?? "something went wrong in the Runtime"}.`;
+  if (run.state === "failed") {
+    const detail = run.detail ? ` (${run.detail.code} at ${run.detail.pointer})` : "";
+    return `Couldn't run this journey's test: ${RUN_REASON[run.reason ?? ""] ?? "something went wrong in the Runtime"}${detail}.`;
+  }
   if (run.state !== "ready") return "This journey's test has not run yet.";
   if (run.held) return "Stopped before a step that changes data";
   const result = run.result === "pass" ? "Test passed" : run.result === "drift" ? "The app no longer matches this journey" : run.result === "fail" ? "Test failed" : "Test ran";

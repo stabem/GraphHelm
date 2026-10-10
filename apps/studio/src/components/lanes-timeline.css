@@ -11,7 +11,7 @@
 .lt-key[data-kind="merge"]::before { background: var(--mv-proven); }
 .lt-key[data-kind="silent"]::before { background: repeating-linear-gradient(135deg, var(--mv-stalled) 0 3px, #3A1E1A 3px 6px); }
 
-.lt-row { display: grid; grid-template-columns: 170px minmax(0, 1fr) 190px; gap: 16px; align-items: center; }
+.lt-row { display: grid; grid-template-columns: 170px minmax(0, 1fr) 240px; gap: 16px; align-items: center; }
 .lt-axis { font-family: var(--mono); font-size: 11px; color: #8D929C; }
 .lt-ticks { display: flex; justify-content: space-between; }
 .lt-now { color: #E9E7E2; }
@@ -31,7 +31,7 @@
 .lt-bar[data-kind="review"] { background: var(--mv-work); }
 .lt-bar[data-kind="merge"] { background: var(--mv-proven); }
 .lt-bar[data-silent="true"] { background: repeating-linear-gradient(135deg, var(--mv-stalled) 0 4px, #3A1E1A 4px 8px); color: #FFE3DF; outline: 1px solid var(--mv-stalled); }
-.lt-last { color: #A9AEB8; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lt-last { color: #A9AEB8; font-size: 12px; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
 
 .lt-cards { display: flex; flex-wrap: wrap; gap: 8px; }
 .lt-card { flex: 1 1 220px; display: flex; flex-direction: column; gap: 4px; padding: 6px 10px; border-radius: 8px; font-size: 12px; background: #111216; border: 1px solid #1E2026; }
@@ -53,8 +53,14 @@
 .ab-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .ab-chip { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid #2A2D35; background: #111216; color: #A9AEB8; cursor: pointer; }
 .ab-chip[aria-pressed="true"] { background: #1E2129; color: #E9E7E2; border-color: #4A4F5C; }
-.ab-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.ab-row { display: grid; grid-template-columns: minmax(96px, max-content) minmax(13ch, 160px) minmax(0, 1fr) 110px 190px auto; gap: 12px; align-items: center; padding: 7px 12px; border-radius: 8px; background: #111216; border: 1px solid #1A1C21; }
+/* #706: the rows share one track template (subgrid), so a long "latest" line widens its column for
+ * every row and never wraps inside a time. #716: at 1440 the "latest" column wraps between its " · " parts
+ * (never inside one), so "last delivered" gets the width to read in full. */
+.ab-rows { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(96px, max-content) minmax(13ch, max-content) minmax(0, 1fr) minmax(0, 160px) minmax(0, 2fr) auto; row-gap: 6px; }
+@media (min-width: 1700px) {
+  .ab-rows { grid-template-columns: minmax(96px, max-content) minmax(13ch, max-content) minmax(0, 1fr) minmax(0, 260px) minmax(0, 2fr) auto; }
+}
+.ab-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; gap: 14px; align-items: center; padding: 8px 12px; line-height: 1.35; border-radius: 8px; background: #111216; border: 1px solid #1A1C21; }
 .ab-row:hover { background: #16181D; border-color: #2A2D35; }
 .ab-row:focus-within { border-color: #4A4F5C; }
 .ab-act:focus-visible, .ab-chip:focus-visible, .ab-what a:focus-visible { outline: 2px solid #8FB3D9; outline-offset: 2px; }
@@ -66,14 +72,16 @@
 .ab-pill[data-status="silent"] { background: #3A1E1A; color: #FF8A7E; }
 .ab-name { font-family: var(--mono); font-size: 12.5px; min-width: 13ch; overflow-wrap: normal; word-break: keep-all; hyphens: manual; }
 .ab-what { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; color: #C9CCD2; }
-.ab-doing { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ab-tag { display: inline-block; white-space: nowrap; font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 6px; background: #1C1F25; border: 1px solid #2A2D35; color: #C7CBD3; }
-.ab-last { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ab-doing { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
+.ab-tag { display: inline-block; max-width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 6px; background: #1C1F25; border: 1px solid #2A2D35; color: #C7CBD3; }
+.ab-last { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
 .ab-what a { color: #8FB3D9; }
-.ab-for { font-family: var(--mono); font-size: 12px; color: #E9E7E2; }
+.ab-for { font-family: var(--mono); font-size: 12px; color: #E9E7E2; overflow-wrap: break-word; }
+/* #716: a chip or a "latest" line wraps only between its " · " parts, never inside one. */
+.ab-for > span, .ab-tag > span { white-space: nowrap; }
 .ab-last { color: #8D929C; font-size: 12px; }
 @media (max-width: 700px) {
-  .ab-row { grid-template-columns: max-content minmax(13ch, 1fr) 90px auto; }
+  .ab-rows { grid-template-columns: max-content minmax(13ch, 1fr) max-content auto; }
   .ab-what, .ab-last { display: none; }
 }
 

@@ -56,6 +56,8 @@ export interface PathCell {
   title: string | null;
   /** #591: the current card's extra line (`after BLOCK by <reviewer>`). */
   sub: string | null;
+  /** #706: a badge the issue graph draws on the cell (`proven ✓` on Merged). */
+  badge?: string | null;
 }
 /** An arrow inside one row: `col` to `col`, solid between done cells, dashed into the current one;
  * `loop` is the Fix back to the re-review in the Review column. */
@@ -181,6 +183,35 @@ export function prPath(raw: TaskState, proven: boolean): Omit<PrRow, "task"> {
   const edges: PathEdge[] = lit.slice(1).map((b, i) => ({ row: t.key, from: lit[i]!.col, to: b.col, kind: b.state === "current" && !fixPushed ? "next" : "done" }));
   if (fixes > 0) edges.push({ row: t.key, from: COL.fix, to: COL.review, kind: fixPushed ? "next" : "done" });
   return { key: t.key, open: t.step !== "merged", cells, edges };
+}
+
+/** #706: the five columns the issue graph draws. Plan and Proven stay in `prPath`'s data; the graph
+ * shows them as a tag on the row title and a badge on the Merged cell. */
+export const GRAPH_STAGES: readonly { id: WorkStage; label: string }[] = WORK_STAGES.filter((s) => s.id !== "plan" && s.id !== "proven");
+/** #706: the graph column a stage is drawn in: a current Plan sits in Implement, Proven on Merged. */
+export function graphCol(stage: WorkStage): number {
+  return stage === "plan" ? 0 : stage === "proven" ? GRAPH_STAGES.length - 1 : COL[stage] - 1;
+}
+export interface GraphRow { planTag: "plan ✓" | "planning" | null; proven: boolean; cells: PathCell[]; edges: PathEdge[] }
+/** #706: one PR's path mapped onto the five graph columns. The Plan cell becomes the title tag (and,
+ * while planning, the current card in Implement, labelled Planning); the Proven cell becomes a
+ * `proven ✓` badge on Merged; arrows into or out of either are dropped, the rest shift one column. */
+export function graphRow(row: Pick<PrRow, "cells" | "edges">): GraphRow {
+  const plan = row.cells.find((c) => c.stage === "plan");
+  const proven = row.cells.find((c) => c.stage === "proven");
+  const planning = plan?.state === "current";
+  const isProven = proven !== undefined && (proven.state === "current" || proven.mark === "✓");
+  const cells = row.cells.flatMap((c): PathCell[] => {
+    if (c.stage === "proven") return [];
+    if (c.stage === "plan") return planning ? [{ ...c, col: 0, label: "Planning" }] : [];
+    if (planning && c.stage === "implement") return [];
+    const col = c.col - 1;
+    return c.stage === "merged" && isProven ? [{ ...c, col, state: c.state === "ahead" ? "done" : c.state, badge: "proven ✓" }] : [{ ...c, col }];
+  });
+  const edges = row.edges.filter((e) => ![COL.plan, COL.proven].includes(e.from) && ![COL.plan, COL.proven].includes(e.to))
+    .map((e) => ({ ...e, from: e.from - 1, to: e.to - 1 }));
+  const planTag = planning ? "planning" : plan?.mark === "✓" ? "plan ✓" : null;
+  return { planTag, proven: isProven, cells, edges };
 }
 
 /** #591: open rows first by the `focusTask` rank, then merged rows; ties keep PR order. */

@@ -632,6 +632,43 @@ def test_codex_routed_run_prices_tokens_even_on_failure(tmp_path, monkeypatch, c
     assert "100/40/20" in output
 
 
+@pytest.mark.parametrize("refused", [True, False])
+@pytest.mark.parametrize("observed_usage", [True, False])
+def test_codex_model_refusal_stops_remaining_runs(tmp_path, monkeypatch, refused, observed_usage):
+    """Catch repeated paid dispatch after refusal, without stopping other failures; mocked I/O, <1s."""
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps(inference_config() | {"host": "codex", "provider": "openai",
+        "model": "gpt-6-sol", "pricesUsdPerMillion": {"input": 2, "cachedInput": 0.5, "output": 8}}))
+    cli = tmp_path / "codex"
+    cli.write_bytes(b"fixture")
+    task_id = next(iter(doless.load_tasks()))
+    monkeypatch.setattr(doless, "RESULTS", tmp_path / "rows.jsonl")
+    monkeypatch.setattr(doless.runner, "validate_prerequisites", lambda *a, **kw:
+        {"path": str(cli), "sha256": doless.runner.digest_file(cli)})
+    monkeypatch.setattr(doless.runner, "make_worktree", lambda *a: tmp_path)
+    monkeypatch.setattr(doless, "score_checkout", lambda *a: green_row())
+    cleaned, calls = [], []
+    monkeypatch.setattr(doless, "remove_checkout", lambda wt: cleaned.append(wt))
+    def capture(cmd, **kw):
+        calls.append(cmd)
+        message = ("The gpt-6-sol model is not supported when using Codex with a ChatGPT account."
+                   if refused else "400 Bad Request: invalid request")
+        stream = ('{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":20}}\n'
+                  if observed_usage else '') + json.dumps({"type": "error", "message": message})
+        return subprocess.CompletedProcess(cmd, 1, stream, ""), False
+    monkeypatch.setattr(doless.runner, "_run_captured", capture)
+    monkeypatch.setattr(sys, "argv", ["doless.py", "run", "--executor", "codex", "--task", task_id,
+        "--arm", "a", "--inference-config", str(config), "--runs", "3"])
+    doless.main()
+    rows = [json.loads(line) for line in doless.RESULTS.read_text().splitlines()]
+    assert len(rows) == len(calls) == len(cleaned) == (1 if refused else 3)
+    assert rows[0]["verdict"] == "INCOMPLETE"
+    assert ("model_refused" in rows[0]["verdictReasons"]) == refused
+    assert rows[0]["tokens"] == ({"input_tokens": 100, "cached_input_tokens": 40, "output_tokens": 20}
+                                  if observed_usage else None)
+    assert rows[0]["costUsd"] == (pytest.approx(0.0003) if observed_usage else None)
+
+
 def test_inference_configuration_is_frozen_and_refuses_unsupported_controls(tmp_path):
     """Catches aliases, unsupported effort or conflicting CLI model reaching a paid run; <1s, files only."""
     import pytest

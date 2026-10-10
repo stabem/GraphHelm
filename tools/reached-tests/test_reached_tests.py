@@ -44,12 +44,44 @@ class Reach(unittest.TestCase):
             self.assertIn(rt.BROWSER_OBSERVERS, tools, path)
         *_, tools, _, _ = reach("core/policy/src/lib.rs")
         self.assertNotIn(rt.BROWSER_OBSERVERS, tools)
+        self.assertIn("-- --ignored --test-threads=2", rt.BROWSER_OBSERVERS)
+
+    def test_rust_package_and_workspace_guard_commands_bound_test_parallelism(self):
+        commands = rt.commands({"graphhelm-cli"}, set(), [])
+        self.assertIn("cargo +1.97.1 test --locked -p graphhelm-cli -- --test-threads=2", commands)
+        self.assertIn(rt.GUARD, commands)
+
+    def test_steps_keep_argv_and_slot_metadata_without_shell_parsing(self):
+        records = rt.steps({"graphhelm-cli"}, set(), ["apps/studio/src/runtime/team-tasks.ts"],
+                           [rt.BROWSER_OBSERVERS], [])
+        self.assertEqual(records[0], {"argv": rt.BROWSER_ARGV, "cwd": ".", "slot": True, "observer": "browser"})
+        self.assertEqual(records[1]["argv"], ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli",
+                                               "--", "--test-threads=2"])
+        self.assertEqual(records[-2], {"argv": ["npx", "vitest", "related", "--run", "--maxWorkers=1",
+                                                 "src/runtime/team-tasks.ts"],
+                                       "cwd": "apps/studio", "slot": False})
+        self.assertEqual(records[-1], {"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio", "slot": False})
+
+    def test_lint_scope_does_not_follow_test_dependents(self):
+        self.assertEqual(rt.lint_scope(["core/policy/src/keel_plan.rs"], PACKAGES, EMBEDDED), {"graphhelm-policy"})
+        commands = rt.commands({"graphhelm-policy", "graphhelm-execution", "graphhelm-cli"}, set(), [],
+                               lint_packages={"graphhelm-policy"})
+        self.assertIn("cargo +1.97.1 clippy --locked -p graphhelm-policy --all-targets --all-features -- -D warnings", commands)
+        self.assertNotIn("-p graphhelm-execution", next(c for c in commands if " clippy " in c))
+
+    def test_node_test_path_with_space_is_recovered_from_filesystem(self):
+        with tempfile.TemporaryDirectory() as repo:
+            path = Path(repo, "tools", "x", "my test.test.mjs")
+            path.parent.mkdir(parents=True)
+            path.write_text("", encoding="utf-8")
+            records = rt.steps(set(), set(), [], ["node --test tools/x/my test.test.mjs"], [], repo=Path(repo))
+        self.assertEqual(records[0]["argv"], ["node", "--test", "tools/x/my test.test.mjs"])
 
     def test_a_test_file_in_a_bundle_reaches_only_its_module(self):
         whole, single, *_ = reach("apps/cli/tests/keel_check.rs")
         self.assertEqual(whole, set())
         self.assertEqual(single, {("graphhelm-cli", "development", "keel_check")})
-        self.assertIn("cargo +1.97.1 test --locked -p graphhelm-cli --test development keel_check::", rt.commands(whole, single, []))
+        self.assertIn("cargo +1.97.1 test --locked -p graphhelm-cli --test development keel_check:: -- --test-threads=2", rt.commands(whole, single, []))
 
     def test_a_test_file_of_its_own_reaches_its_target(self):
         _, single, *_ = reach("core/policy/tests/keel.rs")
@@ -84,7 +116,7 @@ class Reach(unittest.TestCase):
         whole, single, studio, *_ = reach("apps/studio/src/runtime/team-tasks.ts")
         self.assertEqual((whole, single), (set(), set()))
         commands = rt.commands(whole, single, studio)
-        self.assertEqual(commands, ["(cd apps/studio && npx vitest related --run src/runtime/team-tasks.ts && npx tsc -b)"])
+        self.assertEqual(commands, ["(cd apps/studio && npx vitest related --run --maxWorkers=1 src/runtime/team-tasks.ts && npx tsc -b)"])
 
     def test_docs_reach_nothing_and_are_not_reported_unmapped(self):
         whole, single, studio, tools, validate, other = reach("docs/process/DELIVERY.md", "docs/journeys/x/shot.jpg")
@@ -124,7 +156,7 @@ class CliModules(unittest.TestCase):
         files = {
             "journey_explore_cli.rs": 'cmd.args(["--json", "journey", "explore", "--project"]);',
             "keel_check.rs": 'cmd.args(["keel", "check"]);',
-            "surface_completeness.rs": 'let root = env!("CARGO_MANIFEST_DIR"); read(root.join("src/commands/mod.rs"));',
+            "surface_completeness.rs": 'let root = env!("CARGO_MANIFEST_DIR"); read(root.join("src/commands/serve/mod.rs"));',
             "extension_cli.rs": 'cmd.args(["extension", "validate"]);',
         }
         for name, body in files.items():
@@ -140,10 +172,54 @@ class CliModules(unittest.TestCase):
         whole, single, *_ = rt.reach(["apps/cli/src/commands/journey_explore.rs"], packages, {}, root)
         self.assertEqual(whole, set())
         self.assertEqual(single, {("graphhelm-cli", "bin:graphhelm", "commands::journey_explore"),
-                                  ("graphhelm-cli", "journey_explore_cli", None),
-                                  ("graphhelm-cli", "surface_completeness", None)})
-        self.assertIn("cargo +1.97.1 test --locked -p graphhelm-cli --bin graphhelm commands::journey_explore::",
+                                  ("graphhelm-cli", "journey_explore_cli", None)})
+        self.assertIn("cargo +1.97.1 test --locked -p graphhelm-cli --bin graphhelm commands::journey_explore:: -- --test-threads=2",
                       rt.commands(whole, single, []))
+
+    def test_fixture_source_strings_do_not_reach_as_readers(self):
+        root, packages = self.tree()
+        tests = root / "apps/cli/tests"
+        (tests / "api_http.rs").write_text(
+            'let _root = env!("CARGO_MANIFEST_DIR"); let _fixture = "src/lib.rs";', encoding="utf-8")
+        (tests / "runtime_http.rs").write_text(
+            'let _root = env!("CARGO_MANIFEST_DIR"); project.join("src");', encoding="utf-8")
+        packages[0]["tests"] += [{"name": name, "src": f"apps/cli/tests/{name}.rs"}
+                                  for name in ("api_http", "runtime_http")]
+        whole, single, *_ = rt.reach(["apps/cli/src/commands/journey_explore.rs"], packages, {}, root)
+        self.assertNotIn(("graphhelm-cli", "api_http", None), single)
+        self.assertNotIn(("graphhelm-cli", "runtime_http", None), single)
+
+    def test_unknown_source_reader_stays_conservative(self):
+        root, packages = self.tree()
+        tests = root / "apps/cli/tests"
+        (tests / "future_reader.rs").write_text(
+            'let _root = env!("CARGO_MANIFEST_DIR"); let _source = "src/unknown.rs";', encoding="utf-8")
+        packages[0]["tests"].append({"name": "future_reader", "src": "apps/cli/tests/future_reader.rs"})
+        whole, single, *_ = rt.reach(["apps/cli/src/commands/journey_explore.rs"], packages, {}, root)
+        self.assertIn(("graphhelm-cli", "future_reader", None), single)
+
+    def test_scoped_reader_reaches_when_its_real_source_is_touched(self):
+        texts = {
+            Path("surface_completeness.rs"): 'env!("CARGO_MANIFEST_DIR"); "src/commands/serve/mod.rs";',
+        }
+        packages = [dict(PACKAGES[2], tests=PACKAGES[2]["tests"] + [
+            {"name": "surface_completeness", "src": "apps/cli/tests/surface_completeness.rs"}])]
+        self.assertIn(("graphhelm-cli", "surface_completeness", None),
+                      rt.source_reader_targets(texts, packages, "graphhelm-cli", "src/commands/serve/mod.rs"))
+        self.assertNotIn(("graphhelm-cli", "surface_completeness", None),
+                         rt.source_reader_targets(texts, packages, "graphhelm-cli", "src/commands/journey_explore.rs"))
+
+    def test_audited_broad_readers_stay_broad(self):
+        texts = {
+            Path("source_invariants.rs"): 'env!("CARGO_MANIFEST_DIR"); "src/any.rs";',
+            Path("attention_inputs_one_feed.rs"): 'env!("CARGO_MANIFEST_DIR"); join("src");',
+        }
+        packages = [dict(PACKAGES[2], tests=PACKAGES[2]["tests"] + [
+            {"name": name, "src": f"apps/cli/tests/{name}.rs"}
+            for name in ("source_invariants", "attention_inputs_one_feed")])]
+        readers = rt.source_reader_targets(texts, packages, "graphhelm-cli", "src/commands/journey_explore.rs")
+        self.assertEqual(readers, {("graphhelm-cli", "source_invariants", None),
+                                   ("graphhelm-cli", "attention_inputs_one_feed", None)})
 
     def test_a_module_other_modules_import_reaches_their_tests_too(self):
         # #530 review (gh-claude-6): journey_live.rs imports Driver/preflight from journey_replay.rs,

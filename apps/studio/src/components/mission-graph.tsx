@@ -3,7 +3,7 @@ import { useState, type CSSProperties, type ReactNode } from "react";
 import { custodyRows, sha8, TRUST_LABELS, type Mission, type MissionStep, type MissionTask, type StepStatus } from "../runtime/mission";
 import { layoutMission, type PlacedTask } from "../runtime/mission-layout";
 import { liveDuration, stageDuration, type Activity, type StageHealth, type StageProgress } from "../runtime/stage-health";
-import { WORK_STAGES, type PrRow, type WorkGroup, type WorkStage } from "../runtime/work-groups";
+import { GRAPH_STAGES, graphCol, graphRow, type PrRow, type WorkGroup, type WorkStage } from "../runtime/work-groups";
 
 export const STATUS_LABEL: Record<StepStatus, string> = {
   proven: "Proven", failed: "Failed", needs_you: "Needs you", preview_only: "Preview only", not_run: "Not run",
@@ -28,7 +28,7 @@ export function nodeLabel(t: MissionTask, step: MissionStep | undefined): string
 export const prText = (t: MissionTask) => (t.pr ? `#${t.pr}` : "no PR");
 
 // Geometry of the design's artboard: 150px columns 18px apart, 64px of column head, 104px a row.
-export const COL_W = 150, PITCH = 168, HEAD = 64, NODE_H = 88, ROW = 104;
+export const COL_W = 196, PITCH = 216, HEAD = 64, NODE_H = 88, ROW = 104;
 
 interface Seg { style: CSSProperties; dir: "h" | "v" | "right" | "down" | "up"; done: boolean }
 function line(x1: number, y1: number, x2: number, y2: number, done: boolean): Seg {
@@ -114,7 +114,7 @@ export function MissionGraph({ mission, selectedStepId, selectedTaskKey, onSelec
                       <span className="mg-node-label">{nodeLabel(t, steps[col])}</span>
                       <span className="mg-node-pr">{prText(t)}</span>
                     </span>
-                    <span className="mg-node-title">{t.title}</span>
+                    <span className="mg-node-title" title={t.title}>{t.title}</span>
                     <span className="mg-node-who">{t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : "nobody yet"}</span>
                   </button>
                 );
@@ -217,29 +217,34 @@ const STAGE_LABEL: Record<WorkStage, string> = {
 };
 export const stageLabel = (stage: WorkStage, t: MissionTask) => (t.step === "critic" && stage === "plan" ? "Design in review" : STAGE_LABEL[stage]);
 
-/** #591 geometry: a 120px row header, then the seven stage columns; each PR owns one 112px band. */
-export const ROW_HEAD = 120, X0 = ROW_HEAD + 12, BAND = 128, CUR_H = 104, CARD_TOP = 12, CELL_TOP = 36, MID = CARD_TOP + NODE_H / 2, FOLD_H = 44;
-const colX = (col: number) => X0 + col * PITCH;
-/** #591: the row header wraps its whole title (about 17 characters a 16px line in 114px); the band
- * grows to hold it, and the cells stay top-aligned in it. */
-export function rowBand(title: string): number {
-  const lines = Math.max(1, Math.ceil(title.length / 17));
-  return Math.max(BAND, CARD_TOP + 8 + 15 + 4 + lines * 16 + 8 + 12);
-}
+/** #706 geometry: five stage columns sized from the graph box (CSS grid `repeat(5, minmax(140px, 1fr))`
+ * with GAP between them). Arrows are placed with `calc()` against the same track width, so they follow
+ * the columns at any box width without measuring. Inside a row: the current card's top at CARD_TOP, the
+ * done cells' at CELL_TOP (their middle on the card's middle, MID); the loop rides at LOOP_Y above both. */
+export const GRAPH_COLS = GRAPH_STAGES.length, GAP = 12, CARD_TOP = 12, CELL_TOP = 36, MID = CARD_TOP + NODE_H / 2, LOOP_Y = 4;
+/** x of `units` column widths plus `px`, in the row's own width. */
+export const at = (units: number, px: number) => `calc((100% - ${(GRAPH_COLS - 1) * GAP}px) / ${GRAPH_COLS} * ${units} + ${px}px)`;
+const colLeft = (col: number, px = 0) => at(col, col * GAP + px);
+const colMid = (col: number, px = 0) => at(col + 0.5, col * GAP + px);
 
-/** The arrows inside one row: forward ones run straight along the row's middle; the loop from Fix
- * back to the re-review rides above the row's cells, inside its band, so no arrow leaves its row. */
-export function rowSegs(row: PrRow, top: number): Seg[] {
-  const cellTop = (col: number) => top + (row.cells.find((c) => c.col === col)?.state === "current" ? CARD_TOP : CELL_TOP);
+/** The arrows inside one row, positioned in the row's cell strip: forward ones run straight along the
+ * row's middle; the loop from Fix back to the re-review rides above the row's cells, so no arrow leaves its row. */
+export function rowSegs(row: Pick<PrRow, "cells" | "edges">): Seg[] {
+  const cellTop = (col: number) => (row.cells.find((c) => c.col === col)?.state === "current" ? CARD_TOP : CELL_TOP);
   return row.edges.flatMap((e): Seg[] => {
     const done = e.kind === "done";
     if (e.to > e.from) {
-      const sx = colX(e.from) + COL_W, dx = colX(e.to) - 6, y = top + MID;
-      return [line(sx, y, dx, y, done), { dir: "right", done, style: { left: dx, top: y - 5 } }];
+      const n = e.to - e.from;
+      return [{ dir: "h", done, style: { left: colLeft(e.from + 1, -GAP), width: at(n - 1, n * GAP - 6), top: MID - 1, height: 2 } },
+        { dir: "right", done, style: { left: colLeft(e.to, -6), top: MID - 5 } }];
     }
-    const ax = colX(e.from) + COL_W / 2, bx = colX(e.to) + COL_W / 2, high = top + 4;
-    return [line(ax, cellTop(e.from), ax, high, done), line(bx, high, ax, high, done), line(bx, high, bx, cellTop(e.to) - 6, done),
-      { dir: "down", done, style: { left: bx - 5, top: cellTop(e.to) - 6 } }];
+    const n = e.from - e.to, a = cellTop(e.from), b = cellTop(e.to);
+    return [
+      { dir: "v", done, style: { left: colMid(e.from, -1), top: LOOP_Y, width: 2, height: a - LOOP_Y } },
+      { dir: "h", done, style: { left: colMid(e.to), top: LOOP_Y, width: at(n, n * GAP), height: 2 } },
+      { dir: "v", done, style: { left: colMid(e.to, -1), top: LOOP_Y, width: 2, height: b - 6 - LOOP_Y } },
+      { dir: "down", done, style: { left: colMid(e.to, -5), top: b - 6 } },
+    ];
   });
 }
 
@@ -308,17 +313,10 @@ function cardWho(c: PrRow["cells"][number], stage: WorkStage, t: MissionTask): s
   return t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : "nobody yet";
 }
 
-/** #591: how tall the current card grows (measure-free): every line it shows, the who line wrapped
- * at about 22 mono characters a line. The row band grows to hold it. */
-export function cardHeight(c: PrRow["cells"][number], stage: WorkStage, t: MissionTask, health: StageHealth | null, pace: Pace | null): number {
-  const lines = (s: string, per: number) => Math.max(1, Math.ceil(s.length / per));
-  let h = 9 + 15 + Math.min(2, lines(t.title, 22)) * 16;
-  if (c.sub) h += 15;
-  if (health) h += 15;
-  h += lines(cardWho(c, stage, t), 22) * 14;
-  if (pace) h += (pace.progress ? 15 : 0) + 15 + 8;
-  else if (health?.elapsed) h += 14;
-  return Math.max(NODE_H, h + 12);
+/** #706: "author → reviewer" with each lane kept whole: a name never breaks inside itself. */
+function WhoLine({ who }: { who: string }) {
+  const parts = who.split(/( → |, )/);
+  return <span className="mg-node-who">{parts.map((p, i) => (p === " → " || p === ", " ? <span key={i}>{p}</span> : <span key={i} className="mg-lane">{p}</span>))}</span>;
 }
 
 /** #591: the current card. A BLOCK opens a Fixing card for the author (amber, red only when the
@@ -343,11 +341,11 @@ export function CurrentCard({ cell: c, stage, task: t, health, pace, selected, l
         <span className="mg-node-label">{c.count > 1 ? `${base} ×${c.count}` : base}</span>
         <span className="mg-node-pr">{prText(t)}</span>
       </span>
-      <span className="mg-node-title">{t.title}</span>
+      <span className="mg-node-title" title={t.title}>{t.title}</span>
       {c.sub && <span className="mg-node-sub" title={c.sub}>{c.sub}</span>}
       {flag && <HealthFlag health={flag} time={false} />}
       <span className="mg-node-foot">
-        <span className="mg-node-who">{who}</span>
+        <WhoLine who={who} />
         {!pace && health?.elapsed && <span className="mg-node-time">{health.elapsed}</span>}
       </span>
       {pace && <PaceBlock pace={pace} label={stageLabel(stage, t)} stuck={stuck} />}
@@ -356,39 +354,63 @@ export function CurrentCard({ cell: c, stage, task: t, health, pace, selected, l
 }
 
 /** #591: an issue's graph, one row per PR along the stage columns: the stages it passed as small
- * cells, the stage it is in as the full card, arrows only inside its own row. Merged rows fold below. */
+ * cells, the stage it is in as the full card, arrows only inside its own row. Merged rows fold below.
+ * #706: five columns sized from the box; each row's full-width title line sits above its cells. */
 export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSelectTask, onSelectCol, onOpenTest, health = {}, pace = {}, inspectorActions }: IssueProps) {
   const [showMerged, setShowMerged] = useState(false);
   const open = group.rows.filter((r) => r.open), merged = group.rows.filter((r) => !r.open);
-  const shown = showMerged ? [...open, ...merged] : open;
-  const tops = new Map<string, number>();
-  // #591: a row's band holds its wrapped title and its tallest card.
-  const band = (r: PrRow) => {
-    const cur = r.cells.find((c) => c.state === "current");
-    const st = group.stages[r.task.key];
-    const card = cur && st ? cardHeight(cur, st, r.task, health[r.task.key] ?? null, pace[r.task.key] ?? null) : 0;
-    return Math.max(rowBand(r.task.title), CARD_TOP + card + 16);
-  };
-  let y = HEAD;
-  for (const r of open) { tops.set(r.key, y); y += band(r); }
-  const foldTop = y;
-  if (merged.length) y += FOLD_H;
-  if (showMerged) for (const r of merged) { tops.set(r.key, y); y += band(r); }
   const selected = group.rows.find((r) => r.key === selectedTaskKey) ?? null;
-  const col = selected ? WORK_STAGES.findIndex((s) => s.id === group.stages[selected.key]) : selectedCol;
-  const width = colX(WORK_STAGES.length) - 18;
-  const height = y + 8;
+  const col = selected ? graphCol(group.stages[selected.key]!) : selectedCol;
+  const drawRow = (r: PrRow) => {
+    const t = r.task, stage = group.stages[t.key]!, g = graphRow(r);
+    const pr = t.pr ? `PR #${t.pr}` : "No PR";
+    return (
+      <div key={r.key} className="mg-row" data-row={r.key} data-open={r.open}>
+        <button type="button" className="mg-rowtitle" aria-pressed={t.key === selectedTaskKey} aria-label={`Row ${pr}: ${t.title}`} title={t.title}
+          onClick={() => onSelectTask(t.key)}>
+          <span className="mg-rowtitle-pr">{pr}</span>{" · "}<span className="mg-rowtitle-text">{t.title}</span>
+          {g.planTag && <span className="mg-tag" data-tone={g.planTag === "planning" ? "work" : "ok"}>{g.planTag}</span>}
+        </button>
+        <div className="mg-cells mg-grid">
+          {rowSegs(g).map((sg, i) => (
+            <div key={i} className="mg-seg" data-dir={sg.dir} data-done={sg.done} style={sg.style} aria-hidden="true" />
+          ))}
+          {g.cells.map((c) => c.state === "current" ? (
+            <div key={c.stage} className="mg-slot" style={{ gridColumn: c.col + 1 }}>
+              <CurrentCard cell={c} stage={stage} task={t} health={health[t.key] ?? null} pace={pace[t.key] ?? null} selected={t.key === selectedTaskKey}
+                onSelect={() => onSelectTask(t.key)} />
+            </div>
+          ) : (
+            <button key={c.stage} type="button" className="mg-cell" data-cell={c.state} data-stage={c.stage} tabIndex={c.state === "ahead" ? -1 : 0}
+              aria-label={`${pr} ${[c.label, c.who, c.mark, c.badge, c.time].filter(Boolean).join(" · ")}`} style={{ gridColumn: c.col + 1 }}
+              onClick={() => onSelectTask(t.key)}>
+              {c.state !== "ahead" && <>
+                <span className="mg-cell-line">
+                  <span className="mg-cell-label">{c.label}</span>
+                  {c.mark && <span className="mg-cell-mark" data-tone={c.mark === "BLOCK" ? "block" : c.mark === "✓" || c.mark.startsWith("fix pushed") ? "ok" : "skip"}>{c.mark}</span>}
+                </span>
+                <span className="mg-cell-line mg-cell-sub">
+                  <span className="mg-cell-who">{[c.who, c.time].filter(Boolean).join(" · ")}</span>
+                  {c.badge && <span className="mg-tag" data-tone="proven">{c.badge}</span>}
+                </span>
+              </>}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
   return (
     <div className="mg">
       <div className="mg-title"><h1>{group.label}</h1>{group.summary && <span className="mg-desc">{group.summary}</span>}</div>
       <div className="mg-body">
         <section className="mg-graph" aria-label="Work graph">
           <div className="mg-scroll">
-            <div className="mg-canvas" style={{ width, height }}>
-              {col !== null && col >= 0 && <div className="mg-colhi" style={{ left: colX(col) - 8, height: height + 12 }} />}
-              <div className="mg-cols" style={{ left: X0, gridTemplateColumns: `repeat(${WORK_STAGES.length}, ${COL_W}px)` }}>
-                {WORK_STAGES.map((s, i) => {
-                  const n = group.tasks.filter((t) => group.stages[t.key] === s.id).length;
+            <div className="mg-issue">
+              {col !== null && col >= 0 && <div className="mg-colhi" style={{ left: colLeft(col, -8), width: at(1, 16) }} aria-hidden="true" />}
+              <div className="mg-cols mg-grid">
+                {GRAPH_STAGES.map((s, i) => {
+                  const n = group.tasks.filter((t) => graphCol(group.stages[t.key]!) === i).length;
                   return (
                     <button key={s.id} type="button" className="mg-col" data-stage={s.id} data-selected={i === col}
                       aria-label={`Column ${s.label}: ${n}`} onClick={() => onSelectCol(i)}>
@@ -397,44 +419,15 @@ export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSel
                   );
                 })}
               </div>
-              {merged.length > 0 && (
-                <button type="button" className="mg-fold" aria-expanded={showMerged} style={{ top: foldTop + 8 }} onClick={() => setShowMerged((v) => !v)}>
-                  {`Merged · ${merged.length}`}
-                </button>
-              )}
-              {shown.map((r) => {
-                const top = tops.get(r.key)!;
-                const t = r.task, stage = group.stages[t.key]!;
-                const pr = t.pr ? `PR #${t.pr}` : "No PR";
-                return (
-                  <div key={r.key} className="mg-row" data-row={r.key} data-open={r.open}>
-                    <button type="button" className="mg-rowhead" aria-pressed={t.key === selectedTaskKey} style={{ top: top + CARD_TOP }}
-                      aria-label={`Row ${pr}: ${t.title}`} title={t.title} onClick={() => onSelectTask(t.key)}>
-                      <span className="mg-rowhead-pr">{pr}</span>
-                      <span className="mg-rowhead-title">{t.title}</span>
-                    </button>
-                    {rowSegs(r, top).map((sg, i) => (
-                      <div key={i} className="mg-seg" data-dir={sg.dir} data-done={sg.done} style={sg.style} aria-hidden="true" />
-                    ))}
-                    {r.cells.map((c) => c.state === "current" ? (
-                      <CurrentCard key={c.stage} cell={c} stage={stage} task={t} health={health[t.key] ?? null} pace={pace[t.key] ?? null} selected={t.key === selectedTaskKey}
-                        left={colX(c.col)} top={top + CARD_TOP} onSelect={() => onSelectTask(t.key)} />
-                    ) : (
-                      <button key={c.stage} type="button" className="mg-cell" data-cell={c.state} data-stage={c.stage} tabIndex={c.state === "ahead" ? -1 : 0}
-                        aria-label={`${pr} ${[c.label, c.who, c.mark, c.time].filter(Boolean).join(" · ")}`} style={{ left: colX(c.col), top: top + CELL_TOP }}
-                        onClick={() => onSelectTask(t.key)}>
-                        {c.state !== "ahead" && <>
-                          <span className="mg-cell-line">
-                            <span className="mg-cell-label">{c.label}</span>
-                            {c.mark && <span className="mg-cell-mark" data-tone={c.mark === "BLOCK" ? "block" : c.mark === "✓" || c.mark.startsWith("fix pushed") ? "ok" : "skip"}>{c.mark}</span>}
-                          </span>
-                          <span className="mg-cell-line mg-cell-sub">{[c.who, c.time].filter(Boolean).join(" · ")}</span>
-                        </>}
-                      </button>
-                    ))}
-                  </div>
-                );
-              })}
+              <div className="mg-rows">
+                {open.map(drawRow)}
+                {merged.length > 0 && (
+                  <button type="button" className="mg-fold" aria-expanded={showMerged} onClick={() => setShowMerged((v) => !v)}>
+                    {`Merged · ${merged.length}`}
+                  </button>
+                )}
+                {showMerged && merged.map(drawRow)}
+              </div>
             </div>
           </div>
           <div className="mg-legend">

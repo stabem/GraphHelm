@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildWorkGroups, prPath, workStage } from "./work-groups";
+import { buildWorkGroups, GRAPH_STAGES, graphCol, graphRow, prPath, workStage } from "./work-groups";
 import type { TaskState } from "./team-tasks";
 import type { JourneyRunView, JourneyView } from "./types";
 
@@ -116,6 +116,46 @@ describe("prPath (#591)", () => {
       task("n", { issue: 1, pr: 3, step: "review", lastSequence: 9 }), task("b", { issue: 1, pr: 4, step: "review", blockedBy: blocked, lastSequence: 1 }),
     ], []);
     expect(g!.rows.map((r) => [r.key, r.open])).toEqual([["b", true], ["n", true], ["w", true], ["m", false]]);
+  });
+});
+
+describe("graphRow (#706): five display columns over prPath's seven stages", () => {
+  const blocked = { reviewer: "gh-claude-7", headSha: "a", commentUrl: "" };
+  const r1 = { reviewer: "gh-claude-7", headSha: "a", commentUrl: "", fixHead: "b", blockedAt: null, fixedAt: null };
+  const plan = { plan: { summary: "p" } as TaskState["plan"], reviewers: ["gh-claude-7"] };
+  const view = (t: TaskState, proven = false) => graphRow(prPath(t, proven));
+  it("draws Implement · Review · Fix · Merge · Merged; Plan and Proven map onto them", () => {
+    expect(GRAPH_STAGES.map((s) => s.label)).toEqual(["Implement", "Review", "Fix", "Merge", "Merged"]);
+    expect((["plan", "implement", "review", "fix", "merge", "merged", "proven"] as const).map(graphCol)).toEqual([0, 0, 1, 2, 3, 4, 4]);
+  });
+  it("BLOCK -> Fixing keeps its cells and arrows, shifted one column; a recorded plan is the title tag", () => {
+    const g = view(task("a", { ...plan, pr: 7, step: "review", blockedBy: blocked, rounds: [{ ...r1, fixHead: null }] }));
+    expect(g.planTag).toBe("plan ✓");
+    expect(g.cells.map((c) => [c.stage, c.col, c.state])).toEqual([
+      ["implement", 0, "done"], ["review", 1, "block"], ["fix", 2, "current"], ["merge", 3, "ahead"], ["merged", 4, "ahead"]]);
+    expect(g.edges).toEqual([{ row: "a", from: 0, to: 1, kind: "done" }, { row: "a", from: 1, to: 2, kind: "next" }]);
+  });
+  it("a pushed fix loops Fix back to the Re-review, inside the row", () => {
+    const g = view(task("a", { ...plan, step: "review", rounds: [r1] }));
+    expect(g.edges).toContainEqual({ row: "a", from: 2, to: 1, kind: "next" });
+    const cols = new Set(g.cells.map((c) => c.col));
+    for (const e of g.edges) expect(cols.has(e.from) && cols.has(e.to)).toBe(true);
+  });
+  it("a current Plan is the Planning card in Implement; a skipped plan has no tag", () => {
+    const g = view(task("a", { step: "plan" }));
+    expect(g.planTag).toBe("planning");
+    expect(g.cells.filter((c) => c.col === 0).map((c) => [c.stage, c.state, c.label])).toEqual([["plan", "current", "Planning"]]);
+    expect(g.edges).toEqual([]);
+    expect(view(task("b", { step: "merge", reviewers: ["r"] })).planTag).toBeNull();
+  });
+  it("Proven is a badge on the Merged cell, never its own column", () => {
+    const done = task("a", { ...plan, step: "merged", mergeSha: "9a9a9a9a11" });
+    const g = view(done, true);
+    expect(g.proven).toBe(true);
+    expect(g.cells.map((c) => c.col)).toEqual([0, 1, 3, 4]);
+    expect(g.cells.find((c) => c.stage === "merged")).toMatchObject({ col: 4, badge: "proven ✓", state: "done" });
+    expect(g.edges.every((e) => e.to <= 4)).toBe(true);
+    expect(view(done, false).cells.find((c) => c.stage === "merged")!.badge).toBeUndefined();
   });
 });
 

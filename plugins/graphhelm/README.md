@@ -39,7 +39,7 @@ codex plugin add graphhelm-codex-hooks@graphhelm
 
 After installation, start a fresh session. In Claude Code, use `/graphhelm:graphhelm-guide`, `/graphhelm:graphhelm-setup`, or `/graphhelm:graphhelm-resume`; Claude namespaces plugin skills, so the installed commands are not bare `/graphhelm-setup` or `/graphhelm-resume`. In Codex, invoke `$graphhelm-guide`, `$graphhelm-setup`, or `$graphhelm-resume`. The setup skill guides the separate `graphhelm setup` CLI through inventory, a reviewed plan, backup, and restore; invoking the skill alone changes no host files. The resume skill reads current evidence and offers exactly two next actions with one recommendation; it does not take either action for you.
 
-## Session hooks (version 0.1.20)
+## Session hooks (version 0.1.25)
 
 This installed plugin includes command hooks for Claude Code. Affected Codex versions use the
 separate `graphhelm-codex-hooks` compatibility companion, which is the only Codex hook
@@ -81,8 +81,15 @@ the hook before its acknowledgement is observed, while a separately recorded
 Runtime effect remains durable. An unavailable briefing or acknowledgement stays
 UNOBSERVED; it never becomes task success and is never retried by this hook.
 
-Python 3 must be on the host's `PATH`. Set these variables in the environment that launches the
-agent host:
+Python 3 must be on the host's `PATH`. Desktop sessions can resolve their lane identity without
+per-session environment variables: SessionStart saves a valid `session_title` by `session_id` in
+`~/.graphhelm/lane-sessions/`, and the Stop hook combines that identity with `.graphhelm/team.json`
+found from the hook payload's working directory. The team file contains `executionId`, `runtimeUrl`,
+and `tokenFile` (a local path, not a token); keep this machine-specific file out of version control.
+SessionEnd removes the session identity, and SessionStart prunes entries older than seven days.
+Codex sessions without a `session_title` continue to use explicit environment binding.
+
+Set these variables in the environment that launches the agent host when using explicit binding:
 
 - `GRAPHHELM_EXECUTION_ID`: exact execution ID to bind. Without it, the hook makes no Runtime
   request and injects no context by default.
@@ -142,6 +149,25 @@ The hook calls no model. Cached compaction avoids a Runtime request, and confirm
 delivery avoids another request. These are request-count guarantees covered by local HTTP tests,
 not a measured reduction in a complete task's billed tokens. The hook returns only bounded typed
 summary fields, never the full objective, transcript or Runtime command text.
+
+### Lane Stop reminder
+
+`lane_stop_hook.py` runs in both host packages. Bind `GRAPHHELM_EXECUTION_ID` to the team
+execution, `GRAPHHELM_RUNTIME_URL`, the agent `GRAPHHELM_TOKEN_FILE`, and
+`GRAPHHELM_ACTOR` to the exact lane id. A pending addressed `operator_note` blocks once
+with "read the notes addressed to you". Only a later reply recorded by that agent clears
+its note. The hook neither acknowledges notes nor sends messages.
+
+The scan reads only event pages: optional opaque `to` and `replyTo` on `signal_recorded`
+replace per-note evidence GETs. It reads the last 4096 events, at most 8 pages of 512 (one MiB maximum response per page),
+plus one head request. Notes older than the window and legacy notes without routing hints
+are outside this reminder; the normal inbox still reads their sealed evidence. Deploy the
+updated Runtime before reloading the plugin. Historical events are not rewritten.
+
+Unbound sessions, `stop_hook_active=true`, unreadable state, malformed responses, oversized
+pages, exhausted scan and timeout allow Stop. The scan child has a two-second wall timeout;
+the host declaration allows ten seconds for process startup and cleanup. Allow is never
+proof that the inbox is empty. Host background wake notification remains a separate observer.
 
 ### Explicit task handoff
 

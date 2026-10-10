@@ -6,9 +6,22 @@
 .mg-sum::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--mv-tone); }
 .mg-sum[data-tone="ready"]::before { background: transparent; border: 1px dashed var(--mv-ready); }
 .mg-sep { color: #5C6170; }
-.mg-body { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.mg-body { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; container: mg-body / inline-size; }
+/* #706: when five columns and the inspector cannot share the row, the inspector becomes a calm
+ * strip above the graph (below the title and summary), its sections in three balanced columns,
+ * instead of wrapping under the graph. */
+@container mg-body (max-width: 1180px) {
+  .mg-body > .mg-inspector { order: -1; flex: 1 1 100%; max-width: none; min-width: 0; display: block; columns: 3; column-gap: 28px; padding: 14px 18px 4px; }
+  .mg-body > .mg-inspector > * { break-inside: avoid; margin-bottom: 14px; }
+  .mg-body > .mg-inspector > .mg-actions { margin-top: 0; }
+  .mg-body > .mg-inspector .mg-ladder { gap: 5px; }
+  .mg-body > .mg-inspector .mg-ladder li { font-size: 9.5px; letter-spacing: -0.01em; }
+}
+@container mg-body (max-width: 640px) {
+  .mg-body > .mg-inspector { columns: 1; }
+}
 
-.mg-graph { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.mg-graph { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .mg-scroll { background: #0F1013; border: 1px solid #1E2026; border-radius: 14px; overflow-x: auto; }
 .mg-canvas { position: relative; margin: 20px; }
 .mg-colhi { position: absolute; top: -10px; width: 166px; border-radius: 12px; background: rgba(233, 231, 226, 0.035); border: 1px solid #20232A; pointer-events: none; }
@@ -31,7 +44,7 @@
 .mg-seg[data-dir="down"][data-done="true"] { border-top-color: #355C4B; }
 .mg-seg[data-dir="up"][data-done="true"] { border-bottom-color: #355C4B; }
 
-.mg-node { position: absolute; width: 150px; min-height: 88px; box-sizing: border-box; padding: 9px 10px; border-radius: 10px; cursor: pointer;
+.mg-node { position: absolute; width: 196px; min-height: 88px; box-sizing: border-box; padding: 9px 10px; border-radius: 10px; cursor: pointer;
   display: flex; flex-direction: column; gap: 3px; justify-content: flex-start; align-items: flex-start; font: inherit; color: #E9E7E2; text-align: left;
   background: var(--mv-tint); border: 1px solid #262930; }
 .mg-node[data-state="ready"] { background: #0F1013; border-style: dashed; border-color: #3E4466; }
@@ -41,7 +54,7 @@
 .mg-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--mv-tone); }
 .mg-node-label { flex: 1 1 auto; min-width: 0; font-family: var(--mono); font-size: 10.5px; color: #C7CBD3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mg-node-pr { font-family: var(--mono); font-size: 10.5px; color: #8D929C; }
-.mg-node-title { font-size: 12px; line-height: 1.3; font-weight: 500; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.mg-node-title { font-size: 12px; line-height: 1.35; font-weight: 500; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .mg-node-who { width: 100%; font-family: var(--mono); font-size: 10.5px; line-height: 14px; color: #A9AEB8; white-space: normal; overflow-wrap: anywhere; }
 
 .mg-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; color: #A9AEB8; font-size: 12px; }
@@ -51,7 +64,7 @@
 .mg-legend-note { margin-left: auto; }
 
 /* Inspector */
-.mg-inspector { flex: 1 1 320px; max-width: 380px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px; padding: 18px;
+.mg-inspector { flex: 0 1 340px; max-width: 340px; min-width: 280px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px; padding: 18px;
   background: #111216; border: 1px solid #1E2026; border-radius: 14px; }
 .mg-inspector h3 { margin: 0; font-size: 17px; font-weight: 600; line-height: 1.3; }
 .mg-ins-head { display: flex; flex-direction: column; gap: 6px; }
@@ -89,28 +102,45 @@
 
 /* #591: one row per PR. Done stages are small cells, the current one the full card (pulsing dot),
  * stages ahead a dashed outline; merged rows fold below a "Merged · N" button. */
-.mg-row { display: contents; }
-.mg-rowhead { position: absolute; left: 0; width: 120px; min-height: 88px; box-sizing: border-box; padding: 8px 6px 8px 0; display: flex; flex-direction: column; gap: 4px; justify-content: flex-start;
-  align-items: flex-start; border: 0; background: transparent; color: #E9E7E2; font: inherit; text-align: left; cursor: pointer; }
-.mg-rowhead-pr { font-family: var(--mono); font-size: 11px; color: #C7CBD3; }
-/* #591: the whole description wraps onto as many lines as it needs; the row grows to fit (rowBand). */
-.mg-rowhead-title { width: 100%; font-size: 12px; line-height: 16px; color: #A9AEB8; white-space: normal; overflow-wrap: anywhere; }
-.mg-rowhead[aria-pressed="true"] .mg-rowhead-pr { color: #E9E7E2; }
-.mg-cell { position: absolute; width: 150px; height: 40px; box-sizing: border-box; padding: 5px 8px; border-radius: 8px; display: flex; flex-direction: column;
-  justify-content: center; gap: 2px; font-family: var(--mono); font-size: 10.5px; color: #C7CBD3; text-align: left; cursor: pointer;
+/* #706: five columns sized from the box. Headers and every row's cells share one track template, so
+ * they line up; the arrows (rowSegs) use the same GAP. */
+.mg-issue { position: relative; margin: 16px 12px 20px; min-width: calc(5 * 140px + 4 * 12px); line-height: 1.35; }
+.mg-grid { display: grid; grid-template-columns: repeat(5, minmax(140px, 1fr)); column-gap: 12px; }
+.mg-issue .mg-cols { position: static; margin-bottom: 8px; }
+.mg-issue .mg-colhi { top: -10px; bottom: -10px; }
+.mg-rows { display: flex; flex-direction: column; gap: 18px; }
+.mg-row { display: flex; flex-direction: column; gap: 4px; padding-top: 14px; border-top: 1px solid #16181D; }
+.mg-row:first-child { border-top: 0; padding-top: 4px; }
+/* #706: the row's title is a full-width line above its cells; it wraps, never truncates. */
+.mg-rowtitle { display: block; width: 100%; padding: 0; border: 0; background: transparent; color: #A9AEB8; font: inherit; font-size: 12.5px; line-height: 1.35; text-align: left; cursor: pointer; white-space: normal; overflow-wrap: anywhere; }
+.mg-rowtitle-pr { font-family: var(--mono); font-size: 12px; color: #C7CBD3; white-space: nowrap; }
+.mg-rowtitle-text { color: #D9D6D0; }
+.mg-rowtitle[aria-pressed="true"] .mg-rowtitle-pr, .mg-rowtitle[aria-pressed="true"] .mg-rowtitle-text { color: #E9E7E2; }
+.mg-tag { display: inline-block; margin-left: 8px; padding: 1px 6px; border-radius: 5px; border: 1px solid #262930; font-family: var(--mono); font-size: 10.5px; line-height: 1.35; color: #8D929C; white-space: nowrap; vertical-align: 1px; }
+.mg-tag[data-tone="ok"], .mg-tag[data-tone="proven"] { color: var(--mv-proven); border-color: rgba(74, 222, 155, 0.33); }
+.mg-tag[data-tone="work"] { color: var(--mv-work); border-color: rgba(245, 165, 36, 0.33); }
+.mg-cells { position: relative; padding-top: 12px; align-items: start; }
+.mg-cells > .mg-slot { grid-row: 1; min-width: 0; }
+.mg-cells > .mg-slot > .mg-node { position: relative; width: 100%; }
+.mg-cells > .mg-cell { grid-row: 1; position: relative; width: 100%; margin-top: 24px; }
+.mg-cell { min-height: 40px; box-sizing: border-box; padding: 5px 9px; border-radius: 8px; display: flex; flex-direction: column;
+  justify-content: center; gap: 2px; font-family: var(--mono); font-size: 10.5px; line-height: 1.35; color: #C7CBD3; text-align: left; cursor: pointer;
   background: #14151A; border: 1px solid #262930; }
 .mg-cell[data-cell="ahead"] { background: transparent; border-style: dashed; border-color: #23262D; cursor: default; }
 .mg-cell[data-cell="block"] { border-color: #5A2F2B; }
-.mg-cell:focus-visible, .mg-rowhead:focus-visible, .mg-fold:focus-visible { outline: 2px solid #9AB8FF; outline-offset: 2px; }
-.mg-cell-line { display: flex; gap: 6px; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mg-cell-label { overflow: hidden; text-overflow: ellipsis; }
+.mg-cell:focus-visible, .mg-rowtitle:focus-visible, .mg-fold:focus-visible { outline: 2px solid #9AB8FF; outline-offset: 2px; }
+.mg-cell-line { display: flex; align-items: baseline; gap: 6px; width: 100%; min-width: 0; white-space: nowrap; }
+.mg-cell-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mg-cell-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mg-cell-mark, .mg-cell .mg-tag { flex: none; }
+.mg-cell .mg-tag { margin-left: auto; padding: 0 4px; font-size: 10px; }
 .mg-cell-sub { color: #8D929C; }
 .mg-cell-mark { margin-left: auto; color: #8D929C; }
 .mg-cell-mark[data-tone="ok"] { color: var(--mv-proven); }
 .mg-cell-mark[data-tone="block"] { color: #FF8A7E; }
 .mg-node[data-current="true"] .mg-dot { animation: mg-pulse 1.8s infinite; }
 @keyframes mg-pulse { 0% { box-shadow: 0 0 0 0 rgba(233, 231, 226, .35); } 70% { box-shadow: 0 0 0 6px rgba(233, 231, 226, 0); } 100% { box-shadow: 0 0 0 0 rgba(233, 231, 226, 0); } }
-.mg-fold { position: absolute; left: 0; height: 28px; padding: 0 12px; border-radius: 8px; border: 1px solid #262930; background: #14151A; color: #C7CBD3;
+.mg-fold { align-self: flex-start; height: 28px; padding: 0 12px; border-radius: 8px; border: 1px solid #262930; background: #14151A; color: #C7CBD3;
   font-family: var(--mono); font-size: 11px; cursor: pointer; }
 .mg-fold[aria-expanded="true"] { color: #E9E7E2; border-color: #355C4B; }
 /* #591: the plain health flag and the time in stage. */
@@ -171,3 +201,14 @@
 .mg-menu-item:hover, .mg-menu-item:focus { background: #22252C; }
 .mg-menu-flag { color: #FF8A7E; }
 .mg-confirm { display: flex; flex-direction: column; gap: 8px; color: #E9E7E2; font-size: 13px; }
+
+/* #706 legibility: a lane name is never split, the pace line keeps time and pace together. */
+.mg-node-who { overflow-wrap: normal; word-break: normal; }
+.mg-lane { white-space: nowrap; }
+/* The time and the pace each stay whole; the line may break only between them. */
+.mg-pace-time { white-space: normal; }
+.mg-timer, .mg-pace-x { white-space: nowrap; }
+/* #706: on the issue graph the card is as wide as its column; its sub-line and flag wrap at spaces
+ * instead of hiding behind an ellipsis (the title line above the row already names the PR). */
+.mg-cells .mg-node-sub, .mg-cells .mg-node .mg-health-text { white-space: normal; overflow: visible; text-overflow: clip; }
+.mg-cells .mg-node { line-height: 1.35; gap: 4px; }

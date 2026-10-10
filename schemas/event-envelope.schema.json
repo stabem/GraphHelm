@@ -585,7 +585,9 @@
         "kind": {"type": "string", "minLength": 1},
         "severity": {"$ref": "#/$defs/signalSeverity"},
         "envelopeSha256": {"$ref": "#/$defs/rawSha256"},
-        "scopedAgentAuthenticated": {"type": "boolean"}
+        "scopedAgentAuthenticated": {"type": "boolean"},
+        "to": {"$ref": "#/$defs/opaqueId"},
+        "replyTo": {"$ref": "#/$defs/opaqueId"}
       },
       "additionalProperties": false
     },

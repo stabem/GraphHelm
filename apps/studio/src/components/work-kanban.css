@@ -1,14 +1,15 @@
 /* #668: the Lanes work kanban. */
-.wk { display: grid; grid-template-columns: repeat(6, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.wk { display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)); gap: 12px; line-height: 1.35; margin-bottom: 20px; }
 .wk-col { background: #0F1013; border: 1px solid #1E2026; border-radius: 12px; padding: 10px; min-width: 0; display: flex; flex-direction: column; }
-.wk-head { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; color: #C7CBD3; }
+.wk-head { display: flex; flex-wrap: nowrap; align-items: center; min-height: 16px; overflow: hidden; white-space: nowrap; gap: 6px; margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; color: #C7CBD3; }
 .wk-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.wk-cards { display: flex; flex-direction: column; gap: 8px; max-height: 520px; overflow-y: auto; }
+.wk-cards { display: flex; flex-direction: column; gap: 12px; max-height: 520px; overflow-y: auto; }
 .wk-label { letter-spacing: 0.04em; }
 .wk-count { color: #8D929C; }
 .wk-none { margin: 0; font-family: var(--mono); font-size: 11px; color: #5C6170; }
-.wk .mg-node { position: static; width: 100%; }
-.wk .mg-node-title { display: block; -webkit-line-clamp: unset; overflow: visible; overflow-wrap: anywhere; }
+/* #706: a card keeps its full height in the scrolling column; flex never squashes it. */
+.wk .mg-node { position: static; width: 100%; flex: none; }
+.wk .mg-node-title { display: block; -webkit-line-clamp: unset; overflow: visible; overflow-wrap: break-word; }
 .wk .mg-node-label, .wk .mg-node-sub, .wk .mg-node .mg-health-text { white-space: normal; overflow: visible; }
 @media (max-width: 700px) {
   .wk { grid-template-columns: 1fr; }

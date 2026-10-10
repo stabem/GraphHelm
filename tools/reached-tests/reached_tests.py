@@ -24,6 +24,8 @@ From the changed paths and the workspace graph (`cargo metadata --no-deps`, no b
   that name its command; shared files and modules no test names reach the whole package;
 - any reached Rust crate adds `cargo fmt --check`, clippy on the reached crates, and the
   workspace authored-strings guard (DELIVERY.md, "One review").
+- emitted Rust test commands use `-- --test-threads=2`, and Studio related tests use
+  `--maxWorkers=1`, so the selector does not amplify load on a shared lane;
 Nothing else is reached by a docs-only diff. When `graphhelm` is on PATH, the Keel plan's class and
 proof for the same paths are printed too. Standard library only.
 """
@@ -36,7 +38,9 @@ import sys
 from pathlib import Path
 
 TOOLCHAIN = "+1.97.1"
-GUARD = f"cargo {TOOLCHAIN} test --locked -p graphhelm-protocols --test authored_strings_across_the_workspace"
+CLI, CLI_BIN = "graphhelm-cli", "graphhelm"
+TEST_THREADS = "-- --test-threads=2"
+GUARD = f"cargo {TOOLCHAIN} test --locked -p graphhelm-protocols --test authored_strings_across_the_workspace {TEST_THREADS}"
 # Files some tests read at run time (not embedded, so the include scan cannot see them): a changed
 # path under the prefix reaches these test files, as (package, test file stem).
 RUNTIME_READERS = {
@@ -49,15 +53,27 @@ RUNTIME_READERS = {
 # journey driver, replay, explore or live play. Printed, never run for you: they need a browser.
 BROWSER_OBSERVERS = ("GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT=<dir with node_modules/@playwright/test> "
                      "cargo +1.97.1 test --locked -p graphhelm-cli --test journey_replay_browser "
-                     "--test journey_explore_browser --test journey_live_browser -- --ignored")
+                     "--test journey_explore_browser --test journey_live_browser -- --ignored --test-threads=2")
+BROWSER_ARGV = ["cargo", TOOLCHAIN, "test", "--locked", "-p", CLI, "--test", "journey_replay_browser",
+                "--test", "journey_explore_browser", "--test", "journey_live_browser", "--", "--ignored",
+                "--test-threads=2"]
 BROWSER_REACHERS = ("tools/journey-driver/", "apps/cli/src/commands/journey_replay.rs",
                     "apps/cli/src/commands/journey_explore.rs", "apps/cli/src/commands/journey_live.rs",
                     "apps/cli/tests/journey_replay_browser.rs", "apps/cli/tests/journey_explore_browser.rs",
                     "apps/cli/tests/journey_live_browser.rs")
 INCLUDE = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*\)')
-CLI, CLI_BIN = "graphhelm-cli", "graphhelm"
 DISPATCH = {"src/main.rs", "src/commands/mod.rs"}
 SOURCE_READ = re.compile(r'"src/|join\("src"\)')
+# Audited exceptions for CLI integration tests that mention `src` while reading a fixture or a
+# deliberately bounded production surface. `None` means the test reads the whole CLI source tree;
+# an empty tuple means its `src` strings are fixture-only. Unknown readers remain conservative.
+SOURCE_READER_SCOPES = {
+    "source_invariants": None,
+    "attention_inputs_one_feed": None,
+    "surface_completeness": ("src/commands/serve/mod.rs", "src/commands/mcp/tools.rs"),
+    "api_http": (),
+    "runtime_http": (),
+}
 BUNDLE_MOD = re.compile(r'#\[path\s*=\s*"([^"]+)\.rs"\]\s*mod\s+(\w+)\s*;')
 
 
@@ -138,6 +154,21 @@ def target_of(packages, package, stem):
     return None
 
 
+def source_reader_targets(texts, packages, package, changed_source):
+    """Map audited source readers; unknown readers stay broad until reviewed."""
+    readers = set()
+    for f, text in texts.items():
+        if "CARGO_MANIFEST_DIR" not in text or not SOURCE_READ.search(text):
+            continue
+        scope = SOURCE_READER_SCOPES.get(f.stem, "unknown")
+        if scope == () or (scope not in (None, "unknown") and changed_source not in scope):
+            continue
+        target = target_of(packages, package, f.stem)
+        if target is not None:
+            readers.add(target)
+    return readers
+
+
 def cli_module(packages, p, rel, root):
     """#361: a change to one `apps/cli/src/commands/<module>` reaches that module's unit tests, the
     integration tests that read the crate's own source, and the ones that name its command (every
@@ -156,15 +187,15 @@ def cli_module(packages, p, rel, root):
     texts = {f: f.read_text(encoding="utf-8", errors="replace") for f in sorted(tests.glob("*.rs"))}
     sources = {f.relative_to(crate).as_posix(): f.read_text(encoding="utf-8", errors="replace")
                for f in sorted(src.rglob("*.rs"))} if src.is_dir() else {}
-    readers = {t for f, text in texts.items() if "CARGO_MANIFEST_DIR" in text and SOURCE_READ.search(text)
-               for t in [target_of(packages, p["name"], f.stem)] if t is not None}
+    start = rel[len("src/commands/"):-len(".rs")]
+    changed_source = f"src/commands/{start}.rs"
+    readers = source_reader_targets(texts, packages, p["name"], changed_source)
 
     def named(module):
         words = [w for part in module.split("/") for w in part.split("_") if w]
         return {t for f, text in texts.items() if words and all(f'"{w}"' in text for w in words)
                 for t in [target_of(packages, p["name"], f.stem)] if t is not None}
 
-    start = rel[len("src/commands/"):-len(".rs")]
     if not named(start):
         return None
     reached, queue, out = {start}, [start], set(readers)
@@ -246,22 +277,90 @@ def reach(changed, packages, embedded, repo=None):
     return whole, single, studio, sorted(tools), sorted(validate), other
 
 
-def commands(whole, single, studio, tools=(), validate=()):
+def commands(whole, single, studio, tools=(), validate=(), lint_packages=None):
     cmds = list(tools) + [f"graphhelm --json extension validate {v}" for v in validate]
     for name in sorted(whole):
-        cmds.append(f"cargo {TOOLCHAIN} test --locked -p {name}")
+        cmds.append(f"cargo {TOOLCHAIN} test --locked -p {name} {TEST_THREADS}")
     for package, target, module in sorted(single, key=lambda s: (s[0], s[1], s[2] or "")):
         kind = f"--bin {target[4:]}" if target.startswith("bin:") else f"--test {target}"
-        cmds.append(f"cargo {TOOLCHAIN} test --locked -p {package} {kind}" + (f" {module}::" if module else ""))
+        cmds.append(f"cargo {TOOLCHAIN} test --locked -p {package} {kind}" + (f" {module}::" if module else "") + f" {TEST_THREADS}")
     rust = sorted(whole | {s[0] for s in single})
+    lint = rust if lint_packages is None else sorted(lint_packages)
     if rust:
         cmds.append(f"cargo {TOOLCHAIN} fmt --all -- --check")
-        cmds.append(f"cargo {TOOLCHAIN} clippy --locked " + " ".join(f"-p {n}" for n in rust) + " --all-targets --all-features -- -D warnings")
+        if lint:
+            cmds.append(f"cargo {TOOLCHAIN} clippy --locked " + " ".join(f"-p {n}" for n in lint) + " --all-targets --all-features -- -D warnings")
         cmds.append(GUARD)
     if studio:
         files = " ".join(p[len("apps/studio/"):] for p in studio)
-        cmds.append(f"(cd apps/studio && npx vitest related --run {files} && npx tsc -b)")
+        cmds.append(f"(cd apps/studio && npx vitest related --run --maxWorkers=1 {files} && npx tsc -b)")
     return cmds
+
+
+def _node_test_paths(command, repo):
+    """Recover paths from our generated node command, refusing ambiguous names."""
+    tail = command[len("node --test "):]
+    tokens = tail.split(" ")
+    paths = []
+    current = []
+    for token in tokens:
+        current.append(token)
+        candidate = " ".join(current)
+        if (repo / candidate).is_file():
+            paths.append(candidate)
+            current = []
+    if current:
+        raise ValueError(f"ambiguous node test path: {' '.join(current)}")
+    return paths
+
+
+def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo=None):
+    """Return executable argv records without interpreting the legacy shell command strings."""
+    out = []
+    for tool in tools:
+        if tool == BROWSER_OBSERVERS:
+            out.append({"argv": BROWSER_ARGV[:], "cwd": ".", "slot": True, "observer": "browser"})
+        elif tool == "graphhelm --json journey validate --all":
+            out.append({"argv": ["graphhelm", "--json", "journey", "validate", "--all"], "cwd": ".", "slot": False})
+        elif tool.startswith("python -m unittest "):
+            test_path = tool[len("python -m unittest "):]
+            out.append({"argv": ["python", "-m", "unittest", test_path], "cwd": ".", "slot": False})
+        elif tool.startswith("node --test "):
+            if repo is None:
+                raise ValueError("node test paths require the repository root")
+            test_paths = _node_test_paths(tool, Path(repo))
+            out.append({"argv": ["node", "--test", *test_paths], "cwd": ".", "slot": False})
+        else:
+            raise ValueError(f"unrecognised reached-test tool: {tool}")
+    for path in validate:
+        out.append({"argv": ["graphhelm", "--json", "extension", "validate", path], "cwd": ".", "slot": False})
+    for name in sorted(whole):
+        out.append({"argv": ["cargo", TOOLCHAIN, "test", "--locked", "-p", name, *TEST_THREADS.split()],
+                    "cwd": ".", "slot": True})
+    for package, target, module in sorted(single, key=lambda s: (s[0], s[1], s[2] or "")):
+        kind = ["--bin", target[4:]] if target.startswith("bin:") else ["--test", target]
+        argv = ["cargo", TOOLCHAIN, "test", "--locked", "-p", package, *kind]
+        if module:
+            argv.append(module + "::")
+        argv.extend(TEST_THREADS.split())
+        out.append({"argv": argv, "cwd": ".", "slot": True})
+    rust = sorted(whole | {s[0] for s in single})
+    lint = rust if lint_packages is None else sorted(lint_packages)
+    if rust:
+        out.append({"argv": ["cargo", TOOLCHAIN, "fmt", "--all", "--", "--check"], "cwd": ".", "slot": False})
+        if lint:
+            out.append({"argv": ["cargo", TOOLCHAIN, "clippy", "--locked", *sum((["-p", n] for n in lint), []),
+                                   "--all-targets", "--all-features", "--", "-D", "warnings"],
+                        "cwd": ".", "slot": True})
+        out.append({"argv": ["cargo", TOOLCHAIN, "test", "--locked", "-p", "graphhelm-protocols",
+                               "--test", "authored_strings_across_the_workspace", *TEST_THREADS.split()],
+                    "cwd": ".", "slot": True})
+    if studio:
+        files = [p[len("apps/studio/"):] for p in studio]
+        out.append({"argv": ["npx", "vitest", "related", "--run", "--maxWorkers=1", *files],
+                    "cwd": "apps/studio", "slot": False})
+        out.append({"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio", "slot": False})
+    return out
 
 
 def keel_plan(repo, changed):
@@ -276,6 +375,18 @@ def keel_plan(repo, changed):
         return None
 
 
+def lint_scope(changed, packages, embedded):
+    """Crates whose source or manifest was touched; do not include test-only dependents."""
+    out = set()
+    for path in changed:
+        package = owner(packages, path)
+        if package is not None:
+            out.add(package["name"])
+        else:
+            out |= embedded.get(path, set())
+    return out
+
+
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--base", default="origin/main")
@@ -286,11 +397,15 @@ def main(argv):
     repo = Path(args.repo).resolve()
     changed = [line for line in run(["git", "diff", "--name-only", f"{args.base}...{args.head}"], repo).splitlines() if line]
     packages = workspace(repo)
-    whole, single, studio, tools, validate, other = reach(changed, packages, embeds(repo, packages), repo)
-    result = {"changed": changed, "packages": sorted(whole),
+    embedded = embeds(repo, packages)
+    whole, single, studio, tools, validate, other = reach(changed, packages, embedded, repo)
+    lint = lint_scope(changed, packages, embedded)
+    result = {"changed": changed, "packages": sorted(whole), "broadPackages": sorted(whole),
               "targets": [{"package": p, "test": t, "module": m} for p, t, m in sorted(single, key=lambda s: (s[0], s[1], s[2] or ""))],
               "studio": studio, "tools": tools, "validate": validate, "unmapped": other,
-              "commands": commands(whole, single, studio, tools, validate),
+              "commands": commands(whole, single, studio, tools, validate, lint),
+              "steps": steps(whole, single, studio, tools, validate, lint, repo),
+              "lintPackages": sorted(lint),
               "keelPlan": keel_plan(repo, changed)}
     if args.json:
         print(json.dumps(result, indent=1))

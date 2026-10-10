@@ -103,7 +103,7 @@ describe("MissionView", () => {
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("#519 Watch plays inside the Studio");
     const graph = screen.getByRole("region", { name: "Work graph" });
     expect(Array.from(graph.querySelectorAll(".mg-col-head")).map((h) => h.textContent))
-      .toEqual(["PLAN · 0", "IMPLEMENT · 0", "REVIEW · 0", "FIX · 1", "MERGE · 0", "MERGED · 1", "PROVEN · 0"]);
+      .toEqual(["IMPLEMENT · 0", "REVIEW · 0", "FIX · 1", "MERGE · 0", "MERGED · 1"]);
     expect(graph.querySelectorAll(".mg-seg").length).toBeGreaterThan(0);
     expect(within(graph).getByRole("button", { name: "Merged · 1" })).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(within(graph).getByRole("button", { name: "Row PR #548: Proof recorded like replay" }));
@@ -226,15 +226,19 @@ describe("MissionView", () => {
     const onSignal = vi.fn().mockResolvedValue(undefined);
     const tasks = [wt("a", { issue: 5, pr: 609, prTitle: "Two CLI", step: "implement", lane: "gh-claude-4" }),
       wt("b", { issue: 5, pr: 610, prTitle: "Other", step: "implement", lane: "gh-claude-6" })] as unknown as TaskState[];
-    render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} onSignal={onSignal} />);
+    const props = { journeys, tasks, lanes: [], now: 0, runFor: () => null, frameUrl: () => null, onMarkSafe: vi.fn(), onSignal };
+    const { rerender } = render(<MissionView {...props} wakeListeners={["gh-claude-4"]} />);
     await userEvent.click(screen.getByRole("button", { name: "Row PR #609: Two CLI" }));
     await userEvent.click(screen.getByRole("button", { name: "Ask gh-claude-4 for status" }));
     expect(onSignal).toHaveBeenCalledWith({ type: "operator_note", to: "gh-claude-4", description: "Owner asks: status of Implement on PR #609?" });
-    expect(await screen.findByText("Asked 0 min ago · no answer yet")).toBeInTheDocument();
+    expect(await screen.findByText("Asked 0 min ago · waiting")).toBeInTheDocument();
+    // A ring consumes the lease; retain the observation made when this ask was sent.
+    rerender(<MissionView {...props} wakeListeners={[]} />);
     await userEvent.click(screen.getByRole("button", { name: "Row PR #610: Other" }));
-    expect(screen.getByRole("button", { name: "Ask gh-claude-6 for status" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Ask gh-claude-6 for status" }));
+    expect(await screen.findByText("Asked 0 min ago · nobody is listening")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Row PR #609: Two CLI" }));
-    expect(screen.getByText("Asked 0 min ago · no answer yet")).toBeInTheDocument();
+    expect(screen.getByText("Asked 0 min ago · waiting")).toBeInTheDocument();
   });
 
   it("#591: the Review row names only the current reviewer; earlier ones go to a history line", () => {

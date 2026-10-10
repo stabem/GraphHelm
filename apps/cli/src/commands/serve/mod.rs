@@ -1822,28 +1822,36 @@ type MutationFuture<'a> =
 /// wrong for one of them in every half-wired deployment — a model-only server let a tool node
 /// "succeed" from a fixture with no diagnostic, and a tools-only server printed "no
 /// real-executor wiring" over a tool host that was running.
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct ExecutorWiring {
+#[derive(Clone, Copy)]
+struct ExecutorWiring<'a> {
     /// Cognitive nodes (agent, planner, classifier, evaluator) run on a real model route.
     model: bool,
     /// Tool nodes run on the real tool host.
     tools: bool,
+    /// Existing sealing capability used by the wake sweep to read note recipients.
+    sealing: Option<&'a Arc<SignalKeyring>>,
 }
 
-impl ExecutorWiring {
+impl<'a> ExecutorWiring<'a> {
     /// Neither half wired: every node is answered by fixtures — the 05a server.
+    #[cfg(test)]
     const FIXTURE_ONLY: Self = Self {
         model: false,
         tools: false,
+        sealing: None,
     };
 
-    fn from_state(state: &ServeState) -> Self {
-        match state.runtime.as_ref() {
-            Some(wiring) => Self {
-                model: wiring.model.is_some(),
-                tools: wiring.tools.is_some(),
-            },
-            None => Self::FIXTURE_ONLY,
+    fn from_state(state: &'a ServeState) -> Self {
+        Self {
+            model: state
+                .runtime
+                .as_ref()
+                .is_some_and(|wiring| wiring.model.is_some()),
+            tools: state
+                .runtime
+                .as_ref()
+                .is_some_and(|wiring| wiring.tools.is_some()),
+            sealing: state.sealing.as_ref(),
         }
     }
 
@@ -1884,7 +1892,7 @@ async fn run_idempotent_mutation<'a>(
     execution: &str,
     command: &'static str,
     identity: MutationIdentity,
-    wiring: ExecutorWiring,
+    wiring: ExecutorWiring<'_>,
     run: impl FnOnce(PersistedActor, OpaqueId) -> MutationFuture<'a>,
 ) -> Response {
     run_idempotent_mutation_inner(
@@ -1911,7 +1919,7 @@ async fn run_idempotent_mutation_with_store<'a>(
     execution: &str,
     command: &'static str,
     identity: MutationIdentity,
-    wiring: ExecutorWiring,
+    wiring: ExecutorWiring<'_>,
     run: impl FnOnce(PersistedActor, OpaqueId) -> MutationFuture<'a>,
 ) -> Response {
     run_idempotent_mutation_on(
@@ -1953,7 +1961,7 @@ async fn run_idempotent_mutation_inner<'a>(
     execution: &str,
     command: &'static str,
     identity: MutationIdentity,
-    wiring: ExecutorWiring,
+    wiring: ExecutorWiring<'_>,
     observation: MutationObservation<
         impl Future<Output = ()> + Send,
         impl Future<Output = ()> + Send,
@@ -1991,7 +1999,7 @@ async fn run_idempotent_mutation_on<'a>(
     execution: &str,
     command: &'static str,
     identity: MutationIdentity,
-    wiring: ExecutorWiring,
+    wiring: ExecutorWiring<'_>,
     observation: MutationObservation<
         impl Future<Output = ()> + Send,
         impl Future<Output = ()> + Send,
@@ -2089,6 +2097,7 @@ async fn run_idempotent_mutation_on<'a>(
             tokio::spawn(wake::sweep(
                 std::sync::Arc::from(events),
                 execution.to_owned(),
+                wiring.sealing.cloned(),
             ));
             let mut outcome = Outcome::success(command, value);
             // #248: `NodeState::WaitingInput` is produced by exactly one path in this codebase
@@ -2332,7 +2341,7 @@ fn reply_with_current_status(
     events: &Path,
     execution: &str,
     command: &'static str,
-    wiring: ExecutorWiring,
+    wiring: ExecutorWiring<'_>,
     original_decision_sequence: u64,
 ) -> Response {
     let signal_id = if command == "execution.signal" {
@@ -2376,7 +2385,7 @@ fn reply_with_status_value(
     events: &Path,
     execution: &str,
     command: &'static str,
-    wiring: ExecutorWiring,
+    wiring: ExecutorWiring<'_>,
     mut value: serde_json::Value,
     original_decision_sequence: u64,
     signal_id: Option<&str>,
@@ -3030,7 +3039,7 @@ fn annotate_fixture_only(
     output: &mut CommandOutput,
     events: &Path,
     execution: &str,
-    wiring: ExecutorWiring,
+    wiring: ExecutorWiring<'_>,
 ) {
     if wiring.any_fixture()
         && let Some(diagnostic) =
@@ -3259,6 +3268,8 @@ mod tests {
         .unwrap();
         let signal = |id: &str| {
             EventKind::SignalRecorded(SignalRecorded {
+                to: None,
+                reply_to: None,
                 scoped_agent_authenticated: None,
                 execution_id: execution_id.clone(),
                 signal_id: OpaqueId::parse(id).unwrap(),

@@ -35,19 +35,20 @@ describe("WorkKanban (#668)", () => {
     await renderLanes();
     const board = screen.getByRole("region", { name: "Work by stage" });
     expect(Array.from(board.querySelectorAll(".wk-head")).map((h) => h.textContent))
-      .toEqual(["IMPLEMENT · 1", "REVIEW · 1", "BLOCKED · 1", "WAITING FOR BUILD · 0", "SILENT · 1", "MERGE · 1"]);
+      .toEqual(["IMPLEMENT · 1", "REVIEW · 1", "BLOCKED · 1", "BUILD QUEUE · 0", "SILENT · 1", "MERGE · 1"]);
     expect(within(col(/^IMPLEMENT/)).getByText(LONG)).toBeInTheDocument();
     expect(within(col(/^REVIEW/)).getByText("Review me")).toBeInTheDocument();
     expect(within(col(/^BLOCKED/)).getByText("Blocked one")).toBeInTheDocument();
     expect(within(col(/^SILENT/)).getByText("Stalled review")).toBeInTheDocument();
     expect(within(col(/^MERGE/)).getByText("Merging now")).toBeInTheDocument();
-    expect(within(col(/^WAITING FOR BUILD/)).getByText("none")).toBeInTheDocument();
+    expect(within(col(/^Waiting for build · 0/)).getByText("none")).toBeInTheDocument();
     expect(board).not.toHaveTextContent("Done already");
   });
   it("renders full names: the title and the author → reviewer line are whole", async () => {
     await renderLanes();
     expect(screen.getByText(LONG).textContent).toBe(LONG);
-    expect(within(col(/^REVIEW/)).getByText("gh-claude-1 → gh-claude-9")).toBeInTheDocument();
+    // #706: each lane is its own unbreakable span; the line reads whole.
+    expect(Array.from(col(/^REVIEW/).querySelectorAll(".mg-node-who")).map((w) => w.textContent)).toContain("gh-claude-1 → gh-claude-9");
   });
   it("clicking a card opens the Graph with that PR selected in the inspector", async () => {
     const userEvent = await renderLanes();

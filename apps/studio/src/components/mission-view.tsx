@@ -57,6 +57,8 @@ interface Props {
   onReviewAssigned?: (task: TaskState, lane: string) => Promise<unknown>;
   /** #636: the build-slot queues (App polls them); empty: no slot roots, nothing shown. */
   slots?: SlotView[];
+  /** Actors with an armed, unconsumed wake lease; absent on older Runtimes. */
+  wakeListeners?: string[];
   /** #647: the run's graph nodes for the Run graph strip; empty, the strip is omitted. */
   runNodes?: GraphNode[];
   /** #647: node ids no bot holds a task for (App's unassignedSteps), listed as the Team canvas did. */
@@ -143,14 +145,14 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, onJourneys, draftJourneys = 0, agents = [], away = null, onSignal, onReviewAssigned, slots = [], runNodes = [], unassignedNodeIds = [], onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, onJourneys, draftJourneys = 0, agents = [], away = null, onSignal, onReviewAssigned, wakeListeners, slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
   const [chosen, setChosen] = useState<Selection | null>(null);
   const [stepId, setStepId] = useState<string | null>(null);
   // undefined: the group's default (the task that most needs the owner); null: none, a column is chosen.
   const [taskKey, setTaskKey] = useState<string | null | undefined>(undefined);
   const [stageCol, setStageCol] = useState<number | null>(null);
   // #591: when the owner asked a lane for status, by PR + lane; kept here so it survives selecting another PR.
-  const [askedAt, setAskedAt] = useState<Record<string, number>>({});
+  const [askedAt, setAskedAt] = useState<Record<string, { at: number; listening: boolean | null }>>({});
   const [sub, setSub] = useState<Sub>("graph");
   // #630: the wide Graph hides the chat column; this opens it beside the Graph.
   const [chatOpen, setChatOpen] = useState(false);
@@ -234,7 +236,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
     <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots}
       {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
   </>;
-  const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds} {...(onOpenNode ? { onOpenNode } : {})} />;
+  const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} {...(onOpenNode ? { onOpenNode } : {})} />;
   if (sel === null) return <div className="mv" data-wide="true" data-page={page} data-chat={chatOpen ? "open" : undefined}>{header}
     {sub === "lanes" ? <div className="mv-pad">{lanesView}</div>
       : <>{sub === "graph" && runGraph}<p className="mv-none mv-pad">No journeys in this project yet</p></>}</div>;
@@ -299,7 +301,8 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
         if (!task || !onReviewAssigned) throw new Error("Review assignment is unavailable.");
         await onReviewAssigned(task, reviewer);
       }}
-      askedAt={askedAt[id] ?? null} onAsked={(at) => setAskedAt((m) => ({ ...m, [id]: at }))} />;
+      askedAt={askedAt[id]?.at ?? null} listening={wakeListeners?.includes(lane) ?? null}
+      askedListening={askedAt[id]?.listening} onAsked={(at, listening) => setAskedAt((m) => ({ ...m, [id]: { at, listening } }))} />;
   } : undefined;
   const shownTask = taskKey === undefined ? group?.focus ?? null : taskKey;
   const ids = mission ? stepIds(mission) : [];
@@ -371,7 +374,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
                             onClick={() => pickGroup(g.key, t.key)}>
                             <span className="mv-tick" />
                             <span className="mv-step-n">{i + 1}</span>
-                            <span className="mv-step-title">{t.title}</span>
+                            <span className="mv-step-title" title={t.title}>{t.title}</span>
                             {t.step !== "merged" && <ProgressIcon alert={t.blocked || health[t.key]?.flag === "stalled"} />}
                             <span className="mv-step-ids">{t.pr ? `PR #${t.pr}` : "no PR"}</span>
                           </button>
@@ -408,7 +411,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
                           onClick={() => pickStep(m.contractId, s.stepId)}>
                           <span className="mv-tick" data-status={s.status} />
                           <span className="mv-step-n">{s.index + 1}</span>
-                          <span className="mv-step-title">{s.title}</span>
+                          <span className="mv-step-title" title={s.title}>{s.title}</span>
                           <span className="mv-step-ids">{ids[s.index] || "—"}</span>
                         </button>
                       ))}

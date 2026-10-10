@@ -717,9 +717,32 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
             run.state["state"] = "ready".into();
             run.state["result"] = worst.into();
         }
-        Err((code, _, _)) => {
+        Err((code, pointer, _)) => {
             run.state["state"] = "failed".into();
             run.state["reason"] = failed_reason(code).into();
+            let detail = json!({"code":code,"pointer":pointer});
+            run.state["detail"] = detail.clone();
+            // The pointer may name a flow array index (preflight) or a stable step id (play).
+            // Keep only the refusal's code and pointer, never driver output or page text.
+            let mut parts = pointer.split('/').skip(1);
+            if let (Some(kind @ ("screens" | "edges")), Some(step)) = (parts.next(), parts.next()) {
+                let steps = flow[kind].as_array().unwrap();
+                let stopped = if kind == "edges" && parts.next() == Some("acts") {
+                    step.parse::<usize>()
+                        .ok()
+                        .and_then(|index| steps.get(index))
+                } else {
+                    steps.iter().find(|entry| entry["id"] == step)
+                };
+                if let Some(id) = stopped.and_then(|entry| entry["id"].as_str()) {
+                    let mut entry =
+                        json!({"result":"fail","reason":step_reason(code),"detail":detail});
+                    if kind == "screens" {
+                        entry["frame"] = false.into();
+                    }
+                    run.state[kind][id] = entry;
+                }
+            }
         }
     }
     run.save();

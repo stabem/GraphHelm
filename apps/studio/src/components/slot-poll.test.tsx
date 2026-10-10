@@ -37,8 +37,9 @@ describe("Lanes build slots", () => {
       { root: "E:/gh", error: [{ code: "workspace.slot_root_missing" }] },
     ] });
     const { container } = render(<LanesTimeline lanes={[lane("a"), lane("b")]} now={now} windowMs={3_600_000} slots={slots} />);
-    expect(screen.getByText("Building · 4m")).toBeTruthy();
-    expect(screen.getByText("Waiting for build · 2nd · 12m")).toBeTruthy();
+    const tags = Array.from(container.querySelectorAll(".ab-tag")).map((t) => t.textContent);
+    expect(tags).toContain("Building · 4m");
+    expect(tags).toContain("Waiting for build · 2nd · 12m");
     expect(screen.getByText("queue unavailable").closest(".ab-slot")?.getAttribute("data-state")).toBe("unavailable");
     expect(container.querySelector('[aria-label="Build slots"]')).toBeTruthy();
   });

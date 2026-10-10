@@ -405,7 +405,7 @@ fn server_guard_closes_a_descendant_holding_stdout() {
     // ARRANGEMENT: the descendant holding the pipe exists before the subject runs, or a
     // wrapper-only kill would pass this test too.
     ready_rx
-        .recv_timeout(Duration::from_secs(20))
+        .recv_timeout(scaled(Duration::from_secs(20)))
         .expect("the helper must report its pipe-holding child before the guard is dropped");
 
     drop(ServerGuard {
@@ -417,7 +417,7 @@ fn server_guard_closes_a_descendant_holding_stdout() {
         // Windows job close requests descendant termination asynchronously. The process-tree
         // adapter's own drain ceiling is five seconds, and gate load has stretched that path
         // beyond idle measurements, so this failure-only observer leaves a ten second margin.
-        .recv_timeout(Duration::from_secs(10))
+        .recv_timeout(scaled(Duration::from_secs(10)))
         .expect("the process-tree guard must close an inherited stdout pipe");
     assert!(
         captured.contains(PIPE_HOLDER_READY),
@@ -2266,7 +2266,10 @@ fn held_anthropic_server() -> (
             return;
         }
         let _ = arrived.send(());
-        if released.recv_timeout(Duration::from_secs(20)).is_err() {
+        if released
+            .recv_timeout(scaled(Duration::from_secs(20)))
+            .is_err()
+        {
             return;
         }
         let reply = serde_json::json!({
@@ -3946,7 +3949,7 @@ fn a_disconnected_start_client_does_not_orphan_the_committed_runtime_drive() {
         .unwrap()
         .next()
         .unwrap();
-    let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(5)).unwrap();
+    let mut stream = TcpStream::connect_timeout(&address, scaled(Duration::from_secs(5))).unwrap();
     stream
         .set_write_timeout(Some(scaled(Duration::from_secs(5))))
         .unwrap();
@@ -3958,7 +3961,7 @@ fn a_disconnected_start_client_does_not_orphan_the_committed_runtime_drive() {
     stream.write_all(request.as_bytes()).unwrap();
     stream.write_all(&payload).unwrap();
     arrived
-        .recv_timeout(Duration::from_secs(15))
+        .recv_timeout(scaled(Duration::from_secs(15)))
         .expect("the model call did not begin");
     drop(stream);
     release.send(()).unwrap();
@@ -4429,7 +4432,9 @@ fn issue178_graph_output_cap_reaches_http_and_truncation_is_not_retried() {
             &serde_json::json!({"file":graph.to_str().unwrap(), "mode":"autopilot", "project":project.to_str().unwrap()}),
         );
         provider.join().unwrap();
-        let sent = captured_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let sent = captured_rx
+            .recv_timeout(scaled(Duration::from_secs(5)))
+            .unwrap();
         assert_eq!(
             sent["max_tokens"], 6000,
             "declared ceiling must survive every runtime layer"
@@ -4905,7 +4910,7 @@ fn a_request_to_a_server_that_never_answers_ends_at_its_budget_as_a_timeout() {
     let server = std::thread::spawn(move || {
         let (stream, _) = listener.accept().unwrap();
         // Accept, read nothing, answer nothing, until the client has given up.
-        let _ = held.recv_timeout(Duration::from_secs(30));
+        let _ = held.recv_timeout(scaled(Duration::from_secs(30)));
         drop(stream);
     });
     let budget = Duration::from_millis(300);

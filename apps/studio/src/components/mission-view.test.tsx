@@ -226,15 +226,19 @@ describe("MissionView", () => {
     const onSignal = vi.fn().mockResolvedValue(undefined);
     const tasks = [wt("a", { issue: 5, pr: 609, prTitle: "Two CLI", step: "implement", lane: "gh-claude-4" }),
       wt("b", { issue: 5, pr: 610, prTitle: "Other", step: "implement", lane: "gh-claude-6" })] as unknown as TaskState[];
-    render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} onSignal={onSignal} />);
+    const props = { journeys, tasks, lanes: [], now: 0, runFor: () => null, frameUrl: () => null, onMarkSafe: vi.fn(), onSignal };
+    const { rerender } = render(<MissionView {...props} wakeListeners={["gh-claude-4"]} />);
     await userEvent.click(screen.getByRole("button", { name: "Row PR #609: Two CLI" }));
     await userEvent.click(screen.getByRole("button", { name: "Ask gh-claude-4 for status" }));
     expect(onSignal).toHaveBeenCalledWith({ type: "operator_note", to: "gh-claude-4", description: "Owner asks: status of Implement on PR #609?" });
-    expect(await screen.findByText("Asked 0 min ago · no answer yet")).toBeInTheDocument();
+    expect(await screen.findByText("asked · waiting")).toBeInTheDocument();
+    // A ring consumes the lease; retain the observation made when this ask was sent.
+    rerender(<MissionView {...props} wakeListeners={[]} />);
     await userEvent.click(screen.getByRole("button", { name: "Row PR #610: Other" }));
-    expect(screen.getByRole("button", { name: "Ask gh-claude-6 for status" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Ask gh-claude-6 for status" }));
+    expect(await screen.findByText("nobody is listening")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Row PR #609: Two CLI" }));
-    expect(screen.getByText("Asked 0 min ago · no answer yet")).toBeInTheDocument();
+    expect(screen.getByText("asked · waiting")).toBeInTheDocument();
   });
 
   it("#591: the Review row names only the current reviewer; earlier ones go to a history line", () => {

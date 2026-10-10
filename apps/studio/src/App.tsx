@@ -2344,12 +2344,13 @@ export default function App({
   }, [fileFocusNonce]);
 
   const projectKey = project ?? "this runtime";
-  const [seenSeq, setSeenSeq] = useState<number | null>(null);
+  const [seenSeq, setSeenSeq] = useState<ReturnType<typeof readLastSeen>>(null);
   useEffect(() => { setSeenSeq(selected === "" ? null : readLastSeen(projectKey, selected)); }, [projectKey, selected]);
   const head = status?.headSequence ?? 0;
   const handover = useMemo(() => status !== null && status.executionId === selected && shouldShowHandover(eventList, seenSeq, head)
     ? buildHandover({ events: eventList, bots: team.bots, model, claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null,
-        openItems: needs.items, envelopes, fromSeq: seenSeq!, toSeq: head })
+        openItems: needs.items, envelopes, fromSeq: typeof seenSeq === "number" ? seenSeq : seenSeq!.sequence,
+        seenAt: typeof seenSeq === "object" ? seenSeq?.at : undefined, toSeq: head })
     : null, [status, selected, eventList, seenSeq, head, team, model, claudeTaskRead, needs, envelopes]);
   // Hide puts the bar away for this browser session and this gap; it does not mark anything seen.
   const [hiddenGap, setHiddenGap] = useState<string | null>(null);
@@ -2363,7 +2364,7 @@ export default function App({
   const markSeen = useCallback(() => {
     if (selected === "" || head === 0) return;
     writeLastSeen(projectKey, selected, head);
-    setSeenSeq(head);
+    setSeenSeq({ sequence: head, at: Date.now() });
   }, [projectKey, selected, head]);
   useEffect(() => {
     // Ten visible seconds of the live view count as seen; an open handover waits for Got it.

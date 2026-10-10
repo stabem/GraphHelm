@@ -7,26 +7,37 @@ base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux]
-storage: [{key: graphhelm.handover.last-seen:demo:demo, value: "1"}]
+storage: [{key: graphhelm.handover.last-seen:demo:demo, value: "{\"sequence\":1,\"at\":1791602399034}"}]
 screens:
+  - id: details
+    title: The handover details cite what happened while away
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: region, name: While you were away}, {role: heading, name: Shipped}, {role: heading, name: Went quiet}, {role: heading, name: Nobody touched}, {role: button, name: Got it}]
+    scope: [apps/studio/src/components/handover-card.tsx, apps/studio/src/runtime/handover.ts]
   - id: handover
     title: The While you were away card (shows after 15+ minutes and 20+ events away)
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: dialog, name: While you were away}, {role: heading, name: Shipped}, {role: heading, name: Went quiet}, {role: heading, name: Nobody touched}, {role: button, name: Got it}]
+    expect: [{role: region, name: While you were away}, {role: button, name: Show details}, {role: button, name: Got it}]
     scope: [apps/studio/src/components/handover-card.tsx, apps/studio/src/runtime/handover.ts]
   - id: run
-    title: "A run is open, with its chat and its team on screen"
+    title: The run remains open after dismissing the handover
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: navigation, name: Projects}, {role: region, name: Canvas}, {role: tab, name: Team (live)}, {role: region, name: Team}, {role: complementary, name: Run side panel}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx, apps/studio/src/components/team-canvas.tsx, apps/studio/src/components/right-panel.tsx]
+    expect: [{role: navigation, name: Projects}, {role: button, name: Run actions}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/handover-card.tsx]
 edges:
-  - id: handover.dismiss
+  - id: handover.details
     from: handover
+    to: details
+    acts:
+      - {kind: activate, role: button, name: Show details}
+  - id: handover.dismiss
+    from: details
     to: run
     acts:
       - {kind: activate, role: button, name: Got it}
 paths:
-  main: [handover.dismiss]
+  main: [handover.details, handover.dismiss]
 drift: []

@@ -208,8 +208,8 @@ fn a_helper_named_only_in_a_comment_is_still_dead() {
 }
 
 // #549: a fixed real deadline silently bypasses the lane's time-scale knob. Ordinary green
-// runs cannot observe that bypass without loading the host. This source guard costs one read
-// per named target and no processes or ports. It excludes fake clocks and sleeps.
+// runs cannot observe that bypass without loading the host. This source guard costs one
+// file read per named target and no processes or ports. It excludes fake clocks and sleeps.
 #[test]
 fn named_cli_targets_do_not_bypass_scaled_deadlines() {
     let fixed_ceiling = regex::Regex::new(
@@ -226,6 +226,10 @@ fn named_cli_targets_do_not_bypass_scaled_deadlines() {
     let mut violations = Vec::new();
     // Coordinator-approved scope; other test targets remain a recorded residual.
     for target in [
+        "api_http",
+        "architect_cli",
+        "context_journey",
+        "development_concurrency",
         "mcp_discovery",
         "mcp_stdio",
         "monitor_http",

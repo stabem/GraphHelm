@@ -11,6 +11,10 @@ use std::time::Duration;
 use assert_cmd::Command;
 use serde_json::Value;
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 const REFUSED_CODE: &str = "GHCLI026_ARCHITECT_REFUSED";
 const ARGUMENT_CODE: &str = "GHCLI001_ARGUMENT_INVALID";
 
@@ -362,7 +366,7 @@ fn fake_provider(
                 return;
             };
             stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
+                .set_read_timeout(Some(scaled(Duration::from_secs(5))))
                 .unwrap();
             let captured = read_request(&mut stream);
             let (status, body) = match captured.path.as_str() {

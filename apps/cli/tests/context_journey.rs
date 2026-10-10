@@ -137,10 +137,10 @@ fn post_json(url: &str, token: &str, extra_headers: &[(&str, &str)], body: &Valu
     let (host, port, path) = split_url(url);
     let mut stream = TcpStream::connect((host.as_str(), port)).unwrap();
     stream
-        .set_read_timeout(Some(Duration::from_secs(60)))
+        .set_read_timeout(Some(scaled(Duration::from_secs(60))))
         .unwrap();
     stream
-        .set_write_timeout(Some(Duration::from_secs(15)))
+        .set_write_timeout(Some(scaled(Duration::from_secs(15))))
         .unwrap();
     let payload = serde_json::to_vec(body).unwrap();
     let mut request = format!(

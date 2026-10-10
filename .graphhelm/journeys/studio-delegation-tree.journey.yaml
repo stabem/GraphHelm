@@ -13,20 +13,31 @@ screens:
     title: Recorded handoffs keep reported and unknown assigners distinct
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: Delegation}, {role: treeitem, name: lead-901}, {role: treeitem, name: lane-a claimed.assignedBy · reported by lane-a}, {role: treeitem, name: "#901 plan · PR #903 claimed.assignedBy · reported by lane-a"}, {role: treeitem, name: lane-b review_assigned}, {role: treeitem, name: assigner unrecorded}, {role: treeitem, name: lane-c assigner unrecorded}]
-    scope: [apps/studio/src/components/delegation-tree.tsx, apps/studio/src/components/mission-view.tsx]
+    expect: [{role: region, name: "Now, last, next"}, {role: listitem, name: fix owed by lane-a on aaaaaaaa}, {role: listitem, name: "#901 - lane-a - review"}, {role: treeitem, name: lead-901}, {role: treeitem, name: "#901 BLOCK · lane-b · PR #903 claimed.assignedBy · reported by lane-a"}, {role: treeitem, name: lane-b review_assigned}, {role: treeitem, name: assigner unrecorded}, {role: treeitem, name: lane-c assigner unrecorded}]
+    scope: [apps/studio/src/components/delegation-tree.tsx, apps/studio/src/runtime/handoff-summary.ts]
   - id: run
     title: The open run offers Lanes
     url: /?session=studio-fixture
     state: stable
     expect: [{role: tablist, name: Mission views}, {role: tab, name: Lanes}]
     scope: [apps/studio/src/components/mission-view.tsx]
+  - id: task-history
+    title: Recorded BLOCK and evidence remain visible in task history
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: region, name: "#901 details"}, {role: listitem, name: BLOCK lane-b on aaaaaaaa}, {role: link, name: "https://github.com/stabem/GraphHelm/pull/903#issuecomment-1"}]
+    scope: [apps/studio/src/components/delegation-tree.tsx, apps/studio/src/runtime/handoff-summary.ts]
 edges:
+  - id: lanes.task-history
+    from: lanes
+    to: task-history
+    acts:
+      - {kind: activate, role: treeitem, name: "#901 BLOCK · lane-b · PR #903 claimed.assignedBy · reported by lane-a"}
   - id: run.lanes
     from: run
     to: lanes
     acts:
       - {kind: activate, role: tab, name: Lanes}
 paths:
-  main: [run.lanes]
+  main: [run.lanes, lanes.task-history]
 drift: []

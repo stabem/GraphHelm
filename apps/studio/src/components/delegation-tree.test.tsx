@@ -45,3 +45,31 @@ describe("DelegationTree", () => {
     expect(screen.getAllByRole("treeitem").filter((item) => item.tabIndex === 0)).toEqual([focused]);
   });
 });
+
+// Contract: task disclosure and safe evidence URLs, absent from the assignment-only tree tests.
+// Regression: keyboard cannot open history, or an untrusted URL becomes a navigable link.
+// Cost: jsdom only, milliseconds; the real component consumes the fold, with no test seam.
+it("opens recorded BLOCK evidence with Enter and keeps unsafe URLs as text", () => {
+  const tasks = foldTaskEvents([
+    { ...records[0], taskId: "issue-901", issue: 901 },
+    { kind: "task.pr_opened", actorId: "lane", sequence: 4, taskId: "issue-901", pr: 903, lane: "lane", headSha: "aaaaaaaa" },
+    { kind: "task.review_verdict", actorId: "rev", sequence: 5, taskId: "issue-901", pr: 903, reviewer: "rev", headSha: "aaaaaaaa", verdict: "BLOCK", commentUrl: "https://github.com/stabem/GraphHelm/pull/903#issuecomment-1" },
+  ]);
+  const { rerender } = render(<DelegationTree tasks={tasks} />);
+  const item = screen.getByRole("treeitem", { name: /#901/ });
+  fireEvent.keyDown(item, { key: "Enter" });
+  expect(item).toHaveAttribute("aria-expanded", "true");
+  const details = screen.getByRole("region", { name: "#901 details" });
+  expect(within(details).getByRole("link")).toHaveAttribute("href", "https://github.com/stabem/GraphHelm/pull/903#issuecomment-1");
+  expect(within(details).getByRole("link")).toHaveAttribute("rel", "noreferrer");
+  for (const url of ["http://github.com/stabem/GraphHelm/pull/903", "https://github.com.evil.test/pull/903", "javascript:alert(1)"]) {
+    tasks[0].rounds[0].commentUrl = url;
+    rerender(<DelegationTree tasks={[...tasks]} />);
+    expect(within(details).queryByRole("link")).toBeNull();
+    expect(within(details).getByText(url)).toBeInTheDocument();
+  }
+  fireEvent.keyDown(item, { key: " " });
+  expect(screen.queryByRole("region", { name: "#901 details" })).toBeNull();
+  fireEvent.click(within(item).getByText(/#901/));
+  expect(screen.getByRole("region", { name: "#901 details" })).toBeInTheDocument();
+});

@@ -14,3 +14,11 @@
   .delegation-tree { padding: 10px; }
   .delegation-tree ul[role="group"] { margin-left: 4px; padding-left: 8px; }
 }
+
+.handoff-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; font-size: 12px; overflow-wrap: anywhere; }
+.handoff-summary h3, .delegation-details h3 { margin: 6px 0; font-size: 12px; }
+.handoff-summary ul, .delegation-details ul { padding-left: 18px; }
+.delegation-details { padding: 8px; font-size: 12px; overflow-wrap: anywhere; border-left: 1px solid #505765; }
+.delegation-details p { margin: 6px 0; }
+.delegation-details a { color: #91b8ff; }
+@media (max-width: 600px) { .handoff-summary { grid-template-columns: 1fr; gap: 4px; } }

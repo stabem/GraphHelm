@@ -126,6 +126,8 @@ const records = [
   ['901-claimed', 'lane-a', 'task.claimed', { taskId: 'issue-901', issue: 901, lane: 'lane-a', branch: 'issue-901-fixture', assignedBy: 'lead-901' }],
   ['901-review', 'lane-a', 'task.review_assigned', { taskId: 'issue-901', pr: 903, headSha: 'aaaaaaaa', reviewer: 'lane-b', ordinal: 1 }],
   ['902-claimed', 'lane-c', 'task.claimed', { taskId: 'issue-902', issue: 902, lane: 'lane-c', branch: 'issue-902-fixture' }],
+  ['903-pr', 'lane-a', 'task.pr_opened', { taskId: 'issue-901', pr: 903, lane: 'lane-a', headSha: 'aaaaaaaa', journeys: [] }],
+  ['903-block', 'lane-b', 'task.review_verdict', { taskId: 'issue-901', pr: 903, reviewer: 'lane-b', verdict: 'BLOCK', headSha: 'aaaaaaaa', commentUrl: 'https://github.com/stabem/GraphHelm/pull/903#issuecomment-1' }],
 ];
 for (const [id, lane, type, fields] of records) {
   const document = { schema: 'graphhelm-task-event-v1', revision: 1, at, ...fields };
@@ -134,8 +136,9 @@ for (const [id, lane, type, fields] of records) {
   fs.writeFileSync(`${dir}/.graphhelm/task-${id}.json`, JSON.stringify({ signal }));
 }
 NODE
-    for record in 901-claimed 901-review 902-claimed; do
+    for record in 901-claimed 901-review 902-claimed 903-pr 903-block; do
       actor=lane-a; [ "$record" != 902-claimed ] || actor=lane-c
+      [ "$record" != 903-block ] || actor=lane-b
       curl -sf --max-time 10 -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" -H "Idempotency-Key: fixture-$record" -H "X-GraphHelm-Actor: $actor" -H "X-GraphHelm-Actor-Type: agent" \
         --data-binary @"$dir/.graphhelm/task-$record.json" > "$dir/.graphhelm/task-$record.out" \

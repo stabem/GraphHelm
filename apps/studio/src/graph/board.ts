@@ -229,15 +229,6 @@ export function positionOf(board: BoardState, nodeId: string, index: number): Po
   return board.positions[nodeId] ?? defaultPosition(index);
 }
 
-/** Where an agent stands before anyone moves it. `index` is a rank in the left lane. */
-export function defaultAgentPosition(index: number): Point {
-  return { x: 100, y: 140 + index * 140 };
-}
-
-export function agentPositionOf(board: BoardState, agentId: string, index: number): Point {
-  return board.agents[agentId] ?? defaultAgentPosition(index);
-}
-
 /**
  * Puts every block back on the default grid, and keeps everything a person drew.
  *
@@ -368,15 +359,5 @@ function sanitiseNotes(value: unknown): Note[] {
   }
   return out;
 }
-
-/** A board-local id. Not a security value: it distinguishes one stroke from another. */
-export function markId(): string {
-  const uuid = globalThis.crypto?.randomUUID?.();
-  if (uuid) return uuid;
-  const bytes = new Uint8Array(8);
-  globalThis.crypto?.getRandomValues?.(bytes);
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 
 

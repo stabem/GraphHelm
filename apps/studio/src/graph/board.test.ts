@@ -7,7 +7,6 @@ import {
   OBJECTIVE_ALLOWANCE,
   cardHeight,
   clearBoards,
-  defaultAgentPosition,
   defaultPosition,
   emptyBoard,
   fitCamera,
@@ -133,11 +132,6 @@ describe("where a card sits before anyone moves it", () => {
     expect(defaultPosition(0)).toEqual({ x: 680, y: 100 });
     expect(defaultPosition(2)).toEqual({ x: 680, y: 740 });
     expect(defaultPosition(3)).toEqual({ x: 1060, y: 100 });
-  });
-
-  it("keeps agents in one vertical lane", () => {
-    expect(defaultAgentPosition(0)).toEqual({ x: 100, y: 140 });
-    expect(defaultAgentPosition(3)).toEqual({ x: 100, y: 560 });
   });
 });
 

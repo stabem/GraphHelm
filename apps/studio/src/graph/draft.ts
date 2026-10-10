@@ -22,15 +22,6 @@ export const DRAFT_NODE_ID = "start";
  * runs past it is a plan, and belongs in the graph the first node produces. */
 export const MAX_OBJECTIVE_LENGTH = 2000;
 
-export interface DraftTask {
-  /** The execution id this draft will run under, fixed when the draft is created so the board and
-   * the eventual run agree on it. */
-  executionId: string;
-  /** The route id the operator picked, or `null` while they have not. `null` means "the server's
-   * own default" - not "no model". */
-  route: string | null;
-}
-
 /**
  * A URL-safe, collision-resistant execution id.
  *

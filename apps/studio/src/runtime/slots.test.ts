@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ordinal, parseSlots, slotStatus, slotText, unavailableRoots } from "./slots";
+import { ordinal, parseSlots, slotStatus, slotText } from "./slots";
 
 const envelope = {
   ok: true,
@@ -28,7 +28,6 @@ describe("parseSlots", () => {
   });
   it("an error entry is unavailable, never an empty queue", () => {
     expect(slots[1]).toEqual({ root: "E:/gh", ok: false, errorCodes: ["workspace.slot_root_missing"] });
-    expect(unavailableRoots(slots)).toEqual(["E:/gh"]);
   });
   it("an idle slot is an empty queue", () => expect(slots[2]).toEqual({ root: "F:/gh", ok: true, holder: null, waiting: [] }));
   it("no slot roots and garbage parse to nothing", () => {

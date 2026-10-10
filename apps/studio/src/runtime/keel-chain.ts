@@ -37,12 +37,6 @@ function keelKind(event: RuntimeEvent, nodeId: string): { kind: KeelStepKind; se
   return { kind, severity: typeof payload.severity === "string" ? payload.severity : null };
 }
 
-export function isKeelSignal(event: RuntimeEvent): boolean {
-  if (event.kind !== "signal_recorded") return false;
-  const kind = (event.payload as Record<string, unknown> | null)?.kind;
-  return KEEL_STEPS.some((step) => step.kind === kind);
-}
-
 export function keelChain(events: RuntimeEvent[], nodeId: string): KeelChain {
   const counts = new Map<KeelStepKind, number>();
   let lastProofSeverity: string | null = null;

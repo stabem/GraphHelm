@@ -871,19 +871,6 @@ export function useEnvelopes(
 
 const NO_ENVELOPES: EnvelopeRecord = {};
 
-/** Actors the thread has actually heard from, for the roster's plain half. System actors stay
- * out - the room lists who CONVERSES, and `system-runtime` narrating lifecycle is not that. */
-export function actorsInRoom(events: RuntimeEvent[], personas: Record<string, string>): string[] {
-  const seen = new Set<string>();
-  for (const event of events) {
-    if (event.actorId === null) continue;
-    if (event.actorType !== "agent" && event.actorType !== "owner") continue;
-    if (personas[event.actorId] !== undefined) continue;
-    seen.add(event.actorId);
-  }
-  return [...seen].sort();
-}
-
 /**
  * The way back in: say something into a run that is already going.
  *
@@ -1340,82 +1327,6 @@ export function AgentPanel({
 
       <p className="panel-foot">
         {nativeChats === undefined ? `Only what you and ${name ?? agentId} said to each other. Group talk lives in the bubbles on the board.` : "Orders go to this linked chat. A link records membership; it does not assign or complete a graph step."}
-      </p>
-    </section>
-  );
-}
-
-/**
- * One conversation's own window, opened from its bubble on the board.
- *
- * Three kinds of talk exist and they never mix here: the ROOM (everything said to nobody in
- * particular - you are part of it, so the say box speaks into it), a PAIR of agents (their
- * addressed exchange - you read it, you are not in it), and your own direct line with one agent,
- * which is not this component at all: that is the agent's own window, opened from its blob.
- */
-export function TalkPanel({
-  talkId,
-  label,
-  participants,
-  events,
-  executionId,
-  openEvidence,
-  onClose,
-  onSay,
-  saying = false,
-  sayError = "",
-}: {
-  talkId: string;
-  label: string;
-  participants: string[];
-  events: RuntimeEvent[];
-  executionId?: string;
-  openEvidence?: (executionId: string, evidenceId: string) => Promise<EvidenceContent>;
-  onClose: () => void;
-  /** Present only for the room: a pair of agents is theirs, and writing into it would put the
-   * operator's words inside a conversation that never addressed them. */
-  onSay?: (message: string, to: string | null) => void;
-  saying?: boolean;
-  sayError?: string;
-}) {
-  return (
-    <section className="panel" aria-label={`Conversation ${label}`}>
-      <header className="panel-head calm">
-        <span className="talk-faces" aria-hidden="true">
-          {participants.slice(0, 3).map((id) => (
-            <span
-              key={id}
-              className="avatar mini"
-              style={{ background: `hsl(${hueOf(id)} 52% 46%)` }}
-            >
-              {initialOf(id)}
-            </span>
-          ))}
-        </span>
-        <div style={{ minWidth: 0 }}>
-          <h2>{talkId === "room" ? "Everyone" : label}</h2>
-          <p className="lbl">{talkId === "room" ? "the whole room, you included" : "only between them"}</p>
-        </div>
-        <button type="button" className="ghost close" onClick={onClose} aria-label={`Close ${label}`}>
-          <X aria-hidden="true" />
-        </button>
-      </header>
-
-      <Thread events={events} executionId={executionId} openEvidence={openEvidence} />
-
-      {onSay !== undefined && (
-        <SayBox
-          busy={saying}
-          error={sayError}
-          onSay={onSay}
-          draftId={`talk:${executionId ?? ""}:${talkId}`}
-        />
-      )}
-
-      <p className="panel-foot">
-        {talkId === "room"
-          ? "Everyone on this run sees what you send here."
-          : "Their exchange. To talk to one of them, open its blob."}
       </p>
     </section>
   );

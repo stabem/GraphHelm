@@ -3,7 +3,6 @@
 import type { TaskState } from "./team-tasks";
 import { LIVENESS_MS, type Lane } from "./lane-bars";
 import { openBlock } from "./mission";
-export { LIVENESS_MS };
 import type { TimedStep } from "./step-timing";
 import { slotStatus, slotText, type SlotView } from "./slots";
 
@@ -158,8 +157,6 @@ export function stageProgress(t: TaskState, groupTasks: TaskState[], now: number
   return { elapsedMs, expectedMs: exp.expectedMs, ratio: Math.min(1, pace), pace, tone: pace > 1 ? "amber" : "green" };
 }
 
-/** Under this the lane counts as active right now (pulsing green dot): the one liveness rule. */
-export const ACTIVE_MS = LIVENESS_MS;
 export interface Activity { sinceMs: number | null; tone: PaceTone; role?: OwnerRole }
 /** How long since the lane's latest record: green while `laneLiveness` says live, red once it is
  * stalled, so the dot always agrees with the card's Stalled flag. No record at all is red. */

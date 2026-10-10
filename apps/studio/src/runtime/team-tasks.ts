@@ -621,10 +621,6 @@ function contentDigest(evidence: EvidenceContent): Promise<string> {
 /** Reads the sealed `task.*` envelopes of a run and folds them (#391). An envelope whose hash does
  * not match its record, whose type is not the recorded kind, or whose signer is not the actor
  * that recorded it is skipped: the Runtime refuses those, and an old log must not draw them. */
-export async function readTaskEvents(options: ReadClaudeTasksOptions): Promise<TaskState[]> {
-  return foldTaskEvents(await readTaskEventRecords(options));
-}
-
 /** The verified `task.*` records themselves, in sequence order, each with its `occurredAt`: the
  * Graph tab's lanes timeline needs when each one happened, which the fold does not keep. */
 export async function readTaskEventRecords({ executionId, events, readEvidence }: ReadClaudeTasksOptions): Promise<TaskEventRecord[]> {

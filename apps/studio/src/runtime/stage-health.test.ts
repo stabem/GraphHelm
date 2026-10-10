@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ACTIVE_MS, STAGE_ALLOWANCE_MS, ownerRole, LIVENESS_MS, laneLiveness, ownerLane, SLOW_FACTOR, SLOW_MIN_SAMPLES, activity, liveDuration, stageDuration, stageHealth, stageProgress, stageSince } from "./stage-health";
-import { STALL_MS, type Lane } from "./lane-bars";
+import { STAGE_ALLOWANCE_MS, ownerRole, laneLiveness, ownerLane, SLOW_FACTOR, SLOW_MIN_SAMPLES, activity, liveDuration, stageDuration, stageHealth, stageProgress, stageSince } from "./stage-health";
+import { LIVENESS_MS, type Lane } from "./lane-bars";
 import type { TaskState } from "./team-tasks";
 import { parseSlots } from "./slots";
 
@@ -46,8 +46,8 @@ describe("stageHealth", () => {
   it("Stalled at exactly LIVENESS_MS without a record from the owner lane, not one ms before", () => {
     const t = ts("a");
     expect(stageHealth(t, [lane("gh-claude-1", NOW - 9 * H)], [], NOW)).toMatchObject({ flag: "stalled", text: "gh-claude-1 silent 9h", tone: "red" });
-    expect(stageHealth(t, [lane("gh-claude-1", NOW - STALL_MS)], [], NOW)?.flag).toBe("stalled");
-    expect(stageHealth(t, [lane("gh-claude-1", NOW - STALL_MS + 1)], [], NOW)?.flag).toBe("moving");
+    expect(stageHealth(t, [lane("gh-claude-1", NOW - LIVENESS_MS)], [], NOW)?.flag).toBe("stalled");
+    expect(stageHealth(t, [lane("gh-claude-1", NOW - LIVENESS_MS + 1)], [], NOW)?.flag).toBe("moving");
   });
   it("Blocked names the reviewer of the unanswered BLOCK", () => {
     const t = ts("a", { step: "review", blockedBy: { reviewer: "gh-claude-7", headSha: "x", commentUrl: "" } });
@@ -115,8 +115,8 @@ describe("stageProgress", () => {
 
 describe("activity", () => {
   it("green under LIVENESS_MS, red at it or with no lane (the Stalled rule)", () => {
-    expect(activity("l", [lane("l", NOW - ACTIVE_MS + 1)], NOW)).toEqual({ sinceMs: ACTIVE_MS - 1, tone: "green" });
-    expect(activity("l", [lane("l", NOW - ACTIVE_MS)], NOW).tone).toBe("red");
+    expect(activity("l", [lane("l", NOW - LIVENESS_MS + 1)], NOW)).toEqual({ sinceMs: LIVENESS_MS - 1, tone: "green" });
+    expect(activity("l", [lane("l", NOW - LIVENESS_MS)], NOW).tone).toBe("red");
     expect(activity("z", [lane("l", NOW)], NOW)).toEqual({ sinceMs: null, tone: "red" });
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { digestOf } from "./customs";
-import { foldTaskEvents, parseTaskEvent, readTaskEvents, type TaskEventRecord } from "./team-tasks";
+import { foldTaskEvents, parseTaskEvent, readTaskEventRecords, type TaskEventRecord } from "./team-tasks";
 import type { RuntimeEvent } from "./types";
 
 /* #386 (spec §7, §9 row F): the Team tab's per-task graph is folded from `task.*` records alone.
@@ -92,7 +92,7 @@ describe("foldTaskEvents", () => {
   });
 });
 
-describe("readTaskEvents", () => {
+describe("readTaskEventRecords composed with foldTaskEvents", () => {
   async function sealed(id: string, kind: string, signer: string, document: Record<string, unknown>) {
     const content = JSON.stringify({ id: `signal-${id}`, source: { type: "user", id: signer }, type: kind, description: JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-9", revision: 1, at: "2026-10-07T20:00:00Z", ...document }) });
     const hash = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
@@ -106,11 +106,11 @@ describe("readTaskEvents", () => {
     const claimed = await sealed("e1", "task.claimed", "gh-claude-4", { issue: 9, lane: "gh-claude-4", branch: "issue-9-x" });
     const forged = await sealed("e2", "task.pr_opened", "gh-claude-4", { pr: 10, headSha: "aaaaaaaa", journeys: [], lane: "gh-claude-4" });
     const store = new Map([[claimed.evidenceId, claimed], [forged.evidenceId, forged]]);
-    const tasks = await readTaskEvents({
+    const tasks = foldTaskEvents(await readTaskEventRecords({
       executionId: "gh-team",
       events: [event(1, "gh-claude-4", "task.claimed", claimed), event(2, "agent-chat", "task.pr_opened", forged)],
       readEvidence: async (_, id) => store.get(id)!,
-    });
+    }));
     expect(tasks).toHaveLength(1);
     expect(tasks[0]).toMatchObject({ taskId: "issue-9", issue: 9, lane: "gh-claude-4", step: "plan", pr: null });
   });
@@ -125,7 +125,7 @@ describe("readTaskEvents", () => {
     const store = new Map([claimed, ...heads].map((evidence) => [evidence.evidenceId, evidence]));
     let inFlight = 0;
     let most = 0;
-    const tasks = await readTaskEvents({
+    const tasks = foldTaskEvents(await readTaskEventRecords({
       executionId: "gh-team",
       events: [event(1, "gh-claude-4", "task.claimed", claimed), ...heads.map((evidence, n) => event(n + 2, "gh-claude-4", "task.pr_opened", evidence))].reverse(),
       readEvidence: async (_, id) => {
@@ -136,7 +136,7 @@ describe("readTaskEvents", () => {
         inFlight -= 1;
         return store.get(id)!;
       },
-    });
+    }));
     expect(most).toBeGreaterThan(1);
     expect(most).toBeLessThanOrEqual(16);
     expect(tasks).toHaveLength(1);

@@ -20,9 +20,6 @@ export interface Lane {
 /** #591: a lane with no record of any kind for this long is silent; a step it owns reads Stalled.
  * One rule for the Graph cards, the pace dot and the Lanes agent board. */
 export const LIVENESS_MS = 30 * 60 * 1000;
-/** @deprecated the old 2h stall rule, now the one liveness rule. */
-export const STALL_MS = LIVENESS_MS;
-
 export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number): Lane[] {
   const lanes = new Map<string, { bars: LaneBar[]; last: number; record: LaneRecord | null; awaiting: Set<number> }>();
   const open = new Map<string, { lane: string; bar: LaneBar; slice: string }>();

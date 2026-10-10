@@ -83,6 +83,34 @@ fn run(repo: &Path, card: Option<&Path>) -> (i32, Value) {
     (output.status.code().unwrap(), reply)
 }
 
+/// Validation must expose an invalid discovered flow as a failure, rather than treating a
+/// non-executed journey as clean coverage. This protects the user-visible negative-evidence
+/// boundary; existing keel check tests do not invoke the validation supervisor.
+#[test]
+fn validation_reports_invalid_flow_and_no_dead_code_verdict() {
+    let repo = repository(&[]);
+    let journeys = repo.path().join(".graphhelm/journeys");
+    fs::create_dir_all(&journeys).unwrap();
+    fs::write(journeys.join("broken.journey.yaml"), "not: [valid").unwrap();
+    let output = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args([
+            "--json",
+            "keel",
+            "test",
+            "validation",
+            "--repo",
+            repo.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["command"], "keel.test.validation");
+    assert_eq!(envelope["data"]["deadConfirmed"], serde_json::json!([]));
+    assert_eq!(envelope["data"]["failures"][0]["reason"], "flow_invalid");
+}
+
 fn codes(reply: &Value) -> Vec<String> {
     reply["diagnostics"]
         .as_array()

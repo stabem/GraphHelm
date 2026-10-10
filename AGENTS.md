@@ -56,6 +56,20 @@ Use a Rust workspace with small responsibility-focused crates:
 
 Provider SDKs, database clients, sandbox backends, Studio dependencies, and external integrations belong in later adapter plans. Do not scaffold empty modules, public stubs, fake success handlers, or future directories.
 
+## Retire displaced code (Keel)
+
+When a change removes, replaces or redirects a production caller, inspect the displaced path
+before opening the PR. Remove proven-unused code and its exclusive styles/helpers in the same
+scope; inspect tests under the existing test-audit deletion rule. Record `Retirement:` in the PR:
+what was checked, what was removed, what remains with its consumer/contract, or what is unobserved.
+A zero-reference search or test-only caller is a lead, not proof: account for dynamic entry points,
+public APIs, platform code and persisted/wire contracts. No repository-wide sweep or extra build.
+The reviewer checks this record on the reviewed head; a missing record is answered before approval.
+See `docs/process/DELIVERY.md` §3 and `docs/keel/KEEL_SPEC.md` Law 1. This is a repository workflow
+rule, not a new automated `keel check` finding or a change to installed plugin copies.
+For execution evidence, see [`graphhelm keel test validation`](docs/keel/KEEL_TEST_VALIDATION.md).
+Its unobserved results are investigation leads; missing coverage never proves code is dead.
+
 ## Toolchain and repository commands
 
 The pinned toolchain is Rust `1.97.1` with `rustfmt` and `clippy`. Install it when missing:

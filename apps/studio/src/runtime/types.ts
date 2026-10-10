@@ -78,6 +78,8 @@ export interface ExecutionStatus {
   attentionReasons: AttentionReason[];
   nodeStateCounts: Record<string, number>;
   nodeStates?: Record<string, string>;
+  /** Latest recorded routing choice. Older Runtimes omit it; absent nodes have no choice. */
+  delegation?: Record<string, { kind: string; tier: string; effort: string; escalated: boolean; seq: number }>;
   /** Event-backed ownership for governed proposal nodes. Missing means no assignment was recorded. */
   nodeAssignments?: Record<string, { type: string; id: string }>;
   /** Draft digests exposed for matching an approval to the sealed proposal it accepted. */

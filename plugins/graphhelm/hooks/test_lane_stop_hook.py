@@ -138,9 +138,14 @@ class LaneStopTests(unittest.TestCase):
                 if mode == "invalid":
                     body = b"not json"
                 elif "/evidence/" in self.path:
-                    body = json.dumps({"ok": True, "data": {"evidenceId": "recent-evidence",
-                        "mediaType": "application/json", "content": content,
-                        "contentSha256": digest}}).encode()
+                    evidence_id = self.path.rsplit("/", 1)[-1]
+                    envelope = content
+                    if mode == "busy":
+                        envelope = json.dumps({"id": evidence_id, "type": "operator_note",
+                            "to": "codex-4" if evidence_id == "note-4097" else "codex-5"})
+                    body = json.dumps({"ok": True, "data": {"evidenceId": evidence_id,
+                        "mediaType": "application/json", "content": envelope,
+                        "contentSha256": hashlib.sha256(envelope.encode()).hexdigest()}}).encode()
                 else:
                     after = int(parse_qs(urlparse(self.path).query)["after"][0])
                     limit = int(parse_qs(urlparse(self.path).query)["limit"][0])
@@ -151,11 +156,14 @@ class LaneStopTests(unittest.TestCase):
                         for event in events:
                             n = event["sequence"]
                             if n > 3797:
+                                to = "codex-4" if n == 4097 else "codex-5"
+                                envelope = json.dumps({"id": f"note-{n}", "type": "operator_note", "to": to})
+                                note_digest = hashlib.sha256(envelope.encode()).hexdigest()
                                 event.update(kind={"type": "signal_recorded", "data": {
                                     "kind": "operator_note", "executionId": "lane-test",
-                                    "signalId": f"note-{n}", "to": "codex-4" if n == 4097 else "codex-5",
-                                    "envelopeSha256": digest}}, evidenceRefs=[{
-                                        "evidenceId": "recent-evidence", "contentSha256": digest}])
+                                    "signalId": f"note-{n}", "to": to,
+                                    "envelopeSha256": note_digest}}, evidenceRefs=[{
+                                        "evidenceId": f"note-{n}", "contentSha256": note_digest}])
                     if mode == "recent" and events and events[-1]["sequence"] == 4097:
                         events[-1] = {"sequence": 4097, "kind": {"type": "signal_recorded",
                             "data": {"kind": "operator_note", "executionId": "lane-test",

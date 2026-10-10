@@ -12,6 +12,7 @@ import { IssueGraph, MissionGraph, STATUS_LABEL, stageState } from "./mission-gr
 import { ProofTable } from "./proof-table";
 import { TestCanvas } from "./test-canvas";
 import { LanesTimeline } from "./lanes-timeline";
+import { WorkKanban, type KanbanItem } from "./work-kanban";
 import type { Bot } from "../runtime/team";
 import { realName } from "../runtime/lane-bars";
 import { laneLiveness } from "../runtime/stage-health";
@@ -213,8 +214,26 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
       </header>
   );
   const page = onTeam ? "full" : undefined;
-  const lanesView = <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots}
-    {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />;
+  // #668: every open PR as its Graph node, by stage, above the Agents board; a click opens it on the Graph.
+  const kanbanItems: KanbanItem[] = groups.flatMap((g) => {
+    const rows = tasks.filter((t) => g.rows.some((r) => r.key === t.key));
+    return g.rows.filter((r) => r.open).map((r): KanbanItem => {
+      const raw = rows.find((t) => t.key === r.key);
+      return {
+        groupKey: g.key, row: r, stage: g.stages[r.key]!, task: withCurrentReviewer(r.task, lanes),
+        health: raw ? stageHealth(raw, lanes, rows, live, false, slots) : null,
+        pace: raw ? { progress: stageProgress(raw, rows, live, lanes), activity: activity(ownerLane(raw), lanes, live, rows, ownerRole(raw), slots) } : null,
+      };
+    });
+  });
+  const openOnGraph = (groupKey: string, key: string) => {
+    setChosen({ kind: "group", key: groupKey }); setStepId(null); setStageCol(null); setTaskKey(key); setSub("graph");
+  };
+  const lanesView = <>
+    <WorkKanban items={kanbanItems} onOpen={openOnGraph} />
+    <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots}
+      {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
+  </>;
   const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds} {...(onOpenNode ? { onOpenNode } : {})} />;
   if (sel === null) return <div className="mv" data-wide="true" data-page={page} data-chat={chatOpen ? "open" : undefined}>{header}
     {sub === "lanes" ? <div className="mv-pad">{lanesView}</div>

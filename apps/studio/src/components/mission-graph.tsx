@@ -323,8 +323,10 @@ export function cardHeight(c: PrRow["cells"][number], stage: WorkStage, t: Missi
 
 /** #591: the current card. A BLOCK opens a Fixing card for the author (amber, red only when the
  * owner lane is silent past LIVENESS_MS: Stalled); the health flag gets its own line and the time in stage sits right on the who line. */
-function CurrentCard({ cell: c, stage, task: t, health, pace, selected, left, top, onSelect }: {
-  cell: PrRow["cells"][number]; stage: WorkStage; task: MissionTask; health: StageHealth | null; pace: Pace | null; selected: boolean; left: number; top: number; onSelect(): void;
+export function CurrentCard({ cell: c, stage, task: t, health, pace, selected, left, top, onSelect }: {
+  cell: PrRow["cells"][number]; stage: WorkStage; task: MissionTask; health: StageHealth | null; pace: Pace | null; selected: boolean;
+  /** Absolute position on the graph canvas; omitted (#668) when the card sits in a kanban column. */
+  left?: number; top?: number; onSelect(): void;
 }) {
   const stuck = health?.flag === "stalled";
   const fixing = stage === "fix" && t.blocked;
@@ -335,7 +337,7 @@ function CurrentCard({ cell: c, stage, task: t, health, pace, selected, left, to
   const flag = health && !(fixing && health.flag === "blocked") ? health : null;
   return (
     <button type="button" className="mg-node" data-state={st} data-stage={stage} data-blocked={t.blocked} data-current="true" data-dense={Boolean(c.sub || flag)}
-      data-pace={Boolean(pace)} aria-pressed={selected} style={{ left, top }} onClick={onSelect}>
+      data-pace={Boolean(pace)} aria-pressed={selected} style={left === undefined ? undefined : { left, top }} onClick={onSelect}>
       <span className="mg-node-head">
         <span className="mg-dot" data-state={st} />
         <span className="mg-node-label">{c.count > 1 ? `${base} ×${c.count}` : base}</span>

@@ -775,7 +775,8 @@ fn signal_as_agent(base: &str, bearer: &str, key: &str, body: &str) -> (u16, Val
 /// owner's package.json and downloads Chromium, so it is the owner's alone and takes no caller
 /// input. Defect named: the route added to the agent allow-list, or a body passed through to npm.
 /// The agent session token is refused before any handler; a body is refused by the owner's own
-/// request; neither writes a file. Cost: one server, three requests, no install.
+/// request; neither writes a file. The last outcome is also owner-only (#627); a fresh Runtime
+/// answers none. Cost: one server, five requests, no install.
 #[test]
 fn only_the_owner_sets_up_the_observer_and_nothing_reaches_npm() {
     let harness = prepared();
@@ -792,6 +793,12 @@ fn only_the_owner_sets_up_the_observer_and_nothing_reaches_npm() {
                 .exists()
         );
     };
+
+    let (status, record) = http(&base, "GET", ROUTE, Some(&owner));
+    assert_eq!(status, 200, "{record}");
+    assert_eq!(record["data"]["state"], "none");
+    let (status, refused) = http(&base, "GET", ROUTE, Some(agent_token.trim()));
+    assert_eq!(status, 403, "{refused}");
 
     let (status, refused) = http(&base, "POST", ROUTE, Some(agent_token.trim()));
     assert_eq!(status, 403, "{refused}");

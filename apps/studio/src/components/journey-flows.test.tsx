@@ -4,11 +4,12 @@
 // swallowed, a settled approval offered again, and a Watch that does not light the step being
 // played. Cost: jsdom render, no network.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 
 import { fastUserEvent } from "../test/user-event";
 import type { JourneyFlowView, JourneyFlowsView, LiveSession } from "../runtime/types";
-import { JourneyFlows, type JourneyRunSource } from "./journey-flows";
+import { RuntimeClient } from "../runtime/client";
+import { JourneyFlows, PlayerSetup, type JourneyRunSource } from "./journey-flows";
 
 const userEvent = fastUserEvent();
 afterEach(cleanup);
@@ -567,4 +568,90 @@ describe("JourneyFlows held step", () => {
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^Test passed/));
     expect(screen.queryByRole("button", { name: "Run it" })).toBeNull();
   });
+});
+
+// #627: reopening must show the server's failed attempt without starting another install.
+// Existing setup tests only click Install; cost: one jsdom render, mocked HTTP, no install.
+describe("PlayerSetup restored outcome", () => {
+  // Older Runtimes have no GET (404/405). Existing cells only read successful responses.
+  // Real panel/run wiring, mocked I/O and clock; no production seam, no real wait or install.
+  it.each([404, 405, 500])("leaves loading after setup GET %s, offering setup only for observer_missing", async (httpStatus) => {
+    vi.useFakeTimers();
+    try {
+      for (const missing of [false, true]) {
+        const readPlayerSetup = vi.fn().mockRejectedValue(Object.assign(new Error(`HTTP ${httpStatus}`), { httpStatus }));
+        const setupPlayer = vi.fn();
+        const result = missing ? { state: "failed", reason: "driver.observer_missing" } : { state: "ready", result: "pass" };
+        const run: JourneyRunSource = {
+          start: vi.fn().mockResolvedValue(result), read: vi.fn().mockResolvedValue(result),
+          screenFrame: vi.fn().mockResolvedValue(null), liveFrame: vi.fn().mockResolvedValue(null),
+          setupPlayer, readPlayerSetup,
+        };
+        let container!: HTMLElement;
+        await act(async () => { ({ container } = render(<JourneyFlows view={view} onApprove={vi.fn()} run={run} />)); });
+        const panel = within(container.querySelector<HTMLElement>(".journey-player-setup")!);
+        expect(panel.queryByRole("status")).toBeNull();
+        if (missing) expect(panel.getByRole("button", { name: "Set up journey player" })).toBeEnabled();
+        else expect(panel.queryByRole("button")).toBeNull();
+        if (httpStatus === 500) expect(panel.getByRole("alert")).toHaveTextContent("Couldn't read the last setup: HTTP 500");
+        else expect(panel.queryByRole("alert")).toBeNull();
+        const reads = readPlayerSetup.mock.calls.length;
+        expect(reads).toBeGreaterThan(0);
+        await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
+        if (httpStatus !== 500) expect(readPlayerSetup).toHaveBeenCalledTimes(reads);
+        expect(setupPlayer).not.toHaveBeenCalled();
+        cleanup();
+      }
+    } finally { cleanup(); vi.useRealTimers(); }
+  });
+
+  // Reopening after success must still mount the setup reader when readiness no longer fails.
+  // Covers the real client GET and panel wiring; mocked fetch only, no new test seam.
+  it("reads the last successful setup even when the player is already ready", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, data: {
+      state: "ok", startedAt: "2026-10-09T10:00:00Z", finishedAt: "2026-10-09T10:02:00Z",
+      changed: [{ path: "package.json", change: "created" }],
+    }, diagnostics: [] }), { headers: { "content-type": "application/json" } }));
+    const client = new RuntimeClient("owner-token", { fetch });
+    const setupPlayer = vi.fn();
+    const run: JourneyRunSource = {
+      start: vi.fn().mockResolvedValue({ state: "ready", result: "pass" }),
+      read: vi.fn().mockResolvedValue({ state: "ready", result: "pass" }),
+      screenFrame: vi.fn().mockResolvedValue(null), liveFrame: vi.fn().mockResolvedValue(null),
+      setupPlayer, readPlayerSetup: () => client.journeyObserverSetup(),
+    };
+    render(<JourneyFlows view={view} onApprove={vi.fn()} run={run} />);
+    expect(await screen.findByText(/Last setup finished at/)).toHaveTextContent("changed package.json (created)");
+    expect(fetch.mock.calls[0]?.[0]).toBe("/v1/journey-observer/setup");
+    expect(fetch.mock.calls[0]?.[1]).toMatchObject({ method: "GET", headers: { Authorization: "Bearer owner-token" } });
+    expect(setupPlayer).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed setup on mount without a click", async () => {
+    const setup = vi.fn();
+    const readSetup = vi.fn().mockResolvedValue({ state: "failed", startedAt: "2026-10-09T10:00:00Z", finishedAt: "2026-10-09T10:02:00Z", message: "Chromium download failed", changed: [] });
+    render(<PlayerSetup setup={setup} readSetup={readSetup} onDone={vi.fn()} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Last setup failed at .*Chromium download failed/);
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+    expect(setup).not.toHaveBeenCalled();
+  });
+});
+
+// Fixed clock: observes polling without waiting five real seconds. No installer or browser.
+it("polls a running setup every five seconds and stops after completion", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-09T10:02:00Z"));
+  try {
+    const readSetup = vi.fn()
+      .mockResolvedValueOnce({ state: "running", startedAt: "2026-10-09T10:00:00Z", changed: [] })
+      .mockResolvedValue({ state: "ok", startedAt: "2026-10-09T10:00:00Z", finishedAt: "2026-10-09T10:02:00Z", changed: [{ path: "package.json", change: "created" }] });
+    await act(async () => { render(<PlayerSetup setup={vi.fn()} readSetup={readSetup} onDone={vi.fn()} />); });
+    expect(screen.getByRole("status")).toHaveTextContent(/Installing the journey player.*started 2 min ago/);
+    await act(async () => { await vi.advanceTimersByTimeAsync(4999); });
+    expect(readSetup).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(screen.getByRole("status")).toHaveTextContent(/Last setup finished at .*changed package.json \(created\)/);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+    expect(readSetup).toHaveBeenCalledTimes(2);
+  } finally { cleanup(); vi.useRealTimers(); }
 });

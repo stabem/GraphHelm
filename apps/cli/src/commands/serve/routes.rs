@@ -2375,6 +2375,96 @@ fn exclusively<T: Send + 'static>(
     }))
 }
 
+/// Last install in this Runtime process, never persisted. The blocking task owns both writes:
+/// dropping its HTTP caller must not leave the last outcome running forever (#627).
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SetupRecord {
+    state: &'static str,
+    started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    finished_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+    changed: Vec<serde_json::Value>,
+}
+
+static LAST_OBSERVER_SETUP: std::sync::Mutex<Option<SetupRecord>> = std::sync::Mutex::new(None);
+
+fn last_setup() -> serde_json::Value {
+    let record = LAST_OBSERVER_SETUP
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    record.as_ref().map_or_else(
+        || serde_json::json!({"state": "none"}),
+        |record| serde_json::json!(record),
+    )
+}
+
+fn record_and_install(
+    work: impl FnOnce() -> (serde_json::Value, crate::commands::observers::Installed) + Send + 'static,
+) -> Option<
+    impl std::future::Future<
+        Output = Option<(serde_json::Value, crate::commands::observers::Installed)>,
+    >,
+> {
+    exclusively(&OBSERVER_SETUP_RUNNING, move || {
+        use crate::commands::observers::Installed;
+        let mut record = SetupRecord {
+            state: "running",
+            started_at: chrono::Utc::now().to_rfc3339(),
+            finished_at: None,
+            code: None,
+            message: None,
+            changed: Vec::new(),
+        };
+        *LAST_OBSERVER_SETUP
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(record.clone());
+        // Preserve the POST's task-failure response if the installer panics, but do not leave
+        // the owner's next GET reporting work that has already stopped as running.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work));
+        record.finished_at = Some(chrono::Utc::now().to_rfc3339());
+        record.state = "failed";
+        match &result {
+            Ok((data, outcome)) => {
+                record.changed = data["changed"].as_array().cloned().unwrap_or_default();
+                match outcome {
+                    Installed::Ok => record.state = "ok",
+                    Installed::Failed => {
+                        record.code = Some("observer.setup_failed");
+                        record.message = Some(format!("an install step failed: {data}"));
+                    }
+                    Installed::TimedOut => {
+                        record.code = Some("observer.setup_timeout");
+                        record.message = Some(format!(
+                            "the install outlived its budget and was stopped: {data}"
+                        ));
+                    }
+                }
+            }
+            Err(_) => {
+                record.code = Some("observer.setup_failed");
+                record.message = Some("the observer setup task failed".to_owned());
+            }
+        }
+        *LAST_OBSERVER_SETUP
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(record);
+        match result {
+            Ok(result) => result,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    })
+}
+
+/// Owner-only read; deliberately absent from the agent route allow-list, like the POST.
+pub(super) async fn journey_observer_setup() -> Response {
+    respond_outcome(Outcome::success("journey.observer_setup", last_setup()))
+}
+
 /// npm plus the Chromium download (~150 MB) on a slow link; past this the steps are killed.
 const OBSERVER_SETUP_BUDGET: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
@@ -2408,7 +2498,7 @@ pub(super) async fn setup_journey_observer(
             Outcome::internal(COMMAND, "no home directory to look for Chromium in").output,
         );
     };
-    let Some(setup) = exclusively(&OBSERVER_SETUP_RUNNING, move || {
+    let Some(setup) = record_and_install(move || {
         crate::commands::observers::install_playwright_bounded(
             &project,
             &home,
@@ -6222,7 +6312,7 @@ mod pause_digest_body_tests {
 /// the runs recorded before and after are compared, and the thread the new run happened on must
 /// not be the runtime's own. Serialised through one lock because the witness is process-wide.
 #[cfg(test)]
-mod off_reactor_tests {
+mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
 
@@ -6322,6 +6412,102 @@ mod off_reactor_tests {
             native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         };
         (directory, state)
+    }
+
+    /// #627: a dropped HTTP future must not discard the install result. The fake only replaces
+    /// the installer I/O; existing exclusive-flag coverage cannot observe a retained outcome.
+    /// Cost: a blocking task and channels, no network or installer.
+    #[test]
+    fn setup_outcome_survives_a_dropped_request() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (started, ready) = std::sync::mpsc::channel();
+            let (finish, wait) = std::sync::mpsc::channel();
+            let task = super::record_and_install(move || {
+                started.send(()).unwrap();
+                wait.recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                (
+                    serde_json::json!({"changed": [{"path": "package.json", "change": "created"}]}),
+                    crate::commands::observers::Installed::Ok,
+                )
+            })
+            .unwrap();
+            let request = tokio::spawn(task);
+            tokio::task::yield_now().await;
+            ready
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            let running = super::last_setup();
+            request.abort();
+            let _ = request.await;
+            finish.send(()).unwrap();
+            let record = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                loop {
+                    let record = super::last_setup();
+                    if record["state"] == "ok" {
+                        break record;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("the completed setup outcome was lost with its request");
+            assert_eq!(running["state"], "running");
+            assert_eq!(record["startedAt"], running["startedAt"]);
+            assert!(record["finishedAt"].is_string());
+            assert_eq!(
+                record["changed"],
+                serde_json::json!([{"path": "package.json", "change": "created"}])
+            );
+        });
+    }
+
+    /// A failed or timed-out install must retain its diagnostic and partial file changes.
+    /// Existing POST checks cannot observe the record after the caller leaves. Cost: two tasks.
+    #[test]
+    fn setup_outcome_keeps_failures_and_changed_files() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        for (result, code) in [
+            (
+                crate::commands::observers::Installed::Failed,
+                "observer.setup_failed",
+            ),
+            (
+                crate::commands::observers::Installed::TimedOut,
+                "observer.setup_timeout",
+            ),
+        ] {
+            runtime.block_on(super::record_and_install(move || {
+                (serde_json::json!({"changed": [{"path": "package.json", "change": "modified"}]}), result)
+            }).unwrap()).unwrap();
+            let record = super::last_setup();
+            assert_eq!(record["state"], "failed");
+            assert_eq!(record["code"], code);
+            assert!(
+                record["message"]
+                    .as_str()
+                    .is_some_and(|message| !message.is_empty())
+            );
+            assert!(record["startedAt"].is_string());
+            assert!(record["finishedAt"].is_string());
+            assert_eq!(
+                record["changed"],
+                serde_json::json!([{"path": "package.json", "change": "modified"}])
+            );
+        }
     }
 
     /// #588 review (gh-claude-8's probe): a client that disconnects mid-install drops the

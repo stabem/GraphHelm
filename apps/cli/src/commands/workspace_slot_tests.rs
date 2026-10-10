@@ -2,7 +2,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{SlotRequest, run_admitted_slot, run_admitted_slot_in, run_status, slot_dir};
+use super::{
+    BatchRun, BatchSpec, SlotRequest, batch_boundary, parse_slot_batch, run_admitted_slot,
+    run_admitted_slot_in, run_admitted_slot_in_with_batch, run_slot_with_batch_payload, run_status,
+    slot_dir,
+};
 
 fn marker_command(log: &Path, tag: &str, millis: u64) -> Vec<String> {
     let log = log.to_string_lossy().replace('\'', "''");
@@ -44,6 +48,306 @@ fn request<'a>(
         priority: false,
         command,
     }
+}
+
+#[test]
+fn batch_parser_rejects_invalid_tail_before_any_slot_effect() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let first = vec![
+        "cargo".into(),
+        "test".into(),
+        "-pfoo".into(),
+        "--test=cli".into(),
+    ];
+    let raw = r#"{"schema":"graphhelm.slot-batch/1","commands":[["cargo","test","-pfoo","--test=cli"],["cargo","test","-pfoo","--test=cli"],["cargo","test","-pfoo","--test=cli"],["sh","-c","touch marker"]],"budgetSeconds":10,"leaseSeconds":1}"#;
+    assert!(parse_slot_batch(raw, &first).is_err());
+    let first_request = request(&root, "lane", "batch", &first);
+    let outcome = run_slot_with_batch_payload(&first_request, Some(raw), std::time::Instant::now());
+    assert!(!outcome.output.ok);
+    assert!(!root.exists());
+    let expired = serde_json::json!({"schema":"graphhelm.slot-batch/1", "commands":[first],
+        "budgetSeconds":180, "deadlineUnixMs":1, "leaseSeconds":30})
+    .to_string();
+    assert_eq!(
+        parse_slot_batch(&expired, &first).ok().unwrap().budget,
+        Duration::ZERO
+    );
+    let result =
+        run_slot_with_batch_payload(&first_request, Some(&expired), std::time::Instant::now());
+    let data = result.output.data.unwrap();
+    assert_eq!(data["batch"]["stopReason"], "deadline");
+    assert_eq!(data["batch"]["completed"], serde_json::json!([]));
+}
+
+#[test]
+fn batch_boundary_checks_deadline_before_first_and_lease_only_for_next() {
+    assert_eq!(
+        batch_boundary(
+            Duration::from_secs(2),
+            Duration::from_secs(0),
+            Duration::from_secs(2),
+            Duration::from_secs(10),
+            0
+        ),
+        Some("deadline")
+    );
+    assert_eq!(
+        batch_boundary(
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            Duration::from_secs(1),
+            0
+        ),
+        None
+    );
+    assert_eq!(
+        batch_boundary(
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            Duration::from_secs(1),
+            1
+        ),
+        Some("leaseBoundary")
+    );
+}
+
+#[test]
+fn batch_child_failure_keeps_prefix_and_stops_children() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let log = dir.path().join("log.txt");
+    let mut first = marker_command(&log, "first", 0);
+    first.last_mut().unwrap().push_str("; exit 7");
+    let second = marker_command(&log, "second", 1);
+    let request = request(&root, "lane", "batch", &first);
+    let outcome = run_admitted_slot_in_with_batch(
+        &request,
+        dir.path(),
+        Some(BatchRun {
+            spec: BatchSpec {
+                commands: vec![first.clone(), second],
+                budget: Duration::from_secs(10),
+                lease: Duration::from_secs(60),
+            },
+            started: std::time::Instant::now(),
+        }),
+    );
+    let data = outcome.output.data.unwrap();
+    assert_eq!(data["exitCode"], 7);
+    assert_eq!(data["batch"]["stopReason"], "childFailure");
+    assert_eq!(data["batch"]["completed"].as_array().unwrap().len(), 1);
+    assert_eq!(data["batch"]["remaining"], serde_json::json!([1]));
+    assert_eq!(tags(&log), ["first"]);
+}
+
+#[test]
+fn batch_child_environment_is_cleared_in_child() {
+    if std::env::var_os("GRAPHHELM_SLOT_BATCH").is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "commands::workspace_slot::workspace_slot_tests::batch_child_environment_is_cleared_in_child", "--test-threads=2", "--nocapture"])
+            .env("GRAPHHELM_SLOT_BATCH", "sentinel")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{output:?}");
+        assert!(
+            stdout.contains("1 passed"),
+            "child observer did not run: {stdout}"
+        );
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let marker = dir.path().join("env.txt");
+    let marker_text = marker.to_string_lossy().replace('\'', "''");
+    let command = if cfg!(windows) {
+        vec![
+            "powershell".into(),
+            "-NoProfile".into(),
+            "-Command".into(),
+            format!(
+                "if (Test-Path Env:GRAPHHELM_SLOT_BATCH) {{ Set-Content -LiteralPath '{marker_text}' present }} else {{ Set-Content -LiteralPath '{marker_text}' absent }}"
+            ),
+        ]
+    } else {
+        vec![
+            "sh".into(),
+            "-c".into(),
+            format!(
+                "if [ -n \"$GRAPHHELM_SLOT_BATCH\" ]; then printf present > '{}'; else printf absent > '{}'; fi",
+                marker.display(),
+                marker.display()
+            ),
+        ]
+    };
+    for batch in [false, true] {
+        let request = request(&root, "env", "batch", &command);
+        let batch = batch.then(|| BatchRun {
+            spec: BatchSpec {
+                commands: vec![command.clone()],
+                budget: Duration::from_secs(10),
+                lease: Duration::from_secs(60),
+            },
+            started: std::time::Instant::now(),
+        });
+        let outcome = run_admitted_slot_in_with_batch(&request, dir.path(), batch);
+        assert!(outcome.output.ok);
+        assert_eq!(std::fs::read_to_string(&marker).unwrap().trim(), "absent");
+    }
+}
+
+#[test]
+fn batch_lease_boundary_releases_slot_after_completed_prefix() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let log = dir.path().join("log.txt");
+    let release = dir.path().join("release.flag");
+    let release_text = release.to_string_lossy().replace('\'', "''");
+    let log_text = log.to_string_lossy().replace('\'', "''");
+    let first = if cfg!(windows) {
+        vec![
+            "powershell".into(),
+            "-NoProfile".into(),
+            "-Command".into(),
+            format!(
+                "Add-Content -LiteralPath '{log_text}' \"first start $env:CARGO_TARGET_DIR $env:CARGO_BUILD_JOBS\"; for ($i=0; $i -lt 1000 -and -not (Test-Path '{release_text}'); $i++) {{ Start-Sleep -Milliseconds 10 }}; if (-not (Test-Path '{release_text}')) {{ exit 91 }}; Add-Content -LiteralPath '{log_text}' 'first end'"
+            ),
+        ]
+    } else {
+        vec![
+            "sh".into(),
+            "-c".into(),
+            format!(
+                "echo \"first start $CARGO_TARGET_DIR $CARGO_BUILD_JOBS\" >> '{}'; for i in $(seq 1 1000); do [ -f '{}' ] && break; sleep .01; done; [ -f '{}' ] || exit 91; echo 'first end' >> '{}'",
+                log.display(),
+                release.display(),
+                release.display(),
+                log.display()
+            ),
+        ]
+    };
+    let second = marker_command(&log, "second", 1);
+    let batch_root = root.clone();
+    let batch_cwd = dir.path().to_owned();
+    let batch_first = first.clone();
+    let batch_second = second.clone();
+    let batch = std::thread::spawn(move || {
+        let first_request = request(&batch_root, "lane", "batch", &batch_first);
+        run_admitted_slot_in_with_batch(
+            &first_request,
+            &batch_cwd,
+            Some(BatchRun {
+                spec: BatchSpec {
+                    commands: vec![batch_first.clone(), batch_second],
+                    budget: Duration::from_secs(10),
+                    lease: Duration::from_millis(10),
+                },
+                started: std::time::Instant::now(),
+            }),
+        )
+    });
+    wait_for_holder(&root, "lane");
+    let contender_root = root.clone();
+    let contender_cwd = dir.path().to_owned();
+    let contender_command = second.clone();
+    let contender = std::thread::spawn(move || {
+        let contender_request = request(&contender_root, "contender", "after", &contender_command);
+        run_admitted_slot_in(&contender_request, &contender_cwd)
+    });
+    wait_for_ticket(&root, "contender");
+    std::fs::write(&release, b"go").unwrap();
+    let outcome = batch.join().unwrap();
+    let released = contender.join().unwrap();
+    let data = outcome.output.data.unwrap();
+    assert_eq!(data["batch"]["stopReason"], "leaseBoundary");
+    assert_eq!(data["batch"]["remaining"], serde_json::json!([1]));
+    assert!(released.output.ok);
+    let lines = std::fs::read_to_string(&log).unwrap();
+    let target = super::shared_target(&root).display().to_string();
+    assert_eq!(
+        lines.lines().map(str::to_owned).collect::<Vec<_>>(),
+        vec![
+            format!("first start {target} 3"),
+            "first end".to_owned(),
+            format!("second start {target} 3"),
+            "second end".to_owned()
+        ]
+    );
+}
+
+#[test]
+fn batch_success_runs_two_children_with_one_target_and_jobs() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let log = dir.path().join("log.txt");
+    let first = marker_command(&log, "first", 1);
+    let second = marker_command(&log, "second", 1);
+    let request = request(&root, "success", "batch", &first);
+    let outcome = run_admitted_slot_in_with_batch(
+        &request,
+        dir.path(),
+        Some(BatchRun {
+            spec: BatchSpec {
+                commands: vec![first.clone(), second],
+                budget: Duration::from_secs(10),
+                lease: Duration::from_secs(60),
+            },
+            started: std::time::Instant::now(),
+        }),
+    );
+    let data = outcome.output.data.unwrap();
+    assert_eq!(data["batch"]["stopReason"], "exhausted");
+    assert_eq!(data["batch"]["completed"].as_array().unwrap().len(), 2);
+    assert_eq!(data["batch"]["remaining"], serde_json::json!([]));
+    let text = std::fs::read_to_string(&log).unwrap();
+    let target = super::shared_target(&root).display().to_string();
+    assert_eq!(
+        text.lines().map(str::to_owned).collect::<Vec<_>>(),
+        vec![
+            format!("first start {target} 3"),
+            "first end".to_owned(),
+            format!("second start {target} 3"),
+            "second end".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn batch_budget_expires_in_queue_without_spawning_first_child() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let child_log = dir.path().join("child.log");
+    std::fs::create_dir_all(slot_dir(&root)).unwrap();
+    let slot = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(slot_dir(&root).join("slot.lock"))
+        .unwrap();
+    slot.lock().unwrap();
+    let child = marker_command(&child_log, "child", 1);
+    let request = request(&root, "queued", "deadline", &child);
+    let outcome = run_admitted_slot_in_with_batch(
+        &request,
+        dir.path(),
+        Some(BatchRun {
+            spec: BatchSpec {
+                commands: vec![child.clone()],
+                budget: Duration::from_millis(10),
+                lease: Duration::from_secs(60),
+            },
+            started: std::time::Instant::now(),
+        }),
+    );
+    let data = outcome.output.data.unwrap();
+    assert_eq!(data["batch"]["stopReason"], "deadline");
+    assert_eq!(data["batch"]["completed"], serde_json::json!([]));
+    assert_eq!(data["batch"]["remaining"], serde_json::json!([0]));
+    assert!(!child_log.exists());
+    drop(slot);
 }
 
 fn tags(log: &Path) -> Vec<String> {

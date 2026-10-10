@@ -5,9 +5,10 @@ import { LIVENESS_MS, type Lane } from "./lane-bars";
 import { openBlock } from "./mission";
 export { LIVENESS_MS };
 import type { TimedStep } from "./step-timing";
+import { slotStatus, slotText, type SlotView } from "./slots";
 
-export type HealthFlag = "needs_you" | "stalled" | "blocked" | "slow" | "moving";
-export interface StageHealth { flag: HealthFlag; text: string; tone: "red" | "orange" | "amber" | "green"; elapsedMs: number | null; elapsed: string | null }
+export type HealthFlag = "needs_you" | "building" | "waiting_build" | "stalled" | "blocked" | "slow" | "moving";
+export interface StageHealth { flag: HealthFlag; text: string; tone: "red" | "orange" | "amber" | "green" | "blue"; elapsedMs: number | null; elapsed: string | null }
 
 /** Slow: elapsed more than this many times the stage's expected time (`expectedTime`). */
 export const SLOW_FACTOR = 2;
@@ -53,7 +54,7 @@ export interface Liveness { live: boolean; sinceMs: number | null }
 /** #591: a lane is live while its newest record of any kind, on any task, is under LIVENESS_MS old:
  * the lane bars' last event (claims, PRs, assignments, verdicts, merges) and the times the task
  * records carry for it (a pushed fix, a BLOCK). No record at all says nothing: live, `sinceMs` null. */
-export function laneLiveness(name: string | null | undefined, lanes: Lane[], records: TaskState[], now: number): Liveness {
+export function laneLiveness(name: string | null | undefined, lanes: Lane[], records: TaskState[], now: number, slots: SlotView[] = []): Liveness {
   if (!name) return { live: true, sinceMs: null };
   let last = lanes.find((l) => l.lane === name)?.lastEventAt ?? 0;
   const at = (iso: string | null | undefined) => { const ms = iso ? Date.parse(iso) : NaN; if (Number.isFinite(ms)) last = Math.max(last, ms); };
@@ -63,7 +64,8 @@ export function laneLiveness(name: string | null | undefined, lanes: Lane[], rec
   }
   if (!(last > 0)) return { live: true, sinceMs: null };
   const sinceMs = Math.max(0, now - last);
-  return { live: sinceMs < LIVENESS_MS, sinceMs };
+  // #636: a lane building or queued for a build slot is alive: queue time is not silence.
+  return { live: sinceMs < LIVENESS_MS || slotStatus(name, slots) !== null, sinceMs };
 }
 
 /** When the task entered its stage: a pushed fix's time for the re-review (#591), else the Runtime's
@@ -105,13 +107,16 @@ export function expectedTime(t: TaskState, groupTasks: TaskState[]): { expectedM
 
 /** Merged work has no health (null). Order: Needs you, Stalled (the owner lane silent LIVENESS_MS), Blocked, Slow, Moving. `needsYou` is the
  * caller's owner-wait fact for this task (a held destructive step or the summary's need-you rule). */
-export function stageHealth(t: TaskState, lanes: Lane[], groupTasks: TaskState[], now: number, needsYou = false): StageHealth | null {
+export function stageHealth(t: TaskState, lanes: Lane[], groupTasks: TaskState[], now: number, needsYou = false, slots: SlotView[] = []): StageHealth | null {
   if (t.step === "merged") return null;
   const since = stageSince(t, lanes);
   const elapsedMs = since === null ? null : Math.max(0, now - since);
   const base = { elapsedMs, elapsed: elapsedMs === null ? null : stageDuration(elapsedMs) };
   if (needsYou) return { ...base, flag: "needs_you", text: "Needs you", tone: "red" };
   const owner = ownerLane(t);
+  // #636: the owner lane building or waiting for a build slot is never Slow or Stalled.
+  const slot = slotStatus(owner, slots);
+  if (slot) return { ...base, flag: slot.kind === "building" ? "building" : "waiting_build", text: slotText(slot), tone: "blue" };
   const live = laneLiveness(owner, lanes, groupTasks, now);
   if (!live.live && live.sinceMs !== null) {
     return { ...base, flag: "stalled", text: `${owner} silent ${stageDuration(live.sinceMs)}`, tone: "red" };
@@ -158,8 +163,8 @@ export const ACTIVE_MS = LIVENESS_MS;
 export interface Activity { sinceMs: number | null; tone: PaceTone; role?: OwnerRole }
 /** How long since the lane's latest record: green while `laneLiveness` says live, red once it is
  * stalled, so the dot always agrees with the card's Stalled flag. No record at all is red. */
-export function activity(lane: string | null | undefined, lanes: Lane[], now: number, records: TaskState[] = [], role?: OwnerRole): Activity {
-  const l = laneLiveness(lane, lanes, records, now);
+export function activity(lane: string | null | undefined, lanes: Lane[], now: number, records: TaskState[] = [], role?: OwnerRole, slots: SlotView[] = []): Activity {
+  const l = laneLiveness(lane, lanes, records, now, slots);
   const r = role ? { role } : {};
   if (l.sinceMs === null) return { sinceMs: null, tone: "red", ...r };
   return { sinceMs: l.sinceMs, tone: l.live ? "green" : "red", ...r };

@@ -119,6 +119,7 @@
 .mg-health[data-tone="red"] .mg-health-text { color: #F87171; }
 .mg-health[data-tone="orange"] .mg-health-text { color: #FB923C; }
 .mg-health[data-tone="amber"] .mg-health-text { color: #FBBF24; }
+.mg-health[data-tone="blue"] .mg-health-text { color: #8FB3D9; }
 .mg-health-time { color: #A9AEB8; }
 /* #591: the current card never overlaps: flag and sub-line on their own lines (ellipsis), the time in
  * stage right-aligned on the who line; a dense card clamps its title to one line to fit 150x88. */

@@ -5,6 +5,7 @@ import type { MissionTask } from "../runtime/mission";
 import type { Bot } from "../runtime/team";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { agentBoard, type AgentRow, type AgentStatus } from "../runtime/agent-board";
+import { slotDuration, type SlotView } from "../runtime/slots";
 
 const pct = (n: number) => `${Math.round(n * 10000) / 100}%`;
 
@@ -25,9 +26,9 @@ function lastDelivered(tasks: MissionTask[]) {
   return out;
 }
 
-interface Props { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[]; agents?: Bot[] }
+interface Props { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[]; agents?: Bot[]; slots?: SlotView[] }
 
-const PILL: Record<AgentStatus, string> = { silent: "Silent", stale: "Stale claim", working: "Working", awaiting: "Awaiting review", waiting: "Waiting", free: "Free" };
+const PILL: Record<AgentStatus, string> = { silent: "Silent", stale: "Stale claim", building: "Building", build_wait: "Waiting for build", working: "Working", awaiting: "Awaiting review", waiting: "Waiting", free: "Free" };
 const STAGE: Record<string, string> = { implement: "implementing", review: "reviewing", merge: "merging" };
 type Filter = "all" | "working" | "free" | "silent";
 
@@ -65,6 +66,25 @@ function AgentBoard({ rows }: { rows: AgentRow[] }) {
   );
 }
 
+/** #636: one chip per build-slot root: the holder and the queue, or "queue unavailable" (amber). */
+export function SlotStrip({ slots }: { slots: SlotView[] }) {
+  if (slots.length === 0) return null;
+  return (
+    <section className="ab-slots" aria-label="Build slots">
+      <span className="ab-slots-cap">Build slots</span>
+      {slots.map((s) => (
+        <span key={s.root} className="ab-slot" data-state={s.ok ? (s.holder ? "busy" : "idle") : "unavailable"}>
+          <span className="ab-slot-root">{s.root}</span>
+          {!s.ok ? <span>queue unavailable</span> : <>
+            <span>{s.holder ? `${s.holder.lane} building · ${slotDuration(s.holder.heldSeconds)}` : "free"}</span>
+            {s.waiting.length > 0 && <span className="ab-slot-queue">{`queue: ${s.waiting.map((w) => w.lane).join(", ")}`}</span>}
+          </>}
+        </span>
+      ))}
+    </section>
+  );
+}
+
 /** #591: sub-row geometry; a bar narrower than MIN_LABEL_PX on a 1000px track draws no text. */
 export const SUB_H = 18, SUB_GAP = 2, MIN_LABEL_PX = 44;
 const TRACK_PAD = 3;
@@ -84,12 +104,12 @@ function useTrackWidth(ref: RefObject<HTMLElement | null>): number {
   return w;
 }
 
-export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [] }: Props) {
+export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], slots = [] }: Props) {
   const listRef = useRef<HTMLUListElement>(null);
   const trackW = useTrackWidth(listRef);
   lanes = lanes.filter((l) => !placeholderLane(l.lane));
-  if (lanes.length === 0 && agents.length === 0) return <p className="lt-empty">No agent has recorded work in this window</p>;
-  const board = agentBoard(agents, lanes, tasks, now);
+  if (lanes.length === 0 && agents.length === 0) return <>{<SlotStrip slots={slots} />}<p className="lt-empty">No agent has recorded work in this window</p></>;
+  const board = agentBoard(agents, lanes, tasks, now, slots);
   const rank = new Map<string, number>();
   board.forEach((r, i) => rank.set(r.name, i));
   const botOf = (l: Lane) => agents.find((b) => b.actorId === l.lane || b.key === l.lane)?.name;
@@ -106,6 +126,7 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [] }:
   const card = (items: string[]) => (items.length ? items.join(", ") : "none right now");
   return (
     <div className="lt-wrap">
+    <SlotStrip slots={slots} />
     <AgentBoard rows={board} />
     <section className="lt" aria-label="Lanes">
       <div className="lt-head">

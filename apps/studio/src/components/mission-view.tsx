@@ -17,6 +17,7 @@ import { realName } from "../runtime/lane-bars";
 import { laneLiveness } from "../runtime/stage-health";
 import { WORK_STAGES } from "../runtime/work-groups";
 import { LaneActions, laneRoster, type LaneNote } from "./lane-actions";
+import type { SlotView } from "../runtime/slots";
 
 type Sub = "graph" | "proof" | "test" | "lanes";
 const WINDOW_MS = 14 * 3_600_000;
@@ -51,6 +52,8 @@ interface Props {
   /** #591: posts an owner note on the run (App: client.signal). Absent: no Nudge / Reassign. */
   onSignal?: (note: LaneNote) => Promise<unknown>;
   onReviewAssigned?: (task: TaskState, lane: string) => Promise<unknown>;
+  /** #636: the build-slot queues (App polls them); empty: no slot roots, nothing shown. */
+  slots?: SlotView[];
 }
 
 /** #591: the rail's dot colour family for a bot: working amber, waiting or quiet red, done grey. */
@@ -101,7 +104,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, onJourneys, draftJourneys = 0, agents = [], away = null, onSignal, onReviewAssigned }: Props) {
+export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, onJourneys, draftJourneys = 0, agents = [], away = null, onSignal, onReviewAssigned, slots = [] }: Props) {
   const [chosen, setChosen] = useState<Selection | null>(null);
   const [stepId, setStepId] = useState<string | null>(null);
   // undefined: the group's default (the task that most needs the owner); null: none, a column is chosen.
@@ -169,18 +172,18 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
   );
   const page = onTeam ? "full" : undefined;
   if (sel === null) return <div className="mv" data-wide="true" data-page={page} data-chat={chatOpen ? "open" : undefined}>{header}
-    {sub === "lanes" ? <div className="mv-pad"><LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} /></div>
+    {sub === "lanes" ? <div className="mv-pad"><LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} /></div>
       : <p className="mv-none mv-pad">No journeys in this project yet</p>}</div>;
   const rawGroup: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
   // #591: the live Review row names only the current reviewer (latest assignment on the current head).
   const group: WorkGroup | null = rawGroup ? { ...rawGroup, rows: rawGroup.rows.map((r) => ({ ...r, task: withCurrentReviewer(r.task, lanes) })) } : null;
   // #591: time in stage and the health flag of each PR card, from the same records the lanes read.
   const groupRows = group ? tasks.filter((t) => group.rows.some((r) => r.key === t.key)) : [];
-  const health = Object.fromEntries(groupRows.map((t) => [t.key, stageHealth(t, lanes, groupRows, live)]));
+  const health = Object.fromEntries(groupRows.map((t) => [t.key, stageHealth(t, lanes, groupRows, live, false, slots)]));
   // #591: progress against the usual time, and the last record of whoever is on the card's stage.
   const pace = Object.fromEntries(groupRows.map((t) => [t.key, {
     progress: stageProgress(t, groupRows, live, lanes),
-    activity: activity(ownerLane(t), lanes, live, groupRows, ownerRole(t)),
+    activity: activity(ownerLane(t), lanes, live, groupRows, ownerRole(t), slots),
   }]));
   const knownIds = new Set(journeys.map((j) => j.contractId));
   // A group's Proof and Test follow its first linked journey; a journey selection is its own.
@@ -222,7 +225,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
     const t = groupRows.find((r) => r.key === key);
     const lane = t ? realName(ownerLane(t)) : null;
     if (!t || !lane) return null;
-    const seen = laneLiveness(lane, lanes, tasks, live).sinceMs;
+    const seen = laneLiveness(lane, lanes, tasks, live, slots).sinceMs;
     const stage = WORK_STAGES.find((s) => s.id === group.stages[key])?.label ?? t.step;
     const id = `${t.pr ?? key}:${lane}`;
     return <LaneActions key={`${key}:${lane}`} lane={lane} step={stage} pr={t.pr} roster={roster} now={live}
@@ -383,7 +386,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
           {sub === "test" && journey && contractId && <TestCanvas frames={testFrames(journey, runFor(contractId))} selected={frame} onSelect={setFrame}
             frameUrl={(id) => frameUrl(id, contractId)} onMarkSafe={(id) => onMarkSafe(id, contractId)}
             {...(onSendBack ? { onSendBack: (id: string) => onSendBack(id, contractId) } : {})} />}
-          {sub === "lanes" && <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} />}
+          {sub === "lanes" && <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} />}
         </div>
       </div>
     </div>

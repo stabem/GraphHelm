@@ -15,6 +15,7 @@
  */
 
 import envelopeSchema from "../../../../schemas/event-envelope.schema.json";
+import { parseSlots, type SlotView } from "./slots";
 
 import type {
   Actor,
@@ -1937,6 +1938,12 @@ export class RuntimeClient {
       method: "POST", path: `/v1/journey-flows/${encodeURIComponent(id)}/watch`, timeoutMs: RUNTIME_WATCH_TIMEOUT_MS,
       body: path ? { path } : {},
     });
+  }
+
+  /** #636: the build-slot queues (`GET /v1/workspaces/slots`, #612), parsed defensively. Owner token
+   * only; read-only. */
+  async workspaceSlots(): Promise<SlotView[]> {
+    return parseSlots(await this.#request<unknown>({ method: "GET", path: "/v1/workspaces/slots", timeoutMs: RUNTIME_READ_TIMEOUT_MS }));
   }
 
   /** The project's journey-flow sources for review (#353): `GET /v1/journey-flows`. */

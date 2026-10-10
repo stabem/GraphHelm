@@ -156,7 +156,7 @@ const TASK_EVENT_SCHEMA = "graphhelm-task-event-v1";
 const VERDICTS = ["APPROVE", "APPROVE-WITH-RISK", "BLOCK"] as const;
 type Verdict = typeof VERDICTS[number];
 
-export type TaskEventKind = "task.claimed" | "task.planned" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged" | "task.critic_verdict";
+export type TaskEventKind = "task.claimed" | "task.planned" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged" | "task.closed" | "task.critic_verdict";
 
 /** #467: one round of the blind design critic, as its `task.critic_verdict` record states it. */
 export interface CriticRound { round: number; score: number; passScore: number; maxRounds: number; verdict: "pass" | "revise" | "exhausted" }
@@ -181,6 +181,8 @@ export interface TaskEventRecord {
   repo?: string;
   mergeSha?: string;
   closes?: number[];
+  closeReason?: "superseded" | "abandoned";
+  supersededBy?: number;
   /** #477: the issue's (claimed) or the PR's (pr_opened) title and one-line summary. */
   title?: string;
   summary?: string;
@@ -330,6 +332,13 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
       const mergeSha = sha(document.mergeSha);
       const closes = Array.isArray(document.closes) && document.closes.every((n) => count(n) !== null) ? document.closes as number[] : null;
       return pr !== null && mergeSha !== null && closes !== null && document.merger === actorId ? { ...base, kind, pr, mergeSha, closes } : null;
+    }
+    case "task.closed": {
+      const pr = count(document.pr);
+      const reason = document.reason === "superseded" || document.reason === "abandoned" ? document.reason : null;
+      const by = count(document.by);
+      return pr !== null && reason !== null && by !== null
+        ? { ...base, kind, pr, closeReason: reason, supersededBy: by } : null;
     }
     case "task.critic_verdict": {
       // The same rule as the Runtime's admission: the verdict agrees with the score and the round,
@@ -501,8 +510,10 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
  * but keeps the red edge until a verdict lands on a newer head than the BLOCK's. */
 export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
   const slices: TaskState[] = [];
+  const ended = new Set<TaskState>();
   for (const event of [...records].sort((a, b) => a.sequence - b.sequence)) {
     const state = sliceFor(slices, event);
+    if (ended.has(state)) continue;
     if (state.step === "merged") continue;
     state.lastSequence = event.sequence;
     // #480 (gh-claude-2): Plan and Critic hold time only once a plan is recorded. Before that, the
@@ -585,6 +596,9 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         state.blockedBy = null;
         state.step = "merged";
         break;
+      case "task.closed":
+        ended.add(state);
+        break;
     }
     clockStep(state.clock, timed(before), timed(state.step), event.occurredAt);
   }
@@ -593,7 +607,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
     slice.issue ??= slices.find((other) => other.taskId === slice.taskId && other.issue !== null)?.issue ?? null;
     slice.key = slice.pr !== null ? `${slice.taskId}#pr-${slice.pr}` : `${slice.taskId}#claim-${index}`;
   });
-  return slices.sort((a, b) => a.lastSequence - b.lastSequence);
+  return slices.filter((slice) => !ended.has(slice)).sort((a, b) => a.lastSequence - b.lastSequence);
 }
 
 export function isTaskEventSignal(event: RuntimeEvent): boolean {

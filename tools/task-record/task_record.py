@@ -32,10 +32,10 @@ import urllib.request
 from pathlib import Path
 
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
-KINDS = ("claimed", "planned", "pr_opened", "review_assigned", "review_verdict", "merged", "critic_verdict")
+KINDS = ("claimed", "planned", "pr_opened", "review_assigned", "review_verdict", "merged", "closed", "critic_verdict")
 # The default revision is the step's position in the delivery. `planned` (#480) came later and is
 # the claim's companion, so the older steps keep their numbers (and their records' keys).
-REVISIONS = {"claimed": 1, "planned": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "merged": 5, "critic_verdict": 1}
+REVISIONS = {"claimed": 1, "planned": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "merged": 5, "closed": 6, "critic_verdict": 1}
 CLASSES = ("docs", "code", "user_visible", "invariant")
 PROOFS = ("none", "tests", "journey", "both")
 # #477: what the naming standard asks (DELIVERY.md "Naming") and what the Runtime accepts.
@@ -88,6 +88,28 @@ def merged_on_github(pr, sha, repo):
         sys.exit(f"task_record: could not confirm the merge for PR {pr}: state={state}, mergeCommit={oid}")
 
 
+def closed_on_github(pr, repo):
+    """Refuse a close record unless GitHub confirms the PR is closed and unmerged."""
+    command = ["gh", "pr", "view", str(pr), "--json", "state,mergedAt"]
+    if repo:
+        command += ["--repo", repo]
+    for attempt in range(3):
+        try:
+            reply = json.loads(subprocess.run(command, capture_output=True, text=True,
+                                               encoding="utf-8", timeout=60, check=True).stdout)
+        except (OSError, subprocess.SubprocessError, ValueError):
+            sys.exit(f"task_record: could not confirm the closure for PR {pr}")
+        if not isinstance(reply, dict):
+            sys.exit(f"task_record: could not confirm the closure for PR {pr}: invalid GitHub response")
+        state, merged_at = reply.get("state"), reply.get("mergedAt")
+        if state == "CLOSED" and "mergedAt" in reply and merged_at is None:
+            return
+        if attempt < 2 and state == "OPEN":
+            time.sleep(2)
+            continue
+        sys.exit(f"task_record: could not confirm an unmerged closed PR {pr}: state={state}, mergedAt={merged_at}")
+
+
 def words(args):
     """#477: `title` and `summary` for an opening record: the flags win, else GitHub. Over the
     standard's length only warns; over what the Runtime accepts is clipped, so a long title never
@@ -126,6 +148,7 @@ def parse(argv):
     p.add_argument("--verdict", choices=("APPROVE", "APPROVE-WITH-RISK", "BLOCK"))
     p.add_argument("--comment-url")
     p.add_argument("--merge-sha")
+    p.add_argument("--by", type=int, help="closed: the superseding PR number")
     p.add_argument("--closes", type=int, nargs="*", default=[],
                    help="exactly the issues the merge closed (what ci/closing-keywords.ps1 checked); none for a Refs PR")
     p.add_argument("--journeys", nargs="*", default=[],
@@ -308,6 +331,13 @@ def document(args, now):
         need(args, "pr", "head", "verdict", "comment-url")
         doc.update(pr=args.pr, headSha=args.head, reviewer=args.lane, verdict=args.verdict,
                    commentUrl=args.comment_url)
+    elif args.kind == "closed":
+        need(args, "pr", "reason", "by")
+        if args.pr < 1 or args.by < 1:
+            sys.exit("task_record: closed needs positive PR numbers for --pr and --by")
+        if len(args.reason) != 1 or args.reason[0] not in ("superseded", "abandoned"):
+            sys.exit("task_record: closed needs exactly one --reason superseded|abandoned")
+        doc.update(pr=args.pr, reason=args.reason[0], by=args.by)
     elif args.kind == "critic_verdict":
         # #467: the verdict is not an argument. It follows from the score and the round, the way
         # the Runtime checks it, so running out of rounds can never be sent as a pass.
@@ -335,6 +365,10 @@ def main(argv):
         if args.no_github:
             sys.exit("task_record: --no-github is refused for merged unless --dry-run is set")
         merged_on_github(args.pr, args.merge_sha, args.repo)
+    if args.kind == "closed" and not args.dry_run:
+        if args.no_github:
+            sys.exit("task_record: --no-github is refused for closed unless --dry-run is set")
+        closed_on_github(args.pr, args.repo)
     code, signal_id, reply = send_opening(args, doc, now)
     outcome = report(code, signal_id, reply)
     if args.kind == "pr_opened" and outcome == 0:

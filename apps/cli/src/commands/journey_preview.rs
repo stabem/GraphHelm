@@ -712,10 +712,11 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     if let Some(object) = run.state.as_object_mut() {
         object.remove("launched");
     }
-    match outcome {
-        Ok(()) => {
+    let app = match outcome {
+        Ok(app) => {
             run.state["state"] = "ready".into();
             run.state["result"] = worst.into();
+            app
         }
         Err((code, pointer, _)) => {
             run.state["state"] = "failed".into();
@@ -743,9 +744,15 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
                     run.state[kind][id] = entry;
                 }
             }
+            None
         }
-    }
+    };
+    // Publish completion before down: teardown can block or end the runner (#676).
     run.save();
+    if let Ok(mut slot) = launched.lock() {
+        slot.take();
+    }
+    drop(app);
     answer(
         json!({"state":run.state["state"],"result":run.state["result"],"paths":run.state["validationPaths"],"reason":run.state["reason"]}),
         None,
@@ -758,7 +765,7 @@ fn play(
     run: &mut Run,
     deadline: Instant,
     stopper: &std::sync::Arc<std::sync::Mutex<Option<LaunchedStop>>>,
-) -> Result<()> {
+) -> Result<Option<Launched>> {
     observer_ready(project)?;
     if run.validation && !launcher_isolated(project) {
         return Err(failure(
@@ -847,11 +854,8 @@ fn play(
             break;
         }
     }
-    if let Ok(mut slot) = stopper.lock() {
-        slot.take();
-    }
-    drop(launched);
-    Ok(())
+    // The runner retains ownership until the completed result is stored.
+    Ok(launched)
 }
 
 /// Which acts a run plays. A draft keeps #515's rule: an act that would destroy something is not

@@ -328,6 +328,39 @@ pub(super) fn parse_claim_evidence(
     })
 }
 
+/// Recheck the authenticated snapshot against the decision's fresh stream projection.
+/// A publication or authoring snapshot change between recovery and decision must refuse.
+pub(super) fn verify_snapshot_matches_execution(
+    version: &GraphVersion,
+    semantic_hash: &WireHash,
+    initial: &ExecutionProjection,
+    history: &[EventEnvelope],
+    verb: &'static str,
+) -> Result<(), Failure> {
+    let latest = history.iter().rev().find_map(|event| match &event.kind {
+        EventKind::GraphAuthoringSnapshotStored(snapshot) => Some(snapshot),
+        _ => None,
+    });
+    let matches = initial.current_graph.as_ref().is_some_and(|published| {
+        published.number() == version.number()
+            && published.semantic_hash() == semantic_hash
+            && latest.is_some_and(|snapshot| {
+                snapshot.graph_version == published.number()
+                    && &snapshot.graph_hash == published.semantic_hash()
+                    && Some(snapshot.execution_id.as_str()) == initial.execution_id.as_deref()
+            })
+    });
+    if !matches {
+        return Err(execution_state(
+            &format!(
+                "{verb} refused: the recovered snapshot does not match the current published graph"
+            ),
+            "/execution/graph",
+        ));
+    }
+    Ok(())
+}
+
 /// The most an evidence bundle file may weigh before it is read as JSON.
 const MAX_EVIDENCE_BYTES: usize = 1 << 20;
 

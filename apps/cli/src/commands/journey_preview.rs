@@ -716,7 +716,7 @@ fn play(
     let launched: Option<Launched> = if !launcher_isolated(project) && base_reachable(&base) {
         None
     } else {
-        Some(launch(project, &base, |stop| {
+        Some(launch(project, &base, flow["id"].as_str().unwrap(), |stop| {
             // A dead runner cannot clean up itself, even if it dies before up returns.
             run.state["launched"] = stop.record();
             super::journey_flow::atomic_write(

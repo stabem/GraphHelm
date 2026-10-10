@@ -723,7 +723,7 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     // launcher brings it up (and the host stops it when the watch ends). An isolated launcher
     // always brings up its own, on free ports (#585).
     let launched = if args.watch && (launcher_isolated(&project) || !base_reachable(&base)) {
-        let launched = launch(&project, &base, |_| Ok(()))?;
+        let launched = launch(&project, &base, &args.id, |_| Ok(()))?;
         data["launched"] = true.into();
         if let Some(own) = &launched.base {
             base = own.clone();
@@ -1207,9 +1207,10 @@ fn posix_shell() -> Command {
 pub(super) fn launch(
     project: &Path,
     base: &str,
+    flow: &str,
     before_up: impl FnOnce(&LaunchedStop) -> Result<()>,
 ) -> Result<Launched> {
-    launch_within(project, base, LAUNCH_READY, before_up)
+    launch_within(project, base, flow, LAUNCH_READY, before_up)
 }
 
 /// [`launch`] with its readiness bound as a parameter, so the bound itself is testable: the
@@ -1217,6 +1218,7 @@ pub(super) fn launch(
 pub(super) fn launch_within(
     project: &Path,
     base: &str,
+    flow: &str,
     ready: Duration,
     before_up: impl FnOnce(&LaunchedStop) -> Result<()>,
 ) -> Result<Launched> {
@@ -1272,6 +1274,7 @@ pub(super) fn launch_within(
     if let Ok(executable) = std::env::current_exe() {
         command.env("GRAPHHELM_BIN", executable);
     }
+    command.env("GRAPHHELM_JOURNEY_FLOW", flow);
     let answers_on = isolated_base.clone().unwrap_or_else(|| base.to_owned());
     let launched = Launched {
         project: project.to_path_buf(),
@@ -2007,6 +2010,7 @@ mod launch_tests {
         let outcome = super::launch_within(
             project.path(),
             &format!("http://127.0.0.1:{port}"),
+            "checkout",
             Duration::from_secs(2),
             |_| Ok(()),
         );

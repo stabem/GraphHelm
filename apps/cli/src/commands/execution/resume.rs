@@ -117,6 +117,16 @@ pub(crate) fn recover_snapshot_version(
     keyring: Option<&Path>,
     key_id: Option<&str>,
 ) -> Result<GraphVersion, Failure> {
+    recover_snapshot_with_hash(events, execution, keyring, key_id).map(|(version, _)| version)
+}
+
+/// The semantic identity is taken from the publication authenticated by snapshot recovery.
+pub(crate) fn recover_snapshot_with_hash(
+    events: &Path,
+    execution: Option<&str>,
+    keyring: Option<&Path>,
+    key_id: Option<&str>,
+) -> Result<(GraphVersion, graphhelm_protocols::WireHash), Failure> {
     let (keyring, key_id) = match (keyring, key_id) {
         (Some(keyring), Some(key_id)) => (keyring, key_id),
         _ => {
@@ -191,7 +201,7 @@ pub(crate) fn recover_snapshot_version(
     .map_err(|_| execution_state("the authoring snapshot failed integrity checks", "/graph"))?;
     let version = GraphVersion::from_record(record)
         .map_err(|_| execution_state("the authoring snapshot is invalid", "/graph"))?;
-    Ok(version)
+    Ok((version, active.semantic_hash().clone()))
 }
 
 fn block_on_local<F: std::future::Future>(future: F) -> F::Output {

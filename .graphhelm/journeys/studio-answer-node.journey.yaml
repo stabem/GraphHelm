@@ -1,13 +1,20 @@
 schema: graphhelm.journey-flow/1
 id: studio-answer-node
-title: "Answer a step that is waiting for you (draft: the test setup has no waiting step and no graph file to point at)"
+title: Answer a step that is waiting for you
 status: draft
 approved: null
 base: http://127.0.0.1:5184
+viewport: {width: 720, height: 900}
 actors: [owner]
 secrets: []
 risks: [irreversible_effect, ambiguous_behavior]
 screens:
+  - id: mission
+    title: The mobile navigation opens first
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: tablist, name: Studio columns}, {role: tab, name: Team}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/mission-view.tsx]
   - id: node
     title: "The waiting step's window, with the Answer box"
     url: /?session=studio-fixture
@@ -24,9 +31,14 @@ screens:
     title: "A run is open, with its chat and its team on screen"
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: Needs you}, {role: button, name: Answer in chat}]
+    expect: [{role: button, name: Deploy ? waiting input}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts]
 edges:
+  - id: mission.team
+    from: mission
+    to: run
+    acts:
+      - {kind: activate, role: tab, name: Team}
   - id: node.answer
     from: node
     to: released
@@ -39,5 +51,5 @@ edges:
     acts:
       - {kind: activate, role: button, name: Deploy · waiting input}
 paths:
-  main: [run.waiting-step, node.answer]
+  main: [mission.team, run.waiting-step, node.answer]
 drift: []

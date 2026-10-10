@@ -1490,11 +1490,12 @@ export class RuntimeClient {
    */
   async claimNode(
     executionId: string,
-    request: { file: string; node: string; waitSeq?: number; evidence?: ClaimEvidence[] },
+    request: { file?: string; node: string; waitSeq?: number; evidence?: ClaimEvidence[] },
     options: MutationOptions = {},
   ): Promise<MutationEvidence> {
     const nodeId = checkedId(request.node, "node");
-    const body: Record<string, unknown> = { file: checkedGraphPath(request.file), node: nodeId };
+    const body: Record<string, unknown> = { node: nodeId };
+    if (request.file !== undefined) body.file = checkedGraphPath(request.file);
     if (request.waitSeq !== undefined) {
       body.waitSeq = checkedSequence(request.waitSeq, "waitSeq");
     }
@@ -1524,14 +1525,14 @@ export class RuntimeClient {
    */
   async clearClaim(
     executionId: string,
-    request: { file: string; claimSeq: number; evidence: ClaimEvidence[]; node?: string },
+    request: { file?: string; claimSeq: number; evidence: ClaimEvidence[]; node?: string },
     options: MutationOptions = {},
   ): Promise<MutationEvidence> {
     const body: Record<string, unknown> = {
-      file: checkedGraphPath(request.file),
       claimSeq: checkedSequence(request.claimSeq, "claimSeq"),
       evidence: checkedEvidence(request.evidence),
     };
+    if (request.file !== undefined) body.file = checkedGraphPath(request.file);
     return this.#verifiedMutation(
       "clear",
       executionId,

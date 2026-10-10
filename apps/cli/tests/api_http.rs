@@ -7690,6 +7690,201 @@ fn customs_graph() -> PathBuf {
     root().join("examples/graphs/customs-acting.yaml")
 }
 
+/// Snapshot-backed Answer must claim and clear without a host path. The file-backed customs
+/// cells miss this refusal. Cost: one local server and temporary sealed store, no external I/O.
+#[test]
+fn sealed_snapshot_claim_and_clear_need_no_graph_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = fixtures_file(
+        directory.path(),
+        serde_json::json!({ "implementation": "unknown", "release_notes": "success" }),
+    );
+    let execution = "exec_customs_acting";
+    let (_guard, base, token) = serve_sealed(&events);
+    let (status, started) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &customs_headers("snapshot-start"),
+        &serde_json::json!({ "file": customs_graph(), "fixtures": fixtures, "mode": "supervised" }),
+    );
+    assert_eq!(status, 200, "{started}");
+    assert_eq!(
+        started["data"]["nodeStates"]["implementation"],
+        "waiting_input"
+    );
+    let (wrong_status, wrong) = post_json(
+        &format!("{base}/v1/executions/{execution}/claim"),
+        &token,
+        &customs_headers("snapshot-wrong-file"),
+        &serde_json::json!({ "file": root().join("examples/graphs/software-feature.yaml"), "node": "implementation", "evidence": [] }),
+    );
+    assert_eq!(wrong_status, 409, "{wrong}");
+    assert_eq!(wrong["diagnostics"][0]["path"], "/execution/graph");
+    let wait_seq = started["data"]["customs"]["nodes"]["implementation"]["openWait"]["atSequence"]
+        .as_u64()
+        .unwrap();
+    let (status, claimed) = post_json(
+        &format!("{base}/v1/executions/{execution}/claim"),
+        &token,
+        &customs_headers("snapshot-claim"),
+        &serde_json::json!({ "node": "implementation", "waitSeq": wait_seq,
+            "evidence": customs_evidence(&["test_report"]) }),
+    );
+    assert_eq!(status, 200, "{claimed}");
+    assert_eq!(claimed["data"]["claim"]["outcome"], "claimed", "{claimed}");
+    let claim_seq = claimed["data"]["claim"]["claimSeq"].as_u64().unwrap();
+    let (status, cleared) = post_json(
+        &format!("{base}/v1/executions/{execution}/clear"),
+        &token,
+        &customs_headers("snapshot-clear"),
+        &serde_json::json!({ "claimSeq": claim_seq, "fixtures": fixtures,
+            "evidence": customs_evidence(&["test_report"]) }),
+    );
+    assert_eq!(status, 200, "{cleared}");
+    assert_eq!(
+        cleared["data"]["clearance"]["outcome"], "cleared",
+        "{cleared}"
+    );
+    assert_eq!(cleared["data"]["nodeStates"]["implementation"], "succeeded");
+    // Publish a valid successor but deliberately leave the last authoring snapshot at v1.
+    // The HTTP refusal must be the graph seam, not a missing wait or duplicate clearance.
+    use graphhelm_governor::GraphExternalizer;
+    let store = graphhelm_events::LocalEventRepository::open(
+        &events,
+        Arc::new(WallClock),
+        Arc::new(Ids::default()),
+    )
+    .unwrap();
+    let (stream, history) = store.read_unique_replay_stream().unwrap();
+    let active = graphhelm_events::replay(&stream.scope, &stream.stream_id, &history)
+        .unwrap()
+        .current_graph
+        .unwrap();
+    let mut graph = graphhelm_schema::load_graph(&customs_graph())
+        .unwrap()
+        .graph;
+    let first = graphhelm_graph::GraphVersion::publish(
+        graph.clone(),
+        None,
+        graphhelm_protocols::Actor::new(graphhelm_protocols::ActorType::Agent, "agent-claimer"),
+        chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc),
+    )
+    .unwrap();
+    graph.metadata.version = 2;
+    let successor = graphhelm_graph::GraphVersion::publish(
+        graph,
+        Some(graphhelm_protocols::GraphVersionRef {
+            number: 1,
+            content_hash: first.content_hash().clone(),
+        }),
+        graphhelm_protocols::Actor::new(graphhelm_protocols::ActorType::Agent, "agent-claimer"),
+        chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc),
+    )
+    .unwrap();
+    let provider = graphhelm_sealed_key_provider::SealedKeyProvider::open(
+        &events.with_extension("keyring"),
+        "signal-key",
+        graphhelm_events::SecretBytes::new(vec![1; 32]),
+    )
+    .unwrap();
+    let externalizer = graphhelm_governor::SealingGraphExternalizer::new(
+        graphhelm_events::EvidenceProtector::new(provider),
+    );
+    let prepared = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(
+            externalizer.prepare_with_predecessor(
+                stream.scope.clone(),
+                &successor.to_record(),
+                graphhelm_protocols::PersistedGraphVersionRef::new(
+                    1,
+                    active.semantic_hash().clone(),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+    let request = graphhelm_events::PreparedAppend::new(
+        stream.scope.clone(),
+        graphhelm_protocols::OpaqueId::parse(stream.stream_id.clone()).unwrap(),
+        store
+            .next_sequence(&stream.scope, &stream.stream_id)
+            .unwrap(),
+        vec![graphhelm_protocols::NewEvent::new(
+            graphhelm_protocols::OpaqueId::parse("snapshot-new-publication").unwrap(),
+            prepared.version.created_by().clone(),
+            graphhelm_protocols::Sensitivity::Internal,
+            graphhelm_protocols::EventKind::GraphVersionPublished(Box::new(
+                graphhelm_protocols::GraphVersionPublished {
+                    version: prepared.version,
+                },
+            )),
+            prepared.evidence_refs,
+            vec![],
+        )],
+        prepared.evidence,
+        vec![],
+    )
+    .unwrap();
+    store.append_atomic(&request).unwrap();
+    let (_, history) = store.read_unique_replay_stream().unwrap();
+    let projection = graphhelm_events::replay(&stream.scope, &stream.stream_id, &history).unwrap();
+    assert_eq!(projection.current_graph.unwrap().number(), 2);
+    assert!(!projection.authoring_snapshots.contains_key(&2));
+    for (verb, body) in [
+        (
+            "claim",
+            serde_json::json!({"node": "implementation", "waitSeq": wait_seq, "evidence": []}),
+        ),
+        (
+            "clear",
+            serde_json::json!({"claimSeq": claim_seq, "evidence": []}),
+        ),
+    ] {
+        let (status, refused) = post_json(
+            &format!("{base}/v1/executions/{execution}/{verb}"),
+            &token,
+            &customs_headers(verb),
+            &body,
+        );
+        assert_eq!(status, 409, "{refused}");
+        assert_eq!(refused["diagnostics"][0]["path"], "/execution/graph");
+    }
+}
+
+/// An ungoverned run has no authenticated publication to answer against. Cost: local server.
+#[test]
+fn snapshot_claim_refuses_an_unpublished_run() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec_customs_acting";
+    cli_start_customs(&events, directory.path(), execution);
+    let (_guard, base, token) = serve_sealed(&events);
+    for (verb, body) in [
+        (
+            "claim",
+            serde_json::json!({"node": "implementation", "evidence": []}),
+        ),
+        ("clear", serde_json::json!({"claimSeq": 1, "evidence": []})),
+    ] {
+        let (status, refused) = post_json(
+            &format!("{base}/v1/executions/{execution}/{verb}"),
+            &token,
+            &customs_headers(verb),
+            &body,
+        );
+        assert_eq!(status, 409, "{refused}");
+        assert_eq!(refused["diagnostics"][0]["path"], "/execution/graph");
+    }
+}
+
 /// `execution start` on the customs graph, through the CLI: `implementation` answers `unknown`
 /// (the fixture executor's `NeedsInput`) and parks at `waiting_input`; `release_notes` is
 /// scripted to succeed the moment a drive lets it run. Returns the fixtures path the `clear`

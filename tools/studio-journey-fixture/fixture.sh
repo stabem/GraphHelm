@@ -120,6 +120,19 @@ up)
         --data-binary @"$dir/.graphhelm/note.json" > /dev/null
     done
   fi
+  # Seed a governed wait for the answer-node flow only.
+  flow=${GRAPHHELM_JOURNEY_FLOW:-}
+  if [ "$flow" = studio-answer-node ]; then
+    printf '%s\n' '{"nodeOutcomes":{"implementation":"success","deploy":"unknown"}}' > "$dir/.graphhelm/waiting-fixtures.json"
+    # Governed genesis starts at version 1 without a predecessor, with a matching run id.
+    sed -e 's/^  executionId: exec_override[[:space:]]*$/  executionId: waiting/' \
+      -e 's/^  version: 13[[:space:]]*$/  version: 1/' -e '/^  basedOn:/d' \
+      "$repo/examples/graphs/manual-override-deploy.yaml" > "$dir/.graphhelm/waiting-graph.yaml"
+    "$bin" --json execution start --file "$dir/.graphhelm/waiting-graph.yaml" \
+      --events "$dir/.graphhelm/events" --fixtures "$dir/.graphhelm/waiting-fixtures.json" \
+      --mode supervised --execution waiting --keyring "$dir/.graphhelm/keyring" --key-id studio \
+      > "$dir/.graphhelm/waiting-seed.json"
+  fi
   export GRAPHHELM_EVENTS="$dir/.graphhelm/events" GRAPHHELM_RUNTIME_URL="http://127.0.0.1:$rport" \
     GRAPHHELM_STUDIO_SESSION_NONCE=studio-fixture GRAPHHELM_PROJECT=demo
   nohup npm --prefix "$repo/apps/studio" run dev -- --port "$sport" --strictPort > "$dir/.graphhelm/studio.out" 2>&1 &

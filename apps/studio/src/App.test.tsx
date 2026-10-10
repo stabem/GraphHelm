@@ -1393,6 +1393,34 @@ describe("operator actions", () => {
   /** A verb the state makes illegal renders disabled WITH ITS REASON on the wrapping span -
    * a disabled button never shows its own title, and a live button that bounces off the API's
    * refusal would pretend (Phase 2 honesty rule). */
+  it("answers a waiting node from its matched snapshot without sending a file", async () => {
+    const hash = "sha256:" + "a".repeat(64);
+    const recorded = (sequence: number, kind: string, payload: unknown, evidenceRefs: string[] = []) => ({
+      sequence, kind, payload, evidenceRefs, occurredAt: null, actorId: "system-cli",
+      actorType: "system", idempotencyKey: `k${sequence}`, eventId: `e${sequence}`,
+    });
+    const claimNode = vi.fn(async () => ({ ...PAUSED_EVIDENCE, action: "claim", newEvents: [recorded(10, "completion_claimed", {})] }));
+    const clearClaim = vi.fn(async () => ({ ...PAUSED_EVIDENCE, action: "clear", statusAfter: { ...STATUS, customs: { clearances: { "10": { type: "cleared" } } } } }));
+    const client = stubClient({
+      claimNode, clearClaim,
+      getStatus: vi.fn(async () => ({ ...STATUS, customs: { nodes: { implementation: { openWait: { atSequence: 4 } } } } })),
+      getEvents: vi.fn(async () => ({ head: 4, events: [
+        recorded(1, "execution_started", { executionId: "demo-deploy", graphHash: hash, graphVersion: 1 }),
+        recorded(2, "graph_authoring_snapshot_stored", { executionId: "demo-deploy", graphVersion: 1, graphHash: hash }, ["authoring-1"]),
+        recorded(3, "graph_version_published", { version: { number: 1, semanticHash: hash, predecessor: null, topology: { executionId: "demo-deploy", entrypoints: ["implementation"], nodes: { implementation: {} }, edges: [] } } }),
+        recorded(4, "node_outcome_recorded", { nodeId: "implementation", outcome: "unknown", nextState: "waiting_input" }),
+      ] })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(await screen.findByRole("button", { name: /implementation.*waiting/i }));
+    await userEvent.click(await screen.findByRole("button", { name: "Answer with no evidence" }));
+    await waitFor(() => expect(clearClaim).toHaveBeenCalled());
+    expect(claimNode.mock.calls[0]).toEqual(["demo-deploy", { node: "implementation", waitSeq: 4, evidence: [] }]);
+    expect(clearClaim.mock.calls[0]).toEqual(["demo-deploy", { node: "implementation", claimSeq: 10, evidence: [] }]);
+    expect(client.getTopology).not.toHaveBeenCalled();
+  });
+
   /** #1083 (orchestrator verification): a COMPLETED run's dock still offered both pauses, resume
    * and cancel. On an ended run they are gone, the reason is plain text, and what the Runtime
    * still accepts stays: `sweep.rs` refuses no lifecycle state. A running run keeps them all. */

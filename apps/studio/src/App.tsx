@@ -1223,6 +1223,31 @@ export default function App({
     onActivity: (next: ToolActivity) => setActivity(next),
   };
 
+  /** Reconstruct only Studio's generated one-node run. File-backed runs keep requiring their
+   * original Runtime-host path, because objective text cannot safely stand in for topology. */
+  const selectedSummary = executions.find((run) => run.executionId === selected);
+  const resumeGraph =
+    !graphFile.trim() &&
+    isGeneratedRunId(selected) &&
+    typeof (briefing?.objective ?? selectedSummary?.objective) === "string" &&
+    (briefing?.objective ?? selectedSummary?.objective)?.trim().length !== 0
+      ? draftGraph(selected, (briefing?.objective ?? selectedSummary?.objective) as string)
+      : null;
+  const snapshotResumeAvailable = (() => {
+    if (graphFile.trim() !== "" || resumeGraph !== null || journalTopology?.match !== "matched") return false;
+    const published = eventList
+      .filter((event) => event.kind === "graph_version_published" && event.payload !== null && typeof event.payload === "object")
+      .map((event) => (event.payload as { version?: { number?: unknown; topology?: { executionId?: unknown } } }).version)
+      .filter((version): version is { number: number; topology?: { executionId?: unknown } } =>
+        version !== undefined && typeof version.number === "number" && version.topology?.executionId === selected)
+      .sort((left, right) => right.number - left.number);
+    const current = published[0];
+    return current !== undefined && eventList.some((event) => {
+      if (event.kind !== "graph_authoring_snapshot_stored" || event.evidenceRefs.length === 0 || event.payload === null || typeof event.payload !== "object") return false;
+      const payload = event.payload as Record<string, unknown>;
+      return payload.executionId === selected && payload.graphVersion === current.number;
+    });
+  })();
   /**
    * Answering a parked node (#1186): claim, then clear, then re-read.
    *
@@ -1240,7 +1265,7 @@ export default function App({
     async (node: string, waitSeq: number, evidence: ClaimEvidence[]): Promise<AnswerOutcome> => {
       const client = clientRef.current;
       const execution = selectedRef.current;
-      const file = graphFile.trim();
+      const file = snapshotResumeAvailable ? undefined : graphFile.trim();
       // BOUND AT THE PRESS, not armed earlier: `graphFile` is a dependency, so the callback the
       // button holds is rebuilt whenever the box changes and a press always carries what the box
       // says now. That is the opposite arrangement from `verifyPath`, which must NOT read the
@@ -1249,10 +1274,10 @@ export default function App({
       // the path that travels.
       // Thrown, not returned: nothing was sent, and every returned outcome describes something
       // that was. The form reports it as a Runtime it could not reach, which is what it is.
-      if (!client || execution === "" || file === "") {
+      if (!client || execution === "" || (!snapshotResumeAvailable && file === "")) {
         throw new Error("no runtime, no run, or no graph file");
       }
-      const claimed = await client.claimNode(execution, { file, node, waitSeq, evidence });
+      const claimed = await client.claimNode(execution, { ...(file === undefined ? {} : { file }), node, waitSeq, evidence });
       const verdict = claimVerdict(claimed);
       if (verdict.outcome === "refused") {
         void loadExecution(execution);
@@ -1265,7 +1290,7 @@ export default function App({
       let cleared: MutationEvidence;
       try {
         cleared = await client.clearClaim(execution, {
-          file,
+          ...(file === undefined ? {} : { file }),
           claimSeq: verdict.claimSeq,
           evidence,
           node,
@@ -1285,7 +1310,7 @@ export default function App({
       }
       return { step: "unknown", claimSeq: verdict.claimSeq };
     },
-    [graphFile, loadExecution],
+    [graphFile, snapshotResumeAvailable, loadExecution],
   );
 
   const openWith = useCallback(
@@ -2513,31 +2538,6 @@ export default function App({
   const stalledAfterFailure = status?.status === "running" && retryFailures.size > 0 &&
     ["ready", "queued", "linting", "running"].every((state) => (status.nodeStateCounts[state] ?? 0) === 0);
   const waitingInstead = approveTarget === "" && blocking.length > 0;
-  /** Reconstruct only Studio's generated one-node run. File-backed runs keep requiring their
-   * original Runtime-host path, because objective text cannot safely stand in for topology. */
-  const selectedSummary = executions.find((run) => run.executionId === selected);
-  const resumeGraph =
-    !graphFile.trim() &&
-    isGeneratedRunId(selected) &&
-    typeof (briefing?.objective ?? selectedSummary?.objective) === "string" &&
-    (briefing?.objective ?? selectedSummary?.objective)?.trim().length !== 0
-      ? draftGraph(selected, (briefing?.objective ?? selectedSummary?.objective) as string)
-      : null;
-  const snapshotResumeAvailable = (() => {
-    if (graphFile.trim() !== "" || resumeGraph !== null || journalTopology?.match !== "matched") return false;
-    const published = eventList
-      .filter((event) => event.kind === "graph_version_published" && event.payload !== null && typeof event.payload === "object")
-      .map((event) => (event.payload as { version?: { number?: unknown; topology?: { executionId?: unknown } } }).version)
-      .filter((version): version is { number: number; topology?: { executionId?: unknown } } =>
-        version !== undefined && typeof version.number === "number" && version.topology?.executionId === selected)
-      .sort((left, right) => right.number - left.number);
-    const current = published[0];
-    return current !== undefined && eventList.some((event) => {
-      if (event.kind !== "graph_authoring_snapshot_stored" || event.evidenceRefs.length === 0 || event.payload === null || typeof event.payload !== "object") return false;
-      const payload = event.payload as Record<string, unknown>;
-      return payload.executionId === selected && payload.graphVersion === current.number;
-    });
-  })();
   /** The board a draft shows: the start node alone, with no history, because none exists. Built
    * here rather than through `buildGraphModel` - that reads events, and a draft has none, so
    * asking it would return an empty board and lose the one node the operator is about to fill. */
@@ -3544,11 +3544,8 @@ export default function App({
                   openEvidence={openEvidence}
                   onOpenDocument={openProjectDocument}
                   answer={
-                    // WITHHELD WHEN IT CANNOT WORK, rather than rendered and then failing: a
-                    // claim must carry the graph (the Runtime reads the node's declared proof
-                    // kinds from it), so with no path in the box there is nothing to offer. The
-                    // panel renders nothing here and says nothing about whether the node waits.
-                    graphFile.trim() === "" || selected === ""
+                    // A claim needs either a host file or the matched sealed snapshot.
+                    (graphFile.trim() === "" && !snapshotResumeAvailable) || selected === ""
                       ? undefined
                       : {
                           waitSeq: openWaitSequence(status, node.id),

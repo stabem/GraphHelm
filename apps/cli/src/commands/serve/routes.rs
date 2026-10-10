@@ -2990,6 +2990,7 @@ const INLINE_GRAPH_SOURCE: &str = "<request body>";
 enum GraphSource {
     File(PathBuf),
     Inline(serde_json::Value),
+    Snapshot,
 }
 
 /// Reads the request body's graph, refusing every shape that could be read two ways.
@@ -3017,6 +3018,9 @@ fn graph_source(
             "the request body carries both \"file\" and \"graph\"; give exactly one",
             "/graph",
         )),
+        (false, false) if matches!(command, CLAIM_COMMAND | CLEAR_COMMAND) => {
+            Ok(GraphSource::Snapshot)
+        }
         (false, false) => Err(bad_request(
             command,
             "the request body must carry \"file\" or \"graph\"",
@@ -3057,6 +3061,13 @@ fn load_and_publish(
         )
     };
     let loaded = match source {
+        GraphSource::Snapshot => {
+            return Err(bad_request(
+                command,
+                "snapshot recovery requires an execution",
+                "/execution/graph",
+            ));
+        }
         GraphSource::File(path) => graphhelm_schema::load_graph(path).map_err(to_response)?,
         GraphSource::Inline(value) => {
             // `to_vec` on a `Value` that was itself parsed from the request body cannot fail, but
@@ -4402,6 +4413,7 @@ pub(super) async fn claim(
         .unwrap_or("operator_attested")
         .to_owned();
     let events = state.events.clone();
+    let drive_state = state.clone();
     let drive_execution_id = execution_id.clone();
 
     run_idempotent_mutation(
@@ -4412,12 +4424,31 @@ pub(super) async fn claim(
         ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
-                let version = load_and_publish(&source, CLAIM_COMMAND, &actor)
-                    .map_err(MutationError::Prepared)?;
+                let (version, snapshot_hash) = match &source {
+                    GraphSource::Snapshot => {
+                        let sealing = drive_state.sealing.clone();
+                        let events = drive_state.events.clone();
+                        let execution = drive_execution_id.clone();
+                        let recovered = tokio::task::spawn_blocking(move || {
+                            execution::resume::recover_snapshot_with_hash(
+                                &events, Some(&execution),
+                                sealing.as_ref().map(|s| s.directory.as_path()),
+                                sealing.as_ref().map(|s| s.key_id.as_str()),
+                            ).map_err(|_| execution::execution_state(
+                                "snapshot recovery refused: no authenticated snapshot matches the published graph",
+                                "/execution/graph",
+                            ))
+                        }).await.map_err(|_| driver_failure("the snapshot recovery worker stopped"))??;
+                        (recovered.0, Some(recovered.1))
+                    }
+                    _ => (load_and_publish(&source, CLAIM_COMMAND, &actor)
+                        .map_err(MutationError::Prepared)?, None),
+                };
                 let attestation =
                     execution::claim::attestation(asserter.as_deref(), &mode, &actor)?;
                 Ok(execution::claim::execute(
                     &version,
+                    snapshot_hash.as_ref(),
                     &events,
                     Some(drive_execution_id.as_str()),
                     &node,
@@ -4529,8 +4560,26 @@ pub(super) async fn clear(
         ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
-                let version = load_and_publish(&source, CLEAR_COMMAND, &actor)
-                    .map_err(MutationError::Prepared)?;
+                let (version, snapshot_hash) = match &source {
+                    GraphSource::Snapshot => {
+                        let sealing = drive_state.sealing.clone();
+                        let events = drive_state.events.clone();
+                        let execution = drive_execution_id.clone();
+                        let recovered = tokio::task::spawn_blocking(move || {
+                            execution::resume::recover_snapshot_with_hash(
+                                &events, Some(&execution),
+                                sealing.as_ref().map(|s| s.directory.as_path()),
+                                sealing.as_ref().map(|s| s.key_id.as_str()),
+                            ).map_err(|_| execution::execution_state(
+                                "snapshot recovery refused: no authenticated snapshot matches the published graph",
+                                "/execution/graph",
+                            ))
+                        }).await.map_err(|_| driver_failure("the snapshot recovery worker stopped"))??;
+                        (recovered.0, Some(recovered.1))
+                    }
+                    _ => (load_and_publish(&source, CLEAR_COMMAND, &actor)
+                        .map_err(MutationError::Prepared)?, None),
+                };
                 // See `start`'s matching branch for why the async drive is conditional.
                 if drive_is_viable_for(&drive_state, &version.graph().spec) {
                     // #83: the drive's fallible setup runs FIRST, so the clearance is the last
@@ -4540,6 +4589,7 @@ pub(super) async fn clear(
                             .await?;
                     let (outcome, prepared) = execution::clear::decide(
                         &version,
+                    snapshot_hash.as_ref(),
                         &drive_state.events,
                         fixtures.as_deref(),
                         Some(drive_execution_id.as_str()),
@@ -4563,6 +4613,7 @@ pub(super) async fn clear(
                 } else {
                     Ok(execution::clear::execute(
                         &version,
+                    snapshot_hash.as_ref(),
                         &drive_state.events,
                         fixtures.as_deref(),
                         Some(drive_execution_id.as_str()),

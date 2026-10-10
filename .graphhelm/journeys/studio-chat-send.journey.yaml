@@ -38,6 +38,7 @@ edges:
     to: chat
     acts:
       - {kind: activate, role: button, name: Chat}
+      - {kind: wait_for, role: tab, name: "Everyone, 22 unread"}
       - {kind: activate, role: tab, name: "Everyone, 22 unread"}
 paths:
   main: [mission.chat, chat.send]

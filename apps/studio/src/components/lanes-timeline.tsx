@@ -79,7 +79,7 @@ function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: 
           const what = r.doing ? r.doing : r.stage ? `${STAGE[r.stage]}${r.pr ? ` PR #${r.pr}` : ""}${r.title ? ` ${r.title}` : ""}` : "—";
           const bot = agents.find((b) => b.name === r.name);
           return (
-            <li key={r.name} className="ab-row">
+            <li key={bot ? `bot:${bot.key}` : `lane:${r.name}`} className="ab-row">
               <span className="ab-pill" data-status={r.status}>{r.label ?? PILL[r.status]}</span>
               <span className="ab-name">{r.name}</span>
               <span className="ab-what">{r.href ? <a href={r.href} target="_blank" rel="noreferrer">{what}</a> : what}</span>

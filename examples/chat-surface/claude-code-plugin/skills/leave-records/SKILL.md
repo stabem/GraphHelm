@@ -115,6 +115,37 @@ another route. Record what you do instead.
 2. `tool:wake_wait` on the same `executionId`. Success is `{"outcome": "rung"}`.
 3. Re-read the log. The ring is content-free by design.
 
+### Team lanes: keep the wake loop alive
+
+A lane must arm on the **team execution**, not merely its current task execution. Bind the
+host hooks with `GRAPHHELM_EXECUTION_ID`, `GRAPHHELM_RUNTIME_URL`, `GRAPHHELM_TOKEN_FILE`
+(agent token file), and `GRAPHHELM_ACTOR` (the lane name). Read the events and open each
+`operator_note` evidence envelope to read the full message and its `to` addressee.
+Match `to == GRAPHHELM_ACTOR` from both owner and agent events. Act within your authority,
+then record your own `operator_note` with `replyTo` equal to that note's signal id. Report a
+blocker honestly when you cannot act. Only the addressed lane's reply clears its pending note.
+
+Arm `wake_arm` with the last **read** cursor, an opaque rendezvous id unique to this lane/session,
+and a finite `maturesInSeconds` (for example 60). Retain the returned `sessionId` and run:
+
+```text
+graphhelm wake-wait --events <team-events-directory> --execution <team-execution> --session-id <sessionId-from-wake_arm>
+```
+
+Run this as a background task with a host completion notification, outside the Cargo slot.
+A detached child alone does not wake an agent turn. Windows `Start-Process` uses
+`-WindowStyle Hidden`; the host still needs to observe completion. A remote host uses
+`wake_wait` on the same MCP session instead of a CLI process with no access to the store.
+
+On exit 0 (ring), read from the saved cursor, handle addressed notes, reply, and re-arm.
+On exit 3 (timeout), perform that fallback read too, then re-arm and restart the waiter.
+On other exits, diagnose the failure and restore the loop. Never advance the read cursor to
+an unseen head: a note can land between reading and arming. Restart the loop after reboot.
+
+A host without background completion notification reports
+`OBSERVER_MISSING: host wake notification`, rather than claiming a detached waiter is autonomous.
+A bounded Stop reminder is a separate follow-up; keep this loop running independently.
+
 **Arm and wait must be the SAME MCP session.** A lease belongs to the session that armed it, and
 a second `graphhelm mcp` process is a different session against the same Runtime and execution.
 Split across two, the wait is refused:

@@ -53,8 +53,10 @@
 .ab-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .ab-chip { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid #2A2D35; background: #111216; color: #A9AEB8; cursor: pointer; }
 .ab-chip[aria-pressed="true"] { background: #1E2129; color: #E9E7E2; border-color: #4A4F5C; }
-.ab-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.ab-row { display: grid; grid-template-columns: minmax(96px, max-content) minmax(13ch, 160px) minmax(0, 1fr) 110px 190px auto; gap: 12px; align-items: center; padding: 7px 12px; border-radius: 8px; background: #111216; border: 1px solid #1A1C21; }
+/* #706: the rows share one track template (subgrid), so a long "latest" line widens its column for
+ * every row and never wraps inside a time. */
+.ab-rows { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(96px, max-content) minmax(13ch, 160px) minmax(0, 1fr) max-content minmax(0, 220px) auto; row-gap: 6px; }
+.ab-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; gap: 14px; align-items: center; padding: 8px 12px; line-height: 1.35; border-radius: 8px; background: #111216; border: 1px solid #1A1C21; }
 .ab-row:hover { background: #16181D; border-color: #2A2D35; }
 .ab-row:focus-within { border-color: #4A4F5C; }
 .ab-act:focus-visible, .ab-chip:focus-visible, .ab-what a:focus-visible { outline: 2px solid #8FB3D9; outline-offset: 2px; }
@@ -70,10 +72,10 @@
 .ab-tag { display: inline-block; white-space: nowrap; font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 6px; background: #1C1F25; border: 1px solid #2A2D35; color: #C7CBD3; }
 .ab-last { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ab-what a { color: #8FB3D9; }
-.ab-for { font-family: var(--mono); font-size: 12px; color: #E9E7E2; }
+.ab-for { font-family: var(--mono); font-size: 12px; color: #E9E7E2; white-space: nowrap; }
 .ab-last { color: #8D929C; font-size: 12px; }
 @media (max-width: 700px) {
-  .ab-row { grid-template-columns: max-content minmax(13ch, 1fr) 90px auto; }
+  .ab-rows { grid-template-columns: max-content minmax(13ch, 1fr) max-content auto; }
   .ab-what, .ab-last { display: none; }
 }
 

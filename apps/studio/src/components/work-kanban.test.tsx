@@ -47,7 +47,8 @@ describe("WorkKanban (#668)", () => {
   it("renders full names: the title and the author → reviewer line are whole", async () => {
     await renderLanes();
     expect(screen.getByText(LONG).textContent).toBe(LONG);
-    expect(within(col(/^REVIEW/)).getByText("gh-claude-1 → gh-claude-9")).toBeInTheDocument();
+    // #706: each lane is its own unbreakable span; the line reads whole.
+    expect(Array.from(col(/^REVIEW/).querySelectorAll(".mg-node-who")).map((w) => w.textContent)).toContain("gh-claude-1 → gh-claude-9");
   });
   it("clicking a card opens the Graph with that PR selected in the inspector", async () => {
     const userEvent = await renderLanes();

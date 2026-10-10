@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/journey-flow.schema.json",
-  "x-graphhelm-schema-version": "1.1.0",
+  "x-graphhelm-schema-version": "1.2.0",
   "title": "GraphHelm Journey Flow",
   "type": "object",
   "properties": {

@@ -128,7 +128,9 @@ for `vanished`, `at` is the previous start time, not an inferred time of death.
 `location`, when present, is a sanitized crate-relative Rust file and line or `unknown`.
 Panic payloads and thread names are never stored or returned.
 
-`<events>/runtime-lifecycle.json` is replaced atomically after bind and on an ending.
+`<events>.runtime-lifecycle.json` is replaced atomically after bind and on an ending.
+Its ownership lock is `<events>.runtime-lifecycle.lock`; both are siblings of the Event
+Store directory, so its closed root layout stays untouched.
 A lifetime lock prevents two listeners from claiming the same events directory. A live
 previous PID also refuses startup; PID reuse can cause a conservative refusal. Inspect
 the process and `runtime-lifecycle.json` before manually removing a stale record. The

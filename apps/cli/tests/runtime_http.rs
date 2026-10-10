@@ -169,9 +169,10 @@ fn lifecycle_clean_shutdown_is_reported_on_restart() {
         ..ServeExtra::default()
     };
     let (mut server, _, _) = serve_with(&events, &extra);
-    let record: Value =
-        serde_json::from_slice(&std::fs::read(events.join("runtime-lifecycle.json")).unwrap())
-            .unwrap();
+    let record: Value = serde_json::from_slice(
+        &std::fs::read(dir.path().join("events.runtime-lifecycle.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(record["state"], "panicked");
     assert_eq!(record["fatal"], false);
     assert!(!record.to_string().contains("private-panic-payload"));
@@ -188,9 +189,10 @@ fn lifecycle_clean_shutdown_is_reported_on_restart() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
-    let record: Value =
-        serde_json::from_slice(&std::fs::read(events.join("runtime-lifecycle.json")).unwrap())
-            .unwrap();
+    let record: Value = serde_json::from_slice(
+        &std::fs::read(dir.path().join("events.runtime-lifecycle.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(record["state"], "clean");
     assert!(
         record["lastPanic"]["location"]
@@ -235,9 +237,10 @@ fn lifecycle_main_panic_is_reported_without_payload_or_home_path() {
         assert!(Instant::now() < deadline, "main task did not panic");
         std::thread::sleep(Duration::from_millis(20));
     }
-    let record: Value =
-        serde_json::from_slice(&std::fs::read(events.join("runtime-lifecycle.json")).unwrap())
-            .unwrap();
+    let record: Value = serde_json::from_slice(
+        &std::fs::read(dir.path().join("events.runtime-lifecycle.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(record["fatal"], true);
     assert!(!record.to_string().contains("private-panic-payload"));
     let (_next, base, _) = serve(&events);
@@ -256,7 +259,7 @@ fn lifecycle_second_runtime_refuses_without_changing_live_record() {
     let dir = tempfile::tempdir().unwrap();
     let events = dir.path().join("events");
     let (_server, _, _) = serve(&events);
-    let path = events.join("runtime-lifecycle.json");
+    let path = dir.path().join("events.runtime-lifecycle.json");
     let before = std::fs::read(&path).unwrap();
     let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
     let assertion = command

@@ -117,8 +117,10 @@ fn write(path: &Path, record: &Record) -> std::io::Result<()> {
 
 impl Lifecycle {
     pub(super) fn start(events: &Path) -> Result<(Self, serde_json::Value), super::Failure> {
-        let path = events.join("runtime-lifecycle.json");
-        let lock_path = events.join("runtime-lifecycle.lock");
+        let mut name = events.file_name().ok_or_else(invalid)?.to_os_string();
+        name.push(".runtime-lifecycle.json");
+        let path = events.with_file_name(name);
+        let lock_path = path.with_extension("lock");
         regular(&lock_path).map_err(|_| invalid())?;
         let lock = OpenOptions::new()
             .read(true)

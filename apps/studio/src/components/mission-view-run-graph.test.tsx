@@ -15,6 +15,22 @@ const bot = (key: string, name: string, actorId: string | null = key): Bot => ({
 const base = { journeys: [], tasks: [], now: 0, runFor: () => null, frameUrl: () => null, onMarkSafe: vi.fn() };
 
 describe("#647 MissionView: the Team canvas controls on the Graph page", () => {
+  it("keeps the reopened name field and draft when the saved alias arrives", async () => {
+    const userEvent = fastUserEvent();
+    const onNameBot = vi.fn();
+    const props = { ...base, lanes: [], onNameBot };
+    const { rerender } = render(<MissionView {...props} agents={[bot("planner", "planner")]} />);
+    await userEvent.click(screen.getByRole("tab", { name: "Lanes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Name this bot" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Name for planner" }), "Planny");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.click(screen.getByRole("button", { name: "Name this bot" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Name for planner" }), "Next name");
+    // The Runtime refresh can arrive after the owner has already reopened the form.
+    rerender(<MissionView {...props} agents={[bot("planner", "Planny")]} />);
+    expect(screen.getByRole("textbox", { name: "Name for Planny" })).toHaveValue("Next name");
+  });
+
   it("a Run graph node opens its window: the handler gets the node id", async () => {
     const userEvent = fastUserEvent();
     const onOpenNode = vi.fn();

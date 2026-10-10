@@ -4,6 +4,8 @@ import type { GraphModel } from "../graph/model";
 import type { EnvelopeRecord } from "../graph/ledger";
 import type { ClaudeTaskReadModel, TaskState } from "./team-tasks";
 import type { RuntimeEvent } from "./types";
+import { digestOf } from "./customs";
+import { readTaskEventRecords } from "./team-tasks";
 import { teamLinks, teamModel, type TeamInput } from "./team";
 
 const NOW = Date.parse("2026-10-05T12:00:00Z");
@@ -151,10 +153,16 @@ describe("teamLinks", () => {
     expect(team.bots.find((bot) => bot.key === "gh-claude-9")?.doingNow).toBe("Last delivered #532 Every lane shows");
   });
 
-  it("#737: attributes a fresh verified task record to its lane when a shared actor signed it", () => {
-    const taskRecord = { kind: "task.pr_opened", actorId: "codex", sequence: 201, taskId: "issue-737", lane: "codex-8",
-      pr: 738, occurredAt: minutesAgo(2) } as const;
-    const team = teamModel(input({ events: [record(201, "codex", minutesAgo(2), "task.pr_opened")], taskRecords: [taskRecord],
+  it("#737: counts an admitted shared-signer assignment for its reviewer lane", async () => {
+    const detail = { schema: "graphhelm-task-event-v1", revision: 1, taskId: "issue-737", pr: 738,
+      headSha: "a".repeat(40), reviewer: "codex-8" };
+    const content = JSON.stringify({ type: "task.review_assigned", source: { id: "codex" }, description: JSON.stringify(detail) });
+    const hash = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
+    const evidence = { evidenceId: "ev-201", contentSha256: hash, content, mediaType: "application/json", sensitivity: "internal" } as const;
+    const event = { ...record(201, "codex", minutesAgo(2), "task.review_assigned"), payload: { kind: "task.review_assigned", envelopeSha256: hash } };
+    const taskRecords = await readTaskEventRecords({ executionId: "run", events: [event], readEvidence: async () => evidence });
+    expect(taskRecords).toHaveLength(1);
+    const team = teamModel(input({ events: [event], taskRecords,
       taskStates: [{ lane: "codex-8", reviewers: [], title: "Active work", issue: 737, lastSequence: 201 } as unknown as TaskState] }));
     expect(team.bots.find((bot) => bot.key === "codex-8")).toMatchObject({ state: "working", quietMinutes: 2, lastRecordAt: minutesAgo(2) });
   });

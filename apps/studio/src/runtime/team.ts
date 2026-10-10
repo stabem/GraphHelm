@@ -92,17 +92,18 @@ export function teamModel(input: TeamInput): TeamModel {
     }
   }
 
-  // Attribute verified task records to their lane, not only to the signer actor (which may be shared).
+  // An admitted assignment can name a reviewer lane even when a shared actor signed it.
   for (const record of input.taskRecords ?? []) {
-    if (!record.lane) continue;
-    const tally = tallies.get(record.lane) ?? { count: 0, lastAt: null, lastSequence: 0 };
+    const lane = record.lane ?? (record.kind === "task.review_assigned" ? record.reviewer : undefined);
+    if (!lane) continue;
+    const tally = tallies.get(lane) ?? { count: 0, lastAt: null, lastSequence: 0 };
     if (record.sequence >= tally.lastSequence) {
       tally.lastSequence = record.sequence;
       tally.lastAt = record.occurredAt ?? tally.lastAt;
     }
     tally.count += 1;
-    tallies.set(record.lane, tally);
-    known.add(record.lane);
+    tallies.set(lane, tally);
+    known.add(lane);
   }
 
   const seeds = new Map<string, Seed>();

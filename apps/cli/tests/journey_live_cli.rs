@@ -353,6 +353,131 @@ fn watch_and_preview_pass_the_selected_flow_to_the_launcher() {
     }
 }
 
+/// R6: a fixture must get its chance to mint a declared secret before preflight reads it.
+/// The existing launcher test supplies its secret in the parent environment and misses this.
+/// Cost: two real CLI/shell launches, seconds, offline; no browser or production seam.
+#[test]
+fn watch_and_preview_launch_before_refusing_a_fixture_minted_secret() {
+    let dir = draft();
+    let flow = dir.path().join(".graphhelm/journeys/checkout.journey.yaml");
+    std::fs::write(&flow, FLOW.replace("shopper_password", "r6_fixture_token")).unwrap();
+    std::fs::write(
+        dir.path().join(".graphhelm/observers/journey_driver.mjs"),
+        include_bytes!("../../../tools/journey-driver/driver.mjs"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(".graphhelm/journey-fixture.json"),
+        r#"{"schema":"graphhelm-journey-fixture/1","script":"fixture.sh","isolated":true}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("fixture.sh"),
+        "if [ \"$1\" = up ]; then echo called > launched; exit 1; fi\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join(".graphhelm/journey-previews/checkout")).unwrap();
+    for args in [
+        vec!["watch", "checkout"],
+        vec!["preview", "checkout", "--run"],
+    ] {
+        let (_, reply) = cli(dir.path(), &args);
+        assert!(dir.path().join("launched").exists(), "{args:?}: {reply}");
+        std::fs::remove_file(dir.path().join("launched")).unwrap();
+    }
+}
+
+/// R6: uppercase launcher keys supply lowercase flow ids, and the existing literal-secret
+/// refusal still runs after launch. Poisoned non-secret keys must not change the runner.
+/// Existing CLI preflight tests only supply parent environment values, not a launcher file.
+/// Cost: two CLI/shell launches and local listeners, seconds, offline; no browser or new seam.
+#[test]
+fn launcher_secrets_reach_preflight_without_exporting_other_keys_or_values() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use std::time::{Duration, Instant};
+
+    for args in [
+        vec!["watch", "checkout"],
+        vec!["preview", "checkout", "--run"],
+    ] {
+        let dir = draft();
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let flow = FLOW
+            .replace("shopper_password", "r6_fixture_token")
+            .replace("http://localhost:3000", &format!("http://127.0.0.1:{port}"))
+            .replace("Shopper pays for the cart", "r6_literal_canary_585");
+        std::fs::write(
+            dir.path().join(".graphhelm/journeys/checkout.journey.yaml"),
+            flow,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(".graphhelm/observers/journey_driver.mjs"),
+            include_bytes!("../../../tools/journey-driver/driver.mjs"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(".graphhelm/journey-fixture.json"),
+            r#"{"schema":"graphhelm-journey-fixture/1","script":"fixture.sh"}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("fixture.sh"),
+            "if [ \"$1\" = up ]; then\nmkdir -p \"$2/.graphhelm\"\nprintf '%s\\n' 'PATH=not-a-path' 'NODE_OPTIONS=--invalid' 'GRAPHHELM_SECRET_R6_FIXTURE_TOKEN=r6_literal_canary_585' > \"$2/.graphhelm/secrets.env\"\necho ready > ready\nfi\n"
+        ).unwrap();
+        std::fs::create_dir_all(dir.path().join(".graphhelm/journey-previews/checkout")).unwrap();
+        let ready = dir.path().join("ready");
+        let stop = Arc::new(AtomicBool::new(false));
+        let done = stop.clone();
+        let server = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while !ready.exists() && !done.load(Ordering::Relaxed) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if done.load(Ordering::Relaxed) || !ready.exists() {
+                return;
+            }
+            let listener = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+            listener.set_nonblocking(true).unwrap();
+            while !done.load(Ordering::Relaxed) && Instant::now() < deadline {
+                let _ = listener.accept();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let (_, reply) = cli(dir.path(), &args);
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+        assert!(
+            !reply.to_string().contains("r6_literal_canary_585"),
+            "secret value leaked"
+        );
+        let reason = if args[0] == "watch" {
+            reply["diagnostics"][0]["code"].clone()
+        } else {
+            let state: Value = serde_json::from_slice(
+                &std::fs::read(
+                    dir.path()
+                        .join(".graphhelm/journey-previews/checkout/state.json"),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert!(
+                !state.to_string().contains("r6_literal_canary_585"),
+                "secret persisted"
+            );
+            state["reason"].clone()
+        };
+        assert_eq!(reason, "driver.secret_literal");
+    }
+}
+
 /// #490: a generated contract left over from an earlier compile and now stale (the flow changed
 /// since) makes `validate` report `flow.contract_stale`, and must not stop `journey watch`, which
 /// never reads it: the draft still passes every gate up to the observer. Cost: seconds, no browser.

@@ -96,6 +96,19 @@ accessible name, never a CSS selector; secrets are names, never values. Bounds: 
 64 screens, 128 edges, 16 paths, 8 acts per edge. Full example with a secret and a submit act:
 `apps/cli/tests/fixtures/journey_flow/checkout.journey.yaml`.
 
+For watch and preview, a declared app launcher may mint secrets during `up`. It returns them
+through `<fixture dir>/.graphhelm/secrets.env`, written with mode `600`: one raw
+`GRAPHHELM_SECRET_<name>=<value>` entry per line, with no shell quoting or expansion. Only keys
+with a nonempty ASCII letter/digit/underscore suffix are accepted; other environment keys are
+ignored. The optional file is bounded to 64 KiB, each value to 4096 bytes; empty values, duplicate
+keys and links are refused. Errors name only `/launcher/secrets`, never the contents.
+
+Preflight runs after launch. Launcher values take precedence over inherited values for that run;
+an uppercase launcher key such as `GRAPHHELM_SECRET_STUDIO_TOKEN` also supplies the lowercase
+flow id `studio_token`. Only secrets referenced by the selected paths reach the browser driver's
+environment. They are never exported into the runner's global environment or written to its
+session/preview records. A launcher without this file keeps the inherited-secret behavior.
+
 ## 3. Validate, compile, approve
 
 ```sh

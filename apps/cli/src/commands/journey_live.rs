@@ -715,7 +715,6 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
         }
         cache
     };
-    let secrets = preflight(&flow)?;
     observer_ready(&project)?;
     let output = TemporaryOutput::create()?;
     let mut base = flow["base"].as_str().unwrap().to_owned();
@@ -732,6 +731,13 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     } else {
         None
     };
+    let secrets = preflight(
+        &flow,
+        &launched
+            .as_ref()
+            .map(|app| app.secrets.clone())
+            .unwrap_or_default(),
+    )?;
     // The app this watch started from the project's declared launcher is the disposable fixture,
     // so every act is played there. An app that was already answering cannot be told from a real
     // one by its address, and keeps the guard.
@@ -1013,6 +1019,8 @@ pub(super) struct Launched {
     /// The base the launched app answers on, when it is not the flow's own: an isolated
     /// launcher runs on free ports (#585), so two lanes can play the same flows at once.
     pub(super) base: Option<String>,
+    /// Private hand-off to preflight and then the driver, never a session/preview record.
+    pub(super) secrets: BTreeMap<String, String>,
 }
 
 /// Whether the project's declared launcher asks for an isolated app: its own fresh fixture on
@@ -1276,11 +1284,12 @@ pub(super) fn launch_within(
     }
     command.env("GRAPHHELM_JOURNEY_FLOW", flow);
     let answers_on = isolated_base.clone().unwrap_or_else(|| base.to_owned());
-    let launched = Launched {
+    let mut launched = Launched {
         project: project.to_path_buf(),
         script,
         dir,
         base: isolated_base,
+        secrets: BTreeMap::new(),
     };
     // Persist ownership before spawning: recovery must also cover a runner killed inside up.
     before_up(&launched.stopper())?;
@@ -1294,6 +1303,52 @@ pub(super) fn launch_within(
     if !started || !base_reachable(&answers_on) {
         launched.stop();
         return Err(failure("watch.launch_failed", "/launcher", 1));
+    }
+    // The launcher may mint secrets during `up`. Read data, never source shell code or
+    // mutate the process environment. Bound the file and reject links before opening it.
+    let secret_dir = launched.dir.join(".graphhelm");
+    let secret_file = secret_dir.join("secrets.env");
+    match std::fs::symlink_metadata(&secret_file) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        metadata => {
+            let invalid = || failure("watch.launcher_invalid", "/launcher/secrets", 2);
+            let metadata = metadata.map_err(|_| invalid())?;
+            if !metadata.is_file()
+                || !safe_node(&launched.dir)
+                || !safe_node(&secret_dir)
+                || !safe_node(&secret_file)
+            {
+                return Err(invalid());
+            }
+            let mut bytes = Vec::new();
+            std::fs::File::open(&secret_file)
+                .and_then(|file| file.take(65_537).read_to_end(&mut bytes))
+                .map_err(|_| invalid())?;
+            if bytes.len() > 65_536 {
+                return Err(invalid());
+            }
+            let contents = std::str::from_utf8(&bytes).map_err(|_| invalid())?;
+            for line in contents.lines() {
+                let Some((name, value)) = line.split_once('=') else {
+                    continue;
+                };
+                let Some(suffix) = name.strip_prefix("GRAPHHELM_SECRET_") else {
+                    continue;
+                };
+                if suffix.is_empty()
+                    || !suffix
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                    || value.is_empty()
+                    || value.len() > 4096
+                    || value.contains('\0')
+                    || launched.secrets.contains_key(name)
+                {
+                    return Err(invalid());
+                }
+                launched.secrets.insert(name.to_owned(), value.to_owned());
+            }
+        }
     }
     Ok(launched)
 }

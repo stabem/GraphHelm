@@ -320,13 +320,15 @@ fn keel_validation_reports_called_and_untouched_fixture_functions_with_current_s
         "{\"name\":\"keel-validation-fixture\",\"private\":true,\"type\":\"module\"}",
     )
     .unwrap();
+    let node_modules_link = project.join("node_modules");
     let linked = Command::new("node")
         .args(["-e", "require('node:fs').symlinkSync(process.argv[1],process.argv[2],process.platform==='win32'?'junction':'dir')"])
         .arg(toolchain.join("node_modules"))
-        .arg(project.join("node_modules"))
+        .arg(&node_modules_link)
         .status()
         .unwrap();
     assert!(linked.success(), "OBSERVER_MISSING: toolchain link");
+    let _owned_node_modules_link = OwnedNodeModulesLink(node_modules_link);
     std::fs::write(
         project.join(".graphhelm/observers/journey_driver.mjs"),
         DRIVER,
@@ -363,7 +365,7 @@ if (mode === 'up') {
     .unwrap();
     std::fs::write(
         project.join("fixture.sh"),
-        "#!/bin/sh\nexec node fixture-server.mjs \"$@\"\n",
+        "#!/bin/sh\nif [ \"$1\" = up ]; then\n  node fixture-server.mjs \"$@\" >/dev/null 2>&1 &\n  exit 0\nfi\nexec node fixture-server.mjs \"$@\"\n",
     )
     .unwrap();
     std::fs::write(

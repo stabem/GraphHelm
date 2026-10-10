@@ -157,16 +157,16 @@ def _binding_values(execution: str, token_file: str, url: str, node_id: str | No
     if not execution:
         return None
     if not token_file or not ID.fullmatch(execution):
-        return None
+        raise ValueError("invalid execution binding")
     if node_id is not None and not ID.fullmatch(node_id):
-        return None
+        raise ValueError("invalid node binding")
     parsed = urllib.parse.urlparse(url)
     if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path:
-        return None
+        raise ValueError("invalid Runtime URL")
     if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
-        return None
+        raise ValueError("plain HTTP Runtime must be loopback")
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        return None
+        raise ValueError("invalid Runtime URL")
     hostname = parsed.hostname.lower()
     authority = f"[{hostname}]" if ":" in hostname else hostname
     origin = f"{parsed.scheme}://{authority}:{parsed.port or (443 if parsed.scheme == 'https' else 80)}"

@@ -19,7 +19,7 @@ import urllib.request
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
-MANIFESTS = (HERE / "hooks.json", HERE / "codex-hooks.json",
+MANIFESTS = (HERE / "codex-hooks.json",
              REPO / "plugins/graphhelm-codex-hooks/hooks/codex-hooks.json")
 
 
@@ -327,11 +327,11 @@ class LaneStopTests(unittest.TestCase):
     def test_only_own_reply_clears_pending_note(self):
         self.note("request-1", to="codex-4")
         self.note("wrong-reply", reply="request-1", actor="codex-5")
-        self.assertTrue(any(d.get("decision") == "block" for d in self.stop("hooks.json")))
+        self.assertTrue(any(d.get("decision") == "block" for d in self.stop("codex-hooks.json")))
         self.note("own-reply", reply="request-1", actor="codex-4")
-        self.assertEqual(self.stop("hooks.json"), [])
+        self.assertEqual(self.stop("codex-hooks.json"), [])
         self.note("request-2", to="codex-4")
-        self.assertEqual(self.stop("hooks.json")[-1]["decision"], "block")
+        self.assertEqual(self.stop("codex-hooks.json")[-1]["decision"], "block")
 
 
 if __name__ == "__main__":

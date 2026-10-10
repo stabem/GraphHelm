@@ -103,7 +103,7 @@ describe("MissionView", () => {
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("#519 Watch plays inside the Studio");
     const graph = screen.getByRole("region", { name: "Work graph" });
     expect(Array.from(graph.querySelectorAll(".mg-col-head")).map((h) => h.textContent))
-      .toEqual(["PLAN · 0", "IMPLEMENT · 0", "REVIEW · 0", "FIX · 1", "MERGE · 0", "MERGED · 1", "PROVEN · 0"]);
+      .toEqual(["IMPLEMENT · 0", "REVIEW · 0", "FIX · 1", "MERGE · 0", "MERGED · 1"]);
     expect(graph.querySelectorAll(".mg-seg").length).toBeGreaterThan(0);
     expect(within(graph).getByRole("button", { name: "Merged · 1" })).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(within(graph).getByRole("button", { name: "Row PR #548: Proof recorded like replay" }));

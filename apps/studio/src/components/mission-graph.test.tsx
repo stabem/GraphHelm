@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
-import { IssueGraph, MissionGraph } from "./mission-graph";
+import { IssueGraph, MissionGraph, PITCH } from "./mission-graph";
 import { buildWorkGroups } from "../runtime/work-groups";
 import type { TaskState } from "../runtime/team-tasks";
 import type { Mission, MissionTask } from "../runtime/mission";
@@ -49,7 +49,7 @@ describe("MissionGraph", () => {
   it("task node click selects the task; merged work sits past the first unproven step", async () => {
     const p = setup();
     const node = screen.getByRole("button", { name: /#564/ });
-    expect(node.style.left).toBe("168px");
+    expect(node.style.left).toBe(`${PITCH}px`);
     await userEvent.click(node);
     expect(p.onSelectTask).toHaveBeenCalledWith("k564");
   });
@@ -137,7 +137,9 @@ describe("IssueGraph (#591)", () => {
     const row = container.querySelector('.mg-row[data-row="o"]')!;
     expect(row.querySelector('.mg-cell[data-stage="review"] .mg-cell-mark')).toHaveAttribute("data-tone", "block");
     expect(row.querySelector('.mg-node[data-current="true"]')).toHaveAttribute("data-stage", "fix");
-    expect(row.querySelectorAll('.mg-cell[data-cell="ahead"]').length).toBe(3);
+    // #706: five columns; Merge and Merged lie ahead, Plan is the row's title tag, Proven is no column.
+    expect(row.querySelectorAll('.mg-cell[data-cell="ahead"]').length).toBe(2);
+    expect(row.querySelector('.mg-cell[data-stage="plan"], .mg-cell[data-stage="proven"]')).toBeNull();
     await userEvent.click(within(row as HTMLElement).getByRole("button", { name: "PR #12 Implement · gh-claude-1 · ✓" }));
     await userEvent.click(within(row as HTMLElement).getByRole("button", { name: "Row PR #12: Open one" }));
     expect(onSelectTask.mock.calls).toEqual([["o"], ["o"]]);
@@ -259,24 +261,45 @@ describe("PR #581's shape on the Graph (#591)", () => {
 });
 
 describe("IssueGraph owner asks (#591)", () => {
-  it("row header wraps the whole title, carries it as a tooltip, and the row grows to fit", () => {
+  it("each row's title is a full-width line above its cells, whole, with a tooltip", () => {
     const long = "fix(build): two CLI binaries share one target directory and the second build overwrites the first one silently";
     const group = buildWorkGroups([ts("a", { pr: 609, prTitle: long, step: "review" }), ts("b", { pr: 610, prTitle: "Short", step: "review" })], [])[0]!;
     const { container } = render(<IssueGraph group={group} stepFor={() => undefined} selectedTaskKey={null} selectedCol={null} onSelectTask={vi.fn()} onSelectCol={vi.fn()} onOpenTest={vi.fn()} />);
     const head = screen.getByRole("button", { name: `Row PR #609: ${long}` });
     expect(head).toHaveAttribute("title", long);
-    expect(head.querySelector(".mg-rowhead-title")).toHaveTextContent(long);
-    const tops = Array.from(container.querySelectorAll<HTMLElement>(".mg-rowhead")).map((h) => parseInt(h.style.top, 10));
-    // The long title needs more lines than one band holds: the next row starts further down.
-    expect(tops[1]! - tops[0]!).toBeGreaterThan(128);
+    expect(head).toHaveTextContent(`PR #609 · ${long}`);
+    // The title line comes first in its row; the cells follow under it, starting at the first column.
+    const row = head.closest(".mg-row")!;
+    expect(row.firstElementChild).toBe(head);
+    expect(head.nextElementSibling).toHaveClass("mg-cells");
+    expect((row.querySelector(".mg-cells .mg-cell") as HTMLElement).style.gridColumn).toBe("1");
+    expect(container.querySelector(".mg-rowhead")).toBeNull();
   });
-  it("row header css wraps instead of truncating, and cells stay top-aligned", async () => {
+  it("title and grid css: wrap, never truncate; five shared tracks; real gaps between rows and columns", async () => {
     const css = (await import("./mission-graph.css?raw")).default as string;
     const rule = (sel: string) => css.split("\n").find((l) => l.startsWith(`${sel} {`)) ?? "";
-    expect(rule(".mg-rowhead-title")).toMatch(/white-space: normal/);
-    expect(rule(".mg-rowhead-title")).toMatch(/overflow-wrap: anywhere/);
-    expect(rule(".mg-rowhead-title")).not.toMatch(/ellipsis/);
-    expect(rule(".mg-rowhead")).toMatch(/justify-content: flex-start/);
+    expect(rule(".mg-rowtitle")).toMatch(/white-space: normal/);
+    expect(rule(".mg-rowtitle")).toMatch(/font-size: 12.5px/);
+    expect(rule(".mg-rowtitle")).not.toMatch(/ellipsis/);
+    expect(rule(".mg-grid")).toMatch(/grid-template-columns: repeat\(5, minmax\(140px, 1fr\)\)/);
+    expect(Number(rule(".mg-grid").match(/column-gap: (\d+)px/)![1])).toBeGreaterThanOrEqual(12);
+    expect(Number(rule(".mg-rows").match(/gap: (\d+)px/)![1])).toBeGreaterThanOrEqual(12);
+    expect(rule(".mg-cells")).toMatch(/align-items: start/);
+  });
+  it("arrows are drawn inside their own row's cell strip, and the Fix loop returns to the re-review", async () => {
+    const { rowSegs } = await import("./mission-graph");
+    const { graphRow } = await import("../runtime/work-groups");
+    const rnd = { reviewer: "gh-claude-7", headSha: "a", commentUrl: "", fixHead: "b", blockedAt: null, fixedAt: null };
+    const group = buildWorkGroups([ts("p", { pr: 5, prTitle: "Pushed", step: "review", rounds: [rnd], reviewers: ["gh-claude-7"] })], [])[0]!;
+    const { container } = render(<IssueGraph group={group} stepFor={() => undefined} selectedTaskKey={null} selectedCol={null} onSelectTask={vi.fn()} onSelectCol={vi.fn()} onOpenTest={vi.fn()} />);
+    const segs = Array.from(container.querySelectorAll<HTMLElement>(".mg-seg"));
+    expect(segs.length).toBeGreaterThan(0);
+    for (const sg of segs) expect(sg.parentElement).toHaveClass("mg-cells");
+    // The loop drops onto the middle of the Review column (col 1) with a down arrow, above the cells.
+    const loop = rowSegs(graphRow(group.rows[0]!)).filter((sg) => sg.dir === "down");
+    expect(loop).toHaveLength(1);
+    expect(String(loop[0]!.style.left)).toContain("* 1.5 +");
+    expect(container.querySelector('.mg-node[data-current="true"]')).toHaveAttribute("data-stage", "review");
   });
   it("no TBD and no empty reviewer names anywhere: custody, cells, who lines, inspector", () => {
     const rnd = { reviewer: "TBD", headSha: "a", commentUrl: "", fixHead: null, blockedAt: null, fixedAt: null };
@@ -311,16 +334,14 @@ describe("cards never cut names or time (#591)", () => {
     expect(card.querySelector(".mg-pace-time")!.textContent).toBe("34m 05s · 0.6× typical");
     expect(card.querySelector(".mg-pace-line")!.textContent).toBe("reviewer active 4m ago");
   });
-  it("the card css lets text wrap and the card grow; the band grows to the tallest card", async () => {
+  it("the card css lets text wrap and the card grow; the card fills its column", async () => {
     const css = (await import("./mission-graph.css?raw")).default as string;
     const rule = (sel: string) => css.split("\n").find((l) => l.startsWith(`${sel} {`)) ?? "";
     expect(rule(".mg-node")).not.toMatch(/(^|[ ;{])height: \d/);
     expect(rule(".mg-node-who")).not.toMatch(/ellipsis|nowrap/);
     expect(rule(".mg-act")).not.toMatch(/ellipsis|nowrap/);
     expect(css).not.toMatch(/\.mg-node \.mg-pace-x \{[^}]*absolute/);
-    const gap = (c: HTMLElement) => { const t = Array.from(c.querySelectorAll<HTMLElement>(".mg-rowhead")).map((h) => parseInt(h.style.top, 10)); return t[1]! - t[0]!; };
-    const short = gap(render2("a", "b").container);
-    const long = gap(render2(A, R).container);
-    expect(long).toBeGreaterThan(short);
+    expect(rule(".mg-cells > .mg-slot > .mg-node")).toMatch(/width: 100%/);
+    expect(rule(".mg-lane")).toMatch(/white-space: nowrap/);
   });
 });

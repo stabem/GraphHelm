@@ -306,9 +306,11 @@ export function PlayerSetup({ setup, readSetup, offer = true, onDone }: { setup:
         if (record.state === "running") timer = setTimeout(() => { void read(); }, 5000);
       } catch (cause: unknown) {
         if (!active || current !== generation.current) return;
-        setSaid(`Couldn't read the last setup: ${cause instanceof Error ? cause.message : String(cause)}`);
-        // Keep polling after a transient read failure; an install may still be running.
-        timer = setTimeout(() => { void read(); }, 5000);
+        const status = typeof cause === "object" && cause !== null && "httpStatus" in cause ? cause.httpStatus : undefined;
+        // Older Runtimes expose only POST here: no readable record is not a pending setup.
+        setLast({ state: "none" });
+        setStep(offer ? "offer" : "hidden");
+        setSaid(status === 404 || status === 405 ? "" : `Couldn't read the last setup: ${cause instanceof Error ? cause.message : String(cause)}`);
       }
     };
     void read();
@@ -343,7 +345,7 @@ export function PlayerSetup({ setup, readSetup, offer = true, onDone }: { setup:
       {step === "loading" && <p role="status">Checking the last journey player setup…</p>}
       {step === "running" && <p role="status">Installing the journey player… {last.state === "running" ? `started ${Math.max(0, Math.floor((Date.now() - Date.parse(last.startedAt)) / 60000))} min ago` : "this can take a few minutes."}</p>}
       {step === "done" && <p role="status">{last.state === "ok" ? <>Last setup finished at {new Date(last.finishedAt!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}: {last.changed.length ? `changed ${last.changed.map((file) => `${file.path} (${file.change})`).join(", ")}.` : "nothing needed changing."} Journey player installed.</> : said}</p>}
-      {(step === "loading" || last.state !== "none") && said !== "" && <p role="alert">{said}</p>}
+      {(step === "loading" || step === "offer" || step === "hidden" || last.state !== "none") && said !== "" && <p role="alert">{said}</p>}
       {step === "failed" && (
         <>
           <p role="alert">{last.state === "failed" ? `Last setup failed at ${new Date(last.finishedAt!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}: ${last.message}` : `Couldn't install the journey player: ${said}`}</p>

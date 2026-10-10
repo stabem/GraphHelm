@@ -573,6 +573,38 @@ describe("JourneyFlows held step", () => {
 // #627: reopening must show the server's failed attempt without starting another install.
 // Existing setup tests only click Install; cost: one jsdom render, mocked HTTP, no install.
 describe("PlayerSetup restored outcome", () => {
+  // Older Runtimes have no GET (404/405). Existing cells only read successful responses.
+  // Real panel/run wiring, mocked I/O and clock; no production seam, no real wait or install.
+  it.each([404, 405, 500])("leaves loading after setup GET %s, offering setup only for observer_missing", async (httpStatus) => {
+    vi.useFakeTimers();
+    try {
+      for (const missing of [false, true]) {
+        const readPlayerSetup = vi.fn().mockRejectedValue(Object.assign(new Error(`HTTP ${httpStatus}`), { httpStatus }));
+        const setupPlayer = vi.fn();
+        const result = missing ? { state: "failed", reason: "driver.observer_missing" } : { state: "ready", result: "pass" };
+        const run: JourneyRunSource = {
+          start: vi.fn().mockResolvedValue(result), read: vi.fn().mockResolvedValue(result),
+          screenFrame: vi.fn().mockResolvedValue(null), liveFrame: vi.fn().mockResolvedValue(null),
+          setupPlayer, readPlayerSetup,
+        };
+        let container!: HTMLElement;
+        await act(async () => { ({ container } = render(<JourneyFlows view={view} onApprove={vi.fn()} run={run} />)); });
+        const panel = within(container.querySelector<HTMLElement>(".journey-player-setup")!);
+        expect(panel.queryByRole("status")).toBeNull();
+        if (missing) expect(panel.getByRole("button", { name: "Set up journey player" })).toBeEnabled();
+        else expect(panel.queryByRole("button")).toBeNull();
+        if (httpStatus === 500) expect(panel.getByRole("alert")).toHaveTextContent("Couldn't read the last setup: HTTP 500");
+        else expect(panel.queryByRole("alert")).toBeNull();
+        const reads = readPlayerSetup.mock.calls.length;
+        expect(reads).toBeGreaterThan(0);
+        await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
+        if (httpStatus !== 500) expect(readPlayerSetup).toHaveBeenCalledTimes(reads);
+        expect(setupPlayer).not.toHaveBeenCalled();
+        cleanup();
+      }
+    } finally { cleanup(); vi.useRealTimers(); }
+  });
+
   // Reopening after success must still mount the setup reader when readiness no longer fails.
   // Covers the real client GET and panel wiring; mocked fetch only, no new test seam.
   it("reads the last successful setup even when the player is already ready", async () => {

@@ -353,3 +353,27 @@ fn isolated_and_shared_targets_and_jobs_reach_the_child() {
         );
     }
 }
+
+#[test]
+fn failed_clean_never_starts_the_marker_child_and_releases_the_slot() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let cwd = dir.path().join("not-a-workspace");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let log = dir.path().join("child.log");
+    let command = marker_command(&log, "forbidden", 0);
+    let request = SlotRequest {
+        clean_workspace: true,
+        ..request(&root, "lane-a", "failed-clean", &command)
+    };
+    let outcome = run_admitted_slot_in(&request, &cwd);
+    assert!(!outcome.output.ok);
+    assert_eq!(outcome.output.diagnostics[0].path, "/cleanWorkspace");
+    assert!(!log.exists());
+    assert!(
+        std::fs::read_dir(slot_dir(&root))
+            .unwrap()
+            .flatten()
+            .all(|entry| entry.path().extension().is_none_or(|ext| ext != "ticket"))
+    );
+}

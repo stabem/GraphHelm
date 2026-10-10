@@ -753,7 +753,6 @@ fn clean_workspace_that_cannot_clean_refuses_and_never_runs_the_command() {
     let root = dir.path().join("root");
     let not_a_workspace = dir.path().join("plain");
     std::fs::create_dir_all(&not_a_workspace).unwrap();
-    let log = dir.path().join("log.txt");
     let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .current_dir(&not_a_workspace)
         .args([
@@ -787,10 +786,6 @@ fn clean_workspace_that_cannot_clean_refuses_and_never_runs_the_command() {
             .contains("no cargo workspace"),
         "the refusal says why: {reply}"
     );
-    assert!(
-        !log.exists(),
-        "the command must not run after a failed clean"
-    );
     let tickets = root.join(".graphhelm-workspaces").join("slot");
     let left = std::fs::read_dir(&tickets)
         .unwrap()
@@ -800,24 +795,6 @@ fn clean_workspace_that_cannot_clean_refuses_and_never_runs_the_command() {
     assert_eq!(left, 0, "the refusal frees the slot");
 }
 
-/// A direct Cargo-shaped child whose executable is a test-local `cargo` shim. The slot still
-/// admits and launches `cargo +1.97.1 build -p graphhelm-cli`; only the child lookup is isolated
-/// so these target observers do not need a real workspace or a shell command in the slot argv.
-
-/// #361: by default the slot builds in the current worktree's own target, never the shared one
-/// (cargo treats another worktree's path-dependency artifacts as fresh, so a shared-target test run
-/// can vouch for bytes it did not build); `--shared-target` is the explicit opt-in. Credible
-/// regression: the default drifting back to the shared target. Cost: two short child commands.
-/// #540 (1): `workspace slot status` names the holder (lane, label, since when) and the waiters
-/// in order with their wait. Credible regression: lanes reading stale ticket files or asking in
-/// chat, because nothing says who holds the slot. Cost: two short child commands.
-/// #540 (2): a waiter has no wait limit unless it asks (`--max-wait`), and one that timed out keeps
-/// its original place when the same lane and label queue again. Credible regression: the old fixed
-/// 120-minute limit that dropped a waiter to the back of the queue. Cost: four short commands.
-/// #540 (3): `--priority` puts a job next after the holder, never preempting it, and only for a
-/// lane the owner listed in `<root>/.graphhelm-workspaces/slot-priority-lanes`; any other lane is
-/// refused and its command never runs. Credible regression: any agent lane jumping the queue.
-/// Cost: four short commands.
 /// #557 review: a finite but huge `--max-wait` overflows a Duration; it is refused with the
 /// argument's own words, never a panic. Cost: one CLI run, no command started.
 #[test]

@@ -150,8 +150,9 @@ fn priority_allowed(root: &Path, lane: &str) -> bool {
 
 /// The workspace's own package names, for `--clean-workspace` (`cargo metadata --no-deps`, run
 /// in the current directory). `None` when the directory is no cargo workspace or cargo fails.
-fn workspace_packages(cargo: &str) -> Option<Vec<String>> {
+fn workspace_packages(cargo: &str, cwd: &Path) -> Option<Vec<String>> {
     let output = Command::new(cargo)
+        .current_dir(cwd)
         .args(["metadata", "--no-deps", "--format-version", "1"])
         .output()
         .ok()?;
@@ -170,21 +171,27 @@ fn workspace_packages(cargo: &str) -> Option<Vec<String>> {
 /// `--clean-workspace` before the command: clean every workspace package out of the shared
 /// target. Fails closed (#417 review): a clean that cannot run or fails is a refusal, never a
 /// silent `cleaned: null` followed by a build against another lane's artifacts.
-fn clean_workspace_packages(cargo: &str, target: &Path) -> Result<serde_json::Value, String> {
-    let cwd = std::env::current_dir()
-        .map_or_else(|_| "<unknown>".to_owned(), |dir| dir.display().to_string());
-    let packages = workspace_packages(cargo).ok_or_else(|| {
-        format!("--clean-workspace: no cargo workspace at the current directory {cwd}; run the slot from the worktree root")
+fn clean_workspace_packages(
+    cargo: &str,
+    target: &Path,
+    cwd: &Path,
+) -> Result<serde_json::Value, String> {
+    let directory = cwd.display();
+    let packages = workspace_packages(cargo, cwd).ok_or_else(|| {
+        format!("--clean-workspace: no cargo workspace at the current directory {directory}; run the slot from the worktree root")
     })?;
     let mut clean = Command::new(cargo);
-    clean.arg("clean").env("CARGO_TARGET_DIR", target);
+    clean
+        .current_dir(cwd)
+        .arg("clean")
+        .env("CARGO_TARGET_DIR", target);
     for package in &packages {
         clean.args(["-p", package]);
     }
     match clean.status() {
         Ok(status) if status.success() => Ok(json!({"packages": packages.len(), "ok": true})),
         Ok(status) => Err(format!(
-            "--clean-workspace: cargo clean failed ({status}) in {cwd}"
+            "--clean-workspace: cargo clean failed ({status}) in {directory}"
         )),
         Err(error) => Err(format!(
             "--clean-workspace: cargo clean could not start: {}",
@@ -645,7 +652,7 @@ fn run_admitted_slot_in(request: &SlotRequest<'_>, cwd: &Path) -> Outcome {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let mut cleaned = None;
     if request.clean_workspace {
-        match clean_workspace_packages(&cargo, &target) {
+        match clean_workspace_packages(&cargo, &target, cwd) {
             Ok(report) => cleaned = Some(report),
             Err(reason) => {
                 release(slot, ticket);
@@ -654,6 +661,7 @@ fn run_admitted_slot_in(request: &SlotRequest<'_>, cwd: &Path) -> Outcome {
         }
     }
     let status = Command::new(program)
+        .current_dir(cwd)
         .args(arguments)
         .env("CARGO_TARGET_DIR", &target)
         .env("CARGO_BUILD_JOBS", request.jobs.to_string())

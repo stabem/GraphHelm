@@ -81,7 +81,7 @@ up)
     git -C "$dir" add -A && git -C "$dir" -c user.email=demo@example.com -c user.name=demo commit -qm init
   fi
   "$bin" --json init --project "$dir" --bind "127.0.0.1:$rport" --harness codex > "$dir/.graphhelm/init.json"
-  export GRAPHHELM_EVENTS_KEY="$(cat "$dir/.graphhelm/serve.key")"
+  export GRAPHHELM_FIXTURE_RUNTIME_PORT="$rport" GRAPHHELM_EVENTS_KEY="$(cat "$dir/.graphhelm/serve.key")"
   # The Runtime reads journeys and delivered documents from a disposable project. Copy the
   # journeys byte-for-byte; never let a document save reach the source repository (#585).
   mkdir -p "$dir/project/.graphhelm" "$dir/project/docs"
@@ -129,6 +129,42 @@ up)
   fi
   # Seed a governed wait for the answer-node flow only.
   flow=${GRAPHHELM_JOURNEY_FLOW:-}
+  if [ "$flow" = studio-work-graph ] || [ "$flow" = studio-work-graph-mobile ]; then
+    # #721 task records use the existing planner actor, so these rows do not create fake agents.
+    # Every refusal stops the seed; the fixture token's permissions are never widened.
+    node - "$dir" "$now" <<'NODE'
+const fs = require('fs');
+const [dir, at] = process.argv.slice(2);
+const common = { schema: 'graphhelm-task-event-v1', revision: 1, at };
+const journey = [process.env.GRAPHHELM_JOURNEY_FLOW || 'studio-work-graph'];
+const records = [
+  ['open-claimed', 'task.claimed', { taskId: 'issue-721-open', issue: 721, lane: 'planner', branch: 'issue-721-open-fixture', journeys: journey, title: 'Observe issue graph and work kanban' }],
+  ['open-planned', 'task.planned', { taskId: 'issue-721-open', lane: 'planner', classes: ['user_visible'], reviews: 1, proof: 'journey', critic: { mode: 'none', passScore: 7, maxRounds: 1 }, summary: 'Fixture plan' }],
+  ['open-pr', 'task.pr_opened', { taskId: 'issue-721-open', pr: 721, lane: 'planner', headSha: '721abcde', journeys: journey, title: 'Observe issue graph and work kanban' }],
+  ['merged-claimed', 'task.claimed', { taskId: 'issue-721-merged', issue: 721, lane: 'planner', branch: 'issue-721-merged-fixture', journeys: journey, title: 'Merged fixture row' }],
+  ['merged-pr', 'task.pr_opened', { taskId: 'issue-721-merged', pr: 722, lane: 'planner', headSha: '722abcde', journeys: journey, title: 'Merged fixture row' }],
+  ['merged-review', 'task.review_verdict', { taskId: 'issue-721-merged', pr: 722, headSha: '722abcde', reviewer: 'planner', verdict: 'APPROVE', commentUrl: 'https://github.com/stabem/GraphHelm/pull/722#review' }],
+  ['merged-done', 'task.merged', { taskId: 'issue-721-merged', pr: 722, mergeSha: '722fedcb', closes: [], merger: 'planner' }],
+];
+const token = fs.readFileSync(`${dir}/.graphhelm/events.token`, 'utf8').trim();
+const port = process.env.GRAPHHELM_FIXTURE_RUNTIME_PORT || '8797';
+(async () => {
+  for (const [id, type, fields] of records) {
+    const document = { ...common, ...fields };
+    const signal = { id: `fixture-721-${id}`, type, source: { type: 'user', id: 'planner' }, severity: 'low',
+      emittedAt: at, evidence: ['demo'], description: JSON.stringify(document) };
+    const response = await fetch(`http://127.0.0.1:${port}/v1/executions/demo/signal`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
+        'Idempotency-Key': `fixture-721-${id}`, 'X-GraphHelm-Actor': 'planner', 'X-GraphHelm-Actor-Type': 'agent' },
+      body: JSON.stringify({ signal }), signal: AbortSignal.timeout(10000),
+    });
+    const result = await response.json();
+    fs.writeFileSync(`${dir}/.graphhelm/task-${id}.out`, JSON.stringify(result));
+    if (!response.ok || result.ok !== true) throw new Error(`task seed refused: ${id}`);
+  }
+})().catch(() => { console.error('fixture: task record refused; stop without widening permissions'); process.exit(1); });
+NODE
+  fi
   if [ "$flow" = studio-answer-node ]; then
     printf '%s\n' '{"nodeOutcomes":{"implementation":"success","deploy":"unknown"}}' > "$dir/.graphhelm/waiting-fixtures.json"
     # Governed genesis starts at version 1 without a predecessor, with a matching run id.

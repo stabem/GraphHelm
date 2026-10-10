@@ -1,7 +1,7 @@
 {
   "schema": "graphhelm.studio-speed/1",
-  "measuredAt": "2026-10-09T23:45:36.890971+00:00",
-  "sourceHead": "1c48dbdde1efe675fc98653819a064def47548f2",
+  "measuredAt": "2026-10-10T01:04:47.527163+00:00",
+  "sourceHead": "1ef4fe58a16f0f3eef44cf1142242cdd66de9f57",
   "sourceDirty": false,
   "platform": "Windows",
   "browser": "145.0.7632.6",
@@ -18,108 +18,142 @@
   "preview": "404 stub: journey details only, no replay or approval",
   "clock": "browser click event to visible DOM plus two animation frames",
   "p95Method": "nearest rank (maximum for ten samples)",
-  "correctness": "selected demo; planner visible; two journey steps; chat reread after reload",
+  "correctness": "selected demo; Graph/Lanes/Proof selected; planner visible in Lanes; Proof empty state; two journey steps; Chat toggle opens beside Graph; chat reread after reload",
   "metrics": {
     "connectFirstUsablePaint": {
       "count": 10,
-      "medianMs": 247.85,
-      "p95Ms": 336.1,
+      "medianMs": 236.45,
+      "p95Ms": 251.9,
       "samplesMs": [
-        336.1,
-        242.4,
-        236.7,
-        250.9,
-        246.7,
-        244.8,
-        254.9,
-        289.3,
-        236.6,
-        249.0
+        242.0,
+        240.9,
+        214.9,
+        243.3,
+        227.7,
+        233.0,
+        239.9,
+        227.9,
+        229.1,
+        251.9
       ]
     },
-    "tabTeam": {
+    "tabLanes": {
       "count": 10,
-      "medianMs": 94.45,
-      "p95Ms": 110.2,
+      "medianMs": 60.95,
+      "p95Ms": 63.0,
       "samplesMs": [
-        110.2,
-        95.4,
-        93.6,
-        94.5,
-        106.3,
-        89.0,
-        94.4,
-        92.5,
-        94.9,
-        94.3
+        59.5,
+        61.0,
+        61.2,
+        60.7,
+        60.9,
+        60.8,
+        61.9,
+        55.9,
+        61.0,
+        63.0
       ]
     },
-    "tabJourney": {
+    "tabProof": {
       "count": 10,
-      "medianMs": 127.0,
-      "p95Ms": 157.3,
+      "medianMs": 61.2,
+      "p95Ms": 63.0,
       "samplesMs": [
-        157.3,
-        128.8,
-        126.6,
-        120.9,
-        126.9,
-        131.3,
+        61.5,
+        58.0,
+        63.0,
+        60.8,
+        61.5,
+        61.1,
+        62.6,
+        45.3,
+        61.3,
+        60.5
+      ]
+    },
+    "openJourneys": {
+      "count": 10,
+      "medianMs": 129.85,
+      "p95Ms": 146.1,
+      "samplesMs": [
+        146.0,
         127.7,
-        127.1,
-        106.6,
-        100.6
+        146.1,
+        125.4,
+        131.2,
+        144.2,
+        124.0,
+        125.9,
+        143.4,
+        128.5
       ]
     },
     "tabGraph": {
       "count": 10,
-      "medianMs": 77.95,
-      "p95Ms": 79.0,
+      "medianMs": 78.05,
+      "p95Ms": 79.1,
       "samplesMs": [
+        79.1,
+        78.5,
+        78.5,
+        74.9,
+        77.5,
         77.4,
-        79.0,
-        74.4,
-        78.7,
-        77.6,
-        76.2,
-        78.7,
-        78.3,
-        78.4,
-        75.6
+        78.1,
+        78.0,
+        77.4,
+        78.7
       ]
     },
     "openJourney": {
       "count": 10,
-      "medianMs": 91.15,
-      "p95Ms": 94.7,
+      "medianMs": 79.05,
+      "p95Ms": 95.6,
       "samplesMs": [
-        77.0,
-        94.6,
-        78.3,
-        77.2,
-        90.1,
-        94.7,
-        92.2,
-        94.6,
-        93.4,
-        77.8
+        74.2,
+        79.2,
+        77.6,
+        92.6,
+        91.9,
+        93.9,
+        95.6,
+        78.9,
+        78.6,
+        78.9
+      ]
+    },
+    "openChat": {
+      "count": 10,
+      "medianMs": 60.45,
+      "p95Ms": 62.5,
+      "samplesMs": [
+        60.1,
+        59.3,
+        61.6,
+        62.5,
+        61.1,
+        60.8,
+        46.2,
+        58,
+        62.4,
+        45.2
       ]
     },
     "sendChat": {
       "count": 10,
-      "medianMs": 281.0,
-      "p95Ms": 294.4,
+      "medianMs": 282.6,
+      "p95Ms": 295.5,
       "samplesMs": [
-        293.1,
-        276.4,
-        277.1,
-        277.8,
-        290.9,
-        278.4,
-        278.4,
-        293.0,
-        283.6,
-        294.4
+        275.4,
+        292.6,
+        275.8,
+        295.5,
+        278.6,
+        286.6,
+        294.8,
+        262.1,
+        277.3,
+        295.1
       ]
     }
   }

@@ -265,6 +265,69 @@ fn a_claim_release_is_bound_to_its_claim_sequence_and_lane() {
     }
 }
 
+/// #729: a PR on an older claim cannot prevent release of a later PR-less claim.
+/// Cost: one temp store and five signal CLI calls.
+#[test]
+fn release_ignores_a_pr_owned_by_an_earlier_claim() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    for id in ["first-claim", "second-claim"] {
+        let reply = signal(
+            scratch.path(),
+            &events,
+            id,
+            "task.claimed",
+            ACTOR,
+            &as_actor(package_fixture("claimed")),
+        );
+        assert_eq!(reply["ok"], json!(true), "{id}: {reply}");
+    }
+    let second_sequence = history(&events)
+        .into_iter()
+        .find(|event| {
+            matches!(&event.kind, EventKind::SignalRecorded(recorded)
+            if recorded.signal_id.as_str() == "second-claim")
+        })
+        .unwrap()
+        .sequence;
+    let opened = signal(
+        scratch.path(),
+        &events,
+        "first-pr",
+        "task.pr_opened",
+        ACTOR,
+        &as_actor(package_fixture("pr-opened")),
+    );
+    assert_eq!(opened["ok"], json!(true), "{opened}");
+    let updated = signal(
+        scratch.path(),
+        &events,
+        "first-pr-updated",
+        "task.pr_opened",
+        ACTOR,
+        &as_actor(package_fixture("pr-opened")),
+    );
+    assert_eq!(updated["ok"], json!(true), "{updated}");
+
+    let mut released = as_actor(package_fixture("claimed"));
+    released
+        .as_object_mut()
+        .unwrap()
+        .retain(|key, _| matches!(key.as_str(), "schema" | "taskId" | "revision" | "at"));
+    released["lane"] = json!(ACTOR);
+    released["claimSequence"] = json!(second_sequence);
+    released["reason"] = json!("Stopped work on the second claim");
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "release-second",
+        "task.released",
+        ACTOR,
+        &released,
+    );
+    assert_eq!(reply["ok"], json!(true), "{reply}");
+}
+
 /// #86: assignment provenance is optional, bounded text and cannot name the claimant.
 /// Existing claim fixtures cover no assigner. Cost: one temp store and seven CLI calls.
 #[test]

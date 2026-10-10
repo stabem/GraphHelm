@@ -486,27 +486,36 @@ pub(crate) fn validate_task_event(
                 ));
             }
             let task_id = document["taskId"].as_str().expect("common shape checked");
-            let opened = history
+            // A PR belongs to the oldest still-open claim of this lane and issue. A later
+            // claim remains releasable even when an earlier claim's PR was recorded after it.
+            let mut open_claims = Vec::new();
+            let mut opened_prs = Vec::new();
+            for event in history
                 .iter()
-                .filter(|event| {
-                    matches!(&event.kind,
-                EventKind::SignalRecorded(recorded) if recorded.kind == "task.pr_opened")
-                        && event.sequence > claim_sequence
-                        && event.actor.id().as_str() == lane
-                })
-                .any(|event| {
+                .filter(|event| event.actor.id().as_str() == lane)
+            {
+                let EventKind::SignalRecorded(recorded) = &event.kind else {
+                    continue;
+                };
+                if !matches!(
+                    recorded.kind.as_str(),
+                    "task.claimed" | "task.pr_opened" | "task.released"
+                ) {
+                    continue;
+                }
+                let event_doc = (|| {
                     let Some(reference) = event.evidence_refs.first() else {
-                        return false;
+                        return None;
                     };
                     let Ok(EvidenceRead::Available(sealed)) =
                         store.sealed_evidence(scope, reference.evidence_id())
                     else {
-                        return false;
+                        return None;
                     };
                     runtime
                         .block_on(opener.open(scope.clone(), &sealed))
                         .ok()
-                        .is_some_and(|plaintext| {
+                        .and_then(|plaintext| {
                             plaintext
                                 .expose(|bytes| {
                                     serde_json::from_slice::<serde_json::Value>(bytes).ok()
@@ -516,10 +525,37 @@ pub(crate) fn validate_task_event(
                                         serde_json::from_str::<serde_json::Value>(text).ok()
                                     })
                                 })
-                                .is_some_and(|doc| doc["taskId"] == task_id)
                         })
-                });
-            if opened
+                })();
+                let Some(event_doc) = event_doc.filter(|doc| doc["taskId"] == task_id) else {
+                    continue;
+                };
+                match recorded.kind.as_str() {
+                    "task.claimed" => open_claims.push(event.sequence),
+                    "task.pr_opened" => {
+                        if let Some(pr) = event_doc["pr"]
+                            .as_u64()
+                            .filter(|pr| !opened_prs.contains(pr))
+                        {
+                            opened_prs.push(pr);
+                        } else {
+                            continue;
+                        }
+                        if !open_claims.is_empty() {
+                            open_claims.remove(0);
+                        }
+                    }
+                    "task.released" => {
+                        if let Some(released_at) = event_doc["claimSequence"].as_u64() {
+                            if open_claims.contains(&released_at) {
+                                open_claims.retain(|sequence| *sequence >= event.sequence);
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            if !open_claims.contains(&claim_sequence)
                 || claim_doc["description"]
                     .as_str()
                     .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())

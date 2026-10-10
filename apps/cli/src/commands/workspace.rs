@@ -545,6 +545,10 @@ pub(crate) fn slot_target(
     worktree: &Path,
     record: bool,
 ) -> Result<(PathBuf, Vec<Value>), String> {
+    // The caller holds slot.lock here. Never wait for sweep.lock: run_sweep takes these
+    // in the other order and only tries the slot. Without the lock, skip reclaim;
+    // the build may still proceed if the held targets and free space allow it.
+    let sweep_lock = if record { sweep_lock(root).ok() } else { None };
     let name = worktree
         .file_name()
         .and_then(|name| name.to_str())
@@ -575,7 +579,7 @@ pub(crate) fn slot_target(
                 ));
             }
         }
-        if !worktree_gone(&path) {
+        if !worktree_gone(&path) || (record && sweep_lock.is_none()) {
             held.push(other);
         } else if record {
             match reclaim_target(root, rule, lane, &other) {
@@ -593,7 +597,7 @@ pub(crate) fn slot_target(
                 rule.root.display()
             )
         })?;
-        if free < rule.min_free_gb * 1024_u64.pow(3) && record {
+        if free < rule.min_free_gb * 1024_u64.pow(3) && sweep_lock.is_some() {
             let swept = sweep_targets(root, true, Some((lane, worktree)));
             if let Some(removed) = swept["removed"].as_array() {
                 reclaimed.extend(removed.iter().cloned());
@@ -1011,8 +1015,40 @@ fn keep_reason(view: &Value) -> Option<&'static str> {
     None
 }
 
+/// Shared by manual CLI/HTTP sweeps, the Runtime tick and held-slot target reclaim.
+/// The handle's lifetime covers eligibility checks and removal, never a sleep or build.
+fn sweep_lock(root: &Path) -> Result<std::fs::File, String> {
+    let dir = root.join(LEDGER);
+    std::fs::create_dir_all(&dir)
+        .map_err(|_| "the workspace sweep lock directory could not be created".to_owned())?;
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(dir.join("sweep.lock"))
+        .map_err(|_| "the workspace sweep lock could not be opened".to_owned())?;
+    file.try_lock()
+        .map_err(|_| "the workspace sweep lock is busy or unavailable; retry later".to_owned())?;
+    Ok(file)
+}
+
 pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
     const COMMAND: &str = "workspace.sweep";
+    let _sweep_lock = if apply {
+        match sweep_lock(root) {
+            Ok(lock) => Some(lock),
+            Err(message) => {
+                return refuse(
+                    COMMAND,
+                    crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                    &message,
+                    "/root",
+                );
+            }
+        }
+    } else {
+        None
+    };
     let mut removed = Vec::new();
     let mut kept = Vec::new();
     for mut record in records(root) {

@@ -745,6 +745,163 @@ fn http_and_mcp_list_like_the_cli_and_only_an_owner_session_sweeps() {
     assert!(refused.body.contains("/workspaceRoot"), "{}", refused.body);
 }
 
+/// Contract: the Runtime reclaims released work without a request, reports the outcome,
+/// and leaves live work intact; zero disables it. Regression: no timer, ignored zero,
+/// or a tick bypassing the manual rules. Existing HTTP tests only request manual sweeps.
+/// Cost: three temp Git repos and local servers, about ten seconds. The hidden debug-only
+/// period override accelerates the real timer; no deletion or filesystem I/O is mocked.
+#[cfg(debug_assertions)]
+#[test]
+fn runtime_workspace_sweep_runs_without_a_request_and_zero_disables_it() {
+    for seconds in [Some("60"), None, Some("0")] {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = repo(dir.path());
+        let root = dir.path().join("root");
+        let root_s = root.to_str().unwrap();
+        claim(root_s, &repo, "lane", "done");
+        release(root_s, "lane", "done");
+        claim(root_s, &repo, "lane", "live");
+        // A failed first tick must leave the Runtime alive and retry next period.
+        let mut held = (seconds == Some("60")).then(|| {
+            let file =
+                std::fs::File::create(root.join(".graphhelm-workspaces/sweep.lock")).unwrap();
+            file.lock().unwrap();
+            file
+        });
+        let mut saw_failure = false;
+        let mut args = vec![
+            "--workspace-root",
+            root_s,
+            "--workspace-sweep-test-seconds",
+            "1",
+        ];
+        if let Some(seconds) = seconds {
+            args.extend(["--workspace-sweep-seconds", seconds]);
+        }
+        let (_server, base, token_file) = serve(dir.path(), &args);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let started = std::time::Instant::now();
+        loop {
+            let reply =
+                support::raw_request(&format!("{base}/v1/workspaces"), Some(token.trim())).unwrap();
+            assert_eq!(reply.status, 200, "{}", reply.body);
+            let reply: Value = serde_json::from_str(&reply.body).unwrap();
+            assert!(reply["data"].get("lastSweep").is_some(), "{reply}");
+            assert!(root.join("lane/live/wt/a.txt").is_file());
+            if seconds == Some("0") {
+                assert!(root.join("lane/done/wt/a.txt").is_file());
+                assert!(reply["data"]["lastSweep"].is_null(), "{reply}");
+                if started.elapsed() >= std::time::Duration::from_secs(3) {
+                    break;
+                }
+            } else if !reply["data"]["lastSweep"].is_null() {
+                let last = &reply["data"]["lastSweep"];
+                assert!(last["at"].as_u64().is_some_and(|at| at > 0), "{last}");
+                if last["ok"] == false {
+                    assert_eq!(
+                        last["diagnostics"][0]["code"], "GHCLI037_WORKSPACE_REFUSED",
+                        "{last}"
+                    );
+                    assert!(last["removed"].as_array().unwrap().is_empty(), "{last}");
+                    if held.is_some() {
+                        assert!(root.join("lane/done/wt/a.txt").is_file());
+                    }
+                    saw_failure = true;
+                    drop(held.take());
+                } else {
+                    assert_eq!(last["ok"], true, "{last}");
+                    assert_eq!(saw_failure, seconds == Some("60"));
+                    assert_eq!(last["removed"][0]["task"], "done", "{last}");
+                    assert_eq!(last["kept"][0]["task"], "live", "{last}");
+                    assert_eq!(last["kept"][0]["reason"], "not_released", "{last}");
+                    assert!(!root.join("lane/done").exists());
+                    break;
+                }
+            }
+            // Advisory poll ceiling: a request can additionally take REQUEST_TIMEOUT.
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(15),
+                "no sweep: {reply}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+}
+
+/// Contract: bad periods refuse before startup, not a tight background loop. Existing
+/// serve parsing has no workspace period. No seam; four short CLI calls in a temp dir.
+#[test]
+fn runtime_workspace_sweep_refuses_periods_outside_the_safe_range() {
+    let dir = tempfile::tempdir().unwrap();
+    for seconds in ["1", "59", "86401", "18446744073709551615"] {
+        let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args(["serve", "--events"])
+            .arg(dir.path().join("events"))
+            .args([
+                "--bind",
+                "127.0.0.1:0",
+                "--workspace-sweep-seconds",
+                seconds,
+            ])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            reply["diagnostics"][0]["code"], "GHCLI001_ARGUMENT_INVALID",
+            "{reply}"
+        );
+        assert!(!dir.path().join("events").exists());
+    }
+}
+
+/// Contract: CLI, HTTP and held-slot reclaim share the same OS lock. Regression: one
+/// door deletes or refuses a build while a sweep owns the lock. Existing slot tests
+/// only hold slot.lock; this cell must observe the child still running under sweep.lock.
+/// No seam: hold the actual file lock; temp files, Git and short children only.
+#[test]
+fn workspace_sweep_lock_serializes_manual_http_and_slot_reclaim() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = repo(dir.path());
+    let root = dir.path().join("root");
+    let root_s = root.to_str().unwrap();
+    claim(root_s, &repo, "lane", "done");
+    release(root_s, "lane", "done");
+    let fast = dir.path().join("fast");
+    let rules = root.join(".graphhelm-workspaces");
+    std::fs::create_dir_all(&fast).unwrap();
+    std::fs::write(
+        rules.join("slot-targets.json"),
+        serde_json::json!({"targetRoot": fast, "minFreeGb": 0}).to_string(),
+    )
+    .unwrap();
+    let tree = dir.path().join("wt-old");
+    std::fs::create_dir_all(&tree).unwrap();
+    let log = dir.path().join("marker");
+    assert_eq!(slot_in(&root, "lane", &tree, &log).0, 0);
+    std::fs::remove_dir(&tree).unwrap();
+    let next = dir.path().join("wt-next");
+    std::fs::create_dir_all(&next).unwrap();
+    let lock = std::fs::File::create(rules.join("sweep.lock")).unwrap();
+    lock.lock().unwrap();
+    let (code, reply) = run(&["sweep", "--root", root_s, "--apply"]);
+    assert_ne!(code, 0, "{reply}");
+    assert!(root.join("lane/done/wt/a.txt").is_file());
+    let (_server, base, token) = serve(dir.path(), &["--workspace-root", root_s]);
+    let token = std::fs::read_to_string(token).unwrap();
+    let reply = post(&format!("{base}/v1/workspaces/sweep"), token.trim());
+    assert_ne!(reply.status, 200, "{}", reply.body);
+    assert!(root.join("lane/done/wt/a.txt").is_file());
+    assert_eq!(slot_in(&root, "lane", &next, &log).0, 0);
+    assert!(log.exists());
+    assert!(fast.join("lane/wt-old/target").is_dir());
+    drop(lock);
+    assert_eq!(run(&["sweep", "--root", root_s, "--apply"]).0, 0);
+    assert!(!root.join("lane/done").exists());
+    assert!(!fast.join("lane/wt-old/target").exists());
+    assert_eq!(slot_in(&root, "lane", &next, &log).0, 0);
+}
+
 /// #380: the declared actor type is not a credential. The Runtime's agent session token
 /// (`events.agent.token`) cannot sweep over HTTP or through an MCP session that declares itself
 /// `owner`; the workspace stays. The same token still lists, as agents do.

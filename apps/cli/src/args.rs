@@ -1127,6 +1127,14 @@ pub struct ServeArgs {
     /// both routes refuse naming it.
     #[arg(long)]
     pub workspace_root: Option<PathBuf>,
+    /// Sweep eligible workspaces every N seconds with --workspace-root (0 disables;
+    /// otherwise 60..=86400). Uses the same rules as workspace sweep --apply.
+    #[arg(long, default_value_t = 1800)]
+    pub workspace_sweep_seconds: u64,
+    /// Accelerate the actual sweep loop in integration tests; never in release builds.
+    #[cfg(debug_assertions)]
+    #[arg(long, hide = true, value_parser = clap::value_parser!(u64).range(1..=1))]
+    pub workspace_sweep_test_seconds: Option<u64>,
     /// A build-slot root (#612) whose queue `GET /v1/workspaces/slots` reports; repeatable (for
     /// example `D:/gh` and `D:/gh/b`). Read-only: the Runtime never queues, cancels or reorders.
     #[arg(long = "slot-root")]

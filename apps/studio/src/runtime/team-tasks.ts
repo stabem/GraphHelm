@@ -477,18 +477,10 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
     slices.push(slice);
     return slice;
   };
-  // A claim names its branch: the same branch is the same slice (a re-claim), any other opens one.
+  // Each claim has its own sequence, even when a lane reuses a branch.
   if (event.kind === "task.claimed") {
-    // Once this lane released a claim on the branch, a later claim starts a new slice.
-    // Otherwise claimSequence stays pinned to the earlier record and later releases can
-    // either miss this claim or close the wrong slice.
     // A critic round recorded before the claim belongs to this task: the claim adopts it (#562).
-    return group.find((slice) => slice.releasedBy === undefined && slice.branch !== null && slice.branch === event.branch)
-      ?? group.find(isUnclaimedCritic) ?? add();
-  }
-  if (event.kind === "task.released") {
-    return group.find((slice) => slice.pr === null && slice.lane === event.lane && slice.claimSequence === event.claimSequence && slice.claimSequence < event.sequence)
-      ?? (group[group.length - 1] ?? add());
+    return group.find(isUnclaimedCritic) ?? add();
   }
   const own = event.pr === undefined ? undefined : group.find((slice) => slice.pr === event.pr);
   if (own !== undefined) return own;
@@ -522,6 +514,19 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
 export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
   const slices: TaskState[] = [];
   for (const event of [...records].sort((a, b) => a.sequence - b.sequence)) {
+    if (event.kind === "task.released") {
+      // Admission binds the release to one exact claim. Once that claim is found, the
+      // release ends this lane's earlier unowned claims, never a later claim or a PR.
+      const named = slices.some((slice) => slice.taskId === event.taskId && slice.lane === event.lane
+        && slice.pr === null && slice.claimSequence === event.claimSequence && (slice.claimSequence ?? Infinity) < event.sequence);
+      if (named) {
+        for (const slice of slices) {
+          if (slice.taskId === event.taskId && slice.lane === event.lane && slice.pr === null
+            && slice.claimSequence !== undefined && slice.claimSequence < event.sequence) slice.releasedBy = event.lane;
+        }
+      }
+      continue;
+    }
     const state = sliceFor(slices, event);
     if (state.step === "merged") continue;
     state.lastSequence = event.sequence;
@@ -543,11 +548,6 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         state.lane = event.lane ?? state.lane;
         state.journeys = event.journeys?.length ? event.journeys : state.journeys;
         state.claimSequence ??= event.sequence;
-        break;
-      case "task.released":
-        if (state.pr === null && state.lane === event.lane && state.claimSequence !== undefined && state.claimSequence <= event.sequence) {
-          state.releasedBy = event.lane;
-        }
         break;
       case "task.planned":
         state.lane = event.lane ?? state.lane;

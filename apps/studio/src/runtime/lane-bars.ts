@@ -125,7 +125,11 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       case "task.released":
         if (e.lane) {
           const claim = claims.get(e.taskId)?.find((candidate) => candidate.sequence === e.claimSequence && candidate.lane === e.lane && !candidate.pr);
-          if (claim) close("implement", claim.slice, t, e.lane);
+          if (claim) {
+            for (const earlier of claims.get(e.taskId) ?? []) {
+              if (earlier.lane === e.lane && !earlier.pr && earlier.sequence < e.sequence) close("implement", earlier.slice, t, e.lane);
+            }
+          }
         }
         break;
       case "task.review_assigned": close("implement", slice, t); if (e.reviewer) start(e.reviewer, "review", e.taskId, slice, t); break;

@@ -100,7 +100,7 @@ describe("foldTaskEvents", () => {
     expect(parseTaskEvent("task.released", "lane-a", JSON.stringify({ ...doc, reason: "" }))).toBeNull();
   });
 
-  it("a release ends only its named claim while a newer or another lane's claim stays open", () => {
+  it("a release ends earlier claims by its lane while another lane's claim stays open", () => {
     const records = [
       { ...parseTaskEvent("task.claimed", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 1, at: "now", issue: 729, lane: "lane-a", branch: "old" }))!, sequence: 10, claimSequence: 10 },
       { ...parseTaskEvent("task.claimed", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 1, at: "now", issue: 729, lane: "lane-a", branch: "new" }))!, sequence: 12, claimSequence: 12 },
@@ -108,7 +108,7 @@ describe("foldTaskEvents", () => {
       { ...parseTaskEvent("task.released", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 2, at: "now", lane: "lane-a", claimSequence: 10, reason: "Stopped" }))!, sequence: 14 },
     ].map((event) => ({ ...event, occurredAt: null }));
     const folded = foldTaskEvents(records as TaskEventRecord[]);
-    expect(folded.map((task) => [task.branch, task.step, task.releasedBy ?? null])).toEqual([["new", "plan", null], ["foreign", "plan", null], ["old", "plan", "lane-a"]]);
+    expect(folded.map((task) => [task.branch, task.step, task.releasedBy ?? null])).toEqual([["old", "plan", "lane-a"], ["new", "plan", "lane-a"], ["foreign", "plan", null]]);
   });
 
   it("does not release a claim after that claim has a PR", () => {

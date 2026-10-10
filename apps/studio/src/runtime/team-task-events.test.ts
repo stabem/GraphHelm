@@ -211,6 +211,13 @@ describe("foldTaskEvents slices (#460)", () => {
     const tasks = foldTaskEvents(records.slice(0, 4));
     expect(tasks.map((task) => [task.pr, task.step])).toEqual([[456, "review"], [null, "plan"]]);
   });
+
+  it("removes a closed PR slice from the work model without ending a sibling PR", () => {
+    const opened = record(1, "task.pr_opened", "codex-6", { taskId: "issue-685", pr: 685, headSha: "aaaaaaaa", journeys: [], lane: "codex-6" });
+    const sibling = record(2, "task.pr_opened", "codex-6", { taskId: "issue-685", pr: 688, headSha: "bbbbbbbb", journeys: [], lane: "codex-6" });
+    const closed = record(3, "task.closed", "codex-6", { taskId: "issue-685", pr: 685, reason: "superseded", by: 740 });
+    expect(foldTaskEvents([opened, sibling, closed]).map((task) => task.pr)).toEqual([688]);
+  });
 });
 
 /* #480: a claimed task is planning until the lane records its keel plan (`task.planned`); a

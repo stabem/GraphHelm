@@ -1,5 +1,5 @@
 import type { JourneyRunView, JourneyView } from "./types";
-import type { TaskState } from "./team-tasks";
+import type { TaskEventRecord, TaskState } from "./team-tasks";
 import { realName, realNames, type Lane } from "./lane-bars";
 
 export type StepStatus = "proven" | "failed" | "needs_you" | "preview_only" | "not_run";
@@ -70,7 +70,7 @@ export function namedTask(t: TaskState): TaskState {
 export function toMissionTask(raw: TaskState): MissionTask {
   const t = namedTask(raw);
   const block = openBlock(t);
-  const trust: TrustLevel = t.step === "merged" ? 3 : t.step === "merge" ? 2 : 1;
+  const trust: TrustLevel = t.step === "merged" ? 3 : t.step === "merge" ? 2 : t.pr === null ? 0 : 1;
   return {
     key: t.key, pr: t.pr, issue: t.issue, title: t.prTitle || t.title || t.taskId, lane: t.lane,
     reviewers: t.reviewers, step: t.step, blocked: block !== null, trust,
@@ -80,12 +80,13 @@ export function toMissionTask(raw: TaskState): MissionTask {
   };
 }
 
-export function buildMission(journey: JourneyView, run: JourneyRunView | null, tasks: TaskState[]): Mission {
+export function buildMission(journey: JourneyView, run: JourneyRunView | null, tasks: TaskState[], records: TaskEventRecord[] = []): Mission {
   const steps = journey.steps.map((s, index) => ({
     stepId: s.stepId, index, title: s.screen?.title ?? s.stepId, promise: s.promises?.[0] ?? null, ...stepStatus(s.stepId, run, journey.steps.map((x) => x.stepId)),
   }));
+  const closedIssues = new Set(records.filter((record) => record.kind === "task.merged").flatMap((record) => record.closes ?? []));
   const linked = tasks
-    .filter((t) => t.journeys.includes(journey.contractId))
+    .filter((t) => t.journeys.includes(journey.contractId) && !(t.pr === null && t.issue !== null && closedIssues.has(t.issue)))
     .sort((a, b) => STEP_ORDER[a.step] - STEP_ORDER[b.step])
     .map(toMissionTask);
   return {

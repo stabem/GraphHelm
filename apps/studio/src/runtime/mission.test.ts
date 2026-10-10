@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMission, custodyRows, unlinkedTasks, withCurrentReviewer, TRUST_LABELS, type MissionTask } from "./mission";
+import { buildMission, custodyRows, toMissionTask, unlinkedTasks, withCurrentReviewer, TRUST_LABELS, type MissionTask } from "./mission";
 import { laneBars, type TimedTaskEvent } from "./lane-bars";
 import type { JourneyView, JourneyRunView } from "./types";
 import { foldTaskEvents, parseTaskEvent, type TaskState } from "./team-tasks";
@@ -67,6 +67,16 @@ describe("buildMission", () => {
     const m = buildMission(journey, null, foldTaskEvents(records));
     expect(m.tasks.map((t) => t.key)).toEqual(foldTaskEvents(records).map((t) => t.key));
     expect(m.tasks).toHaveLength(1);
+  });
+
+  it("a merged record closing a claim removes its open slice; a claim without a PR is not Written", () => {
+    const records = [
+      { ...parseTaskEvent("task.claimed", "gh-claude-3", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-478", revision: 1, at: "2026-10-09T00:00:00Z", issue: 478, lane: "gh-claude-3", journeys: ["watch"] }))!, sequence: 1 },
+      { ...parseTaskEvent("task.merged", "gh-claude-10", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "pr-479", revision: 1, at: "2026-10-09T01:00:00Z", pr: 479, mergeSha: "m", closes: [478], merger: "gh-claude-10" }))!, sequence: 2 },
+    ];
+    const m = buildMission(journey, null, foldTaskEvents(records), records);
+    expect(m.tasks).toHaveLength(0);
+    expect(toMissionTask(task({ pr: null })).trust).toBe(0);
   });
 
   it("blocked task keeps its flag", () => {

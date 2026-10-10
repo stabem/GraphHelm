@@ -271,6 +271,7 @@ test('coverage keeps inline source hashes, refuses source-map attribution gaps, 
     if(req.url==='/invalid-vlq') return res.end(`<script>function invalidVlq(){return 1}invalidVlq();//# sourceMappingURL=data:application/json;base64,${invalidVlq}</script>`);
     if(req.url==='/out-of-bounds') return res.end(`<script>function outOfBounds(){return 1}outOfBounds();//# sourceMappingURL=data:application/json;base64,${outOfBounds}</script>`);
     if(req.url==='/no-attribution') return res.end(`<script>function noAttribution(){return 1}noAttribution();//# sourceMappingURL=data:application/json;base64,${noAttribution}</script>`);
+    if(req.url==='/null-map') return res.end('<script>function validBesideNull(){return 1}validBesideNull()</script><script>function nullMap(){return 1}nullMap();//# sourceMappingURL=data:application/json;base64,bnVsbA==</script>');
     if(req.url==='/nav') return res.end('<button>Navigate</button><script>document.querySelector("button").onclick=()=>location.href="/nav2"</script>');
     if(req.url==='/spa') return res.end('<button>Push state</button><script>document.querySelector("button").onclick=()=>history.pushState({},"","#next")</script>');
     res.end('<h1>Navigation target</h1>');
@@ -298,6 +299,15 @@ test('coverage keeps inline source hashes, refuses source-map attribution gaps, 
   const multiple=await readArtifact('/multi',[createHash('sha256').update('function a(){return 1}').digest('hex'),createHash('sha256').update('function b(){return 2}').digest('hex')]);
   assert.equal(multiple.negativeEvidenceEligible,false);
   assert.equal(multiple.complete,false);
+  const nullMap=await client(t);await open(nullMap,base+'/null-map',[],{coverage:true});
+  const nullReply=await nullMap.send('coverage');assert.equal(nullReply.ok,true);
+  const nullArtifact=JSON.parse(await readFile(join(nullMap.output,'coverage.json'),'utf8'));
+  assert.equal(nullArtifact.complete,false);
+  assert.equal(nullArtifact.negativeEvidenceEligible,false);
+  assert.ok(nullArtifact.scripts.some(script=>script.sources.length===0));
+  assert.ok(nullArtifact.scripts.some(script=>script.functions.some(fn=>fn.name==='validBesideNull'&&fn.ranges.some(range=>range.count>0))),'valid coverage survives null map');
+  assert.ok(!JSON.stringify(nullArtifact).includes('sourceMappingURL'));
+  assert.equal((await nullMap.send('close')).ok,true);
   const unavailable=await client(t);await open(unavailable,base+'/valid');
   const unavailableReply=await unavailable.send('coverage');assert.equal(unavailableReply.ok,true);
   const unavailableArtifact=JSON.parse(await readFile(join(unavailable.output,'coverage.json'),'utf8'));

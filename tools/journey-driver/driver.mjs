@@ -159,7 +159,7 @@ function inlineSourceHashes(source) {
     if (decoded.length > COVERAGE_MAP_MAX) return { hashes: [], mapped: true };
     map = JSON.parse(decoded.toString('utf8'));
   } catch { return { hashes: [], mapped: true }; }
-  if (map.version !== 3 || !Array.isArray(map.sources) || map.sources.length === 0 || !map.sources.every(value => typeof value === 'string') || typeof map.mappings !== 'string' || !validSourceMapMappings(map) || !Array.isArray(map.sourcesContent) || map.sourcesContent.length !== map.sources.length) return { hashes: [], mapped: true };
+  if (!plain(map) || map.version !== 3 || !Array.isArray(map.sources) || map.sources.length === 0 || !map.sources.every(value => typeof value === 'string') || typeof map.mappings !== 'string' || !validSourceMapMappings(map) || !Array.isArray(map.sourcesContent) || map.sourcesContent.length !== map.sources.length) return { hashes: [], mapped: true };
   if (!map.sourcesContent.every(value => typeof value === 'string' && Buffer.byteLength(value) <= COVERAGE_SOURCE_MAX)) return { hashes: [], mapped: true };
   const hashes = map.sourcesContent.map(hashSource);
   return { hashes, mapped: true };

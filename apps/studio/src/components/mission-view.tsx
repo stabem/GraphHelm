@@ -40,6 +40,10 @@ interface Props {
   lastRecordAt?: number | null;
   /** #583: present, the view is the full page. The owner retired the Team tab (Lanes replaces it), so the nav no longer offers it. */
   onTeam?: () => void;
+  /** #630: opens the Journey canvas, where the owner approves draft journeys. Absent: no Journeys item. */
+  onJourneys?: () => void;
+  /** #630: draft journeys waiting for approval; shown on the Journeys item when above zero. */
+  draftJourneys?: number;
   /** #591: "Agents right now" in the rail, from the team model. */
   agents?: Bot[];
   /** #591: the "While you were away" gap, for the summary's `N h away · N shipped`; absent, omitted. */
@@ -97,7 +101,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, agents = [], away = null, onSignal, onReviewAssigned }: Props) {
+export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, onJourneys, draftJourneys = 0, agents = [], away = null, onSignal, onReviewAssigned }: Props) {
   const [chosen, setChosen] = useState<Selection | null>(null);
   const [stepId, setStepId] = useState<string | null>(null);
   // undefined: the group's default (the task that most needs the owner); null: none, a column is chosen.
@@ -106,6 +110,8 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
   // #591: when the owner asked a lane for status, by PR + lane; kept here so it survives selecting another PR.
   const [askedAt, setAskedAt] = useState<Record<string, number>>({});
   const [sub, setSub] = useState<Sub>("graph");
+  // #630: the wide Graph hides the chat column; this opens it beside the Graph.
+  const [chatOpen, setChatOpen] = useState(false);
   const [frame, setFrame] = useState(0);
   // #591: one shared one-second clock for the live card timers, anchored on the `now` the parent gave.
   const [tick, setTick] = useState(0);
@@ -145,6 +151,16 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
               onClick={() => (t.id === "team" ? onTeam?.() : setSub(t.id))}>{t.label}</button>
           ))}
         </div>
+        {runName !== undefined && (
+          <div className="mv-nav" role="group" aria-label="Go to">
+            <button type="button" className="mv-tab" aria-pressed={chatOpen} onClick={() => setChatOpen((o) => !o)}>Chat</button>
+            {onJourneys && (
+              <button type="button" className="mv-tab" onClick={onJourneys}>
+                {draftJourneys > 0 ? `Journeys · ${draftJourneys} to approve` : "Journeys"}
+              </button>
+            )}
+          </div>
+        )}
         {sub === "test" && <button type="button" className="mv-back" onClick={() => setSub("proof")}>‹ Back to proof</button>}
         {lastRecordAt != null && Number.isFinite(lastRecordAt) && (
           <span className="mv-live"><span className="mv-live-dot" aria-hidden="true" />{`live · last record ${ago(now - lastRecordAt)}`}</span>
@@ -152,7 +168,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
       </header>
   );
   const page = onTeam ? "full" : undefined;
-  if (sel === null) return <div className="mv" data-wide="true" data-page={page}>{header}
+  if (sel === null) return <div className="mv" data-wide="true" data-page={page} data-chat={chatOpen ? "open" : undefined}>{header}
     {sub === "lanes" ? <div className="mv-pad"><LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} /></div>
       : <p className="mv-none mv-pad">No journeys in this project yet</p>}</div>;
   const rawGroup: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
@@ -228,7 +244,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
   } : null;
   return (
     // data-wide: the Studio layout gives the mission view the whole main area (mission-view.css).
-    <div className="mv" data-wide="true" data-page={page}>
+    <div className="mv" data-wide="true" data-page={page} data-chat={chatOpen ? "open" : undefined}>
       {header}
       {gsum && sub !== "lanes" && (
         <p className="mg-summary mv-summary" aria-label="Summary">

@@ -135,6 +135,24 @@ describe("MissionView", () => {
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Graph", "Lanes", "Proof"]);
   });
 
+  it("#630: Chat toggles the chat column; Journeys opens the Journey canvas with a draft count", async () => {
+    const userEvent = fastUserEvent();
+    const onJourneys = vi.fn();
+    const { container } = render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()}
+      runName="r" onJourneys={onJourneys} draftJourneys={2} />);
+    const chat = screen.getByRole("button", { name: "Chat" });
+    const root = container.querySelector(".mv")!;
+    expect(chat).toHaveAttribute("aria-pressed", "false");
+    expect(root).not.toHaveAttribute("data-chat");
+    await userEvent.click(chat);
+    expect(chat).toHaveAttribute("aria-pressed", "true");
+    expect(root).toHaveAttribute("data-chat", "open");
+    await userEvent.click(chat);
+    expect(root).not.toHaveAttribute("data-chat");
+    await userEvent.click(screen.getByRole("button", { name: "Journeys · 2 to approve" }));
+    expect(onJourneys).toHaveBeenCalledTimes(1);
+  });
+
   it("no last record time: the live indicator is omitted", () => {
     render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} runName="r" lastRecordAt={Number.NaN} />);
     expect(screen.queryByText(/live · last record/)).toBeNull();

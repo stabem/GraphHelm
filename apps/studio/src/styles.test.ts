@@ -304,4 +304,8 @@ describe("Graph tab on a phone (#591)", () => {
     expect(media).toBeGreaterThanOrEqual(0);
     expect(before.slice(media)).toMatch(/^@media\s*\(min-width:\s*769px\)\s*\{[^}]*$/);
   });
+  it("#630: the wide rule does not apply while the owner has chat open", () => {
+    const sheet = STYLESHEETS["./components/mission-view.css"].replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(sheet).toMatch(/\.mv\[data-wide="true"\]:not\(\[data-chat="open"\]\)\)\s*>\s*:is\(\.chat-column\)/);
+  });
 });

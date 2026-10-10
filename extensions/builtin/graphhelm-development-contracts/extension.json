@@ -980,7 +980,7 @@
           "id": "skill/blind-review",
           "kind": "skill",
           "path": "skills/blind-review/SKILL.md",
-          "sha256": "sha256:c82d5858b064650bacd4027c4d73d5709db0890f672899735645746714ea0be6",
+          "sha256": "sha256:d3a7faff2e6cef6fff395172ef2e2d138f7af24879d0e7a918f6e711b38a0517",
           "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
           "permissions": ["network.loopback", "package.read", "runtime.read"],
           "requires": {"capabilities": [], "observers": []},

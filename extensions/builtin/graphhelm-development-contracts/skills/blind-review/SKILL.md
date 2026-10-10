@@ -22,14 +22,21 @@ for, a summary of the change or an expected verdict, you are not blind: say so a
 
 ## Method
 
-1. Pin the head you read: `gh pr view <N> --json headRefOid`. Everything below is about that sha.
+1. At the start of each review or re-review, fetch the head and body together with
+   `gh pr view <N> --json headRefOid,body`. Save that exact body as UTF-8 Markdown under the
+   reviewer's lane scratch directory, outside the worktree. Record the PR number, head SHA, fetch
+   time and body digest beside the saved file. Use that saved body for the Keel check; do not reuse
+   a card saved during an earlier review. Pin the fetched head: everything below is about that sha.
 2. Read every earlier comment. An open BLOCK on this head must be answered in your review: does it
    still hold, and why.
 3. Run the tests the change reaches on the committed head, plus the repository's lints for touched
    code. Name each command and its result.
-4. Run the Keel check and paste its output:
-   `graphhelm --json keel check --diff <merge-base>..<head> --card <card.json>`. Exit 2 with
-   `keel.scope.path_outside_card` is a finding for the author.
+4. Run the Keel check against the body saved in step 1 and paste its output:
+   `graphhelm --json keel check --diff <merge-base>..<head> --card <saved-body.md>`. State the
+   source PR and fetch time (or digest) in the review. Exit 2 with
+   `keel.scope.path_outside_card` is a finding for the author. If the head changed, restart the
+   head-dependent proof; if only the body changed on the same head, fetch and save it again and
+   rerun the Keel check without rerunning unrelated tests.
 5. Attack the promise, not the prose: reproduce the user-visible journey (or the invariant), try
    the error, empty and recovery paths, and look for one reproducible counterexample. Shrink it to
    the fewest steps that still fail. One severe, reproducible counterexample outweighs any number

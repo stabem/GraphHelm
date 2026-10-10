@@ -190,11 +190,25 @@ fn timed_out_waiter_resumes_at_its_original_place() {
         ..timed
     };
     let refused = run_admitted_slot(&timed);
+    assert_eq!(refused.exit_code, 3);
     assert!(!refused.output.ok);
+    assert_eq!(
+        refused.output.diagnostics[0].code,
+        "GHCLI037_WORKSPACE_REFUSED"
+    );
+    assert_eq!(refused.output.diagnostics[0].path, "/slot");
+    let data = refused.output.data.as_ref().unwrap();
+    assert!(data["waitedSeconds"].as_f64().unwrap() >= 0.06);
+    assert_eq!(data["heldSeconds"], 0);
     assert!(
         refused.output.diagnostics[0]
             .message
             .contains("keep their place")
+    );
+    assert!(
+        !std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .contains("b start")
     );
     let later_command = marker_command(&log, "c", 10);
     let later_root = root.clone();

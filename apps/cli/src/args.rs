@@ -2099,7 +2099,7 @@ pub enum WorkspaceCommand {
     /// Declare the task done: records the worktree's HEAD. Deletes nothing.
     Release(WorkspaceTaskArgs),
     /// Every recorded workspace with its state, size and live git facts. Read-only.
-    List(WorkspaceRootArgs),
+    List(WorkspaceListArgs),
     /// Remove released workspaces that are clean and still at the released commit, ignored files
     /// included. A dry run unless `--apply`. Never touches a path the ledger did not create,
     /// never follows a link, and keeps any workspace whose worktree contains one.
@@ -2138,6 +2138,15 @@ pub struct WorkspaceTaskArgs {
     pub lane: String,
     #[arg(long)]
     pub task: String,
+}
+
+#[derive(Debug, Args)]
+pub struct WorkspaceListArgs {
+    #[arg(long)]
+    pub root: PathBuf,
+    /// Include regular-file bytes for workspaces, recorded build targets and lane totals.
+    #[arg(long)]
+    pub sizes: bool,
 }
 
 #[derive(Debug, Args)]

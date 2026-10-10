@@ -1947,10 +1947,18 @@ pub(super) async fn keel_plan(State(state): State<ServeState>, body: Bytes) -> R
 /// `GET /v1/workspaces` (#360): `graphhelm workspace list` over the Runtime's
 /// `--workspace-root`; nothing from the request names a path. Owner credentials only
 /// (`agent_route_allowed` admits no `/v1/workspaces`).
-pub(super) async fn workspaces(State(state): State<ServeState>) -> Response {
+pub(super) async fn workspaces(
+    State(state): State<ServeState>,
+    RawQuery(query): RawQuery,
+) -> Response {
+    let sizes = query
+        .as_deref()
+        .unwrap_or("")
+        .split('&')
+        .any(|pair| pair == "sizes=1");
     let last_sweep = state.last_workspace_sweep.lock().await.clone();
     workspace_command(state, "workspace.list", move |root| {
-        let mut outcome = crate::commands::workspace::run_list(root);
+        let mut outcome = crate::commands::workspace::run_list(root, sizes);
         if let Some(data) = outcome.output.data.as_mut() {
             data["lastSweep"] = last_sweep;
         }

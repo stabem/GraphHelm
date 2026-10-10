@@ -34,7 +34,7 @@ pub fn run(args: &WorkspaceArgs) -> Outcome {
         WorkspaceCommand::Release(release) => {
             run_release(&release.root, &release.lane, &release.task)
         }
-        WorkspaceCommand::List(list) => run_list(&list.root),
+        WorkspaceCommand::List(list) => run_list(&list.root, list.sizes),
         WorkspaceCommand::Sweep(sweep) => run_sweep(&sweep.root, sweep.apply),
         WorkspaceCommand::Slot(slot) => match (&slot.action, &slot.root, &slot.lane) {
             (Some(crate::args::WorkspaceSlotAction::Status(status)), _, _) => {
@@ -942,25 +942,37 @@ fn sweep_targets(root: &Path, apply: bool, held_lane: Option<(&str, &Path)>) -> 
     json!({"removed": removed, "kept": kept})
 }
 
-fn live(root: &Path, record: &Value) -> Value {
+fn live(root: &Path, record: &Value, sizes: bool) -> Value {
     let (lane, task) = (
         record["lane"].as_str().unwrap_or_default(),
         record["task"].as_str().unwrap_or_default(),
     );
     let dir = workspace_dir(root, lane, task);
     let worktree = dir.join("wt");
-    let head = git(&worktree, &["rev-parse", "HEAD"]).ok();
+    // Preserve the legacy view for plain list/sweep; sized reads never enter linked ancestors.
+    let ancestry = if sizes {
+        linked_ancestor(&worktree)
+    } else {
+        Ok(false)
+    };
+    let blocked = ancestry.unwrap_or(true);
+    let head = if blocked {
+        None
+    } else {
+        git(&worktree, &["rev-parse", "HEAD"]).ok()
+    };
     let dirty = head
         .as_ref()
         .map(|_| git(&worktree, &["status", "--porcelain"]).map_or(true, |s| !s.is_empty()));
     // A lane, task or worktree directory that is itself a link would make every path below it
     // resolve somewhere the ledger never created; such a workspace is reported, never removed.
-    let linked = [root.join(lane), dir.clone(), worktree.clone()]
-        .iter()
-        .any(|p| std::fs::symlink_metadata(p).is_ok_and(|m| is_link(&m)));
+    let linked = ancestry.unwrap_or(false)
+        || [root.join(lane), dir.clone(), worktree.clone()]
+            .iter()
+            .any(|p| std::fs::symlink_metadata(p).is_ok_and(|m| is_link(&m)));
     let slash = |p: &Path| p.to_string_lossy().replace('\\', "/");
     let mut scan_error = None;
-    let link_in_worktree = if linked {
+    let link_in_worktree = if blocked || linked {
         None
     } else {
         match first_link(&worktree, &worktree) {
@@ -974,16 +986,103 @@ fn live(root: &Path, record: &Value) -> Value {
     json!({"lane": lane, "task": task, "branch": record["branch"], "state": record["state"],
         "linked": linked, "linkInWorktree": link_in_worktree, "scanError": scan_error,
         "path": dir.to_string_lossy(), "exists": dir.exists(), "head": head, "dirty": dirty,
-        "releasedHead": record["releasedHead"], "sizeBytes": size_of(&dir)})
+        "releasedHead": record["releasedHead"], "sizeBytes": if blocked { 0 } else { size_of(&dir) }})
 }
 
-pub(crate) fn run_list(root: &Path) -> Outcome {
+/// Inspect parents from the filesystem root down, so even an intermediate junction is not entered.
+fn linked_ancestor(path: &Path) -> Result<bool, ()> {
+    for parent in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        if parent.as_os_str().is_empty() {
+            continue;
+        }
+        let metadata = std::fs::symlink_metadata(parent).map_err(|_| ())?;
+        if is_link(&metadata) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Logical regular-file bytes only. A failed entry invalidates the whole sum, not just that entry.
+fn measured_bytes(base: &Path) -> Result<u64, String> {
+    if linked_ancestor(base).map_err(|_| ".".to_owned())? {
+        return Ok(0);
+    }
+    let relative = |path: &Path| {
+        let path = path.strip_prefix(base).unwrap_or(Path::new("."));
+        if path.as_os_str().is_empty() {
+            ".".to_owned()
+        } else {
+            path.to_string_lossy().replace('\\', "/")
+        }
+    };
+    let mut pending = vec![base.to_path_buf()];
+    let mut total = 0_u64;
+    while let Some(path) = pending.pop() {
+        let metadata = std::fs::symlink_metadata(&path).map_err(|_| relative(&path))?;
+        if is_link(&metadata) {
+            continue;
+        }
+        if metadata.is_file() {
+            total = total
+                .checked_add(metadata.len())
+                .ok_or_else(|| relative(&path))?;
+        } else if metadata.is_dir() {
+            for entry in std::fs::read_dir(&path).map_err(|_| relative(&path))? {
+                pending.push(entry.map_err(|_| relative(&path))?.path());
+            }
+        }
+    }
+    Ok(total)
+}
+
+pub(crate) fn run_list(root: &Path, sizes: bool) -> Outcome {
     const COMMAND: &str = "workspace.list";
-    let listed: Vec<Value> = records(root).iter().map(|r| live(root, r)).collect();
-    Outcome::success(
-        COMMAND,
-        json!({"root": root.to_string_lossy(), "workspaces": listed}),
-    )
+    let mut listed: Vec<Value> = records(root).iter().map(|r| live(root, r, sizes)).collect();
+    let mut data = json!({"root": root.to_string_lossy(), "workspaces": []});
+    if sizes {
+        let mut lanes = serde_json::Map::new();
+        let mut measure = |item: &mut Value, path: Option<&Path>| {
+            let bytes = match path.map_or_else(|| Err(".".to_owned()), measured_bytes) {
+                Ok(bytes) => Some(bytes),
+                Err(at) => {
+                    item["sizeError"] = json!(at);
+                    None
+                }
+            };
+            item["bytes"] = json!(bytes);
+            let lane = item["lane"].as_str().unwrap_or_default().to_owned();
+            let previous = lanes.entry(lane.clone()).or_insert(json!(0)).as_u64();
+            lanes.insert(
+                lane,
+                json!(previous.zip(bytes).and_then(|(a, b)| a.checked_add(b))),
+            );
+        };
+        for item in &mut listed {
+            let path = PathBuf::from(item["path"].as_str().unwrap_or_default());
+            measure(item, Some(&path));
+        }
+        let mut targets = Vec::new();
+        for (lane, name, worktree) in all_target_records(root) {
+            // Use the recorded build directory, including records made before a target-root change.
+            let file = target_record_file(root, &lane, &name);
+            let record = std::fs::read(file)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+            let path = record
+                .as_ref()
+                .and_then(|r| r["target"].as_str())
+                .map(PathBuf::from)
+                .filter(|p| p.is_absolute());
+            let mut item = json!({"lane": lane, "worktree": worktree});
+            measure(&mut item, path.as_deref());
+            targets.push(item);
+        }
+        data["targets"] = json!(targets);
+        data["lanes"] = Value::Object(lanes);
+    }
+    data["workspaces"] = json!(listed);
+    Outcome::success(COMMAND, data)
 }
 
 /// Why a workspace is kept, or `None` when the sweep may remove it.
@@ -1052,7 +1151,7 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
     let mut removed = Vec::new();
     let mut kept = Vec::new();
     for mut record in records(root) {
-        let view = live(root, &record);
+        let view = live(root, &record, false);
         let (lane, task) = (
             view["lane"].as_str().unwrap_or_default().to_owned(),
             view["task"].as_str().unwrap_or_default().to_owned(),

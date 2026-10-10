@@ -7,6 +7,7 @@ base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [irreversible_effect, external_delivery]
+viewport: {width: 768, height: 900}
 screens:
   - id: editor
     title: The document editor
@@ -18,7 +19,7 @@ screens:
     title: The mission graph opens first
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: tablist, name: Mission views}, {role: button, name: Journeys · 21 to approve}]
+    expect: [{role: tablist, name: Mission views}, {role: tab, name: Team}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/mission-view.tsx]
   - id: node
     title: "The step's window, with what it delivered"
@@ -50,8 +51,7 @@ edges:
     from: mission
     to: run
     acts:
-      - {kind: activate, role: button, name: Journeys · 21 to approve}
-      - {kind: activate, role: tab, name: Team (live)}
+      - {kind: activate, role: tab, name: Team}
   - id: node.open-document
     from: node
     to: editor

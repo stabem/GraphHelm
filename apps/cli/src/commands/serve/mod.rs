@@ -1,4 +1,5 @@
 mod documents;
+mod lifecycle;
 pub(super) mod monitor;
 mod native_chats;
 mod notices;
@@ -110,6 +111,7 @@ fn serve_invalid(message: &str, pointer: &str) -> Failure {
 /// this. `token` is the 64 lowercase-hex-character bearer token, compared in constant time.
 #[derive(Clone)]
 struct ServeState {
+    previous_exit: serde_json::Value,
     token: Arc<[u8]>,
     /// #380: the agent session token (`events.agent.token`), minted beside the owner token. It
     /// authenticates an agent session project-wide, forces the request's actor type to `agent`,
@@ -233,6 +235,7 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
     let instance =
         super::runtime_record::new_instance().map_err(|message| serve_invalid(&message, "/"))?;
     let state = ServeState {
+        previous_exit: serde_json::Value::Null,
         token: Arc::from(token.into_bytes()),
         agent_session_token: Arc::from(agent_session_token.into_bytes()),
         agent_credentials: Arc::new(agent_credentials),
@@ -547,7 +550,7 @@ fn build_wiring(
 
 async fn serve_forever(
     address: SocketAddr,
-    state: ServeState,
+    mut state: ServeState,
     startup_warnings: Vec<Diagnostic>,
 ) -> Result<(), Failure> {
     let listener = tokio::net::TcpListener::bind(address)
@@ -556,6 +559,16 @@ async fn serve_forever(
     let bound = listener
         .local_addr()
         .map_err(|_| serve_invalid("the bound address could not be read back", "/bind"))?;
+    let (lifecycle, previous_exit) = lifecycle::Lifecycle::start(&state.events)?;
+    state.previous_exit = previous_exit;
+    #[cfg(debug_assertions)]
+    if std::env::var("GRAPHHELM_TEST_PANIC_ON_BOOT").as_deref() == Ok("1") {
+        panic!("private-panic-payload");
+    }
+    #[cfg(debug_assertions)]
+    if std::env::var("GRAPHHELM_TEST_PANIC_ON_BOOT").as_deref() == Ok("task") {
+        let _ = tokio::spawn(async { panic!("private-panic-payload") }).await;
+    }
     let mut startup_warnings = startup_warnings;
     if let Err(message) = publish_runtime_record(address, bound, &state) {
         // A warning, not a refusal: the Runtime works; only `mcp --discover` cannot find it.
@@ -599,9 +612,22 @@ async fn serve_forever(
     }
 
     let app = build_router(state);
-    axum::serve(listener, app)
+    let result = axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            // Isolated integration harness only. Release builds have no shutdown seam.
+            #[cfg(debug_assertions)]
+            if let Some(path) = std::env::var_os("GRAPHHELM_TEST_SHUTDOWN_FILE") {
+                while !std::path::Path::new(&path).is_file() {
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+                return;
+            }
+            std::future::pending::<()>().await;
+        })
         .await
-        .map_err(|_| serve_invalid("the server loop ended unexpectedly", "/"))
+        .map_err(|_| serve_invalid("the server loop ended unexpectedly", "/"));
+    lifecycle.finish(result.is_ok())?;
+    result
 }
 
 /// Sweep every stream in the repository, forever, every `seconds`.
@@ -865,7 +891,7 @@ async fn health(State(state): State<ServeState>) -> impl IntoResponse {
         StatusCode::OK,
         Outcome::success(
             HEALTH_COMMAND,
-            serde_json::json!({ "instance": &*state.instance, "projectId": state.project_id.as_deref() }),
+            serde_json::json!({ "instance": &*state.instance, "projectId": state.project_id.as_deref(), "previousExit": state.previous_exit }),
         )
         .output,
     )

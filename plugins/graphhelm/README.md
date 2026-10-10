@@ -161,8 +161,18 @@ its note. The hook neither acknowledges notes nor sends messages.
 The scan reads only event pages: optional opaque `to` and `replyTo` on `signal_recorded`
 replace per-note evidence GETs. It reads the last 4096 events, at most 8 pages of 512 (one MiB maximum response per page),
 plus one head request. Notes older than the window and legacy notes without routing hints
-are outside this reminder; the normal inbox still reads their sealed evidence. Deploy the
-updated Runtime before reloading the plugin. Historical events are not rewritten.
+are outside this reminder; the normal inbox still reads their sealed evidence.
+
+Roll out addressed-note routing in reader-first order. First upgrade every active reader of the
+shared event store: PATH-installed and versioned `graphhelm` CLIs, direct-store status or inbox
+tools, and any sidecar that reads the event log. Verify each can read events with `to` and
+`replyTo`. HTTP-only hooks do not read the store directly; upgrade those with their host plugin
+in the final step. After readers are ready, switch the Runtime writer that appends routing fields,
+then update and restart host plugins. Keep source release, Runtime writer activation, host
+activation, and observed autonomous wake as separate rollout statuses. Old binaries cannot read
+events already appended with the new fields, so rollback to old readers is not valid after the
+first such event. Never delete or rewrite events to recover; restore compatible readers instead.
+Historical events are not rewritten.
 
 Unbound sessions, `stop_hook_active=true`, unreadable state, malformed responses, oversized
 pages, exhausted scan and timeout allow Stop. The scan child has a two-second wall timeout;

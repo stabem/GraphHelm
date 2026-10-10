@@ -93,3 +93,17 @@ it("reads owner actor aliases, newest wins, and the bot carries the name", async
   const team = teamModel({ events: [], envelopes: {}, personas: {}, nativeLinks: {}, aliases: result.current, model: null, claudeTasks: null, waitingAskers: new Set(), now: Date.parse("2026-10-05T12:00:00Z") });
   expect(team.bots.find((bot) => bot.actorId === "kit-1")?.name).toBe("Cart builder");
 });
+
+// #673: DOM-only; catches dropping crash sites and echoing unknown provider text.
+it("shows fixed crash site labels in the node history", () => {
+  cleanup();
+  const events: RuntimeEvent[] = ["stream_malformed", "future_site", "secret text"].map((crashSite, i) => ({
+    sequence: i + 1, kind: "node_outcome_recorded", payload: { nodeId: "work", outcome: "retryable_failure", nextState: "blocked", reason: "runtime_crashed", crashSite }, occurredAt: null, actorId: "system-runtime", actorType: "system", idempotencyKey: `crash-${i}`, eventId: `crash-${i}`, evidenceRefs: [],
+  }));
+  render(<NodePanel node={buildGraphModel(events).nodes[0]} events={events} onClose={vi.fn()} />);
+  const history = screen.getByRole("region", { name: "Runtime crash history" });
+  expect(history).toHaveTextContent("#1: stream malformed");
+  expect(history).toHaveTextContent("#2: unknown");
+  expect(history).toHaveTextContent("#3: unknown");
+  expect(history).not.toHaveTextContent("secret text");
+});

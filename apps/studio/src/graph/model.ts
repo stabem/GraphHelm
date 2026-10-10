@@ -33,6 +33,7 @@ export interface NodeHistoryEntry {
   outcome: string | null;
   /** Stable failure code on a recorded node outcome, when the Runtime supplied one. */
   reason?: string | null;
+  crashSite?: string | null;
   occurredAt: string | null;
   actorId: string | null;
   actorType: string | null;
@@ -411,6 +412,8 @@ export function buildGraphModel(
     const nextState = stringField(event, "nextState");
     const outcome = stringField(event, "outcome");
     const rawReason = event.kind === "node_outcome_recorded" ? stringField(event, "reason") : null;
+    const rawCrashSite = event.kind === "node_outcome_recorded" ? stringField(event, "crashSite") : null;
+    const crashSite = rawCrashSite !== null && /^[a-z][a-z0-9_]{0,63}$/.test(rawCrashSite) ? rawCrashSite : null;
     const reason = rawReason !== null && /^[a-z][a-z0-9_]{0,63}$/.test(rawReason) ? rawReason : null;
     if (event.kind === "gate_verdict") {
       const passed = event.payload !== null && typeof event.payload === "object"
@@ -478,6 +481,7 @@ export function buildGraphModel(
       nextState,
       outcome,
       reason,
+      crashSite,
       occurredAt: event.occurredAt,
       actorId: event.actorId,
       actorType: event.actorType,

@@ -18,6 +18,7 @@ import envelopeSchema from "../../../../schemas/event-envelope.schema.json";
 import { parseSlots, type SlotView } from "./slots";
 
 import type {
+  RuntimePreviousExit,
   Actor,
   Briefing,
   ClaimEvidence,
@@ -614,7 +615,7 @@ export class RuntimeClient {
   }
 
   /**
-   * `GET /health` - a REACHABILITY probe, and only that.
+   * `GET /health` - reachability and validated previous-exit metadata, never authentication.
    *
    * The Runtime exempts this path from its bearer check before it ever looks at the header
    * (`require_token` in `apps/cli/src/commands/serve/mod.rs` returns early on `/health`), so a
@@ -626,8 +627,25 @@ export class RuntimeClient {
    * differently: "could not be reached" and "the token was refused" are separate facts, and a
    * single probe cannot tell them apart.
    */
-  async health(): Promise<void> {
-    await this.#request<unknown>({ method: "GET", path: "/health" });
+  async health(): Promise<RuntimePreviousExit | null> {
+    const data = await this.#request<{ previousExit?: unknown }>({ method: "GET", path: "/health" });
+    const raw = data?.previousExit;
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const value = raw as Record<string, unknown>;
+    const state = value.state;
+    if (state !== "clean" && state !== "vanished" && state !== "serve_error" && state !== "panicked") return null;
+    if (typeof value.pid !== "number" || !Number.isSafeInteger(value.pid) || value.pid < 1 || value.pid > 0xffffffff ||
+        typeof value.at !== "number" || !Number.isSafeInteger(value.at) || value.at < 0 || value.at > 8_640_000_000_000) return null;
+    // Only Runtime's crate-relative Rust source coordinates are displayable, never free text.
+    const location = (input: unknown): string => typeof input === "string" && input.length <= 256 &&
+      /^[a-zA-Z0-9_-]+\/src\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+\.rs:[0-9]{1,10}$/.test(input) ? input : "unknown";
+    const result: RuntimePreviousExit = { state, pid: value.pid, at: value.at };
+    if (value.location !== undefined) result.location = location(value.location);
+    if (value.lastPanic !== undefined) {
+      const panic = value.lastPanic;
+      result.lastPanic = { location: location(panic !== null && typeof panic === "object" ? (panic as Record<string, unknown>).location : undefined) };
+    }
+    return result;
   }
 
   async listExecutions(options: { after?: string; limit?: number } = {}): Promise<ExecutionPage> {

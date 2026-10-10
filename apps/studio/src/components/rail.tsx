@@ -23,7 +23,7 @@
 import { useEffect, useState } from "react";
 import { Activity, Check, Folder, FolderPlus, ListFilter, Pencil, Plus, RotateCcw, Trash2, X, SlidersHorizontal } from "lucide-react";
 
-import type { ExecutionSummary } from "../runtime/types";
+import type { ExecutionSummary, RuntimePreviousExit } from "../runtime/types";
 import { hueOf, initialOf, readable, runLabel, verdictOf } from "./format";
 
 /** How the rail groups its runs. "day" is the default: the work of each day together, the day
@@ -112,6 +112,7 @@ export function ProjectRail({
   selected,
   connected,
   stale = false,
+  previousExit = null,
   hasMore,
   busy,
   onSelect,
@@ -130,6 +131,7 @@ export function ProjectRail({
   projects: Project[];
   selected: string;
   connected: boolean;
+  previousExit?: RuntimePreviousExit | null;
   /** True when background reads have failed repeatedly: the screen may be aging. "live" under
    * a dead Runtime was indistinguishable from a quiet room (round-4, 3am). */
   stale?: boolean;
@@ -188,6 +190,13 @@ export function ProjectRail({
         </span>
       </div>
 
+      {connected && previousExit && previousExit.state !== "clean" && (
+        <p className="hint" aria-label="Previous Runtime exit" style={{ overflowWrap: "anywhere" }}>
+          Last stop: {({ vanished: "vanished", serve_error: "serve error", panicked: "panicked" })[previousExit.state] ?? "unknown"} (pid {previousExit.pid}, {new Date(previousExit.at * 1000).toISOString()})
+          {previousExit.location !== undefined && <> · location: {previousExit.location}</>}
+          {previousExit.lastPanic && <> · last panic: {previousExit.lastPanic.location}</>}
+        </p>
+      )}
       <p className="lbl rail-section">Projects</p>
 
       <div className="projects">

@@ -8,6 +8,16 @@
  * contracts, and a generated binding would be a second, silent coupling to internals.
  */
 
+/** Validated diagnostic metadata from the unauthenticated health probe. */
+export interface RuntimePreviousExit {
+  state: "clean" | "vanished" | "serve_error" | "panicked";
+  pid: number;
+  /** Unix seconds, restricted to the JavaScript date range. */
+  at: number;
+  location?: string;
+  lastPanic?: { location: string };
+}
+
 /** The four-key envelope every Runtime reply carries. */
 export interface Envelope<T> {
   ok: boolean;

@@ -1180,3 +1180,22 @@ describe("the gateway writes (#1171)", () => {
     expect(JSON.stringify(put?.headers ?? {})).not.toContain(KEY);
   });
 });
+
+// #673: scripted HTTP only; health previously discarded these diagnostic records.
+it("returns only validated previous exit records from the existing health request", async () => {
+  for (const [previousExit, expected] of [
+    [{ state: "vanished", pid: 1, at: 2 }, { state: "vanished", pid: 1, at: 2 }],
+    [{ state: "<script>", pid: 1, at: 2 }, null],
+    [{ state: "clean", pid: 1, at: 2 }, { state: "clean", pid: 1, at: 2 }],
+    [{ state: "panicked", pid: 1, at: 2, location: "runtime/src/driver.rs:42", lastPanic: { location: "secret text" } }, { state: "panicked", pid: 1, at: 2, location: "runtime/src/driver.rs:42", lastPanic: { location: "unknown" } }],
+    [{ state: "serve_error", pid: -1, at: 2 }, null],
+    [{ state: "vanished", pid: 1, at: 1e30 }, null],
+    [{ state: "vanished", pid: 1, at: 2, location: "C:/Users/private/src/main.rs:1", lastPanic: { location: "crate/src/../secret.rs:1" } }, { state: "vanished", pid: 1, at: 2, location: "unknown", lastPanic: { location: "unknown" } }],
+    [undefined, null],
+  ]) {
+    const { fetchImpl, calls } = scriptedFetch([{ match: c => c.url === "/health", reply: ok({ previousExit }, "health") }]);
+    const client = new RuntimeClient("token", { fetch: fetchImpl });
+    expect(await client.health()).toEqual(expected);
+    expect(calls).toHaveLength(1);
+  }
+});

@@ -9,6 +9,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 struct ServerGuard {
     child: Child,
 }
@@ -57,7 +61,7 @@ fn serve(events: &Path) -> (ServerGuard, String, String) {
 }
 
 fn wait_for_health(address: &str) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
     loop {
         let (status, _headers, _body) = request(address, "GET", "/health", &[]);
         if status == 200 {

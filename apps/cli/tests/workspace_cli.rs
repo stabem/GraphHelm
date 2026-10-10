@@ -645,7 +645,8 @@ fn serve(dir: &Path, extra: &[&str]) -> (Server, String, std::path::PathBuf) {
     let started: Value = serde_json::from_str(line.trim()).unwrap();
     let base = format!("http://{}", started["data"]["address"].as_str().unwrap());
     let token = dir.join("events.token");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline =
+        std::time::Instant::now() + support::time_scale::scaled(std::time::Duration::from_secs(10));
     while support::raw_request(&format!("{base}/health"), None).map_or(true, |r| r.status != 200) {
         assert!(
             std::time::Instant::now() < deadline,

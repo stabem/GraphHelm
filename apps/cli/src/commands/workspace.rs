@@ -579,9 +579,9 @@ pub(crate) fn slot_target(
                 ));
             }
         }
-        if !worktree_gone(&path) || (record && sweep_lock.is_none()) {
+        if !worktree_gone(&path) {
             held.push(other);
-        } else if record {
+        } else if record && sweep_lock.is_some() {
             match reclaim_target(root, rule, lane, &other) {
                 Ok(()) => reclaimed.push(json!({"lane": lane, "name": other})),
                 Err(_) => held.push(other),

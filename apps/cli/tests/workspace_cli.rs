@@ -902,6 +902,50 @@ fn workspace_sweep_lock_serializes_manual_http_and_slot_reclaim() {
     assert_eq!(slot_in(&root, "lane", &next, &log).0, 0);
 }
 
+/// Contract: gone targets do not consume the cap while sweep.lock defers deletion.
+/// Regression: counting deferred targets refuses a build at cap 1. The serialization
+/// test above uses the default cap and misses this refusal. No production seams;
+/// three short CLI children and temp files, a few seconds, no network or Runtime.
+#[test]
+fn slot_cap_ignores_gone_targets_until_locked_reclaim() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let fast = dir.path().join("fast");
+    let rules = root.join(".graphhelm-workspaces");
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(
+        rules.join("slot-targets.json"),
+        serde_json::json!({"targetRoot": fast, "cap": 1, "minFreeGb": 0}).to_string(),
+    )
+    .unwrap();
+    let old = dir.path().join("wt-old");
+    let next = dir.path().join("wt-next");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::create_dir_all(&next).unwrap();
+    let log = dir.path().join("marker");
+    let (code, reply) = slot_in(&root, "lane", &old, &log);
+    assert_eq!(code, 0, "{reply}");
+    let artifact = fast.join("lane/wt-old/target/built.bin");
+    std::fs::write(&artifact, b"keep until locked").unwrap();
+    std::fs::remove_dir(&old).unwrap();
+    let lock = std::fs::File::create(rules.join("sweep.lock")).unwrap();
+    lock.lock().unwrap();
+    let (code, reply) = slot_in(&root, "lane", &next, &log);
+    assert_eq!(code, 0, "{reply}");
+    assert!(log.is_file());
+    assert_eq!(std::fs::read(&artifact).unwrap(), b"keep until locked");
+    assert!(rules.join("targets/lane/wt-old.json").is_file());
+    drop(lock);
+    let (code, reply) = slot_in(&root, "lane", &next, &log);
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(
+        reply["data"]["reclaimedTargets"],
+        serde_json::json!([{"lane": "lane", "name": "wt-old"}])
+    );
+    assert!(!fast.join("lane/wt-old").exists());
+    assert!(!rules.join("targets/lane/wt-old.json").exists());
+}
+
 /// #380: the declared actor type is not a credential. The Runtime's agent session token
 /// (`events.agent.token`) cannot sweep over HTTP or through an MCP session that declares itself
 /// `owner`; the workspace stays. The same token still lists, as agents do.

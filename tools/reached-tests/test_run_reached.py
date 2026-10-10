@@ -107,7 +107,8 @@ class RunnerContracts(unittest.TestCase):
             control.write_text("import unittest\nclass Control(unittest.TestCase):\n def test_ok(self): self.assertTrue(True)\n", encoding="utf-8")
             subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
             (repo / "tracked").write_text("x", encoding="utf-8")
-            subprocess.run(["git", "add", "tracked", "test_fixture.py", "test_control.py"], cwd=repo, check=True)
+            (repo / ".gitignore").write_text("__pycache__/\n.pytest_cache/\n", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked", "test_fixture.py", "test_control.py", ".gitignore"], cwd=repo, check=True)
             subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
             output = Path(temp).parent / (Path(temp).name + "-pytest-report.json")
             plan = {"steps": [{"argv": [sys.executable, "-m", "pytest", "-q", "test_fixture.py"], "cwd": ".", "slot": False},
@@ -155,7 +156,8 @@ class RunnerContracts(unittest.TestCase):
             )
             subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
             (repo / "tracked").write_text("x", encoding="utf-8")
-            subprocess.run(["git", "add", "tracked", "test_empty.py", "conftest.py"], cwd=repo, check=True)
+            (repo / ".gitignore").write_text("__pycache__/\n.pytest_cache/\n", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked", "test_empty.py", "conftest.py", ".gitignore"], cwd=repo, check=True)
             subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
             output = Path(temp).parent / (Path(temp).name + "-zero-pytest-report.json")
             plan = {"steps": [{"argv": [sys.executable, "-m", "pytest", "-q", "test_empty.py"], "cwd": ".", "slot": False}]}

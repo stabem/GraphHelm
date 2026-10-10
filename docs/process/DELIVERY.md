@@ -265,6 +265,7 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 | Step | Kind | Fields besides `schema`, `taskId`, `revision`, `at` |
 |---|---|---|
 | take the issue (§1) | `task.claimed` | `issue`, `lane`, `branch`, optional `plan`, optional `repo`, optional `journeys` |
+| release a pre-PR claim (#729) | `task.released` | `lane`, exact `claimSequence`, bounded nonempty `reason` |
 | plan it, **right after the claim** (§2) | `task.planned` | `lane`, `classes`, `reviews`, `proof`, `critic` `{mode, passScore, maxRounds}`, `summary` |
 | open the PR (§3), and **again after every push** to it | `task.pr_opened` | `pr`, `headSha`, `journeys`, `lane`, optional `repo` |
 | ask a reviewer (§4) | `task.review_assigned` | `pr`, `headSha`, `reviewer`, `ordinal` (1 or 2) |
@@ -278,6 +279,7 @@ task with one slice per PR (#460): record `task.claimed` with the new slice's ow
 next. `repo` is the GitHub `owner/name` (here
 `stabem/GraphHelm`); the Studio links the task's issue and PR from it, so name it on `task.claimed`.
 Pass `--assigned-by` on `claimed` when an order came from someone; the Studio labels it as the lane's report.
+Release only a claim your lane recorded before opening a PR: use `released --claim-sequence <sequence> --release-reason "<why>"`. The sequence must identify that exact `task.claimed` record; the Runtime rejects another lane's claim. A release ends only that pre-PR claim and keeps its event history.
 Name the journey the issue serves; the Studio Graph tab links the task to it. Ids are the stems of .graphhelm/journeys/*.journey.yaml.
 
 **Plan is a recorded step (#480).** A claimed task shows **Plan** lit until its `task.planned`

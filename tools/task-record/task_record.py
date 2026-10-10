@@ -6,6 +6,7 @@ need a per-lane environment or a session relaunch:
 
     python tools/task-record/task_record.py --lane gh-claude-2 claimed  --issue 355 --branch issue-355-x
     python tools/task-record/task_record.py --lane gh-claude-2 planned  --issue 355 --paths <card scope...> --summary "<one line>"
+    python tools/task-record/task_record.py --lane gh-claude-2 released --issue 355 --claim-sequence <claim sequence> --release-reason "<why>"
     python tools/task-record/task_record.py --lane gh-claude-2 pr_opened --issue 355 --pr 357 --head <sha>
     python tools/task-record/task_record.py --lane gh-claude-2 review_assigned --issue 355 --pr 357 --head <sha> --reviewer gh-claude-6
     python tools/task-record/task_record.py --lane gh-claude-6 review_verdict --issue 355 --pr 357 --head <sha> --verdict APPROVE --comment-url <url>
@@ -32,10 +33,10 @@ import urllib.request
 from pathlib import Path
 
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
-KINDS = ("claimed", "planned", "pr_opened", "review_assigned", "review_verdict", "merged", "critic_verdict")
+KINDS = ("claimed", "planned", "released", "pr_opened", "review_assigned", "review_verdict", "merged", "critic_verdict")
 # The default revision is the step's position in the delivery. `planned` (#480) came later and is
 # the claim's companion, so the older steps keep their numbers (and their records' keys).
-REVISIONS = {"claimed": 1, "planned": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "merged": 5, "critic_verdict": 1}
+REVISIONS = {"claimed": 1, "planned": 1, "released": 2, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "merged": 5, "critic_verdict": 1}
 CLASSES = ("docs", "code", "user_visible", "invariant")
 PROOFS = ("none", "tests", "journey", "both")
 # #477: what the naming standard asks (DELIVERY.md "Naming") and what the Runtime accepts.
@@ -117,6 +118,8 @@ def parse(argv):
     p.add_argument("--issue", type=int, required=True, help="the task is issue-<N> for its whole life")
     p.add_argument("--revision", type=int, help="defaults to the step's position: claimed 1 (planned 1) ... merged 5")
     p.add_argument("--branch")
+    p.add_argument("--claim-sequence", type=int, help="released: exact sequence of your task.claimed record")
+    p.add_argument("--release-reason", help="released: why this pre-PR claim is being released")
     p.add_argument("--parent", type=int, help="claimed: the issue whose work turned this task up (#514)")
     p.add_argument("--assigned-by", help="claimed: who ordered the work, as reported by this lane")
     p.add_argument("--pr", type=int)
@@ -292,6 +295,13 @@ def document(args, now):
         journeys = known_journeys(args)
         if journeys:
             doc["journeys"] = journeys
+    elif args.kind == "released":
+        need(args, "claim-sequence", "release-reason")
+        if args.claim_sequence <= 0:
+            sys.exit("task_record: --claim-sequence must be positive")
+        if not args.release_reason or len(args.release_reason) > 500 or not args.release_reason.isprintable():
+            sys.exit("task_record: --release-reason must be nonempty printable text of at most 500 characters")
+        doc.update(lane=args.lane, claimSequence=args.claim_sequence, reason=args.release_reason)
     elif args.kind == "planned":
         need(args, "summary")
         if len(args.summary) > 300 or not args.summary.isprintable():

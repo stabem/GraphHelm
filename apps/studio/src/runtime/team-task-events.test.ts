@@ -90,6 +90,43 @@ describe("foldTaskEvents", () => {
   it("refuses a record whose lane field names another lane than the actor that recorded it", () => {
     expect(parseTaskEvent("task.pr_opened", "agent-chat", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "pr-1", revision: 1, at: "2026-10-07T20:00:00Z", pr: 1, headSha: "aaaaaaaa", journeys: [], lane: "gh-claude-4" }))).toBeNull();
   });
+
+  it("parses a release only for its recording lane and exact positive claim sequence", () => {
+    const doc = { schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 2, at: "now",
+      lane: "lane-a", claimSequence: 4, reason: "Work moved" };
+    expect(parseTaskEvent("task.released", "lane-a", JSON.stringify(doc))).toMatchObject({ kind: "task.released", claimSequence: 4 });
+    expect(parseTaskEvent("task.released", "lane-b", JSON.stringify(doc))).toBeNull();
+    expect(parseTaskEvent("task.released", "lane-a", JSON.stringify({ ...doc, claimSequence: 0 }))).toBeNull();
+    expect(parseTaskEvent("task.released", "lane-a", JSON.stringify({ ...doc, reason: "" }))).toBeNull();
+  });
+
+  it("a release ends only its named claim while a newer or another lane's claim stays open", () => {
+    const records = [
+      { ...parseTaskEvent("task.claimed", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 1, at: "now", issue: 729, lane: "lane-a", branch: "old" }))!, sequence: 10, claimSequence: 10 },
+      { ...parseTaskEvent("task.claimed", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 1, at: "now", issue: 729, lane: "lane-a", branch: "new" }))!, sequence: 12, claimSequence: 12 },
+      { ...parseTaskEvent("task.claimed", "lane-b", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 1, at: "now", issue: 729, lane: "lane-b", branch: "foreign" }))!, sequence: 13, claimSequence: 13 },
+      { ...parseTaskEvent("task.released", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 2, at: "now", lane: "lane-a", claimSequence: 10, reason: "Stopped" }))!, sequence: 14 },
+    ].map((event) => ({ ...event, occurredAt: null }));
+    const folded = foldTaskEvents(records as TaskEventRecord[]);
+    expect(folded.map((task) => [task.branch, task.step, task.releasedBy ?? null])).toEqual([["new", "plan", null], ["foreign", "plan", null], ["old", "plan", "lane-a"]]);
+  });
+
+  it("does not release a claim after that claim has a PR", () => {
+    const claimed = { ...parseTaskEvent("task.claimed", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 1, at: "now", issue: 729, lane: "lane-a", branch: "old" }))!, sequence: 10, claimSequence: 10 };
+    const opened = { ...parseTaskEvent("task.pr_opened", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 2, at: "now", pr: 800, headSha: "aaaaaaa", journeys: [], lane: "lane-a" }))!, sequence: 11 };
+    const released = { ...parseTaskEvent("task.released", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 2, at: "now", lane: "lane-a", claimSequence: 10, reason: "Too late" }))!, sequence: 12 };
+    expect(foldTaskEvents([claimed, opened, released] as TaskEventRecord[])[0]).toMatchObject({ pr: 800, step: "review" });
+  });
+
+  it("a new claim after release stays a separate active slice", () => {
+    const claimed = (sequence: number) => ({
+      ...parseTaskEvent("task.claimed", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 1, at: "now", issue: 729, lane: "lane-a", branch: "same" }))!,
+      sequence,
+    });
+    const released = { ...parseTaskEvent("task.released", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 2, at: "now", lane: "lane-a", claimSequence: 10, reason: "Stopped" }))!, sequence: 11 };
+    expect(foldTaskEvents([claimed(10), released, claimed(12)] as TaskEventRecord[]).map((task) => [task.branch, task.releasedBy ?? null]))
+      .toEqual([["same", "lane-a"], ["same", null]]);
+  });
 });
 
 describe("readTaskEventRecords composed with foldTaskEvents", () => {

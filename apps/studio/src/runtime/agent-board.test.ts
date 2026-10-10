@@ -123,7 +123,7 @@ describe("#591 board times the latest activity (record shapes)", () => {
     expect(board(events, 3 * H, ["gh-claude-3"])["gh-claude-3"]!.status).toBe("free");
   });
 
-  it.each(["closes", "issue", "pr"] as const)("another lane's merge ends a claim through %s without changing lastDelivered", (match) => {
+  it.each(["closes", "issue", "pr"] as const)("another lane's merge only ends a claim through closes: %s, preserving lastDelivered", (match) => {
     const events = [
       ev({ kind: "task.claimed", taskId: "issue-549", lane: "codex-3", issue: 549, at: iso(0) }),
       ev({ kind: "task.claimed", taskId: "issue-700", lane: "other", issue: match === "pr" ? 549 : 700, at: iso(M) }),
@@ -135,11 +135,25 @@ describe("#591 board times the latest activity (record shapes)", () => {
     for (const at of [3 * H, 4 * M]) {
       const lanes = laneBars(events, T0 + at, 48 * H);
       const row = agentBoard([bot("codex-3")], lanes, [delivered], T0 + at).find((r) => r.name === "codex-3");
-      expect(row).toMatchObject({ status: "free", stage: null, lastDelivered: "#7 Previous delivery" });
-      expect(lanes.find((l) => l.lane === "codex-3")!.bars[0]).toMatchObject({ open: false, end: T0 + 3 * M });
+      const closed = match === "closes";
+      expect(row).toMatchObject({ status: closed ? "free" : at === 3 * H ? "stale" : "working",
+        stage: closed || at === 3 * H ? null : "implement", lastDelivered: "#7 Previous delivery" });
+      expect(lanes.find((l) => l.lane === "codex-3")!.bars[0]).toMatchObject({ open: !closed, end: T0 + (closed ? 3 * M : at) });
     }
     events.push(ev({ kind: "task.claimed", taskId: "issue-702", lane: "codex-3", issue: 702, at: iso(3 * H) }));
     expect(board(events, 3 * H + M, ["codex-3"])["codex-3"]!.status).toBe("working");
+  });
+
+  it.each(["issue-86-tree", "issue-86-summary"])("a Refs slice by codex-4 keeps codex-1's PR-less claim working: %s", (taskId) => {
+    const events = [
+      ev({ kind: "task.claimed", taskId, lane: "codex-1", issue: 86, at: iso(0) }),
+      ev({ kind: "task.claimed", taskId: "issue-86-summary", lane: "codex-4", issue: 86, at: iso(M) }),
+      ev({ kind: "task.pr_opened", taskId: "issue-86-summary", lane: "codex-4", issue: 86, pr: 658, at: iso(2 * M) }),
+      ev({ kind: "task.merged", taskId: "issue-86-summary", pr: 658, issue: 86, closes: [], at: iso(3 * M) }),
+    ];
+    const rows = board(events, 4 * M, ["codex-1", "codex-4"]);
+    expect(rows["codex-1"]).toMatchObject({ status: "working", stage: "implement" });
+    expect(rows["codex-4"]!.status).toBe("free");
   });
 
   it("the time is since the lane's latest record, naming that record", () => {

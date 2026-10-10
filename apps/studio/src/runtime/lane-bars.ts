@@ -132,13 +132,15 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       case "task.merged": {
         for (const k of ["implement", "review", "merge"] as const) close(k, slice, t);
         if (author && pr !== undefined) laneOf(author).awaiting.delete(pr);
-        // #591: a delivered issue ends PR-less claims across lanes. Other PR slices stay open.
+        // #591: only issue closure ends PR-less claims across lanes. A Refs slice ends only
+        // its author's matching claims; other PR slices stay open.
         const issue = e.issue ?? issueOf.get(slice);
         for (const [k, v] of [...open]) {
           const [kind, s] = k.split("|");
           if (kind !== "implement" || !s!.includes("#claim-")) continue;
-          if (s!.startsWith(`${e.taskId}#`) || (v.bar.issue !== undefined
-            && (v.bar.issue === issue || e.closes?.includes(v.bar.issue)))) {
+          if ((v.bar.issue !== undefined && e.closes?.includes(v.bar.issue))
+            || (v.lane === author && (s!.startsWith(`${e.taskId}#`)
+              || (issue !== undefined && v.bar.issue === issue)))) {
             v.bar.end = t; v.bar.open = false; open.delete(k);
           }
         }

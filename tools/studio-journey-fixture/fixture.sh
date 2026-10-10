@@ -82,13 +82,16 @@ up)
   fi
   "$bin" --json init --project "$dir" --bind "127.0.0.1:$rport" --harness codex > "$dir/.graphhelm/init.json"
   export GRAPHHELM_EVENTS_KEY="$(cat "$dir/.graphhelm/serve.key")"
-  # `--project` is the repository: the Runtime's GET /v1/journeys and /v1/journeys/flows read
-  # <project>/.graphhelm/journeys, where the studio-* flows and contracts live. Events, token,
-  # key and keyring stay under the fixture directory.
+  # The Runtime reads journeys and delivered documents from a disposable project. Copy the
+  # journeys byte-for-byte; never let a document save reach the source repository (#585).
+  mkdir -p "$dir/project/.graphhelm" "$dir/project/docs"
+  cp -R "$repo/.graphhelm/journeys" "$dir/project/.graphhelm/"
+  printf '# Release notes: version 0.1\n' > "$dir/project/docs/RELEASE_NOTES.md"
+  git -C "$dir/project" init -q
   # #585: a route manifest of the fixture's own, listed and written by the Studio's Models panel
   # (Add model). Listing only: `--gateway-manifest` wires no executor, so nodes stay on fixtures.
   cp "$repo/examples/gateway/astra-routes.json" "$dir/.graphhelm/routes.json"
-  nohup "$bin" serve --events "$dir/.graphhelm/events" --bind "127.0.0.1:$rport" --project "$repo" \
+  nohup "$bin" serve --events "$dir/.graphhelm/events" --bind "127.0.0.1:$rport" --project "$dir/project" \
     --keyring "$dir/.graphhelm/keyring" --key-id studio --gateway-manifest "$dir/.graphhelm/routes.json" \
     > "$dir/.graphhelm/serve.out" 2> "$dir/.graphhelm/serve.err" &
   echo "serve $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
@@ -103,6 +106,10 @@ up)
     "$bin" --json execution start --file "$repo/examples/graphs/manual-override-deploy.yaml" \
       --events "$dir/.graphhelm/events" --fixtures "$dir/.graphhelm/fixtures.json" --mode supervised --execution demo \
       > "$dir/.graphhelm/seed.json"
+    printf '%s\n' '{"version":1,"summary":"Release notes ready for review.","reason":"Fixture document for the owner to edit.","documents":[{"path":"docs/RELEASE_NOTES.md","title":"Release notes","kind":"file","action":"created"}]}' > "$dir/.graphhelm/delivery.json"
+    "$bin" --json execution delivery --events "$dir/.graphhelm/events" --execution demo --node deploy \
+      --delivery "$dir/.graphhelm/delivery.json" --project-directory "$dir/project" \
+      --keyring "$dir/.graphhelm/keyring" --key-id studio > "$dir/.graphhelm/delivery.out"
     # One unanswered question from the bot `planner` to the owner (studio-answer-question, studio-name-bot).
     token=$(head -1 "$dir/.graphhelm/events.token"); id=$(node -e 'console.log(require("crypto").randomUUID())')
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)

@@ -38,6 +38,7 @@ function EditorSession({ document, readDocument, saveDocument, onClose, onAttent
   const busy = useRef(false);
   const live = useRef(true);
   const dirty = snapshot !== null && content !== snapshot.content;
+  const statusText = saving ? "Saving…" : dirty ? "Unsaved draft" : result ? "Saved to main project folder" : "Current project version";
   const attention = uncertainSave ? "uncertain_save" : pendingNotice ? "pending_notice" : dirty ? "draft" : "clean";
   const needsAttention = attention !== "clean";
   useEffect(() => { onAttentionChange?.(attention, dirty); }, [attention, dirty, onAttentionChange]);
@@ -124,7 +125,7 @@ function EditorSession({ document, readDocument, saveDocument, onClose, onAttent
     {!snapshot && !error && <p role="status">Opening project file…</p>}
     {error && <div role="alert" className="document-error"><p>{error}</p>{!snapshot && <button onClick={() => setAttempt((value) => value + 1)}>Retry opening file</button>}</div>}
     {snapshot && <>
-      <div className="document-draft-status" role="status">{saving ? "Saving…" : dirty ? "Unsaved draft" : result ? "Saved to main project folder" : "Current project version"}</div>
+      <div className="document-draft-status" role="status" aria-label={statusText}>{statusText}</div>
       <label className="document-content-label">File content<textarea aria-label="File content" spellCheck={false} value={content} disabled={saving} onChange={(event) => { setContent(event.target.value); setResult(null); }} /></label>
       <label>Why are you changing this?<textarea aria-label="Why are you changing this?" className="document-reason" value={reason} disabled={saving} placeholder="Explain what changed so agents can reassess their work." onChange={(event) => { setReason(event.target.value); }} /></label>
       <button className="document-save" disabled={!dirty || !reason.trim() || saving || pendingNotice !== null || uncertainSave !== null || revisionConflict} onClick={() => void save()}>{saving ? "Saving…" : "Save project file"}</button>

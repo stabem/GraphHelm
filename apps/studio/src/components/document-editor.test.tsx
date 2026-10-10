@@ -5,6 +5,14 @@ import { DocumentEditor } from "./document-editor";
 const document = { evidenceId: "ev", index: 0, path: "docs/rule.md", title: "Refund rule", projectId: "a".repeat(64) };
 const readDocument = async () => ({ content: "Original rule", contentSha256: "old" });
 describe("project document editor", () => {
+  it("names the saved status so assistive readers can find it", async () => {
+    const saveDocument = vi.fn().mockResolvedValue({ contentSha256: "new", notification: { status: "recorded", notifiedRuns: [], pendingRuns: [] } });
+    render(<DocumentEditor document={document} readDocument={readDocument} saveDocument={saveDocument} onClose={vi.fn()} />);
+    fireEvent.change(await screen.findByLabelText("File content"), { target: { value: "New rule" } });
+    fireEvent.change(screen.getByLabelText("Why are you changing this?"), { target: { value: "New terms" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save project file" }));
+    expect(await screen.findByRole("status", { name: "Saved to main project folder" })).toHaveTextContent("Saved to main project folder");
+  });
   it("keeps a conflicted draft and its reason and guards close", async () => {
     const onClose = vi.fn();
     const saveDocument = vi.fn().mockRejectedValue({ httpStatus: 409, diagnostics: [{ path: "/expectedSha256" }] });

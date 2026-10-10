@@ -120,7 +120,7 @@ another route. Record what you do instead.
 A lane must arm on the **team execution**, not merely its current task execution. Bind the
 host hooks with `GRAPHHELM_EXECUTION_ID`, `GRAPHHELM_RUNTIME_URL`, `GRAPHHELM_TOKEN_FILE`
 (agent token file), and `GRAPHHELM_ACTOR` (the lane name). Read the events and open each
-`operator_note` evidence envelope; `to` lives in that envelope, not the journal metadata.
+`operator_note` evidence envelope to read the full message and its `to` addressee.
 Match `to == GRAPHHELM_ACTOR` from both owner and agent events. Act within your authority,
 then record your own `operator_note` with `replyTo` equal to that note's signal id. Report a
 blocker honestly when you cannot act. Only the addressed lane's reply clears its pending note.

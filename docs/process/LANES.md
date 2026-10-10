@@ -76,7 +76,7 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 
 ## 3. Builds: one slot for the whole machine
 
-- Every `cargo` build or test runs under the build slot, one at a time in arrival order:
+- Every `cargo` build, test or clippy invocation runs under the build slot, one at a time in arrival order:
 
       graphhelm workspace slot --root D:\gh --lane <lane> --label <what> -- "C:\Program Files\Git\bin\bash.exe" D:\gh\<lane>\<script>.sh
 
@@ -131,20 +131,29 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   unreadable free space is `null`, never a claim that enough space remains. No-rule and
   `--shared-target` runs keep their existing behavior.
 - Write Git Bash's full path in the slot command, as above. A bare `bash` or `sh` resolves to WSL.
-- A `cargo` run allowed outside the slot (`check`, `clippy`) uses
+- A `cargo check` run allowed outside the slot uses
   `CARGO_TARGET_DIR=D:\gh\<lane>\target-check`.
 - Benchmarks, load generators and store seeding run inside the slot too: they load the machine like
   a build does.
-- A fix the owner is waiting to see may run outside the slot with `CARGO_BUILD_JOBS=6`, and only
-  when at least 8 GB of RAM is free.
+- Urgency does not exempt cargo builds, tests or clippy from the slot.
 - After the machine reboots, every background run is dead. Queue it again; do not wait for it.
 - **One waiting ticket per lane.** Put everything the diff needs in one script instead of queueing
   several.
-- Run only what the diff reaches (DELIVERY.md §3):
+- Authors and reviewers share one test budget (DELIVERY.md §3). Run only what the diff reaches:
 
       python tools/reached-tests/reached_tests.py
 
-- Studio-only and docs-only work never uses the slot: `vitest` and `tsc` run directly.
+- Run Studio checks only when `apps/studio` or something it imports is reached. In your
+  worktree's `apps/studio`, run `npm ci --prefer-offline --no-audit --no-fund` only when
+  `node_modules` is missing or `package-lock.json` changed; otherwise reuse it. Run `vitest`
+  with `--maxWorkers=1`; `vitest` and `tsc` run directly, without the cargo slot.
+- Journey previews cover only flows whose file changed or whose screens the diff changes,
+  never all flows by default. The card must name and explain any additional flows or checks.
+- Clippy covers touched crates only. A broader lint scope or a full-package/whole-suite test
+  run needs the card to name it and explain why, even if the reached-tests script prints it.
+  Cargo tests use `-- --test-threads=2`.
+- Docs-only work runs only applicable existing docs guards and `git diff --check`; it does not
+  use the slot or run Studio checks or journey previews.
 - **Never end a turn idle because a build waits.** Write the next code, write the PR body, or read
   the PR you were assigned to review.
 

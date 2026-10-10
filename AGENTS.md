@@ -70,7 +70,22 @@ There is **no gate** (owner order, 2026-09-24). The queued runners, the receipt 
 `merge-proof` are retired; `ci/gate.ps1` remains only as an optional full local check that nothing
 requires and nothing merges on. The evidence for a change is the tests the
 change can reach, run by the author and again by the reviewer, and named in the PR
-([docs/process/DELIVERY.md](docs/process/DELIVERY.md)). The individual commands:
+([docs/process/DELIVERY.md](docs/process/DELIVERY.md)).
+
+**Authors and reviewers share one test budget:** run only what
+`python tools/reached-tests/reached_tests.py` reaches. Studio checks run only when `apps/studio`
+or something it imports is reached; run `npm ci --prefer-offline --no-audit --no-fund` there only
+when `node_modules` is missing or `package-lock.json` changed, and use `vitest --maxWorkers=1`.
+Journey previews cover only flows whose file changed or whose screens the diff changes, never
+all flows by default. Any extra checks or flows must be named and justified in the card; a
+full-package or whole-suite run requires that justification even when the script prints it.
+Cargo build/test **and clippy** run through the build slot (docs/process/LANES.md §3), clippy on
+touched crates only unless the card names and justifies broader lint coverage. Cargo tests use
+`-- --test-threads=2`. Docs-only changes run only applicable existing docs guards and
+`git diff --check`.
+
+The commands below are reference forms, not a default checklist. Workspace-wide test and clippy
+forms require the card's explicit scope and reason under that budget:
 
 ```powershell
 cargo +1.97.1 fmt --all -- --check

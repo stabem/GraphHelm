@@ -70,10 +70,27 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
   reaches that tool's own tests;
 - docs reach nothing.
 
-The fmt, clippy and workspace-guard lines below are included whenever Rust is reached. Run what it
-prints, in the slot, instead of the whole battery. A path no rule maps is listed as "not mapped"
-and is the author's to check by hand. When `graphhelm` is on PATH the Keel plan's class and proof
-are printed beside the commands.
+**One test budget for authors and reviewers:**
+
+- Run only the checks reached by `tools/reached-tests/reached_tests.py`. Check any "not mapped"
+  path by hand. If the computed set misses an obligation, name the extra check and why it is
+  needed in the card before running it. A full-package or whole-suite run is allowed only when
+  the card names it and explains why, including when the script prints a whole-package command.
+- Run Studio checks (`vitest`, `tsc`, npm scripts) only when `apps/studio` or something it imports
+  is reached. Run `npm ci --prefer-offline --no-audit --no-fund` in that worktree's `apps/studio`
+  only when `node_modules` is missing or `package-lock.json` changed; otherwise reuse it. Use
+  `vitest --maxWorkers=1`, including for related tests.
+- Run journey previews only for flows whose file changed or whose screens the diff changes.
+  Never preview all flows by default. A card may name additional flows, but must explain why.
+- Every cargo build, test and clippy run goes through the build slot (LANES.md §3). Run clippy
+  only on touched crates; name and justify any broader lint scope in the card. Rust tests use
+  `-- --test-threads=2`. The fmt and workspace-source-guard checks remain reached by Rust edits.
+- Docs-only changes need only the existing applicable docs guards and `git diff --check`, not
+  Rust builds, Studio checks or journey previews.
+
+The script prints fmt, clippy and workspace-guard commands whenever Rust is reached. Apply the
+budget above to those commands, including narrowing clippy to touched crates. When `graphhelm`
+is on PATH the Keel plan's class and proof are printed beside the commands.
 
 **Without a Runtime** (a cloud or CI session with no `.graphhelm/` and no Runtime to post to), the
 delivery still runs on the CLI alone: write the card in the PR body (`Promise:`, `Scope:`,
@@ -133,8 +150,9 @@ merged like any other, and the review says what was not observed.
   card names, on the head, and pastes its summary.
 - The reviewer **runs the tests the change reaches** on that head and names each command and its
   result in the review. A review that does not run them is not a review. The reached set is what
-  `tools/reached-tests/reached_tests.py --base <merge base> --head <head>` prints (§3), plus
-  anything the reviewer judges it misses.
+  `tools/reached-tests/reached_tests.py --base <merge base> --head <head>` prints, subject to the
+  same test budget as the author (§3). Any extra check needs its scope and reason in the card;
+  review is not a reason to run unrelated Studio checks, all journey previews or a full suite.
 - **The reviewer runs the Keel check on the head under review and pastes its output** in the
   review: `graphhelm --json keel check --diff <base>..<head> --card <card.json>`, where `<base>` is
   the merge base with `main` and the card is the one in the PR body saved as JSON
@@ -147,8 +165,9 @@ merged like any other, and the review says what was not observed.
   alike: `cargo +1.97.1 fmt --all -- --check` and
   `cargo +1.97.1 clippy --locked -p <crate> --all-targets --all-features -- -D warnings` for each
   touched crate. Tests alone do not catch a lint: #1269 merged with passing tests and left `main`
-  red under clippy until #1274. When `Cargo.toml`, `Cargo.lock` or a crate many others depend on
-  changes, run the workspace form (`--workspace` instead of `-p`).
+  red under clippy until #1274. Clippy runs through the build slot, on touched crates only.
+  If a manifest, lockfile or shared-crate change needs broader lint coverage, the card names
+  that scope and explains why before a workspace run (`--workspace` instead of `-p`).
 - **A change to any Rust file also runs the workspace-wide source guards**, because they read every
   crate's text and so are reached by any edit: `cargo +1.97.1 test --locked -p graphhelm-protocols
   --test authored_strings_across_the_workspace` (about one second). #1281 added a string literal in

@@ -15,11 +15,11 @@ screens:
     expect: [{role: region, name: Canvas}, {role: tab, name: Lanes}]
     scope: [apps/studio/src/components/mission-view.tsx]
   - id: named
-    title: "The name is saved and the bot shows it (demo: Planny)"
+    title: The reopened name box uses the saved display name
     url: /?session=studio-fixture
     state: success
-    expect: [{role: region, name: Agent planner}, {role: heading, name: Planny}, {role: button, name: Close planner}]
-    scope: [apps/studio/src/components/panel.tsx, apps/studio/src/runtime/team.ts]
+    expect: [{role: region, name: Agents}, {role: textbox, name: Name for Planny}, {role: button, name: Cancel}]
+    scope: [apps/studio/src/components/lanes-timeline.tsx, apps/studio/src/runtime/team.ts]
   - id: naming
     title: The name box in the Lanes agent row
     url: /?session=studio-fixture
@@ -44,7 +44,7 @@ edges:
     acts:
       - {kind: enter_text, role: textbox, name: Name for planner, text: Planny}
       - {kind: submit, role: button, name: Save}
-      - {kind: activate, role: button, name: Details}
+      - {kind: activate, role: button, name: Name this bot}
   - id: run.name
     from: run
     to: naming

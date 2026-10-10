@@ -391,6 +391,7 @@ def run_codex_agent(wt: Path, prompt: str, model: str, effort: str, timeout_min:
         result["agentError"] = "timeout_exit_unconfirmed" if cleanup_unconfirmed else "timeout"
     elif proc.returncode:
         result["agentError"] = f"codex_exit_{proc.returncode}"
+    model_refused = False
     for line in raw.splitlines():
         try:
             event = json.loads(line)
@@ -419,9 +420,16 @@ def run_codex_agent(wt: Path, prompt: str, model: str, effort: str, timeout_min:
                     result["tokens"][key] += usage[key]
                 result["num_turns"] += 1
             elif kind in {"turn.failed", "error"}:
+                error = event.get("error") if kind == "turn.failed" else event
+                message = error.get("message", "") if isinstance(error, dict) else ""
+                if isinstance(message, str):
+                    message = message.lower()
+                    model_refused |= "model" in message and "not supported" in message
                 result["agentError"] = "codex_failed"
         except (ValueError, TypeError):
             result["agentError"] = "invalid_codex_stream"
+    if model_refused:
+        result["agentError"] = "model_refused"
     if result["tokens"] is None:
         result["agentError"] = result.get("agentError", "codex_usage_missing")
     return result, stderr, time.monotonic() - t0

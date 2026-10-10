@@ -238,13 +238,18 @@ def run(args: argparse.Namespace) -> int:
                 )
                 raise RuntimeError(f"selector returned unsupported targets; no steps executed: {reasons}")
             browser_steps = [i for i, step in enumerate(steps) if step["observer"] == "browser"]
-            if browser_steps and not getattr(args, "include_browser", False):
-                raise RuntimeError("browser observer steps require --include-browser; they remain pending")
+            skip_browser = browser_steps if not getattr(args, "include_browser", False) else []
+            report["skipped"] = [{"index": index, "reason": "no observer"} for index in skip_browser]
             if browser_steps and not _browser_toolchain_ready():
-                raise RuntimeError("--include-browser requires GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT with local @playwright/test")
+                if getattr(args, "include_browser", False):
+                    raise RuntimeError("--include-browser requires GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT with local @playwright/test")
+            for index in skip_browser:
+                report["pending"].remove(index)
             queue: float | None = 0.0
             held: float | None = 0.0
             for index, step in enumerate(steps):
+                if index in skip_browser:
+                    continue
                 remaining = args.budget_seconds - (time.monotonic() - started)
                 if remaining <= 0:
                     report["status"] = "budgetExceeded"

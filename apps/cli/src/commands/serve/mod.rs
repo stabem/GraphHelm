@@ -171,6 +171,9 @@ struct ServeState {
     /// Where to append the read audit, when `--read-audit` asked for one. `None` - the default -
     /// means nothing is recorded at all.
     read_audit: Option<Arc<Path>>,
+    /// `--gateway-manifest`: the route manifest the gateway routes list and write when no model
+    /// half is wired (#585). Never read by an executor.
+    gateway_manifest: Option<Arc<Path>>,
     native_chat_busy: Arc<tokio::sync::Mutex<std::collections::HashMap<String, String>>>,
 }
 
@@ -228,6 +231,7 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         sealing: sealing.map(Arc::new),
         cancels: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         read_audit: args.read_audit.as_deref().map(Arc::from),
+        gateway_manifest: args.gateway_manifest.as_deref().map(Arc::from),
         sweep_interval: args.sweep_interval,
         native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
     };

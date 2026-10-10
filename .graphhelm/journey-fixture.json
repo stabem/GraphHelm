@@ -1,1 +1,1 @@
-{"schema":"graphhelm-journey-fixture/1","script":"tools/studio-journey-fixture/fixture.sh"}
+{"schema":"graphhelm-journey-fixture/1","script":"tools/studio-journey-fixture/fixture.sh","isolated":true}

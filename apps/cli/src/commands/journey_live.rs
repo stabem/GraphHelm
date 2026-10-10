@@ -718,12 +718,16 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     let secrets = preflight(&flow)?;
     observer_ready(&project)?;
     let output = TemporaryOutput::create()?;
-    let base = flow["base"].as_str().unwrap().to_owned();
+    let mut base = flow["base"].as_str().unwrap().to_owned();
     // The owner only clicks Watch: when the app under test is down, the project's declared
-    // launcher brings it up (and the host stops it when the watch ends).
-    let launched = if args.watch && !base_reachable(&base) {
-        let launched = launch(&project, &base)?;
+    // launcher brings it up (and the host stops it when the watch ends). An isolated launcher
+    // always brings up its own, on free ports (#585).
+    let launched = if args.watch && (launcher_isolated(&project) || !base_reachable(&base)) {
+        let launched = launch(&project, &base, |_| Ok(()))?;
         data["launched"] = true.into();
+        if let Some(own) = &launched.base {
+            base = own.clone();
+        }
         Some(launched)
     } else {
         None
@@ -1006,6 +1010,52 @@ pub(super) struct Launched {
     project: PathBuf,
     script: String,
     dir: PathBuf,
+    /// The base the launched app answers on, when it is not the flow's own: an isolated
+    /// launcher runs on free ports (#585), so two lanes can play the same flows at once.
+    pub(super) base: Option<String>,
+}
+
+/// Whether the project's declared launcher asks for an isolated app: its own fresh fixture on
+/// free ports for every watch or preview, never whatever already answers on the flow's base
+/// (#585: one lane's fixture state leaked into another's preview).
+pub(super) fn launcher_isolated(project: &Path) -> bool {
+    let declared = project.join(FIXTURE_FILE);
+    safe_node(&declared)
+        && std::fs::read(&declared)
+            .ok()
+            .filter(|bytes| bytes.len() <= FRAME)
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .is_some_and(|fixture| fixture["isolated"] == true)
+}
+
+/// `base` with its port replaced by `port`: the address an isolated launch answers on.
+pub(super) fn base_on_port(base: &str, port: u16) -> Option<String> {
+    let (scheme, rest) = base.split_once("://")?;
+    if !matches!(scheme, "http" | "https") {
+        return None;
+    }
+    let (authority, path) = rest.split_once('/').map_or((rest, ""), |(a, p)| (a, p));
+    if authority.is_empty() || authority.contains('@') || authority.starts_with('[') {
+        return None;
+    }
+    let host = authority
+        .split_once(':')
+        .map_or(authority, |(host, _)| host);
+    let path = path.trim_end_matches('/');
+    Some(if path.is_empty() {
+        format!("{scheme}://{host}:{port}")
+    } else {
+        format!("{scheme}://{host}:{port}/{path}")
+    })
+}
+
+/// A port nothing listens on right now (the OS picks it; the listener is closed at once).
+fn free_port() -> Option<u16> {
+    TcpListener::bind("127.0.0.1:0")
+        .ok()?
+        .local_addr()
+        .ok()
+        .map(|address| address.port())
 }
 
 /// What it takes to stop a launched app, apart from the `Launched` that owns it: the preview's
@@ -1018,6 +1068,41 @@ pub(super) struct LaunchedStop {
 }
 
 impl LaunchedStop {
+    /// What a reader needs to stop this app after its runner is gone (#593 review): the launcher
+    /// script and the fixture directory. The project is the reader's own.
+    pub(super) fn record(&self) -> Value {
+        json!({"script": self.script, "dir": self.dir.to_string_lossy()})
+    }
+
+    /// The stop handle a record names, only when it still names this project's declared launcher
+    /// and a `graphhelm-watch-*` directory directly in this machine's temp directory: an edited
+    /// state file cannot make a reader run another script or remove another directory.
+    pub(super) fn from_record(project: &Path, record: &Value) -> Option<Self> {
+        let script = record["script"].as_str()?;
+        let declared: Value = std::fs::read(project.join(FIXTURE_FILE))
+            .ok()
+            .filter(|bytes| bytes.len() <= FRAME)
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())?;
+        if declared["script"].as_str() != Some(script) {
+            return None;
+        }
+        let dir = PathBuf::from(record["dir"].as_str()?);
+        let temp = std::env::temp_dir();
+        let in_temp = dir.parent().is_some_and(|parent| {
+            parent == temp
+                || parent.canonicalize().ok().as_deref() == temp.canonicalize().ok().as_deref()
+        });
+        let named = dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("graphhelm-watch-"));
+        (in_temp && named).then(|| LaunchedStop {
+            project: project.to_path_buf(),
+            script: script.to_owned(),
+            dir,
+        })
+    }
+
     /// Runs the launcher's `down`, bounded, then removes the fixture directory.
     pub(super) fn stop(&self) {
         let mut command = posix_shell();
@@ -1119,13 +1204,22 @@ fn posix_shell() -> Command {
 }
 
 /// Starts the declared app under test and waits until the flow's base answers.
-pub(super) fn launch(project: &Path, base: &str) -> Result<Launched> {
-    launch_within(project, base, LAUNCH_READY)
+pub(super) fn launch(
+    project: &Path,
+    base: &str,
+    before_up: impl FnOnce(&LaunchedStop) -> Result<()>,
+) -> Result<Launched> {
+    launch_within(project, base, LAUNCH_READY, before_up)
 }
 
 /// [`launch`] with its readiness bound as a parameter, so the bound itself is testable: the
 /// launcher's `up` and the wait for the base together end within `ready`.
-pub(super) fn launch_within(project: &Path, base: &str, ready: Duration) -> Result<Launched> {
+pub(super) fn launch_within(
+    project: &Path,
+    base: &str,
+    ready: Duration,
+    before_up: impl FnOnce(&LaunchedStop) -> Result<()>,
+) -> Result<Launched> {
     let declared = project.join(FIXTURE_FILE);
     if !safe_node(&declared) {
         return Err(failure("watch.app_down", "/base", 2));
@@ -1159,22 +1253,42 @@ pub(super) fn launch_within(project: &Path, base: &str, ready: Duration) -> Resu
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    // An isolated launcher gets two free ports (`up <dir> <runtime port> <app port>`), and the
+    // flow is played on the app port instead of its own base.
+    let isolated_base = if fixture["isolated"] == true {
+        let (Some(runtime_port), Some(app_port)) = (free_port(), free_port()) else {
+            return Err(failure("watch.launch_failed", "/launcher/ports", 1));
+        };
+        command
+            .arg(runtime_port.to_string())
+            .arg(app_port.to_string());
+        Some(
+            base_on_port(base, app_port)
+                .ok_or_else(|| failure("watch.launcher_invalid", "/base", 2))?,
+        )
+    } else {
+        None
+    };
     if let Ok(executable) = std::env::current_exe() {
         command.env("GRAPHHELM_BIN", executable);
     }
+    let answers_on = isolated_base.clone().unwrap_or_else(|| base.to_owned());
     let launched = Launched {
         project: project.to_path_buf(),
         script,
         dir,
+        base: isolated_base,
     };
+    // Persist ownership before spawning: recovery must also cover a runner killed inside up.
+    before_up(&launched.stopper())?;
     let deadline = Instant::now() + ready;
     // The `up` script is bounded too: one that hangs is killed at `ready` and reads as a failed
     // launch, never as a run that waits for ever.
     let started = run_within(command, ready).unwrap_or(false);
-    while started && !base_reachable(base) && Instant::now() < deadline {
+    while started && !base_reachable(&answers_on) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(250));
     }
-    if !started || !base_reachable(base) {
+    if !started || !base_reachable(&answers_on) {
         launched.stop();
         return Err(failure("watch.launch_failed", "/launcher", 1));
     }
@@ -1837,6 +1951,35 @@ mod caption_tests {
 
 #[cfg(test)]
 mod launch_tests {
+    /// #585: an isolated launch plays the flow on the port it was given, keeping the flow's
+    /// scheme, host and path; a base the code cannot rewrite safely is refused, never guessed.
+    /// Cost: microseconds.
+    #[test]
+    fn an_isolated_launch_rewrites_only_the_port_of_the_base() {
+        use super::base_on_port;
+        assert_eq!(
+            base_on_port("http://127.0.0.1:5184", 6001).as_deref(),
+            Some("http://127.0.0.1:6001")
+        );
+        assert_eq!(
+            base_on_port("http://localhost/", 6001).as_deref(),
+            Some("http://localhost:6001")
+        );
+        assert_eq!(
+            base_on_port("https://app.test:8443/studio/", 6001).as_deref(),
+            Some("https://app.test:6001/studio")
+        );
+        for refused in [
+            "ftp://x:1",
+            "127.0.0.1:5184",
+            "http://user@host:1",
+            "http://[::1]:1",
+            "http://",
+        ] {
+            assert_eq!(base_on_port(refused, 6001), None, "{refused}");
+        }
+    }
+
     /// #560 review (gh-claude-3's real run): a launcher whose `up` never returns is killed at the
     /// readiness bound and reads as `watch.launch_failed`, instead of holding its caller for ever.
     /// Cost: about two seconds; a POSIX shell (Git Bash on Windows), temp files only.
@@ -1865,6 +2008,7 @@ mod launch_tests {
             project.path(),
             &format!("http://127.0.0.1:{port}"),
             Duration::from_secs(2),
+            |_| Ok(()),
         );
         let took = started.elapsed();
         let code = outcome.err().map(|(code, _, _)| code);

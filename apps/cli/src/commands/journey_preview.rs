@@ -19,7 +19,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use super::journey_live::{Launched, LaunchedStop, base_reachable, launch, would_destroy};
+use super::journey_live::{
+    Launched, LaunchedStop, base_reachable, launch, launcher_isolated, would_destroy,
+};
 use super::journey_replay::{
     Driver, Failure, Result, SURVIVABLE, TemporaryOutput, declared_browser, failure, observe,
     observer_ready, preflight, record, safe_directory, safe_node, walked, with_storage,
@@ -209,6 +211,7 @@ fn body(state: Option<Value>, flow: &Value, digest: &str, commit: &str) -> Value
     }
     if let Some(object) = state.as_object_mut() {
         object.remove("pid");
+        object.remove("launched");
         if let Some(screens) = object.get_mut("screens").and_then(Value::as_object_mut) {
             for screen in screens.values_mut() {
                 if let Some(screen) = screen.as_object_mut() {
@@ -257,7 +260,7 @@ pub(crate) fn status(args: &JourneyPreviewArgs) -> Outcome {
     match flow_and_key(&project, &args.id) {
         Ok((flow, digest, commit)) => answer(
             body(
-                read_settled(|| read_state(&dir_of(&project, &args.id))),
+                reap_lost(&project, &dir_of(&project, &args.id)),
                 &flow,
                 &digest,
                 &commit,
@@ -283,7 +286,7 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
         Err(failed) => return answer(json!({}), Some(failed)),
     };
     let dir = dir_of(&project, &args.id);
-    let stored = read_settled(|| read_state(&dir));
+    let stored = reap_lost(&project, &dir);
     let running_now = stored
         .as_ref()
         .is_some_and(|state| state["state"] == "running" && runner_alive(state));
@@ -397,6 +400,45 @@ fn watch_budget(
     })
 }
 
+/// The stored state, after stopping the app of a run whose runner is gone (#593 review: a killed
+/// runner left its isolated fixture running, and every new preview launches another). A state
+/// still `running` whose runner is dead and that names a launched app: run that app's `down`,
+/// then store the run as `failed / preview.runner_lost` (`preview.budget_exceeded` past the
+/// budget) without the record, so it is stopped once.
+fn reap_lost(project: &Path, dir: &Path) -> Option<Value> {
+    reap_lost_from(project, dir, || read_state(dir))
+}
+
+/// [`reap_lost`] from `read`, the state file's reads in order (a test supplies them).
+fn reap_lost_from(
+    project: &Path,
+    dir: &Path,
+    read: impl FnMut() -> Option<Value>,
+) -> Option<Value> {
+    // Settled first (#586): a run that finished between the read and the liveness check is read
+    // as it finished, and is never reaped.
+    let mut state = read_settled(read)?;
+    if state["state"] != "running" || runner_alive(&state) || state["launched"].is_null() {
+        return Some(state);
+    }
+    if let Some(stop) = LaunchedStop::from_record(project, &state["launched"]) {
+        stop.stop();
+    }
+    let reason = if within_budget(&state) {
+        "preview.runner_lost"
+    } else {
+        "preview.budget_exceeded"
+    };
+    state["state"] = "failed".into();
+    state["reason"] = reason.into();
+    state["current"] = Value::Null;
+    if let Some(object) = state.as_object_mut() {
+        object.remove("launched");
+    }
+    save_state(dir, &state);
+    Some(state)
+}
+
 /// The top-level `reason` a failed preview carries (the closed list agreed on #519).
 fn failed_reason(code: &str) -> &'static str {
     match code {
@@ -412,6 +454,7 @@ fn failed_reason(code: &str) -> &'static str {
         "driver.unsupported_act" => "driver.unsupported_act",
         "replay.act_value_missing" => "replay.act_value_missing",
         "replay.entry_missing" => "replay.entry_missing",
+        "preview.runner_lost" => "preview.runner_lost",
         _ => "internal",
     }
 }
@@ -641,6 +684,9 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         .to_owned();
     run.state["current"] = Value::Null;
     run.state["ranAt"] = chrono::Utc::now().to_rfc3339().into();
+    if let Some(object) = run.state.as_object_mut() {
+        object.remove("launched");
+    }
     match outcome {
         Ok(()) => {
             run.state["state"] = "ready".into();
@@ -664,15 +710,28 @@ fn play(
 ) -> Result<()> {
     let secrets = preflight(flow)?;
     observer_ready(project)?;
-    let base = flow["base"].as_str().unwrap().to_owned();
-    // The app under test is started when it is down, and stopped when the preview ends.
-    let launched: Option<Launched> = if base_reachable(&base) {
+    let mut base = flow["base"].as_str().unwrap().to_owned();
+    // The app under test is started when it is down, and stopped when the preview ends. An
+    // isolated launcher always starts its own on free ports (#585), and the preview plays there.
+    let launched: Option<Launched> = if !launcher_isolated(project) && base_reachable(&base) {
         None
     } else {
-        Some(launch(project, &base)?)
+        Some(launch(project, &base, |stop| {
+            // A dead runner cannot clean up itself, even if it dies before up returns.
+            run.state["launched"] = stop.record();
+            super::journey_flow::atomic_write(
+                &run.dir.join(STATE),
+                &serde_json::to_vec_pretty(&run.state).unwrap(),
+            )
+            .map_err(|_| failure("watch.launch_failed", "/launcher", 1))?;
+            if let Ok(mut slot) = stopper.lock() {
+                *slot = Some(stop.clone());
+            }
+            Ok(())
+        })?)
     };
-    if let (Some(app), Ok(mut slot)) = (&launched, stopper.lock()) {
-        *slot = Some(app.stopper());
+    if let Some(own) = launched.as_ref().and_then(|app| app.base.clone()) {
+        base = own;
     }
     let guard = Guard {
         approved: flow["status"] == "approved",
@@ -887,7 +946,8 @@ fn sha_of(text: &str) -> String {
 mod tests {
     use super::{
         Guard, JourneyPreviewArgs, body, failed_reason, plain_id, proof_args, read_settled,
-        read_state, runner_alive, save_state, severity, step_reason, unsealed_proof, watch_budget,
+        read_state, reap_lost, reap_lost_from, runner_alive, save_state, severity, step_reason,
+        unsealed_proof, watch_budget,
     };
     use serde_json::{Value, json};
     use std::path::Path;
@@ -1115,6 +1175,239 @@ mod tests {
             assert_eq!(failed_reason(code), code);
         }
         assert_eq!(failed_reason("anything.else"), "internal");
+    }
+
+    /// #593 review (gh-claude-3 killed a runner after its isolated fixture was up: the fixture
+    /// stayed alive, and every new preview launches another): a reader that finds the runner gone
+    /// runs the launched app's `down` once, then stores `failed / preview.runner_lost` without the
+    /// record; a record naming another script, or a directory outside the temp directory, stops
+    /// nothing. Cost: a few shell runs (Git Bash on Windows), temp files only.
+    #[test]
+    fn a_reader_stops_the_app_of_a_runner_that_died() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join(".graphhelm")).unwrap();
+        std::fs::write(
+            project.path().join(".graphhelm/journey-fixture.json"),
+            r#"{"schema":"graphhelm-journey-fixture/1","script":"fake.sh","isolated":true}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join("fake.sh"),
+            "#!/usr/bin/env bash\nif [ \"$1\" = down ]; then echo down >> down.log; fi\n",
+        )
+        .unwrap();
+        let previews = tempfile::tempdir().unwrap();
+        let app = std::env::temp_dir().join(format!(
+            "graphhelm-watch-{}",
+            &uuid::Uuid::new_v4().simple().to_string()[..12]
+        ));
+        std::fs::create_dir_all(&app).unwrap();
+        let state = |launched: Value| {
+            json!({"preview":true,"digest":"sha256:aa","commit":"c1","state":"running",
+                "pid":u32::MAX,"startedAt":chrono::Utc::now().to_rfc3339(),
+                "screens":{},"edges":{},"launched":launched})
+        };
+        let downs = || {
+            std::fs::read_to_string(project.path().join("down.log"))
+                .map_or(0, |log| log.lines().count())
+        };
+
+        save_state(
+            previews.path(),
+            &state(json!({"script":"fake.sh","dir":app.to_string_lossy()})),
+        );
+        let reaped = reap_lost(project.path(), previews.path()).unwrap();
+        assert_eq!(reaped["state"], "failed", "{reaped}");
+        assert_eq!(reaped["reason"], "preview.runner_lost", "{reaped}");
+        assert!(reaped.get("launched").is_none(), "{reaped}");
+        assert_eq!(downs(), 1, "the launched app's down ran once");
+        assert!(!app.exists(), "the fixture directory is removed");
+        reap_lost(project.path(), previews.path()).unwrap();
+        assert_eq!(downs(), 1, "a reaped run is not stopped again");
+
+        for record in [
+            json!({"script":"other.sh","dir":app.to_string_lossy()}),
+            json!({"script":"fake.sh","dir":project.path().join("graphhelm-watch-x").to_string_lossy()}),
+        ] {
+            save_state(previews.path(), &state(record));
+            reap_lost(project.path(), previews.path()).unwrap();
+        }
+        assert_eq!(
+            downs(),
+            1,
+            "a record naming another script or directory stops nothing"
+        );
+    }
+
+    /// #593: a runner killed inside up must leave a record that a reader can reap. Existing
+    /// reaper cells supply a completed launch record and miss this window. Cost: a child test
+    /// process, a shell and temp files; no browser/network, at most 15 seconds waiting for up.
+    #[test]
+    fn a_preview_records_its_fixture_before_up_returns() {
+        use std::process::{Command, Stdio};
+        use std::sync::{Arc, Mutex};
+        use std::time::{Duration, Instant};
+        const CHILD: &str = "GRAPHHELM_TEST_PREVIEW_DURING_UP";
+        if let Some(project) = std::env::var_os(CHILD) {
+            let project = std::path::PathBuf::from(project);
+            let mut run = super::Run {
+                dir: project.join("preview"),
+                state: json!({"state":"running","pid":std::process::id(),
+                    "startedAt":chrono::Utc::now().to_rfc3339()}),
+                frames: 0,
+                proof: None,
+                contract: String::new(),
+                last: None,
+                confirmed: false,
+                viewport: Value::Null,
+                storage: None,
+            };
+            run.save();
+            let _ = super::play(
+                &project,
+                &json!({"base":"http://127.0.0.1:1","paths":{},"edges":[],"screens":[]}),
+                &mut run,
+                Instant::now() + Duration::from_secs(30),
+                &Arc::new(Mutex::new(None)),
+            );
+            return;
+        }
+        let project = tempfile::tempdir().unwrap();
+        let observers = project.path().join(".graphhelm/observers");
+        let previews = project.path().join("preview");
+        std::fs::create_dir_all(&observers).unwrap();
+        std::fs::create_dir(&previews).unwrap();
+        std::fs::write(
+            observers.join("journey_driver.mjs"),
+            include_bytes!("../../../../tools/journey-driver/driver.mjs"),
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join(".graphhelm/journey-fixture.json"),
+            r#"{"schema":"graphhelm-journey-fixture/1","script":"fake.sh","isolated":true}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join("fake.sh"),
+            r#"#!/usr/bin/env bash
+if [ "$1" = up ]; then
+  mkdir -p "$2"
+  echo "$$ $(cat /proc/$$/winpid 2>/dev/null)" > "$2/up.pid"
+  printf '%s' "$2" > up.marker
+  sleep 30
+else
+  read -r shellpid winpid < "$2/up.pid"
+  if [ -n "$winpid" ]; then
+    taskkill //PID "$winpid" //T //F >/dev/null 2>&1 || true
+  else
+    kill -STOP "$shellpid" 2>/dev/null || true
+    pkill -TERM -P "$shellpid" 2>/dev/null || true
+    kill -KILL "$shellpid" 2>/dev/null || true
+  fi
+  echo down >> down.log
+fi
+"#,
+        )
+        .unwrap();
+        let mut runner = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "commands::journey_preview::tests::a_preview_records_its_fixture_before_up_returns",
+            ])
+            .env(CHILD, project.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(15);
+        let fixture = loop {
+            let marker = std::fs::read_to_string(project.path().join("up.marker"));
+            if let Some(marker) = marker.ok().filter(|text| !text.is_empty()) {
+                break Some(marker);
+            }
+            if Instant::now() >= until {
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        let recorded = read_state(&previews);
+        runner.kill().unwrap();
+        runner.wait().unwrap();
+        let reaped = reap_lost(project.path(), &previews);
+        let downs = std::fs::read_to_string(project.path().join("down.log"))
+            .map_or(0, |log| log.lines().count());
+        let fixture = fixture.expect("the real up process reached its sleeping marker");
+        let removed = !Path::new(&fixture).exists();
+        // Keep the RED run clean too: the old code has no persisted handle for the reader.
+        if !removed {
+            super::LaunchedStop::from_record(
+                project.path(),
+                &json!({"script":"fake.sh","dir":fixture}),
+            )
+            .unwrap()
+            .stop();
+        }
+        let recorded = recorded.unwrap();
+        assert_eq!(recorded["launched"]["script"], "fake.sh", "{recorded}");
+        assert_eq!(recorded["launched"]["dir"], fixture);
+        let reaped = reaped.unwrap();
+        assert_eq!(reaped["state"], "failed", "{reaped}");
+        assert_eq!(reaped["reason"], "preview.runner_lost", "{reaped}");
+        assert_eq!(downs, 1, "the reader ran down once");
+        assert!(removed, "the reader removed the fixture directory");
+        reap_lost(project.path(), &previews);
+        assert_eq!(
+            std::fs::read_to_string(project.path().join("down.log"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+    }
+
+    /// #593 review (gh-claude-3): the reaper settles before it reaps. A reader that first sees
+    /// `running` with a dead runner and then, on the settling read, the `ready` the runner wrote
+    /// on its way out, answers `ready`: no `down`, no `preview.runner_lost`, and nothing stored
+    /// over the finished run. Catches a reaper that reads once (and kills the fixture of a run
+    /// that just finished). Cost: one process listing, temp files only.
+    #[test]
+    fn a_reaper_racing_a_finishing_runner_reaps_nothing() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join(".graphhelm")).unwrap();
+        std::fs::write(
+            project.path().join(".graphhelm/journey-fixture.json"),
+            r#"{"schema":"graphhelm-journey-fixture/1","script":"fake.sh","isolated":true}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join("fake.sh"),
+            "#!/usr/bin/env bash\nif [ \"$1\" = down ]; then echo down >> down.log; fi\n",
+        )
+        .unwrap();
+        let previews = tempfile::tempdir().unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        let app = std::env::temp_dir().join("graphhelm-watch-composition");
+        let running = json!({"preview":true,"digest":"sha256:aa","commit":"c1","state":"running",
+            "pid":u32::MAX,"startedAt":now,"screens":{},"edges":{},
+            "launched":{"script":"fake.sh","dir":app.to_string_lossy()}});
+        let ready = json!({"preview":true,"digest":"sha256:aa","commit":"c1","state":"ready",
+            "result":"pass","pid":u32::MAX,"startedAt":now,"ranAt":now,"screens":{},"edges":{}});
+        // The file holds what the runner left; the reads show the race.
+        save_state(previews.path(), &ready);
+        let mut reads = vec![running, ready.clone()].into_iter();
+        let answered = reap_lost_from(project.path(), previews.path(), || reads.next()).unwrap();
+        assert_eq!(answered["state"], "ready", "{answered}");
+        assert!(answered.get("reason").is_none(), "{answered}");
+        assert!(
+            !project.path().join("down.log").exists(),
+            "a finished run's fixture is not stopped by a reader"
+        );
+        assert_eq!(
+            read_state(previews.path()).unwrap(),
+            ready,
+            "the finished run is not overwritten"
+        );
     }
 
     /// #519: ids become file names only within the schema's identifier characters, and step

@@ -5212,13 +5212,16 @@ const GATEWAY_CREDENTIAL_SET_COMMAND: &str = "gateway.credential.set";
 /// `configured: false` (#1083 F6) - see `gateway_routes`; `probe`, which needs a route to act on,
 /// still answers 400 naming the parameter.
 fn effective_manifest(state: &ServeState, query_manifest: Option<PathBuf>) -> Option<PathBuf> {
-    query_manifest.or_else(|| {
-        state
-            .runtime
-            .as_ref()
-            .and_then(|wiring| wiring.model.as_ref())
-            .map(|model| model.manifest_path.clone())
-    })
+    query_manifest
+        .or_else(|| {
+            state
+                .runtime
+                .as_ref()
+                .and_then(|wiring| wiring.model.as_ref())
+                .map(|model| model.manifest_path.clone())
+        })
+        // #585: a listing-only manifest (`--gateway-manifest`) when no model half is wired.
+        .or_else(|| state.gateway_manifest.as_deref().map(Path::to_path_buf))
 }
 
 /// Query values ride verbatim (no percent-decoding): every input here is a filesystem path or
@@ -6458,6 +6461,7 @@ mod tests {
             cancels: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             sweep_interval: None,
             read_audit: None,
+            gateway_manifest: None,
             native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         };
         (directory, state)
@@ -6603,8 +6607,6 @@ mod tests {
         });
     }
 
-    /// The helper's own contract, with a closure that can observe its thread: the work runs
-    /// somewhere that is not the reactor thread, and its value comes back.
     /// #519 (gh-claude-9's real Studio check): the Studio names the run it has open in the preview
     /// POST, so a body with `executionId` must start the preview, while any other key, a wrong
     /// type or an empty id is still refused. Cost: microseconds.
@@ -6649,6 +6651,28 @@ mod tests {
         }
     }
 
+    /// #585: the Studio's Models panel can list and write routes on a Runtime started with only
+    /// `--gateway-manifest`, while a request's own `manifest` still wins; with neither, there is
+    /// no manifest (the panel says "started without a gateway manifest"). Cost: microseconds.
+    #[test]
+    fn a_listing_only_gateway_manifest_is_the_routes_manifest_when_no_model_is_wired() {
+        let (_directory, mut state) = known_execution_state();
+        assert_eq!(super::effective_manifest(&state, None), None);
+        let listed = PathBuf::from("fixture/routes.json");
+        state.gateway_manifest = Some(Arc::from(listed.as_path()));
+        assert_eq!(
+            super::effective_manifest(&state, None),
+            Some(listed.clone())
+        );
+        let asked = PathBuf::from("asked/routes.json");
+        assert_eq!(
+            super::effective_manifest(&state, Some(asked.clone())),
+            Some(asked)
+        );
+    }
+
+    /// The helper's own contract, with a closure that can observe its thread: the work runs
+    /// somewhere that is not the reactor thread, and its value comes back.
     #[test]
     fn off_reactor_runs_the_work_on_another_thread_and_returns_its_value() {
         let _serial = SERIAL

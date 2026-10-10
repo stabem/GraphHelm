@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { startFixture } from './fixture-server.mjs';
 
@@ -36,7 +37,7 @@ async function client(t, env={}) {
   return {send,output};
 }
 const viewport={width:1280,height:720};
-async function open(c,base,allowOrigins=[]) {const r=await c.send('open',{base,viewport,allowOrigins});assert.equal(r.ok,true,JSON.stringify(r));}
+async function open(c,base,allowOrigins=[],extra={}) {const r=await c.send('open',{base,viewport,allowOrigins,...extra});assert.equal(r.ok,true,JSON.stringify(r));}
 async function act(c,kind,role,name,extra={}) {return c.send('act',{kind,role,name,...extra});}
 
 test('exact names, ambiguity, contextual cache and actual supported actions',async t=>{
@@ -221,4 +222,85 @@ test('declared storage survives a reload until the app overwrites it, at the dec
   await seen('Seen: flow');
   assert.equal((await act(c,'activate','button','Overwrite')).ok,true);
   await seen('Seen: app');
+});
+
+// Coverage is an explicit observer: the initial page calls one named function while another stays
+// untouched. This catches a missing start-before-navigation,
+// an accidental zero-success artifact, or loss of function ranges/counts in serialization.
+test('coverage captures called and untouched generated functions without source text',async t=>{
+  const server=createServer((_req,res)=>{
+    res.setHeader('Content-Type','text/html; charset=utf-8');
+    res.end('<!doctype html><html><body><main><h1>Coverage</h1></main><script>function calledFunction(){return 1} function untouchedFunction(){return 2} window.coverageMarker=calledFunction()</script></body></html>');
+  });
+  await new Promise(done=>server.listen(0,'127.0.0.1',done));
+  t.after(()=>new Promise(done=>server.close(done)));
+  const c=await client(t);await open(c,`http://127.0.0.1:${server.address().port}/coverage`,[],{coverage:true});
+  const result=await c.send('coverage');
+  assert.equal(result.ok,true,JSON.stringify(result));
+  assert.deepEqual(result.result,{path:'coverage.json',schema:'graphhelm-js-coverage/1'});
+  const artifact=JSON.parse(await readFile(join(c.output,'coverage.json'),'utf8'));
+  assert.equal(artifact.schema,'graphhelm-js-coverage/1');
+  assert.equal(artifact.collection,'captured');
+  assert.equal(artifact.navigationCount,1);
+  assert.equal(artifact.negativeEvidenceEligible,true);
+  assert.equal(artifact.completeness.complete,true);
+  assert.ok(artifact.limitations.includes('JavaScript page coverage only'));
+  assert.ok(artifact.scripts.length>0);
+  const functions=artifact.scripts.flatMap(script=>script.functions);
+  assert.ok(functions.some(fn=>fn.name==='calledFunction'&&fn.ranges.some(range=>range.count>0)),'a named generated function was called');
+  assert.ok(functions.some(fn=>fn.name==='untouchedFunction'&&fn.ranges.every(range=>range.count===0)),'a named untouched generated function was retained');
+  assert.ok(!JSON.stringify(artifact).includes('sourceContent'));
+  assert.equal((await c.send('coverage')).code,'driver.protocol_invalid');
+});
+
+test('coverage keeps inline source hashes, refuses source-map attribution gaps, and marks navigation incomplete',async t=>{
+  const original='function originalMapped(){return "original-source-canary"}';
+  const encoded=Buffer.from(JSON.stringify({version:3,sources:['src/original.js'],sourcesContent:[original],names:[],mappings:''})).toString('base64');
+  const multi=Buffer.from(JSON.stringify({version:3,sources:['a.js','b.js'],sourcesContent:['function a(){return 1}','function b(){return 2}'],names:[],mappings:''})).toString('base64');
+  const partial=Buffer.from(JSON.stringify({version:3,sources:['a.js','b.js'],sourcesContent:['function a(){return 1}'],names:[],mappings:''})).toString('base64');
+  const server=createServer((req,res)=>{
+    res.setHeader('Content-Type','text/html; charset=utf-8');
+    if(req.url==='/valid') return res.end(`<script>function generatedMapped(){return 1}generatedMapped();//# sourceMappingURL=data:application/json;base64,${encoded}</script>`);
+    if(req.url==='/external') return res.end('<script>function externalMap(){return 1}externalMap();//# sourceMappingURL=https://maps.example/external-map.js</script>');
+    if(req.url==='/malformed') return res.end('<script>function malformedMap(){return 1}malformedMap();//# sourceMappingURL=data:application/json;base64,not-json</script>');
+    if(req.url==='/multi') return res.end(`<script>function multiMap(){return 1}multiMap();//# sourceMappingURL=data:application/json;base64,${multi}</script>`);
+    if(req.url==='/partial') return res.end(`<script>function partialMap(){return 1}partialMap();//# sourceMappingURL=data:application/json;base64,${partial}</script>`);
+    if(req.url==='/nav') return res.end('<button>Navigate</button><script>document.querySelector("button").onclick=()=>location.href="/nav2"</script>');
+    res.end('<h1>Navigation target</h1>');
+  });
+  await new Promise(done=>server.listen(0,'127.0.0.1',done));
+  t.after(()=>new Promise(done=>server.close(done)));
+  const base=`http://127.0.0.1:${server.address().port}`;
+  const readArtifact=async (path, expectedSources)=>{
+    const c=await client(t);await open(c,base+path,[],{coverage:true});
+    const reply=await c.send('coverage');assert.equal(reply.ok,true,JSON.stringify(reply));
+    const artifact=JSON.parse(await readFile(join(c.output,'coverage.json'),'utf8'));
+    assert.deepEqual(artifact.scripts.flatMap(s=>s.sources).map(s=>s.sha256),expectedSources);
+    assert.ok(!JSON.stringify(artifact).includes('sourceContent'));
+    return artifact;
+  };
+  const valid=await readArtifact('/valid',[createHash('sha256').update(original).digest('hex')]);
+  assert.equal(valid.negativeEvidenceEligible,true);
+  for(const path of ['/external','/malformed','/partial']) {
+    const artifact=await readArtifact(path,[]);
+    assert.equal(artifact.negativeEvidenceEligible,false);
+    assert.equal(artifact.complete,false);
+    assert.ok(!JSON.stringify(artifact).includes('external-map.js'));
+  }
+  const multiple=await readArtifact('/multi',[createHash('sha256').update('function a(){return 1}').digest('hex'),createHash('sha256').update('function b(){return 2}').digest('hex')]);
+  assert.equal(multiple.negativeEvidenceEligible,false);
+  assert.equal(multiple.complete,false);
+  const unavailable=await client(t);await open(unavailable,base+'/valid');
+  const unavailableReply=await unavailable.send('coverage');assert.equal(unavailableReply.ok,true);
+  const unavailableArtifact=JSON.parse(await readFile(join(unavailable.output,'coverage.json'),'utf8'));
+  assert.equal(unavailableArtifact.collection,'unavailable');
+  assert.equal(unavailableArtifact.complete,false);
+  assert.equal(unavailableArtifact.negativeEvidenceEligible,false);
+  const navigated=await client(t);await open(navigated,base+'/nav',[],{coverage:true});
+  assert.equal((await act(navigated,'activate','button','Navigate')).ok,true);
+  const navReply=await navigated.send('coverage');assert.equal(navReply.ok,true);
+  const navArtifact=JSON.parse(await readFile(join(navigated.output,'coverage.json'),'utf8'));
+  assert.equal(navArtifact.navigationCount,2);
+  assert.equal(navArtifact.negativeEvidenceEligible,false);
+  assert.equal(navArtifact.complete,false);
 });

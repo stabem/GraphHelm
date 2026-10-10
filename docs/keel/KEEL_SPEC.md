@@ -83,6 +83,10 @@ Owner order 2026-09-23: *keel also serves to optimise time.* The unit of cost is
 | 3 | `KeelDebit` events; the ladder folded per actor from the Event Store; wired to `amend_budget` and route eligibility; repair cost charged to the offender | runtime driver (after #1204 lands) |
 | 4 | Contract index generated deterministically from the AST per unit (the read half of Law 1), served through `compile_context` instead of files | `core/architect`, context compiler |
 
+The optional [`keel test validation`](KEEL_TEST_VALIDATION.md) command collects journey execution
+evidence. It distinguishes generated functions observed in the browser from unobserved candidates
+and unknown source coverage; it cannot establish that a declaration is safe to delete.
+
 ## 5. Gaps the research names, kept open on purpose
 
 Write-token economy has no direct instrument anywhere (first-write survival to merge, patch precision) — slice 3 will measure it from the Event Store before claiming it. "The card is answerable without opening bodies" is a hypothesis no source tested — slice 4 pairs it with a body-read ratio. A unified drift taxonomy with severities does not exist; Keel's rule ids are one. The watchdog's own false-positive budget and rule-retirement criterion are unowned in every source; Law 5's replayable refusals are the precondition for measuring them. Multi-lane concurrency (two seats drifting one module, attribution in a squash of two clean PRs) is unsolved everywhere; GraphHelm's identity line and the two-pass protocol are the primitives. Compliance decay per generated unit (odds ratio 0.944 per function, [arXiv 2605.10039](https://arxiv.org/abs/2605.10039)) argues for re-checking every K units; the effect on billed cost is unmeasured and is not claimed.

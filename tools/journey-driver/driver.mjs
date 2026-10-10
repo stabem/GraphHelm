@@ -7,6 +7,7 @@ import { lstat, mkdir, rename, writeFile } from 'node:fs/promises';
 
 const PROTOCOL = 'graphhelm-journey-driver/1';
 const FRAME = 65536, TIMEOUT = 30000;
+const COVERAGE_MAX = 16 * 1024 * 1024, COVERAGE_SOURCE_MAX = 4 * 1024 * 1024, COVERAGE_MAP_MAX = 4 * 1024 * 1024, COVERAGE_FUNCTION_MAX = 65536, COVERAGE_RANGE_MAX = 262144;
 // A replay snapshot (expect check) may carry a real page: 32 KiB, well inside the 64 KiB frame (#434:
 // a Studio Journey tab listing 21 flows is 13.8 KiB). A discover snapshot feeds a model, so it keeps
 // the explore design's 6 KiB budget.
@@ -15,16 +16,17 @@ const SNAPSHOT = 32768, SNAPSHOT_DISCOVER = 6144;
 // TIMEOUT raced that deadline and surfaced as replay.timeout instead of expectation_failed (#398).
 const SCREEN_WAIT = TIMEOUT - 5000;
 const fields = {
-  open: ['base', 'viewport', 'allowOrigins', 'headed', 'survive', 'show', 'screencast', 'storage'], snapshot: ['expect','discover'],
+  open: ['base', 'viewport', 'allowOrigins', 'headed', 'survive', 'show', 'screencast', 'storage', 'coverage'], snapshot: ['expect','discover'],
   show: ['caption', 'role', 'name'],
   act: ['kind', 'role', 'name', 'text', 'secretEnv', 'locator'],
-  capture: ['path', 'maskSecrets'], close: [],
+  capture: ['path', 'maskSecrets'], coverage: [], close: [],
 };
 const roles = new Set(['dialog','alertdialog','banner','complementary','contentinfo','form','main','navigation','region','search','heading','button','checkbox','combobox','link','menuitem','menuitemcheckbox','menuitemradio','option','radio','searchbox','slider','spinbutton','switch','tab','textbox','treeitem']);
 const landmarks = new Set(['banner','complementary','contentinfo','form','main','navigation','region','search']);
 const secrets = Object.entries(process.env).filter(([key]) => /^GRAPHHELM_SECRET_[A-Za-z0-9_]+$/.test(key));
 let browser, context, page, baseOrigin, allowed = new Set(), hostRefused = false, networkFailure;
 let requestId = 0, opened = false, closed = false, headed = false, survive = false, showing = false;
+let coverageEnabled = false, coverageStarted = false, coverageStopped = false, mainframeNavigations = 0;
 // A headed (live) session survives an observation failure so the owner sees where the journey
 // broke (#398); so does a healing replay's session, which repairs the broken edge in place
 // (#356). Protocol, privacy and host failures still end it.
@@ -63,6 +65,7 @@ function validate(r) {
   if (!exactKeys(r,['protocol','requestId','op'],fields[r.op])) fail('driver.protocol_invalid');
   if (r.op === 'open') {
     if (Object.hasOwn(r,'headed') && typeof r.headed !== 'boolean') fail('driver.protocol_invalid');
+    if (Object.hasOwn(r,'coverage') && typeof r.coverage !== 'boolean') fail('driver.protocol_invalid');
     if (Object.hasOwn(r,'survive') && typeof r.survive !== 'boolean') fail('driver.protocol_invalid');
     // #491: `show` (a watch) draws its caption and outline in the page, headed or not (#519).
     if (Object.hasOwn(r,'show') && typeof r.show !== 'boolean') fail('driver.protocol_invalid');
@@ -96,6 +99,86 @@ function validate(r) {
   // Refuse a raw secret in any approved name, origin, cache locator or literal before I/O.
   if (secrets.some(([,v]) => v && JSON.stringify(r).includes(v))) fail('driver.secret_literal');
   requestId = r.requestId;
+}
+function coveragePath(raw) {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return redacted(parsed.pathname).slice(0, 2048) || '/';
+  } catch {}
+  return '[unknown]';
+}
+function hashSource(source) {
+  return createHash('sha256').update(source).digest('hex');
+}
+function inlineSourceHashes(source) {
+  if (typeof source !== 'string') return { hashes: [], mapped: false };
+  const match = source.match(/(?:\/\/|\/\*)[#@]\s*sourceMappingURL=data:application\/json;base64,([^*\s]+)(?:\*\/)?\s*$/m);
+  if (!match) {
+    if (/(?:\/\/|\/\*)[#@]\s*sourceMappingURL=/m.test(source)) return { hashes: [], mapped: true };
+    return { hashes: Buffer.byteLength(source) <= COVERAGE_SOURCE_MAX ? [hashSource(source)] : [], mapped: false };
+  }
+  const encoded = match[1];
+  if (Buffer.byteLength(encoded, 'ascii') > COVERAGE_MAP_MAX) return { hashes: [], mapped: true };
+  let map;
+  try {
+    const decoded = Buffer.from(encoded, 'base64');
+    if (decoded.length > COVERAGE_MAP_MAX) return { hashes: [], mapped: true };
+    map = JSON.parse(decoded.toString('utf8'));
+  } catch { return { hashes: [], mapped: true }; }
+  if (map.version !== 3 || !Array.isArray(map.sources) || map.sources.length === 0 || !map.sources.every(value => typeof value === 'string') || typeof map.mappings !== 'string' || !Array.isArray(map.sourcesContent) || map.sourcesContent.length !== map.sources.length) return { hashes: [], mapped: true };
+  if (!map.sourcesContent.every(value => typeof value === 'string' && Buffer.byteLength(value) <= COVERAGE_SOURCE_MAX)) return { hashes: [], mapped: true };
+  const hashes = map.sourcesContent.map(hashSource);
+  return { hashes, mapped: true };
+}
+function coverageArtifact(entries, limitations, collection = 'captured') {
+  const scripts = [];
+  const reasons = [];
+  let functionTotal = 0, rangeTotal = 0;
+  const inputEntries = Array.isArray(entries) ? entries : [];
+  if (inputEntries.length > 1024) reasons.push('script count was bounded');
+  for (const entry of inputEntries.slice(0, 1024)) {
+    const source = typeof entry.source === 'string' ? entry.source : null;
+    const mapped = inlineSourceHashes(source);
+    const functions = [];
+    if (source === null) reasons.push('generated source was unavailable');
+    if (typeof entry.url === 'string' && Buffer.byteLength(entry.url) > 2048) reasons.push('script URL was bounded');
+    const inputFunctions = Array.isArray(entry.functions) ? entry.functions : [];
+    if (inputFunctions.length > 4096) reasons.push('function count was bounded');
+    for (const fn of inputFunctions.slice(0, 4096)) {
+      if (functionTotal >= COVERAGE_FUNCTION_MAX) { reasons.push('total function count was bounded'); break; }
+      const inputRanges = Array.isArray(fn.ranges) ? fn.ranges : [];
+      if (inputRanges.length > 64) reasons.push('range count was bounded');
+      const ranges = inputRanges.slice(0, 64).filter(range => plain(range) && Number.isSafeInteger(range.startOffset) && Number.isSafeInteger(range.endOffset) && Number.isSafeInteger(range.count) && range.startOffset >= 0 && range.endOffset >= range.startOffset && range.count >= 0).map(range => ({startOffset: range.startOffset, endOffset: range.endOffset, count: range.count}));
+      if (ranges.length !== Math.min(inputRanges.length, 64)) reasons.push('invalid coverage range was omitted');
+      if (!ranges.length) continue;
+      if (rangeTotal + ranges.length > COVERAGE_RANGE_MAX) { reasons.push('total range count was bounded'); break; }
+      if (typeof fn.functionName === 'string' && Buffer.byteLength(fn.functionName) > 256) reasons.push('function name was bounded');
+      functions.push({name: redacted(typeof fn.functionName === 'string' ? fn.functionName : '(anonymous)').replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 256), ranges, isBlockCoverage: fn.isBlockCoverage === true});
+      functionTotal += 1; rangeTotal += ranges.length;
+    }
+    if (source !== null && !mapped.hashes.length) reasons.push('source or inline source map was unusable');
+    if (mapped.mapped && mapped.hashes.length > 1) reasons.push('multiple original source hashes were retained');
+    const script = {url: coveragePath(entry.url), generatedSha256: source === null ? null : hashSource(source), sources: mapped.hashes.map(sha256 => ({sha256})), functions};
+    scripts.push(script);
+  }
+  if (mainframeNavigations > 1) { limitations.push('mainframe navigation may have lost coverage data'); reasons.push('mainframe navigation exceeded initial load'); }
+  limitations.push('scripts without usable generated source or inline source-map association remain unknown');
+  if (reasons.length) limitations.push(...new Set(reasons));
+  if (collection !== 'captured') reasons.push('coverage collection was unavailable');
+  const complete = collection === 'captured' && reasons.length === 0;
+  return {schema:'graphhelm-js-coverage/1', collection, navigationCount:mainframeNavigations, negativeEvidenceEligible:collection === 'captured' && complete && mainframeNavigations <= 1, complete, completeness:{complete, reasons:[...new Set(reasons)]}, limitations, scripts};
+}
+async function writeCoverageArtifact(artifact) {
+  const target = resolve(output, 'coverage.json');
+  if (!target.startsWith(output) || relative(output, target) !== 'coverage.json') fail('driver.capture_refused');
+  await mkdir(output, {recursive:true});
+  const outputInfo = await lstat(output);
+  if (outputInfo.isSymbolicLink() || !outputInfo.isDirectory()) fail('driver.capture_refused');
+  try { await lstat(target); fail('driver.capture_refused'); } catch (err) { if (err.code !== 'ENOENT') throw err; }
+  const data = JSON.stringify(clean(artifact));
+  if (Buffer.byteLength(data) > COVERAGE_MAX) fail('driver.capture_refused');
+  await writeFile(target, data, {flag:'wx'});
+  return {path:'coverage.json',schema:'graphhelm-js-coverage/1'};
 }
 /** #519: the page as frames for the Studio while a headless watch plays. The latest frame is
  * `screencast/frame.jpg` in the output directory, with `frame.json` (`seq`, `width`, `height`)
@@ -227,7 +310,7 @@ function skeleton(aria) {
 async function run(r) {
   if (r.op === 'open') {
     if (opened) fail('driver.protocol_invalid');
-    headed = r.headed === true; survive = headed || r.survive === true; showing = r.show === true;
+    headed = r.headed === true; survive = headed || r.survive === true; showing = r.show === true; coverageEnabled = r.coverage === true;
     const parsed=url(r.base,true); baseOrigin=parsed.origin;
     allowed = new Set([baseOrigin,...r.allowOrigins.map(o=>url(o,false,true).origin)]);
     let chromium;
@@ -277,6 +360,12 @@ async function run(r) {
         socket.connectToServer();
       });
       page=await context.newPage();
+      page.on('framenavigated', frame => { if (frame === page.mainFrame()) mainframeNavigations += 1; });
+      if (coverageEnabled) {
+        if (!page.coverage || typeof page.coverage.startJSCoverage !== 'function') fail('driver.observer_missing');
+        await page.coverage.startJSCoverage({resetOnNavigation:false});
+        coverageStarted = true;
+      }
       if (r.screencast === true) await screencast(r.viewport);
       await page.goto(r.base,{waitUntil:'domcontentloaded',timeout:TIMEOUT});
       opened=true; checkHost();
@@ -286,6 +375,17 @@ async function run(r) {
   if (r.op === 'close') { await release(); closed=true; return {closed:true}; }
   if (!opened || closed) fail('driver.protocol_invalid');
   checkHost();
+  if (r.op === 'coverage') {
+    if (coverageStopped) fail('driver.protocol_invalid');
+    coverageStopped = true;
+    if (!coverageEnabled || !coverageStarted) return writeCoverageArtifact(coverageArtifact([], ['coverage was not enabled for this session'], 'unavailable'));
+    let entries;
+    try {
+      if (!page.coverage || typeof page.coverage.stopJSCoverage !== 'function') fail('driver.observer_missing');
+      entries = await page.coverage.stopJSCoverage();
+    } catch (err) { if (err.code) throw err; fail('driver.observer_missing'); }
+    return writeCoverageArtifact(coverageArtifact(entries, ['JavaScript page coverage only', 'backend, CSS, and worker coverage is not collected']));
+  }
   if (r.op === 'snapshot') {
     for (const expected of r.expect) {
       // A screen renders after its document loads; wait for the control, then require it unique.

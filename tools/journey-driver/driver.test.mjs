@@ -39,6 +39,8 @@ test('closed protocol refuses malformed, secret, sequence and oversized frames',
     // #519: a headless watch shows in the page and may stream frames; a headed one may not stream.
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], show: true, screencast: true }, 'driver.observer_missing'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], headed: true, show: true, screencast: true }, 'driver.protocol_invalid'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], coverage: 'yes' }, 'driver.protocol_invalid'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], coverage: true }, 'driver.observer_missing'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], screencast: true }, 'driver.protocol_invalid'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], show: true, screencast: 'yes' }, 'driver.protocol_invalid'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], headed: true, show: 'yes' }, 'driver.protocol_invalid'],

@@ -67,6 +67,8 @@ public APIs, platform code and persisted/wire contracts. No repository-wide swee
 The reviewer checks this record on the reviewed head; a missing record is answered before approval.
 See `docs/process/DELIVERY.md` §3 and `docs/keel/KEEL_SPEC.md` Law 1. This is a repository workflow
 rule, not a new automated `keel check` finding or a change to installed plugin copies.
+For execution evidence, see [`graphhelm keel test validation`](docs/keel/KEEL_TEST_VALIDATION.md).
+Its unobserved results are investigation leads; missing coverage never proves code is dead.
 
 ## Toolchain and repository commands
 

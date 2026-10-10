@@ -2356,6 +2356,7 @@ pub(super) async fn start_journey_preview(
             keyring: sealing.as_ref().map(|keyring| keyring.directory.clone()),
             key_id: sealing.as_ref().map(|keyring| keyring.key_id.clone()),
             execution,
+            validation_dir: None,
         })
     })
     .await;
@@ -2379,6 +2380,7 @@ pub(super) async fn journey_preview(
             execution: None,
             keyring: None,
             key_id: None,
+            validation_dir: None,
         })
     })
     .await;

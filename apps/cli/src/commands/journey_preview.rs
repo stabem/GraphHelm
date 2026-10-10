@@ -65,6 +65,12 @@ fn dir_of(project: &Path, id: &str) -> PathBuf {
     project.join(PREVIEWS).join(id)
 }
 
+fn dir_for(project: &Path, id: &str, validation_dir: Option<&Path>) -> PathBuf {
+    validation_dir
+        .map(|dir| dir.join(id))
+        .unwrap_or_else(|| dir_of(project, id))
+}
+
 /// The flow as the preview plays it, and the key its result is kept under.
 fn flow_and_key(project: &Path, id: &str) -> Result<(Value, String, String)> {
     if !plain_id(id) {
@@ -285,7 +291,7 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
         Ok(found) => found,
         Err(failed) => return answer(json!({}), Some(failed)),
     };
-    let dir = dir_of(&project, &args.id);
+    let dir = dir_for(&project, &args.id, args.validation_dir.as_deref());
     let stored = reap_lost(&project, &dir);
     let running_now = stored
         .as_ref()
@@ -332,6 +338,9 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
             "--project",
         ])
         .arg(&project);
+    if let Some(validation_dir) = args.validation_dir.as_deref() {
+        command.arg("--validation-dir").arg(validation_dir);
+    }
     if args.confirm {
         command.arg("--confirm");
     }
@@ -495,6 +504,9 @@ struct Run {
     /// #585: the page size and seeded localStorage the flow declares (else the preview's size).
     viewport: Value,
     storage: Option<Value>,
+    /// Validation owns a separate result tree and asks the driver for JS coverage per path.
+    validation: bool,
+    flow_id: String,
 }
 
 /// An approved flow asked to record into an execution on a Runtime with no sealed keyring: refused,
@@ -620,7 +632,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         Ok(found) => found,
         Err(failed) => return answer(json!({}), Some(failed)),
     };
-    let dir = dir_of(&project, &args.id);
+    let dir = dir_for(&project, &args.id, args.validation_dir.as_deref());
     let mut state = read_state(&dir).unwrap_or_else(|| json!({}));
     if state["digest"] != digest.as_str() || state["state"] != "running" {
         state = json!({"preview":true,"digest":digest,"commit":commit,"state":"running",
@@ -640,14 +652,27 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         dir,
         state,
         frames: 0,
-        proof: proof_args(args, &flow, &project),
+        proof: if args.validation_dir.is_some() {
+            None
+        } else {
+            proof_args(args, &flow, &project)
+        },
         contract: String::new(),
         last: None,
-        confirmed: args.confirm,
+        confirmed: args.confirm && args.validation_dir.is_none(),
         viewport: Value::Null,
         storage: None,
+        validation: args.validation_dir.is_some(),
+        flow_id: args.id.clone(),
     };
     (run.viewport, run.storage) = declared_browser(&flow, json!({"width":WIDTH,"height":HEIGHT}));
+    if run.validation {
+        run.state["validationPaths"] = json!({});
+        for name in flow["paths"].as_object().unwrap().keys() {
+            run.state["validationPaths"][name] =
+                json!({"execution":"not_run","collection":"unavailable"});
+        }
+    }
     run.save();
     let deadline = Instant::now() + PREVIEW_BUDGET;
     let launched = std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -698,7 +723,10 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         }
     }
     run.save();
-    answer(json!({"state":run.state["state"]}), None)
+    answer(
+        json!({"state":run.state["state"],"result":run.state["result"],"paths":run.state["validationPaths"],"reason":run.state["reason"]}),
+        None,
+    )
 }
 
 fn play(
@@ -709,6 +737,13 @@ fn play(
     stopper: &std::sync::Arc<std::sync::Mutex<Option<LaunchedStop>>>,
 ) -> Result<()> {
     observer_ready(project)?;
+    if run.validation && !launcher_isolated(project) {
+        return Err(failure(
+            "preview.launcher_not_isolated",
+            "/launcher/isolated",
+            2,
+        ));
+    }
     let mut base = flow["base"].as_str().unwrap().to_owned();
     // The app under test is started when it is down, and stopped when the preview ends. An
     // isolated launcher always starts its own on free ports (#585), and the preview plays there.
@@ -781,7 +816,9 @@ fn play(
             .iter()
             .map(|id| id.as_str().unwrap())
             .collect();
-        play_path(project, &base, &secrets, &screens, &edges, &ids, guard, run)?;
+        play_path(
+            project, &base, &secrets, &screens, &edges, &ids, name, guard, run,
+        )?;
         if !run.state["held"].is_null() {
             // Waiting for the owner's click: nothing after the held act is played.
             break;
@@ -825,44 +862,55 @@ fn play_path(
     screens: &std::collections::BTreeMap<&str, &Value>,
     edges: &std::collections::BTreeMap<&str, &Value>,
     ids: &[&str],
+    path_name: &str,
     guard: Guard,
     run: &mut Run,
 ) -> Result<()> {
+    if run.validation {
+        run.state["validationPaths"][path_name] =
+            json!({"execution":"failed","collection":"unavailable"});
+        run.save();
+    }
     let output = TemporaryOutput::create()?;
     let mut driver = Driver::start(project, output.path(), secrets)?;
-    let first = edges[ids[0]]["from"].as_str().unwrap();
-    let entry = format!(
-        "{}{}",
-        base.trim_end_matches('/'),
-        screens[first]["url"].as_str().unwrap()
-    );
-    // `survive` keeps the page after a step fails, so the failure's frame can be taken.
-    driver.call(
-        "open",
-        with_storage(
+    // One exit from the live driver: even a held or failed path attempts collection and closes.
+    let result = (|| -> Result<&'static str> {
+        let first = edges[ids[0]]["from"].as_str().unwrap();
+        let entry = format!(
+            "{}{}",
+            base.trim_end_matches('/'),
+            screens[first]["url"].as_str().unwrap()
+        );
+        let mut request = with_storage(
             json!({"base":entry,"viewport":run.viewport,"allowOrigins":[],"survive":true}),
             run.storage.as_ref(),
-        ),
-        "/entry",
-    )?;
-    let arrived = |driver: &mut Driver, run: &mut Run, screen: &str| -> Result<bool> {
-        match observe(driver, screens[screen], base, &format!("/screens/{screen}")) {
-            Ok(_) => {
-                let frame = run.capture(driver, output.path(), screen);
-                run.prove(screen, frame.as_ref())?;
-                run.screen(screen, "pass", None, frame);
-                Ok(true)
-            }
-            Err((code, _, _)) if SURVIVABLE.contains(&code) || code == "replay.wrong_screen" => {
-                let frame = run.capture(driver, output.path(), screen);
-                run.screen(screen, "drift", Some(step_reason(code)), frame);
-                Ok(false)
-            }
-            Err(failed) => Err(failed),
+        );
+        if run.validation {
+            request["coverage"] = true.into();
         }
-    };
-    if arrived(&mut driver, run, first)? {
-        'edges: for id in ids {
+        driver.call("open", request, "/entry")?;
+        let arrived = |driver: &mut Driver, run: &mut Run, screen: &str| -> Result<bool> {
+            match observe(driver, screens[screen], base, &format!("/screens/{screen}")) {
+                Ok(_) => {
+                    let frame = run.capture(driver, output.path(), screen);
+                    run.prove(screen, frame.as_ref())?;
+                    run.screen(screen, "pass", None, frame);
+                    Ok(true)
+                }
+                Err((code, _, _))
+                    if SURVIVABLE.contains(&code) || code == "replay.wrong_screen" =>
+                {
+                    let frame = run.capture(driver, output.path(), screen);
+                    run.screen(screen, "drift", Some(step_reason(code)), frame);
+                    Ok(false)
+                }
+                Err(failed) => Err(failed),
+            }
+        };
+        if !arrived(&mut driver, run, first)? {
+            return Ok("drift");
+        }
+        for id in ids {
             let edge = edges[id];
             let to = edge["to"].as_str().unwrap();
             for act in edge["acts"].as_array().unwrap() {
@@ -871,8 +919,9 @@ fn play_path(
                     if reason == "confirm_needed" {
                         run.state["held"] = json!({"edge":id,"act":act["name"],"base":base});
                         run.save();
+                        return Ok("held");
                     }
-                    break 'edges;
+                    return Ok("skipped");
                 }
                 let mut request = json!({"kind":act["kind"],"role":act["role"],"name":act["name"]});
                 if let Some(text) = act.get("text") {
@@ -886,11 +935,9 @@ fn play_path(
                     Err((code, _, _)) if SURVIVABLE.contains(&code) => {
                         let reason = step_reason(code);
                         run.edge(id, "fail", Some(reason));
-                        // The page as it was when the act failed, on the screen it was meant to
-                        // reach: that is where the owner looks for what went wrong.
                         let frame = run.capture(&mut driver, output.path(), to);
                         run.screen(to, "fail", Some(reason), frame);
-                        break 'edges;
+                        return Ok("failed");
                     }
                     Err(failed) => return Err(failed),
                 }
@@ -899,12 +946,65 @@ fn play_path(
                 run.edge(id, "pass", None);
             } else {
                 run.edge(id, "drift", Some("expect_missing"));
-                break;
+                return Ok("drift");
             }
         }
+        Ok("completed")
+    })();
+    if run.validation {
+        let execution = result.as_ref().copied().unwrap_or("failed");
+        let collection = finalize_coverage(&mut driver, run, output.path(), path_name, execution);
+        run.state["validationPaths"][path_name] =
+            json!({"execution":execution,"collection":collection});
+        run.save();
     }
     let _ = driver.close();
-    Ok(())
+    result.map(|_| ())
+}
+
+fn finalize_coverage(
+    driver: &mut Driver,
+    run: &Run,
+    output: &Path,
+    path_name: &str,
+    execution: &str,
+) -> &'static str {
+    let save = || -> Option<&'static str> {
+        let result = driver.call("coverage", json!({}), "/coverage").ok()?;
+        if result["path"] != "coverage.json" {
+            return None;
+        }
+        let source = output.join("coverage.json");
+        if !safe_node(&source) || std::fs::metadata(&source).ok()?.len() > 16 * 1024 * 1024 {
+            return None;
+        }
+        let mut artifact: Value = serde_json::from_slice(&std::fs::read(source).ok()?).ok()?;
+        if artifact["schema"] != "graphhelm-js-coverage/1" {
+            return None;
+        }
+        artifact["flow"] = run.flow_id.clone().into();
+        artifact["path"] = path_name.into();
+        artifact["execution"] = execution.into();
+        let dir = run.dir.join("coverage").join(sha_of(path_name));
+        std::fs::create_dir_all(&dir).ok()?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dir.join("coverage.json"))
+            .ok()?;
+        use std::io::Write;
+        file.write_all(&serde_json::to_vec(&artifact).ok()?).ok()?;
+        Some(
+            if artifact["collection"] == "captured" && artifact["completeness"]["complete"] == true
+            {
+                "captured"
+            } else {
+                "incomplete"
+            },
+        )
+    };
+    let mut save = save;
+    save().unwrap_or("unavailable")
 }
 
 /// `GET /v1/journey-flows/{id}/screens/{screen}/frame`: one screen's frame from the current
@@ -1109,6 +1209,7 @@ mod tests {
             execution: Some("x".into()),
             keyring: Some("k".into()),
             key_id: Some("id".into()),
+            validation_dir: None,
         };
         let approved = json!({"status":"approved"});
         let proof = proof_args(&full, &approved, project).expect("approved + execution records");
@@ -1117,6 +1218,7 @@ mod tests {
         assert!(proof_args(&full, &json!({"status":"draft"}), project).is_none());
         let partial = JourneyPreviewArgs {
             key_id: None,
+            validation_dir: None,
             ..full
         };
         assert!(proof_args(&partial, &approved, project).is_none());
@@ -1125,6 +1227,7 @@ mod tests {
         assert!(!unsealed_proof(&partial, &json!({"status":"draft"})));
         let no_execution = JourneyPreviewArgs {
             execution: None,
+            validation_dir: None,
             ..partial
         };
         assert!(!unsealed_proof(&no_execution, &approved));
@@ -1272,6 +1375,8 @@ mod tests {
                 confirmed: false,
                 viewport: Value::Null,
                 storage: None,
+                validation: false,
+                flow_id: String::new(),
             };
             run.save();
             let _ = super::play(

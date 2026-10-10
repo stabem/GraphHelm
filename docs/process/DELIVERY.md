@@ -66,6 +66,9 @@ other platforms and persisted/wire contracts before calling a candidate unused. 
 and a search with zero hits are leads, not deletion proof. Read source when an index is stale or
 partial and report any remaining coverage gap.
 
+When journey execution evidence is useful, [`keel test validation`](../keel/KEEL_TEST_VALIDATION.md)
+can collect it in isolated fixtures. It is optional, not another gate; missing coverage is unknown.
+
 Add a short `Retirement:` entry to the PR body (not a new card/schema field), only for changes that
 trigger this rule. Name the inspected paths/symbols and the evidence at the committed head, then
 record each candidate as **removed**, **retained** (name its live consumer or contract), or

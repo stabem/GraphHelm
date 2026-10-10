@@ -963,6 +963,100 @@ mod tests {
     use serde_json::{Value, json};
     use std::path::Path;
 
+    /// #676: the real preview must publish its result before the launcher's down runs.
+    /// Existing reaper cells start with supplied states and never observe this boundary.
+    /// Cost: one isolated Studio preview; opt-in Node, Playwright/Chromium and built CLI.
+    /// No production seam: the declared launcher reads the public persisted preview state.
+    #[test]
+    #[ignore = "requires an isolated Studio fixture and browser toolchain"]
+    fn a_finished_preview_is_ready_before_launcher_down() {
+        let root = std::env::var_os("GRAPHHELM_PREVIEW_OBSERVER_ROOT")
+            .expect("OBSERVER_MISSING: browser toolchain directory");
+        let project = tempfile::tempdir_in(root).unwrap();
+        let project = project.path();
+        let id = "studio-answer-node";
+        std::fs::create_dir_all(project.join(".graphhelm/journeys")).unwrap();
+        std::fs::create_dir_all(project.join(".graphhelm/observers")).unwrap();
+        std::fs::create_dir_all(super::dir_of(project, id)).unwrap();
+        std::fs::write(
+            project.join(".graphhelm/journeys/studio-answer-node.journey.yaml"),
+            include_bytes!("../../../../.graphhelm/journeys/studio-answer-node.journey.yaml"),
+        )
+        .unwrap();
+        let repo = std::path::PathBuf::from(
+            std::env::var_os("GRAPHHELM_PREVIEW_OBSERVER_REPO")
+                .expect("OBSERVER_MISSING: Studio checkout"),
+        );
+        let flow: Value = serde_yaml_ng::from_slice(include_bytes!(
+            "../../../../.graphhelm/journeys/studio-answer-node.journey.yaml"
+        ))
+        .unwrap();
+        for screen in flow["screens"].as_array().unwrap() {
+            for scope in screen["scope"].as_array().unwrap() {
+                let scope = scope.as_str().unwrap();
+                let target = project.join(scope);
+                std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+                std::fs::copy(repo.join(scope), target).unwrap();
+            }
+        }
+        std::fs::write(
+            project.join(".graphhelm/observers/journey_driver.mjs"),
+            include_bytes!("../../../../tools/journey-driver/driver.mjs"),
+        )
+        .unwrap();
+        std::fs::write(project.join("package.json"), "{}").unwrap();
+        std::fs::write(
+            project.join(".graphhelm/journey-fixture.json"),
+            r#"{"schema":"graphhelm-journey-fixture/1","script":"observe.sh","isolated":true}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            project.join("observe.sh"),
+            r#"#!/usr/bin/env bash
+set -eu
+if [ "$1" = down ]; then
+  cp .graphhelm/journey-previews/studio-answer-node/state.json before-down.json
+fi
+export GRAPHHELM_BIN="$GRAPHHELM_PREVIEW_OBSERVER_BIN"
+exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture.sh" "$@"
+"#,
+        )
+        .unwrap();
+        let outcome = super::run(&JourneyPreviewArgs {
+            id: id.into(),
+            project: Some(project.into()),
+            force: true,
+            read: false,
+            run: true,
+            confirm: false,
+            events: None,
+            execution: None,
+            keyring: None,
+            key_id: None,
+        });
+        assert_eq!(outcome.exit_code, 0);
+        let during: Value = serde_json::from_slice(
+            &std::fs::read(project.join("before-down.json")).expect("launcher reached down"),
+        )
+        .unwrap();
+        assert_eq!(during["screens"].as_object().unwrap().len(), 4, "{during}");
+        assert!(
+            during["screens"]
+                .as_object()
+                .unwrap()
+                .values()
+                .all(|s| s["result"] == "pass"),
+            "{during}"
+        );
+        assert_eq!(during["state"], "ready", "{during}");
+        assert_eq!(during["result"], "pass", "{during}");
+        assert!(during["ranAt"].is_string(), "{during}");
+        assert_eq!(
+            reap_lost(project, &super::dir_of(project, id)).unwrap()["state"],
+            "ready"
+        );
+    }
+
     /// #519: a stored preview answers only for the flow and commit it ran on; a changed flow or a
     /// new commit reads as `none` (the Studio then starts a new run), and the runner's pid and the
     /// frame files never reach the caller. Cost: microseconds.

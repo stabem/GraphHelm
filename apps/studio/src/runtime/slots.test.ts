@@ -30,6 +30,26 @@ describe("parseSlots", () => {
     expect(slots[1]).toEqual({ root: "E:/gh", ok: false, errorCodes: ["workspace.slot_root_missing"] });
   });
   it("an idle slot is an empty queue", () => expect(slots[2]).toEqual({ root: "F:/gh", ok: true, holder: null, waiting: [] }));
+  it("marks a queue unavailable when a waiter has no lane, without moving later waiters forward", () => {
+    const parsed = parseSlots({ slots: [
+      { root: "D:/gh", holder: { lane: "a", heldSeconds: 4 }, waiting: [{ lane: null }, { lane: "b", waitedSeconds: 2 }] },
+      { root: "E:/gh", holder: null, waiting: [] },
+      { root: "F:/gh", holder: null, waiting: [{ lane: "c", waitedSeconds: null }] },
+    ] });
+    expect(parsed[0]).toEqual({ root: "D:/gh", ok: false, errorCodes: [] });
+    expect(slotStatus("b", parsed)).toBeNull();
+    expect(parsed[1]).toEqual({ root: "E:/gh", ok: true, holder: null, waiting: [] });
+    expect(parsed[2]).toEqual({ root: "F:/gh", ok: true, holder: null, waiting: [{ lane: "c", label: null, pid: null, worktree: null, priority: null, waitedSeconds: 0, ticket: null }] });
+  });
+  it("does not read a held legacy slot with a missing lane as idle", () => {
+    expect(parseSlots({ slots: [
+      { root: "D:/gh", holder: { lane: null, label: null, pid: null, heldSeconds: null }, waiting: [] },
+      { root: "E:/gh", holder: null, waiting: [] },
+    ] })).toEqual([
+      { root: "D:/gh", ok: false, errorCodes: [] },
+      { root: "E:/gh", ok: true, holder: null, waiting: [] },
+    ]);
+  });
   it("no slot roots and garbage parse to nothing", () => {
     expect(parseSlots({ slots: [] })).toEqual([]);
     expect(parseSlots(null)).toEqual([]);

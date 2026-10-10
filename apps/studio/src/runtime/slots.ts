@@ -47,7 +47,13 @@ export function parseSlots(data: unknown): SlotView[] {
       out.push({ root, ok: false, errorCodes: codes });
       continue;
     }
-    out.push({ root, ok: true, holder: holder(o.holder), waiting: o.waiting.map(waiter).filter((w): w is SlotWaiter => w !== null) });
+    const parsedHolder = holder(o.holder);
+    const parsedWaiting = o.waiting.map(waiter);
+    if ((o.holder !== null && parsedHolder === null) || parsedWaiting.some((w) => w === null)) {
+      out.push({ root, ok: false, errorCodes: [] });
+      continue;
+    }
+    out.push({ root, ok: true, holder: parsedHolder, waiting: parsedWaiting.filter((w): w is SlotWaiter => w !== null) });
   }
   return out;
 }

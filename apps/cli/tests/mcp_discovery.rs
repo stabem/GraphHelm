@@ -241,6 +241,122 @@ impl Bridge {
 }
 
 #[test]
+fn project_discovery_from_a_linked_worktree_finds_the_main_checkout_runtime() {
+    // Cost: one temporary Runtime, Git subprocesses and MCP clients; no external service.
+    // The main checkout owns the record; hashing the linked worktree loses that record.
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("main checkout");
+    let worktree = dir.path().join("linked worktree");
+    let registry = dir.path().join("registry");
+    std::fs::create_dir_all(&project).unwrap();
+    for args in [
+        vec!["init"],
+        vec![
+            "-c",
+            "user.name=MCP Test",
+            "-c",
+            "user.email=mcp@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "initial",
+        ],
+        vec!["worktree", "add", "--detach", worktree.to_str().unwrap()],
+    ] {
+        let output = Command::new("git")
+            .current_dir(&project)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "Git setup failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let events = project.join(".graphhelm").join("events");
+    std::fs::create_dir_all(&events).unwrap();
+    let _runtime = serve_with_project(&events, free_port(), &registry, Some(&project));
+    let mut bridge = Bridge::start_in_project_cwd(&worktree, &registry);
+    let reply = bridge.list();
+    assert!(
+        authorized(&reply),
+        "worktree cwd must find main checkout Runtime: {reply}"
+    );
+    let nested = worktree.join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    let mut explicit = Bridge::start_project(&nested, &registry);
+    let reply = explicit.list();
+    assert!(
+        authorized(&reply),
+        "explicit worktree path must find main checkout Runtime: {reply}"
+    );
+}
+
+/// Cost: one temporary Runtime and six MCP clients; no host installation or external service.
+/// Exercise shipped arguments after host variable expansion, both explicit project and cwd.
+#[test]
+fn shipped_mcp_registrations_discover_without_port_or_token_overrides() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    let elsewhere = dir.path().join("elsewhere");
+    let registry = dir.path().join("registry");
+    let events = project.join(".graphhelm").join("events");
+    std::fs::create_dir_all(&events).unwrap();
+    std::fs::create_dir(&elsewhere).unwrap();
+    let _runtime = serve_with_project(&events, free_port(), &registry, Some(&project));
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for path in [
+        "plugins/graphhelm/.mcp.json",
+        "extensions/builtin/graphhelm-development-contracts/.mcp.json",
+        "extensions/builtin/graphhelm-jpd/.mcp.json",
+    ] {
+        let config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join(path)).unwrap()).unwrap();
+        for explicit in [false, true] {
+            let args = config["mcpServers"]["graphhelm"]["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|arg| {
+                    arg.as_str()
+                        .unwrap()
+                        .replace(
+                            "${GRAPHHELM_PROJECT:-.}",
+                            if explicit {
+                                project.to_str().unwrap()
+                            } else {
+                                "."
+                            },
+                        )
+                        .replace("${GRAPHHELM_ACTOR}", "registration-test")
+                        .replace(
+                            "${GRAPHHELM_RUNTIME_URL:-http://127.0.0.1:8791}",
+                            "http://127.0.0.1:8791",
+                        )
+                        .replace("${GRAPHHELM_TOKEN_FILE}", "")
+                })
+                .collect::<Vec<_>>();
+            let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+            command
+                .args(&args)
+                .current_dir(if explicit { &elsewhere } else { &project })
+                .env("GRAPHHELM_RUNTIME_DIR", &registry)
+                .env_remove("GRAPHHELM_API_TOKEN")
+                .env_remove("GRAPHHELM_TOKEN_FILE")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            let mut bridge = Bridge::from_child(command.spawn().unwrap());
+            let reply = bridge.list();
+            assert!(authorized(&reply), "{path}, explicit={explicit}: {reply}");
+        }
+    }
+}
+
+#[test]
 fn project_discovery_routes_two_projects_to_distinct_ports_and_tokens() {
     let dir = tempfile::tempdir().unwrap();
     let registry = dir.path().join("registry");

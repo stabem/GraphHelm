@@ -2514,6 +2514,19 @@ fn valid_mcp_registration(value: &serde_json::Value) -> bool {
     let Some(args) = args else {
         return false;
     };
+    if args
+        == [
+            "mcp",
+            "--discover",
+            "--project",
+            "${GRAPHHELM_PROJECT:-.}",
+            "--actor",
+            "${GRAPHHELM_ACTOR}",
+        ]
+    {
+        return true;
+    }
+    // Older packages may still use an explicit loopback endpoint and token file.
     args.len() == 7
         && args[0] == "mcp"
         && args[1] == "--url"

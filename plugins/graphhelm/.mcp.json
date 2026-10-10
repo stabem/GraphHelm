@@ -4,10 +4,9 @@
       "command": "${GRAPHHELM_CLI:-graphhelm}",
       "args": [
         "mcp",
-        "--url",
-        "${GRAPHHELM_RUNTIME_URL:-http://127.0.0.1:8791}",
-        "--token-file",
-        "${GRAPHHELM_TOKEN_FILE}",
+        "--discover",
+        "--project",
+        "${GRAPHHELM_PROJECT:-.}",
         "--actor",
         "agent-chat"
       ]

@@ -35,7 +35,7 @@ fn refuse(message: &str, pointer: &str) -> Outcome {
 /// and the actor admitted by the same wire rules the serve layer applies.
 fn build_client(args: &McpArgs, session: String) -> Result<client::ApiClient, Outcome> {
     let (base_url, token) = if args.discover && args.url.is_none() {
-        let project = match &args.project {
+        let mut project = match &args.project {
             Some(project) => project.clone(),
             None => std::env::current_dir().map_err(|_| {
                 refuse(
@@ -44,6 +44,33 @@ fn build_client(args: &McpArgs, session: String) -> Result<client::ApiClient, Ou
                 )
             })?,
         };
+        // A linked worktree belongs to the main checkout's Runtime. Keep ordinary
+        // directories (including non-Git projects) on their existing path identity.
+        if let Ok(output) = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&project)
+            .args([
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-common-dir",
+                "--git-dir",
+            ])
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_COMMON_DIR")
+            .stdin(std::process::Stdio::null())
+            .output()
+            && output.status.success()
+            && let Ok(paths) = std::str::from_utf8(&output.stdout)
+        {
+            let mut paths = paths.lines();
+            if let (Some(common), Some(private)) = (paths.next(), paths.next())
+                && common != private
+                && let Some(main) = std::path::Path::new(common).parent()
+            {
+                project = main.to_path_buf();
+            }
+        }
         let project_id =
             crate::commands::execution::delivery::project_id(&project).map_err(|_| {
                 refuse(

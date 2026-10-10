@@ -249,6 +249,7 @@ fn named_cli_targets_do_not_bypass_scaled_deadlines() {
         "monitor_http",
         "resume_atomicity",
         "resume_project_default",
+        "runtime_http",
         "signal_image_evidence_http",
         "wake_http",
         "workspace_cli",

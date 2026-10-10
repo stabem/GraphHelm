@@ -579,7 +579,7 @@ fn post_request(
     }
     let mut stream = connect_with_retry(&addresses)?;
     stream.set_read_timeout(Some(read_timeout))?;
-    stream.set_write_timeout(Some(Duration::from_secs(15)))?;
+    stream.set_write_timeout(Some(scaled(Duration::from_secs(15))))?;
 
     let payload = serde_json::to_vec(body).unwrap();
     let mut request = format!(
@@ -995,7 +995,7 @@ fn immediate_pause_interrupts_an_in_flight_node_and_resume_refuses_until_approve
     // The fixture is written BEFORE the clock starts (Codex on PR #1101): the 60 s budget below
     // measures the Runtime reaching `running`, not the temporary filesystem.
     let project = plain_project(directory.path());
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + scaled(Duration::from_secs(60));
     let events = directory.path().join("events");
     let broker = directory.path().join("broker");
     let keyring = directory.path().join("keyring");
@@ -1269,7 +1269,7 @@ fn immediate_pause_honors_if_match_attributes_the_caller_and_recognises_a_retry(
     // The fixture is written BEFORE the clock starts (Codex on PR #1101): the 60 s budget below
     // measures the Runtime reaching `running`, not the temporary filesystem.
     let project = plain_project(directory.path());
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + scaled(Duration::from_secs(60));
     let events = directory.path().join("events");
     let broker = directory.path().join("broker");
     let keyring = directory.path().join("keyring");
@@ -1581,7 +1581,7 @@ fn immediate_pause_does_not_share_a_key_with_a_prior_graceful_pause() {
     // The fixture is written BEFORE the clock starts (Codex on PR #1101): the 60 s budget below
     // measures the Runtime reaching `running`, not the temporary filesystem.
     let project = plain_project(directory.path());
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + scaled(Duration::from_secs(60));
     let events = directory.path().join("events");
     let broker = directory.path().join("broker");
     let keyring = directory.path().join("keyring");
@@ -1792,7 +1792,7 @@ fn graceful_pause_during_a_draining_node_then_immediate_does_not_corrupt_the_str
     // The fixture is written BEFORE the clock starts (Codex on PR #1101): the 60 s budget below
     // measures the Runtime reaching `running`, not the temporary filesystem.
     let project = plain_project(directory.path());
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + scaled(Duration::from_secs(60));
     let events = directory.path().join("events");
     let broker = directory.path().join("broker");
     let keyring = directory.path().join("keyring");
@@ -2019,7 +2019,7 @@ fn a_sequential_actor_reusing_a_committed_immediate_pause_key_is_refused_not_gra
     // The fixture is written BEFORE the clock starts (Codex on PR #1101): the 60 s budget below
     // measures the Runtime reaching `running`, not the temporary filesystem.
     let project = plain_project(directory.path());
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + scaled(Duration::from_secs(60));
     let events = directory.path().join("events");
     let broker = directory.path().join("broker");
     let keyring = directory.path().join("keyring");
@@ -3948,7 +3948,7 @@ fn a_disconnected_start_client_does_not_orphan_the_committed_runtime_drive() {
         .unwrap();
     let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(5)).unwrap();
     stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
+        .set_write_timeout(Some(scaled(Duration::from_secs(5))))
         .unwrap();
     let payload = serde_json::to_vec(&body).unwrap();
     let request = format!(
@@ -3964,7 +3964,7 @@ fn a_disconnected_start_client_does_not_orphan_the_committed_runtime_drive() {
     release.send(()).unwrap();
 
     let status_url = format!("{base}/v1/executions/{execution}");
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + scaled(Duration::from_secs(20));
     loop {
         let status = get_json(&status_url, Some(&token));
         if status["data"]["status"] == "completed" {
@@ -4334,7 +4334,7 @@ fn issue178_graph_output_cap_reaches_http_and_truncation_is_not_retried() {
         let (captured_tx, captured_rx) = std::sync::mpsc::channel();
         let provider = std::thread::spawn(move || {
             listener.set_nonblocking(true).unwrap();
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let deadline = std::time::Instant::now() + scaled(std::time::Duration::from_secs(10));
             let (mut stream, _) = loop {
                 match listener.accept() {
                     Ok(connection) => break connection,
@@ -4350,7 +4350,7 @@ fn issue178_graph_output_cap_reaches_http_and_truncation_is_not_retried() {
             };
             stream.set_nonblocking(false).unwrap();
             stream
-                .set_read_timeout(Some(Duration::from_secs(10)))
+                .set_read_timeout(Some(scaled(Duration::from_secs(10))))
                 .unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
             let mut length = 0;
@@ -4562,7 +4562,7 @@ fn issue178_reply_suggestions_refuse_truncated_candidates_before_judgment() {
     let provider = std::thread::spawn(move || {
         let mut chat_calls = 0;
         let mut judge_calls = 0;
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let deadline = Instant::now() + scaled(Duration::from_secs(15));
         while Instant::now() < deadline && stop_rx.try_recv().is_err() {
             let (mut stream, _) = match listener.accept() {
                 Ok(connection) => connection,
@@ -4574,7 +4574,7 @@ fn issue178_reply_suggestions_refuse_truncated_candidates_before_judgment() {
             };
             stream.set_nonblocking(false).unwrap();
             stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
+                .set_read_timeout(Some(scaled(Duration::from_secs(5))))
                 .unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
             let mut length = 0;

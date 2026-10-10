@@ -5,6 +5,10 @@
 use std::path::Path;
 use std::process::Command;
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use serde_json::Value;
 
 const FLOW: &str = include_str!("fixtures/journey_flow/checkout.journey.yaml");
@@ -124,7 +128,7 @@ fn invalid_id_and_partial_recording_bundle_are_input_errors() {
         .spawn()
         .unwrap();
     let held_input = child.stdin.take().unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let deadline = std::time::Instant::now() + scaled(std::time::Duration::from_secs(3));
     let timely = loop {
         if child.try_wait().unwrap().is_some() {
             break true;

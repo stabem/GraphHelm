@@ -13,6 +13,10 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use assert_cmd::Command;
 use serde_json::Value;
 
@@ -126,7 +130,7 @@ fn setup_and_route_set_serialize_the_same_manifest_transaction() {
         .unwrap();
 
     let keyring = project.path().join(".graphhelm").join("keyring");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + scaled(std::time::Duration::from_secs(5));
     while !keyring.exists() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }

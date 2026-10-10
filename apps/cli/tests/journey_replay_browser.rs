@@ -11,6 +11,10 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use serde_json::{Value, json};
 
 const KEY: &str = "0101010101010101010101010101010101010101010101010101010101010101";
@@ -125,10 +129,10 @@ fn git(project: &Path, args: &[&str]) -> String {
 fn http(address: &str, path: &str, token: Option<&str>) -> (String, Vec<u8>) {
     let mut stream = TcpStream::connect(address).unwrap();
     stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
+        .set_read_timeout(Some(scaled(Duration::from_secs(10))))
         .unwrap();
     stream
-        .set_write_timeout(Some(Duration::from_secs(10)))
+        .set_write_timeout(Some(scaled(Duration::from_secs(10))))
         .unwrap();
     write!(
         stream,

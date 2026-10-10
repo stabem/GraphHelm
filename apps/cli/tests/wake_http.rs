@@ -1353,12 +1353,12 @@ impl Sleeper {
                 ready_tx.send(()).unwrap();
                 // Both phases bounded: an absent ringer must yield an empty result, never
                 // a hung test (the no-ring cases DEPEND on this timing out).
-                match tokio::time::timeout(Duration::from_secs(10), server.connect()).await {
+                match tokio::time::timeout(scaled(Duration::from_secs(10)), server.connect()).await {
                     Ok(Ok(())) => {}
                     _ => return (Vec::new(), Vec::new()),
                 }
                 let mut buffer = [0_u8; 8];
-                match tokio::time::timeout(Duration::from_secs(10), server.read(&mut buffer)).await
+                match tokio::time::timeout(scaled(Duration::from_secs(10)), server.read(&mut buffer)).await
                 {
                     Ok(Ok(read)) => {
                         // The instant of the ring: snapshot what is durable RIGHT NOW.
@@ -1369,7 +1369,7 @@ impl Sleeper {
                 }
             })
         });
-        ready_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        ready_rx.recv_timeout(scaled(Duration::from_secs(5))).unwrap();
         Self {
             rendezvous_id,
             handle,
@@ -2188,7 +2188,7 @@ fn wake_wait_child_guard_kills_and_reaps_on_early_exit() {
     let cleanup = std::thread::spawn(move || drop(guard));
 
     let (kill_result, wait_result) = reaped_rx
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(scaled(Duration::from_secs(2)))
         .expect("dropping the guard kills and reaps within the cleanup bound");
     kill_result.expect("dropping the guard successfully kills the live child");
     let status = wait_result.expect("dropping the guard successfully reaps the child");

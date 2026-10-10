@@ -8,6 +8,10 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use serde_json::Value;
 
 const FLOW: &str = include_str!("fixtures/journey_flow/checkout.journey.yaml");
@@ -79,7 +83,7 @@ fn draft() -> tempfile::TempDir {
 
 /// Reads until the background run leaves `running`, within a bound.
 fn settled(project: &Path) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + scaled(Duration::from_secs(60));
     loop {
         let (code, reply) = cli(project, &["preview", "checkout", "--read"]);
         assert_eq!(code, 0, "{reply}");

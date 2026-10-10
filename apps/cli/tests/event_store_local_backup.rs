@@ -18,6 +18,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use assert_cmd::Command;
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -589,7 +593,7 @@ fn a_backup_is_not_blocked_by_another_reader() {
 
     // Generous against a capture measured in single-digit milliseconds. The claim is coarse on
     // purpose: not "it was fast" but "a reader did not stop it at all".
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + scaled(std::time::Duration::from_secs(10));
     let finished = loop {
         match child.try_wait().unwrap() {
             Some(status) => break Some(status),

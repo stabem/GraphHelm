@@ -397,7 +397,11 @@ fn launcher_secrets_reach_preflight_without_exporting_other_keys_or_values() {
         Arc,
         atomic::{AtomicBool, Ordering},
     };
-    use std::time::{Duration, Instant};
+use std::time::{Duration, Instant};
+
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
 
     for args in [
         vec!["watch", "checkout"],
@@ -436,7 +440,7 @@ fn launcher_secrets_reach_preflight_without_exporting_other_keys_or_values() {
         let stop = Arc::new(AtomicBool::new(false));
         let done = stop.clone();
         let server = std::thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(15);
+            let deadline = Instant::now() + scaled(Duration::from_secs(15));
             while !ready.exists() && !done.load(Ordering::Relaxed) && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(10));
             }

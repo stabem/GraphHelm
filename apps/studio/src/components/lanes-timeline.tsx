@@ -78,12 +78,15 @@ function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: 
         {shown.map((r) => {
           const full = r.doing ? r.doing : r.stage ? `${STAGE[r.stage]}${r.pr ? ` PR #${r.pr}` : ""}${r.title ? ` ${r.title}` : ""}` : "—";
           // The pill carries the plain status; a longer label (stale claim · #549, awaiting review #N) is a chip.
-          const tag = r.label && r.label !== PILL[r.status] ? r.label : null;
-          const what = tag && full.startsWith(tag) ? full.slice(tag.length).trim() : full;
+          const tag = r.status !== "building" && r.label && r.label !== PILL[r.status] ? r.label : null;
+          const pill = r.status === "building" && r.label ? r.label.replaceAll("Â·", "·") : PILL[r.status];
+          const what = r.status === "building" && full.startsWith("building in ")
+            ? full.slice("building in ".length)
+            : tag && full.startsWith(tag) ? full.slice(tag.length).trim() : full;
           const bot = agents.find((b) => b.name === r.name);
           return (
             <li key={bot ? `bot:${bot.key}` : `lane:${r.name}`} className="ab-row">
-              <span className="ab-pill" data-status={r.status}>{PILL[r.status]}</span>
+              <span className="ab-pill" data-status={r.status}>{pill}</span>
               <span className="ab-name">{r.name}</span>
               <span className="ab-what">
                 {tag && <span className="ab-tag">{tag.split(" · ").map((part, i) => <span key={i}>{i > 0 ? ` · ${part}` : part}</span>)}</span>}

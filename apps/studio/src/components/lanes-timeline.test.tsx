@@ -136,4 +136,16 @@ describe("LanesTimeline", () => {
     expect(rule(".ab-tag")).toContain("border-radius: 6px");
     expect(css).not.toMatch(/\.ab-[a-z-]+[^{]*\{[^}]*border-radius: 50%/);
   });
+
+  it("shows the build duration in the pill and the build location once", () => {
+    render(<LanesTimeline lanes={[lanes[1]!]} now={now} windowMs={1000} slots={[
+      { root: "D:/gh", ok: true, holder: { lane: "gh-claude-6", label: null, pid: 1, worktree: null, heldSeconds: 240 }, waiting: [] },
+    ]} />);
+    const row = within(screen.getByRole("list", { name: "Agent board" })).getByText("gh-claude-6").closest("li")!;
+    expect(row.querySelector(".ab-pill")).toHaveTextContent("Building");
+    expect(row.querySelector(".ab-pill")).toHaveTextContent("4m");
+    expect(row.querySelector(".ab-tag")).toBeNull();
+    expect(row.querySelector(".ab-doing")).toHaveTextContent("D:/gh");
+    expect(row.querySelector(".ab-doing")).not.toHaveTextContent("building");
+  });
 });

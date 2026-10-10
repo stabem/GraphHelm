@@ -161,6 +161,13 @@ describe("the Team tab is a column that reserves the dock (#481)", () => {
   });
 });
 
+describe("the Lanes kanban fits six columns without a minimum-width overflow (#759)", () => {
+  it("lets the six columns shrink to the available board width", () => {
+    expect(STYLESHEETS["./components/work-kanban.css"])
+      .toMatch(/\.wk\s*\{[^}]*grid-template-columns:\s*repeat\(6,\s*minmax\(0,\s*1fr\)\)/s);
+  });
+});
+
 describe("the stylesheet and the components agree", () => {
   /** The second half of the same defect: `.blob` survived as modifiers with no base rule, so the
    * element had a colour and no size and would have rendered as nothing. */

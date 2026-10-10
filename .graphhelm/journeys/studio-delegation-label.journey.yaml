@@ -1,0 +1,31 @@
+schema: graphhelm.journey-flow/1
+id: studio-delegation-label
+title: See the recorded delegation choice on a node
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [accessibility, critical_ux]
+screens:
+  - id: node
+    title: "The node shows its recorded kind, tier and effort"
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: note, name: "Delegation choice: implementer · standard · medium"}]
+    scope: [apps/studio/src/components/panel.tsx]
+  - id: run
+    title: The fixture run shows the delegating node
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: button, name: Routed worker · blocked}]
+    scope: [apps/studio/src/components/panel.tsx, apps/studio/src/components/mission-view.tsx]
+edges:
+  - id: run.node
+    from: run
+    to: node
+    acts:
+      - {kind: activate, role: button, name: Routed worker · blocked}
+paths:
+  main: [run.node]
+drift: []

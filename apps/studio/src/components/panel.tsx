@@ -1165,7 +1165,7 @@ export function NodePanel({
         <i aria-hidden="true" />
         <div style={{ minWidth: 0 }}>
           <h2>{node.declaredName ?? node.id}</h2>
-          {delegation && <p className="lbl" aria-label="Delegation choice">{delegation.kind} · {delegation.tier} · {delegation.effort}{delegation.escalated ? " · escalated" : ""}</p>}
+          {delegation && <p className="lbl" role="note" aria-label={`Delegation choice: ${delegation.kind} · ${delegation.tier} · ${delegation.effort}${delegation.escalated ? " · escalated" : ""}`}>{delegation.kind} · {delegation.tier} · {delegation.effort}{delegation.escalated ? " · escalated" : ""}</p>}
           {(node.declaredName || node.declaredRole) && <p className="lbl">{[node.declaredName ? `Node · ${node.id}` : null, node.declaredRole ? `Role · ${node.declaredRole}` : null].filter(Boolean).join(" · ")}</p>}
           <p className="panel-state">{nodeStatusLabel(node) === "review needed" ? node.resultSource === "model_reply" ? "Reply received · review needed" : "Finished · review needed" : nodeStatusLabel(node) ?? readable(node.state)}</p>
         </div>

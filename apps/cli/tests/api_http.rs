@@ -505,7 +505,11 @@ fn server_guard_surfaces_a_panicking_childs_stderr_in_the_failure_report() {
     let this_binary = std::env::current_exe().unwrap();
     let output = Command::new(this_binary)
         .env(SABOTAGE_CONFIRM_ENV, "1")
-        .args(["api_http::server_guard_sabotage_ignored", "--exact", "--ignored"])
+        .args([
+            "api_http::server_guard_sabotage_ignored",
+            "--exact",
+            "--ignored",
+        ])
         .output()
         .unwrap();
     assert!(

@@ -1059,7 +1059,8 @@ fn a_misspelled_key_in_the_gate_contract_refuses_instead_of_verdicting() {
 /// server start, about two seconds.
 #[test]
 fn a_refused_time_scale_is_a_quick_named_red_that_leaves_no_server_behind() {
-    const CELL: &str = "gate_http::a_refused_time_scale_is_a_quick_named_red_that_leaves_no_server_behind";
+    const CELL: &str =
+        "gate_http::a_refused_time_scale_is_a_quick_named_red_that_leaves_no_server_behind";
     if std::env::var_os("GRAPHHELM_TEST_REFUSED_SCALE_CHILD").is_some() {
         let directory = tempfile::tempdir().unwrap();
         let extra = ServeExtra {

@@ -16,7 +16,7 @@ test('even samples average the middle pair; p90 uses nearest rank', () => {
 });
 
 test('empty and non-finite observations cannot produce a numeric report', () => {
-  for (const samples of [[], [NaN], [1, Infinity], [-Infinity, 1], [1, '2']]) {
+  for (const samples of [[], [NaN], [1, Infinity], [-Infinity, 1], [1, '2'], Array(1)]) {
     assert.throws(() => summarize(samples), { name: 'TypeError' });
   }
 });

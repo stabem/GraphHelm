@@ -13,6 +13,8 @@ target/
 # Caught before any push (#1184), which is luck rather than a safeguard: untracked is not a
 # guard, an ignore rule is.
 /.graphhelm/*
+# Per-machine Desktop team binding stores local paths and is never shared.
+/.graphhelm/team.json
 # ...except the journey-flow sources, which are the project's own user-journey map (#368) and
 # carry no secret: names only, never a token or a key value (journey-explore design, section 11).
 !/.graphhelm/journeys/

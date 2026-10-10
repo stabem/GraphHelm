@@ -25,7 +25,9 @@ describe("ProofTable", () => {
     const rows = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent("The owner can mark a skipped step safe.");
-    expect(rows[0]).toHaveTextContent("Needs you · data-changing");
+    expect(rows[0]).toHaveTextContent("Needs you");
+    expect(rows[0]).toHaveTextContent("data-changing");
+    expect(rows[0]).toHaveTextContent("journey replay · step 1 SKIPPED");
     expect(rows[0]).toHaveTextContent("impl gh-claude-8");
     expect(rows[0]).toHaveTextContent("rev gh-claude-2");
     expect(rows[1]).toHaveTextContent("No work linked to this step");

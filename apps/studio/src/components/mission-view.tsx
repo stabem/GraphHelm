@@ -11,6 +11,9 @@ import { activity, ownerLane, ownerRole, stageHealth, stageProgress } from "../r
 import { buildWorkGroups, type WorkGroup } from "../runtime/work-groups";
 import { IssueGraph, MissionGraph, STATUS_LABEL, stageState } from "./mission-graph";
 import { ProofTable } from "./proof-table";
+import { IssueProof } from "./issue-proof";
+import { proofRows, type ProofLink, type ProofRowData } from "../runtime/proof-rows";
+import { sha8 } from "../runtime/mission";
 import { TestCanvas } from "./test-canvas";
 import { LanesTimeline } from "./lanes-timeline";
 import { WorkKanban, type KanbanItem } from "./work-kanban";
@@ -126,6 +129,23 @@ export function agentActivity(b: Bot): string {
   return b.doingNow || "working";
 }
 export const awayText = (a: { minutes: number; shipped: number }) => `${Math.max(1, Math.round(a.minutes / 60))} h away · ${a.shipped} shipped`;
+/** #735: one stacked bar per work group, plus the same counts in words, instead of a spinner per item. */
+const PROGRESS_ORDER = ["proven", "merged", "work", "stalled", "ready"] as const;
+const PROGRESS_WORD: Record<(typeof PROGRESS_ORDER)[number], string> = { proven: "proven", merged: "merged", work: "in work", stalled: "blocked", ready: "waiting" };
+export function GroupProgress({ states }: { states: string[] }) {
+  const counts = PROGRESS_ORDER.map((k) => [k, states.filter((s) => s === k).length] as const).filter(([, n]) => n > 0);
+  const total = states.length;
+  const words = [`${total} ${total === 1 ? "PR" : "PRs"}`, ...counts.map(([k, n]) => `${n} ${PROGRESS_WORD[k]}`)].join(" · ");
+  return (
+    <span className="mv-progress">
+      <span className="mv-progress-bar" role="img" aria-label={words}>
+        {counts.map(([k, n]) => <span key={k} className="mv-progress-part" style={{ flexGrow: n, background: SEG_TONE[k] }} />)}
+      </span>
+      <span className="mv-progress-text">{words}</span>
+    </span>
+  );
+}
+
 const SEG_TONE: Record<string, string> = { proven: "#4ADE9B", merged: "#8FB3D9", work: "#F5A524", stalled: "#FF6B5E", ready: "#24272E" };
 
 type Selection = { kind: "group"; key: string } | { kind: "journey"; id: string };
@@ -287,6 +307,38 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
     const placed = layoutMission(mission).placed.find((p) => p.task.key === key);
     return placed ? mission.steps[placed.col] : undefined;
   };
+  // #735: Proof for issue work, one row per PR; a PR that serves a journey step carries that step's replay.
+  const linkFor = (t: TaskState): ProofLink | null => {
+    for (const m of missions) {
+      if (!t.journeys.includes(m.contractId)) continue;
+      const placed = layoutMission(m).placed.find((p) => p.task.key === t.key);
+      const st = placed ? m.steps[placed.col] : undefined;
+      if (st) return { contractId: m.contractId, stepId: st.stepId, stepIndex: st.index, status: st.status, frame: frameUrl(st.stepId, m.contractId) };
+    }
+    return null;
+  };
+  const issueProof = group && sub === "proof" ? proofRows(group.rows.flatMap((r) => {
+    const t = groupRows.find((x) => x.key === r.key);
+    return t ? [{ task: t, stage: group.stages[r.key]!, health: health[r.key] ?? null, link: linkFor(t), open: r.open }] : [];
+  })) : [];
+  const issueCap = group ? [group.issue !== null ? `Issue #${group.issue}` : "No issue", "proof",
+    `${issueProof.filter((r) => r.open).length} open · ${issueProof.filter((r) => !r.open).length} merged`,
+    ...(() => { const heads = groupRows.filter((t) => t.step !== "merged" && t.headSha).map((t) => sha8(t.headSha)!); return heads.length ? [`head ${heads.slice(0, 3).join(" · ")}${heads.length > 3 ? " …" : ""}`] : []; })()].join(" · ") : "";
+  const openRowTest = (r: ProofRowData) => {
+    const cid = r.frame.contractId, sid = r.frame.stepId;
+    if (!cid || !sid) return;
+    if (cid === contractId) { openTest(sid); return; }
+    const j = journeys.find((x) => x.contractId === cid);
+    if (!j) return;
+    setChosen({ kind: "journey", id: cid }); setTaskKey(null); setStageCol(null);
+    setStepId(sid); setFrame(Math.max(0, j.steps.findIndex((x) => x.stepId === sid))); setSub("test");
+  };
+  const askRow = onSignal ? (r: ProofRowData) => {
+    const lane = r.call.lane ? realName(r.call.lane) : null;
+    if (!lane) return Promise.reject(new Error("no lane"));
+    const stage = WORK_STAGES.find((x) => x.id === group?.stages[r.key])?.label ?? "this step";
+    return onSignal({ type: "operator_note", to: lane, description: `Owner asks: status of ${stage} on ${r.pr !== null ? `#${r.pr}` : r.title}?` });
+  } : undefined;
   // #591: Nudge / Reassign the lane that owns the selected PR's current step.
   const roster = laneRoster(agents.map((b) => b.name), lanes);
   const inspectorActions = onSignal && group ? (key: string) => {
@@ -337,27 +389,20 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
                 {groups.map((g) => {
                   const on = group?.key === g.key;
                   const prs = g.tasks.filter((t) => t.pr !== null).length;
-                  const proven = g.tasks.filter((t) => g.stages[t.key] === "proven").length;
-                  const count = `${proven} / ${g.tasks.length}`;
                   if (!on) return (
                     <div key={g.key} className="mv-jcard" data-selected={false}>
                       <button type="button" className="mv-journey mv-group" aria-pressed={false} title={g.label} onClick={() => pickGroup(g.key)}>
                         <span className="mv-journey-title">{g.label}</span>
-                        {g.open && <ProgressIcon />}
-                        <span className="mv-journey-count">{count}</span>
                       </button>
-                      <span className="mv-segs" aria-hidden="true">
-                        {g.tasks.map((t) => <span key={t.key} className="mv-seg" style={{ background: SEG_TONE[stageState(g.stages[t.key]!, t)] }} />)}
-                      </span>
+                      <GroupProgress states={g.tasks.map((t) => stageState(g.stages[t.key]!, t))} />
                     </div>
                   );
                   return (
                     <div key={g.key} className="mv-jcard" data-selected={true}>
                       <button type="button" className="mv-journey mv-group" aria-pressed={true} title={g.label} onClick={() => pickGroup(g.key)}>
                         <span className="mv-journey-title">{g.label}</span>
-                        {g.open && <ProgressIcon />}
-                        <span className="mv-journey-count">{count}</span>
                       </button>
+                      <GroupProgress states={g.tasks.map((t) => stageState(g.stages[t.key]!, t))} />
                       <span className="mv-journey-meta">{`${g.issue !== null ? `issue #${g.issue}` : "no issue"} · ${prs} ${prs === 1 ? "PR" : "PRs"}`}</span>
                       <div className="mv-chips">
                         {g.tasks.map((t, i) => {
@@ -366,7 +411,7 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
                           return (
                             <button key={t.key} type="button" className="mv-chip mv-pr-chip" data-state={stageState(stage, t)} data-stage={stage}
                               aria-pressed={t.key === shownTask} aria-label={`${t.pr ? `PR #${t.pr}` : "No PR"}: ${t.title}`}
-                              onClick={() => pickGroup(g.key, t.key)}>{i + 1}{busy && <ProgressIcon alert={alert} />}</button>
+                              data-alert={alert && busy} onClick={() => pickGroup(g.key, t.key)}>{i + 1}</button>
                           );
                         })}
                       </div>
@@ -377,7 +422,6 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
                             <span className="mv-tick" />
                             <span className="mv-step-n">{i + 1}</span>
                             <span className="mv-step-title" title={t.title}>{t.title}</span>
-                            {t.step !== "merged" && <ProgressIcon alert={t.blocked || health[t.key]?.flag === "stalled"} />}
                             <span className="mv-step-ids">{t.pr ? `PR #${t.pr}` : "no PR"}</span>
                           </button>
                         ))}
@@ -450,7 +494,8 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
             {...(inspectorActions ? { inspectorActions } : {})} />}
           {sub === "graph" && !group && mission && <MissionGraph mission={mission} selectedStepId={stepId} selectedTaskKey={taskKey ?? null}
             onSelectStep={(id) => { setStepId(id); setTaskKey(null); }} onSelectTask={pickTask} onOpenTest={openTest} />}
-          {sub === "proof" && (mission && contractId ? <ProofTable mission={mission} onOpenTest={openTest} frameUrl={(id) => frameUrl(id, contractId)}
+          {sub === "proof" && group && <IssueProof key={group.key} label={group.label} cap={issueCap} rows={issueProof} onOpenTest={openRowTest} {...(askRow ? { onAsk: askRow } : {})} />}
+          {sub === "proof" && !group && (mission && contractId ? <ProofTable mission={mission} onOpenTest={openTest} frameUrl={(id) => frameUrl(id, contractId)}
             {...(onReplay ? { onReplay: () => onReplay(contractId) } : {})} />
             : <p className="mv-empty">This work names no journey yet — agents pass --journeys when they claim.</p>)}
           {sub === "test" && journey && contractId && <TestCanvas frames={testFrames(journey, runFor(contractId))} selected={frame} onSelect={setFrame}

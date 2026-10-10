@@ -27,8 +27,11 @@ export function nodeLabel(t: MissionTask, step: MissionStep | undefined): string
 }
 export const prText = (t: MissionTask) => (t.pr ? `#${t.pr}` : "no PR");
 
-// Geometry of the design's artboard: 150px columns 18px apart, 64px of column head, 104px a row.
+// Geometry of the journey graph: 196px columns 20px apart, 64px of column head, 104px a row.
 export const COL_W = 196, PITCH = 216, HEAD = 64, NODE_H = 88, ROW = 104;
+export const COL_GAP = PITCH - COL_W, HI_PAD = 8;
+/** #735: the selected column's highlight box wraps the column's header, title and nodes exactly. */
+export const colHighlight = (col: number, height: number) => ({ left: col * PITCH - HI_PAD, width: COL_W + 2 * HI_PAD, height: height + 2 * HI_PAD + 4 });
 
 interface Seg { style: CSSProperties; dir: "h" | "v" | "right" | "down" | "up"; done: boolean }
 function line(x1: number, y1: number, x2: number, y2: number, done: boolean): Seg {
@@ -70,7 +73,7 @@ export function MissionGraph({ mission, selectedStepId, selectedTaskKey, onSelec
   const placed = layout.placed.find((p) => p.task.key === selectedTaskKey) ?? null;
   const at = new Map(layout.placed.map((p) => [p.task.key, p]));
   const selCol = steps.findIndex((s) => s.stepId === selectedStepId);
-  const width = Math.max(1, steps.length) * PITCH - 18;
+  const width = Math.max(1, steps.length) * PITCH - COL_GAP;
   const height = HEAD + layout.rows * ROW + 16;
   const step = steps.find((s) => s.stepId === selectedStepId) ?? null;
   return (
@@ -88,13 +91,13 @@ export function MissionGraph({ mission, selectedStepId, selectedTaskKey, onSelec
         <section className="mg-graph" aria-label="Work graph">
           <div className="mg-scroll">
             <div className="mg-canvas" style={{ width, height }}>
-              {selCol >= 0 && <div className="mg-colhi" style={{ left: selCol * PITCH - 8, height: height + 12 }} />}
-              <div className="mg-cols" style={{ gridTemplateColumns: `repeat(${steps.length}, ${COL_W}px)` }}>
+              {selCol >= 0 && <div className="mg-colhi" data-testid="mg-colhi" style={colHighlight(selCol, height)} />}
+              <div className="mg-cols" style={{ gridTemplateColumns: `repeat(${steps.length}, ${COL_W}px)`, columnGap: COL_GAP }}>
                 {steps.map((s) => (
                   <button key={s.stepId} type="button" className="mg-col" data-status={s.status} data-selected={s.stepId === selectedStepId}
                     aria-label={`Column ${s.index + 1}: ${s.title}`} onClick={() => onSelectStep(s.stepId)}>
                     <span className="mg-col-head">{`STEP ${s.index + 1} · ${STATUS_LABEL[s.status]}`}</span>
-                    <span className="mg-col-title">{s.title}</span>
+                    <span className="mg-col-title" title={s.title}>{s.title}</span>
                   </button>
                 ))}
               </div>

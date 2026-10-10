@@ -2,6 +2,7 @@ import "./proof-table.css";
 import type { Mission, StepStatus } from "../runtime/mission";
 import { layoutMission } from "../runtime/mission-layout";
 import { STATUS_LABEL } from "./mission-graph";
+import { MiniBrowser } from "./issue-proof";
 
 const HINT: Record<StepStatus, string> = {
   proven: "Proven by a machine. Seen by you closes the ladder.",
@@ -10,6 +11,11 @@ const HINT: Record<StepStatus, string> = {
   preview_only: "A draft preview is not proof. Approve the flow to replay it.",
   not_run: "Not replayed yet.",
 };
+
+const EV: Record<StepStatus, [string, string, string]> = {
+  proven: ["ok", "✓", "PASS"], failed: ["no", "✕", "FAIL"], needs_you: ["warn", "!", "SKIPPED"], preview_only: ["warn", "!", "preview only"], not_run: ["wait", "○", "not replayed yet"],
+};
+const TONE: Record<StepStatus, string> = { proven: "proven", failed: "stalled", needs_you: "stalled", preview_only: "work", not_run: "ready" };
 
 interface Props {
   mission: Mission;
@@ -34,7 +40,7 @@ export function ProofTable({ mission, onOpenTest, frameUrl, onReplay }: Props) {
           ? <button type="button" className="proof-primary" onClick={onReplay}>Replay whole journey</button>
           : <button type="button" className="proof-primary" disabled title="Start the replay from the journey panel">Replay whole journey — start it from the journey panel</button>}
       </div>
-      <div className="proof-cols" aria-hidden="true"><span>Step</span><span>Promise</span><span>Replay saw</span><span>Chain of custody</span><span>Your call</span></div>
+      <div className="proof-cols" aria-hidden="true"><span>Step</span><span>Promise</span><span>Replay saw</span><span>Chain of custody · evidence</span><span>Your call</span></div>
       <ol className="proof-rows" aria-label="Steps">
         {mission.steps.map((s) => {
           const src = frameUrl?.(s.stepId) ?? null;
@@ -43,20 +49,15 @@ export function ProofTable({ mission, onOpenTest, frameUrl, onReplay }: Props) {
             <li key={s.stepId} className="proof-row" data-status={s.status}>
               <div className="proof-n"><span>{s.index + 1}</span><span className="proof-dot" data-status={s.status} /></div>
               <div className="proof-promise">
-                <span className="proof-name">{s.title}</span>
-                {s.promise && <span className="proof-sub">{s.promise}</span>}
-                <span className="proof-badge" data-status={s.status}>{`${STATUS_LABEL[s.status]}${s.reason ? ` · ${s.reason}` : ""}`}</span>
+                <span className="proof-name" title={s.title}>{s.title}</span>
+                {s.promise && <span className="proof-sub proof-clamp" title={s.promise}>{s.promise}</span>}
+                <span className="proof-badge" data-status={s.status} title={s.reason ?? undefined}>{STATUS_LABEL[s.status]}</span>
               </div>
               <button type="button" className="proof-frame" data-status={s.status} aria-label={`Open the test canvas for step ${s.index + 1}`} onClick={() => onOpenTest(s.stepId)}>
-                {src ? <img src={src} alt={`Replay frame of step ${s.index + 1}`} /> : (
-                  <span className="proof-mini" aria-hidden="true">
-                    <span className="proof-mini-bar"><i /><i /><i /></span>
-                    <span className="proof-mini-body"><span className="proof-mini-hl" data-status={s.status} /><span className="proof-mini-line" /><span className="proof-mini-line" /></span>
-                  </span>
-                )}
-                <span className="proof-frame-txt"><span>{src ? "frame recorded" : "no frame recorded"}</span><span>open test →</span></span>
+                {src ? <img src={src} alt={`Replay frame of step ${s.index + 1}`} /> : <MiniBrowser tone={TONE[s.status]} />}
+                <span className="proof-frame-txt"><span>{src ? "frame recorded" : s.status === "not_run" ? "not replayed yet" : "no frame recorded"}</span><span className="proof-frame-go">open test →</span></span>
               </button>
-              <div className="proof-chain">
+              <div className="proof-chain"><div className="proof-chiprow">
                 {tasks.length === 0 ? <span className="proof-sub">No work linked to this step</span> : tasks.map((t) => (
                   <span key={t.key} className="proof-chips">
                     <span className="proof-chip" data-tone={t.step === "implement" ? "run" : "ok"}><span className="proof-stage">impl</span>{` ${t.lane ?? "—"}`}</span>
@@ -64,6 +65,9 @@ export function ProofTable({ mission, onOpenTest, frameUrl, onReplay }: Props) {
                     {t.step === "merged" && <span className="proof-chip" data-tone="ok"><span className="proof-stage">merge</span>{` ${t.mergeSha?.slice(0, 8) ?? (t.pr ? `#${t.pr}` : "—")}`}</span>}
                   </span>
                 ))}
+              </div>
+                {s.reason && <div className="proof-ev"><span className="proof-ev-mark" data-mark="warn">!</span><span className="proof-ev-txt" title={s.reason}>{s.reason}</span></div>}
+                <div className="proof-ev"><span className="proof-ev-mark" data-mark={EV[s.status][0]}>{EV[s.status][1]}</span><span className="proof-ev-txt">{`journey replay · step ${s.index + 1} ${EV[s.status][2]}`}</span></div>
               </div>
               <div className="proof-call">
                 <button type="button" className={s.status === "needs_you" ? "proof-primary" : "proof-secondary"} aria-label={`Open test for step ${s.index + 1}`} onClick={() => onOpenTest(s.stepId)}>

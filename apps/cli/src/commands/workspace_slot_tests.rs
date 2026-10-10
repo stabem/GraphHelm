@@ -285,10 +285,12 @@ fn target_root_floor_cap_and_reclaim_are_observed_through_private_admission() {
     let first_outcome = run_admitted_slot_in(&first_request, &first);
     assert!(first_outcome.output.ok);
     assert_eq!(
-        first_outcome.output.data.as_ref().unwrap()["targetDir"],
-        fast.join("lane-a/wt-first/target")
-            .to_string_lossy()
-            .to_string()
+        Path::new(
+            first_outcome.output.data.as_ref().unwrap()["targetDir"]
+                .as_str()
+                .unwrap()
+        ),
+        fast.join("lane-a").join("wt-first").join("target")
     );
     let second_command = marker_command(&log, "second", 10);
     let second_request = SlotRequest {

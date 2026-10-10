@@ -77,13 +77,16 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 ## 3. Builds: one slot for the whole machine
 
 - Every Cargo build, test or clippy invocation runs under the existing build slot, with a direct
-  Cargo command and an explicit package. Tests also name a target:
+  Cargo command and an explicit package. Each test invocation names exactly one package and one
+  explicit target. Multiple module filters for that executable may follow `--`:
 
-      graphhelm workspace slot --root D:\gh --lane <lane> --jobs 6 --label <what> -- cargo +1.97.1 test --locked -p graphhelm-cli --test keel_check -- --test-threads=2
+      graphhelm workspace slot --root D:\gh --lane <lane> --jobs 6 --label <what> -- cargo +1.97.1 test --locked -p graphhelm-cli --test cli -- --test-threads=2 keel_check::
 
 - The CLI refuses shell, PowerShell and Python wrappers before creating a ticket. Keep the outer
   script outside the slot and acquire once for each direct Cargo command. Unscoped package tests,
-  workspace-wide commands and target-directory overrides are refused too. This is enforced by
+  workspace-wide commands and target-directory overrides are refused too. Multiple package or
+  target selectors in one `cargo test` command are refused before queueing; split different
+  executables into separate leases. Clippy may still name multiple touched packages. This is enforced by
   upgraded CLI binaries; an old installed binary retains the old behavior until upgraded.
 - Run `npm ci --prefer-offline --no-audit --no-fund`, `vitest --maxWorkers=1`, `tsc`, and standalone
   journey previews outside the Cargo slot, serially within the lane. Cargo-based browser observers

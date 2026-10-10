@@ -401,6 +401,32 @@ fn the_public_slot_refuses_script_commands_before_any_effect() {
         !root.join(".graphhelm-workspaces").exists(),
         "refusal created ledger state"
     );
+    // Multiple executables must be refused at admission, before Cargo discovery or queueing.
+    // These extra subprocesses need no compiler or fixture repository (well under one second).
+    for args in [
+        vec!["cargo", "test", "-pfoo", "--test=one", "--test=two"],
+        vec!["cargo", "test", "-pfoo", "-pbar", "--lib"],
+    ] {
+        let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .current_dir(dir.path())
+            .args(["--json", "workspace", "slot", "--root"])
+            .arg(&root)
+            .args(["--lane", "lane-a", "--"])
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{args:?}: {output:?}");
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            reply["diagnostics"][0]["code"], "GHCLI037_WORKSPACE_REFUSED",
+            "{reply}"
+        );
+        assert_eq!(reply["diagnostics"][0]["path"], "/command", "{reply}");
+        assert!(
+            !root.join(".graphhelm-workspaces").exists(),
+            "refusal created ledger state"
+        );
+    }
 }
 
 #[path = "support/mod.rs"]

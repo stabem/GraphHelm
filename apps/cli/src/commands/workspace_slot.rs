@@ -236,8 +236,8 @@ fn admit_command(command: &[String]) -> Result<(), String> {
         return Err("workspace slot accepts cargo build, test, or clippy only".into());
     };
     cursor += 1;
-    let mut package = false;
-    let mut target = false;
+    let mut package_count = 0;
+    let mut target_count = 0;
     let mut filter = false;
     while let Some(raw) = command.get(cursor) {
         cursor += 1;
@@ -261,7 +261,7 @@ fn admit_command(command: &[String]) -> Result<(), String> {
             | "--exclude" | "-j" | "--jobs" | "--tests" | "--bins" | "--examples" | "--benches" => {
                 return Err("workspace-wide commands and target overrides cannot occupy the ordinary slot; name each package and test target".into());
             }
-            "--lib" | "--doc" if inline.is_none() => target = true,
+            "--lib" | "--doc" if inline.is_none() => target_count += 1,
             "--all-targets" if kind == "clippy" && inline.is_none() => {}
             "--locked"
             | "--offline"
@@ -301,9 +301,9 @@ fn admit_command(command: &[String]) -> Result<(), String> {
                     return Err("package and target globs are not bounded slot commands".into());
                 }
                 if matches!(flag, "-p" | "--package") {
-                    package = true;
+                    package_count += 1;
                 } else if matches!(flag, "--test" | "--bin" | "--example" | "--bench") {
-                    target = true;
+                    target_count += 1;
                 }
             }
             _ if !raw.starts_with('-') && kind == "test" && !filter => filter = true,
@@ -314,11 +314,14 @@ fn admit_command(command: &[String]) -> Result<(), String> {
             }
         }
     }
-    if !package {
+    if package_count == 0 {
         return Err("workspace slot requires an explicit package".into());
     }
-    if kind == "test" && !target {
+    if kind == "test" && target_count == 0 {
         return Err("workspace slot test requires an explicit test target".into());
+    }
+    if kind == "test" && (package_count != 1 || target_count != 1) {
+        return Err("workspace slot test accepts one package and one explicit target; split different executables before queueing".into());
     }
     Ok(())
 }
@@ -456,6 +459,26 @@ mod admission_tests {
             vec!["cargo", "test", "-p", "foo", "--doc"],
             vec![
                 "cargo",
+                "test",
+                "-pfoo",
+                "--test=cli",
+                "--",
+                "--test-threads=2",
+                "module_a::",
+                "module_b::",
+            ],
+            vec![
+                "cargo",
+                "clippy",
+                "-pfoo",
+                "--package=bar",
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ],
+            vec![
+                "cargo",
                 "clippy",
                 "-pfoo",
                 "--all-targets",
@@ -473,6 +496,11 @@ mod admission_tests {
             vec!["cargo", "test", "-pfoo", "--test=*"],
             vec!["cargo", "test", "-pfoo", "--test", "--lib"],
             vec!["cargo", "test", "-pfoo", "--lib", "-j32"],
+            vec!["cargo", "test", "-pfoo", "--test", "one", "--test", "two"],
+            vec!["cargo", "test", "-pfoo", "--test=one", "--test=two"],
+            vec!["cargo", "test", "-pfoo", "--lib", "--doc"],
+            vec!["cargo", "test", "-pfoo", "--test=cli", "--bin=graphhelm"],
+            vec!["cargo", "test", "-pfoo", "--package=bar", "--lib"],
         ] {
             assert!(admit_command(&argv(&args)).is_err(), "{args:?}");
         }

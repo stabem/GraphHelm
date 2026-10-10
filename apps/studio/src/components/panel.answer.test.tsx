@@ -41,16 +41,17 @@ const answer = {
 };
 
 describe("NodePanel's answer affordance", () => {
-  // DOM only, under one second: routing must stay visible and escalation must not be invented.
+  // DOM only: role/name must expose the recorded choice to the journey observer; no new seam.
+  // Existing text assertions missed the inaccessible role/name. Absence and escalation stay covered.
   it("shows the status delegation choice and marks only recorded escalation", () => {
     const delegation = { kind: "implementer", tier: "standard", effort: "medium", escalated: false, seq: 7 };
     const { rerender } = render(<NodePanel node={node("running")} events={[]} onClose={() => {}} delegation={delegation} />);
-    expect(screen.getByLabelText("Delegation choice")).toHaveTextContent("implementer · standard · medium");
-    expect(screen.getByLabelText("Delegation choice")).not.toHaveTextContent("escalated");
+    expect(screen.getByRole("note", { name: "Delegation choice: implementer · standard · medium" })).toHaveTextContent("implementer · standard · medium");
+    expect(screen.getByRole("note", { name: /^Delegation choice:/ })).not.toHaveTextContent("escalated");
     rerender(<NodePanel node={node("running")} events={[]} onClose={() => {}} delegation={{ ...delegation, tier: "large", effort: "high", escalated: true }} />);
-    expect(screen.getByLabelText("Delegation choice")).toHaveTextContent("implementer · large · high · escalated");
+    expect(screen.getByRole("note", { name: /^Delegation choice:/ })).toHaveTextContent("implementer · large · high · escalated");
     rerender(<NodePanel node={node("running")} events={[]} onClose={() => {}} />);
-    expect(screen.queryByLabelText("Delegation choice")).not.toBeInTheDocument();
+    expect(screen.queryByRole("note", { name: /^Delegation choice:/ })).not.toBeInTheDocument();
   });
 
   it("offers it for a node that is waiting", () => {

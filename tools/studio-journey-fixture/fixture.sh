@@ -165,6 +165,43 @@ NODE
       --mode supervised --execution waiting --keyring "$dir/.graphhelm/keyring" --key-id studio \
       > "$dir/.graphhelm/waiting-seed.json"
   fi
+  # #137: the async Runtime driver records delegation; no model executor is wired.
+  if [ "$flow" = studio-delegation-label ]; then
+    node - "$repo" "$dir" <<'NODE'
+const fs = require('fs');
+const [repo, dir] = process.argv.slice(2);
+let graph = fs.readFileSync(`${repo}/examples/graphs/manual-override-deploy.yaml`, 'utf8').replace(/\r\n/g, '\n');
+graph = graph.replace(/exec_override_graph_v13/g, 'routing-fixture-v1')
+  .replace('executionId: exec_override', 'executionId: routing-fixture')
+  .replace('version: 13', 'version: 1').replace(/^  basedOn:.*\n/m, '')
+  .replace(/implementation/g, 'routed-worker-137')
+  .replace('      type: agent', '      delegation: {kind: implementer}\n      type: agent')
+  .replace(/      name: .*\n/, '      name: Routed worker\n')
+  // A deploy node selects the legacy synchronous driver, which does not record delegation.
+  .replace(/    deploy:\n[\s\S]*?  budgets:/, '  edges: []\n  budgets:')
+  .replace('      - deploy', '      - routed-worker-137');
+fs.writeFileSync(`${dir}/.graphhelm/routing-graph.yaml`, graph);
+NODE
+    printf '%s\n' '{"nodeOutcomes":{"routed-worker-137":"failure"}}' > "$dir/.graphhelm/routing-fixtures.json"
+    node - "$dir" "$rport" <<'NODE'
+const fs = require('fs');
+const path = require('path');
+const [dir, port] = process.argv.slice(2);
+const token = fs.readFileSync(`${dir}/.graphhelm/events.token`, 'utf8').trim();
+fetch(`http://127.0.0.1:${port}/v1/executions/routing-fixture/start`, {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
+    'Idempotency-Key': 'routing-fixture-start', 'X-GraphHelm-Actor': 'studio-operator', 'X-GraphHelm-Actor-Type': 'owner' },
+  body: JSON.stringify({ file: path.resolve(dir, '.graphhelm/routing-graph.yaml'),
+    fixtures: path.resolve(dir, '.graphhelm/routing-fixtures.json'), mode: 'supervised' }),
+  signal: AbortSignal.timeout(30000),
+}).then(async response => {
+  const result = await response.json();
+  fs.writeFileSync(`${dir}/.graphhelm/routing-seed.json`, JSON.stringify(result));
+  if (!response.ok || result.ok !== true) throw new Error('delegation fixture start refused');
+}).catch(() => { console.error('fixture: delegation seed failed'); process.exitCode = 1; });
+NODE
+  fi
   export GRAPHHELM_EVENTS="$dir/.graphhelm/events" GRAPHHELM_RUNTIME_URL="http://127.0.0.1:$rport" \
     GRAPHHELM_STUDIO_SESSION_NONCE=studio-fixture GRAPHHELM_PROJECT=demo
   nohup npm --prefix "$repo/apps/studio" run dev -- --port "$sport" --strictPort > "$dir/.graphhelm/studio.out" 2>&1 &

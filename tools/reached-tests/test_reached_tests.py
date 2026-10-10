@@ -1,7 +1,8 @@
 """Observer for reached_tests.py (#361): `python -m unittest tools/reached-tests/test_reached_tests.py`.
 
-A small fake workspace, no cargo and no git: policy <- execution <- cli, an adapter nobody depends
-on, a cli test bundle, and one embedded schema. Each case is a real diff shape from this repository.
+Most cells use a small fake workspace, no cargo and no git: policy <- execution <- cli, an adapter
+nobody depends on, a cli test bundle, and one embedded schema. The repository-bundle cell reads
+offline Cargo metadata. Each case is a real diff shape from this repository.
 """
 import json
 import sys

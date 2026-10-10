@@ -39,6 +39,7 @@ import { workConversation } from "./runtime/work-conversation";
 import { isSubagentLifecycleSignal } from "./runtime/subagents";
 import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
 import { foldTaskEvents, isClaudeTaskSignal, isTaskEventSignal, readClaudeTasks, readTaskEventRecords, type ClaudeTaskReadModel, type TaskEventRecord, type TaskState } from "./runtime/team-tasks";
+import { SlotPoll } from "./components/slot-poll";
 import { MissionView } from "./components/mission-view";
 import { laneBars, type TimedTaskEvent } from "./runtime/lane-bars";
 import { skippedEdgeInto } from "./runtime/mission";
@@ -3159,7 +3160,7 @@ export default function App({
             </div>
             {canvasTab === "graph" && (
               <div id="studio-panel-graph" role="tabpanel" aria-label="Graph">
-                <MissionView journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} runFor={missionRunFor}
+                <SlotPoll client={clientRef.current}>{(slots) => <MissionView slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} runFor={missionRunFor}
                   lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe}
                   runName={selected} lastRecordAt={Date.parse(eventList[eventList.length - 1]?.occurredAt ?? "")} onTeam={() => chooseCanvas("team")} onJourneys={() => chooseCanvas("journey")}
                   draftJourneys={flowsRead.view?.flows.filter((flow) => flow.status === "draft").length ?? 0}
@@ -3175,7 +3176,7 @@ export default function App({
                     if (!client || selected === "") throw new Error("No Runtime is connected.");
                     const evidence = await client.signal(selected, note.description, { to: note.to, kind: note.type });
                     if (evidence.result === "refused") throw new Error(evidence.diagnostics[0]?.message ?? "The Runtime refused the note.");
-                  }} />
+                  }} />}</SlotPoll>
               </div>
             )}
             {citedRecords !== null && citedRecords.executionId === selected && (

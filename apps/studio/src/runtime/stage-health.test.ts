@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ACTIVE_MS, STAGE_ALLOWANCE_MS, ownerRole, LIVENESS_MS, laneLiveness, ownerLane, SLOW_FACTOR, SLOW_MIN_SAMPLES, activity, liveDuration, stageDuration, stageHealth, stageProgress, stageSince } from "./stage-health";
 import { STALL_MS, type Lane } from "./lane-bars";
 import type { TaskState } from "./team-tasks";
+import { parseSlots } from "./slots";
 
 const H = 3_600_000, M = 60_000;
 const NOW = Date.parse("2026-10-09T12:00:00Z");
@@ -148,5 +149,23 @@ describe("laneLiveness (#591)", () => {
     expect(stageProgress(t, [t], NOW)!.elapsedMs).toBe(3 * H);
     expect(stageHealth(t, [lane("gh-claude-8", NOW - M)], [t], NOW)?.flag).not.toBe("blocked");
     expect(ownerLane(t)).toBe("gh-claude-8");
+  });
+});
+
+describe("#636 build-slot queue", () => {
+  const slots = parseSlots({ slots: [{ root: "D:/gh", holder: { lane: "gh-claude-1", heldSeconds: 240, worktree: null }, waiting: [
+    { lane: "x", waitedSeconds: 5 }, { lane: "gh-claude-2", waitedSeconds: 720, worktree: null }] }] });
+  it("a building owner lane silent 9h reads building, never Stalled", () => {
+    expect(stageHealth(ts("a"), [lane("gh-claude-1", NOW - 9 * H)], [], NOW, false, slots)).toMatchObject({ flag: "building", text: "building · 4m (D:/gh)", tone: "blue" });
+  });
+  it("a waiting owner lane reads waiting Nth, never Slow", () => {
+    const t = ts("a", { lane: "gh-claude-2", clock: { since: iso(NOW - 100 * H), spent: {} } });
+    const group = [done("p", M), done("q", M), done("r", M)];
+    expect(stageHealth(t, [lane("gh-claude-2", NOW)], group, NOW)?.flag).toBe("slow");
+    expect(stageHealth(t, [lane("gh-claude-2", NOW)], group, NOW, false, slots)).toMatchObject({ flag: "waiting_build", text: "waiting for build · 2nd · 12m" });
+  });
+  it("a queued lane counts as alive", () => {
+    expect(laneLiveness("gh-claude-2", [lane("gh-claude-2", NOW - 9 * H)], [], NOW).live).toBe(false);
+    expect(laneLiveness("gh-claude-2", [lane("gh-claude-2", NOW - 9 * H)], [], NOW, slots).live).toBe(true);
   });
 });

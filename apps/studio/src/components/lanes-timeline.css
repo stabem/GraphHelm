@@ -70,3 +70,13 @@
   .ab-row { grid-template-columns: 70px minmax(0, 1fr) 90px; }
   .ab-what, .ab-last { display: none; }
 }
+
+/* #636 build slots */
+.ab-pill[data-status="building"], .ab-pill[data-status="build_wait"] { background: #172338; color: #8FB3D9; }
+.ab-slots { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 12px; }
+.ab-slots-cap { color: #9AA0AA; text-transform: uppercase; letter-spacing: .06em; font-size: 11px; }
+.ab-slot { display: inline-flex; gap: 6px; padding: 3px 8px; border-radius: 999px; background: #172338; color: #8FB3D9; }
+.ab-slot[data-state="idle"] { background: #1C1F25; color: #C7CBD3; }
+.ab-slot[data-state="unavailable"] { background: #3A2A10; color: #F5A524; }
+.ab-slot-root { font-family: ui-monospace, monospace; opacity: .85; }
+.ab-slot-queue { opacity: .8; }

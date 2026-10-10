@@ -198,6 +198,111 @@
       },
       "whyHard": "New test required, and it must be red on the parent. Tempts caching signal ids in memory, adding signalId to every mutation's retry reply, or a new test file and helper instead of one assertion in the existing HTTP cells; the mismatched-actor and wrong-kind refusals must keep giving no signalId.",
       "kind": "implementer"
+    },
+    "explore-routing": {
+      "category": "python",
+      "kind": "explorer",
+      "split": "test",
+      "splitPin": "test",
+      "parentSha": "3f26f0c35ec7fac2cdab4250496e236db020814d",
+      "fixSha": null,
+      "prompt": "prompts/explore-routing.md",
+      "promptIssue": "prompts-issue/explore-routing.md",
+      "card": "cards/explore-routing.json",
+      "oracle": "oracles/explore_routing.py",
+      "regression": {
+        "command": [
+          "{python}",
+          "{doless}/regressions/diff_check.py"
+        ]
+      },
+      "expected": {},
+      "referenceAnswer": "{\"initial\": {\"tier\": \"small\", \"effort\": \"low\"}, \"oneRed\": {\"tier\": \"standard\", \"effort\": \"high\"}, \"nineRed\": {\"tier\": \"large\", \"effort\": \"high\"}, \"callsModel\": false}",
+      "whyHard": "Public routing implementation at PR #660; capped escalation and effort must be traced, not guessed from the kind name."
+    },
+    "explore-status-delegation": {
+      "category": "docs",
+      "kind": "explorer",
+      "split": "test",
+      "splitPin": "test",
+      "parentSha": "43760060462419da55fce2655a379595b385e537",
+      "fixSha": null,
+      "prompt": "prompts/explore-status-delegation.md",
+      "promptIssue": "prompts-issue/explore-status-delegation.md",
+      "card": "cards/explore-status-delegation.json",
+      "oracle": "oracles/explore_status_delegation.py",
+      "regression": {
+        "command": [
+          "{python}",
+          "{doless}/regressions/diff_check.py"
+        ]
+      },
+      "expected": {},
+      "referenceAnswer": "{\"source\": \"delegation_choices\", \"statusFields\": [\"kind\", \"tier\", \"effort\", \"escalated\", \"seq\"], \"defaultsAbsentNode\": false, \"labelForAbsentChoice\": false}",
+      "whyHard": "Public PR #662. A declared node role is not evidence of a recorded delegation choice."
+    },
+    "review-hook-framing": {
+      "category": "python",
+      "kind": "reviewer",
+      "split": "test",
+      "splitPin": "test",
+      "parentSha": "a19aa2c633e7e86aa73f8ca3b7f56d70f3d60b67",
+      "fixSha": null,
+      "prompt": "prompts/review-hook-framing.md",
+      "promptIssue": "prompts-issue/review-hook-framing.md",
+      "card": "cards/review-hook-framing.json",
+      "oracle": "oracles/review_hook_framing.py",
+      "regression": {
+        "command": [
+          "{python}",
+          "{doless}/regressions/diff_check.py"
+        ]
+      },
+      "expected": {},
+      "referenceAnswer": "{\"verdict\": \"BLOCK\", \"function\": \"hook_input\", \"waitsForEof\": true, \"rejectsOversize\": true, \"rejectsNonObject\": true, \"findings\": [\"EOF_WAIT\"]}",
+      "whyHard": "Real pre-fix defect from public PR #118 (53b9eed9f5b628b8b654b7ad8a6cad4cb97ec5d7): bounded read still waits for EOF. Existing size/type checks are negative controls."
+    },
+    "review-end-ack": {
+      "category": "python",
+      "kind": "reviewer",
+      "split": "test",
+      "splitPin": "test",
+      "parentSha": "53b9eed9f5b628b8b654b7ad8a6cad4cb97ec5d7",
+      "fixSha": null,
+      "prompt": "prompts/review-end-ack.md",
+      "promptIssue": "prompts-issue/review-end-ack.md",
+      "card": "cards/review-end-ack.json",
+      "oracle": "oracles/review_end_ack.py",
+      "regression": {
+        "command": [
+          "{python}",
+          "{doless}/regressions/diff_check.py"
+        ]
+      },
+      "expected": {},
+      "referenceAnswer": "{\"verdict\": \"BLOCK\", \"function\": \"_end_impl\", \"requestTimeoutSeconds\": 2.5, \"acceptsThreeSecondAck\": false, \"checksExecutionId\": true, \"checksSignalId\": true, \"findings\": [\"ACK_TIMEOUT\"]}",
+      "whyHard": "Real pre-fix defect from public PR #120 (dbb0c0db2230bbeace594fd000698b5b1fffe4fa). Identity checks already work; inventing missing checks must fail."
+    },
+    "verify-end-ack-evidence": {
+      "category": "observer-missing",
+      "kind": "verifier",
+      "split": "test",
+      "splitPin": "test",
+      "parentSha": "dbb0c0db2230bbeace594fd000698b5b1fffe4fa",
+      "fixSha": null,
+      "prompt": "prompts/verify-end-ack-evidence.md",
+      "promptIssue": "prompts-issue/verify-end-ack-evidence.md",
+      "card": "cards/verify-end-ack-evidence.json",
+      "oracle": "oracles/verify_end_ack_evidence.py",
+      "regression": {
+        "command": [
+          "{python}",
+          "{doless}/regressions/diff_check.py"
+        ]
+      },
+      "expected": {},
+      "referenceAnswer": "{\"acknowledgement\": \"mismatched\", \"taskCompletion\": \"unobserved\", \"retryAuthorized\": false, \"missingEvidence\": \"task_outcome\"}",
+      "whyHard": "Public PR #120 distinguishes matching shutdown acknowledgement from task completion; HTTP success alone proves neither."
     }
   }
 }

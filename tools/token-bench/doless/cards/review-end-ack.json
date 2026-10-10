@@ -1,0 +1,7 @@
+{
+  "promise": "Review _end_impl at this frozen revision for a host allowing a five-second acknowledgement window. A matching response arrives after three seconds. Report verdict (BLOCK or APPROVE), function, requestTimeoutSeconds, acceptsThreeSecondAck, checksExecutionId, checksSignalId, and findings as an array chosen from ACK_TIMEOUT, MISSING_EXECUTION_CHECK, MISSING_SIGNAL_CHECK. Report only source-supported defects; do not change code. Leave an empty diff.",
+  "scopePaths": [
+    "plugins/graphhelm/hooks/session_hook.py"
+  ],
+  "proof": "Offline read-only semantic answer oracle; reference passes, false conclusions and any checkout change fail."
+}

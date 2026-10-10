@@ -3,6 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import { LanesTimeline } from "./lanes-timeline";
 import type { MissionTask } from "../runtime/mission";
 import { fastUserEvent } from "../test/user-event";
+import css from "./lanes-timeline.css?raw";
 
 const now = 1_000_000;
 const lanes = [
@@ -114,7 +115,25 @@ describe("LanesTimeline", () => {
     const row = within(screen.getByRole("list", { name: "Agent board" })).getByText("gh-claude-3").closest("li")!;
     expect(within(row).getByText("pr_opened #613 · 12m ago")).toBeInTheDocument();
     expect(row.querySelector(".ab-pill")).toHaveAttribute("data-status", "awaiting");
-    expect(row.querySelector(".ab-pill")).toHaveTextContent("awaiting review #613");
+    expect(row.querySelector(".ab-pill")).toHaveTextContent("Awaiting review");
+    expect(row.querySelector(".ab-tag")).toHaveTextContent("awaiting review #613");
     expect(document.querySelector('[data-kind="free"]')).toHaveTextContent("none right now");
+  });
+
+  it("agent row: one-line pill and rectangular chips, full name, labels unchanged", () => {
+    const H = 3_600_000, T = 10 * H;
+    const stale = { lane: "gh-claude-11", silent: false, lastEventAt: T - 3 * H, bars: [{ kind: "implement" as const, label: "issue 549", issue: 549, start: T - 3 * H, end: T, open: true }] };
+    render(<LanesTimeline lanes={[stale]} now={T} windowMs={4 * H} />);
+    const row = within(screen.getByRole("list", { name: "Agent board" })).getByText("gh-claude-11").closest("li")!;
+    expect(row.querySelector(".ab-name")!.textContent).toBe("gh-claude-11");
+    const pill = row.querySelector(".ab-pill")!, tag = row.querySelector(".ab-tag")!;
+    expect(pill).toHaveTextContent("Stale claim");
+    expect(tag.textContent).toMatch(/^stale claim · /);
+    const rule = (sel: string) => css.split(/\r?\n/).find((l: string) => l.startsWith(`${sel} {`)) ?? "";
+    expect(rule(".ab-pill")).toContain("white-space: nowrap");
+    expect(rule(".ab-pill")).toContain("border-radius: 999px");
+    expect(rule(".ab-tag")).toContain("white-space: nowrap");
+    expect(rule(".ab-tag")).toContain("border-radius: 6px");
+    expect(css).not.toMatch(/\.ab-[a-z-]+[^{]*\{[^}]*border-radius: 50%/);
   });
 });

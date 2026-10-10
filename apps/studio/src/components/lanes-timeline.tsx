@@ -76,13 +76,19 @@ function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: 
       </div>
       <ul className="ab-rows" aria-label="Agent board">
         {shown.map((r) => {
-          const what = r.doing ? r.doing : r.stage ? `${STAGE[r.stage]}${r.pr ? ` PR #${r.pr}` : ""}${r.title ? ` ${r.title}` : ""}` : "—";
+          const full = r.doing ? r.doing : r.stage ? `${STAGE[r.stage]}${r.pr ? ` PR #${r.pr}` : ""}${r.title ? ` ${r.title}` : ""}` : "—";
+          // The pill carries the plain status; a longer label (stale claim · #549, awaiting review #N) is a chip.
+          const tag = r.label && r.label !== PILL[r.status] ? r.label : null;
+          const what = tag && full.startsWith(tag) ? full.slice(tag.length).trim() : full;
           const bot = agents.find((b) => b.name === r.name);
           return (
             <li key={bot ? `bot:${bot.key}` : `lane:${r.name}`} className="ab-row">
-              <span className="ab-pill" data-status={r.status}>{r.label ?? PILL[r.status]}</span>
+              <span className="ab-pill" data-status={r.status}>{PILL[r.status]}</span>
               <span className="ab-name">{r.name}</span>
-              <span className="ab-what">{r.href ? <a href={r.href} target="_blank" rel="noreferrer">{what}</a> : what}</span>
+              <span className="ab-what">
+                {tag && <span className="ab-tag">{tag}</span>}
+                {what.length > 0 && <span className="ab-doing">{r.href ? <a href={r.href} target="_blank" rel="noreferrer">{what}</a> : what}</span>}
+              </span>
               <span className="ab-for">{r.latest ?? "—"}</span>
               <span className="ab-last">{r.lastDelivered ? `last delivered ${r.lastDelivered}` : "nothing delivered yet"}</span>
               {bot && (onOpenBotDetails || onNameBot) && (

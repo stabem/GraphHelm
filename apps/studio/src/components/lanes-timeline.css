@@ -54,20 +54,26 @@
 .ab-chip { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid #2A2D35; background: #111216; color: #A9AEB8; cursor: pointer; }
 .ab-chip[aria-pressed="true"] { background: #1E2129; color: #E9E7E2; border-color: #4A4F5C; }
 .ab-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.ab-row { display: grid; grid-template-columns: 80px 150px minmax(0, 1fr) 120px 220px; gap: 12px; align-items: center; padding: 6px 10px; border-radius: 8px; background: #101115; border: 1px solid #1A1C21; }
-.ab-pill { font-family: var(--mono); font-size: 11px; text-align: center; padding: 2px 6px; border-radius: 999px; background: #1F2A22; color: #8FD3A8; }
+.ab-row { display: grid; grid-template-columns: minmax(96px, max-content) minmax(13ch, 160px) minmax(0, 1fr) 110px 190px auto; gap: 12px; align-items: center; padding: 7px 12px; border-radius: 8px; background: #111216; border: 1px solid #1A1C21; }
+.ab-row:hover { background: #16181D; border-color: #2A2D35; }
+.ab-row:focus-within { border-color: #4A4F5C; }
+.ab-act:focus-visible, .ab-chip:focus-visible, .ab-what a:focus-visible { outline: 2px solid #8FB3D9; outline-offset: 2px; }
+.ab-pill { justify-self: start; min-width: 64px; box-sizing: border-box; white-space: nowrap; font-family: var(--mono); font-size: 11px; text-align: center; padding: 2px 8px; border-radius: 999px; background: #1F2A22; color: #8FD3A8; }
 .ab-pill[data-status="working"] { background: #3A2A10; color: #F5A524; }
 .ab-pill[data-status="waiting"] { background: #172338; color: #8FB3D9; }
 .ab-pill[data-status="awaiting"] { background: #172338; color: #9AB8FF; }
 .ab-pill[data-status="stale"] { background: #2A2D34; color: #C7CBD3; }
 .ab-pill[data-status="silent"] { background: #3A1E1A; color: #FF8A7E; }
-.ab-name { font-family: var(--mono); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ab-what, .ab-last { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #C9CCD2; }
+.ab-name { font-family: var(--mono); font-size: 12.5px; min-width: 13ch; overflow-wrap: normal; word-break: keep-all; hyphens: manual; }
+.ab-what { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; color: #C9CCD2; }
+.ab-doing { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ab-tag { display: inline-block; white-space: nowrap; font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 6px; background: #1C1F25; border: 1px solid #2A2D35; color: #C7CBD3; }
+.ab-last { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ab-what a { color: #8FB3D9; }
 .ab-for { font-family: var(--mono); font-size: 12px; color: #E9E7E2; }
 .ab-last { color: #8D929C; font-size: 12px; }
 @media (max-width: 700px) {
-  .ab-row { grid-template-columns: 70px minmax(0, 1fr) 90px; }
+  .ab-row { grid-template-columns: max-content minmax(13ch, 1fr) 90px auto; }
   .ab-what, .ab-last { display: none; }
 }
 
@@ -82,7 +88,7 @@
 .ab-slot-queue { opacity: .8; }
 
 /* #647: Details / Name this bot on a board row, quiet until hovered. */
-.ab-acts { grid-column: 1 / -1; display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.ab-acts { justify-self: end; display: inline-flex; gap: 6px; white-space: nowrap; }
 .ab-act, .ab-name-form button { font: inherit; font-size: 12px; padding: 2px 8px; border-radius: 6px; border: 1px solid #2A2D35; background: transparent; color: inherit; cursor: pointer; }
 .ab-name-form { display: inline-flex; gap: 6px; }
 .ab-name-form input { font: inherit; font-size: 12px; padding: 2px 6px; width: 140px; }

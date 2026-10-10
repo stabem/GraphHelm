@@ -13,7 +13,7 @@ screens:
     title: The PR is selected on its issue graph
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: tab, name: Graph}, {role: button, name: "Row PR #721: Observe issue graph and work kanban"}, {role: button, name: "Column Implement: 0"}, {role: button, name: "Column Review: 1"}, {role: button, name: "Column Fix: 0"}, {role: button, name: "Column Merge: 0"}, {role: button, name: "Column Merged: 1"}]
+    expect: [{role: tab, name: Graph}, {role: button, name: "Row PR #721: Observe issue graph and work kanban · plan ✓"}, {role: button, name: "Column Implement: 0"}, {role: button, name: "Column Review: 1"}, {role: button, name: "Column Fix: 0"}, {role: button, name: "Column Merge: 0"}, {role: button, name: "Column Merged: 1"}]
     scope: [apps/studio/src/components/mission-graph.tsx, apps/studio/src/components/mission-view.tsx, apps/studio/src/runtime/work-groups.ts]
   - id: lanes
     title: The seeded open PR appears in the work kanban
@@ -31,7 +31,7 @@ screens:
     title: The merged PR shows no proof record
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: heading, name: Merged fixture row}, {role: complementary, name: Selected work}]
+    expect: [{role: heading, name: Merged fixture row}, {role: complementary, name: Selected work}, {role: button, name: "#722 Merged · not proven"}]
     scope: [apps/studio/src/components/mission-graph.tsx, apps/studio/src/runtime/work-groups.ts]
   - id: run
     title: The work kanban is available

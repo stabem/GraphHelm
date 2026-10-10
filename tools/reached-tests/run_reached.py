@@ -228,6 +228,8 @@ def run(args: argparse.Namespace) -> int:
                 env.update({"CARGO_BUILD_JOBS": "6", "RUST_TEST_THREADS": "2"})
                 with logfile.open("w", encoding="utf-8") as stream:
                     proc = subprocess.run(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, text=True, env=env)
+                no_pytest_tests = command[1:3] == ["-m", "pytest"] and (
+                    proc.returncode == 5 or "no tests ran" in _tail(logfile).lower())
                 if step["slot"]:
                     q, h = _slot_telemetry(logfile, command)
                     if q is None or h is None:
@@ -240,6 +242,9 @@ def run(args: argparse.Namespace) -> int:
                 entry = {"index": index, "argv": argv, "cwd": step["cwd"], "slot": step["slot"],
                          "returncode": proc.returncode, "late": time.monotonic() - started > args.budget_seconds,
                          "log": str(logfile), "tail": _tail(logfile)}
+                if no_pytest_tests:
+                    entry["returncode"] = proc.returncode or 1
+                    entry["error"] = "pytest collected no tests"
                 zero_tests = "-m" in argv and "unittest" in argv and bool(_UNITTEST_ZERO.search(entry["tail"]))
                 if zero_tests:
                     entry["zeroTests"] = True
@@ -248,7 +253,7 @@ def run(args: argparse.Namespace) -> int:
                     report["status"] = "incomplete"
                     report["error"] = f"step {index} unittest discovered zero tests"
                     break
-                if proc.returncode:
+                if entry["returncode"]:
                     report["status"] = "failed"
                     break
                 if entry["late"]:

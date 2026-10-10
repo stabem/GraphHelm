@@ -204,8 +204,8 @@ def target_of(packages, package, stem):
 def python_test_tool(root, path):
     """Choose the module's declared Python test framework without running it."""
     text = (root / path).read_text(encoding="utf-8", errors="replace")
-    if re.search(r"^\s*def\s+test_\w+\s*\(", text, re.M):
-        return f"python -m pytest -q {path}"
+    if re.search(r"^(?:import pytest|from pytest)", text, re.M) or re.search(r"^def\s+test_\w+\s*\(", text, re.M):
+        return f"python -m pytest {path}"
     return f"python -m unittest {path}"
 
 
@@ -236,6 +236,17 @@ def private_test_parent(sources, changed_path):
     return next(iter(parents)) if len(parents) == 1 else None
 
 
+def private_test_children(sources, parent):
+    """Return cfg(test) path children belonging to one production source."""
+    children = set()
+    parent_source = parent + ".rs"
+    text = sources.get(parent_source, "")
+    for pattern in PRIVATE_TEST_PATH:
+        for child in pattern.findall(text):
+            children.add((Path(parent_source).parent / child).as_posix())
+    return children
+
+
 def cli_module(packages, p, rel, root):
     """#361: a change to one `apps/cli/src/commands/<module>` reaches that module's unit tests, the
     integration tests that read the crate's own source, and the ones that name its command (every
@@ -256,10 +267,25 @@ def cli_module(packages, p, rel, root):
                for f in sorted(src.rglob("*.rs"))} if src.is_dir() else {}
     start = rel[len("src/commands/"):-len(".rs")]
     parent = private_test_parent(sources, rel)
+    audited_parent = "src/commands/workspace_slot" if start == "workspace_slot" else parent
     if parent is not None and parent.startswith("src/commands/"):
         start = parent[len("src/commands/"):]
     changed_source = f"src/commands/{start}.rs"
     readers = source_reader_targets(texts, packages, p["name"], changed_source)
+
+    if audited_parent == "src/commands/workspace_slot":
+        cli_bin = any(t.get("kind") == "bin" and t.get("name") == CLI_BIN for t in p.get("targets", []))
+        workspace_target = target_of(packages, p["name"], "workspace_cli")
+        allowed = {audited_parent + ".rs", *private_test_children(sources, audited_parent), "src/main.rs", "src/commands/mod.rs",
+                   "src/commands/workspace.rs", "src/commands/serve/routes.rs"}
+        unknown_caller = any(
+            path not in allowed and re.search(r"\bworkspace_slot\b", text)
+            for path, text in sources.items()
+        )
+        if not cli_bin or workspace_target is None or unknown_caller:
+            return None
+        return {(p["name"], f"bin:{CLI_BIN}", "commands::" + start.replace("/", "::")),
+                workspace_target, *readers}
 
     def named(module):
         words = [w for part in module.split("/") for w in part.split("_") if w]
@@ -483,9 +509,9 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
         elif tool.startswith("python -m unittest "):
             test_path = tool[len("python -m unittest "):]
             out.append({"argv": ["python", "-m", "unittest", test_path], "cwd": ".", "slot": False})
-        elif tool.startswith("python -m pytest -q "):
-            test_path = tool[len("python -m pytest -q "):]
-            out.append({"argv": ["python", "-m", "pytest", "-q", test_path], "cwd": ".", "slot": False})
+        elif tool.startswith("python -m pytest "):
+            test_path = tool[len("python -m pytest "):]
+            out.append({"argv": ["python", "-m", "pytest", test_path], "cwd": ".", "slot": False})
         elif tool.startswith("node --test "):
             if repo is None:
                 raise ValueError("node test paths require the repository root")

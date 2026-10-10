@@ -224,12 +224,29 @@ class Reach(unittest.TestCase):
             tool.mkdir(parents=True)
             (tool / "test_run.py").write_text("def test_reaches_pytest():\n    assert True\n", encoding="utf-8")
             *_, tools, _, other = reach("tools/token-bench/run.py", repo=repo)
-        self.assertEqual(tools, ["python -m pytest -q tools/token-bench/test_run.py"])
+        self.assertEqual(tools, ["python -m pytest tools/token-bench/test_run.py"])
         self.assertEqual(other, [])
 
     def test_structured_pytest_step_keeps_direct_argv(self):
-        records = rt.steps(set(), set(), [], ["python -m pytest -q tools/token-bench/test_run.py"], [])
-        self.assertEqual(records[0]["argv"], ["python", "-m", "pytest", "-q", "tools/token-bench/test_run.py"])
+        records = rt.steps(set(), set(), [], ["python -m pytest tools/token-bench/test_run.py"], [])
+        self.assertEqual(records[0]["argv"], ["python", "-m", "pytest", "tools/token-bench/test_run.py"])
+
+    def test_pytest_tool_contract_is_selected_explicitly_without_importing_tests(self):
+        with tempfile.TemporaryDirectory() as repo:
+            tool = Path(repo, "tools", "example")
+            tool.mkdir(parents=True)
+            (tool / "tool.py").write_text("", encoding="utf-8")
+            (tool / "test_pytest_contract.py").write_text("def test_contract(): pass\n", encoding="utf-8")
+            (tool / "test_unittest_contract.py").write_text("import unittest\nclass T(unittest.TestCase): pass\n", encoding="utf-8")
+            *_, tools, _, other = reach("tools/example/tool.py", repo=repo)
+            records = rt.steps(set(), set(), [], tools, repo=Path(repo))
+        self.assertEqual(tools, ["python -m pytest tools/example/test_pytest_contract.py",
+                                 "python -m unittest tools/example/test_unittest_contract.py"])
+        self.assertEqual([step["argv"] for step in records], [
+            ["python", "-m", "pytest", "tools/example/test_pytest_contract.py"],
+            ["python", "-m", "unittest", "tools/example/test_unittest_contract.py"],
+        ])
+        self.assertEqual(other, [])
 
     def test_a_path_no_rule_maps_is_reported(self):
         *_, other = reach("ci/gate.ps1")
@@ -312,12 +329,83 @@ class CliModules(unittest.TestCase):
             {"name": "workspace_cli", "src": "apps/cli/tests/workspace_cli.rs"},
             {"name": "source_invariants", "src": "apps/cli/tests/source_invariants.rs"},
         ]
+        packages[0]["targets"] = [{"name": "graphhelm", "kind": "bin"}]
         whole, single, *_ = rt.reach(
             ["apps/cli/src/commands/workspace_slot_tests.rs"], packages, {}, root)
         self.assertEqual(whole, set())
         self.assertIn(("graphhelm-cli", "bin:graphhelm", "commands::workspace_slot"), single)
         self.assertIn(("graphhelm-cli", "workspace_cli", None), single)
         self.assertIn(("graphhelm-cli", "source_invariants", None), single)
+
+    def test_private_cfg_test_unknown_caller_falls_back_to_whole_package(self):
+        root, packages = self.tree()
+        source = root / "apps/cli/src/commands"
+        source.mkdir(parents=True, exist_ok=True)
+        (source / "workspace_slot.rs").write_text(
+            '#[cfg(test)]\n#[path = "workspace_slot_tests.rs"]\nmod workspace_slot_tests;\n', encoding="utf-8")
+        (source / "workspace_slot_tests.rs").write_text("", encoding="utf-8")
+        (source / "unrelated.rs").write_text("use crate::workspace_slot;\n", encoding="utf-8")
+        tests = root / "apps/cli/tests"
+        (tests / "workspace_cli.rs").write_text('cmd.args(["workspace", "slot"]);', encoding="utf-8")
+        packages[0]["tests"] += [{"name": "workspace_cli", "src": "apps/cli/tests/workspace_cli.rs"}]
+        packages[0]["targets"] = [{"name": "graphhelm", "kind": "bin"}]
+        whole, *_ = rt.reach(["apps/cli/src/commands/workspace_slot_tests.rs"], packages, {}, root)
+        self.assertEqual(whole, {"graphhelm-cli"})
+
+    def test_private_cfg_test_without_bin_or_workspace_target_falls_back(self):
+        root, packages = self.tree()
+        source = root / "apps/cli/src/commands"
+        source.mkdir(parents=True, exist_ok=True)
+        (source / "workspace_slot.rs").write_text(
+            '#[cfg(test)]\n#[path = "workspace_slot_tests.rs"]\nmod workspace_slot_tests;\n', encoding="utf-8")
+        (source / "workspace_slot_tests.rs").write_text("", encoding="utf-8")
+        packages[0]["targets"] = []
+        whole, *_ = rt.reach(["apps/cli/src/commands/workspace_slot_tests.rs"], packages, {}, root)
+        self.assertEqual(whole, {"graphhelm-cli"})
+
+    def test_workspace_production_change_keeps_normal_narrow_coverage(self):
+        root, packages = self.tree()
+        source = root / "apps/cli/src/commands"
+        source.mkdir(parents=True, exist_ok=True)
+        (source / "workspace.rs").write_text("", encoding="utf-8")
+        tests = root / "apps/cli/tests"
+        (tests / "workspace_cli.rs").write_text('cmd.args(["workspace"]);', encoding="utf-8")
+        packages[0]["tests"] += [{"name": "workspace_cli", "src": "apps/cli/tests/workspace_cli.rs"}]
+        packages[0]["targets"] = [{"name": "graphhelm", "kind": "bin"}]
+        whole, single, *_ = rt.reach(["apps/cli/src/commands/workspace.rs"], packages, {}, root)
+        self.assertEqual(whole, set())
+        self.assertIn(("graphhelm-cli", "bin:graphhelm", "commands::workspace"), single)
+
+    def test_workspace_slot_production_file_uses_audited_narrow_coverage(self):
+        root, packages = self.tree()
+        source = root / "apps/cli/src/commands"
+        source.mkdir(parents=True, exist_ok=True)
+        (source / "workspace_slot.rs").write_text(
+            '#[cfg(test)]\n#[path = "workspace_slot_tests.rs"]\nmod workspace_slot_tests;\n', encoding="utf-8")
+        (source / "workspace_slot_tests.rs").write_text("", encoding="utf-8")
+        tests = root / "apps/cli/tests"
+        (tests / "workspace_cli.rs").write_text('cmd.args(["workspace", "slot"]);', encoding="utf-8")
+        packages[0]["tests"] += [{"name": "workspace_cli", "src": "apps/cli/tests/workspace_cli.rs"}]
+        packages[0]["targets"] = [{"name": "graphhelm", "kind": "bin"}]
+        whole, single, *_ = rt.reach(["apps/cli/src/commands/workspace_slot.rs"], packages, {}, root)
+        self.assertEqual(whole, set())
+        self.assertIn(("graphhelm-cli", "bin:graphhelm", "commands::workspace_slot"), single)
+        self.assertIn(("graphhelm-cli", "workspace_cli", None), single)
+
+    def test_other_private_cfg_test_parent_keeps_normal_module_selection(self):
+        root, packages = self.tree()
+        source = root / "apps/cli/src/commands"
+        source.mkdir(parents=True, exist_ok=True)
+        (source / "other_module.rs").write_text(
+            '#[cfg(test)]\n#[path = "other_module_tests.rs"]\nmod other_module_tests;\n', encoding="utf-8")
+        (source / "other_module_tests.rs").write_text("", encoding="utf-8")
+        tests = root / "apps/cli/tests"
+        (tests / "other_module_cli.rs").write_text('cmd.args(["other", "module"]);', encoding="utf-8")
+        packages[0]["tests"] += [{"name": "other_module_cli", "src": "apps/cli/tests/other_module_cli.rs"}]
+        whole, single, *_ = rt.reach(
+            ["apps/cli/src/commands/other_module_tests.rs"], packages, {}, root)
+        self.assertEqual(whole, set())
+        self.assertIn(("graphhelm-cli", "bin:graphhelm", "commands::other_module"), single)
 
     def test_scoped_reader_reaches_when_its_real_source_is_touched(self):
         texts = {

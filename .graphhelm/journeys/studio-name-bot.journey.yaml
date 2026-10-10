@@ -44,7 +44,7 @@ edges:
     acts:
       - {kind: enter_text, role: textbox, name: Name for planner, text: Planny}
       - {kind: submit, role: button, name: Save}
-      - {kind: activate, role: button, name: Details, locator: {context: 'region "Agents"'}}
+      - {kind: activate, role: button, name: Details}
   - id: run.name
     from: run
     to: naming

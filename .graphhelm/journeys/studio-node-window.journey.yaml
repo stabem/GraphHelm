@@ -18,14 +18,14 @@ screens:
     title: The Graph shows the run steps without a bot
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: Run graph}, {role: heading, name: Steps without a bot}, {role: button, name: Deploy Â· ready}]
+    expect: [{role: region, name: Run graph}, {role: heading, name: Steps without a bot}, {role: button, name: Deploy · ready}]
     scope: [apps/studio/src/components/mission-view.tsx]
 edges:
   - id: run.step
     from: run
     to: node
     acts:
-      - {kind: activate, role: button, name: Deploy Â· ready}
+      - {kind: activate, role: button, name: Deploy · ready}
 paths:
   main: [run.step]
 drift: []

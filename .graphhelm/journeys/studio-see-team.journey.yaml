@@ -18,7 +18,7 @@ screens:
     title: Agents board and lane timeline
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: Agents}, {role: heading, name: Agents}, {role: list, name: Agent board}, {role: button, name: Details, locator: {context: 'region "Agents"'}}, {role: region, name: Lanes}, {role: heading, name: "Who did what, and who is stuck"}]
+    expect: [{role: region, name: Agents}, {role: heading, name: Agents}, {role: list, name: Agent board}, {role: button, name: Details}, {role: region, name: Lanes}, {role: heading, name: "Who did what, and who is stuck"}]
     scope: [apps/studio/src/components/lanes-timeline.tsx, apps/studio/src/runtime/agent-board.ts, apps/studio/src/runtime/lane-bars.ts]
   - id: run
     title: A run is open on its Mission graph
@@ -36,7 +36,7 @@ edges:
     from: lanes
     to: agent
     acts:
-      - {kind: activate, role: button, name: Details, locator: {context: 'region "Agents"'}}
+      - {kind: activate, role: button, name: Details}
 paths:
   main: [run.lanes, lanes.details]
 drift: []

@@ -5,7 +5,6 @@ import { MissionView } from "./mission-view";
 import type { GraphNode } from "../graph/model";
 import type { Bot } from "../runtime/team";
 import type { Lane } from "../runtime/lane-bars";
-import { foldTaskEvents } from "../runtime/team-tasks";
 
 const node = (id: string, declaredName: string, state: GraphNode["state"]): GraphNode =>
   ({ id, declaredName, state, touches: 0, lastEventAt: null, history: [], reopened: null });
@@ -16,35 +15,6 @@ const bot = (key: string, name: string, actorId: string | null = key): Bot => ({
 const base = { journeys: [], tasks: [], now: 0, runFor: () => null, frameUrl: () => null, onMarkSafe: vi.fn() };
 
 describe("#647 MissionView: the Team canvas controls on the Graph page", () => {
-  // Contract: the Lanes entry point exposes recorded handoffs, with no empty box.
-  // Regression: forgetting the mount hides a working standalone DelegationTree.
-  // Gap: tree component tests never render MissionView. Cost: jsdom, no I/O or test seam.
-  it("shows the recorded delegation hierarchy in Lanes and omits it without records", async () => {
-    const userEvent = fastUserEvent();
-    const delegation = foldTaskEvents([
-      { kind: "task.claimed", actorId: "lane-a", sequence: 1, taskId: "issue-901", issue: 901,
-        lane: "lane-a", branch: "issue-901-fixture", assignedBy: "lead-901" },
-      { kind: "task.review_assigned", actorId: "lane-a", sequence: 2, taskId: "issue-901",
-        pr: 903, headSha: "aaaaaaaa", reviewer: "lane-b" },
-      { kind: "task.claimed", actorId: "lane-c", sequence: 3, taskId: "issue-902", issue: 902,
-        lane: "lane-c", branch: "issue-902-fixture" },
-    ]);
-    const props = { ...base, lanes: [], delegation };
-    const { rerender } = render(<MissionView {...props} />);
-    await userEvent.click(screen.getByRole("tab", { name: "Lanes" }));
-    const tree = within(screen.getByRole("region", { name: "Delegation" })).getByRole("tree");
-    const assigner = within(tree).getByRole("treeitem", { name: "lead-901" });
-    const lane = within(assigner).getByRole("treeitem", { name: /^lane-a/ });
-    const issue = within(lane).getByRole("treeitem", { name: /^#901/ });
-    expect(within(issue).getByRole("treeitem", { name: /^lane-b\s*review_assigned$/ })).toBeInTheDocument();
-    const unknown = within(tree).getByRole("treeitem", { name: "assigner unrecorded" });
-    expect(within(unknown).getByRole("treeitem", { name: /^lane-c\s*assigner unrecorded$/ })).toBeInTheDocument();
-    rerender(<MissionView {...base} lanes={[]} />);
-    expect(screen.queryByRole("region", { name: "Delegation" })).toBeNull();
-    rerender(<MissionView {...props} delegation={[]} />);
-    expect(screen.queryByRole("region", { name: "Delegation" })).toBeNull();
-  });
-
   it("keeps the reopened name field and draft when the saved alias arrives", async () => {
     const userEvent = fastUserEvent();
     const onNameBot = vi.fn();

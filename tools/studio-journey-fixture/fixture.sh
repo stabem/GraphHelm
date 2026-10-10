@@ -117,31 +117,6 @@ up)
     curl -sf --max-time 10 -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token" \
       -H "Content-Type: application/json" -H "Idempotency-Key: $id" -H "X-GraphHelm-Actor: planner" -H "X-GraphHelm-Actor-Type: agent" \
       --data-binary @"$dir/.graphhelm/question.json" > "$dir/.graphhelm/question.out"
-    # #86: recorded handoffs, using the same signal envelope and actor headers as task_record.py.
-    # Refusal is fatal: never widen the fixture token's permissions to seed task records.
-    node - "$dir" "$now" <<'NODE'
-const fs = require('fs');
-const [dir, at] = process.argv.slice(2);
-const records = [
-  ['901-claimed', 'lane-a', 'task.claimed', { taskId: 'issue-901', issue: 901, lane: 'lane-a', branch: 'issue-901-fixture', assignedBy: 'lead-901' }],
-  ['901-review', 'lane-a', 'task.review_assigned', { taskId: 'issue-901', pr: 903, headSha: 'aaaaaaaa', reviewer: 'lane-b', ordinal: 1 }],
-  ['902-claimed', 'lane-c', 'task.claimed', { taskId: 'issue-902', issue: 902, lane: 'lane-c', branch: 'issue-902-fixture' }],
-];
-for (const [id, lane, type, fields] of records) {
-  const document = { schema: 'graphhelm-task-event-v1', revision: 1, at, ...fields };
-  const signal = { id: `fixture-${id}`, type, source: { type: 'user', id: lane }, severity: 'low',
-    emittedAt: at, evidence: ['demo'], description: JSON.stringify(document) };
-  fs.writeFileSync(`${dir}/.graphhelm/task-${id}.json`, JSON.stringify({ signal }));
-}
-NODE
-    for record in 901-claimed 901-review 902-claimed; do
-      actor=lane-a; [ "$record" != 902-claimed ] || actor=lane-c
-      curl -sf --max-time 10 -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token" \
-        -H "Content-Type: application/json" -H "Idempotency-Key: fixture-$record" -H "X-GraphHelm-Actor: $actor" -H "X-GraphHelm-Actor-Type: agent" \
-        --data-binary @"$dir/.graphhelm/task-$record.json" > "$dir/.graphhelm/task-$record.out" \
-        || { echo "fixture: task record $record refused; stop without widening permissions" >&2; exit 1; }
-      node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if(r.ok!==true) { console.error("fixture: task record refused; stop without widening permissions"); process.exit(1); }' "$dir/.graphhelm/task-$record.out"
-    done
     # #585: studio-handover shows "While you were away" after 20+ events since the owner was last
     # here; the flow sets that last-seen time in the browser, these are the events after it.
     for n in $(seq 1 22); do

@@ -3165,7 +3165,6 @@ export default function App({
             {canvasTab === "graph" && (
               <div id="studio-panel-graph" role="tabpanel" aria-label="Graph">
                 <SlotPoll client={clientRef.current}>{(slots) => <MissionView slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} runFor={missionRunFor}
-                  delegation={taskGraphs?.executionId === selected ? taskGraphs.tasks : undefined}
                   lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe}
                   runName={selected} lastRecordAt={Date.parse(eventList[eventList.length - 1]?.occurredAt ?? "")} onTeam={() => chooseCanvas("team")} onJourneys={() => chooseCanvas("journey")}
                   draftJourneys={flowsRead.view?.flows.filter((flow) => flow.status === "draft").length ?? 0}

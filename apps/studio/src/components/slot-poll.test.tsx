@@ -26,6 +26,31 @@ describe("SlotPoll", () => {
     await flush();
     expect(screen.getByText("n=0")).toBeTruthy();
   });
+  it("clears a known queue when a later read fails", async () => {
+    const known = parseSlots({ slots: [{ root: "D:/gh", holder: { lane: "a", heldSeconds: 1 }, waiting: [] }] });
+    const client = { workspaceSlots: vi.fn().mockResolvedValueOnce(known).mockRejectedValueOnce(Object.assign(new Error("offline"), { status: 503 })) };
+    vi.useFakeTimers();
+    render(<SlotPoll client={client}>{(s) => <span>{s.some((slot) => slot.ok && slot.holder?.lane === "a") ? "Building" : "clear"}</span>}</SlotPoll>);
+    await flush();
+    expect(screen.getByText("Building")).toBeTruthy();
+    await act(async () => { vi.advanceTimersByTime(10_000); await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByText("clear")).toBeTruthy();
+    vi.useRealTimers();
+  });
+  it("clears old data immediately when the client changes and ignores its late reply", async () => {
+    let resolveOld!: (slots: ReturnType<typeof parseSlots>) => void;
+    const old = { workspaceSlots: vi.fn(() => new Promise<ReturnType<typeof parseSlots>>((resolve) => { resolveOld = resolve; })) };
+    const next = { workspaceSlots: vi.fn().mockResolvedValue([]) };
+    const view = (client: typeof old | typeof next) => <SlotPoll client={client}>{(s) => <span>{s.some((slot) => slot.ok && slot.holder?.lane === "a") ? "Building" : "clear"}</span>}</SlotPoll>;
+    const r = render(view(old));
+    await flush();
+    r.rerender(view(next));
+    expect(screen.getByText("clear")).toBeTruthy();
+    await flush();
+    resolveOld(parseSlots({ slots: [{ root: "D:/gh", holder: { lane: "a", heldSeconds: 1 }, waiting: [] }] }));
+    await flush();
+    expect(screen.getByText("clear")).toBeTruthy();
+  });
 });
 
 describe("Lanes build slots", () => {

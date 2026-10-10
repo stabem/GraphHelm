@@ -11,12 +11,21 @@ export function useSlotPoll(client: SlotSource | null, everyMs = SLOT_POLL_MS): 
   useEffect(() => {
     if (!client) { setSlots([]); return; }
     let live = true;
-    const read = () => Promise.resolve().then(() => client.workspaceSlots()).then((s) => { if (live) setSlots(s); }, (e: unknown) => {
-      const status = (e as { status?: unknown } | null)?.status;
-      if (live && (status === 403 || status === 404)) setSlots([]);
-    });
-    void read();
-    const id = setInterval(read, everyMs);
+    let latestRead = 0;
+    setSlots([]);
+    const orderedRead = () => {
+      const readId = ++latestRead;
+      void Promise.resolve().then(() => client.workspaceSlots()).then((s) => {
+        if (live && readId === latestRead) setSlots(s);
+      }, (e: unknown) => {
+        if (!live || readId !== latestRead) return;
+        const status = (e as { status?: unknown } | null)?.status;
+        if (status === 403 || status === 404) { setSlots([]); return; }
+        setSlots((known) => known.map((slot) => ({ root: slot.root, ok: false, errorCodes: [] })));
+      });
+    };
+    orderedRead();
+    const id = setInterval(orderedRead, everyMs);
     return () => { live = false; clearInterval(id); };
   }, [client, everyMs]);
   return slots;

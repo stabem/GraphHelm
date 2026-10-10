@@ -354,7 +354,7 @@ pub(crate) fn execute(
         },
     )?;
 
-    Ok(render(
+    let mut reply = render(
         &projection,
         // Nothing measured here on purpose: this command reports the mutation it just made,
         // not a liveness reading. The seam turns "not measured" into `silenceUnevaluated`
@@ -376,7 +376,10 @@ pub(crate) fn execute(
         // projection; the per-node age remains unmeasured on this surface.
         &super::Liveness::from_store(&store, &prepared.scope, prepared.stream.as_str()),
         Some(&prepared.spec),
-    ))
+    );
+    // A new execution has no armed wake leases; keep start's reply aligned with status.
+    reply["wakeListeners"] = serde_json::json!([]);
+    Ok(reply)
 }
 
 /// #90: a start that publishes and records `execution_started` and stops there.

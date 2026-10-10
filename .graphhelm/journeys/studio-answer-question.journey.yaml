@@ -24,8 +24,14 @@ screens:
     title: "A question is waiting under Needs you (demo: asked by planner)"
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: Needs you}, {role: heading, name: planner asks}, {role: button, name: Answer}, {role: button, name: Refuse}]
+    expect: [{role: complementary, name: Chat}, {role: tablist, name: Threads}, {role: region, name: Needs you}, {role: heading, name: planner asks}, {role: button, name: Answer}, {role: button, name: Refuse}]
     scope: [apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx]
+  - id: mission
+    title: Open the chat from the mission
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: group, name: Go to}, {role: button, name: Chat}]
+    scope: [apps/studio/src/components/mission-view.tsx]
 edges:
   - id: answering.send
     from: answering
@@ -38,6 +44,11 @@ edges:
     to: answering
     acts:
       - {kind: activate, role: button, name: Answer}
+  - id: mission.chat
+    from: mission
+    to: asked
+    acts:
+      - {kind: activate, role: button, name: Chat}
 paths:
-  main: [asked.answer, answering.send]
+  main: [mission.chat, asked.answer, answering.send]
 drift: []

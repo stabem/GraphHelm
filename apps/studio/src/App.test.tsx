@@ -1393,7 +1393,7 @@ describe("operator actions", () => {
   /** A verb the state makes illegal renders disabled WITH ITS REASON on the wrapping span -
    * a disabled button never shows its own title, and a live button that bounces off the API's
    * refusal would pretend (Phase 2 honesty rule). */
-  it("answers a waiting node from its matched snapshot without sending a file", async () => {
+  it("answers a waiting node from its matched snapshot and removes the stale waiting label", async () => {
     const hash = "sha256:" + "a".repeat(64);
     const recorded = (sequence: number, kind: string, payload: unknown, evidenceRefs: string[] = []) => ({
       sequence, kind, payload, evidenceRefs, occurredAt: null, actorId: "system-cli",
@@ -1403,7 +1403,9 @@ describe("operator actions", () => {
     const clearClaim = vi.fn(async () => ({ ...PAUSED_EVIDENCE, action: "clear", statusAfter: { ...STATUS, customs: { clearances: { "10": { type: "cleared" } } } } }));
     const client = stubClient({
       claimNode, clearClaim,
-      getStatus: vi.fn(async () => ({ ...STATUS, customs: { nodes: { implementation: { openWait: { atSequence: 4 } } } } })),
+      getStatus: vi.fn(async () => clearClaim.mock.calls.length > 0
+        ? { ...STATUS, headSequence: 14, nodeStates: { implementation: "succeeded" }, customs: { nodes: {} } }
+        : { ...STATUS, headSequence: 4, nodeStates: { implementation: "waiting_input" }, customs: { nodes: { implementation: { openWait: { atSequence: 4 } } } } }),
       getEvents: vi.fn(async () => ({ head: 4, events: [
         recorded(1, "execution_started", { executionId: "demo-deploy", graphHash: hash, graphVersion: 1 }),
         recorded(2, "graph_authoring_snapshot_stored", { executionId: "demo-deploy", graphVersion: 1, graphHash: hash }, ["authoring-1"]),
@@ -1419,6 +1421,10 @@ describe("operator actions", () => {
     expect(claimNode.mock.calls[0]).toEqual(["demo-deploy", { node: "implementation", waitSeq: 4, evidence: [] }]);
     expect(clearClaim.mock.calls[0]).toEqual(["demo-deploy", { node: "implementation", claimSeq: 10, evidence: [] }]);
     expect(client.getTopology).not.toHaveBeenCalled();
+    const panel = screen.getByLabelText("Node implementation");
+    await waitFor(() => expect(within(panel).queryByText("waiting input")).not.toBeInTheDocument());
+    expect(panel.querySelector(".panel-state")).toHaveTextContent("Finished");
+    expect(within(panel).queryByRole("button", { name: "Answer with no evidence" })).not.toBeInTheDocument();
   });
 
   /** #1083 (orchestrator verification): a COMPLETED run's dock still offered both pauses, resume

@@ -26,13 +26,39 @@ function lastDelivered(tasks: MissionTask[]) {
   return out;
 }
 
-interface Props { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[]; agents?: Bot[]; slots?: SlotView[] }
+/** #647: the bot controls the retired Team canvas had; absent, the board shows no buttons. */
+export interface BotActions {
+  onOpenBotDetails?: (key: string) => void;
+  onNameBot?: (actorId: string, displayName: string) => void | Promise<unknown>;
+}
+
+interface Props extends BotActions { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[]; agents?: Bot[]; slots?: SlotView[] }
+
+/** #647: the Team canvas's rename control (same gate, labels and save path), on a board row. */
+export function NameBot({ bot, onSave }: { bot: Bot; onSave: (actorId: string, displayName: string) => void | Promise<unknown> }) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  if (bot.actorId === null) return null;
+  const actorId = bot.actorId;
+  if (!open) return <button type="button" className="ab-act" onClick={() => setOpen(true)}>Name this bot</button>;
+  const name = value.trim();
+  return (
+    <form className="ab-name-form" onSubmit={(event) => { event.preventDefault(); if (name.length === 0) return; void onSave(actorId, name); setOpen(false); setValue(""); }}>
+      <input aria-label={`Name for ${bot.name}`} placeholder="Display name" maxLength={80} value={value} onChange={(event) => setValue(event.target.value)} autoFocus />
+      <button type="submit" disabled={name.length === 0}>Save</button>
+      <button type="button" onClick={() => { setOpen(false); setValue(""); }}>Cancel</button>
+    </form>
+  );
+}
+
+/** The Team canvas showed the rename only for an unnamed, unshared, non-native actor. */
+const nameable = (b: Bot) => b.actorId !== null && b.role === null && !b.native && !b.shared;
 
 const PILL: Record<AgentStatus, string> = { silent: "Silent", stale: "Stale claim", building: "Building", build_wait: "Waiting for build", working: "Working", awaiting: "Awaiting review", waiting: "Waiting", free: "Free" };
 const STAGE: Record<string, string> = { implement: "implementing", review: "reviewing", merge: "merging" };
 type Filter = "all" | "working" | "free" | "silent";
 
-function AgentBoard({ rows }: { rows: AgentRow[] }) {
+function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: AgentRow[]; agents?: Bot[] } & BotActions) {
   const [filter, setFilter] = useState<Filter>("all");
   const count = (f: Filter) => (f === "all" ? rows.length : rows.filter((r) => r.status === f).length);
   const shown = filter === "all" ? rows : rows.filter((r) => r.status === filter);
@@ -51,6 +77,7 @@ function AgentBoard({ rows }: { rows: AgentRow[] }) {
       <ul className="ab-rows" aria-label="Agent board">
         {shown.map((r) => {
           const what = r.doing ? r.doing : r.stage ? `${STAGE[r.stage]}${r.pr ? ` PR #${r.pr}` : ""}${r.title ? ` ${r.title}` : ""}` : "—";
+          const bot = agents.find((b) => b.name === r.name);
           return (
             <li key={r.name} className="ab-row">
               <span className="ab-pill" data-status={r.status}>{r.label ?? PILL[r.status]}</span>
@@ -58,6 +85,12 @@ function AgentBoard({ rows }: { rows: AgentRow[] }) {
               <span className="ab-what">{r.href ? <a href={r.href} target="_blank" rel="noreferrer">{what}</a> : what}</span>
               <span className="ab-for">{r.latest ?? "—"}</span>
               <span className="ab-last">{r.lastDelivered ? `last delivered ${r.lastDelivered}` : "nothing delivered yet"}</span>
+              {bot && (onOpenBotDetails || onNameBot) && (
+                <span className="ab-acts">
+                  {onOpenBotDetails && <button type="button" className="ab-act" onClick={() => onOpenBotDetails(bot.key)}>Details</button>}
+                  {onNameBot && nameable(bot) && <NameBot bot={bot} onSave={onNameBot} />}
+                </span>
+              )}
             </li>
           );
         })}
@@ -104,7 +137,7 @@ function useTrackWidth(ref: RefObject<HTMLElement | null>): number {
   return w;
 }
 
-export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], slots = [] }: Props) {
+export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], slots = [], onOpenBotDetails, onNameBot }: Props) {
   const listRef = useRef<HTMLUListElement>(null);
   const trackW = useTrackWidth(listRef);
   lanes = lanes.filter((l) => !placeholderLane(l.lane));
@@ -127,7 +160,7 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
   return (
     <div className="lt-wrap">
     <SlotStrip slots={slots} />
-    <AgentBoard rows={board} />
+    <AgentBoard rows={board} agents={agents} {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
     <section className="lt" aria-label="Lanes">
       <div className="lt-head">
         <div className="lt-title">
@@ -155,7 +188,7 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
             <li key={l.lane} className="lt-row lt-lane" style={{ height: Math.max(44, trackH + 14) }}>
               <span className="lt-who">
                 <span className="lt-dot" data-state={l.silent ? "silent" : open ? "busy" : "idle"} />
-                <span className="lt-name">{l.lane}</span>
+                <span className="lt-name">{botOf(l) ?? l.lane}</span>
                 {l.silent ? <span className="lt-flag" data-flag="silent">silent</span> : !open && <span className="lt-flag" data-flag="free">free</span>}
               </span>
               <div className="lt-track" style={{ height: trackH }} data-subrows={pack.rows}>

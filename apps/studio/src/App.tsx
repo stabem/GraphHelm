@@ -3168,6 +3168,9 @@ export default function App({
                   runName={selected} lastRecordAt={Date.parse(eventList[eventList.length - 1]?.occurredAt ?? "")} onTeam={() => chooseCanvas("team")} onJourneys={() => chooseCanvas("journey")}
                   draftJourneys={flowsRead.view?.flows.filter((flow) => flow.status === "draft").length ?? 0}
                   agents={team.bots} away={handover ? { minutes: handover.gapMinutes, shipped: handover.shipped.length } : null}
+                  runNodes={model.nodes} unassignedNodeIds={unassignedSteps.map((node) => node.id)}
+                  onOpenNode={(id) => { nodeFocusOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setFocus({ kind: "node", id }); }}
+                  onOpenBotDetails={(key) => setFocus({ kind: "agent", id: key })} onNameBot={nameBot}
                   onReviewAssigned={async (task, lane) => {
                     const client = clientRef.current;
                     if (!client || selected === "") throw new Error("No Runtime is connected.");

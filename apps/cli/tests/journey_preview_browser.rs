@@ -365,7 +365,7 @@ if (mode === 'up') {
     .unwrap();
     std::fs::write(
         project.join("fixture.sh"),
-        "#!/bin/sh\nif [ \"$1\" = up ]; then\n  node fixture-server.mjs \"$@\" >/dev/null 2>&1 &\n  exit 0\nfi\nexec node fixture-server.mjs \"$@\"\n",
+        "#!/bin/sh\nexec 2>fixture-launch.log\nset -x\nif [ \"$1\" = up ]; then\n  node fixture-server.mjs \"$@\" >>fixture-launch.log 2>&1 &\n  exit 0\nfi\nexec node fixture-server.mjs \"$@\"\n",
     )
     .unwrap();
     std::fs::write(
@@ -432,7 +432,13 @@ if (mode === 'up') {
         .unwrap();
     let envelope: Value =
         serde_json::from_slice(&output.stdout).expect("validation must return its JSON envelope");
-    assert_eq!(output.status.code(), Some(0), "{envelope}");
+    let launch_log = std::fs::read_to_string(project.join("fixture-launch.log"))
+        .unwrap_or_else(|error| format!("<fixture-launch.log unavailable: {error}>"));
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{envelope}; fixture launch log:\n{launch_log}"
+    );
     let data = &envelope["data"];
     assert_eq!(data["failures"], json!([]), "{data}");
     assert!(

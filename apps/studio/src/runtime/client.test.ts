@@ -240,6 +240,15 @@ describe("RuntimeClient reads", () => {
     expect((error as RuntimeError).message).toBe("limit must be between 1 and 100");
   });
 
+  it("rejects invalid evidence IDs before making a request the Runtime would answer 400", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    for (const id of ["bad id", "bad/id", "x".repeat(129)]) {
+      await expect(client.readEvidence("demo", id)).rejects.toBeInstanceOf(RuntimeError);
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("reports a refused token without echoing the token", async () => {
     const { fetchImpl } = scriptedFetch([
       { match: () => true, reply: { status: 401, envelope: { ok: false, command: "unauthorized", data: null, diagnostics: [] } } },

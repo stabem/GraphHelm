@@ -1687,13 +1687,26 @@ export default function App({
     [loadExecution, loadList, observeStatus],
   );
 
-  /** Opens one sealed item. Stable across renders because the thread's turns depend on it: a fresh
-   * identity every render would re-open every envelope on every render. */
+  /** One immutable evidence read per connection and id, shared by the task board and conversation.
+   * Keep invalid-ID refusals; evict other failures so the operator's retry can recover. */
+  const evidenceReads = useRef<{ client: RuntimeClient | null; entries: Map<string, Promise<EvidenceContent>> }>({ client: null, entries: new Map() });
   const openEvidence = useCallback(
     async (executionId: string, evidenceId: string): Promise<EvidenceContent> => {
       const client = clientRef.current;
       if (!client) throw new Error("This Studio session is not connected.");
-      return client.readEvidence(executionId, evidenceId);
+      if (evidenceReads.current.client !== client) evidenceReads.current = { client, entries: new Map() };
+      const key = `${executionId}\u0000${evidenceId}`;
+      let pending = evidenceReads.current.entries.get(key);
+      if (!pending) {
+        pending = client.readEvidence(executionId, evidenceId);
+        evidenceReads.current.entries.set(key, pending);
+        const fetched = pending;
+        fetched.catch((reason: unknown) => {
+          if (reason instanceof RuntimeError && reason.httpStatus === 400) return;
+          if (evidenceReads.current.entries.get(key) === fetched) evidenceReads.current.entries.delete(key);
+        });
+      }
+      return pending;
     },
     [],
   );
@@ -1701,8 +1714,6 @@ export default function App({
   const [claudeTaskRead, setClaudeTaskRead] = useState<ClaudeTaskReadModel | null>(null);
   // #391: the per-task graphs, folded from the run's `task.*` records.
   const [taskGraphs, setTaskGraphs] = useState<{ executionId: string; tasks: TaskState[]; records: TaskEventRecord[] } | null>(null);
-  const subagentEvidenceCache = useRef(new Map<string, Promise<EvidenceContent>>());
-  useEffect(() => { subagentEvidenceCache.current.clear(); }, [selected]);
   useEffect(() => {
     if (!selected || events === null) {
       setRunTeamRead(null);
@@ -1711,22 +1722,13 @@ export default function App({
     }
     let cancelled = false;
     const run = selected;
-    const readEvidence = (executionId: string, evidenceId: string) => {
-      const key = `${executionId}\u0000${evidenceId}`;
-      let pending = subagentEvidenceCache.current.get(key);
-      if (!pending) {
-        pending = openEvidence(executionId, evidenceId);
-        subagentEvidenceCache.current.set(key, pending);
-      }
-      return pending;
-    };
-    void readRunTeam(run, eventList, readEvidence)
+    void readRunTeam(run, eventList, openEvidence)
       .then((result) => { if (!cancelled) setRunTeamRead(result); })
       .catch(() => { if (!cancelled) setRunTeamRead({ executionId: run, members: [], messages: [], rejected: 0, unavailable: true }); });
-    void readClaudeTasks({ executionId: run, events: eventList, readEvidence })
+    void readClaudeTasks({ executionId: run, events: eventList, readEvidence: openEvidence })
       .then((result) => { if (!cancelled) setClaudeTaskRead(result); })
       .catch(() => { if (!cancelled) setClaudeTaskRead({ executionId: run, tasks: [], rejected: 1 }); });
-    void readTaskEventRecords({ executionId: run, events: eventList, readEvidence })
+    void readTaskEventRecords({ executionId: run, events: eventList, readEvidence: openEvidence })
       .then((records) => { if (!cancelled) setTaskGraphs({ executionId: run, tasks: foldTaskEvents(records), records }); })
       .catch(() => { if (!cancelled) setTaskGraphs({ executionId: run, tasks: [], records: [] }); });
     return () => { cancelled = true; };

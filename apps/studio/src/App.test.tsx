@@ -3061,6 +3061,31 @@ describe("round-2: the live tail neither starves nor freezes", () => {
     expect(vi.mocked(client.readEvidence).mock.calls.length).toBe(opened);
   });
 
+  it("does not retry a refused old envelope when a new event arrives", async () => {
+    const old = {
+      sequence: 13, kind: "signal_recorded", payload: { kind: "operator_note", signalId: "q-1", sourceKind: "agent" },
+      occurredAt: "2026-08-27T12:01:00Z", actorId: "codex", actorType: "agent",
+      idempotencyKey: "k13", eventId: "event-13", evidenceRefs: ["ev-question"],
+    };
+    const newer = { ...old, sequence: 14, idempotencyKey: "k14", eventId: "event-14", evidenceRefs: ["ev-reply"] };
+    const client = askedClient({
+      getEvents: vi.fn(async (_id: string, options: { after: number }) => ({
+        head: 14, events: options.after === 0 ? [old] : [newer],
+      })),
+      readEvidence: vi.fn(async (_id: string, evidenceId: string) => {
+        if (evidenceId === "ev-question") throw new RuntimeError("invalid evidence id", 400, []);
+        return { evidenceId, mediaType: "application/json", sensitivity: "confidential", contentSha256: "sha256:whatever", content: "{}" };
+      }),
+    });
+    render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null}
+      session={async () => ({ token: "local-token", project: "dale-api-base" })} pollIntervalMs={40} />);
+    await screen.findByLabelText("Projects");
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await waitFor(() => expect(client.readEvidence).toHaveBeenCalledWith("demo-deploy", "ev-question"));
+    await waitFor(() => expect(client.readEvidence).toHaveBeenCalledWith("demo-deploy", "ev-reply"));
+    expect(client.readEvidence.mock.calls.filter((call) => (call as unknown[])[1] === "ev-question")).toHaveLength(1);
+  });
+
   it("reads past the first page, so event 201 exists on screen", async () => {
     const eventAt = (sequence: number) => ({
       sequence,

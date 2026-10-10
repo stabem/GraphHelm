@@ -418,3 +418,11 @@ describe("isFirstEntryNode", () => {
     expect(isFirstEntryNode(base, "triage")).toBe(false);
   });
 });
+
+// #673: offline fold; preserves crash classification that reason-only coverage misses.
+it("retains guarded crash sites in node history", () => {
+  for (const [raw, expected] of [["stream_malformed", "stream_malformed"], ["future_site", "future_site"], ["<script>", null], ["x".repeat(65), null], [null, null]]) {
+    const node = buildGraphModel([event(1, "node_outcome_recorded", { nodeId: "work", outcome: "retryable_failure", nextState: "blocked", reason: "runtime_crashed", crashSite: raw })]).nodes[0];
+    expect(node.history[0]).toHaveProperty("crashSite", expected);
+  }
+});

@@ -46,6 +46,7 @@ import { skippedEdgeInto } from "./runtime/mission";
 import { TaskGraphs } from "./components/task-graphs";
 import { JEV_ABSENT_NOTE, jevAvailability } from "./runtime/jev";
 import type {
+  RuntimePreviousExit,
   Briefing,
   ClaimEvidence,
   EventPage,
@@ -201,6 +202,7 @@ export default function App({
   /** #585: the step whose chat picker Main chat's "Connect existing chat" opened. */
   const [connectingNode, setConnectingNode] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
+  const [previousExit, setPreviousExit] = useState<RuntimePreviousExit | null>(null);
   /** What the rail calls this folder. Named by the operator; absent, the rail says what it can. */
   const [project, setProject] = useState<string | null>(null);
   const [projectPath, setProjectPath] = useState<string | null>(null);
@@ -1431,12 +1433,14 @@ export default function App({
       const generation = ++connectionGeneration.current;
       pollMisses.current = 0;
       setStale(false);
+      setPreviousExit(null);
       setConnecting(true);
       setError("");
       const client = createClient ? createClient(token) : new RuntimeClient(token);
       try {
-        await client.health();
+        const exit = await client.health();
         if (connectionGeneration.current !== generation) { client.dispose(); return; }
+        setPreviousExit(exit ?? null);
         // A manual reconnect must establish its public identity again. A different bearer
         // cannot inherit the previous Runtime's browser preferences merely by sharing a tab.
         let identity = knownProject;
@@ -1537,6 +1541,7 @@ export default function App({
     probeGeneration.current.clear();
     setBusy(false);
     setConnected(false);
+    setPreviousExit(null);
     setProject(null);
     setProjectPath(null);
     setProjectIdentity(null);
@@ -2718,6 +2723,7 @@ export default function App({
         selectedPresentation={recordedWorkBehindGraphWait ? { key: "calm", status: "agent work recorded · graph step waiting" } : null}
         selected={selected}
         connected={connected}
+        previousExit={previousExit}
         stale={stale}
         hasMore={nextCursor !== null}
         busy={busy}

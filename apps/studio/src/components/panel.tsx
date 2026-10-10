@@ -1211,6 +1211,20 @@ export function NodePanel({
         </section>
       )}
 
+      {node.history.some((entry) => entry.reason === "runtime_crashed") && (
+        <section className="node-result-summary" aria-label="Runtime crash history">
+          <strong>Runtime crash history</strong>
+          {node.history.filter((entry) => entry.reason === "runtime_crashed").map((entry) => (
+            <span key={entry.sequence}>#{entry.sequence}: {new Map([
+              ["wait_failed", "wait failed"], ["exit_status_unreadable", "exit status unreadable"],
+              ["stdin_writer_unclean", "stdin writer unclean"], ["timeout_cleanup_unobserved", "timeout cleanup unobserved"],
+              ["stdout_truncated", "stdout truncated"], ["exit_nonzero_with_reply", "exit nonzero with reply"],
+              ["stream_malformed", "stream malformed"], ["stream_without_error_text", "stream without error text"],
+              ["error_text_unclassified", "error text unclassified"], ["claude_unparsed", "Claude unparsed"],
+            ]).get(entry.crashSite ?? "") ?? "unknown"}</span>
+          ))}
+        </section>
+      )}
       {/* THE STATE DECIDES, not the presence of the prop: a node that is not parked must not be
         * offered an answer, because a claim against it is refused (`not_waiting`) and the button
         * would exist only to produce that refusal. */}

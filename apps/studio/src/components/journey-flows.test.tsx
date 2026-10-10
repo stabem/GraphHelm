@@ -410,6 +410,14 @@ describe("JourneyFlows run", () => {
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Couldn't run this journey's test: the app under test didn't start."));
   });
 
+  // #677: the fallback used to hide the refusal needed to diagnose a stopped preview.
+  // Cost: one jsdom render; no production seam or browser required.
+  it("shows the original refusal beside an internal run failure", async () => {
+    const failed = { state: "failed" as const, reason: "internal", detail: { code: "driver.locator_missing", pointer: "/edges/2/acts/0" } };
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start: vi.fn(async () => failed) })} />);
+    expect(await screen.findByText(/something went wrong in the Runtime/)).toHaveTextContent("(driver.locator_missing at /edges/2/acts/0)");
+  });
+
   it("draws the flowchart without a run line on a Runtime that has no run route", async () => {
     const start = vi.fn(async () => { throw Object.assign(new Error("The Runtime replied 404."), { httpStatus: 404 }); });
     render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start })} />);

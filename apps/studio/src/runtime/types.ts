@@ -496,6 +496,16 @@ export interface ObserverSetupView {
   changed: { path: string; change: "created" | "modified" }[];
 }
 
+/** Last setup in this Runtime process; a restart resets it to none (#627). */
+export type ObserverSetupRecord = { state: "none" } | {
+  state: "running" | "ok" | "failed";
+  startedAt: string;
+  finishedAt?: string;
+  code?: string;
+  message?: string;
+  changed: ObserverSetupView["changed"];
+};
+
 export interface JourneyRunView {
   preview?: boolean;
   digest?: string;

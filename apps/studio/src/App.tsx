@@ -2186,6 +2186,7 @@ export default function App({
       screenFrame: async (flowId, screenId) => client().journeyScreenFrame(flowId, screenId),
       liveFrame: async (sessionId, etag) => client().liveFrame(sessionId, etag),
       setupPlayer: async () => client().setupJourneyObserver(),
+      readPlayerSetup: async () => client().journeyObserverSetup(),
     };
   }, []);
   // #518: the owner marks a draft's skipped step safe; the flows are read again to show the mark.

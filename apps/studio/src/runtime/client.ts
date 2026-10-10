@@ -33,6 +33,7 @@ import type {
   JourneyFrame,
   JourneyRunView,
   ObserverSetupView,
+  ObserverSetupRecord,
   ModelRouteSummary,
   NativeChatPage,
   NativeChatRequest,
@@ -2001,6 +2002,11 @@ export class RuntimeClient {
    * reaches npm. It edits package.json and downloads Chromium, so it may take minutes. */
   async setupJourneyObserver(): Promise<ObserverSetupView> {
     return this.#request<ObserverSetupView>({ method: "POST", path: "/v1/journey-observer/setup", timeoutMs: OBSERVER_SETUP_TIMEOUT_MS });
+  }
+
+  /** Owner-only status of the last install, including work whose HTTP caller left (#627). */
+  async journeyObserverSetup(): Promise<ObserverSetupRecord> {
+    return this.#request<ObserverSetupRecord>({ method: "GET", path: "/v1/journey-observer/setup" });
   }
 
   /** One screen as the run rendered it (#519): `GET /v1/journey-flows/{id}/screens/{screen}/frame`.

@@ -9,7 +9,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 
-import type { JourneyFlowEdge, JourneyFlowScreen, JourneyFlowView, JourneyFlowsView, JourneyFrame, JourneyRunView, LiveSession, ObserverSetupView } from "../runtime/types";
+import type { JourneyFlowEdge, JourneyFlowScreen, JourneyFlowView, JourneyFlowsView, JourneyFrame, JourneyRunView, LiveSession, ObserverSetupRecord, ObserverSetupView } from "../runtime/types";
 import { JourneyFlowchart, actWords, pathsOf } from "./journey-flowchart";
 
 /** Where a journey's run and its pictures come from (#519): the Runtime client's four reads. */
@@ -22,6 +22,7 @@ export interface JourneyRunSource {
   liveFrame: (sessionId: string, etag: string | null) => Promise<JourneyFrame | null>;
   /** Install the browser player in the project (#519); absent, the Studio only names the gap. */
   setupPlayer?: () => Promise<ObserverSetupView>;
+  readPlayerSetup?: () => Promise<ObserverSetupRecord>;
 }
 
 export interface JourneyFlowsProps {
@@ -284,10 +285,39 @@ function SkippedSteps({ flow, edges, onMarkSafe }: { flow: JourneyFlowView; edge
 
 /** #519: a project with no browser player gets one from here. The owner reads what it changes
  * before anything runs: it edits package.json and downloads Chromium. */
-export function PlayerSetup({ setup, onDone }: { setup: () => Promise<ObserverSetupView>; onDone: (note: string) => void }) {
-  const [step, setStep] = useState<"offer" | "confirm" | "running" | "done" | "failed">("offer");
+export function PlayerSetup({ setup, readSetup, offer = true, onDone }: { setup: () => Promise<ObserverSetupView>; readSetup?: () => Promise<ObserverSetupRecord>; offer?: boolean; onDone: (note: string) => void }) {
+  const [step, setStep] = useState<"loading" | "hidden" | "offer" | "confirm" | "running" | "done" | "failed">(readSetup ? "loading" : offer ? "offer" : "hidden");
   const [said, setSaid] = useState("");
+  const [last, setLast] = useState<ObserverSetupRecord>({ state: "none" });
+  const generation = useRef(0);
+  useEffect(() => {
+    if (!readSetup) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const current = generation.current;
+    const read = async () => {
+      if (!active || current !== generation.current) return;
+      try {
+        const record = await readSetup();
+        if (!active || current !== generation.current) return;
+        setLast(record);
+        setSaid("");
+        setStep(record.state === "none" ? (offer ? "offer" : "hidden") : record.state === "ok" ? "done" : record.state);
+        if (record.state === "running") timer = setTimeout(() => { void read(); }, 5000);
+      } catch (cause: unknown) {
+        if (!active || current !== generation.current) return;
+        setSaid(`Couldn't read the last setup: ${cause instanceof Error ? cause.message : String(cause)}`);
+        // Keep polling after a transient read failure; an install may still be running.
+        timer = setTimeout(() => { void read(); }, 5000);
+      }
+    };
+    void read();
+    return () => { active = false; clearTimeout(timer); };
+  }, [readSetup, offer]);
   const install = () => {
+    generation.current += 1;
+    setLast({ state: "none" });
+    setSaid("");
     setStep("running");
     setup().then((result) => {
       const files = result.changed.map((file) => `${file.path} (${file.change})`).join(", ");
@@ -310,11 +340,13 @@ export function PlayerSetup({ setup, onDone }: { setup: () => Promise<ObserverSe
           <button type="button" onClick={() => setStep("offer")}>Cancel</button>
         </>
       )}
-      {step === "running" && <p role="status">Installing the journey player… this can take a few minutes.</p>}
-      {step === "done" && <p role="status">{said}</p>}
+      {step === "loading" && <p role="status">Checking the last journey player setup…</p>}
+      {step === "running" && <p role="status">Installing the journey player… {last.state === "running" ? `started ${Math.max(0, Math.floor((Date.now() - Date.parse(last.startedAt)) / 60000))} min ago` : "this can take a few minutes."}</p>}
+      {step === "done" && <p role="status">{last.state === "ok" ? <>Last setup finished at {new Date(last.finishedAt!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}: {last.changed.length ? `changed ${last.changed.map((file) => `${file.path} (${file.change})`).join(", ")}.` : "nothing needed changing."} Journey player installed.</> : said}</p>}
+      {(step === "loading" || last.state !== "none") && said !== "" && <p role="alert">{said}</p>}
       {step === "failed" && (
         <>
-          <p role="alert">Couldn't install the journey player: {said}</p>
+          <p role="alert">{last.state === "failed" ? `Last setup failed at ${new Date(last.finishedAt!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}: ${last.message}` : `Couldn't install the journey player: ${said}`}</p>
           <button type="button" onClick={() => setStep("confirm")}>Try again</button>
         </>
       )}
@@ -385,7 +417,7 @@ function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source }: { flo
             {run?.state === "ready" && run.ranAt !== undefined && <> · ran <time dateTime={run.ranAt}>{new Date(run.ranAt).toLocaleString()}</time></>}
           </p>
           <button type="button" onClick={again} disabled={run?.state === "running" || (run === null && runFailure === null)}>Run again</button>
-          {run?.state === "failed" && run.reason === "driver.observer_missing" && source?.setupPlayer && <PlayerSetup setup={source.setupPlayer} onDone={(note) => { setInstalled(note); again(); }} />}
+          {source?.setupPlayer && (source.readPlayerSetup || (run?.state === "failed" && run.reason === "driver.observer_missing")) && <PlayerSetup setup={source.setupPlayer} readSetup={source.readPlayerSetup} offer={run?.state === "failed" && run.reason === "driver.observer_missing"} onDone={(note) => { setInstalled(note); again(); }} />}
           {installed !== null && <p className="journey-flow-note">{installed}</p>}
         </div>
       )}

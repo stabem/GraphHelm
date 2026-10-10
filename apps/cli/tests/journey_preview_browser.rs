@@ -365,7 +365,7 @@ if (mode === 'up') {
     .unwrap();
     std::fs::write(
         project.join("fixture.sh"),
-        "#!/bin/sh\nexec 2>fixture-launch.log\nset -x\nif [ \"$1\" = up ]; then\n  node fixture-server.mjs \"$@\" >>fixture-launch.log 2>&1 &\n  exit 0\nfi\nexec node fixture-server.mjs \"$@\"\n",
+        "#!/bin/sh\nexec 2>>fixture-launch.log\nset -x\nif [ \"$1\" = up ]; then\n  node fixture-server.mjs \"$@\" >>fixture-launch.log 2>&1 &\n  exit 0\nfi\nexec node fixture-server.mjs \"$@\"\n",
     )
     .unwrap();
     std::fs::write(

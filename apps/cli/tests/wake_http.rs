@@ -1896,6 +1896,104 @@ fn a_burned_lease_never_rings_twice_and_no_ring_without_a_fresh_append() {
     );
 }
 
+/// Cost: one local server, three reads, temp store only; no pipe or wait.
+#[cfg(windows)]
+#[test]
+fn operator_notes_listener_status_tracks_armed_and_consumed_leases() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    start_execution(&events, directory.path(), "exec-listeners");
+    let (_guard, address, token) = serve(&events);
+    let path = "/v1/executions/exec-listeners";
+    assert_eq!(
+        get_json(&address, &token, path)["data"]["wakeListeners"],
+        serde_json::json!([])
+    );
+    arm_lease(&events, "exec-listeners", "listeners", head(&events));
+    assert_eq!(
+        get_json(&address, &token, path)["data"]["wakeListeners"],
+        serde_json::json!(["agent-sleeper"])
+    );
+    consume_lease(
+        &events,
+        "exec-listeners",
+        "session-sleeper-1",
+        graphhelm_protocols::WakeConsumeReason::Rung,
+        None,
+    );
+    assert_eq!(
+        get_json(&address, &token, path)["data"]["wakeListeners"],
+        serde_json::json!([])
+    );
+}
+
+/// Cost: three local servers and one ten-second no-ring observation; temp stores only.
+#[cfg(windows)]
+#[test]
+fn operator_notes_ring_only_the_addressed_actor_or_everyone_when_unaddressed() {
+    for (to, should_ring) in [
+        (Some("another-lane"), false),
+        (Some("agent-sleeper"), true),
+        (None, true),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events");
+        start_execution(&events, directory.path(), "exec-note-routing");
+        let (_guard, address, token, sleeper) =
+            serve_before_arming_sleeper(&events, "exec-note-routing", "note-routing", &[]);
+        let cursor = head(&events);
+        let mut body = signal_body("note-routing");
+        body["signal"]["type"] = serde_json::json!("operator_note");
+        if let Some(to) = to {
+            body["signal"]["to"] = serde_json::json!(to);
+        }
+        let (status, reply) = post_json(
+            &address,
+            &token,
+            "/v1/executions/exec-note-routing/signal",
+            "note-routing",
+            &body,
+        );
+        assert_eq!(status, 200, "{reply}");
+        let (bytes, _) = sleeper.wait();
+        assert_eq!(!bytes.is_empty(), should_ring, "recipient {to:?}");
+        if should_ring {
+            // Let the receipt become durable before replacing its lease. This poll bounds
+            // iterations only; the existing local HTTP read itself has no wall-time bound.
+            let deadline = Instant::now() + scaled(Duration::from_secs(5));
+            while get_json(
+                &address,
+                &token,
+                "/v1/executions/exec-note-routing/wake-lease?sessionId=session-sleeper-1",
+            )["data"]["live"]
+                != false
+            {
+                assert!(
+                    Instant::now() < deadline,
+                    "the ring receipt must become durable"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let rearmed =
+                Sleeper::arm_lease("note-routing-rearm", &events, "exec-note-routing", cursor);
+            // A bookkeeping request sweeps the stored note, without its original HTTP body.
+            let (status, reply) = post_json(
+                &address,
+                &token,
+                "/v1/executions/exec-note-routing/wake-lease",
+                "rearm-sweep",
+                &serde_json::json!({"sessionId":"other-session", "rendezvousId":"other-rendezvous", "cursor":head(&events)}),
+            );
+            assert_eq!(status, 200, "{reply}");
+            assert_eq!(
+                rearmed.wait().0,
+                vec![1],
+                "a pending stored note still rings after rearming"
+            );
+        }
+    }
+}
+
 #[cfg(windows)]
 #[test]
 fn a_missing_rendezvous_consumes_the_lease_without_a_serve_error() {

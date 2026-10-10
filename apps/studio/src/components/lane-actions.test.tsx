@@ -16,18 +16,27 @@ describe("laneRoster", () => {
 
 describe("LaneActions", () => {
   const M = 60_000;
-  const base = { lane: "gh-claude-7", step: "Review", pr: 609, roster: laneRoster(["gh-claude-3"], lanes), lastSeenAt: 1_000, now: 10 * M };
-  it("Ask posts an operator_note, then reads Asked Xm ago · no answer yet, then Answered once the lane records anything newer", async () => {
+  const base = { listening: true, lane: "gh-claude-7", step: "Review", pr: 609, roster: laneRoster(["gh-claude-3"], lanes), lastSeenAt: 1_000, now: 10 * M };
+  it("Ask posts an operator_note, then reads asked · waiting, then Answered once the lane records anything newer", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const onAsked = vi.fn();
     const { rerender } = render(<LaneActions {...base} askedAt={null} onAsked={onAsked} send={send} />);
     await userEvent.click(screen.getByRole("button", { name: "Ask gh-claude-7 for status" }));
     expect(send).toHaveBeenCalledWith({ type: "operator_note", to: "gh-claude-7", description: "Owner asks: status of Review on PR #609?" });
-    expect(onAsked).toHaveBeenCalledWith(10 * M);
+    expect(onAsked).toHaveBeenCalledWith(10 * M, true);
     rerender(<LaneActions {...base} askedAt={10 * M} onAsked={onAsked} send={send} now={12 * M} />);
-    expect(screen.getByText("Asked 2 min ago · no answer yet")).toBeInTheDocument();
+    expect(screen.getByText("Asked 2 min ago · waiting")).toBeInTheDocument();
     rerender(<LaneActions {...base} askedAt={10 * M} onAsked={onAsked} send={send} now={13 * M} lastSeenAt={12 * M} />);
     expect(screen.getByText("Answered 1 min ago")).toBeInTheDocument();
+  });
+  it("an ask without a live listener says nobody is listening", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const onAsked = vi.fn();
+    const { rerender } = render(<LaneActions {...base} listening={false} askedAt={null} onAsked={onAsked} send={send} />);
+    await userEvent.click(screen.getByRole("button", { name: "Ask gh-claude-7 for status" }));
+    expect(onAsked).toHaveBeenCalledWith(10 * M, false);
+    rerender(<LaneActions {...base} listening={false} askedAt={10 * M} onAsked={onAsked} send={send} />);
+    expect(screen.getByText("Asked 0 min ago · nobody is listening")).toBeInTheDocument();
   });
   it("a failed ask shows the error as an alert", async () => {
     const send = vi.fn().mockRejectedValue(new Error("Runtime has no keyring"));

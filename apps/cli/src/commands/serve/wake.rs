@@ -81,14 +81,18 @@ async fn ring(rendezvous_id: &str) -> WakeConsumeReason {
 }
 
 /// Phase 1 of the sweep: what is due? Replay the stream and keep every live lease whose
-/// cursor lies before the latest NON-wake append. `None` on any failure — the sweep is
+/// cursor lies before relevant content, respecting each operator note recipient. `None` on any failure — the sweep is
 /// fire-and-forget and every failure path is a silent no-op.
 ///
 /// Its own function so the unit tests below build their captures by CALLING it rather than by
 /// copying it (#258). A copy cannot notice the original drifting, and that drift is exactly
 /// what those tests exist to catch: with `armed_at_sequence` corrupted here, every cell stayed
 /// green while the read was a copy, because none of them ran this code.
-fn due_leases(events: &Path, execution: &str) -> Option<Vec<DueLease>> {
+fn due_leases(
+    events: &Path,
+    execution: &str,
+    sealing: Option<&crate::commands::execution::signal::SignalKeyring>,
+) -> Option<Vec<DueLease>> {
     let store = crate::commands::event_store(events).ok()?;
     let streams = store.list_streams().ok()?;
     let stream = streams
@@ -103,23 +107,87 @@ fn due_leases(events: &Path, execution: &str) -> Option<Vec<DueLease>> {
     // armed the lease, by the same session, and counting it as content consumed the lease
     // before the sleeper ever waited (gate 9b277afb, `wake_http`:
     // a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window`).
-    let content_head = history
+    let cursor = projection
+        .wake_leases
+        .values()
+        .map(|lease| lease.cursor)
+        .min()?;
+    let actors: std::collections::BTreeMap<_, _> = history
         .iter()
-        .filter(|event| {
-            !matches!(
-                event.kind,
-                EventKind::WakeLease(_)
-                    | EventKind::WakeLeaseConsumed(_)
-                    | EventKind::AgentPresenceDeclared(_)
-            )
+        .filter_map(|event| {
+            let EventKind::WakeLease(arming) = &event.kind else {
+                return None;
+            };
+            projection
+                .wake_leases
+                .get(arming.session_id.as_str())
+                .filter(|live| live.armed_at_sequence == event.sequence)
+                .map(|_| (event.sequence, event.actor.id().as_str()))
         })
-        .map(|event| event.sequence)
-        .max()
-        .unwrap_or(0);
+        .collect();
+    let mut content_head = 0;
+    let mut notes: std::collections::BTreeMap<&str, u64> =
+        actors.values().map(|actor| (*actor, 0)).collect();
+    // Open only pending notes, with the Runtime's existing keyring. Missing/unreadable
+    // evidence cannot be treated as an unaddressed note and broadcast to unrelated actors.
+    let mut opener = None;
+    for event in history.iter().filter(|event| event.sequence > cursor) {
+        match &event.kind {
+            EventKind::WakeLease(_)
+            | EventKind::WakeLeaseConsumed(_)
+            | EventKind::AgentPresenceDeclared(_) => {}
+            EventKind::SignalRecorded(signal) if signal.kind == "operator_note" => {
+                let opener = opener.get_or_insert_with(|| super::ports::build_opener(sealing).ok());
+                let Some(opener) = opener else {
+                    continue;
+                };
+                for reference in &event.evidence_refs {
+                    let Ok(graphhelm_events::EvidenceRead::Available(sealed)) =
+                        store.sealed_evidence(&stream.scope, reference.evidence_id())
+                    else {
+                        continue;
+                    };
+                    // Attachments are evidence too; only the admitted envelope carries routing.
+                    if sealed.reference().content_sha256().as_str()
+                        != signal.envelope_sha256.as_str()
+                    {
+                        continue;
+                    }
+                    let Ok(plaintext) = tokio::runtime::Handle::current()
+                        .block_on(opener.open(stream.scope.clone(), &sealed))
+                    else {
+                        continue;
+                    };
+                    let Ok(envelope) = plaintext
+                        .expose(|bytes| serde_json::from_slice::<serde_json::Value>(bytes))
+                    else {
+                        continue;
+                    };
+                    match envelope.get("to") {
+                        None => content_head = content_head.max(event.sequence),
+                        Some(serde_json::Value::String(to)) => {
+                            if let Some(head) = notes.get_mut(to.as_str()) {
+                                *head = (*head).max(event.sequence);
+                            }
+                        }
+                        _ => continue,
+                    }
+                    break;
+                }
+            }
+            _ => content_head = content_head.max(event.sequence),
+        }
+    }
     let due = projection
         .wake_leases
         .iter()
-        .filter(|(_, lease)| lease.cursor < content_head)
+        .filter(|(_, lease)| {
+            lease.cursor < content_head
+                || actors
+                    .get(&lease.armed_at_sequence)
+                    .and_then(|actor| notes.get(actor))
+                    .is_some_and(|head| lease.cursor < *head)
+        })
         .map(|(session, lease)| DueLease {
             execution_id: execution.to_owned(),
             session_id: session.clone(),
@@ -131,17 +199,23 @@ fn due_leases(events: &Path, execution: &str) -> Option<Vec<DueLease>> {
 }
 
 /// The sweep: read the stream's projection, ring every lease whose cursor lies before the
-/// latest NON-wake append, and record each consumption. Called fire-and-forget after a
+/// latest relevant append, and record each consumption. Called fire-and-forget after a
 /// mutation route's own append succeeded; every failure path is a silent no-op.
-pub(super) async fn sweep(events: Arc<Path>, execution: String) {
+pub(super) async fn sweep(
+    events: Arc<Path>,
+    execution: String,
+    sealing: Option<Arc<crate::commands::execution::signal::SignalKeyring>>,
+) {
     // Phase 1 (blocking): what is due?
     let events_read = events.clone();
     let execution_read = execution.clone();
-    let due = tokio::task::spawn_blocking(move || due_leases(&events_read, &execution_read))
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_default();
+    let due = tokio::task::spawn_blocking(move || {
+        due_leases(&events_read, &execution_read, sealing.as_deref())
+    })
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_default();
 
     if due.is_empty() {
         return;
@@ -365,7 +439,7 @@ mod tests {
     /// than returning an `Option`: a fixture whose lease the sweep would not capture is not a
     /// fixture for the sweep's recorder.
     fn captured_by_the_sweep(events: &std::path::Path, stream: &str, session: &str) -> DueLease {
-        due_leases(events, stream)
+        due_leases(events, stream, None)
             .expect("the sweep's read phase must find the fixture's stream")
             .into_iter()
             .find(|lease| lease.session_id == session)

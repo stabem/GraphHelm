@@ -21,9 +21,10 @@ export function laneRoster(agentNames: readonly string[], lanes: readonly Lane[]
 const ago = (ms: number) => `${Math.max(0, Math.floor(ms / 60_000))} min ago`;
 
 /** Review hand-offs record the assignment before announcing it to either lane. */
-export function LaneActions({ lane, step, pr, roster, lastSeenAt, now, askedAt, onAsked, send, assignReview }: {
+export function LaneActions({ lane, step, pr, roster, lastSeenAt, now, askedAt, listening = null, askedListening = listening, onAsked, send, assignReview }: {
   lane: string; step: string; pr: number | null; roster: RosterLane[]; lastSeenAt: number | null; now: number;
-  askedAt: number | null; onAsked(at: number): void;
+  askedAt: number | null; listening?: boolean | null; askedListening?: boolean | null;
+  onAsked(at: number, listening: boolean | null): void;
   send(note: LaneNote): Promise<unknown>;
   assignReview?: (lane: string) => Promise<unknown>;
 }) {
@@ -56,7 +57,7 @@ export function LaneActions({ lane, step, pr, roster, lastSeenAt, now, askedAt, 
   const choices = roster.filter((r) => r.name !== lane);
   const ask = () => {
     const at = now;
-    void run([{ type: "operator_note", to: lane, description: `Owner asks: status of ${step} on ${prText}?` }], () => onAsked(at));
+    void run([{ type: "operator_note", to: lane, description: `Owner asks: status of ${step} on ${prText}?` }], () => onAsked(at, listening));
   };
   const handOff = () => {
     const to = target!;
@@ -82,7 +83,7 @@ export function LaneActions({ lane, step, pr, roster, lastSeenAt, now, askedAt, 
     <div className="mg-section mg-lane-actions">
       <span className="mg-cap">Owner</span>
       <div className="mg-actions">
-        {askedAt !== null && !answered ? <span className="mg-muted">{`Asked ${ago(now - askedAt)} · no answer yet`}</span> : (
+        {askedAt !== null && !answered ? <span className="mg-muted">{`Asked ${ago(now - askedAt)} · ${askedListening === true ? "waiting" : askedListening === false ? "nobody is listening" : "listener status unavailable"}`}</span> : (
           <button type="button" className="mg-secondary" disabled={busy} onClick={ask}>{`Ask ${lane} for status`}</button>
         )}
         <span className="mg-menu-anchor">

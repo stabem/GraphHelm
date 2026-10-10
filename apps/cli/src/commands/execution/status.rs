@@ -217,6 +217,23 @@ fn render_read(read: &Read, spec: Option<&GraphSpec>) -> serde_json::Value {
     // yet", and widening it to null is a wire change that needs its own justification. The
     // flattening is left here DECLARED rather than silently carried into the seam.
     value["headSequence"] = serde_json::json!(read.at_sequence.unwrap_or(0));
+    // A live lease means armed and not consumed, just as wake status reports. Its actor
+    // comes from the arming envelope, not its opaque session id or a display alias.
+    let listeners: std::collections::BTreeSet<_> = read
+        .history
+        .iter()
+        .filter_map(|event| {
+            let graphhelm_protocols::EventKind::WakeLease(lease) = &event.kind else {
+                return None;
+            };
+            read.projection
+                .wake_leases
+                .get(lease.session_id.as_str())
+                .filter(|live| live.armed_at_sequence == event.sequence)
+                .map(|_| event.actor.id().as_str())
+        })
+        .collect();
+    value["wakeListeners"] = serde_json::json!(listeners);
     value
 }
 

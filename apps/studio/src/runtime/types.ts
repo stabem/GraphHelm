@@ -100,6 +100,8 @@ export interface ExecutionStatus {
   lastEventAt: string | null;
   nodeLastEventAt: Record<string, string>;
   headSequence: number;
+  /** Actors with armed, unconsumed wake leases. Missing on older Runtimes. */
+  wakeListeners?: string[];
   /** Who produced this run's outcomes, as declared at start (#1064). `"fixture"` means every
    * outcome came from a fixture file and no model or tool was consulted - a demonstration, and
    * the panel says so in words. `"gateway"` means a real executor was wired. Absent or `null`

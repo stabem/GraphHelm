@@ -190,6 +190,8 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 - **Never end a turn idle because a build waits.** Write the next code, write the PR body, or read
   the PR you were assigned to review.
 
+`workspace list --sizes` (HTTP `GET /v1/workspaces?sizes=1`) adds regular-file bytes for recorded workspaces and targets plus lane totals; links are skipped, unreadable items and their lane totals are null, and hard links count once per directory entry.
+
 ## 4. Task records
 
 The owner watches the Studio Team tab, which is drawn from these records (DELIVERY.md, "Task

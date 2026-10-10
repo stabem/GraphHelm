@@ -1817,3 +1817,121 @@ fn the_runtime_reports_each_slot_roots_holder_and_waiters_to_the_owner_only() {
     assert_eq!(log_tags(&log), ["a", "b"], "the read disturbed the queue");
     assert_eq!(refused.status, 403, "{}", refused.body);
 }
+
+/// Contract: opt-in sizes count regular files only and agree over CLI and HTTP.
+/// Regression: missing flag, following links, incomplete totals or a separate HTTP sizing path.
+/// Gap: existing list tests only observe the legacy sizeBytes field. No production seams.
+/// Cost: a temp repository, small files, CLI processes and one loopback server; a few seconds.
+#[test]
+fn sizes_count_files_and_recorded_targets_without_following_links_with_http_parity() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = repo(dir.path());
+    let root = dir.path().join("root");
+    let root_s = root.to_str().unwrap();
+    claim(root_s, &repo, "lane", "sizes");
+    let wt = root.join("lane").join("sizes").join("wt");
+    let sizes = || {
+        let (code, reply) = run(&["list", "--root", root_s, "--sizes"]);
+        assert_eq!(code, 0, "--sizes must succeed: {reply}");
+        reply["data"].clone()
+    };
+    let before = sizes()["workspaces"][0]["bytes"].as_u64().unwrap();
+    std::fs::write(wt.join("one.bin"), vec![0; 1000]).unwrap();
+    std::fs::write(wt.join("two.bin"), vec![0; 24]).unwrap();
+    let after = sizes()["workspaces"][0]["bytes"].as_u64().unwrap();
+    assert_eq!(after - before, 1024);
+    let outside = dir.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("large.bin"), vec![0; 1024 * 1024]).unwrap();
+    let link = wt.join("escape");
+    link_dir(&link, &outside);
+    let linked = sizes();
+    #[cfg(windows)]
+    std::fs::remove_dir(&link).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_file(&link).unwrap();
+    assert_eq!(linked["workspaces"][0]["bytes"], after);
+    let hidden = wt.join("sealed");
+    std::fs::create_dir_all(&hidden).unwrap();
+    std::fs::write(hidden.join("unread.bin"), vec![0; 32]).unwrap();
+    let guard = Unreadable::new(&hidden);
+    assert!(
+        std::fs::read_dir(&hidden).is_err(),
+        "unreadable fixture must deny access"
+    );
+    let unreadable = sizes();
+    drop(guard);
+    assert!(unreadable["workspaces"][0]["bytes"].is_null());
+    assert_eq!(unreadable["workspaces"][0]["sizeError"], "wt/sealed");
+    assert!(unreadable["lanes"]["lane"].is_null());
+    std::fs::remove_file(hidden.join("unread.bin")).unwrap();
+    std::fs::remove_dir(&hidden).unwrap();
+    // Unrecorded siblings must not enter totals.
+    std::fs::create_dir_all(root.join("unrecorded")).unwrap();
+    std::fs::write(root.join("unrecorded/large.bin"), vec![0; 2048]).unwrap();
+    let fast = dir.path().join("fast");
+    let rules = root.join(".graphhelm-workspaces");
+    std::fs::write(
+        rules.join("slot-targets.json"),
+        serde_json::json!({"targetRoot": fast, "minFreeGb": 0}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(slot_in(&root, "lane", &wt, &dir.path().join("log")).0, 0);
+    std::fs::write(fast.join("lane/wt/target/built.bin"), vec![0; 4096]).unwrap();
+    let unrecorded = fast.join("unrecorded");
+    std::fs::create_dir_all(&unrecorded).unwrap();
+    std::fs::write(unrecorded.join("large.bin"), vec![0; 2048]).unwrap();
+    let cli = sizes();
+    assert_eq!(cli["targets"][0]["bytes"], 4096);
+    assert_eq!(
+        Path::new(cli["targets"][0]["worktree"].as_str().unwrap()),
+        wt.as_path()
+    );
+    assert_eq!(cli["lanes"]["lane"], after + 4096);
+    let plain = run(&["list", "--root", root_s]).1["data"].clone();
+    let mut legacy = cli.clone();
+    legacy.as_object_mut().unwrap().remove("targets");
+    legacy.as_object_mut().unwrap().remove("lanes");
+    legacy["workspaces"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("bytes");
+    assert_eq!(legacy, plain);
+    let (_server, base, token_file) = serve(dir.path(), &["--workspace-root", root_s]);
+    let token = std::fs::read_to_string(token_file).unwrap();
+    let response =
+        support::raw_request(&format!("{base}/v1/workspaces?sizes=1"), Some(token.trim())).unwrap();
+    assert_eq!(response.status, 200);
+    let mut http: Value = serde_json::from_str(&response.body).unwrap();
+    http["data"].as_object_mut().unwrap().remove("lastSweep");
+    assert_eq!(http["data"], cli);
+    // A link in a target's parent must also be skipped before reaching its files.
+    let holder = fast.join("lane").join("wt");
+    let saved = fast.join("saved");
+    std::fs::rename(&holder, &saved).unwrap();
+    link_dir(&holder, &saved);
+    let linked_target = sizes();
+    #[cfg(windows)]
+    std::fs::remove_dir(&holder).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_file(&holder).unwrap();
+    std::fs::rename(&saved, &holder).unwrap();
+    assert_eq!(linked_target["targets"][0]["bytes"], 0);
+    assert_eq!(linked_target["lanes"]["lane"], after);
+    std::fs::remove_file(fast.join("lane/wt/target/built.bin")).unwrap();
+    std::fs::remove_dir(fast.join("lane/wt/target")).unwrap();
+    let missing = sizes();
+    assert!(missing["targets"][0]["bytes"].is_null());
+    assert_eq!(missing["targets"][0]["sizeError"], ".");
+    assert!(missing["lanes"]["lane"].is_null());
+
+    // A tampered record must not redirect the size walk outside the configured target root.
+    let record = root.join(".graphhelm-workspaces/targets/lane/wt.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+    value["target"] = serde_json::json!(outside);
+    std::fs::write(&record, serde_json::to_vec(&value).unwrap()).unwrap();
+    let redirected = sizes();
+    assert!(redirected["targets"][0]["bytes"].is_null());
+    assert_eq!(redirected["targets"][0]["sizeError"], "target_outside_root");
+    assert!(redirected["lanes"]["lane"].is_null());
+}

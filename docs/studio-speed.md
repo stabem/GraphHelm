@@ -42,9 +42,12 @@ production build or a cold navigation benchmark.
 
 | Action | Start | Visible end / correctness check |
 |---|---|---|
-| Connect | Connect click | Graph's Team control visible; selected run is `demo` |
-| Switch tabs | Each tab click | Team: planner; Journey: first journey row; Graph: truthful empty journey state |
+| Connect | Connect click | Graph's truthful empty journey state visible; selected run is `demo`; Graph selected |
+| Switch tabs | Each tab click | Graph â†’ Lanes: planner on Agent board; Lanes â†’ Proof: selected Proof and truthful empty journey state |
+| Open Journeys | Journeys button click | First draft journey row visible |
+| Return to Graph | Graph tab click from Journey canvas | Truthful empty journey state |
 | Open journey | Chat journey row click | Its two steps and matching detail heading; different detail before click |
+| Open Chat | Chat toggle click from Graph | Everyone tab visible beside Graph; `aria-pressed=true` |
 | Send chat | Send click, after filling Message | Unique message in Everyone; composer clears; reload rereads it from Runtime |
 
 Times use the browser's monotonic clock, from the actual click event to a visible
@@ -58,24 +61,35 @@ The dataset is one manual-override fixture run, one planner question, and the
 repository's draft Studio flows. Each pass adds one synthetic chat record, so
 history grows by ten records. Journey preview requests alone receive a 404 stub,
 using Studio's existing older-Runtime fallback: opening a journey otherwise launches
-another browser. Details are measured; replay, screenshots, approvals and agent
-replies are **not** measured. All other UI requests reach the real fixture Runtime.
+another browser. The Proof tab has no certified journeys in this fixture: only
+its selected state and truthful empty state are observed, not a populated proof
+table. Details are measured; replay, screenshots, approvals and agent replies
+are **not** measured. All other UI requests reach the real fixture Runtime.
 
-## Baseline: 2026-10-09
+## Baseline: 2026-10-09 (Sao Paulo)
 
-Measured at 23:45 UTC (20:45 in Sao Paulo) on Windows, Chromium 145.0.7632.6,
-Playwright 1.58.0 and installed GraphHelm 0.1.1. The clean measurement source was
-`1c48dbdde1efe675fc98653819a064def47548f2`; subsequent changes only add these results.
-All ten passes completed, including the chat reload checks.
+Measured at 01:04 UTC on October 10 (22:04 on October 9 in Sao Paulo) on Windows,
+Chromium 145.0.7632.6, Playwright 1.58.0 and installed GraphHelm 0.1.1. The clean measurement source was
+`1ef4fe58a16f0f3eef44cf1142242cdd66de9f57`; subsequent changes only add these results.
+All ten passes completed in one slot-held run, including the chat reload checks.
+No other work from this lane ran during collection.
+
+This replaces the earlier Team/Journey navigation baseline; the routes differ, so
+these values are not evidence of a speedup. The unchanged parent observer at
+`1dd84fcfea487911c729dc5871dc25ee012172f9` failed on run 1 at Connect because
+it waited for the retired Team control. That failed attempt wrote no report.
+The updated observer below is the single completed baseline collection.
 
 | Interaction | Median (ms) | p95 (ms) |
 |---|---:|---:|
-| Connect to first usable paint | 247.85 | 336.10 |
-| Graph to Team | 94.45 | 110.20 |
-| Team to Journey | 127.00 | 157.30 |
-| Journey to Graph | 77.95 | 79.00 |
-| Open journey details | 91.15 | 94.70 |
-| Send chat to visible message | 281.00 | 294.40 |
+| Connect to first usable paint | 236.45 | 251.90 |
+| Graph to Lanes | 60.95 | 63.00 |
+| Lanes to Proof | 61.20 | 63.00 |
+| Proof to Journeys | 129.85 | 146.10 |
+| Open journey details | 79.05 | 95.60 |
+| Journey canvas to Graph | 78.05 | 79.10 |
+| Open Chat beside Graph | 60.45 | 62.50 |
+| Send chat to visible message | 282.60 | 295.50 |
 
 [Raw JSON](studio-speed-2026-10-09.json) retains all ten samples, tool versions,
 source revision and dirty-tree status. Median uses the middle pair; p95 uses

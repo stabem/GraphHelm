@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run the reached-test plan with a short, per-step build-slot lease.
+"""Run the reached-test plan with bounded build-slot leases.
 
 The selector owns reachability. This runner owns only orchestration: every Cargo
-step gets its own slot invocation, while format, Python, and Studio steps run
-directly. No command is passed through a shell. Whole-package plans are expanded
+step gets its own slot invocation by default; --batch-slot groups short adjacent
+Cargo checks. Format, Python, and Studio steps run directly. No command is passed through a shell. Whole-package plans are expanded
 by the selector into explicit Cargo targets; targets requiring features are
 reported as unsupported and remain incomplete rather than being silently skipped.
 """

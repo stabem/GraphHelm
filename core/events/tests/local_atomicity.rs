@@ -165,6 +165,15 @@ fn read_only_inspection_recognizes_complete_and_recoverable_layouts_without_muta
 
 #[test]
 fn read_only_inspection_accepts_a_store_that_refuses_writer_access() {
+    #[cfg(unix)]
+    // SAFETY: geteuid takes no arguments and has no preconditions.
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!(
+            "SKIP: needs a non-root user: root bypasses Unix mode bits denying store writer access"
+        );
+        return;
+    }
+
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("repository");
     drop(repository(&root));

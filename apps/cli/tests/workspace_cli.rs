@@ -9,11 +9,6 @@ use std::process::Command;
 
 use serde_json::Value;
 
-/// Contract: only an old, clean, idle, content-merged target may be reclaimed; its worktree
-/// and branch survive. Regression: ancestry misses squash merges, or eligibility is bypassed.
-/// Gap: orphan tests never exercise a merged live worktree. No production seams; local Git
-/// and CLI subprocesses in a temp repo, normally a few seconds, no network or Runtime.
-
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
         .arg("-C")
@@ -684,11 +679,6 @@ fn workspace_sweep_lock_serializes_manual_and_http_sweep() {
     assert!(!root.join("lane/done").exists());
 }
 
-/// Contract: gone targets do not consume the cap while sweep.lock defers deletion.
-/// Regression: counting deferred targets refuses a build at cap 1. The serialization
-/// test above uses the default cap and misses this refusal. No production seams;
-/// three short CLI children and temp files, a few seconds, no network or Runtime.
-
 /// #380: the declared actor type is not a credential. The Runtime's agent session token
 /// (`events.agent.token`) cannot sweep over HTTP or through an MCP session that declares itself
 /// `owner`; the workspace stays. The same token still lists, as agents do.
@@ -869,27 +859,6 @@ fn slot_status_does_not_trust_a_stale_holder_file() {
         "the slot is held, by someone unnamed: {status}"
     );
 }
-
-/// One slot run in `worktree` that writes the `CARGO_TARGET_DIR` it was given to `log`.
-
-/// The floor must stop the real child, not just parse successfully. Existing cap/reclaim
-/// observers do not exercise disk pressure. No production seam; a few short local children.
-
-/// #360 (`keel.invariant.persistence`, destructive operation): with the owner's rule file the
-/// slot, the one door every build uses, puts the build directory on the configured root, holds a
-/// lane to its cap, and reclaims a build directory when its worktree is gone. Defects named: the
-/// build still landing in the worktree (the slow disk) although the owner configured a fast one;
-/// a lane piling up build directories past the cap; a build directory deleted while its worktree
-/// still exists; a reclaim that follows a link out of the target root; an unreadable rule read as
-/// "no rule". No existing cell knows the rule file. Cost: a dozen short child commands, tempdirs.
-
-/// #360, review BLOCK on `18a2759e` (gh-claude-7): "the worktree is gone" was "it is not a
-/// directory I can see", which is also true of a worktree on a volume that is offline, and of a
-/// record with no worktree at all; the build directory was then deleted although its worktree
-/// existed. Defects named: a build directory reclaimed because its worktree could not be READ; a
-/// record without an absolute worktree treated as an orphan; a sweep that deletes the build
-/// directory of a worktree that exists; a changed target root reported as reclaimed while the
-/// real directory leaks. Cost: a few short child commands, temp directories.
 
 /// #612: the Runtime reports the build-slot queues so the Studio can say "waiting for a build
 /// (Nth)" instead of "Slow". `GET /v1/workspaces/slots` returns, per `--slot-root`, exactly what

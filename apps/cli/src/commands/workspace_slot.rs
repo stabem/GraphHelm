@@ -550,10 +550,7 @@ fn run_admitted_slot_in(request: &SlotRequest<'_>, cwd: &Path) -> Outcome {
             Err(message) => return refuse(&message, "/targetRoot"),
         }
     };
-    let worktree = match &rule {
-        None => None,
-        Some(_) => Some(cwd.to_owned()),
-    };
+    let worktree = rule.as_ref().map(|_| cwd.to_owned());
     if let (Some(rule), Some(worktree)) = (&rule, &worktree)
         && let Err(message) = super::workspace::slot_target(root, rule, lane, worktree, false)
     {

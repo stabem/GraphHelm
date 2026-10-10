@@ -1,5 +1,6 @@
 /* #668: the Lanes work kanban. */
 .wk { display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)); gap: 12px; line-height: 1.35; margin-bottom: 20px; }
+.wk-loading { margin-bottom: 20px; color: #A9AEB8; font-family: var(--sans); font-size: 13px; }
 .wk-col { background: #0F1013; border: 1px solid #1E2026; border-radius: 12px; padding: 10px; min-width: 0; display: flex; flex-direction: column; }
 .wk-head { display: flex; flex-wrap: nowrap; align-items: center; min-height: 16px; overflow: hidden; white-space: nowrap; gap: 6px; margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; color: #C7CBD3; }
 .wk-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }

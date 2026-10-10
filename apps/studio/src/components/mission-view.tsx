@@ -497,7 +497,7 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
                 {unlinkedOpen && <ul>{orphans.map((t) => <li key={t.key}>{`${t.pr ? `#${t.pr}` : "no PR"} ${t.title}`}</li>)}</ul>}
               </section>
             )}
-            {agents.length > 0 && (
+            {!historyLoading && agents.length > 0 && (
               <section aria-label="Agents right now" className="mv-agents">
                 <span className="mv-cap">Agents right now</span>
                 {activeAgents.map((b) => (

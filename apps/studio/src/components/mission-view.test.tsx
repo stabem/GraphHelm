@@ -243,6 +243,18 @@ describe("MissionView", () => {
     expect(screen.getByText("14 h away · 42 shipped")).toBeInTheDocument();
   });
 
+  it("#755: waits for task history before showing an agent's provisional activity", () => {
+    const agent = { key: "codex-15", actorId: "codex-15", name: "codex-15", hue: 0, role: null,
+      doingNow: "Free", lastRecordAt: null, lastSequence: 0, state: "working", quietMinutes: null,
+      shared: false, native: false, tasks: [] };
+    const props = { journeys, tasks: [wt("a", { issue: 755, pr: 756 })] as unknown as TaskState[],
+      lanes: [], now: 0, runFor: () => null, frameUrl: () => null, onMarkSafe: vi.fn(), agents: [agent] as never };
+    const { rerender } = render(<MissionView {...props} historyLoading />);
+    expect(screen.queryByRole("region", { name: "Agents right now" })).toBeNull();
+    rerender(<MissionView {...props} historyLoading={false} />);
+    expect(screen.getByRole("region", { name: "Agents right now" })).toHaveTextContent("codex-15Free");
+  });
+
   it("#737: folds lanes with no record in the last 24 hours under Gone quiet", async () => {
     const userEvent = fastUserEvent();
     const bot = (name: string, lastRecordAt: string | null) => ({ key: name, actorId: name, name, hue: 0, role: null, doingNow: "No note yet",

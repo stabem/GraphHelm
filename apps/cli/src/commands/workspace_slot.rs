@@ -288,7 +288,8 @@ pub(crate) fn run_slot(request: &SlotRequest<'_>) -> Outcome {
         return refuse("the slot ticket could not be locked", "/root");
     }
     let info = json!({"lane": lane, "label": label, "pid": std::process::id(),
-        "arrivedNanos": arrival.to_string(), "priority": request.priority});
+        "arrivedNanos": arrival.to_string(), "priority": request.priority,
+        "worktree": std::env::current_dir().ok()});
     let _ = std::fs::write(info_path(&mine), info.to_string());
     let started = Instant::now();
     let slot = loop {
@@ -330,7 +331,7 @@ pub(crate) fn run_slot(request: &SlotRequest<'_>) -> Outcome {
     let _ = std::fs::write(
         dir.join(HOLDER),
         json!({"lane": lane, "label": label, "pid": std::process::id(),
-            "sinceNanos": held_since.to_string(), "ticket": mine.file_name().map(|n| n.to_string_lossy().into_owned())})
+            "sinceNanos": held_since.to_string(), "worktree": std::env::current_dir().ok(), "ticket": mine.file_name().map(|n| n.to_string_lossy().into_owned())})
         .to_string(),
     );
     let release = |slot: File, ticket: File| {
@@ -456,7 +457,7 @@ pub(crate) fn run_status(root: &Path) -> Outcome {
         .and_then(|info| info["ticket"].as_str().map(str::to_owned));
     let holder = holder_info.as_ref().map(|info| {
         json!({"lane": info["lane"], "label": info["label"], "pid": info["pid"],
-            "heldSeconds": seconds_since(nanos_of(&info["sinceNanos"]), now)})
+            "worktree": info["worktree"], "heldSeconds": seconds_since(nanos_of(&info["sinceNanos"]), now)})
     });
     let waiting: Vec<serde_json::Value> = live
         .iter()
@@ -469,7 +470,7 @@ pub(crate) fn run_status(root: &Path) -> Outcome {
                 .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
                 .unwrap_or(serde_json::Value::Null);
             json!({"lane": info["lane"], "label": info["label"], "pid": info["pid"],
-                "priority": info["priority"].as_bool().unwrap_or(false),
+                "worktree": info["worktree"], "priority": info["priority"].as_bool().unwrap_or(false),
                 "waitedSeconds": seconds_since(nanos_of(&info["arrivedNanos"]), now),
                 "ticket": ticket.file_name().map(|n| n.to_string_lossy().into_owned())})
         })

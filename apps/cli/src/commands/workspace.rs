@@ -499,10 +499,9 @@ fn target_dir(rule: &TargetRule, lane: &str, name: &str) -> PathBuf {
     rule.root.join(lane).join(name).join("target")
 }
 
-/// Removes one recorded build directory and its record. Refuses when the lane or worktree-name
-/// directory on the way to it is a link, so the delete never leaves the target root; the target
-/// itself is deleted without following links.
-fn reclaim_target(root: &Path, rule: &TargetRule, lane: &str, name: &str) -> Result<(), String> {
+/// Validate the recorded target against its derived path and refuse linked ancestors or target.
+/// Shared by preview and reclaim; the record never supplies the deletion path.
+fn check_target(root: &Path, rule: &TargetRule, lane: &str, name: &str) -> Result<(), String> {
     let holder = rule.root.join(lane).join(name);
     // The record was written under another target root: the directory this rule derives is not
     // the one that was built in. Deleting nothing and saying "reclaimed" would drop the record
@@ -514,11 +513,20 @@ fn reclaim_target(root: &Path, rule: &TargetRule, lane: &str, name: &str) -> Res
     if recorded.as_deref() != Some(holder.join("target").as_path()) {
         return Err("target_root_changed".to_owned());
     }
-    for step in [rule.root.join(lane), holder.clone()] {
-        if std::fs::symlink_metadata(&step).is_ok_and(|metadata| is_link(&metadata)) {
-            return Err("linked_path".to_owned());
+    for step in target_dir(rule, lane, name).ancestors() {
+        match std::fs::symlink_metadata(step) {
+            Ok(metadata) if is_link(&metadata) => return Err("linked_path".to_owned()),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("target_unreadable".to_owned()),
         }
     }
+    Ok(())
+}
+
+fn reclaim_target(root: &Path, rule: &TargetRule, lane: &str, name: &str) -> Result<(), String> {
+    check_target(root, rule, lane, name)?;
+    let holder = rule.root.join(lane).join(name);
     remove_tree(&holder.join("target")).map_err(|_| "remove_failed".to_owned())?;
     let _ = std::fs::remove_dir(&holder);
     std::fs::remove_file(target_record_file(root, lane, name))
@@ -529,7 +537,7 @@ fn reclaim_target(root: &Path, rule: &TargetRule, lane: &str, name: &str) -> Res
 /// reclaimed on the way. `record: false` checks the cap and free-space floor before
 /// the caller queues; `record: true` is called while holding the slot, so it is serialized: it
 /// reclaims the lane's build directories whose worktree is positively gone, checks the floor and cap, and
-/// records this one. A build directory whose worktree still exists is never deleted here.
+/// records this one. Below the floor, other lanes may lose only eligible targets, never worktrees.
 pub(crate) fn slot_target(
     root: &Path,
     rule: &TargetRule,
@@ -579,13 +587,29 @@ pub(crate) fn slot_target(
     // Sample again while holding the slot: space may have fallen during the queue wait.
     // This is a check, not a reservation, and never evicts a live target to make room.
     if rule.min_free_gb != 0 {
-        let free = fs2::available_space(&rule.root).map_err(|_| {
+        let mut free = fs2::available_space(&rule.root).map_err(|_| {
             format!(
                 "target root {} free space could not be measured (slot-targets.json minFreeGb); check the root and graphhelm workspace sweep",
                 rule.root.display()
             )
         })?;
-        if free < rule.min_free_gb * 1024_u64.pow(3) {
+        if free < rule.min_free_gb * 1024_u64.pow(3) && record {
+            let swept = sweep_targets(root, true, Some((lane, worktree)));
+            if let Some(removed) = swept["removed"].as_array() {
+                reclaimed.extend(removed.iter().cloned());
+            }
+            free = fs2::available_space(&rule.root).map_err(|_| {
+                "target root free space could not be measured after reclaim".to_owned()
+            })?;
+        }
+        // Only queue below the floor when another lane has records to inspect under the lock.
+        // Never reclaim before acquiring the slot, and never reclaim this lane or current tree.
+        if free < rule.min_free_gb * 1024_u64.pow(3)
+            && (record
+                || !all_target_records(root)
+                    .iter()
+                    .any(|(other, _, _)| other != lane))
+        {
             return Err(format!(
                 "target root {} has {} GB free, below the floor of {} GB (slot-targets.json minFreeGb); inspect graphhelm workspace sweep",
                 rule.root.display(),
@@ -692,32 +716,222 @@ pub(crate) fn target_counts(root: &Path) -> (Value, Value) {
     (Value::Object(counts), space.unwrap_or(Value::Null))
 }
 
-/// The sweep's half of the rule: a recorded build directory whose worktree is gone is removed
-/// (listed only, without `--apply`); one whose worktree still exists is kept.
-fn sweep_targets(root: &Path, apply: bool) -> Value {
+/// Content, never ancestry, proves a squash-merged worktree has nothing left to land.
+/// The caller holds the build slot throughout eligibility and deletion. Any uncertainty keeps it.
+fn merged_target(
+    root: &Path,
+    rule: &TargetRule,
+    lane: &str,
+    name: &str,
+    worktree: &Path,
+) -> Result<(), (String, String)> {
+    let keep = |reason: &str| (reason.to_owned(), String::new());
+    check_target(root, rule, lane, name).map_err(|reason| keep(&reason))?;
+    for path in worktree.ancestors() {
+        let metadata = std::fs::symlink_metadata(path).map_err(|_| keep("worktree_unreadable"))?;
+        if is_link(&metadata) {
+            return Err(keep("linked_path"));
+        }
+    }
+    let strict_git = |args: &[&str]| -> Result<String, (String, String)> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(worktree)
+            .args(args)
+            .output()
+            .map_err(|error| ("merge_check_failed".to_owned(), error.to_string()))?;
+        if !output.status.success() || !output.stderr.is_empty() {
+            return Err((
+                "merge_check_failed".to_owned(),
+                format!(
+                    "git {}: {} {}",
+                    args[0],
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            ));
+        }
+        String::from_utf8(output.stdout)
+            .map(|text| text.trim().to_owned())
+            .map_err(|_| keep("merge_check_failed"))
+    };
+    let top = strict_git(&["rev-parse", "--show-toplevel"])?;
+    if Path::new(&top).canonicalize().ok() != worktree.canonicalize().ok() {
+        return Err(keep("merge_check_failed"));
+    }
+    let target = target_dir(rule, lane, name);
+    let exclusion = target.strip_prefix(worktree).ok().map(|path| {
+        format!(
+            ":(exclude,literal){}",
+            path.to_string_lossy().replace('\\', "/")
+        )
+    });
+    let mut args = vec!["status", "--porcelain", "--untracked-files=all", "--", "."];
+    if let Some(exclusion) = &exclusion {
+        args.push(exclusion);
+    }
+    if !strict_git(&args)?.is_empty() {
+        return Err(keep("merged_dirty"));
+    }
+    // We own slot.lock; its synthetic unknown holder is ourselves. Waiter metadata from older
+    // binaries has no worktree, so conservatively protect every target of that lane.
+    for entry in
+        std::fs::read_dir(root.join(LEDGER).join("slot")).map_err(|_| keep("merged_busy"))?
+    {
+        let path = entry.map_err(|_| keep("merged_busy"))?.path();
+        if path.extension().is_some_and(|ext| ext == "ticket") && std::fs::File::open(path).is_err()
+        {
+            return Err(keep("merged_busy"));
+        }
+    }
+    let status = super::workspace_slot::run_status(root);
+    let data = status
+        .output
+        .data
+        .filter(|_| status.exit_code == 0)
+        .ok_or_else(|| keep("merged_busy"))?;
+    let waiting = data["waiting"]
+        .as_array()
+        .ok_or_else(|| keep("merged_busy"))?;
+    if waiting.iter().any(|waiter| {
+        waiter["lane"].as_str().is_none_or(|other| other == lane)
+            && waiter["worktree"].as_str().is_none_or(|other| {
+                let other = Path::new(other);
+                other == worktree
+                    || other.canonicalize().ok().is_none()
+                    || other.canonicalize().ok() == worktree.canonicalize().ok()
+            })
+    }) {
+        return Err(keep("merged_busy"));
+    }
+    let cutoff = SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(30 * 60))
+        .ok_or_else(|| keep("merged_recent"))?;
+    let mut pending = vec![target];
+    let mut seen = 0usize;
+    while let Some(path) = pending.pop() {
+        seen += 1;
+        if seen > 1_000_000 {
+            return Err(keep("merged_recent"));
+        }
+        let metadata = std::fs::symlink_metadata(&path).map_err(|_| keep("merged_recent"))?;
+        if is_link(&metadata) {
+            return Err(keep("linked_path"));
+        }
+        if metadata.modified().map_err(|_| keep("merged_recent"))? >= cutoff {
+            return Err(keep("merged_recent"));
+        }
+        if metadata.is_dir() {
+            for entry in std::fs::read_dir(path).map_err(|_| keep("merged_recent"))? {
+                pending.push(entry.map_err(|_| keep("merged_recent"))?.path());
+                if pending.len() > 1_000_000 {
+                    return Err(keep("merged_recent"));
+                }
+            }
+        }
+    }
+    let version = strict_git(&["--version"])?;
+    let mut parts = version
+        .strip_prefix("git version ")
+        .unwrap_or("")
+        .split('.');
+    let major = parts.next().and_then(|part| part.parse::<u32>().ok());
+    let minor = parts.next().and_then(|part| part.parse::<u32>().ok());
+    if !matches!((major, minor), (Some(2), Some(38..)) | (Some(3..), Some(_))) {
+        return Err((
+            "merge_check_failed".to_owned(),
+            "git >= 2.38 is required".to_owned(),
+        ));
+    }
+    let main = strict_git(&["rev-parse", "refs/remotes/origin/main^{tree}"])?;
+    let merged = strict_git(&[
+        "merge-tree",
+        "--write-tree",
+        "refs/remotes/origin/main",
+        "HEAD",
+    ])?;
+    let hash =
+        |text: &str| matches!(text.len(), 40 | 64) && text.bytes().all(|c| c.is_ascii_hexdigit());
+    if !hash(&main) || !hash(&merged) {
+        return Err(keep("merge_check_failed"));
+    }
+    if main != merged {
+        return Err(keep("not_merged"));
+    }
+    Ok(())
+}
+
+/// Reclaim orphan targets, plus targets whose existing worktrees are clean, idle and merged.
+/// This does not remove a worktree or branch. Preview performs the same safety checks.
+fn sweep_targets(root: &Path, apply: bool, held_lane: Option<(&str, &Path)>) -> Value {
     let mut removed = Vec::new();
     let mut kept = Vec::new();
     let rule = target_rule(root).ok().flatten();
+    // A live build cannot start between our checks and reclaim. Do not wait for a holder.
+    let slot_dir = root.join(LEDGER).join("slot");
+    let slot = held_lane
+        .is_none()
+        .then(|| std::fs::create_dir_all(&slot_dir))
+        .and_then(Result::ok)
+        .and_then(|()| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(slot_dir.join("slot.lock"))
+                .ok()
+        })
+        .filter(|file| file.try_lock().is_ok());
     for (lane, name, worktree) in all_target_records(root) {
         let entry = |reason: &str| json!({"lane": lane, "name": name, "reason": reason});
-        if !worktree_gone(&worktree) {
-            kept.push(entry(if std::fs::symlink_metadata(&worktree).is_ok() {
-                "worktree_exists"
-            } else {
-                "worktree_unreadable"
-            }));
+        if let Some((active, current)) = held_lane
+            && (lane == active
+                || worktree == current
+                || current.canonicalize().is_err()
+                || (worktree.canonicalize().ok().is_some()
+                    && worktree.canonicalize().ok() == current.canonicalize().ok()))
+        {
+            kept.push(entry("merged_busy"));
             continue;
         }
         let Some(rule) = &rule else {
             kept.push(entry("no_target_root"));
             continue;
         };
+        if slot.is_none() && held_lane.is_none() {
+            kept.push(entry("merged_busy"));
+            continue;
+        }
+        let merged = !worktree_gone(&worktree);
+        if merged {
+            if std::fs::symlink_metadata(&worktree).is_err() {
+                kept.push(entry("worktree_unreadable"));
+                continue;
+            }
+            if let Err((reason, message)) = merged_target(root, rule, &lane, &name, &worktree) {
+                let mut item = entry(&reason);
+                if !message.is_empty() {
+                    item["message"] = json!(message);
+                }
+                kept.push(item);
+                continue;
+            }
+        }
+        if let Err(reason) = check_target(root, rule, &lane, &name) {
+            kept.push(entry(&reason));
+            continue;
+        }
+        let item = if merged {
+            entry("merged")
+        } else {
+            json!({"lane": lane, "name": name})
+        };
         if !apply {
-            removed.push(json!({"lane": lane, "name": name}));
+            removed.push(item);
             continue;
         }
         match reclaim_target(root, rule, &lane, &name) {
-            Ok(()) => removed.push(json!({"lane": lane, "name": name})),
+            Ok(()) => removed.push(item),
             Err(reason) => kept.push(entry(&reason)),
         }
     }
@@ -865,6 +1079,6 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
     Outcome::success(
         COMMAND,
         json!({"root": root.to_string_lossy(), "applied": apply, "removed": removed, "kept": kept,
-            "targets": sweep_targets(root, apply)}),
+            "targets": sweep_targets(root, apply, None)}),
     )
 }

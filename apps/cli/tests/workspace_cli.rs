@@ -9,6 +9,161 @@ use std::process::Command;
 
 use serde_json::Value;
 
+/// Contract: only an old, clean, idle, content-merged target may be reclaimed; its worktree
+/// and branch survive. Regression: ancestry misses squash merges, or eligibility is bypassed.
+/// Gap: orphan tests never exercise a merged live worktree. No production seams; local Git
+/// and CLI subprocesses in a temp repo, normally a few seconds, no network or Runtime.
+#[test]
+fn merged_squash_target_is_reclaimed_only_when_clean_idle_and_old() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = repo(dir.path());
+    git(&repo, &["branch", "-M", "main"]);
+    let origin = dir.path().join("origin.git");
+    git(&repo, &["init", "--bare", origin.to_str().unwrap()]);
+    git(
+        &repo,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    git(&repo, &["push", "origin", "main"]);
+    let tree = dir.path().join("fast").join("lane-a").join("wt-merged");
+    git(
+        &repo,
+        &["worktree", "add", "-b", "feature", tree.to_str().unwrap()],
+    );
+    std::fs::write(tree.join("a.txt"), "landed\n").unwrap();
+    git(&tree, &["commit", "-am", "feature"]);
+    git(&repo, &["merge", "--squash", "feature"]);
+    git(&repo, &["commit", "-m", "squashed"]);
+    git(&repo, &["push", "origin", "main"]);
+    let root = dir.path().join("root");
+    let fast = dir.path().join("fast");
+    let rules = root.join(".graphhelm-workspaces");
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(
+        rules.join("slot-targets.json"),
+        serde_json::json!({"targetRoot": fast, "minFreeGb": 0}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        slot_in(&root, "lane-a", &tree, &dir.path().join("log")).0,
+        0
+    );
+    let target = tree.join("target");
+    let artifact = target.join("built.bin");
+    std::fs::write(&artifact, b"build").unwrap();
+    let age = || {
+        let past = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        for path in [&artifact, &target] {
+            let mut options = std::fs::OpenOptions::new();
+            options.read(true);
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                options.access_mode(0x100).custom_flags(0x02000000);
+            }
+            options
+                .open(path)
+                .unwrap()
+                .set_times(std::fs::FileTimes::new().set_modified(past))
+                .unwrap();
+        }
+    };
+    let sweep = |apply: bool| {
+        let mut args = vec!["sweep", "--root", root.to_str().unwrap()];
+        if apply {
+            args.push("--apply");
+        }
+        let (code, reply) = run(&args);
+        assert_eq!(code, 0, "{reply}");
+        reply["data"]["targets"].clone()
+    };
+    age();
+    let preview = sweep(false);
+    assert_eq!(preview["removed"][0]["reason"], "merged", "{preview}");
+    assert!(artifact.is_file());
+    assert!(rules.join("targets/lane-a/wt-merged.json").is_file());
+    git(&tree, &["update-ref", "-d", "refs/remotes/origin/main"]);
+    assert_eq!(sweep(true)["kept"][0]["reason"], "merge_check_failed");
+    assert!(artifact.is_file());
+    git(&tree, &["update-ref", "refs/remotes/origin/main", "main"]);
+    std::fs::write(tree.join("dirty.txt"), b"keep").unwrap();
+    assert_eq!(sweep(true)["kept"][0]["reason"], "merged_dirty");
+    std::fs::remove_file(tree.join("dirty.txt")).unwrap();
+    std::fs::write(&artifact, b"recent").unwrap();
+    assert_eq!(sweep(true)["kept"][0]["reason"], "merged_recent");
+    age();
+    let slot = rules.join("slot");
+    std::fs::create_dir_all(&slot).unwrap();
+    let ticket_path = slot.join("000-lane-a.ticket");
+    let ticket = std::fs::File::create(&ticket_path).unwrap();
+    ticket.lock().unwrap();
+    std::fs::write(
+        ticket_path.with_extension("info"),
+        serde_json::json!({"lane": "lane-a", "worktree": tree}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(sweep(true)["kept"][0]["reason"], "merged_busy");
+    std::fs::write(ticket_path.with_extension("info"), b"{}").unwrap();
+    assert_eq!(sweep(true)["kept"][0]["reason"], "merged_busy");
+    drop(ticket);
+    let holder = std::fs::File::create(slot.join("slot.lock")).unwrap();
+    holder.lock().unwrap();
+    assert_eq!(sweep(true)["kept"][0]["reason"], "merged_busy");
+    drop(holder);
+    std::fs::write(tree.join("extra.txt"), b"unlanded").unwrap();
+    git(&tree, &["add", "extra.txt"]);
+    git(&tree, &["commit", "-m", "unlanded"]);
+    assert_eq!(sweep(true)["kept"][0]["reason"], "not_merged");
+    git(&tree, &["revert", "--no-edit", "HEAD"]);
+    std::fs::write(repo.join("a.txt"), "later main edit\n").unwrap();
+    git(&repo, &["commit", "-am", "later"]);
+    git(&repo, &["push", "origin", "main"]);
+    let later = sweep(true);
+    assert!(!later["kept"].as_array().unwrap().is_empty(), "{later}");
+    assert!(artifact.is_file());
+    // Restore the local tracking ref only; the sweep must neither fetch nor consult the remote.
+    git(&tree, &["update-ref", "refs/remotes/origin/main", "main~1"]);
+    let saved = dir.path().join("saved-target");
+    std::fs::rename(&target, &saved).unwrap();
+    link_dir(&target, &saved);
+    assert_eq!(sweep(true)["kept"][0]["reason"], "linked_path");
+    assert!(saved.join("built.bin").is_file());
+    #[cfg(windows)]
+    std::fs::remove_dir(&target).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_file(&target).unwrap();
+    std::fs::rename(&saved, &target).unwrap();
+    age();
+    let applied = sweep(true);
+    assert_eq!(applied["removed"][0]["reason"], "merged", "{applied}");
+    assert!(!target.exists());
+    assert!(!rules.join("targets/lane-a/wt-merged.json").exists());
+    assert_eq!(
+        std::fs::read_to_string(tree.join("a.txt")).unwrap(),
+        "landed\n"
+    );
+    git(&repo, &["show-ref", "--verify", "refs/heads/feature"]);
+    // Below the floor, preserve the current lane's target. Another lane may reclaim it under
+    // the slot, but still must refuse its child when the one recheck remains below the floor.
+    let log = dir.path().join("floor-child.txt");
+    assert_eq!(slot_in(&root, "lane-a", &tree, &log).0, 0);
+    std::fs::write(&artifact, b"build").unwrap();
+    age();
+    std::fs::write(
+        rules.join("slot-targets.json"),
+        serde_json::json!({"targetRoot": fast, "minFreeGb": 4096}).to_string(),
+    )
+    .unwrap();
+    assert!(fs2::available_space(&fast).unwrap() < 4096 * 1024_u64.pow(3));
+    assert_eq!(slot_in(&root, "lane-a", &tree, &log).0, 3);
+    assert!(artifact.is_file());
+    assert_eq!(slot_in(&root, "lane-b", &repo, &log).0, 3);
+    assert!(!log.exists());
+    assert!(!target.exists());
+    assert!(tree.join("a.txt").is_file());
+    git(&repo, &["show-ref", "--verify", "refs/heads/feature"]);
+}
+
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
         .arg("-C")
@@ -1256,7 +1411,7 @@ fn the_slot_builds_on_the_owners_target_root_caps_a_lane_and_reclaims_orphans() 
         reply["data"]["targets"].clone()
     };
     let dry = sweep(false);
-    assert_eq!(dry["removed"].as_array().map(Vec::len), Some(3), "{dry}");
+    assert_eq!(dry["removed"].as_array().map(Vec::len), Some(2), "{dry}");
     assert!(fast.join("lane-a/wt-two/target").is_dir());
     let applied = sweep(true);
     assert_eq!(
@@ -1325,7 +1480,7 @@ fn a_build_directory_is_reclaimed_only_when_its_worktree_is_positively_gone() {
 
     // The worktree exists: an applied sweep keeps its build directory.
     let swept = sweep();
-    assert_eq!(swept["kept"], kept("worktree_exists"), "{swept}");
+    assert_eq!(swept["kept"][0]["reason"], "merge_check_failed", "{swept}");
     assert!(built.is_file());
 
     // No worktree, or a relative one: not a record, so nothing is deleted for it.

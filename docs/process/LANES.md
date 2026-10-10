@@ -81,8 +81,20 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   directory, and holds each lane to `cap` of them (default 3): a run that would start one more is
   refused before it queues, naming the ones the lane holds. A build directory whose worktree no
   longer exists is reclaimed by that lane's next slot run and by `graphhelm workspace sweep
-  --apply`; one whose worktree exists is never deleted. So removing a finished worktree is what
-  frees its build directory. `graphhelm workspace slot status` shows how many each lane holds. An
+  --apply`. The sweep also reclaims only the target of an existing worktree when it is clean,
+  idle and merged by content into its local `refs/remotes/origin/main`; its worktree and branch
+  remain intact. Git 2.38 or newer must report that `git merge-tree --write-tree
+  refs/remotes/origin/main HEAD` produces exactly `origin/main`'s tree, with no error or stderr.
+  The sweep never fetches. Squash merges qualify; a later main edit that conflicts keeps the
+  target. Missing refs, unreadable paths and ambiguous results keep it with a reason.
+  Only the target's own path is excluded from the clean-tree check. Every target entry must be
+  older than 30 minutes; links are refused. The sweep holds the build slot while checking and
+  reclaiming, and refuses a target named by a waiter (older tickets without a worktree protect
+  the entire lane). A held slot keeps targets as `merged_busy`.
+  Without `--apply` the same checks only list candidates; eligible entries carry `reason: merged`.
+  Other keep reasons include `merged_dirty`, `merged_recent`, `not_merged` and `merge_check_failed`.
+  `graphhelm workspace slot status` shows how many targets each lane holds and the worktree of
+  new holders and waiters. An
   `export CARGO_TARGET_DIR=...` inside the script overrides the slot and puts the build back where
   the rule says not to: leave it out. The worktree's directory name must be a workspace id
   (lowercase letters, digits, `.`, `_`, `-`).

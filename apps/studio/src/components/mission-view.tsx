@@ -129,6 +129,23 @@ export function agentActivity(b: Bot): string {
   return b.doingNow || "working";
 }
 export const awayText = (a: { minutes: number; shipped: number }) => `${Math.max(1, Math.round(a.minutes / 60))} h away · ${a.shipped} shipped`;
+/** #735: one stacked bar per work group, plus the same counts in words, instead of a spinner per item. */
+const PROGRESS_ORDER = ["proven", "merged", "work", "stalled", "ready"] as const;
+const PROGRESS_WORD: Record<(typeof PROGRESS_ORDER)[number], string> = { proven: "proven", merged: "merged", work: "in work", stalled: "blocked", ready: "waiting" };
+export function GroupProgress({ states }: { states: string[] }) {
+  const counts = PROGRESS_ORDER.map((k) => [k, states.filter((s) => s === k).length] as const).filter(([, n]) => n > 0);
+  const total = states.length;
+  const words = [`${total} ${total === 1 ? "PR" : "PRs"}`, ...counts.map(([k, n]) => `${n} ${PROGRESS_WORD[k]}`)].join(" · ");
+  return (
+    <span className="mv-progress">
+      <span className="mv-progress-bar" role="img" aria-label={words}>
+        {counts.map(([k, n]) => <span key={k} className="mv-progress-part" style={{ flexGrow: n, background: SEG_TONE[k] }} />)}
+      </span>
+      <span className="mv-progress-text">{words}</span>
+    </span>
+  );
+}
+
 const SEG_TONE: Record<string, string> = { proven: "#4ADE9B", merged: "#8FB3D9", work: "#F5A524", stalled: "#FF6B5E", ready: "#24272E" };
 
 type Selection = { kind: "group"; key: string } | { kind: "journey"; id: string };
@@ -372,27 +389,20 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
                 {groups.map((g) => {
                   const on = group?.key === g.key;
                   const prs = g.tasks.filter((t) => t.pr !== null).length;
-                  const proven = g.tasks.filter((t) => g.stages[t.key] === "proven").length;
-                  const count = `${proven} / ${g.tasks.length}`;
                   if (!on) return (
                     <div key={g.key} className="mv-jcard" data-selected={false}>
                       <button type="button" className="mv-journey mv-group" aria-pressed={false} title={g.label} onClick={() => pickGroup(g.key)}>
                         <span className="mv-journey-title">{g.label}</span>
-                        {g.open && <ProgressIcon />}
-                        <span className="mv-journey-count">{count}</span>
                       </button>
-                      <span className="mv-segs" aria-hidden="true">
-                        {g.tasks.map((t) => <span key={t.key} className="mv-seg" style={{ background: SEG_TONE[stageState(g.stages[t.key]!, t)] }} />)}
-                      </span>
+                      <GroupProgress states={g.tasks.map((t) => stageState(g.stages[t.key]!, t))} />
                     </div>
                   );
                   return (
                     <div key={g.key} className="mv-jcard" data-selected={true}>
                       <button type="button" className="mv-journey mv-group" aria-pressed={true} title={g.label} onClick={() => pickGroup(g.key)}>
                         <span className="mv-journey-title">{g.label}</span>
-                        {g.open && <ProgressIcon />}
-                        <span className="mv-journey-count">{count}</span>
                       </button>
+                      <GroupProgress states={g.tasks.map((t) => stageState(g.stages[t.key]!, t))} />
                       <span className="mv-journey-meta">{`${g.issue !== null ? `issue #${g.issue}` : "no issue"} · ${prs} ${prs === 1 ? "PR" : "PRs"}`}</span>
                       <div className="mv-chips">
                         {g.tasks.map((t, i) => {
@@ -401,7 +411,7 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
                           return (
                             <button key={t.key} type="button" className="mv-chip mv-pr-chip" data-state={stageState(stage, t)} data-stage={stage}
                               aria-pressed={t.key === shownTask} aria-label={`${t.pr ? `PR #${t.pr}` : "No PR"}: ${t.title}`}
-                              onClick={() => pickGroup(g.key, t.key)}>{i + 1}{busy && <ProgressIcon alert={alert} />}</button>
+                              data-alert={alert && busy} onClick={() => pickGroup(g.key, t.key)}>{i + 1}</button>
                           );
                         })}
                       </div>
@@ -412,7 +422,6 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
                             <span className="mv-tick" />
                             <span className="mv-step-n">{i + 1}</span>
                             <span className="mv-step-title" title={t.title}>{t.title}</span>
-                            {t.step !== "merged" && <ProgressIcon alert={t.blocked || health[t.key]?.flag === "stalled"} />}
                             <span className="mv-step-ids">{t.pr ? `PR #${t.pr}` : "no PR"}</span>
                           </button>
                         ))}

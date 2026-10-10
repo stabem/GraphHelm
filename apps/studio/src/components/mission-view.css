@@ -168,3 +168,10 @@
 .mv-run-part h3 { margin: 0; font-size: 11px; font-weight: 500; opacity: .7; }
 .mv-run-part ol { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .mv-node { font: inherit; padding: 2px 8px; border-radius: 6px; border: 1px solid #24272E; background: transparent; color: inherit; cursor: pointer; }
+
+/* #735: one progress bar per work group, counts spelled out under it; no spinners. */
+.mv-progress { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.mv-progress-bar { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; background: #1B1D22; }
+.mv-progress-part { min-width: 4px; height: 100%; }
+.mv-progress-text { font-family: var(--mono); font-size: 11px; line-height: 1.35; color: #A9AEB8; }
+.mv-pr-chip[data-alert="true"] { box-shadow: inset 0 -2px 0 #FF6B5E; }

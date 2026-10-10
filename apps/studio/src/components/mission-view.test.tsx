@@ -96,7 +96,7 @@ describe("MissionView", () => {
     render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
     const work = screen.getByRole("region", { name: "Work by issue" });
     const cards = Array.from(work.querySelectorAll("button.mv-group")).map((b) => b.textContent);
-    expect(cards).toEqual(["#519 Watch plays inside the Studio0 / 2", "#400 Old work0 / 1"]);
+    expect(cards).toEqual(["#519 Watch plays inside the Studio", "#400 Old work"]);
     expect(work.querySelector("button.mv-group")).toHaveAttribute("aria-pressed", "true");
     expect(within(work).getByText("issue #519 · 2 PRs")).toBeInTheDocument();
     expect(within(work).getByRole("button", { name: "PR #548: Proof recorded like replay" })).toHaveAttribute("data-stage", "fix");
@@ -194,27 +194,24 @@ describe("MissionView", () => {
     expect(Array.from(cards[0]!.querySelectorAll(".mv-pr-chip")).map((c) => c.textContent)).toEqual(["1", "2"]);
     expect(Array.from(cards[0]!.querySelectorAll(".mv-step-ids")).map((c) => c.textContent)).toEqual(["PR #50", "PR #51"]);
     expect(cards[1]!.querySelectorAll(".mv-pr-chip")).toHaveLength(0);
-    expect(cards[1]!.querySelectorAll(".mv-seg")).toHaveLength(1);
+    expect(cards[1]!.querySelectorAll(".mv-progress-bar")).toHaveLength(1);
     expect(screen.getByText("The owner sees it")).toBeInTheDocument();
   });
 
-  it("#591: open work spins on the rail; blocked work shows a red ! instead; merged work shows neither", () => {
+  it("#735: each work group shows one progress bar with its counts in words; no spinners; a blocked chip is marked", () => {
     const block = { reviewer: "r", headSha: "abcdef0123", commentUrl: "" };
     const tasks = [wt("a", { issue: 5, pr: 50, prTitle: "Moving", step: "review" }), wt("b", { issue: 5, pr: 51, prTitle: "Held", step: "review", blockedBy: block }),
       wt("m", { issue: 5, pr: 52, prTitle: "Done", step: "merged" }), wt("c", { issue: 6, pr: 60, prTitle: "Elsewhere", step: "merged" })] as unknown as TaskState[];
     render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
-    const cards = Array.from(screen.getByRole("region", { name: "Work by issue" }).querySelectorAll<HTMLElement>(".mv-jcard"));
-    const title = (c: HTMLElement) => c.querySelector(".mv-group")!;
-    expect(within(title(cards[0]!) as HTMLElement).getByRole("img", { name: "in progress" })).toHaveAttribute("data-kind", "spin");
-    expect(within(title(cards[1]!) as HTMLElement).queryByRole("img")).toBeNull();
-    const steps = Array.from(cards[0]!.querySelectorAll<HTMLElement>(".mv-step"));
-    const icon = (el: HTMLElement) => el.querySelector(".mv-prog")?.getAttribute("aria-label") ?? null;
-    const byTitle = (t: string) => steps.find((s) => s.textContent!.includes(t))!;
-    expect([icon(byTitle("Moving")), icon(byTitle("Held")), icon(byTitle("Done"))]).toEqual(["in progress", "blocked", null]);
-    const chips = Array.from(cards[0]!.querySelectorAll<HTMLElement>(".mv-pr-chip"));
-    const chip = (pr: number) => chips.find((c) => c.getAttribute("aria-label")!.startsWith(`PR #${pr}`))!;
-    expect([icon(chip(50)), icon(chip(51)), icon(chip(52))]).toEqual(["in progress", "blocked", null]);
-    expect(chip(51).querySelector(".mv-prog")).toHaveAttribute("data-kind", "alert");
+    const region = screen.getByRole("region", { name: "Work by issue" });
+    const cards = Array.from(region.querySelectorAll<HTMLElement>(".mv-jcard"));
+    expect(region.querySelector(".mv-prog")).toBeNull();
+    const words = (c: HTMLElement) => c.querySelector(".mv-progress-text")!.textContent;
+    expect(words(cards[0]!)).toMatch(/^3 PRs · 1 merged · /);
+    expect(words(cards[1]!)).toBe("1 PR · 1 merged");
+    expect(within(cards[0]!).getByRole("img", { name: words(cards[0]!)! })).toHaveClass("mv-progress-bar");
+    const chip = (pr: number) => Array.from(cards[0]!.querySelectorAll<HTMLElement>(".mv-pr-chip")).find((c) => c.getAttribute("aria-label")!.startsWith(`PR #${pr}`))!;
+    expect([chip(50), chip(51), chip(52)].map((c) => c.getAttribute("data-alert"))).toEqual(["false", "true", "false"]);
   });
 
   it("#591: agents right now come from the bots; away/shipped from the handover", () => {

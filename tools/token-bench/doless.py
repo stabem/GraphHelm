@@ -429,9 +429,11 @@ def load_inference_config(path: Path, requested_model: str | None) -> dict:
 def freeze_inference_config(config: dict, requested_model: str | None) -> dict:
     """Validate the same capability contract for uniform and routed selections."""
     fields = {"version", "host", "provider", "model", "effort", "supportedEfforts", "capabilitySource"}
+    if isinstance(config, dict) and config.get("host") == "codex":
+        fields.add("pricesUsdPerMillion")
     if not isinstance(config, dict) or set(config) != fields:
         raise ValueError("inference config must contain exactly the documented fields")
-    if type(config["version"]) is not int or config["version"] != 1 or config["host"] != "claude_code":
+    if type(config["version"]) is not int or config["version"] != 1 or config["host"] not in {"claude_code", "codex"}:
         raise ValueError("unsupported inference config version or host")
     for name in ("provider", "model", "effort", "capabilitySource"):
         if not isinstance(config[name], str) or not config[name].strip() or len(config[name]) > 2048:
@@ -445,6 +447,11 @@ def freeze_inference_config(config: dict, requested_model: str | None) -> dict:
         raise ValueError("requested effort is not explicitly supported by the declared capability contract")
     if requested_model is not None and requested_model != config["model"]:
         raise ValueError("--model conflicts with the frozen inference configuration")
+    if config["host"] == "codex":
+        prices = config["pricesUsdPerMillion"]
+        if (not isinstance(prices, dict) or set(prices) != {"input", "cachedInput", "output"}
+                or any(type(p) not in (int, float) or not math.isfinite(p) or p < 0 for p in prices.values())):
+            raise ValueError("Codex requires declared finite nonnegative pricesUsdPerMillion (input, cachedInput, output)")
     canonical = json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return {"configuration": config, "digest": runner.digest_bytes(canonical)}
 
@@ -484,7 +491,8 @@ def observe_effort_flag(claude_cli: dict) -> dict:
 def comparison_arm(row: dict) -> str:
     """Never pool a model/effort treatment into its legacy methodology arm."""
     config = row.get("inferenceConfig")
-    return f"{row['arm']}@{config['digest']}" if config else row["arm"]
+    arm = f"{row['arm']}@{config['digest']}" if config else row["arm"]
+    return f"{row['executor']}:{arm}" if row.get("executor", "claude") != "claude" else arm
 
 
 def observed_cost(row: dict) -> float | None:
@@ -494,6 +502,7 @@ def observed_cost(row: dict) -> float | None:
 
 def cmd_run(a: argparse.Namespace) -> None:
     task = load_tasks()[a.task]
+    executor = getattr(a, "executor", "claude")
     config_path = getattr(a, "inference_config", None)
     if getattr(a, "treatment", None) == "routed":
         if a.model is not None or a.arm != "a" or not config_path:
@@ -505,8 +514,18 @@ def cmd_run(a: argparse.Namespace) -> None:
         selected = inference["configuration"] if inference else {}
     model = selected.get("model", a.model)
     effort = selected.get("effort")
-    claude_cli = runner.validate_prerequisites("a")
-    effort_capability = observe_effort_flag(claude_cli) if inference else None
+    contracts = (list(inference["configuration"]["tiers"].values()) if inference and
+                 "tiers" in inference["configuration"] else [selected])
+    if executor == "codex" and not inference:
+        raise ValueError("Codex requires --inference-config with a model, supported effort and declared prices")
+    expected_host = "codex" if executor == "codex" else "claude_code"
+    if inference and any(c["host"] != expected_host for c in contracts):
+        raise ValueError("inference config host conflicts with --executor")
+    if executor == "codex" and a.max_budget_usd is not None:
+        raise ValueError("Codex has no USD budget cap; omit --max-budget-usd")
+    claude_cli = (runner.validate_prerequisites("a", executor="codex") if executor == "codex"
+                  else runner.validate_prerequisites("a"))
+    effort_capability = (observe_effort_flag(claude_cli) if inference and executor == "claude" else None)
     surface_dir = Path(a.surface_dir).resolve() if a.surface_dir else REPO
     prompt, surface_digests = compose_prompt(task, a.arm, surface_dir, a.prompt_style)
     task_digest = runner.digest_bytes(b"\0".join((DOLESS / task[k]).read_bytes()
@@ -515,19 +534,29 @@ def cmd_run(a: argparse.Namespace) -> None:
         wt = runner.make_worktree(f"dl-{a.task}", a.arm, task["parentSha"])
         result, wall, row = {"agentError": "agent_not_started"}, 0.0, {}
         try:
-            result, _stderr, wall = runner.run_agent(wt, prompt, "a", model, a.timeout_min, {},
-                                                     a.max_budget_usd, None, claude_cli, effort=effort)
+            if executor == "codex":
+                result, _stderr, wall = runner.run_codex_agent(wt, prompt, model, effort, a.timeout_min, claude_cli)
+            else:
+                result, _stderr, wall = runner.run_agent(wt, prompt, "a", model, a.timeout_min, {},
+                    a.max_budget_usd if a.max_budget_usd is not None else 1.0, None, claude_cli, effort=effort)
             row = score_checkout(wt, task, str(result.get("result") or ""), a.prove)
         except Exception as exc:  # the row still records what was observed
             row["evaluatorError"] = f"{type(exc).__name__}: {exc}"[:500]
         finally:
             if not a.keep:
                 remove_checkout(wt)
-        usage = runner.transcript_usage(result.get("session_id"))
+        usage = runner.transcript_usage(result.get("session_id")) if executor == "claude" else {}
+        if executor == "codex" and result.get("tokens") is not None:
+            tokens = result["tokens"]
+            contract = (inference["configuration"]["tiers"][selected["tier"]]
+                        if "tier" in selected else selected)
+            prices = contract["pricesUsdPerMillion"]
+            result["total_cost_usd"] = ((tokens["input_tokens"] - tokens["cached_input_tokens"]) * prices["input"]
+                + tokens["cached_input_tokens"] * prices["cachedInput"] + tokens["output_tokens"] * prices["output"]) / 1_000_000
         agent_error = result.get("agentError") or (str(result.get("result", ""))[:300] if result.get("is_error") else None)
         row.update({
             "at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
-            "dolessVersion": DOLESS_VERSION, "task": a.task, "split": task["split"],
+            "dolessVersion": DOLESS_VERSION, "executor": executor, "task": a.task, "split": task["split"],
             "category": task["category"], "arm": a.arm, "promptStyle": a.prompt_style, "run": index + 1,
             "requestedModel": model, "models": usage.get("models"),
             "inferenceConfig": inference, "requestedEffort": effort, "observedEffort": None,
@@ -540,11 +569,15 @@ def cmd_run(a: argparse.Namespace) -> None:
             "turns": result.get("num_turns"), "transcript": usage,
             "answerTail": str(result.get("result") or "")[-400:],
         })
+        if executor == "codex":
+            row.pop("claudeCli")
+            row.update({"codexCli": claude_cli, "tokens": result.get("tokens"),
+                        "costProvenance": "declared_price_table" if observed_cost(row) is not None else "unavailable"})
         if row.get("evaluatorError"):
             row["verdict"], row["verdictReasons"] = "INCOMPLETE", ["evaluator_error"]
         else:
             row["verdict"], row["verdictReasons"] = do_less_verdict(row)
-        if inference:
+        if inference and executor == "claude":
             row["usageAudit"] = runner.usage_audit(usage, result)
             row["claudeCliPostDigest"] = runner.digest_file(Path(claude_cli["path"]))
             missing = []
@@ -555,6 +588,18 @@ def cmd_run(a: argparse.Namespace) -> None:
             if observed_cost(row) is None:
                 missing.append("cost_unobserved")
             if row["claudeCliPostDigest"] != claude_cli["sha256"]:
+                missing.append("cli_identity_changed")
+            if missing:
+                row["verdict"] = "INCOMPLETE"
+                row["verdictReasons"].extend(missing)
+        if executor == "codex":
+            row["codexCliPostDigest"] = runner.digest_file(Path(claude_cli["path"]))
+            missing = []
+            if result.get("tokens") is None:
+                missing.append("usage_incomplete")
+            if observed_cost(row) is None:
+                missing.append("cost_unobserved")
+            if row["codexCliPostDigest"] != claude_cli["sha256"]:
                 missing.append("cli_identity_changed")
             if missing:
                 row["verdict"] = "INCOMPLETE"
@@ -618,7 +663,15 @@ def arm_scores(rows: list[dict]) -> dict:
     out: dict = {}
     for r in rows:
         cell = out.setdefault(comparison_arm(r), {"runs": 0, "scored": 0, "passes": 0, "incomplete": 0,
-                                         "costs": [], "costMissing": 0})
+                                         "costs": [], "costMissing": 0, "tokens": {}, "tokensMissing": 0})
+        if r.get("executor") == "codex":
+            if r.get("tokens") is None:
+                cell["tokensMissing"] += 1
+            else:
+                model = r.get("requestedModel", "unknown")
+                totals = cell["tokens"].setdefault(model, [0, 0, 0])
+                for i, key in enumerate(("input_tokens", "cached_input_tokens", "output_tokens")):
+                    totals[i] += r["tokens"][key]
         cell["runs"] += 1
         cost = observed_cost(r)
         if cost is not None:
@@ -668,14 +721,16 @@ def _usd(value: float | None) -> str:
 
 def pareto_lines(arms: dict) -> list[str]:
     lines = ["arm | runs | scored | INCOMPLETE | pass rate [95% CI] | USD mean/run | USD median/run | "
-             "USD per pass | frontier"]
+             "USD per pass | frontier | Codex tokens by requested model (input/cached/output)"]
     for arm, c in sorted(arms.items()):
         rate = "-" if c["passRate"] is None else (
             f"{c['passes']}/{c['scored']} = {c['passRate']:.0%} [{c['interval'][0]:.0%}, {c['interval'][1]:.0%}]")
         mark = {True: "YES", False: "no", None: "unplaced"}[c["frontier"]]
         missing = f" ({c['costMissing']} without cost)" if c["costMissing"] else ""
         lines.append(f"{arm} | {c['runs']} | {c['scored']} | {c['incomplete']} | {rate} | {_usd(c['costMean'])}{missing} | "
-                     f"{_usd(c['costMedian'])} | {_usd(c['costPerPass'])} | {mark}")
+                     f"{_usd(c['costMedian'])} | {_usd(c['costPerPass'])} | {mark} | "
+                     + ", ".join(f"{model}: {'/'.join(map(str, counts))}" for model, counts in sorted(c.get("tokens", {}).items()))
+                     + (f" ({c['tokensMissing']} without usage)" if c.get("tokensMissing") else ""))
     return lines
 
 
@@ -748,10 +803,11 @@ def main() -> None:
     r.add_argument("--prompt-style", choices=sorted(PROMPT_KEYS), default="explicit")
     r.add_argument("--runs", type=int, default=3)
     r.add_argument("--model")
+    r.add_argument("--executor", choices=["claude", "codex"], default="claude")
     r.add_argument("--treatment", choices=["routed"], help="route declared task kinds on arm a; no reuse")
     r.add_argument("--inference-config", help="frozen exact model/effort capability JSON; no automatic downgrade")
     r.add_argument("--timeout-min", type=int, default=15)
-    r.add_argument("--max-budget-usd", type=float, default=1.0)
+    r.add_argument("--max-budget-usd", type=float, help="Claude only (default 1.0); Codex has no USD cap")
     r.add_argument("--surface-dir", help="directory holding the candidate Keel surfaces (a hillclimb copy)")
     r.add_argument("--prove", action="store_true", help="also run keel check --prove-new-tests")
     r.add_argument("--keep", action="store_true")

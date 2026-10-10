@@ -1,0 +1,32 @@
+{
+  "small": {
+    "version": 1,
+    "host": "codex",
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "effort": "medium",
+    "supportedEfforts": ["low", "medium", "high", "xhigh", "max"],
+    "capabilitySource": "Local codex-cli 0.157.1 models_cache.json, checked 2026-10-10. Replace all null prices with operator-declared USD per million tokens before running; these are not subscription charges. Input price excludes cached input. Routed efforts come from routed.json.",
+    "pricesUsdPerMillion": {"input": null, "cachedInput": null, "output": null}
+  },
+  "standard": {
+    "version": 1,
+    "host": "codex",
+    "provider": "openai",
+    "model": "gpt-6.1-sol",
+    "effort": "medium",
+    "supportedEfforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+    "capabilitySource": "Local codex-cli 0.157.1 models_cache.json, checked 2026-10-10. Copy this tier object to a separate file for all-standard runs. Fill prices before use; no model was called to verify this declaration.",
+    "pricesUsdPerMillion": {"input": null, "cachedInput": null, "output": null}
+  },
+  "large": {
+    "version": 1,
+    "host": "codex",
+    "provider": "openai",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "supportedEfforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+    "capabilitySource": "Local codex-cli 0.157.1 models_cache.json, checked 2026-10-10. Fill prices before use. Codex reports usage, not USD, and has no --max-budget-usd cap. No fallback or retry is performed.",
+    "pricesUsdPerMillion": {"input": null, "cachedInput": null, "output": null}
+  }
+}

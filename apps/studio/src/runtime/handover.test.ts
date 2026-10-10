@@ -30,10 +30,14 @@ const events = [ev(0, 0, "execution_form_declared", "system-cli", { nodeIds: ["c
 
 describe("shouldShowHandover", () => {
   it("needs a stored position, 15 minutes and 20 events", () => {
+    vi.spyOn(Date, "now").mockReturnValue(T0 + 180 * 60_000);
     expect(shouldShowHandover(events, 10, 40)).toBe(true);
     expect(shouldShowHandover(events, null, 40)).toBe(false);
     expect(shouldShowHandover(events, 30, 40)).toBe(false);          // 10 events
     expect(shouldShowHandover(before, 1, 10)).toBe(false);           // 9 minutes
+    expect(shouldShowHandover(events, { sequence: 10, at: T0 + 179 * 60_000 }, 40)).toBe(false);
+    expect(shouldShowHandover(events, { sequence: 10, at: T0 + 165 * 60_000 }, 40)).toBe(true);
+    expect(shouldShowHandover(events, { sequence: 30, at: T0 }, 40)).toBe(false);
   });
 });
 
@@ -104,13 +108,20 @@ describe("buildHandover screen captures", () => {
 describe("last seen storage", () => {
   afterEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
   it("round-trips per project and run", () => {
+    vi.spyOn(Date, "now").mockReturnValue(T0);
     writeLastSeen("ml-saas", "run-a", 42);
-    expect(readLastSeen("ml-saas", "run-a")).toBe(42);
+    expect(readLastSeen("ml-saas", "run-a")).toEqual({ sequence: 42, at: T0 });
     expect(readLastSeen("ml-saas", "run-b")).toBeNull();
+    localStorage.setItem(lastSeenKey("ml-saas", "run-b"), "42");
+    expect(readLastSeen("ml-saas", "run-b")).toBe(42);
   });
   it("treats junk and unavailable storage as no position", () => {
     localStorage.setItem(lastSeenKey("ml-saas", "run-a"), "not a number");
     expect(readLastSeen("ml-saas", "run-a")).toBeNull();
+    for (const raw of ['null', '[]', '{"sequence":1}', '{"sequence":-1,"at":0}', '{"sequence":1,"at":"old"}']) {
+      localStorage.setItem(lastSeenKey("ml-saas", "run-a"), raw);
+      expect(readLastSeen("ml-saas", "run-a")).toBeNull();
+    }
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked"); });
     expect(readLastSeen("ml-saas", "run-a")).toBeNull();
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked"); });

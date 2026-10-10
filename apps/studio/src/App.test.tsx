@@ -445,13 +445,13 @@ describe("live team layout", () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => localStorage.clear());
 
-  function longGapClient() {
+  function longGapClient(fresh = false) {
     const many = Array.from({ length: 24 }, (_, i) => ({ sequence: 20 + i, kind: "signal_recorded", payload: { kind: "operator_note", signalId: `s${i}` },
-      occurredAt: new Date(Date.parse("2026-08-27T12:30:00Z") + i * 60_000).toISOString(), actorId: "kit-1", actorType: "agent",
+      occurredAt: new Date(fresh ? Date.now() - (24 - i) * 1000 : Date.parse("2026-08-27T12:30:00Z") + i * 60_000).toISOString(), actorId: "kit-1", actorType: "agent",
       idempotencyKey: null, eventId: `e${20 + i}`, evidenceRefs: [] }));
     // Run A (demo-deploy) has the long gap; run B (demo-calm) has a short log, so it never earns a card.
     return stubClient({ getEvents: vi.fn(async (executionId: string) => executionId === "demo-calm" ? { head: 4, events: [] } : { head: 43, events: [
-      { sequence: 1, kind: "execution_form_declared", payload: { executionId: "demo-deploy", nodeIds: ["implementation"] }, occurredAt: "2026-08-27T12:00:00Z", actorId: "system-cli", actorType: "system", idempotencyKey: "k0", eventId: "e1", evidenceRefs: [] },
+      { sequence: 1, kind: "execution_form_declared", payload: { executionId: "demo-deploy", nodeIds: ["implementation"] }, occurredAt: fresh ? new Date(Date.now() - 25_000).toISOString() : "2026-08-27T12:00:00Z", actorId: "system-cli", actorType: "system", idempotencyKey: "k0", eventId: "e1", evidenceRefs: [] },
       ...many,
     ] }), getStatus: vi.fn(async (executionId: string) => ({ ...STATUS, executionId, headSequence: executionId === "demo-calm" ? 4 : 43 })) });
   }
@@ -478,7 +478,20 @@ describe("live team layout", () => {
     const card = await screen.findByRole("region", { name: "While you were away" });
     expect(card).toHaveTextContent("24 records");
     await userEvent.click(within(card).getByRole("button", { name: "Got it" }));
-    expect(localStorage.getItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy")).toBe("43");
+    expect(JSON.parse(localStorage.getItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy")!)).toMatchObject({ sequence: 43, at: expect.any(Number) });
+    expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull();
+  });
+
+  it("R4: shows an hour away even when new events are one second apart", async () => {
+    const now = Date.parse("2026-10-10T12:00:00Z");
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const key = "graphhelm.handover.last-seen:dale-api-base:demo-deploy";
+    localStorage.setItem(key, JSON.stringify({ sequence: 1, at: now - 3_600_000 }));
+    await open(longGapClient(true));
+    const card = await screen.findByRole("region", { name: "While you were away" });
+    expect(card).toHaveTextContent("24 records over 1 h");
+    await userEvent.click(within(card).getByRole("button", { name: "Got it" }));
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ sequence: 43, at: now });
     expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull();
   });
 

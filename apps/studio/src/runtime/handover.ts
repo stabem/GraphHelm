@@ -18,28 +18,29 @@ const SETTLED = new Set(["succeeded", "waived", "skipped"]);
 
 export interface HandoverLine { text: string; sequences: number[] }
 export interface Handover { fromSeq: number; toSeq: number; eventCount: number; gapMinutes: number; shipped: HandoverLine[]; needsYou: HandoverLine[]; quiet: HandoverLine[]; untouched: HandoverLine[] }
-export interface HandoverInput { events: RuntimeEvent[]; bots: Bot[]; model: GraphModel | null; claudeTasks: ClaudeTaskReadModel | null; openItems: NeedsYouItem[]; envelopes?: EnvelopeRecord; fromSeq: number; toSeq: number }
+export interface HandoverInput { events: RuntimeEvent[]; bots: Bot[]; model: GraphModel | null; claudeTasks: ClaudeTaskReadModel | null; openItems: NeedsYouItem[]; envelopes?: EnvelopeRecord; fromSeq: number; toSeq: number; seenAt?: number }
 
 function payloadOf(event: RuntimeEvent): Record<string, unknown> {
   return event.payload !== null && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, unknown> : {};
 }
 
-function gapBounds(events: RuntimeEvent[], fromSeq: number, toSeq: number): { inGap: RuntimeEvent[]; fromTime: number | null; toTime: number | null } {
+function gapBounds(events: RuntimeEvent[], fromSeq: number, toSeq: number, seenAt?: number): { inGap: RuntimeEvent[]; fromTime: number | null; toTime: number | null } {
   const inGap = events.filter((event) => event.sequence > fromSeq && event.sequence <= toSeq);
   const seen = events.filter((event) => event.sequence <= fromSeq).at(-1);
-  const fromTime = timeOf(seen?.occurredAt ?? inGap[0]?.occurredAt ?? null);
-  const toTime = timeOf(inGap.at(-1)?.occurredAt ?? null);
+  const fromTime = seenAt ?? timeOf(seen?.occurredAt ?? inGap[0]?.occurredAt ?? null);
+  const toTime = seenAt === undefined ? timeOf(inGap.at(-1)?.occurredAt ?? null) : Date.now();
   return { inGap, fromTime, toTime };
 }
 
-export function shouldShowHandover(events: RuntimeEvent[], fromSeq: number | null, toSeq: number): boolean {
+export function shouldShowHandover(events: RuntimeEvent[], lastSeen: number | { sequence: number; at: number } | null, toSeq: number): boolean {
+  const fromSeq = typeof lastSeen === "number" ? lastSeen : lastSeen?.sequence ?? null;
   if (fromSeq === null || toSeq <= fromSeq) return false;
-  const { inGap, fromTime, toTime } = gapBounds(events, fromSeq, toSeq);
+  const { inGap, fromTime, toTime } = gapBounds(events, fromSeq, toSeq, typeof lastSeen === "object" ? lastSeen?.at : undefined);
   return inGap.length >= HANDOVER_MIN_EVENTS && fromTime !== null && toTime !== null && toTime - fromTime >= HANDOVER_MIN_GAP_MS;
 }
 
 export function buildHandover(input: HandoverInput): Handover {
-  const { inGap, fromTime, toTime } = gapBounds(input.events, input.fromSeq, input.toSeq);
+  const { inGap, fromTime, toTime } = gapBounds(input.events, input.fromSeq, input.toSeq, input.seenAt);
   const botName = (id: string | null) => input.bots.find((bot) => bot.key === id || bot.actorId === id)?.name ?? id ?? "Someone";
   const nodeName = (id: unknown) => {
     if (typeof id !== "string") return "A step";
@@ -140,11 +141,18 @@ export function lastSeenKey(project: string, executionId: string): string {
   return `graphhelm.handover.last-seen:${project}:${executionId}`;
 }
 
-export function readLastSeen(project: string, executionId: string): number | null {
+export function readLastSeen(project: string, executionId: string): number | { sequence: number; at: number } | null {
   try {
     const raw = globalThis.localStorage.getItem(lastSeenKey(project, executionId));
-    if (raw === null || !/^\d{1,15}$/.test(raw)) return null;
-    return Number(raw);
+    if (raw === null) return null;
+    // Legacy visits retain their event-time gap until the owner next marks the run seen.
+    if (/^\d{1,15}$/.test(raw)) return Number(raw);
+    const value: unknown = JSON.parse(raw);
+    if (value === null || typeof value !== "object" || !("sequence" in value) || !("at" in value)) return null;
+    const { sequence, at } = value;
+    return typeof sequence === "number" && Number.isSafeInteger(sequence) && sequence >= 0
+      && typeof at === "number" && Number.isSafeInteger(at) && at >= 0 && at <= 8_640_000_000_000_000
+      ? { sequence, at } : null;
   } catch {
     return null;
   }
@@ -152,7 +160,7 @@ export function readLastSeen(project: string, executionId: string): number | nul
 
 export function writeLastSeen(project: string, executionId: string, sequence: number): void {
   try {
-    globalThis.localStorage.setItem(lastSeenKey(project, executionId), String(Math.max(0, Math.floor(sequence))));
+    globalThis.localStorage.setItem(lastSeenKey(project, executionId), JSON.stringify({ sequence: Math.max(0, Math.floor(sequence)), at: Date.now() }));
   } catch {
     // A convenience: without storage the next visit shows no card, which is correct.
   }

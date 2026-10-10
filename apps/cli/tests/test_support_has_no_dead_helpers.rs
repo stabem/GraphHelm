@@ -217,6 +217,8 @@ fn named_cli_targets_do_not_bypass_scaled_deadlines() {
         Instant\s*::\s*now\s*\(\s*\)\s*\+\s*(?:std::time::)?Duration\s*::\s*from_\w+
         | set_(?:read|write)_timeout\s*\(\s*Some\s*\(\s*(?:std::time::)?Duration\s*::\s*from_\w+
         | \.timeout\s*\(\s*Duration\s*::\s*from_\w+
+        | \.recv_timeout\s*\(\s*(?:std::time::)?Duration\s*::\s*from_\w+
+        | tokio\s*::\s*time\s*::\s*timeout\s*\(\s*(?:std::time::)?Duration\s*::\s*from_\w+
         | started\s*\+\s*SEQUENCE_POST_DEADLINE
         | \.min\s*\(\s*SEQUENCE_POST_IO_TIMEOUT
         | sequence_io_timeout_at\s*\(\s*deadline\s*,\s*Instant::now\(\)\s*,\s*SEQUENCE_POST_IO_TIMEOUT

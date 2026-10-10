@@ -102,7 +102,7 @@ impl Drop for ServerGuard {
         // death. The day a spawner reachable from `serve` inherits stdio instead, a drain thread
         // can block past this poll's 200ms cap, and this loop's own bound is what keeps `Drop`
         // from hanging anyway — but a future spawner change is the trigger to re-examine this.
-        let deadline = Instant::now() + Duration::from_millis(200);
+        let deadline = Instant::now() + scaled(Duration::from_millis(200));
         let drained_fully = loop {
             let stdout_done = self
                 .stdout_thread
@@ -6094,7 +6094,7 @@ fn a_sweep_interval_makes_the_server_sweep_itself_and_the_record_says_tick() {
 
     let (_guard, base, token) = serve_with(&events, &["--sweep-interval", "1"]);
 
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + scaled(Duration::from_secs(30));
     let recorded = loop {
         let response = get_json(
             &format!("{base}/v1/executions/{execution}/events?limit=1000"),
@@ -6900,7 +6900,7 @@ fn a_write_that_cannot_proceed_is_bounded_by_the_total_deadline_not_the_per_writ
     // a single large send is queued rather than bounded (see the doc above). A short timeout
     // here so the fill itself cannot become the test's runtime.
     stream
-        .set_write_timeout(Some(Duration::from_millis(500)))
+        .set_write_timeout(Some(scaled(Duration::from_millis(500))))
         .unwrap();
     let chunk = vec![b'x'; 1024 * 1024];
     let mut filled: usize = 0;
@@ -7020,7 +7020,7 @@ fn a_slow_drip_server_fails_bounded_by_the_total_deadline_not_the_per_read_guard
     // itself means a genuinely broken server (one that never writes anything) fails this cell
     // loud, with a clear panic, rather than hanging it.
     stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
+        .set_read_timeout(Some(scaled(Duration::from_secs(5))))
         .unwrap();
     let mut peek_buf = [0u8; 2];
     while stream
@@ -8914,7 +8914,7 @@ fn fake_system_one(judge_body: String) -> (String, Arc<Mutex<Vec<CapturedRequest
                 return;
             };
             stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
+                .set_read_timeout(Some(scaled(Duration::from_secs(5))))
                 .unwrap();
             let captured = read_captured_request(&mut stream);
             let (status, body) = match captured.path.as_str() {

@@ -6,6 +6,8 @@
 #[path = "support/mod.rs"]
 mod support;
 
+use support::time_scale::scaled;
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -686,7 +688,7 @@ fn serve_runs_from_the_paths_init_wrote() {
     assert_eq!(started["ok"], true, "{started}");
     let base = format!("http://{}", started["data"]["address"].as_str().unwrap());
 
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
     loop {
         if health_answers_within(&base, deadline) {
             break;

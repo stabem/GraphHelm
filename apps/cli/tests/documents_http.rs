@@ -10,6 +10,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use serde_json::{Value, json};
 
 const EVENTS_KEY: &str = "0101010101010101010101010101010101010101010101010101010101010101";
@@ -120,7 +124,7 @@ fn serve(events: &Path, extra: &[&str]) -> (Server, String, String) {
     let mut token_name = events.file_name().unwrap().to_os_string();
     token_name.push(".token");
     let token_path = events.with_file_name(token_name);
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
     let token = loop {
         if let Ok(token) = std::fs::read_to_string(&token_path)
             && !token.is_empty()
@@ -137,10 +141,10 @@ fn post_json(base: &str, token: &str, path: &str, body: &Value) -> (u16, Value) 
     let authority = base.strip_prefix("http://").unwrap();
     let mut stream = TcpStream::connect(authority).unwrap();
     stream
-        .set_read_timeout(Some(Duration::from_secs(30)))
+        .set_read_timeout(Some(scaled(Duration::from_secs(30))))
         .unwrap();
     stream
-        .set_write_timeout(Some(Duration::from_secs(30)))
+        .set_write_timeout(Some(scaled(Duration::from_secs(30))))
         .unwrap();
     let payload = serde_json::to_vec(body).unwrap();
     let request = format!(

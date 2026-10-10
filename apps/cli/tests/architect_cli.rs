@@ -8,6 +8,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use assert_cmd::Command;
 use serde_json::Value;
 
@@ -362,7 +366,7 @@ fn fake_provider(
                 return;
             };
             stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
+                .set_read_timeout(Some(scaled(Duration::from_secs(5))))
                 .unwrap();
             let captured = read_request(&mut stream);
             let (status, body) = match captured.path.as_str() {

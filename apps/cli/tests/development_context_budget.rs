@@ -25,6 +25,10 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 /// One required section, and a budget it cannot fit in.
 ///
 /// The two numbers are computed rather than written down, and that is deliberate. A hardcoded
@@ -269,7 +273,7 @@ fn start_server(directory: &Path) -> Server {
 
     let mut stdout = child.stdout.take().expect("stdout is piped");
     let mut buffer = Vec::new();
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + scaled(Duration::from_secs(30));
     let started: serde_json::Value = loop {
         let mut byte = [0u8; 1];
         match stdout.read(&mut byte) {
@@ -301,7 +305,7 @@ fn start_server(directory: &Path) -> Server {
         .map_or_else(|| std::ffi::OsString::from("events"), ToOwned::to_owned);
     name.push(".token");
     let token_path = events.with_file_name(name);
-    let token_deadline = Instant::now() + Duration::from_secs(5);
+    let token_deadline = Instant::now() + scaled(Duration::from_secs(5));
     let token = loop {
         if let Ok(contents) = std::fs::read_to_string(&token_path)
             && !contents.is_empty()
@@ -334,10 +338,10 @@ fn post_json(server: &Server, path: &str, body: &serde_json::Value) -> (u16, ser
     let mut stream = TcpStream::connect((host, port.parse::<u16>().expect("the port is a number")))
         .expect("the server accepts a connection right after startup");
     stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
+        .set_read_timeout(Some(scaled(Duration::from_secs(10))))
         .expect("read timeout is settable");
     stream
-        .set_write_timeout(Some(Duration::from_secs(10)))
+        .set_write_timeout(Some(scaled(Duration::from_secs(10))))
         .expect("write timeout is settable");
 
     let payload = serde_json::to_vec(body).expect("the request body serializes");

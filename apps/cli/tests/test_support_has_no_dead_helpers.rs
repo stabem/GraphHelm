@@ -223,14 +223,39 @@ fn named_cli_targets_do_not_bypass_scaled_deadlines() {
         | read_response_until_sequence_deadline\s*\(\s*request\.deadline\s*,\s*SEQUENCE_POST_IO_TIMEOUT",
     )
     .unwrap();
+    let runtime_http_fixed_ceiling = regex::Regex::new(
+        r"(?x)
+        \.recv_timeout\s*\(\s*(?:std::time::)?Duration\s*::\s*from_\w+
+        | TcpStream\s*::\s*connect_timeout\s*\(\s*[^,]+,\s*(?:std::time::)?Duration\s*::\s*from_\w+",
+    )
+    .unwrap();
     let mut violations = Vec::new();
     // Coordinator-approved scope; other test targets remain a recorded residual.
     for target in [
+        "api_http",
+        "architect_cli",
+        "context_journey",
+        "development_concurrency",
+        "development_context_budget",
+        "development_surface_parity",
+        "documents_http",
+        "event_store_local_backup",
+        "gate_http",
+        "gateway_setup",
+        "init_cli",
+        "journey_flow_surfaces",
+        "journey_live_cli",
+        "journey_preview_browser",
+        "journey_preview_cli",
+        "journey_replay_browser",
+        "journey_replay_cli",
+        "journeys_surfaces",
         "mcp_discovery",
         "mcp_stdio",
         "monitor_http",
         "resume_atomicity",
         "resume_project_default",
+        "runtime_http",
         "signal_image_evidence_http",
         "wake_http",
         "workspace_cli",
@@ -256,6 +281,16 @@ fn named_cli_targets_do_not_bypass_scaled_deadlines() {
                 .count()
                 + 1;
             violations.push(format!("{target}.rs:{line}: {}", found.as_str()));
+        }
+        if target == "runtime_http" {
+            for found in runtime_http_fixed_ceiling.find_iter(&code) {
+                let line = code[..found.start()]
+                    .bytes()
+                    .filter(|b| *b == b'\n')
+                    .count()
+                    + 1;
+                violations.push(format!("{target}.rs:{line}: {}", found.as_str()));
+            }
         }
     }
     assert!(

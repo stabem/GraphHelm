@@ -12,6 +12,10 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use serde_json::{Value, json};
 use sha2::Digest;
 
@@ -226,7 +230,7 @@ fn git(project: &Path, args: &[&str]) {
 
 /// Reads the kept result until the background run leaves `running`, within a bound.
 fn settled(project: &Path) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(180);
+    let deadline = Instant::now() + scaled(Duration::from_secs(180));
     loop {
         let (code, value) = cli(project, &["journey", "preview", "account", "--read"]);
         assert_eq!(code, 0, "{value}");

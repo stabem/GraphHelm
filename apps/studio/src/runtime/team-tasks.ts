@@ -451,6 +451,10 @@ export function isUnclaimedCritic(task: TaskState): boolean {
 }
 
 function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
+  // Merge records may use `pr-N` as their task id even when the author claimed `issue-N`.
+  // The PR identifies the existing slice across those task ids.
+  const byPr = event.pr === undefined ? undefined : slices.find((slice) => slice.pr === event.pr);
+  if (byPr !== undefined) return byPr;
   const group = slices.filter((slice) => slice.taskId === event.taskId);
   const open = (slice: TaskState) => slice.pr === null && slice.step !== "merged"
     && (slice.lane === null || event.lane === undefined || slice.lane === event.lane);
@@ -470,8 +474,6 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
     return group.find((slice) => slice.branch !== null && slice.branch === event.branch)
       ?? group.find(isUnclaimedCritic) ?? add();
   }
-  const own = event.pr === undefined ? undefined : group.find((slice) => slice.pr === event.pr);
-  if (own !== undefined) return own;
   // A PR no slice holds yet joins the oldest open claim of its task (for pr_opened, the same
   // lane's): PRs open in the order their slices were claimed. The claim's slice becomes that PR's
   // slice. A merge recorded with no pr_opened (#449's own log) still lands on the issue's claim
@@ -587,6 +589,18 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         break;
     }
     clockStep(state.clock, timed(before), timed(state.step), event.occurredAt);
+    if (event.kind === "task.merged" && event.closes !== undefined) {
+      for (const claim of slices) {
+        if (claim !== state && claim.pr === null && claim.step !== "merged" && claim.issue !== null && event.closes.includes(claim.issue)) {
+          const claimBefore = claim.step;
+          claim.step = "merged";
+          claim.mergeSha = event.mergeSha ?? null;
+          claim.blockedBy = null;
+          claim.lastSequence = event.sequence;
+          clockStep(claim.clock, timed(claimBefore), "merged", event.occurredAt);
+        }
+      }
+    }
   }
   slices.forEach((slice, index) => {
     // A slice opened by a PR record (no claim seen) still belongs to its issue.

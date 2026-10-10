@@ -723,7 +723,7 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     // launcher brings it up (and the host stops it when the watch ends). An isolated launcher
     // always brings up its own, on free ports (#585).
     let launched = if args.watch && (launcher_isolated(&project) || !base_reachable(&base)) {
-        let launched = launch(&project, &base)?;
+        let launched = launch(&project, &base, |_| Ok(()))?;
         data["launched"] = true.into();
         if let Some(own) = &launched.base {
             base = own.clone();
@@ -1204,13 +1204,22 @@ fn posix_shell() -> Command {
 }
 
 /// Starts the declared app under test and waits until the flow's base answers.
-pub(super) fn launch(project: &Path, base: &str) -> Result<Launched> {
-    launch_within(project, base, LAUNCH_READY)
+pub(super) fn launch(
+    project: &Path,
+    base: &str,
+    before_up: impl FnOnce(&LaunchedStop) -> Result<()>,
+) -> Result<Launched> {
+    launch_within(project, base, LAUNCH_READY, before_up)
 }
 
 /// [`launch`] with its readiness bound as a parameter, so the bound itself is testable: the
 /// launcher's `up` and the wait for the base together end within `ready`.
-pub(super) fn launch_within(project: &Path, base: &str, ready: Duration) -> Result<Launched> {
+pub(super) fn launch_within(
+    project: &Path,
+    base: &str,
+    ready: Duration,
+    before_up: impl FnOnce(&LaunchedStop) -> Result<()>,
+) -> Result<Launched> {
     let declared = project.join(FIXTURE_FILE);
     if !safe_node(&declared) {
         return Err(failure("watch.app_down", "/base", 2));
@@ -1270,6 +1279,8 @@ pub(super) fn launch_within(project: &Path, base: &str, ready: Duration) -> Resu
         dir,
         base: isolated_base,
     };
+    // Persist ownership before spawning: recovery must also cover a runner killed inside up.
+    before_up(&launched.stopper())?;
     let deadline = Instant::now() + ready;
     // The `up` script is bounded too: one that hangs is killed at `ready` and reads as a failed
     // launch, never as a run that waits for ever.
@@ -1997,6 +2008,7 @@ mod launch_tests {
             project.path(),
             &format!("http://127.0.0.1:{port}"),
             Duration::from_secs(2),
+            |_| Ok(()),
         );
         let took = started.elapsed();
         let code = outcome.err().map(|(code, _, _)| code);

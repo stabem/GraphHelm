@@ -716,19 +716,22 @@ fn play(
     let launched: Option<Launched> = if !launcher_isolated(project) && base_reachable(&base) {
         None
     } else {
-        Some(launch(project, &base)?)
+        Some(launch(project, &base, |stop| {
+            // A dead runner cannot clean up itself, even if it dies before up returns.
+            run.state["launched"] = stop.record();
+            super::journey_flow::atomic_write(
+                &run.dir.join(STATE),
+                &serde_json::to_vec_pretty(&run.state).unwrap(),
+            )
+            .map_err(|_| failure("watch.launch_failed", "/launcher", 1))?;
+            if let Ok(mut slot) = stopper.lock() {
+                *slot = Some(stop.clone());
+            }
+            Ok(())
+        })?)
     };
     if let Some(own) = launched.as_ref().and_then(|app| app.base.clone()) {
         base = own;
-    }
-    if let (Some(app), Ok(mut slot)) = (&launched, stopper.lock()) {
-        *slot = Some(app.stopper());
-    }
-    // #593 review: the state names the app this run launched, so a reader that finds the runner
-    // gone can still stop it (a killed runner runs neither its own stop nor its watchdog).
-    if let Some(app) = &launched {
-        run.state["launched"] = app.stopper().record();
-        run.save();
     }
     let guard = Guard {
         approved: flow["status"] == "approved",
@@ -1233,6 +1236,133 @@ mod tests {
             downs(),
             1,
             "a record naming another script or directory stops nothing"
+        );
+    }
+
+    /// #593: a runner killed inside up must leave a record that a reader can reap. Existing
+    /// reaper cells supply a completed launch record and miss this window. Cost: a child test
+    /// process, a shell and temp files; no browser/network, at most 15 seconds waiting for up.
+    #[test]
+    fn a_preview_records_its_fixture_before_up_returns() {
+        use std::process::{Command, Stdio};
+        use std::sync::{Arc, Mutex};
+        use std::time::{Duration, Instant};
+        const CHILD: &str = "GRAPHHELM_TEST_PREVIEW_DURING_UP";
+        if let Some(project) = std::env::var_os(CHILD) {
+            let project = std::path::PathBuf::from(project);
+            let mut run = super::Run {
+                dir: project.join("preview"),
+                state: json!({"state":"running","pid":std::process::id(),
+                    "startedAt":chrono::Utc::now().to_rfc3339()}),
+                frames: 0,
+                proof: None,
+                contract: String::new(),
+                last: None,
+                confirmed: false,
+                viewport: Value::Null,
+                storage: None,
+            };
+            run.save();
+            let _ = super::play(
+                &project,
+                &json!({"base":"http://127.0.0.1:1","paths":{},"edges":[],"screens":[]}),
+                &mut run,
+                Instant::now() + Duration::from_secs(30),
+                &Arc::new(Mutex::new(None)),
+            );
+            return;
+        }
+        let project = tempfile::tempdir().unwrap();
+        let observers = project.path().join(".graphhelm/observers");
+        let previews = project.path().join("preview");
+        std::fs::create_dir_all(&observers).unwrap();
+        std::fs::create_dir(&previews).unwrap();
+        std::fs::write(
+            observers.join("journey_driver.mjs"),
+            include_bytes!("../../../../tools/journey-driver/driver.mjs"),
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join(".graphhelm/journey-fixture.json"),
+            r#"{"schema":"graphhelm-journey-fixture/1","script":"fake.sh","isolated":true}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join("fake.sh"),
+            r#"#!/usr/bin/env bash
+if [ "$1" = up ]; then
+  mkdir -p "$2"
+  echo "$$ $(cat /proc/$$/winpid 2>/dev/null)" > "$2/up.pid"
+  printf '%s' "$2" > up.marker
+  sleep 30
+else
+  read -r shellpid winpid < "$2/up.pid"
+  if [ -n "$winpid" ]; then
+    taskkill //PID "$winpid" //T //F >/dev/null 2>&1 || true
+  else
+    kill -STOP "$shellpid" 2>/dev/null || true
+    pkill -TERM -P "$shellpid" 2>/dev/null || true
+    kill -KILL "$shellpid" 2>/dev/null || true
+  fi
+  echo down >> down.log
+fi
+"#,
+        )
+        .unwrap();
+        let mut runner = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "commands::journey_preview::tests::a_preview_records_its_fixture_before_up_returns",
+            ])
+            .env(CHILD, project.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(15);
+        let fixture = loop {
+            let marker = std::fs::read_to_string(project.path().join("up.marker"));
+            if let Some(marker) = marker.ok().filter(|text| !text.is_empty()) {
+                break Some(marker);
+            }
+            if Instant::now() >= until {
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        let recorded = read_state(&previews);
+        runner.kill().unwrap();
+        runner.wait().unwrap();
+        let reaped = reap_lost(project.path(), &previews);
+        let downs = std::fs::read_to_string(project.path().join("down.log"))
+            .map_or(0, |log| log.lines().count());
+        let fixture = fixture.expect("the real up process reached its sleeping marker");
+        let removed = !Path::new(&fixture).exists();
+        // Keep the RED run clean too: the old code has no persisted handle for the reader.
+        if !removed {
+            super::LaunchedStop::from_record(
+                project.path(),
+                &json!({"script":"fake.sh","dir":fixture}),
+            )
+            .unwrap()
+            .stop();
+        }
+        let recorded = recorded.unwrap();
+        assert_eq!(recorded["launched"]["script"], "fake.sh", "{recorded}");
+        assert_eq!(recorded["launched"]["dir"], fixture);
+        let reaped = reaped.unwrap();
+        assert_eq!(reaped["state"], "failed", "{reaped}");
+        assert_eq!(reaped["reason"], "preview.runner_lost", "{reaped}");
+        assert_eq!(downs, 1, "the reader ran down once");
+        assert!(removed, "the reader removed the fixture directory");
+        reap_lost(project.path(), &previews);
+        assert_eq!(
+            std::fs::read_to_string(project.path().join("down.log"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
         );
     }
 

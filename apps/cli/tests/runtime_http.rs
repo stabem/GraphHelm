@@ -2994,6 +2994,8 @@ fn a_runtime_can_seal_a_message_with_a_keyring_and_no_credential_at_all() {
         &serde_json::json!({
             "signal": {
                 "id": "signal-keyring-only",
+                "to": "codex-4",
+                "replyTo": "ask-1",
                 "source": {"type": "user", "id": "studio-operator"},
                 "type": "operator_note",
                 "severity": "low",
@@ -3011,6 +3013,13 @@ fn a_runtime_can_seal_a_message_with_a_keyring_and_no_credential_at_all() {
     let events_url = format!("{base}/v1/executions/{execution}/events?limit=1000");
     let events_reply = get_json(&events_url, Some(&token));
     let entries = envelope_array(&events_reply, "events", &events_url);
+    let recorded = entries
+        .iter()
+        .find(|entry| entry["kind"]["type"] == "signal_recorded")
+        .unwrap();
+    assert_eq!(recorded["kind"]["data"]["to"], "codex-4");
+    assert_eq!(recorded["kind"]["data"]["replyTo"], "ask-1");
+    assert!(!serde_json::to_string(recorded).unwrap().contains(note));
     let reference = entries
         .iter()
         .filter(|entry| entry["kind"]["type"] == "signal_recorded")

@@ -143,6 +143,25 @@ delivery avoids another request. These are request-count guarantees covered by l
 not a measured reduction in a complete task's billed tokens. The hook returns only bounded typed
 summary fields, never the full objective, transcript or Runtime command text.
 
+### Lane Stop reminder
+
+`lane_stop_hook.py` runs in both host packages. Bind `GRAPHHELM_EXECUTION_ID` to the team
+execution, `GRAPHHELM_RUNTIME_URL`, the agent `GRAPHHELM_TOKEN_FILE`, and
+`GRAPHHELM_ACTOR` to the exact lane id. A pending addressed `operator_note` blocks once
+with "read the notes addressed to you". Only a later reply recorded by that agent clears
+its note. The hook neither acknowledges notes nor sends messages.
+
+The scan reads only event pages: optional opaque `to` and `replyTo` on `signal_recorded`
+replace per-note evidence GETs. It reads the last 4096 events, at most 8 pages of 512 (one MiB maximum response per page),
+plus one head request. Notes older than the window and legacy notes without routing hints
+are outside this reminder; the normal inbox still reads their sealed evidence. Deploy the
+updated Runtime before reloading the plugin. Historical events are not rewritten.
+
+Unbound sessions, `stop_hook_active=true`, unreadable state, malformed responses, oversized
+pages, exhausted scan and timeout allow Stop. The scan child has a two-second wall timeout;
+the host declaration allows ten seconds for process startup and cleanup. Allow is never
+proof that the inbox is empty. Host background wake notification remains a separate observer.
+
 ### Explicit task handoff
 
 `hooks/task_handoff.py` is a provider-neutral command adapter for any host that can run Python.

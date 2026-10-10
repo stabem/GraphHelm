@@ -89,6 +89,8 @@ fn keyed_batch_of(prefix: &str, signals: usize) -> Vec<NewEvent> {
         events.push(event(
             format!("{prefix}-signal-{index}"),
             EventKind::SignalRecorded(SignalRecorded {
+                to: None,
+                reply_to: None,
                 scoped_agent_authenticated: None,
                 execution_id: execution_id.clone(),
                 signal_id: OpaqueId::parse(format!("signal-{index}")).unwrap(),

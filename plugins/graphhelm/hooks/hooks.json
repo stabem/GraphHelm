@@ -76,6 +76,15 @@
             "timeout": 70
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/lane_stop_hook.py\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PreToolUse": [

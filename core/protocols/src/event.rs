@@ -1005,6 +1005,12 @@ pub struct ExecutionCompleted {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SignalRecorded {
+    /// Optional opaque routing hints for operator notes; legacy records omit them.
+    /// Free-form addressing stays only in the encrypted signal envelope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<OpaqueId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<OpaqueId>,
     pub execution_id: OpaqueId,
     pub signal_id: OpaqueId,
     pub source_kind: SignalSourceKind,

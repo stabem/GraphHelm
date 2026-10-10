@@ -133,7 +133,18 @@ fn build_signal_record(
     // dependencies of this crate. `graphhelm-graph` is already a dependency.
     let envelope_sha256 = graphhelm_graph::raw_content_sha256(externalize)
         .map_err(|_| GovernanceError::InvalidSignal)?;
+    // Routing is a reading hint, not authentication. Only bounded opaque identities
+    // from operator notes belong in the journal; arbitrary address prose stays sealed.
+    let routing = signal.raw_kind() == "operator_note";
     Ok(SignalRecorded {
+        to: signal
+            .to()
+            .filter(|_| routing)
+            .and_then(|value| graphhelm_protocols::OpaqueId::parse(value).ok()),
+        reply_to: signal
+            .reply_to()
+            .filter(|_| routing)
+            .and_then(|value| graphhelm_protocols::OpaqueId::parse(value).ok()),
         scoped_agent_authenticated: None,
         execution_id: graphhelm_protocols::OpaqueId::parse(execution_id)
             .map_err(|_| GovernanceError::InvalidSignal)?,
@@ -240,6 +251,41 @@ mod tests {
         .unwrap();
         assert_eq!(admitted.record.kind, "no_progress");
         assert!(!admitted.externalize.is_empty());
+    }
+
+    /// Cost: in-memory admission only. Missing routing metadata forces one evidence GET per note.
+    #[test]
+    fn operator_note_routing_is_readable_without_opening_evidence() {
+        let mut note = signal("operator_note");
+        note["to"] = serde_json::json!("codex-4");
+        note["replyTo"] = serde_json::json!("ask-1");
+        let admitted = admit_signal(&projection(ExecutionMode::Manual, 0, 0), &note).unwrap();
+        let wire = serde_json::to_value(&admitted.record).unwrap();
+        assert_eq!(wire["to"], "codex-4");
+        assert_eq!(wire["replyTo"], "ask-1");
+        assert!(wire.get("description").is_none());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&admitted.externalize).unwrap(),
+            note
+        );
+
+        // Legacy records remain readable and arbitrary address prose stays sealed.
+        let mut legacy = wire;
+        legacy.as_object_mut().unwrap().remove("to");
+        legacy.as_object_mut().unwrap().remove("replyTo");
+        assert!(serde_json::from_value::<SignalRecorded>(legacy).is_ok());
+        for (kind, address) in [
+            ("operator_note", "free form address"),
+            ("no_progress", "codex-4"),
+        ] {
+            note["type"] = serde_json::json!(kind);
+            note["to"] = serde_json::json!(address);
+            note["replyTo"] = serde_json::json!(address);
+            let admitted = admit_signal(&projection(ExecutionMode::Manual, 0, 0), &note).unwrap();
+            let wire = serde_json::to_value(&admitted.record).unwrap();
+            assert!(wire.get("to").is_none());
+            assert!(wire.get("replyTo").is_none());
+        }
     }
 
     /// A schema-valid signal whose id is not an OpaqueId is evidence that cannot be

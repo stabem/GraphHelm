@@ -66,3 +66,9 @@
   .tc-inspector { flex: 1 1 100%; }
 }
 .tc-empty { color: #A9AEB8; }
+
+/* #746: the live run line above the strip. */
+.tc-run { display: flex; align-items: center; gap: 12px; min-height: 28px; }
+.tc-run-progress { margin: 0; font-size: 13px; }
+.tc-run-error { margin: 0; font-size: 13px; color: #B42318; }
+.tc-run-kind { margin-left: 8px; padding: 1px 6px; border-radius: 4px; background: #FEF3C7; color: #92400E; font-size: 12px; }

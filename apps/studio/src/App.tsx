@@ -2279,6 +2279,8 @@ export default function App({
     const kept = missionFrameKeys.current;
     return () => { for (const entry of kept.values()) if (entry.url !== null) URL.revokeObjectURL(entry.url); kept.clear(); };
   }, []);
+  // #746: the test canvas runs a journey; each state it reads updates that journey's Proof rows.
+  const recordMissionRun = useCallback((contractId: string, run: JourneyRunView) => setMissionRuns((before) => ({ ...before, [contractId]: run })), []);
   const missionRunFor = useCallback((contractId: string) => missionRuns[contractId] ?? null, [missionRuns]);
   const missionFrameUrl = useCallback((stepId: string, contractId: string) => {
     const step = journeysView?.journeys.find((j) => j.contractId === contractId)?.steps.find((s) => s.stepId === stepId);
@@ -3171,6 +3173,7 @@ export default function App({
             {canvasTab === "graph" && (
               <div id="studio-panel-graph" role="tabpanel" aria-label="Graph">
                 <SlotPoll client={clientRef.current}>{(slots) => <MissionView wakeListeners={status?.wakeListeners} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={taskGraphs?.executionId === selected ? taskGraphs.records : []} runFor={missionRunFor}
+                  run={journeyRun} onRun={recordMissionRun}
                   lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe}
                   runName={selected} lastRecordAt={Date.parse(eventList[eventList.length - 1]?.occurredAt ?? "")} onTeam={() => chooseCanvas("team")} onJourneys={() => chooseCanvas("journey")}
                   draftJourneys={flowsRead.view?.flows.filter((flow) => flow.status === "draft").length ?? 0}

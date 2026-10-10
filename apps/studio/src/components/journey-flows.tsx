@@ -137,7 +137,7 @@ function runWords(run: JourneyRunView): string {
  * runs, and each reached screen's picture fetched once per result. Object URLs are revoked when a
  * picture is replaced and when the journey is left. A Runtime that answers 404 predates the run
  * routes: `offered` turns false and the flowchart is drawn without a run line. */
-function useJourneyRun(flowId: string, source: JourneyRunSource | undefined): { offered: boolean; run: JourneyRunView | null; frames: Record<string, string>; failure: string | null; again: () => void; confirm: () => void; confirming: boolean } {
+export function useJourneyRun(flowId: string, source: JourneyRunSource | undefined): { offered: boolean; run: JourneyRunView | null; frames: Record<string, string>; failure: string | null; again: () => void; confirm: () => void; confirming: boolean } {
   const [run, setRun] = useState<JourneyRunView | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [absent, setAbsent] = useState(false);

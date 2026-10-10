@@ -12,6 +12,8 @@ import { buildWorkGroups, type WorkGroup } from "../runtime/work-groups";
 import { IssueGraph, MissionGraph, STATUS_LABEL, stageState } from "./mission-graph";
 import { ProofTable } from "./proof-table";
 import { TestCanvas } from "./test-canvas";
+import { ProofRun } from "./proof-run";
+import type { JourneyRunSource } from "./journey-flows";
 import { LanesTimeline } from "./lanes-timeline";
 import { WorkKanban, type KanbanItem } from "./work-kanban";
 import type { Bot } from "../runtime/team";
@@ -40,6 +42,10 @@ interface Props {
   onSendBack?: (stepId: string, contractId: string) => void;
   /** Absent: the Proof view's "Replay whole journey" is disabled and says where the replay starts. */
   onReplay?: (contractId: string) => void;
+  /** #746: present, opening a journey's test runs it (the Journey tab's run source). */
+  run?: JourneyRunSource;
+  /** #746: each state of that run, so the Proof rows read it. */
+  onRun?: (contractId: string, run: JourneyRunView) => void;
   /** #583 full page: the run named in the top bar's breadcrumb. */
   runName?: string;
   /** #583: when the newest record was written (ms); absent, the live indicator is omitted. */
@@ -181,7 +187,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, onJourneys, draftJourneys = 0, agents = [], away = null, onSignal, onReviewAssigned, wakeListeners, slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, run, onRun, runName, lastRecordAt, onTeam, onJourneys, draftJourneys = 0, agents = [], away = null, onSignal, onReviewAssigned, wakeListeners, slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
   const [chosen, setChosen] = useState<Selection | null>(null);
   const [stepId, setStepId] = useState<string | null>(null);
   // undefined: the group's default (the task that most needs the owner); null: none, a column is chosen.
@@ -504,9 +510,14 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
           {sub === "proof" && (mission && contractId ? <ProofTable mission={mission} onOpenTest={openTest} frameUrl={(id) => frameUrl(id, contractId)}
             {...(onReplay ? { onReplay: () => onReplay(contractId) } : {})} />
             : <p className="mv-empty">No journeys in this project yet</p>)}
-          {sub === "test" && journey && contractId && <TestCanvas frames={testFrames(journey, runFor(contractId))} selected={frame} onSelect={setFrame}
-            frameUrl={(id) => frameUrl(id, contractId)} onMarkSafe={(id) => onMarkSafe(id, contractId)}
-            {...(onSendBack ? { onSendBack: (id: string) => onSendBack(id, contractId) } : {})} />}
+          {sub === "test" && journey && contractId && (run
+            ? <ProofRun key={contractId} journey={journey} source={run} selected={frame} onSelect={setFrame}
+              frameUrl={(id) => frameUrl(id, contractId)} onMarkSafe={(id) => onMarkSafe(id, contractId)}
+              {...(onRun ? { onRun: (r: JourneyRunView) => onRun(contractId, r) } : {})}
+              {...(onSendBack ? { onSendBack: (id: string) => onSendBack(id, contractId) } : {})} />
+            : <TestCanvas frames={testFrames(journey, runFor(contractId))} selected={frame} onSelect={setFrame}
+              frameUrl={(id) => frameUrl(id, contractId)} onMarkSafe={(id) => onMarkSafe(id, contractId)}
+              {...(onSendBack ? { onSendBack: (id: string) => onSendBack(id, contractId) } : {})} />)}
           {sub === "lanes" && lanesView}
         </div>
       </div>

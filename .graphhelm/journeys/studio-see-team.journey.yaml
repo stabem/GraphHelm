@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-see-team
-title: See the live team and open a bot's window
+title: See agents and their timeline in Lanes
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -8,24 +8,24 @@ actors: [owner]
 secrets: []
 risks: [critical_ux]
 screens:
-  - id: bot
-    title: "One bot's window (demo bot: planner)"
+  - id: lanes
+    title: Agents board and lane timeline
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: Agent planner}, {role: heading, name: planner}, {role: button, name: Close planner}, {role: textbox, name: Say something into this run}]
-    scope: [apps/studio/src/components/panel.tsx, apps/studio/src/components/team-canvas.tsx, apps/studio/src/runtime/team.ts]
+    expect: [{role: region, name: Agents}, {role: heading, name: Agents}, {role: list, name: Agent board}, {role: region, name: Lanes}, {role: heading, name: "Who did what, and who is stuck"}]
+    scope: [apps/studio/src/components/lanes-timeline.tsx, apps/studio/src/runtime/agent-board.ts, apps/studio/src/runtime/lane-bars.ts]
   - id: run
-    title: "A run is open, with its chat and its team on screen"
+    title: A run is open on its Mission graph
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: Team}, {role: button, name: Reset layout}, {role: button, name: Graph file}, {role: heading, name: Steps without a bot}, {role: button, name: Details}]
-    scope: [apps/studio/src/components/rail.tsx, apps/studio/src/components/team-canvas.tsx, apps/studio/src/components/right-panel.tsx]
+    expect: [{role: region, name: Canvas}, {role: tablist, name: Mission views}, {role: tab, name: Lanes}]
+    scope: [apps/studio/src/components/mission-view.tsx]
 edges:
-  - id: run.details
+  - id: run.lanes
     from: run
-    to: bot
+    to: lanes
     acts:
-      - {kind: activate, role: button, name: Details}
+      - {kind: activate, role: tab, name: Lanes}
 paths:
-  main: [run.details]
+  main: [run.lanes]
 drift: []

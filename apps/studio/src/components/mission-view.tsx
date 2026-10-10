@@ -158,9 +158,13 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
           <div className="mv-nav" role="group" aria-label="Go to">
             <button type="button" className="mv-tab" aria-pressed={chatOpen} onClick={() => setChatOpen((o) => !o)}>Chat</button>
             {onJourneys && (
-              <button type="button" className="mv-tab" aria-label="Journeys" title={draftJourneys > 0 ? `${draftJourneys} journeys waiting for your approval` : undefined} onClick={onJourneys}>
+              <button type="button" className="mv-tab" aria-label="Journeys" aria-describedby={draftJourneys > 0 ? "mv-journeys-count" : undefined} onClick={onJourneys}>
                 {draftJourneys > 0 ? `Journeys · ${draftJourneys} to approve` : "Journeys"}
               </button>
+            )}
+            {/* #641: the name stays "Journeys" for journey flows; the count reaches screen readers as the description. */}
+            {onJourneys && draftJourneys > 0 && (
+              <span id="mv-journeys-count" hidden>{`${draftJourneys} ${draftJourneys === 1 ? "journey waits" : "journeys wait"} for your approval`}</span>
             )}
           </div>
         )}

@@ -1,3 +1,6 @@
+// Separate support modules preserve each suite's existing helper tests.
+#![allow(clippy::duplicate_mod)]
+
 // One integration-test executable; keep each suite in its original file.
 mod registration {
     use std::collections::BTreeSet;

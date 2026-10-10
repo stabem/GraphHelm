@@ -697,6 +697,47 @@ async function open(client: ReturnType<typeof stubClient>, modelContext: ModelCo
 }
 
 describe("opening", () => {
+  // Runtime I/O only; protects the Lanes -> Details alias handoff missed by control-only tests.
+  it("shows the saved bot name in Details after renaming in Lanes", async () => {
+    sessionStorage.clear();
+    let alias: { to?: unknown; description: string; source: { type: string; id: string } } | null = null;
+    const client = stubClient({
+      getEvents: vi.fn(async () => ({
+        head: alias ? 14 : 13,
+        events: [
+          { sequence: 13, kind: "signal_recorded", payload: { kind: "operator_note" },
+            occurredAt: "2026-08-27T12:01:00Z", actorId: "planner", actorType: "agent",
+            idempotencyKey: "planner-note", eventId: "planner-note", evidenceRefs: [] },
+          ...(alias ? [{ sequence: 14, kind: "signal_recorded", payload: { kind: "actor_alias" },
+            occurredAt: "2026-08-27T12:02:00Z", actorId: "studio-operator", actorType: "owner",
+            idempotencyKey: "planner-alias", eventId: "planner-alias", evidenceRefs: ["planner-alias"] }] : []),
+        ],
+      })),
+      signal: vi.fn(async (_run: string, description: string, options: Record<string, unknown>) => {
+        alias = { to: options.to, description, source: { type: "user", id: "studio-operator" } };
+        return { ...PAUSED_EVIDENCE, action: "signal" };
+      }),
+      readEvidence: vi.fn(async (_run: string, evidenceId: string) => ({ evidenceId,
+        mediaType: "application/json", sensitivity: "confidential", contentSha256: "sha256:alias",
+        content: JSON.stringify(alias) })),
+    });
+    await open(client, null, false);
+    await userEvent.click(screen.getByRole("tab", { name: "Lanes" }));
+    const board = within(await screen.findByRole("region", { name: "Agents" }));
+    await userEvent.click(board.getByRole("button", { name: "Details" }));
+    expect(within(await screen.findByLabelText("Agent planner")).getByRole("heading", { name: "planner" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Close planner" }));
+    await userEvent.click(board.getByRole("button", { name: "Name this bot" }));
+    await userEvent.type(board.getByRole("textbox", { name: "Name for planner" }), "Planny");
+    await userEvent.click(board.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(client.signal).toHaveBeenCalledWith("demo-deploy",
+      JSON.stringify({ protocol: "graphhelm-actor-alias-v1", displayName: "Planny" }),
+      expect.objectContaining({ to: "planner", kind: "actor_alias" })));
+    await board.findByText("Planny");
+    await userEvent.click(board.getByRole("button", { name: "Details" }));
+    expect(within(await screen.findByLabelText("Agent planner")).getByRole("heading", { name: "Planny" })).toBeVisible();
+  });
+
   it("reviews a raw-digest DraftProposed before any ghost event and submits plain AddNode ids", async () => {
     const content = JSON.stringify({ id: "draft-wire", operations: [
       { op: "addNode", path: "/spec/nodes/summarize", value: { name: "Summarize", objective: "Make a short summary" } },

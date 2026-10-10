@@ -112,24 +112,41 @@ describe("MissionView", () => {
     expect(within(ins).getByRole("list", { name: "Who touched it" })).toHaveTextContent("BLOCK");
     expect(ins).toHaveTextContent("Evidence on this head");
     await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
-    // #735: issue work proves PR by PR; the blocked PR is open work and asks its author.
-    expect(screen.getByRole("heading", { name: "Can I trust “#519 Watch plays inside the Studio”?" })).toBeInTheDocument();
-    const open = within(screen.getByRole("list", { name: "PRs" })).getAllByRole("listitem");
-    expect(open[0]).toHaveTextContent("Fixing · #548");
-    expect(open[0]).toHaveTextContent("BLOCK at");
-    expect(screen.getByRole("button", { name: "▸ Merged · 1" })).toHaveAttribute("aria-expanded", "false");
+    // #744: Proof lists journeys only and preselects the issue's linked journey.
+    const rail = screen.getByRole("navigation", { name: "Journeys" });
+    expect(rail.querySelector("button.mv-group")).toBeNull();
+    expect(within(rail).getByRole("button", { name: /Watch plays inside the Studio/ })).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("a group naming no journey: Proof says so", async () => {
+  it("#744: Proof rail lists only journeys; a step opens the emulated browser on its frame; Back returns", async () => {
     const userEvent = fastUserEvent();
-    const tasks = [wt("a", { issue: 7, pr: 70 })] as unknown as TaskState[];
-    render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Issue #7");
+    const two: JourneyView[] = [...journeys, { ...journeys[0]!, contractId: "add", title: "Add a model",
+      steps: [{ stepId: "open", screen: { screenId: "open", title: "Open models", scopePaths: [] }, promises: [] },
+        { stepId: "save", screen: { screenId: "save", title: "Save the model", scopePaths: [] }, promises: [] }] }];
+    const tasks = [wt("a", { issue: 7, pr: 70, title: "Loose work" }), wt("b", { issue: 8, pr: 80, title: "Other" })] as unknown as TaskState[];
+    render(<MissionView journeys={two} tasks={tasks} lanes={[]} now={0}
+      runFor={(id) => (id === "add" ? { state: "ready", kind: "replay", screens: { open: { result: "pass" }, save: { result: "pass" } }, edges: {} } : null) as never}
+      frameUrl={(sid, cid) => `/frames/${cid}/${sid}.png`} onMarkSafe={vi.fn()} />);
+    // Graph keeps the issue rail.
+    expect(screen.getByRole("region", { name: "Work by issue" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
-    // #735: no journey is no longer an empty page: the PR row says so in its frame and still offers the PR.
-    const row = within(screen.getByRole("list", { name: "PRs" })).getByRole("listitem");
-    expect(row).toHaveTextContent("no journey linked");
-    expect(within(row).queryByRole("button", { name: /Open the test canvas/ })).toBeNull();
+    const rail = screen.getByRole("navigation", { name: "Journeys" });
+    expect(screen.queryByRole("region", { name: "Work by issue" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Unlinked work" })).toBeNull();
+    expect(Array.from(rail.querySelectorAll("button.mv-journey")).map((b) => b.textContent))
+      .toEqual(["Watch plays inside the Studio0/1", "Add a model2/2"]);
+    // No linked journey: the one with a recorded run is preselected.
+    expect(within(rail).getByRole("button", { name: /Add a model/ })).toHaveAttribute("aria-pressed", "true");
+    expect(within(rail).getByText("2 steps · 2 proven")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open the test canvas for step 2" }));
+    const browser = screen.getByRole("region", { name: "Emulated browser" });
+    expect(within(browser).getByRole("img")).toHaveAttribute("src", "/frames/add/save.png");
+    expect(screen.getByRole("tablist", { name: "Mission views" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "‹ Back to proof" }));
+    expect(screen.queryByRole("region", { name: "Emulated browser" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Open test for step 1" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
+    expect(screen.getByRole("region", { name: "Work by issue" })).toBeInTheDocument();
   });
 
   it("full page: breadcrumb, no Team in the nav, live indicator", () => {

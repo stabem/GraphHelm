@@ -231,14 +231,14 @@ describe("MissionView", () => {
     await userEvent.click(screen.getByRole("button", { name: "Row PR #609: Two CLI" }));
     await userEvent.click(screen.getByRole("button", { name: "Ask gh-claude-4 for status" }));
     expect(onSignal).toHaveBeenCalledWith({ type: "operator_note", to: "gh-claude-4", description: "Owner asks: status of Implement on PR #609?" });
-    expect(await screen.findByText("asked · waiting")).toBeInTheDocument();
+    expect(await screen.findByText("Asked 0 min ago · waiting")).toBeInTheDocument();
     // A ring consumes the lease; retain the observation made when this ask was sent.
     rerender(<MissionView {...props} wakeListeners={[]} />);
     await userEvent.click(screen.getByRole("button", { name: "Row PR #610: Other" }));
     await userEvent.click(screen.getByRole("button", { name: "Ask gh-claude-6 for status" }));
-    expect(await screen.findByText("nobody is listening")).toBeInTheDocument();
+    expect(await screen.findByText("Asked 0 min ago · nobody is listening")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Row PR #609: Two CLI" }));
-    expect(screen.getByText("asked · waiting")).toBeInTheDocument();
+    expect(screen.getByText("Asked 0 min ago · waiting")).toBeInTheDocument();
   });
 
   it("#591: the Review row names only the current reviewer; earlier ones go to a history line", () => {

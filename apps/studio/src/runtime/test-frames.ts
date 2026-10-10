@@ -2,10 +2,11 @@ import type { JourneyRunView, JourneyView } from "./types";
 import { actionText } from "../components/journey-canvas";
 import { skippedEdgeInto } from "./mission";
 
-export type FrameStatus = "passed" | "failed" | "waits_for_you" | "not_run";
+export type FrameStatus = "running" | "passed" | "failed" | "waits_for_you" | "not_run";
 export interface TestFrame { stepId: string; n: number; verb: "SEES" | "DOES" | "EXPECT"; text: string; status: FrameStatus; reason: string | null; expected: string[] }
 
-export function testFrames(journey: JourneyView, run: JourneyRunView | null): TestFrame[] {
+/** `running`: the step id a live run is on (#746); that step reads "running" until it has a result. */
+export function testFrames(journey: JourneyView, run: JourneyRunView | null, running: string | null = null): TestFrame[] {
   const last = journey.steps.length - 1;
   return journey.steps.map((s, i) => {
     const title = s.screen?.title ?? s.stepId;
@@ -18,6 +19,7 @@ export function testFrames(journey: JourneyView, run: JourneyRunView | null): Te
     if (skipped) { status = "waits_for_you"; reason = skipped[1].reason ?? null; }
     else if (screen?.result === "pass") status = "passed";
     else if (screen?.result) { status = "failed"; reason = screen.reason ?? null; }
+    else if (running === s.stepId) status = "running";
     return { stepId: s.stepId, n: i + 1, verb, text: s.action ? actionText(s.action) : title, status, reason, expected };
   });
 }

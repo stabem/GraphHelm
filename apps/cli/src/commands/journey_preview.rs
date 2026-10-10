@@ -325,7 +325,7 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
     let dir = dir_of(&project, &args.id);
     let stored = reap_lost(&project, &dir);
     let running_now = stored.as_ref().is_some_and(|state| {
-        state["state"] == "running" && runner_liveness(state) == Liveness::Alive
+        state["state"] == "running" && runner_liveness(state) != Liveness::Dead
     });
     let current = body(stored.clone(), &flow, &digest, &commit);
     if running_now {
@@ -1209,6 +1209,61 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         assert!(!project.path().join("down.log").exists());
         assert!(app.exists());
         assert_eq!(read_state(previews.path()).unwrap()["state"], "running");
+    }
+
+    /// #676 review: start must not replace an in-budget preview when its runner probe is unknown.
+    /// A malformed pid is an unavailable probe on every platform; the saved state and frames
+    /// belong to the existing runner. Cost: one temp project and files; no subprocess or browser.
+    #[test]
+    fn start_does_not_replace_an_in_budget_preview_with_unknown_liveness() {
+        let project = tempfile::tempdir().unwrap();
+        let journeys = project.path().join(".graphhelm/journeys");
+        std::fs::create_dir_all(&journeys).unwrap();
+        std::fs::write(
+            journeys.join("studio-add-project.journey.yaml"),
+            include_bytes!("../../../../.graphhelm/journeys/studio-add-project.journey.yaml"),
+        )
+        .unwrap();
+        for path in [
+            "apps/studio/src/components/addproject.tsx",
+            "apps/studio/src/components/rail.tsx",
+        ] {
+            let target = project.path().join(path);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(target, "fixture").unwrap();
+        }
+        let id = "studio-add-project";
+        let dir = super::dir_of(project.path(), id);
+        let frames = dir.join("frames");
+        std::fs::create_dir_all(&frames).unwrap();
+        std::fs::write(frames.join("existing.png"), b"frame").unwrap();
+        let (_, digest, commit) = super::flow_and_key(project.path(), id).unwrap();
+        let running = json!({"preview":true,"kind":"preview","digest":digest,"commit":commit,
+            "state":"running","pid":"unavailable",
+            "startedAt":(chrono::Utc::now() - chrono::Duration::seconds(90)).to_rfc3339(),
+            "current":null,"screens":{},"edges":{},"launched":{"script":"fixture.sh"}});
+        save_state(&dir, &running);
+
+        let answer = super::start(&JourneyPreviewArgs {
+            id: id.into(),
+            project: Some(project.path().to_path_buf()),
+            force: true,
+            read: false,
+            run: false,
+            confirm: false,
+            events: None,
+            execution: None,
+            keyring: None,
+            key_id: None,
+        });
+
+        let answer = answer.output.data.unwrap();
+        assert_eq!(answer["state"], "running");
+        assert_eq!(read_state(&dir).unwrap(), running);
+        assert_eq!(
+            std::fs::read(frames.join("existing.png")).unwrap(),
+            b"frame"
+        );
     }
 
     /// #560 review (gh-claude-3's real run: a runner still alive 15 minutes after a 300 s budget,

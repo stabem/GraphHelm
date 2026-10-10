@@ -160,7 +160,7 @@ fn post_request(
     let (host, port, path) = split_url(url);
     let mut stream = TcpStream::connect((host.as_str(), port))?;
     stream.set_read_timeout(Some(read_timeout))?;
-    stream.set_write_timeout(Some(Duration::from_secs(15)))?;
+    stream.set_write_timeout(Some(scaled(Duration::from_secs(15))))?;
 
     let payload = serde_json::to_vec(body).unwrap();
     let mut request = format!(
@@ -180,8 +180,14 @@ fn post_request(
 }
 
 fn post_json(url: &str, token: &str, extra_headers: &[(&str, &str)], body: &Value) -> (u16, Value) {
-    let response = post_request(url, token, extra_headers, body, Duration::from_secs(15))
-        .unwrap_or_else(|error| panic!("request to {url} failed: {error}"));
+    let response = post_request(
+        url,
+        token,
+        extra_headers,
+        body,
+        scaled(Duration::from_secs(15)),
+    )
+    .unwrap_or_else(|error| panic!("request to {url} failed: {error}"));
     (response.status, json_body(&response))
 }
 
@@ -325,7 +331,7 @@ fn credential_set(broker: &Path, keyring: &Path, key_id: &str, reference: &str, 
 /// identically, by the real judge in the second judge story's paid run (2026-08-19).
 #[test]
 fn resume_without_project_succeeds_when_the_deployer_configured_a_default() {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + scaled(Duration::from_secs(30));
 
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");

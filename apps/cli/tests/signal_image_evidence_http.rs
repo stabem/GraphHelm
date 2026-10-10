@@ -9,6 +9,10 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use chrono::TimeZone;
 use graphhelm_protocols::{EventEnvelope, EventKind};
 use serde_json::{Value, json};
@@ -205,7 +209,7 @@ impl Harness {
             .to_owned();
         self.base = format!("http://{address}");
         self.server = Some(guard);
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + scaled(Duration::from_secs(10));
         while request(&self.base, "GET", "/health", None, &[], None)
             .map(|reply| reply.status != 200)
             .unwrap_or(true)
@@ -294,7 +298,7 @@ fn request(
     }
     head.push_str("\r\n");
     let mut stream = TcpStream::connect(address)?;
-    stream.set_read_timeout(Some(Duration::from_secs(60)))?;
+    stream.set_read_timeout(Some(scaled(Duration::from_secs(60))))?;
     stream.write_all(head.as_bytes())?;
     if let Some(body) = body {
         stream.write_all(body)?;
@@ -516,7 +520,7 @@ fn mcp(harness: &Harness, arguments: Value) -> Value {
         .arg(&token_file)
         .args(["--actor", "agent-chat", "--actor-type", "agent"])
         .write_stdin(input)
-        .timeout(Duration::from_secs(60))
+        .timeout(scaled(Duration::from_secs(60)))
         .output()
         .unwrap();
     String::from_utf8(output.stdout)

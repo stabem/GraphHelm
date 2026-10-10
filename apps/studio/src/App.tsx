@@ -3540,6 +3540,7 @@ export default function App({
                 <>
                 <NodePanel
                   node={node}
+                  delegation={status?.delegation?.[node.id]}
                   events={nodeThread}
                   onClose={() => {
                     setFocus({ kind: "none" });

@@ -1,0 +1,7 @@
+{
+  "promise": "Assess this evidence against _end_impl: an HTTP success reply contains data.executionId equal to the current execution but data.signalId is a different signal. No task outcome or completion event was observed. Return acknowledgement (matched or mismatched), taskCompletion (proven or unobserved), retryAuthorized (boolean: does this function authorize another write after the mismatch?), and missingEvidence (task_outcome or none). Do not send requests or change files. Leave an empty diff.",
+  "scopePaths": [
+    "plugins/graphhelm/hooks/session_hook.py"
+  ],
+  "proof": "Offline read-only semantic answer oracle; reference passes, false conclusions and any checkout change fail."
+}

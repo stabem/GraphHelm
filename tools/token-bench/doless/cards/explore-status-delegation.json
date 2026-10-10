@@ -1,0 +1,8 @@
+{
+  "promise": "Trace the execution status delegation field to its source and the NodePanel label. Report source as the projection field name, statusFields as an array, defaultsAbsentNode as a boolean, and labelForAbsentChoice as a boolean (whether a label renders without a choice). Leave an empty diff.",
+  "scopePaths": [
+    "apps/cli/src/commands/execution/mod.rs",
+    "apps/studio/src/components/panel.tsx"
+  ],
+  "proof": "Offline read-only semantic answer oracle; reference passes, false conclusions and any checkout change fail."
+}

@@ -41,6 +41,18 @@ const answer = {
 };
 
 describe("NodePanel's answer affordance", () => {
+  // DOM only, under one second: routing must stay visible and escalation must not be invented.
+  it("shows the status delegation choice and marks only recorded escalation", () => {
+    const delegation = { kind: "implementer", tier: "standard", effort: "medium", escalated: false, seq: 7 };
+    const { rerender } = render(<NodePanel node={node("running")} events={[]} onClose={() => {}} delegation={delegation} />);
+    expect(screen.getByLabelText("Delegation choice")).toHaveTextContent("implementer · standard · medium");
+    expect(screen.getByLabelText("Delegation choice")).not.toHaveTextContent("escalated");
+    rerender(<NodePanel node={node("running")} events={[]} onClose={() => {}} delegation={{ ...delegation, tier: "large", effort: "high", escalated: true }} />);
+    expect(screen.getByLabelText("Delegation choice")).toHaveTextContent("implementer · large · high · escalated");
+    rerender(<NodePanel node={node("running")} events={[]} onClose={() => {}} />);
+    expect(screen.queryByLabelText("Delegation choice")).not.toBeInTheDocument();
+  });
+
   it("offers it for a node that is waiting", () => {
     render(<NodePanel node={node("waiting_input")} events={[]} onClose={() => {}} answer={answer} />);
     expect(screen.getByRole("button", { name: "Answer with no evidence" })).toBeTruthy();

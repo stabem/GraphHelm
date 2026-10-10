@@ -157,6 +157,85 @@ def test_every_task_names_files_that_exist():
         assert task.get("fixSha") or task.get("referenceAnswer"), task_id
 
 
+def test_heldout_growth_preserves_frozen_splits_and_pins_new_tasks():
+    """Prevent corpus growth from leaking frozen test cases into training; no processes."""
+    tasks = doless.load_tasks()
+    frozen = {"docs-config-risk": "train", "docs-doc-comments": "test",
+              "om-macos-launch": "train", "om-win-arm64": "test",
+              "py-actor-session-header": "train", "py-mcp-meta": "train",
+              "py-sessionend-cap": "test", "rs-signal-id-retry": "train"}
+    assert {key: doless.split_of(key, tasks) for key in frozen} == frozen
+    added = set(tasks) - set(frozen)
+    assert len(added) == 5
+    assert all(tasks[key].get("splitPin") == "test" and
+               doless.split_of(key, tasks) == "test" for key in added)
+
+
+def test_heldout_has_six_changed_routes_and_two_implementer_controls():
+    """Catch a held-out corpus where routed mostly repeats all-standard; no model call."""
+    tasks = doless.load_tasks()
+    routes = json.loads((doless.DOLESS / "routed.json").read_text(encoding="utf-8"))
+    heldout = [task for key, task in tasks.items() if doless.split_of(key, tasks) == "test"]
+    changed = [task for task in heldout
+               if routes[task["kind"]] != {"tier": "standard", "effort": "medium"}]
+    assert len(changed) == 6
+    assert sorted(task["kind"] for task in changed) == ["explorer", "explorer", "reviewer", "reviewer", "verifier", "verifier"]
+    assert len(heldout) == 8
+    assert sum(task["kind"] == "implementer" for task in heldout) == 2
+
+
+@pytest.mark.parametrize("task_id", ["explore-routing", "explore-status-delegation",
+                                    "review-hook-framing", "review-end-ack",
+                                    "verify-end-ack-evidence"])
+def test_heldout_oracles_reject_false_claims_and_overreaching_diffs(tmp_path, task_id):
+    """Reject keyword-only, wrong, missing, invented claims and edits, including committed edits.
+    Real oracle subprocesses and a tiny local Git store; seconds, no model/network/build.
+    """
+    task = doless.load_tasks()[task_id]
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=checkout, capture_output=True, check=True)
+    git("init", "-q")
+    git("config", "user.name", "Oracle test")
+    git("config", "user.email", "oracle@example.invalid")
+    (checkout / "README.md").write_text("baseline\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-qm", "baseline")
+    answer_file = tmp_path / "answer.txt"
+    def run(value):
+        answer_file.write_text(value, encoding="utf-8")
+        return subprocess.run([sys.executable, str(doless.DOLESS / task["oracle"]), str(checkout)],
+                              env={**os.environ, "DOLESS_ANSWER": str(answer_file)},
+                              capture_output=True, text=True, timeout=10)
+    reference = json.loads(task["referenceAnswer"])
+    assert run(task["referenceAnswer"]).returncode == 0
+    # JSON whitespace/key order and claim order cannot determine the grade.
+    reordered = {key: list(reversed(value)) if isinstance(value, list) else value
+                 for key, value in reversed(list(reference.items()))}
+    assert run(json.dumps(reordered, indent=4)).returncode == 0
+    for wrong in ("", "OBSERVER_MISSING", "APPROVE", "{}", "[]"):
+        assert run(wrong).returncode == 1
+    for key, value in reference.items():
+        wrong = dict(reference)
+        wrong[key] = (not value if isinstance(value, bool) else value + 1 if isinstance(value, (int, float))
+                      else value + ["invented defect"] if isinstance(value, list)
+                      else {} if isinstance(value, dict) else "incorrect")
+        assert run(json.dumps(wrong)).returncode == 1, key
+        missing = dict(reference)
+        del missing[key]
+        assert run(json.dumps(missing)).returncode == 1, key
+    assert run(json.dumps(reference | {"inventedFinding": True})).returncode == 1
+    (checkout / "extra.txt").write_text("unrequested", encoding="utf-8")
+    assert "changed the checkout" in run(task["referenceAnswer"]).stdout
+    (checkout / "extra.txt").unlink()
+    (checkout / "README.md").write_text("overreach\n", encoding="utf-8")
+    assert "changed the checkout" in run(task["referenceAnswer"]).stdout
+    git("add", ".")
+    git("commit", "-qm", "overreach")
+    assert "changed the checkout" in run(task["referenceAnswer"]).stdout
+
+
 def test_no_test_task_shares_a_parent_or_fix_with_a_train_task():
     """Catches the leak #1343 found: py-utf8-leave-timeout (test) had tb-utf8-prompt's parent and
     fix, so a hillclimber reading train transcripts saw a test answer."""
@@ -573,3 +652,75 @@ def test_configured_run_records_requested_effort_and_incomplete_usage(tmp_path, 
     assert recorded["costProvenance"] == "cli_estimate"
     assert recorded["verdict"] == "INCOMPLETE"
     assert "usage_incomplete" in recorded["verdictReasons"]
+
+
+@pytest.mark.parametrize("kind,tier,effort", [
+    ("explorer", "small", "low"), ("implementer", "standard", "medium"),
+    ("reviewer", "standard", "high"), ("verifier", "small", "medium"),
+])
+def test_routed_run_selects_per_kind_and_keeps_one_pareto_arm(tmp_path, monkeypatch, capsys, kind, tier, effort):
+    """Catches uniform dispatch and split/pool errors; mocked process/file I/O only, <1s."""
+    configs = {t: inference_config() | {"model": f"claude-{t}-exact",
+               "supportedEfforts": ["low", "medium", "high"]} for t in ("small", "standard", "large")}
+    config = tmp_path / "routing.json"
+    config.write_text(json.dumps(configs), encoding="utf-8")
+    result_path = tmp_path / "rows.jsonl"
+    cli = tmp_path / "claude"
+    cli.write_bytes(b"pinned")
+    task_id, task = next(iter(doless.load_tasks().items()))
+    assert all(t.get("kind") in {"explorer", "implementer", "reviewer", "verifier"}
+               for t in doless.load_tasks().values())
+    monkeypatch.setattr(doless, "load_tasks", lambda: {task_id: task | {"kind": kind}})
+    monkeypatch.setattr(doless, "RESULTS", result_path)
+    monkeypatch.setattr(doless.runner, "validate_prerequisites", lambda _: {"path": str(cli), "sha256": doless.runner.digest_file(cli)})
+    monkeypatch.setattr(doless, "observe_effort_flag", lambda _: {"flag": "--effort"})
+    monkeypatch.setattr(doless.runner, "make_worktree", lambda *_: tmp_path)
+    monkeypatch.setattr(doless, "score_checkout", lambda *_: green_row())
+    monkeypatch.setattr(doless.runner, "transcript_usage", lambda _: {
+        "models": [f"claude-{tier}-exact"], "userMessages": 1, "assistantMessages": 1,
+        "input": 10, "output": 5, "cacheRead": 0, "cacheWrite": 0})
+    calls = []
+    def agent(*args, **kwargs):
+        calls.append((args[3], kwargs["effort"]))
+        return {"result": "fixture", "num_turns": 1, "total_cost_usd": 0.1,
+                "usage": {"input_tokens": 10, "output_tokens": 5,
+                          "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}, "", 0.0
+    monkeypatch.setattr(doless.runner, "run_agent", agent)
+    monkeypatch.setattr(sys, "argv", ["doless.py", "run", "--task", task_id, "--arm", "a",
+                        "--treatment", "routed", "--inference-config", str(config), "--runs", "1", "--keep"])
+    doless.main()
+    recorded = json.loads(result_path.read_text())
+    assert calls == [(f"claude-{tier}-exact", effort)]
+    assert recorded["verdict"] == "PASS"
+    inference = recorded["inferenceConfig"]
+    assert inference["selection"] == {"kind": kind, "tier": tier, "model": f"claude-{tier}-exact", "effort": effort}
+    uniform = tmp_path / "uniform.json"
+    uniform_rows = []
+    for uniform_tier in ("standard", "large"):
+        uniform.write_text(json.dumps(configs[uniform_tier]), encoding="utf-8")
+        uniform_inference = doless.load_inference_config(uniform, None)
+        assert inference["digest"] != uniform_inference["digest"]
+        uniform_rows.append(row("a", "PASS", 0.2) | {"task": task_id, "inferenceConfig": uniform_inference})
+    other = doless.load_routed_config(config, {"kind": "reviewer"})
+    assert other["digest"] == inference["digest"]
+    result_path.write_text("\n".join(json.dumps(r) for r in [recorded, *uniform_rows]) + "\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["doless.py", "pareto"])
+    doless.main()
+    output = capsys.readouterr().out
+    assert f"a@{inference['digest']}" in output
+    assert all(doless.comparison_arm(r) in output for r in uniform_rows)
+    assert len(doless.arm_scores([recorded, *uniform_rows])) == 3
+    assert doless.arm_scores([recorded, *uniform_rows])[doless.comparison_arm(recorded)]["frontier"] is True
+
+
+@pytest.mark.parametrize("kind", [None, "unknown", "", []])
+def test_routed_refuses_undeclared_kind_before_any_process(tmp_path, monkeypatch, kind):
+    """Catches defaulting a missing/unknown kind; real run entry, no process or network, <1s."""
+    import argparse
+    monkeypatch.setattr(doless, "load_tasks", lambda: {"task": {} if kind is None else {"kind": kind}})
+    def forbidden(*args, **kwargs):
+        pytest.fail("process reached before route validation")
+    monkeypatch.setattr(doless.runner, "validate_prerequisites", forbidden)
+    args = argparse.Namespace(task="task", treatment="routed", model=None, arm="a", inference_config=str(tmp_path / "absent.json"))
+    with pytest.raises(ValueError, match="kind"):
+        doless.cmd_run(args)

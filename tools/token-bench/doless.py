@@ -28,6 +28,15 @@ Commands:
                                           score AND cost per arm, and which arms are on the
                                           Pareto frontier (also: `table --pareto`)
 
+`run --arm a --treatment routed --inference-config FILE` selects each task's declared `kind`
+using doless/routed.json. FILE maps small, standard and large to the existing uniform capability
+contracts (version, host, provider, exact model, effort, supportedEfforts, capabilitySource).
+The route replaces each contract's effort; every mapped effort must be explicitly supported.
+The whole policy and all tier contracts define one comparison digest; each row also records its
+chosen kind/tier/model/effort. No retries escalate in this first slice. Model IDs and capability
+claims are operator declarations, not provider observations. Running this command starts model
+sessions; offline tests mock that boundary, and paid/held-out experiments need separate approval.
+
 Needs TOKEN_BENCH_SCRATCH (outside the repository) and TOKEN_BENCH_GRAPHHELM_CLI (a graphhelm
 executable that has `keel check`). Rows append to tools/token-bench/doless/results.jsonl.
 """
@@ -414,6 +423,11 @@ def cmd_qualify(a: argparse.Namespace) -> None:
 def load_inference_config(path: Path, requested_model: str | None) -> dict:
     """Freeze an operator-declared host/model capability contract; no model-name inference."""
     config = json.loads(path.read_text(encoding="utf-8"))
+    return freeze_inference_config(config, requested_model)
+
+
+def freeze_inference_config(config: dict, requested_model: str | None) -> dict:
+    """Validate the same capability contract for uniform and routed selections."""
     fields = {"version", "host", "provider", "model", "effort", "supportedEfforts", "capabilitySource"}
     if not isinstance(config, dict) or set(config) != fields:
         raise ValueError("inference config must contain exactly the documented fields")
@@ -433,6 +447,28 @@ def load_inference_config(path: Path, requested_model: str | None) -> dict:
         raise ValueError("--model conflicts with the frozen inference configuration")
     canonical = json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return {"configuration": config, "digest": runner.digest_bytes(canonical)}
+
+
+def load_routed_config(path: Path, task: dict) -> dict:
+    """Freeze the whole route, recording the per-task selection outside its arm digest."""
+    policy = json.loads((DOLESS / "routed.json").read_text(encoding="utf-8"))
+    kind = task.get("kind")
+    if not isinstance(kind, str) or kind not in policy or not isinstance(policy[kind], dict):
+        raise ValueError("routed treatment requires a declared delegation kind")
+    tiers = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(tiers, dict) or set(tiers) != {"small", "standard", "large"}:
+        raise ValueError("routed inference config requires small, standard and large capability contracts")
+    for capability in tiers.values():
+        freeze_inference_config(capability, None)
+    for rule in policy.values():
+        if isinstance(rule, dict):
+            freeze_inference_config(tiers[rule["tier"]] | {"effort": rule["effort"]}, None)
+    rule = policy[kind]
+    selection = {"kind": kind, "tier": rule["tier"],
+                 "model": tiers[rule["tier"]]["model"], "effort": rule["effort"]}
+    config = {"treatment": "routed", "policy": policy, "tiers": tiers}
+    canonical = json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {"configuration": config, "digest": runner.digest_bytes(canonical), "selection": selection}
 
 
 def observe_effort_flag(claude_cli: dict) -> dict:
@@ -459,9 +495,16 @@ def observed_cost(row: dict) -> float | None:
 def cmd_run(a: argparse.Namespace) -> None:
     task = load_tasks()[a.task]
     config_path = getattr(a, "inference_config", None)
-    inference = load_inference_config(Path(config_path), a.model) if config_path else None
-    model = inference["configuration"]["model"] if inference else a.model
-    effort = inference["configuration"]["effort"] if inference else None
+    if getattr(a, "treatment", None) == "routed":
+        if a.model is not None or a.arm != "a" or not config_path:
+            raise ValueError("routed requires --arm a and --inference-config, without --model")
+        inference = load_routed_config(Path(config_path), task)
+        selected = inference["selection"]
+    else:
+        inference = load_inference_config(Path(config_path), a.model) if config_path else None
+        selected = inference["configuration"] if inference else {}
+    model = selected.get("model", a.model)
+    effort = selected.get("effort")
     claude_cli = runner.validate_prerequisites("a")
     effort_capability = observe_effort_flag(claude_cli) if inference else None
     surface_dir = Path(a.surface_dir).resolve() if a.surface_dir else REPO
@@ -705,6 +748,7 @@ def main() -> None:
     r.add_argument("--prompt-style", choices=sorted(PROMPT_KEYS), default="explicit")
     r.add_argument("--runs", type=int, default=3)
     r.add_argument("--model")
+    r.add_argument("--treatment", choices=["routed"], help="route declared task kinds on arm a; no reuse")
     r.add_argument("--inference-config", help="frozen exact model/effort capability JSON; no automatic downgrade")
     r.add_argument("--timeout-min", type=int, default=15)
     r.add_argument("--max-budget-usd", type=float, default=1.0)

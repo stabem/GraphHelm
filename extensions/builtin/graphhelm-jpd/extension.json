@@ -241,7 +241,7 @@
           "id": "host/mcp",
           "kind": "host-adapter",
           "path": ".mcp.json",
-          "sha256": "sha256:893e00703c1c6659cffbe0e5158fbd3c49a4d05de03166f0f2da45e7b880bbf6",
+          "sha256": "sha256:364f581b149d28d0618f58a610e5a96e2a0b5bcd60ea54d62ce32fc899a17041",
           "effects": [
             "runtime.connect"
           ],

@@ -498,10 +498,10 @@ export interface LiveSessionsView { sessions: LiveSession[] }
 /** How one screen or edge fared in a journey's run (#519). The reason codes are the Runtime's
  * closed list; the Studio says them in words. */
 export type JourneyStepResult = "pass" | "fail" | "drift";
-export interface JourneyRunScreen { frame: boolean; width?: number; height?: number; result?: JourneyStepResult; reason?: string; seen?: string }
+export interface JourneyRunScreen { frame: boolean; width?: number; height?: number; result?: JourneyStepResult; reason?: string; detail?: { code: string; pointer: string }; seen?: string }
 /** An edge the destructive guard stopped reads `skipped` (it does not turn the run red); an edge the
  * run never got to reads `null`. */
-export interface JourneyRunEdge { result?: JourneyStepResult | "skipped" | null; reason?: string; seen?: string }
+export interface JourneyRunEdge { result?: JourneyStepResult | "skipped" | null; reason?: string; detail?: { code: string; pointer: string }; seen?: string }
 /** The run a journey gets when it is opened: `GET|POST /v1/journey-flows/{id}/preview`. `replay` is
  * an approved flow's real replay; `preview` is a draft's and is never proof. While `running`,
  * `screens` holds only the screens reached so far and `current` is the one being played. */
@@ -521,6 +521,8 @@ export type ObserverSetupRecord = { state: "none" } | {
 };
 
 export interface JourneyRunView {
+  /** Original refusal identifiers only; no page text or exception message. */
+  detail?: { code: string; pointer: string };
   preview?: boolean;
   digest?: string;
   state: "none" | "running" | "ready" | "failed";

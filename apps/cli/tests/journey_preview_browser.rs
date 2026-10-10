@@ -17,6 +17,91 @@ use serde_json::{Value, json};
 const FIXTURE: &str = include_str!("../../../tools/journey-driver/fixture-server.mjs");
 const DRIVER: &[u8] = include_bytes!("../../../tools/journey-driver/driver.mjs");
 
+/// #677: oversized snapshots and navigation outside the base are unlisted, fatal refusals.
+/// The public preview read must retain their code and pointer on the stopped screen or edge.
+/// Existing preview cells only observed closed-list failures or successful browser runs.
+/// Cost: two Chromium sessions and local static servers; no signals, approval, or new seams.
+#[test]
+#[ignore = "requires an explicitly observer-enabled validation project"]
+fn an_unlisted_preview_refusal_keeps_its_code_and_stopped_step() {
+    let toolchain = PathBuf::from(
+        std::env::var_os("GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT")
+            .expect("OBSERVER_MISSING: GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT"),
+    );
+    for (oversized, code_expected, pointer, kind, step) in [
+        (
+            true,
+            "driver.snapshot_too_large",
+            "/screens/account",
+            "screens",
+            "account",
+        ),
+        (
+            false,
+            "driver.host_refused",
+            "/edges/account.next",
+            "edges",
+            "account.next",
+        ),
+    ] {
+        // A child of the explicit toolchain resolves its packages without links or copying them.
+        let project = tempfile::tempdir_in(&toolchain).unwrap();
+        let mut command = Command::new("node");
+        command.env("PREVIEW_OVERSIZED", if oversized { "1" } else { "0" });
+        command.args(["--input-type=module", "-e", r#"
+        import http from 'node:http';
+        const app = http.createServer((_, res) => {
+            res.writeHead(200, {'content-type':'text/html'});
+            res.end('<h1>Account</h1><a href="http://localhost:65534/next">Next</a>' +
+                (process.env.PREVIEW_OVERSIZED === '1' ? '<p>' + 'preview_private_page_canary '.repeat(1600) + '</p>' : ''));
+        });
+        app.listen(0, '127.0.0.1', () => console.log(JSON.stringify({base:'http://127.0.0.1:'+app.address().port})));
+    "#]);
+        let app = Server::start(command);
+        let flow = json!({"schema":"graphhelm.journey-flow/1","id":"account",
+        "title":"Owner views account","status":"draft","approved":null,
+        "base":app.started["base"],"actors":["owner"],"secrets":[],"risks":[],
+        "screens":[
+            {"id":"account","url":"/","state":"stable","expect":[{"role":"heading","name":"Account"}],"scope":"unknown"},
+            {"id":"next","url":"/next","state":"success","expect":[{"role":"heading","name":"Next"}],"scope":"unknown"}],
+        "edges":[{"id":"account.next","from":"account","to":"next","acts":[{"kind":"activate","role":"link","name":"Next"}]}],
+        "paths":{"main":["account.next"]},"drift":[]});
+        std::fs::create_dir_all(project.path().join(".graphhelm/journeys")).unwrap();
+        std::fs::create_dir_all(project.path().join(".graphhelm/observers")).unwrap();
+        std::fs::write(project.path().join("package.json"), "{\"private\":true}").unwrap();
+        std::fs::write(
+            project
+                .path()
+                .join(".graphhelm/journeys/account.journey.yaml"),
+            serde_yaml_ng::to_string(&flow).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            project
+                .path()
+                .join(".graphhelm/observers/journey_driver.mjs"),
+            DRIVER,
+        )
+        .unwrap();
+        let (code, compiled) = cli(
+            project.path(),
+            &["journey", "compile", "account", "--fmt", "--include-draft"],
+        );
+        assert_eq!(code, 0, "{compiled}");
+        let (code, started) = cli(project.path(), &["journey", "preview", "account"]);
+        assert_eq!(code, 0, "{started}");
+        let result = settled(project.path());
+        assert_eq!(result["state"], "failed", "{result}");
+        assert_eq!(result["reason"], "internal", "{result}");
+        let detail = json!({"code":code_expected,"pointer":pointer});
+        assert_eq!(result["detail"], detail, "{result}");
+        assert_eq!(result[kind][step]["detail"], detail, "{result}");
+        assert_eq!(result[kind][step]["result"], "fail");
+        assert_eq!(result["screens"]["next"]["reason"], "not_reached");
+        assert!(!result.to_string().contains("preview_private_page_canary"));
+    }
+}
+
 struct Server {
     child: Child,
     group: graphhelm_process_tree::ProcessGroup,
@@ -124,7 +209,8 @@ fn settled(project: &Path) -> Value {
     loop {
         let (code, value) = cli(project, &["journey", "preview", "account", "--read"]);
         assert_eq!(code, 0, "{value}");
-        if value["data"]["state"] != "running" {
+        // Observe the runner's terminal write, not a read before it has published its pid.
+        if value["data"]["state"] != "running" && value["data"]["ranAt"].is_string() {
             return value["data"].clone();
         }
         assert!(

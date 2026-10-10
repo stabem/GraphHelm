@@ -1121,6 +1121,10 @@ pub struct ServeArgs {
     /// both routes refuse naming it.
     #[arg(long)]
     pub workspace_root: Option<PathBuf>,
+    /// A build-slot root (#612) whose queue `GET /v1/workspaces/slots` reports; repeatable (for
+    /// example `D:/gh` and `D:/gh/b`). Read-only: the Runtime never queues, cancels or reorders.
+    #[arg(long = "slot-root")]
+    pub slot_roots: Vec<PathBuf>,
     /// Run the customs sweep automatically every N seconds, journalling each one as
     /// `SweepCaller::Tick`.
     ///

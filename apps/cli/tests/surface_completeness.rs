@@ -194,7 +194,7 @@ fn read_rust_string(text: &str) -> String {
 /// AN EXCEPTION LIST IS THE HONEST HALF OF A COMPLETENESS GUARD, and it earns its keep only if
 /// adding a row is harder than adding the tool. Each entry names WHY, so a future author who wants
 /// to silence this guard has to write a false sentence rather than paste a path.
-const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 13] = [
+const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 14] = [
     (
         "GET",
         "/v1/journey-observer/setup",
@@ -204,6 +204,12 @@ const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 13] = [
         "POST",
         "/v1/journey-observer/setup",
         "it edits the owner's package.json and downloads Chromium into the owner's machine, an act the owner confirms by a button in the Studio (#519); an agent must not install software on the owner's behalf, and the CLI's `setup --install-observer playwright` stays the agent-free door",
+    ),
+    (
+        "GET",
+        "/v1/workspaces/slots",
+        "the Studio owner's view of host build queues across configured roots, not an execution verb; \
+         agent credentials are refused and agents inspect their own slot through the workspace CLI",
     ),
     (
         "GET",

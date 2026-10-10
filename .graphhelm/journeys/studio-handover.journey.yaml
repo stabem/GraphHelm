@@ -7,6 +7,7 @@ base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux]
+viewport: {width: 768, height: 844}
 storage: [{key: graphhelm.handover.last-seen:demo:demo, value: "{\"sequence\":1,\"at\":1791602399034}"}]
 screens:
   - id: details
@@ -15,6 +16,12 @@ screens:
     state: stable
     expect: [{role: region, name: While you were away}, {role: heading, name: Shipped}, {role: heading, name: Went quiet}, {role: heading, name: Nobody touched}, {role: button, name: Got it}]
     scope: [apps/studio/src/components/handover-card.tsx, apps/studio/src/runtime/handover.ts]
+  - id: entry
+    title: Open the Team column to read the handover
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: tablist, name: Studio columns}, {role: tab, name: Team}]
+    scope: [apps/studio/src/App.tsx]
   - id: handover
     title: The While you were away card (shows after 15+ minutes and 20+ events away)
     url: /?session=studio-fixture
@@ -25,9 +32,14 @@ screens:
     title: The run remains open after dismissing the handover
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: navigation, name: Projects}, {role: button, name: Run actions}]
+    expect: [{role: tablist, name: Canvas views}, {role: tab, name: Team (live)}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/handover-card.tsx]
 edges:
+  - id: entry.handover
+    from: entry
+    to: handover
+    acts:
+      - {kind: activate, role: tab, name: Team}
   - id: handover.details
     from: handover
     to: details
@@ -39,5 +51,5 @@ edges:
     acts:
       - {kind: activate, role: button, name: Got it}
 paths:
-  main: [handover.details, handover.dismiss]
+  main: [entry.handover, handover.details, handover.dismiss]
 drift: []

@@ -26,6 +26,15 @@ describe("laneBars", () => {
     expect(lane.bars[0]).toMatchObject({ end: T0 + 50, open: true });
   });
 
+  it("a release closes the lane's earlier pre-PR claim bars", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "dev", taskId: "issue-729", sequence: 10, at: at(0) }),
+      ev({ kind: "task.claimed", lane: "dev", taskId: "issue-729", sequence: 11, at: at(10) }),
+      ev({ kind: "task.released", lane: "dev", taskId: "issue-729", sequence: 12, claimSequence: 10, reason: "Stopped", at: at(20) } as never),
+    ], T0 + 30, 1000);
+    expect(lanes[0]!.bars.map((bar) => [bar.start - T0, bar.end - T0, bar.open])).toEqual([[0, 20, false], [10, 20, false]]);
+  });
+
   it("silence threshold", () => {
     const events = [ev({ kind: "task.review_assigned", reviewer: "rev", at: at(0) })];
     expect(laneBars(events, T0 + LIVENESS_MS - 1, LIVENESS_MS * 2)[0].silent).toBe(false);

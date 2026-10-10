@@ -5,13 +5,49 @@
 //! apart unseen. Cost: one held fixture run and a few CLI calls in a tempdir; no network.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use assert_cmd::Command;
+use chrono::TimeZone;
+use graphhelm_protocols::{EventEnvelope, EventKind};
 use serde_json::{Value, json};
 
 const RUN: &str = "task-events";
 /// The actor the CLI's own `execution signal` records under.
 const ACTOR: &str = "owner-cli";
+
+struct FixedClock;
+impl graphhelm_protocols::Clock for FixedClock {
+    fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc
+            .with_ymd_and_hms(2026, 10, 10, 12, 0, 0)
+            .unwrap()
+    }
+}
+struct ReadOnlyIds;
+impl graphhelm_protocols::IdGenerator for ReadOnlyIds {
+    fn next_id(&self, _: &'static str) -> String {
+        panic!("reading task history must not append")
+    }
+}
+
+fn history(events: &Path) -> Vec<EventEnvelope> {
+    let store = graphhelm_events::LocalEventRepository::open(
+        events,
+        Arc::new(FixedClock),
+        Arc::new(ReadOnlyIds),
+    )
+    .unwrap();
+    let stream = store
+        .list_streams()
+        .unwrap()
+        .into_iter()
+        .find(|stream| stream.stream_id.as_str() == RUN)
+        .unwrap();
+    store
+        .read_replay_stream(&stream.scope, &stream.stream_id)
+        .unwrap()
+}
 
 fn command() -> Command {
     let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
@@ -151,6 +187,145 @@ fn each_of_the_six_task_kinds_is_accepted_from_its_recording_actor() {
         );
         assert_eq!(reply["ok"], json!(true), "{kind}: {reply}");
     }
+}
+
+/// #729: only the lane may release its exact pre-PR claim. Cost: one temp store and five CLI calls.
+#[test]
+fn a_claim_release_is_bound_to_its_claim_sequence_and_lane() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let claim = signal(
+        scratch.path(),
+        &events,
+        "release-claim",
+        "task.claimed",
+        ACTOR,
+        &as_actor(package_fixture("claimed")),
+    );
+    assert_eq!(claim["ok"], json!(true), "{claim}");
+    let claim_sequence = history(&events)
+        .into_iter()
+        .find(|event| {
+            matches!(&event.kind,
+        EventKind::SignalRecorded(recorded) if recorded.signal_id.as_str() == "release-claim")
+        })
+        .unwrap()
+        .sequence;
+    let mut released = as_actor(package_fixture("claimed"));
+    released
+        .as_object_mut()
+        .unwrap()
+        .retain(|key, _| matches!(key.as_str(), "schema" | "taskId" | "revision" | "at"));
+    released["lane"] = json!(ACTOR);
+    released["claimSequence"] = json!(claim_sequence);
+    released["reason"] = json!("No longer working on this claim");
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "release-ok",
+        "task.released",
+        ACTOR,
+        &released,
+    );
+    assert_eq!(reply["ok"], json!(true), "{reply}");
+
+    for (id, lane, sequence, code) in [
+        (
+            "release-foreign",
+            "another-lane",
+            json!(claim_sequence),
+            "GHCLI038_ACTOR_MISMATCH",
+        ),
+        (
+            "release-no-sequence",
+            ACTOR,
+            json!(null),
+            "GHCLI003_SIGNAL_INVALID",
+        ),
+        (
+            "release-orphan",
+            ACTOR,
+            json!(999),
+            "GHCLI003_SIGNAL_INVALID",
+        ),
+    ] {
+        let mut malformed = released.clone();
+        malformed["lane"] = json!(lane);
+        malformed["claimSequence"] = sequence;
+        let reply = signal(
+            scratch.path(),
+            &events,
+            id,
+            "task.released",
+            ACTOR,
+            &malformed,
+        );
+        assert_eq!(reply["ok"], json!(false), "{id}: {reply}");
+        assert_eq!(reply["diagnostics"][0]["code"], json!(code));
+    }
+}
+
+/// #729: a PR on an older claim cannot prevent release of a later PR-less claim.
+/// Cost: one temp store and five signal CLI calls.
+#[test]
+fn release_ignores_a_pr_owned_by_an_earlier_claim() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    for id in ["first-claim", "second-claim"] {
+        let reply = signal(
+            scratch.path(),
+            &events,
+            id,
+            "task.claimed",
+            ACTOR,
+            &as_actor(package_fixture("claimed")),
+        );
+        assert_eq!(reply["ok"], json!(true), "{id}: {reply}");
+    }
+    let second_sequence = history(&events)
+        .into_iter()
+        .find(|event| {
+            matches!(&event.kind, EventKind::SignalRecorded(recorded)
+            if recorded.signal_id.as_str() == "second-claim")
+        })
+        .unwrap()
+        .sequence;
+    let opened = signal(
+        scratch.path(),
+        &events,
+        "first-pr",
+        "task.pr_opened",
+        ACTOR,
+        &as_actor(package_fixture("pr-opened")),
+    );
+    assert_eq!(opened["ok"], json!(true), "{opened}");
+    let updated = signal(
+        scratch.path(),
+        &events,
+        "first-pr-updated",
+        "task.pr_opened",
+        ACTOR,
+        &as_actor(package_fixture("pr-opened")),
+    );
+    assert_eq!(updated["ok"], json!(true), "{updated}");
+
+    let mut released = as_actor(package_fixture("claimed"));
+    released
+        .as_object_mut()
+        .unwrap()
+        .retain(|key, _| matches!(key.as_str(), "schema" | "taskId" | "revision" | "at"));
+    released["lane"] = json!(ACTOR);
+    released["claimSequence"] = json!(second_sequence);
+    released["reason"] = json!("Stopped work on the second claim");
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "release-second",
+        "task.released",
+        ACTOR,
+        &released,
+    );
+    assert_eq!(reply["ok"], json!(true), "{reply}");
 }
 
 /// #86: assignment provenance is optional, bounded text and cannot name the claimant.

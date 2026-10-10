@@ -396,7 +396,21 @@ fn record_on(
     }
     super::documents::validate_owner_execution(execution, &envelope, &actor)?;
     super::documents::validate_owner_signal(&envelope, &actor, sealing.is_some())?;
-    super::documents::validate_task_event(&envelope, &actor)?;
+    let task_history = if envelope
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|kind| kind == "task.released")
+    {
+        Some(super::resolve_stream(store, execution)?.2)
+    } else {
+        None
+    };
+    super::documents::validate_task_event(
+        &envelope,
+        &actor,
+        task_history.as_deref().unwrap_or_default(),
+        sealing.map(|keyring| (store, &scope, keyring)),
+    )?;
     if matches!(
         envelope.get("type").and_then(serde_json::Value::as_str),
         Some("actor_alias" | "owner_refusal")

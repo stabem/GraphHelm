@@ -26,7 +26,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
   // #591: a bar belongs to one slice of its task, as foldTaskEvents keys it: its PR once one is
   // recorded, else its claim. Keying by taskId let one slice's merge or a later claim close another
   // slice's open review.
-  const claims = new Map<string, { key: string; lane?: string }[]>();
+  const claims = new Map<string, { key: string; lane?: string; sequence: number; slice: string; pr: boolean }[]>();
   const known = new Set<string>();
   const latest = new Map<string, string>();
   const prOfKey = new Map<string, number>();
@@ -51,7 +51,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
     if (e.kind === "task.claimed") {
       key = `${e.taskId}#claim-${e.sequence}`;
       const list = claims.get(e.taskId) ?? [];
-      list.push({ key, lane: e.lane });
+      list.push({ key, lane: e.lane, sequence: e.sequence, slice: key, pr: false });
       claims.set(e.taskId, list);
     } else if (e.pr !== undefined) {
       key = prKey.get(e.pr) ?? `${e.taskId}#pr-${e.pr}`;
@@ -60,10 +60,12 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       if (!known.has(key)) {
         // A PR no slice holds yet joins the oldest open claim of its task (the same lane's, when named).
         const list = claims.get(e.taskId) ?? [];
-        const i = list.findIndex((c) => e.lane === undefined || c.lane === undefined || c.lane === e.lane);
+        const i = list.findIndex((c) => !c.pr && (e.lane === undefined || c.lane === undefined || c.lane === e.lane));
         if (i >= 0) {
-          const [claim] = list.splice(i, 1);
+          const claim = list[i]!;
+          claim.pr = true;
           rekey(claim.key, key, `#${e.pr}`);
+          claim.slice = key;
           if (claim.lane) authorOf.set(key, claim.lane);
           const issue = issueOf.get(claim.key);
           if (issue !== undefined) issueOf.set(key, issue);
@@ -120,6 +122,16 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
     switch (e.kind) {
       case "task.claimed": if (e.lane) start(e.lane, "implement", e.taskId, slice, t); break;
       case "task.pr_opened": if (author && pr !== undefined) laneOf(author).awaiting.add(pr); break;
+      case "task.released":
+        if (e.lane) {
+          const claim = claims.get(e.taskId)?.find((candidate) => candidate.sequence === e.claimSequence && candidate.lane === e.lane && !candidate.pr);
+          if (claim) {
+            for (const earlier of claims.get(e.taskId) ?? []) {
+              if (earlier.lane === e.lane && !earlier.pr && earlier.sequence < e.sequence) close("implement", earlier.slice, t, e.lane);
+            }
+          }
+        }
+        break;
       case "task.review_assigned": close("implement", slice, t); if (e.reviewer) start(e.reviewer, "review", e.taskId, slice, t); break;
       case "task.review_verdict":
         close("review", slice, t, e.reviewer);

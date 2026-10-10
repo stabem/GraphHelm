@@ -156,7 +156,7 @@ const TASK_EVENT_SCHEMA = "graphhelm-task-event-v1";
 const VERDICTS = ["APPROVE", "APPROVE-WITH-RISK", "BLOCK"] as const;
 type Verdict = typeof VERDICTS[number];
 
-export type TaskEventKind = "task.claimed" | "task.planned" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged" | "task.critic_verdict";
+export type TaskEventKind = "task.claimed" | "task.planned" | "task.released" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged" | "task.critic_verdict";
 
 /** #467: one round of the blind design critic, as its `task.critic_verdict` record states it. */
 export interface CriticRound { round: number; score: number; passScore: number; maxRounds: number; verdict: "pass" | "revise" | "exhausted" }
@@ -186,6 +186,9 @@ export interface TaskEventRecord {
   summary?: string;
   /** #514: the issue whose work turned this task up (on `task.claimed`). */
   parent?: number;
+  /** #729: the exact prior claim sequence released by its lane, and its stated reason. */
+  claimSequence?: number;
+  reason?: string;
   /** #502: when the Runtime appended the record (its own clock, not the lane's `at`). */
   occurredAt?: string | null;
   /** #467: the round a `task.critic_verdict` states. */
@@ -299,6 +302,13 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
     case "task.planned": {
       const plan = taskPlan(document);
       return plan !== null && document.lane === actorId ? { ...base, kind, lane: actorId, plan } : null;
+    }
+    case "task.released": {
+      const claimSequence = count(document.claimSequence);
+      const reason = typeof document.reason === "string" && Array.from(document.reason).length <= 500
+        && !/\p{Cc}/u.test(document.reason) ? text(document.reason, 1000) : null;
+      return document.lane === actorId && claimSequence !== null && reason !== null
+        ? { ...base, kind, lane: actorId, claimSequence, reason } : null;
     }
     case "task.pr_opened": {
       const repo = repository(document.repo);
@@ -418,6 +428,9 @@ export interface TaskState {
   /** #502: when the slice entered its step and what it spent in the steps it left. */
   clock: StepClock;
   lastSequence: number;
+  /** #729: sequence of this slice's original claim, used to reject releases of another claim. */
+  claimSequence?: number;
+  releasedBy?: string;
 }
 
 function applyVerdict(state: TaskState, event: TaskEventRecord): void {
@@ -464,11 +477,10 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
     slices.push(slice);
     return slice;
   };
-  // A claim names its branch: the same branch is the same slice (a re-claim), any other opens one.
+  // Each claim has its own sequence, even when a lane reuses a branch.
   if (event.kind === "task.claimed") {
     // A critic round recorded before the claim belongs to this task: the claim adopts it (#562).
-    return group.find((slice) => slice.branch !== null && slice.branch === event.branch)
-      ?? group.find(isUnclaimedCritic) ?? add();
+    return group.find(isUnclaimedCritic) ?? add();
   }
   const own = event.pr === undefined ? undefined : group.find((slice) => slice.pr === event.pr);
   if (own !== undefined) return own;
@@ -502,6 +514,19 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
 export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
   const slices: TaskState[] = [];
   for (const event of [...records].sort((a, b) => a.sequence - b.sequence)) {
+    if (event.kind === "task.released") {
+      // Admission binds the release to one exact claim. Once that claim is found, the
+      // release ends this lane's earlier unowned claims, never a later claim or a PR.
+      const named = slices.some((slice) => slice.taskId === event.taskId && slice.lane === event.lane
+        && slice.pr === null && slice.claimSequence === event.claimSequence && (slice.claimSequence ?? Infinity) < event.sequence);
+      if (named) {
+        for (const slice of slices) {
+          if (slice.taskId === event.taskId && slice.lane === event.lane && slice.pr === null
+            && slice.claimSequence !== undefined && slice.claimSequence < event.sequence) slice.releasedBy = event.lane;
+        }
+      }
+      continue;
+    }
     const state = sliceFor(slices, event);
     if (state.step === "merged") continue;
     state.lastSequence = event.sequence;
@@ -522,6 +547,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         state.issue = event.issue ?? state.issue;
         state.lane = event.lane ?? state.lane;
         state.journeys = event.journeys?.length ? event.journeys : state.journeys;
+        state.claimSequence ??= event.sequence;
         break;
       case "task.planned":
         state.lane = event.lane ?? state.lane;

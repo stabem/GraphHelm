@@ -156,6 +156,15 @@ describe("#591 board times the latest activity (record shapes)", () => {
     expect(rows["codex-4"]!.status).toBe("free");
   });
 
+  it("a released pre-PR claim no longer leaves its lane working", () => {
+    const events = [
+      ev({ kind: "task.claimed", taskId: "issue-729", lane: "codex-12", issue: 729, sequence: 10, at: iso(0) }),
+      ev({ kind: "task.released", taskId: "issue-729", lane: "codex-12", sequence: 11, claimSequence: 10, reason: "Stopped", at: iso(M) } as never),
+    ];
+    const lanes = laneBars(events, T0 + 2 * M, 48 * H);
+    expect(agentBoard([bot("codex-12")], lanes, [], T0 + 2 * M)[0]).toMatchObject({ status: "free" });
+  });
+
   it("the time is since the lane's latest record, naming that record", () => {
     const events = [
       ev({ kind: "task.claimed", lane: "gh-claude-3", issue: 600, at: iso(0) }),

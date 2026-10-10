@@ -452,10 +452,9 @@ if (mode === 'up') {
     assert_eq!(called["source"], "app.js", "{called}");
     assert_eq!(
         called["sourceSha256"],
-        format!(
-            "{:x}",
-            sha2::Sha256::digest(std::fs::read(project.join("app.js")).unwrap())
-        ),
+        hex::encode(sha2::Sha256::digest(
+            std::fs::read(project.join("app.js")).unwrap(),
+        )),
         "source association must use the current file hash"
     );
     assert!(

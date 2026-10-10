@@ -82,34 +82,135 @@ def _session(payload: dict) -> str:
     return value
 
 
+def _lane_sessions_root() -> Path:
+    return Path.home() / ".graphhelm" / "lane-sessions"
+
+
+def _remember_lane(payload: dict) -> None:
+    session = payload.get("session_id")
+    title = payload.get("session_title")
+    if not isinstance(session, str) or not ID.fullmatch(session) or not isinstance(title, str) or not ID.fullmatch(title):
+        return
+    root = _lane_sessions_root()
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc)
+    cutoff = now.timestamp() - 7 * 24 * 60 * 60
+    for path in root.glob("*.json"):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+        except OSError:
+            continue
+    path = root / f"{session}.json"
+    raw = json.dumps({"actor": title, "at": now.isoformat(timespec="seconds")}, separators=(",", ":")).encode()
+    fd, name = tempfile.mkstemp(prefix=f".{session}.", suffix=".tmp", dir=root)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as output:
+            output.write(raw)
+            output.flush()
+            os.fsync(output.fileno())
+        if os.name != "nt":
+            temporary.chmod(0o600)
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _forget_lane(payload: dict) -> None:
+    session = payload.get("session_id")
+    if isinstance(session, str) and ID.fullmatch(session):
+        try:
+            (_lane_sessions_root() / f"{session}.json").unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _lane_actor(payload: dict) -> str | None:
+    session = payload.get("session_id")
+    if not isinstance(session, str) or not ID.fullmatch(session):
+        return None
+    try:
+        path = _lane_sessions_root() / f"{session}.json"
+        if path.stat().st_mtime < datetime.now(timezone.utc).timestamp() - 7 * 24 * 60 * 60:
+            return None
+        raw = path.read_bytes()
+        if len(raw) > 4096:
+            return None
+        value = json.loads(raw)
+        actor = value.get("actor") if isinstance(value, dict) else None
+        return actor if isinstance(actor, str) and ID.fullmatch(actor) else None
+    except (OSError, ValueError, TypeError, json.JSONDecodeError, RecursionError):
+        return None
+
+
 def _host(value: str) -> str:
     if not isinstance(value, str) or not PORTABLE_HOST.fullmatch(value):
         raise ValueError("invalid host identity")
     return value
 
 
-def binding() -> tuple[str, str, str, str, str | None] | None:
-    execution = os.environ.get("GRAPHHELM_EXECUTION_ID", "")
-    token_file = os.environ.get("GRAPHHELM_TOKEN_FILE", "")
-    url = os.environ.get("GRAPHHELM_RUNTIME_URL", "http://127.0.0.1:8791").rstrip("/")
-    node_id = os.environ.get("GRAPHHELM_NODE_ID")
+def _binding_values(execution: str, token_file: str, url: str, node_id: str | None) -> tuple[str, str, str, str, str | None] | None:
     if not execution:
         return None
     if not token_file or not ID.fullmatch(execution):
-        raise ValueError("invalid execution binding")
+        return None
     if node_id is not None and not ID.fullmatch(node_id):
-        raise ValueError("invalid node binding")
+        return None
     parsed = urllib.parse.urlparse(url)
     if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path:
-        raise ValueError("invalid Runtime URL")
+        return None
     if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
-        raise ValueError("plain HTTP Runtime must be loopback")
+        return None
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("invalid Runtime URL")
+        return None
     hostname = parsed.hostname.lower()
     authority = f"[{hostname}]" if ":" in hostname else hostname
     origin = f"{parsed.scheme}://{authority}:{parsed.port or (443 if parsed.scheme == 'https' else 80)}"
     return execution, token_file, url, origin, node_id
+
+
+def binding(payload: dict | None = None) -> tuple[str, str, str, str, str | None] | None:
+    execution = os.environ.get("GRAPHHELM_EXECUTION_ID", "")
+    token_file = os.environ.get("GRAPHHELM_TOKEN_FILE", "")
+    url = os.environ.get("GRAPHHELM_RUNTIME_URL", "http://127.0.0.1:8791").rstrip("/")
+    node_id = os.environ.get("GRAPHHELM_NODE_ID")
+    if execution or token_file:
+        return _binding_values(execution, token_file, url, node_id)
+    if payload is None:
+        return None
+    session = payload.get("session_id")
+    if not isinstance(session, str) or not ID.fullmatch(session):
+        return None
+    try:
+        actor = _lane_actor(payload)
+        if actor is None:
+            return None
+        repo = Path(payload.get("cwd", ""))
+        if not repo.is_absolute():
+            return None
+        for directory in (repo, *repo.parents):
+            team_path = directory / ".graphhelm" / "team.json"
+            if not team_path.is_file():
+                continue
+            team_raw = team_path.read_bytes()
+            if len(team_raw) > 4096:
+                return None
+            team = json.loads(team_raw)
+            if not isinstance(team, dict):
+                return None
+            candidate = _binding_values(team.get("executionId", ""), team.get("tokenFile", ""),
+                                        str(team.get("runtimeUrl", "")).rstrip("/"), None)
+            if candidate is None or not Path(candidate[1]).is_file():
+                return None
+            os.environ["GRAPHHELM_ACTOR"] = actor
+            return candidate
+    except (OSError, ValueError, TypeError, json.JSONDecodeError, RecursionError):
+        return None
+    return None
 
 
 def token_from_file(path: str) -> str:
@@ -291,6 +392,7 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
     if payload.get("hook_event_name") != "SessionStart":
         raise ValueError("wrong hook event")
     session = _session(payload)
+    _remember_lane(payload)
     bound = binding()
     if bound is None:
         if os.environ.get("GRAPHHELM_KEEL_CONTEXT") != "1":
@@ -411,6 +513,7 @@ def end(payload: dict, host: str, output_format: str = "native") -> bool:
     host = _host(host)
     if payload.get("hook_event_name") != "SessionEnd":
         raise ValueError("wrong hook event")
+    _forget_lane(payload)
     bound = binding()
     if bound is None:
         return False

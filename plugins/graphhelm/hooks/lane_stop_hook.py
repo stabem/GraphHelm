@@ -12,15 +12,17 @@ import subprocess
 import sys
 from urllib.parse import quote
 
-from session_hook import binding, hook_input, request, token_from_file, ID
+from session_hook import _lane_actor, binding, hook_input, request, token_from_file, ID
 
 
-def pending() -> bool:
-    bound = binding()
+def pending(payload: dict | None = None) -> bool:
+    bound = binding(payload)
     if bound is None:
         return False
     execution, token_file, url, _origin, _node = bound
     lane = os.environ.get("GRAPHHELM_ACTOR", "")
+    if not lane and payload is not None:
+        lane = _lane_actor(payload) or ""
     if not ID.fullmatch(lane):
         raise ValueError("lane identity missing")
     token = token_from_file(token_file)
@@ -74,7 +76,8 @@ def pending() -> bool:
 def main() -> int:
     if sys.argv[1:] == ["--scan"]:
         try:
-            return 1 if pending() else 0
+            payload = hook_input()
+            return 1 if pending(payload) else 0
         except Exception:
             return 2
     try:
@@ -85,10 +88,9 @@ def main() -> int:
     # per stop cycle is enough, even when the lane cannot send its reply.
     if payload.get("stop_hook_active") is True:
         return 0
-    if not os.environ.get("GRAPHHELM_EXECUTION_ID"):
-        return 0
     try:
         result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--scan"],
+                                input=json.dumps(payload), text=True,
                                 capture_output=True, timeout=2)
         status = result.returncode
     except (OSError, subprocess.SubprocessError):

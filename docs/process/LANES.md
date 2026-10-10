@@ -198,9 +198,13 @@ Studio's **Ask for status** appends an `operator_note` addressed with `to: <lane
 team execution. SendMessage is not its delivery mechanism. Every active lane must maintain
 this loop; the coordinator does not nudge it:
 
-1. Bind the host/plugin to the **team execution** with `GRAPHHELM_EXECUTION_ID`,
-   `GRAPHHELM_RUNTIME_URL`, `GRAPHHELM_TOKEN_FILE` (the agent token file), and
-   `GRAPHHELM_ACTOR=<lane>`. Keep the actor distinct from the MCP session identity.
+1. Bind the host/plugin to the **team execution**. On Desktop, put `executionId`, `runtimeUrl`,
+   and the agent token file path in the repository's ignored `.graphhelm/team.json`; SessionStart
+   saves the valid Desktop `session_title` by `session_id`, and Stop resolves the lane from that
+   saved session identity. Explicit `GRAPHHELM_*` environment variables still take precedence.
+   Codex sessions without a title use `GRAPHHELM_EXECUTION_ID`, `GRAPHHELM_RUNTIME_URL`,
+   `GRAPHHELM_TOKEN_FILE`, and `GRAPHHELM_ACTOR=<lane>`. Keep the actor distinct from the MCP
+   session identity.
 2. Read `events` through its head, opening sealed `operator_note` evidence with `evidence`.
    Match the envelope's `to` exactly to your lane. Read notes from owners and agents;
    do not filter only owner events. Act on each pending addressed note within your authority.

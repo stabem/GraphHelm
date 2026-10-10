@@ -181,6 +181,8 @@ A change is delivered when it is merged into `main`, not when the PR is open.
 
 ### Task records (journey-first spec §7, #386)
 
+`task_record.py merged` requires GitHub-confirmed `MERGED` state and a matching merge SHA (full or at least 7 hex characters, case-insensitive); `--no-github` refuses unless `--dry-run` is set, and an `OPEN` state or null merge commit retries up to three reads, two seconds apart.
+
 Where a Runtime execution coordinates the lanes (`gh-team` here), each step that writes an identity
 line also records the matching `task.*` signal, so the Studio can draw each task's graph from
 records instead of prose. The signal's `type` is the kind, its `source` is

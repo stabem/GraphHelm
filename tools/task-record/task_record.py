@@ -22,8 +22,10 @@ import argparse
 import datetime
 import hashlib
 import json
+import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -55,6 +57,35 @@ def github_words(kind, number, repo):
     summary = next((line.split(":", 1)[1].strip() for line in (reply.get("body") or "").splitlines()
                     if line.strip().lower().startswith("summary:")), None)
     return (reply.get("title") or "").strip() or None, summary or None
+
+
+def merged_on_github(pr, sha, repo):
+    """Refuse a merge record unless GitHub confirms its state and merge commit."""
+    if not re.fullmatch(r"[0-9a-fA-F]{7,40}", sha):
+        sys.exit("task_record: --merge-sha must be a full SHA or a prefix of at least 7 hex characters")
+    command = ["gh", "pr", "view", str(pr), "--json", "state,mergeCommit"]
+    if repo:
+        command += ["--repo", repo]
+    # Three reads, each with a 60 s subprocess timeout; only eventual state/commit absence retries.
+    for attempt in range(3):
+        try:
+            reply = json.loads(subprocess.run(command, capture_output=True, text=True,
+                                               encoding="utf-8", timeout=60, check=True).stdout)
+        except (OSError, subprocess.SubprocessError, ValueError):
+            sys.exit(f"task_record: could not confirm the merge for PR {pr}")
+        if not isinstance(reply, dict):
+            sys.exit(f"task_record: could not confirm the merge for PR {pr}: invalid GitHub response")
+        state = reply.get("state")
+        commit = reply.get("mergeCommit")
+        oid = commit.get("oid") if isinstance(commit, dict) else None
+        if state == "MERGED" and isinstance(oid, str) and re.fullmatch(r"[0-9a-fA-F]{40}", oid):
+            if oid.lower().startswith(sha.lower()):
+                return
+            sys.exit(f"task_record: --merge-sha {sha} does not match PR {pr} merge commit {oid}")
+        if attempt < 2 and (state == "OPEN" or commit is None):
+            time.sleep(2)
+            continue
+        sys.exit(f"task_record: could not confirm the merge for PR {pr}: state={state}, mergeCommit={oid}")
 
 
 def words(args):
@@ -278,6 +309,10 @@ def main(argv):
     args = parse(argv)
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     doc = document(args, now)
+    if args.kind == "merged" and not args.dry_run:
+        if args.no_github:
+            sys.exit("task_record: --no-github is refused for merged unless --dry-run is set")
+        merged_on_github(args.pr, args.merge_sha, args.repo)
     code, signal_id, reply = send_opening(args, doc, now)
     outcome = report(code, signal_id, reply)
     if args.kind == "pr_opened" and outcome == 0:

@@ -7,10 +7,13 @@ import hashlib
 import http.server
 import io
 import json
+import os
+import shutil
 import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -452,6 +455,105 @@ class Planned(unittest.TestCase):
                                       ("merged", ["--pr", "1", "--merge-sha", HEAD_A], 5)):
             args = task_record.parse(["--lane", "l", kind, "--issue", "9", *extra])
             self.assertEqual(task_record.document(args, "t")["revision"], revision, kind)
+
+
+class MergedRequiresGithub(unittest.TestCase):
+    """#674: main must not send an unconfirmed merge. Existing document/wire tests never
+    observe GitHub merge state. No production seam: fake gh is a child on PATH, send is I/O.
+    Cost: small local Python children, no network; retry sleeps are replaced by a clock stub.
+    """
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.folder = Path(tmp.name)
+        self.calls = self.folder / "calls.json"
+        script = self.folder / "fake_gh.py"
+        script.write_text(
+            "import json, pathlib, sys\n"
+            "root = pathlib.Path(__file__).parent\n"
+            "calls = root / 'calls.json'\n"
+            "seen = json.loads(calls.read_text()) if calls.exists() else []\n"
+            "seen.append(sys.argv[1:])\n"
+            "calls.write_text(json.dumps(seen))\n"
+            "replies = json.loads((root / 'replies.json').read_text())\n"
+            "reply = replies[min(len(seen) - 1, len(replies) - 1)]\n"
+            "print(json.dumps(reply))\n"
+            "sys.exit(1 if reply == 'failed' else 0)\n", encoding="utf-8")
+        if os.name == "nt":
+            (self.folder / "gh.cmd").write_text(
+                f'@"{sys.executable}" "{script}" %*\n', encoding="utf-8")
+        else:
+            executable = self.folder / "gh"
+            executable.write_text(f'#!{sys.executable}\n' + script.read_text(encoding="utf-8"), encoding="utf-8")
+            executable.chmod(0o755)
+        self.enterContext(patch.dict(os.environ, {"PATH": str(self.folder) + os.pathsep + os.environ["PATH"]}))
+        if os.name == "nt":
+            # CreateProcess searches .exe, not PATHEXT. Resolve the .cmd fake from PATH
+            # at the process I/O boundary; keep the actual child execution and options.
+            run = task_record.subprocess.run
+            def run_fake(command, **options):
+                executable = shutil.which(command[0])
+                self.assertEqual(Path(executable), self.folder / "gh.cmd")
+                return run([executable, *command[1:]], **options)
+            self.enterContext(patch.object(task_record.subprocess, "run", side_effect=run_fake))
+        self.sleep = self.enterContext(patch("time.sleep"))
+        self.real_send = task_record.send
+        self.sent = self.enterContext(patch.object(task_record, "send", return_value=(0, "record", {})))
+
+    def run_merge(self, replies, sha="abcdef12", *extra):
+        (self.folder / "replies.json").write_text(json.dumps(replies), encoding="utf-8")
+        out = io.StringIO()
+        with redirect_stdout(out):
+            try:
+                code = task_record.main(["--lane", "test", "--issue", "674", "merged",
+                                         "--pr", "42", "--merge-sha", sha, *extra])
+            except SystemExit as error:
+                code = error.code
+        return code, out.getvalue()
+
+    def test_unconfirmed_merges_never_send_and_confirmed_prefixes_do(self):
+        merged = {"state": "MERGED", "mergeCommit": {"oid": "abcdef12" + "a" * 32}}
+        cases = [
+            ([{"state": "OPEN", "mergeCommit": None}], "abcdef12", (), "OPEN", 3),
+            ([merged], "bbbbbbbb", (), "does not match", 1),
+            (["failed"], "abcdef12", (), "could not confirm the merge", 1),
+            ([merged], "abcdef12", ("--no-github",), "--no-github", 0),
+            ([merged], "abcdef", (), "at least 7 hex", 0),
+            ([merged], "zzzzzzz", (), "at least 7 hex", 0),
+            ([merged], "ABCDEF12", (), None, 1),
+            ([merged], merged["mergeCommit"]["oid"], (), None, 1),
+            ([{"state": "OPEN", "mergeCommit": None}, merged], "abcdef12", (), None, 2),
+            ([{"state": "MERGED", "mergeCommit": None}, merged], "abcdef12", (), None, 2),
+        ]
+        for replies, sha, extra, refusal, count in cases:
+            with self.subTest(replies=replies, sha=sha, extra=extra):
+                self.calls.unlink(missing_ok=True)
+                self.sent.reset_mock()
+                self.sleep.reset_mock()
+                code, _ = self.run_merge(replies, sha, *extra)
+                if refusal:
+                    self.assertNotEqual(code, 0)
+                    self.assertIn(refusal, str(code))
+                    self.sent.assert_not_called()
+                else:
+                    self.assertEqual(code, 0)
+                    self.sent.assert_called_once()
+                    self.assertEqual(self.sent.call_args.args[1]["mergeSha"], sha)
+                calls = json.loads(self.calls.read_text()) if self.calls.exists() else []
+                self.assertEqual(calls, [["pr", "view", "42", "--json", "state,mergeCommit",
+                                          "--repo", "stabem/GraphHelm"]] * count)
+                self.assertEqual(self.sleep.call_args_list, [((2,),)] * max(0, count - 1))
+
+        # The real send formats the preview, but network I/O must remain unused.
+        self.calls.unlink(missing_ok=True)
+        with patch.object(task_record, "send", wraps=self.real_send), \
+                patch.object(task_record.urllib.request, "urlopen") as post:
+            code, out = self.run_merge([], "abcdef12", "--no-github", "--dry-run")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["body"]["signal"]["type"], "task.merged")
+        post.assert_not_called()
+        self.assertFalse(self.calls.exists())
 
 
 class GithubWordsDecodeUtf8(unittest.TestCase):

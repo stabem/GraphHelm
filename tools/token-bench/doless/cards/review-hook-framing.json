@@ -1,0 +1,7 @@
+{
+  "promise": "Review hook_input at this frozen revision. The native host sends one complete small JSON object but keeps stdin open while awaiting the hook response. Report verdict (BLOCK or APPROVE), function, waitsForEof, rejectsOversize, rejectsNonObject, and findings as an array of defect codes chosen from EOF_WAIT, NO_SIZE_LIMIT, ACCEPTS_NON_OBJECT. Report only defects supported by the source; do not fix them. Leave an empty diff.",
+  "scopePaths": [
+    "plugins/graphhelm/hooks/session_hook.py"
+  ],
+  "proof": "Offline read-only semantic answer oracle; reference passes, false conclusions and any checkout change fail."
+}

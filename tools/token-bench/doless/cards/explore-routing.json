@@ -1,0 +1,7 @@
+{
+  "promise": "Trace DelegationPolicy::routed and choose. Report the initial explorer tier/effort and the choice after one and after nine red checks. Does choosing a route call a model? Leave an empty diff.",
+  "scopePaths": [
+    "core/policy/src/delegation.rs"
+  ],
+  "proof": "Offline read-only semantic answer oracle; reference passes, false conclusions and any checkout change fail."
+}

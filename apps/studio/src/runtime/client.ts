@@ -2111,8 +2111,10 @@ export class RuntimeClient {
    */
   async readEvidence(executionId: string, evidenceId: string): Promise<EvidenceContent> {
     const id = checkedId(executionId, "executionId");
-    if (typeof evidenceId !== "string" || evidenceId.length === 0 || evidenceId.length > 256) {
-      throw new RuntimeError("evidenceId must be a non-empty id of at most 256 characters.", 0, []);
+    // EvidenceId uses the Runtime's 128-byte opaque-id alphabet. Sending a looser Studio id
+    // only produces a 400, and the same malformed event would ask again on every refresh.
+    if (typeof evidenceId !== "string" || !/^[\x21-\x2e\x30-\x39\x3b-\x5b\x5d-\x7e]{1,128}$/.test(evidenceId)) {
+      throw new RuntimeError("evidenceId is not a valid Runtime evidence identifier.", 0, []);
     }
     return this.#request<EvidenceContent>({
       method: "GET",

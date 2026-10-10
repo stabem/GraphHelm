@@ -194,7 +194,7 @@ fn timed_out_waiter_resumes_at_its_original_place() {
     assert!(!refused.output.ok);
     assert_eq!(
         refused.output.diagnostics[0].code,
-        "GHCLI037_WORKSPACE_REFUSED"
+        crate::error_codes::GHCLI037_WORKSPACE_REFUSED
     );
     assert_eq!(refused.output.diagnostics[0].path, "/slot");
     let data = refused.output.data.as_ref().unwrap();

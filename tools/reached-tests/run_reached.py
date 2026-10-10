@@ -13,6 +13,7 @@ import argparse
 import json
 import math
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -44,10 +45,33 @@ def _tail(path: Path) -> str:
     return data[-MAX_CAPTURE:]
 
 
-def _selector(repo: Path, base: str, head: str, log: Path) -> dict[str, Any]:
+def _resolve_graphhelm(args: argparse.Namespace) -> Path:
+    """Select and resolve the GraphHelm executable once for this run."""
+    explicit = getattr(args, "graphhelm", None)
+    configured = explicit or os.environ.get("GRAPHHELM_CLI")
+    if configured:
+        candidate = Path(configured).expanduser()
+        if not candidate.is_file():
+            source = "--graphhelm" if explicit else "GRAPHHELM_CLI"
+            raise RuntimeError(f"{source} does not name an existing executable: {configured}")
+        return candidate.resolve()
+    found = shutil.which("graphhelm")
+    if not found:
+        raise RuntimeError("graphhelm executable was not found on PATH")
+    candidate = Path(found).resolve()
+    if not candidate.is_file():
+        raise RuntimeError(f"graphhelm PATH entry is not an existing executable: {found}")
+    return candidate
+
+
+def _selector(repo: Path, base: str, head: str, log: Path, graphhelm: Path | None = None) -> dict[str, Any]:
+    env = os.environ.copy()
+    if graphhelm is not None:
+        env["GRAPHHELM_CLI"] = str(graphhelm)
+        env["PATH"] = str(graphhelm.parent) + os.pathsep + env.get("PATH", "")
     proc = subprocess.run(
         [sys.executable, str(SELECTOR), "--repo", str(repo), "--base", base, "--head", head, "--json"],
-        cwd=repo, capture_output=True, text=True,
+        cwd=repo, capture_output=True, text=True, env=env,
     )
     log.write_text(proc.stdout + ("\n[selector stderr]\n" + proc.stderr if proc.stderr else ""), encoding="utf-8")
     if proc.returncode:
@@ -106,7 +130,7 @@ def _whole_reason(plan: dict[str, Any], reason: str | None) -> str | None:
 
 def _slot_telemetry(path: Path, command: list[str]) -> tuple[float | None, float | None]:
     """Read only the final slot envelope, after bounded backwards log reading."""
-    if command[:4] != ["graphhelm", "--json", "workspace", "slot"]:
+    if len(command) < 4 or command[1:4] != ["--json", "workspace", "slot"]:
         return None, None
     text = _tail(path)
     lines = [line for line in text.splitlines() if line.strip()]
@@ -175,11 +199,15 @@ def run(args: argparse.Namespace) -> int:
         report["untracked"] = [line for line in status.splitlines() if line.startswith("??")]
         if status:
             raise RuntimeError("worktree is not clean; tracked or untracked source could affect the proof")
+        configured_graphhelm = getattr(args, "graphhelm", None) or os.environ.get("GRAPHHELM_CLI")
+        selected_graphhelm = _resolve_graphhelm(args) if configured_graphhelm else None
         if args.plan:
-            plan = _selector(repo, args.base, args.head, logs / "selector.log")
+            plan = _selector(repo, args.base, args.head, logs / "selector.log", selected_graphhelm)
             report.update({"plan": plan, "status": "planned"})
+            if selected_graphhelm is not None:
+                report["graphhelmPath"] = str(selected_graphhelm)
         else:
-            plan = _selector(repo, args.base, args.head, logs / "selector.log")
+            plan = _selector(repo, args.base, args.head, logs / "selector.log", selected_graphhelm)
             reason = _whole_reason(plan, args.allow_whole_package)
             report["wholePackageReason"] = args.allow_whole_package
             unsupported = plan.get("unsupported", [])
@@ -195,6 +223,14 @@ def run(args: argparse.Namespace) -> int:
                 raise RuntimeError(error)
             report["plan"] = {"steps": steps, "unsupported": unsupported}
             report["pending"] = list(range(len(steps)))
+            needs_graphhelm = any(
+                step["slot"] or Path(step["argv"][0]).name.lower() in ("graphhelm", "graphhelm.exe")
+                for step in steps
+            )
+            if needs_graphhelm and selected_graphhelm is None:
+                selected_graphhelm = _resolve_graphhelm(args)
+            if selected_graphhelm is not None:
+                report["graphhelmPath"] = str(selected_graphhelm)
             if unsupported:
                 reasons = "; ".join(
                     str(item.get("reason", item)) if isinstance(item, dict) else str(item)
@@ -218,8 +254,10 @@ def run(args: argparse.Namespace) -> int:
                 command = _resolve_argv(repo, cwd, argv)
                 if command and command[0] in ("python", "python3"):
                     command[0] = sys.executable
+                if selected_graphhelm is not None and command and Path(command[0]).name.lower() in ("graphhelm", "graphhelm.exe"):
+                    command[0] = str(selected_graphhelm)
                 if step["slot"]:
-                    command = ["graphhelm", "--json", "workspace", "slot", "--root", args.root,
+                    command = [str(selected_graphhelm), "--json", "workspace", "slot", "--root", args.root,
                                "--lane", args.lane, "--jobs", "6", "--label", f"reached-step-{index}",
                                "--max-wait", repr(remaining / 60.0), "--", *command]
                 logfile = logs / f"step-{index}.log"
@@ -290,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--head", default="HEAD")
     ap.add_argument("--root", default="D:/gh")
     ap.add_argument("--lane", default="reached-fast-feedback")
+    ap.add_argument("--graphhelm", help="GraphHelm executable; overrides GRAPHHELM_CLI and PATH")
     ap.add_argument("--output", required=True)
     ap.add_argument("--budget-seconds", type=float, default=180)
     ap.add_argument("--allow-whole-package")

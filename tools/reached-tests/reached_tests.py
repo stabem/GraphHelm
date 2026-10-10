@@ -31,6 +31,7 @@ proof for the same paths are printed too. Standard library only.
 """
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -448,6 +449,24 @@ def _argv_text(argv):
     return " ".join(argv)
 
 
+def _group_single(single):
+    """Group selected modules by package and test executable.
+
+    A None module means the executable must run unfiltered, which dominates any
+    narrower module selections for the same executable.
+    """
+    grouped = {}
+    for package, target, module in single:
+        key = (package, target)
+        entry = grouped.setdefault(key, {"unfiltered": False, "modules": set()})
+        if module is None:
+            entry["unfiltered"] = True
+        else:
+            entry["modules"].add(module + "::")
+    return [(package, target, None if entry["unfiltered"] else tuple(sorted(entry["modules"])))
+            for (package, target), entry in sorted(grouped.items())]
+
+
 def commands(whole, single, studio, tools=(), validate=(), lint_packages=None, package_plans=None):
     if whole and package_plans is not None:
         missing = sorted(set(whole) - set(package_plans))
@@ -459,9 +478,10 @@ def commands(whole, single, studio, tools=(), validate=(), lint_packages=None, p
             cmds.extend(_argv_text(step["argv"]) for step in package_plans[name])
         else:
             cmds.append(f"cargo {TOOLCHAIN} test --locked -p {name} {TEST_THREADS}")
-    for package, target, module in sorted(single, key=lambda s: (s[0], s[1], s[2] or "")):
+    for package, target, modules in _group_single(single):
         kind = f"--bin {target[4:]}" if target.startswith("bin:") else f"--test {target}"
-        cmds.append(f"cargo {TOOLCHAIN} test --locked -p {package} {kind}" + (f" {module}::" if module else "") + f" {TEST_THREADS}")
+        filters = "" if modules is None else " " + " ".join(modules)
+        cmds.append(f"cargo {TOOLCHAIN} test --locked -p {package} {kind} {TEST_THREADS}{filters}")
     rust = sorted(whole | {s[0] for s in single})
     lint = rust if lint_packages is None else sorted(lint_packages)
     if rust:
@@ -527,12 +547,12 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
         else:
             out.append({"argv": ["cargo", TOOLCHAIN, "test", "--locked", "-p", name, *TEST_THREADS.split()],
                         "cwd": ".", "slot": True})
-    for package, target, module in sorted(single, key=lambda s: (s[0], s[1], s[2] or "")):
+    for package, target, modules in _group_single(single):
         kind = ["--bin", target[4:]] if target.startswith("bin:") else ["--test", target]
         argv = ["cargo", TOOLCHAIN, "test", "--locked", "-p", package, *kind]
-        if module:
-            argv.append(module + "::")
         argv.extend(TEST_THREADS.split())
+        if modules is not None:
+            argv.extend(modules)
         out.append({"argv": argv, "cwd": ".", "slot": True})
     rust = sorted(whole | {s[0] for s in single})
     lint = rust if lint_packages is None else sorted(lint_packages)
@@ -554,7 +574,10 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
 
 
 def keel_plan(repo, changed):
-    exe = shutil.which("graphhelm")
+    configured = os.environ.get("GRAPHHELM_CLI")
+    exe = str(Path(configured).resolve()) if configured else shutil.which("graphhelm")
+    if configured and not Path(exe).is_file():
+        raise ValueError("GRAPHHELM_CLI does not name an existing executable")
     if exe is None or not changed:
         return None
     try:

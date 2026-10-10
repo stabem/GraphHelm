@@ -32,6 +32,20 @@ def reach(*changed, repo=None):
 
 
 class Reach(unittest.TestCase):
+    def test_keel_plan_uses_configured_cli_without_path_fallback(self):
+        with tempfile.TemporaryDirectory() as temp:
+            exe = Path(temp) / "selected-graphhelm"
+            exe.write_text("fixture", encoding="utf-8")
+            reply = json.dumps({"data": {"plan": {"classes": [], "proof": [], "decidedBy": "fixture"}}})
+            with patch.dict(rt.os.environ, {"GRAPHHELM_CLI": str(exe)}), \
+                    patch.object(rt.shutil, "which", side_effect=AssertionError("no fallback")), \
+                    patch.object(rt, "run", return_value=reply) as invoke:
+                self.assertIsNotNone(rt.keel_plan(temp, ["example.rs"]))
+                self.assertEqual(invoke.call_args.args[0][0], str(exe.resolve()))
+                exe.unlink()
+                with self.assertRaisesRegex(ValueError, "GRAPHHELM_CLI"):
+                    rt.keel_plan(temp, ["example.rs"])
+                self.assertEqual(invoke.call_count, 1)
     def test_repository_cli_files_select_bundled_modules(self):
         # Cost: offline cargo metadata and file reads. Fixture-only bundle coverage misses a
         # manifest that still auto-discovers individual targets or forgets a newly added file.
@@ -45,7 +59,7 @@ class Reach(unittest.TestCase):
             whole, single, *_ = rt.reach([source.relative_to(repo).as_posix()], packages, {}, repo)
             self.assertEqual(whole, set())
             self.assertEqual(single, {("graphhelm-cli", "cli", source.stem)}, source.name)
-            self.assertIn(f"cargo +1.97.1 test --locked -p graphhelm-cli --test cli {source.stem}:: -- --test-threads=2",
+            self.assertIn(f"cargo +1.97.1 test --locked -p graphhelm-cli --test cli -- --test-threads=2 {source.stem}::",
                           rt.commands(whole, single, []))
 
     def test_repository_cli_bundle_owns_registration_guard(self):
@@ -189,7 +203,43 @@ class Reach(unittest.TestCase):
         whole, single, *_ = reach("apps/cli/tests/keel_check.rs")
         self.assertEqual(whole, set())
         self.assertEqual(single, {("graphhelm-cli", "development", "keel_check")})
-        self.assertIn("cargo +1.97.1 test --locked -p graphhelm-cli --test development keel_check:: -- --test-threads=2", rt.commands(whole, single, []))
+        self.assertIn("cargo +1.97.1 test --locked -p graphhelm-cli --test development -- --test-threads=2 keel_check::", rt.commands(whole, single, []))
+
+    def test_single_modules_group_by_executable_without_crossing_targets(self):
+        single = {
+            ("graphhelm-cli", "bundle", "alpha"),
+            ("graphhelm-cli", "bundle", "beta"),
+            ("graphhelm-cli", "other", "gamma"),
+            ("other-package", "bundle", "delta"),
+        }
+        expected = [
+            "cargo +1.97.1 test --locked -p graphhelm-cli --test bundle -- --test-threads=2 alpha:: beta::",
+            "cargo +1.97.1 test --locked -p graphhelm-cli --test other -- --test-threads=2 gamma::",
+            "cargo +1.97.1 test --locked -p other-package --test bundle -- --test-threads=2 delta::",
+        ]
+        command_targets = [command for command in rt.commands(set(), single, [])
+                           if command.startswith("cargo +1.97.1 test --locked -p ")
+                           and " authored_strings_across_the_workspace " not in command]
+        self.assertEqual(command_targets, expected)
+        step_targets = [step["argv"] for step in rt.steps(set(), single, [])
+                        if step["argv"][:3] == ["cargo", "+1.97.1", "test"]
+                        and step["argv"][5] in {"graphhelm-cli", "other-package"}]
+        self.assertEqual([" ".join(argv) for argv in step_targets], expected)
+
+    def test_unfiltered_selection_dominates_module_filters(self):
+        single = {
+            ("graphhelm-cli", "bundle", None),
+            ("graphhelm-cli", "bundle", "alpha"),
+        }
+        expected = "cargo +1.97.1 test --locked -p graphhelm-cli --test bundle -- --test-threads=2"
+        command_targets = [command for command in rt.commands(set(), single, [])
+                           if command.startswith("cargo +1.97.1 test --locked -p ")
+                           and " authored_strings_across_the_workspace " not in command]
+        self.assertEqual(command_targets, [expected])
+        step_targets = [step["argv"] for step in rt.steps(set(), single, [])
+                        if step["argv"][:3] == ["cargo", "+1.97.1", "test"]
+                        and step["argv"][5] == "graphhelm-cli"]
+        self.assertEqual([" ".join(argv) for argv in step_targets], [expected])
 
     def test_a_test_file_of_its_own_reaches_its_target(self):
         _, single, *_ = reach("core/policy/tests/keel.rs")
@@ -311,7 +361,7 @@ class CliModules(unittest.TestCase):
         self.assertEqual(whole, set())
         self.assertEqual(single, {("graphhelm-cli", "bin:graphhelm", "commands::journey_explore"),
                                   ("graphhelm-cli", "journey_explore_cli", None)})
-        self.assertIn("cargo +1.97.1 test --locked -p graphhelm-cli --bin graphhelm commands::journey_explore:: -- --test-threads=2",
+        self.assertIn("cargo +1.97.1 test --locked -p graphhelm-cli --bin graphhelm -- --test-threads=2 commands::journey_explore::",
                       rt.commands(whole, single, []))
 
     def test_fixture_source_strings_do_not_reach_as_readers(self):

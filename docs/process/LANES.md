@@ -147,6 +147,17 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 
       python tools/reached-tests/run_reached.py --repo . --base origin/main --head HEAD --root D:/gh --lane <lane> --output <outside-repo>/feedback.json
 
+  Pin the agent CLI with `--graphhelm <absolute-executable>` or `GRAPHHELM_CLI`; an explicit
+  missing executable is an error, never a reason to fall back to another installation. The
+  runner records the resolved path and uses it for its selector and GraphHelm commands.
+  Updating a launcher affects future processes only; an already-running agent must pass the
+  explicit path on its next invocation. Keep the Runtime executable and launch settings separate.
+
+  Selected modules of the same Rust test executable share one invocation with multiple libtest
+  filters. This preserves the selected test set and avoids queueing once per module. Different
+  executables still take separate leases. A broad selection is still a broad audit; bundling is
+  not permission to execute every module or to omit required checks to meet the time target.
+
   It plans the committed diff and queues each Cargo test or clippy command separately, with six
   build jobs and two test threads. Fmt, Python, Node, Studio checks and standalone journey tools
   run outside the Cargo slot, serially. Existing root target rules remain authoritative. The

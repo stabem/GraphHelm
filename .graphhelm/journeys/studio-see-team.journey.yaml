@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-see-team
-title: See agents and their timeline in Lanes
+title: See agents, their timeline and details in Lanes
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -8,11 +8,17 @@ actors: [owner]
 secrets: []
 risks: [critical_ux]
 screens:
+  - id: agent
+    title: The planner agent details are open
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: region, name: Agent planner}, {role: heading, name: planner}, {role: button, name: Close planner}]
+    scope: [apps/studio/src/components/panel.tsx]
   - id: lanes
     title: Agents board and lane timeline
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: Agents}, {role: heading, name: Agents}, {role: list, name: Agent board}, {role: region, name: Lanes}, {role: heading, name: "Who did what, and who is stuck"}]
+    expect: [{role: region, name: Agents}, {role: heading, name: Agents}, {role: list, name: Agent board}, {role: button, name: Details, locator: {context: 'region "Agents"'}}, {role: region, name: Lanes}, {role: heading, name: "Who did what, and who is stuck"}]
     scope: [apps/studio/src/components/lanes-timeline.tsx, apps/studio/src/runtime/agent-board.ts, apps/studio/src/runtime/lane-bars.ts]
   - id: run
     title: A run is open on its Mission graph
@@ -26,6 +32,11 @@ edges:
     to: lanes
     acts:
       - {kind: activate, role: tab, name: Lanes}
+  - id: lanes.details
+    from: lanes
+    to: agent
+    acts:
+      - {kind: activate, role: button, name: Details, locator: {context: 'region "Agents"'}}
 paths:
-  main: [run.lanes]
+  main: [run.lanes, lanes.details]
 drift: []

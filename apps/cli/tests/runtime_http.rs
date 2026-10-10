@@ -154,6 +154,54 @@ fn lifecycle_killed_runtime_is_reported_as_vanished() {
 }
 
 #[test]
+fn lifecycle_task_panic_then_kill_is_vanished_with_last_panic() {
+    // A caught task panic is not the later process ending. Existing clean/main-panic
+    // cells miss this sequence. Cost: two isolated child starts; no new seam.
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let extra = ServeExtra {
+        env: vec![("GRAPHHELM_TEST_PANIC_ON_BOOT".into(), "task".into())],
+        ..ServeExtra::default()
+    };
+    let (server, _, _) = serve_with(&events, &extra);
+    let record: Value = serde_json::from_slice(
+        &std::fs::read(dir.path().join("events.runtime-lifecycle.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(record["fatal"], false);
+    drop(server);
+    let (_next, base, _) = serve(&events);
+    let reply = json_body(&raw_request(&format!("{base}/health"), None).unwrap());
+    let previous = &reply["data"]["previousExit"];
+    assert_eq!(previous["state"], "vanished");
+    assert_eq!(previous["at"], record["startedAt"]);
+    assert!(previous.get("location").is_none());
+    let location = previous["lastPanic"]["location"].as_str().unwrap();
+    assert!(location.starts_with("cli/src/") && location.contains(".rs:"));
+    assert_eq!(previous["lastPanic"].as_object().unwrap().len(), 1);
+    assert!(!reply.to_string().contains("private-panic-payload"));
+}
+
+#[test]
+fn lifecycle_reused_live_pid_does_not_refuse_unlocked_restart() {
+    // Model PID reuse deterministically with this living test process after killing
+    // the owner. The existing live-owner cell covers a held lock, not a free one.
+    // Cost: two isolated child starts and one persisted-record edit; no new seam.
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let (server, _, _) = serve(&events);
+    drop(server);
+    let path = dir.path().join("events.runtime-lifecycle.json");
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    record["pid"] = std::process::id().into();
+    std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let (_next, base, _) = serve(&events);
+    let reply = json_body(&raw_request(&format!("{base}/health"), None).unwrap());
+    assert_eq!(reply["data"]["previousExit"]["state"], "vanished");
+    assert_eq!(reply["data"]["previousExit"]["pid"], std::process::id());
+}
+
+#[test]
 fn lifecycle_clean_shutdown_is_reported_on_restart() {
     let dir = tempfile::tempdir().unwrap();
     let events = dir.path().join("events");

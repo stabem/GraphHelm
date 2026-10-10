@@ -146,24 +146,28 @@ impl Lifecycle {
                     return Err(invalid());
                 }
                 let record: Record = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-                if matches!(record.state, State::Running | State::Panicked)
-                    && graphhelm_process_tree::process_is_running(record.pid)
-                {
-                    return Err(super::serve_invalid(
-                        "the previous Runtime pid is alive; inspect runtime-lifecycle.json before removing it manually",
-                        "/events",
-                    ));
-                }
+                // The acquired lifetime lock proves no previous owner remains. A live
+                // recorded PID can have been reused and does not establish ownership.
                 let state = match record.state {
                     State::Running => "vanished",
                     State::Clean => "clean",
                     State::ServeError => "serve_error",
+                    State::Panicked if record.fatal != Some(true) => "vanished",
                     State::Panicked => "panicked",
                 };
+                let at = if state == "vanished" {
+                    record.started_at
+                } else {
+                    record.at.unwrap_or(record.started_at)
+                };
                 let mut result = serde_json::json!({"state": state, "pid": record.pid,
-                    "at": record.at.unwrap_or(record.started_at)});
+                    "at": at});
                 if let Some(location) = record.location {
-                    result["location"] = serde_json::Value::String(sanitize(&location));
+                    if state == "vanished" {
+                        result["lastPanic"] = serde_json::json!({"location": sanitize(&location)});
+                    } else {
+                        result["location"] = serde_json::Value::String(sanitize(&location));
+                    }
                 }
                 result
             }

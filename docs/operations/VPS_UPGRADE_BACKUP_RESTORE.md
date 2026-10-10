@@ -122,7 +122,7 @@ systemctl start graphhelm.service
 Wait for `/health` to return successfully before reconnecting clients.
 
 The unauthenticated health envelope includes `data.previousExit`: `null` on the first
-start, otherwise `{state, at, pid, location?}` for the previous run on this events directory.
+start, otherwise `{state, at, pid, location?, lastPanic?}` for the previous run on this events directory.
 `state` is `clean`, `serve_error`, `panicked`, or `vanished`. Times are Unix seconds;
 for `vanished`, `at` is the previous start time, not an inferred time of death.
 `location`, when present, is a sanitized crate-relative Rust file and line or `unknown`.
@@ -131,15 +131,15 @@ Panic payloads and thread names are never stored or returned.
 `<events>.runtime-lifecycle.json` is replaced atomically after bind and on an ending.
 Its ownership lock is `<events>.runtime-lifecycle.lock`; both are siblings of the Event
 Store directory, so its closed root layout stays untouched.
-A lifetime lock prevents two listeners from claiming the same events directory. A live
-previous PID also refuses startup; PID reuse can cause a conservative refusal. Inspect
-the process and `runtime-lifecycle.json` before manually removing a stale record. The
-existing process helper does not supply a process start identity.
+A lifetime lock prevents two listeners from claiming the same events directory. The lock
+is the ownership test; a reused PID in the previous record does not refuse startup.
 
 A caught task panic records `panicked` with `fatal: false` while the Runtime can still
 serve requests. A later clean exit supersedes it and keeps `lastPanic` in the file.
-Thus a previous `panicked` record proves that a panic happened, not that it caused the
-process to end. A kill, abort, or power loss with no recorded ending reports `vanished`.
+On restart, a panic record reports `panicked` only when `fatal` is true. Otherwise it
+reports `vanished`, with the sanitized panic location in `lastPanic.location`, rather
+than attributing the process ending to the caught panic. A kill, abort, or power loss
+with no recorded ending also reports `vanished`.
 Neither state establishes the root cause of an outage. The previous exit stays fixed
 for the current process; health does not report its own latest caught panic.
 

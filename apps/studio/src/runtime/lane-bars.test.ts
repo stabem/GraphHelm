@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { agentBoard } from "./agent-board";
-import { LIVENESS_MS, laneBars, packBars, placeholderLane, STALL_MS, type TimedTaskEvent } from "./lane-bars";
+import { LIVENESS_MS, laneBars, packBars, placeholderLane, type TimedTaskEvent } from "./lane-bars";
 
 const T0 = Date.parse("2026-10-09T00:00:00Z");
 const at = (ms: number) => new Date(T0 + ms).toISOString();
@@ -28,8 +28,8 @@ describe("laneBars", () => {
 
   it("silence threshold", () => {
     const events = [ev({ kind: "task.review_assigned", reviewer: "rev", at: at(0) })];
-    expect(laneBars(events, T0 + STALL_MS - 1, STALL_MS * 2)[0].silent).toBe(false);
-    expect(laneBars(events, T0 + STALL_MS, STALL_MS * 2)[0].silent).toBe(true);
+    expect(laneBars(events, T0 + LIVENESS_MS - 1, LIVENESS_MS * 2)[0].silent).toBe(false);
+    expect(laneBars(events, T0 + LIVENESS_MS, LIVENESS_MS * 2)[0].silent).toBe(true);
   });
 
   it("an open implement bar goes silent after LIVENESS_MS too (#591: an offline author is not working)", () => {
@@ -62,7 +62,7 @@ describe("laneBars", () => {
       ev({ kind: "task.review_assigned", reviewer: "rev", at: at(0) }),
       ev({ kind: "task.review_assigned", reviewer: "rev", at: at(10) }),
       ev({ kind: "task.review_verdict", reviewer: "rev", verdict: "BLOCK" as never, at: at(20) }),
-    ], T0 + STALL_MS * 2, STALL_MS * 4);
+    ], T0 + LIVENESS_MS * 2, LIVENESS_MS * 4);
     expect(lanes[0].bars.some((b) => b.open)).toBe(false);
     expect(lanes[0].silent).toBe(false);
   });

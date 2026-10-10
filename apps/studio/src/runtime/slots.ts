@@ -65,9 +65,6 @@ export function slotStatus(lane: string | null | undefined, slots: SlotView[]): 
   return null;
 }
 
-/** The roots whose queue could not be read: shown as "queue unavailable", never as empty. */
-export const unavailableRoots = (slots: SlotView[]): string[] => slots.filter((s) => !s.ok).map((s) => s.root);
-
 /** 1st, 2nd, 3rd, 4th, 11th, 21st. */
 export function ordinal(n: number): string {
   const t = n % 100;

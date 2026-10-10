@@ -9,6 +9,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -442,6 +443,77 @@ class Planned(unittest.TestCase):
         run("init", "-q"); run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base")
         (Path(repo) / "changed.rs").write_text("x", encoding="utf-8")
         self.assertEqual(task_record.git_paths(repo), ["changed.rs"])
+
+    def test_automatic_plan_passes_exact_git_paths_to_keel(self):
+        # #702: untracked directories must expand to files and Git's quoted UTF-8 paths
+        # must survive decoding. The sibling test covers rename parsing.
+        # Existing coverage has only one ASCII root file. This uses a real temporary Git repo
+        # and mocks only the planner process response. Cost: local Git, seconds, no network.
+        repo = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(repo, ignore_errors=True))
+        run = lambda *a: subprocess.run(["git", "-C", repo, *a], capture_output=True, check=True)
+        run("init", "-q")
+        run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base")
+        run("update-ref", "refs/remotes/origin/main", "HEAD")
+        run("config", "core.quotePath", "true")
+
+        tracked_name = "core/policy/移動.rs"
+        tracked_path = Path(repo, tracked_name)
+        tracked_path.parent.mkdir(parents=True)
+        tracked_path.write_text("tracked", encoding="utf-8")
+        run("add", tracked_name)
+        run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "tracked")
+        tracked_path.write_text("changed", encoding="utf-8")
+
+        nested = Path(repo, "core/policy/new/nested.rs")
+        nested.parent.mkdir(parents=True)
+        nested.write_text("untracked", encoding="utf-8")
+        expected = ["core/policy/new/nested.rs", tracked_name]
+
+        args = task_record.parse(["--lane", "lane-a", "planned", "--issue", "702", "--summary", "s",
+                                  "--plan-repo", repo, "--graphhelm", "graphhelm"])
+        plan = {"schema": "graphhelm-task-plan-v1", "classes": ["code"], "reviews": 1,
+                "proof": "tests", "critic": {"mode": "none", "passScore": 8, "maxRounds": 3}}
+        calls = []
+        real_run = subprocess.run
+
+        def observe(command, **options):
+            if command[0] == "graphhelm":
+                calls.append(command)
+                return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"plan": plan}}), "")
+            return real_run(command, **options)
+
+        with patch.object(task_record.subprocess, "run", side_effect=observe):
+            task_record.keel_plan(args)
+
+        self.assertEqual(calls[0][calls[0].index("--paths") + 1:], expected)
+
+    def test_automatic_plan_keeps_literal_arrow_in_rename_path(self):
+        # #702: Git's human rename separator can also occur in the destination filename.
+        # Windows forbids `>` in real filenames, so supply Git's status output at the I/O edge.
+        # This guards the planner argv; only subprocess I/O is replaced. Cost: milliseconds.
+        args = task_record.parse(["--lane", "lane-a", "planned", "--issue", "702", "--summary", "s",
+                                  "--plan-repo", ".", "--graphhelm", "graphhelm"])
+        plan = {"schema": "graphhelm-task-plan-v1", "classes": ["code"], "reviews": 1,
+                "proof": "tests", "critic": {"mode": "none", "passScore": 8, "maxRounds": 3}}
+        calls = []
+
+        def observe(command, **options):
+            if command[0] == "git":
+                if "diff" in command:
+                    output = b""
+                elif "-z" in command:
+                    output = b"R  new -> label.rs\0old.rs\0"
+                else:
+                    output = "R  old.rs -> new -> label.rs\n"
+                return subprocess.CompletedProcess(command, 0, output, b"")
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"plan": plan}}), "")
+
+        with patch.object(task_record.subprocess, "run", side_effect=observe):
+            task_record.keel_plan(args)
+
+        self.assertEqual(calls[0][calls[0].index("--paths") + 1:], ["new -> label.rs"])
 
     def test_no_summary_is_refused(self):
         with self.assertRaises(SystemExit):

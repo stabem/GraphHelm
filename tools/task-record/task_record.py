@@ -194,14 +194,36 @@ DEFAULT_PLAN = {"classes": ["code"], "reviews": 1, "proof": "tests",
 def git_paths(repo):
     """#602: the task's paths when none are given: the branch's diff against `origin/main` plus
     uncommitted changes, in `repo`. Empty when git cannot answer."""
-    def lines(*command):
+    def nul_paths(*command):
         try:
-            run = subprocess.run(["git", "-C", repo, *command], capture_output=True, text=True, timeout=60)
+            run = subprocess.run(["git", "-C", repo, *command], capture_output=True, timeout=60)
         except (OSError, subprocess.TimeoutExpired):
             return []
-        return run.stdout.splitlines() if run.returncode == 0 else []
-    paths = lines("diff", "--name-only", "origin/main...HEAD")
-    paths += [line[3:].split(" -> ")[-1].strip('"') for line in lines("status", "--porcelain") if len(line) > 3]
+        if run.returncode != 0:
+            return []
+        return [path.decode("utf-8", errors="surrogateescape")
+                for path in run.stdout.split(b"\0") if path]
+
+    paths = nul_paths("diff", "--name-only", "-z", "origin/main...HEAD")
+    try:
+        run = subprocess.run(["git", "-C", repo, "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+                             capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        run = None
+    if run is not None and run.returncode == 0:
+        records = run.stdout.split(b"\0")
+        index = 0
+        while index < len(records):
+            record = records[index]
+            index += 1
+            if len(record) < 4:
+                continue
+            status, path = record[:2], record[3:]
+            if path:
+                paths.append(path.decode("utf-8", errors="surrogateescape"))
+            # In NUL porcelain output the destination comes first; the next field is its source.
+            if b"R" in status or b"C" in status:
+                index += 1
     return sorted(dict.fromkeys(path for path in paths if path))
 
 

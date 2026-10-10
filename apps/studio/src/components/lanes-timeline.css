@@ -80,3 +80,9 @@
 .ab-slot[data-state="unavailable"] { background: #3A2A10; color: #F5A524; }
 .ab-slot-root { font-family: ui-monospace, monospace; opacity: .85; }
 .ab-slot-queue { opacity: .8; }
+
+/* #647: Details / Name this bot on a board row, quiet until hovered. */
+.ab-acts { grid-column: 1 / -1; display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.ab-act, .ab-name-form button { font: inherit; font-size: 12px; padding: 2px 8px; border-radius: 6px; border: 1px solid #2A2D35; background: transparent; color: inherit; cursor: pointer; }
+.ab-name-form { display: inline-flex; gap: 6px; }
+.ab-name-form input { font: inherit; font-size: 12px; padding: 2px 6px; width: 140px; }

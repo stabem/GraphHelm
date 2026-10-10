@@ -18,6 +18,8 @@ import { laneLiveness } from "../runtime/stage-health";
 import { WORK_STAGES } from "../runtime/work-groups";
 import { LaneActions, laneRoster, type LaneNote } from "./lane-actions";
 import type { SlotView } from "../runtime/slots";
+import type { GraphNode } from "../graph/model";
+import { readable } from "./format";
 
 type Sub = "graph" | "proof" | "test" | "lanes";
 const WINDOW_MS = 14 * 3_600_000;
@@ -54,6 +56,42 @@ interface Props {
   onReviewAssigned?: (task: TaskState, lane: string) => Promise<unknown>;
   /** #636: the build-slot queues (App polls them); empty: no slot roots, nothing shown. */
   slots?: SlotView[];
+  /** #647: the run's graph nodes for the Run graph strip; empty, the strip is omitted. */
+  runNodes?: GraphNode[];
+  /** #647: node ids no bot holds a task for (App's unassignedSteps), listed as the Team canvas did. */
+  unassignedNodeIds?: string[];
+  /** #647: opens the existing node window (App: setFocus node). Absent: nodes are not buttons. */
+  onOpenNode?: (nodeId: string) => void;
+  /** #647: Lanes board "Details" (App: setFocus agent). */
+  onOpenBotDetails?: (key: string) => void;
+  /** #647: Lanes board "Name this bot" (App: nameBot). */
+  onNameBot?: (actorId: string, displayName: string) => void | Promise<unknown>;
+}
+
+/** #647: the run's nodes and their state, each one opening the node window the Team canvas opened. */
+export function RunGraphStrip({ nodes, unassigned, onOpenNode }: { nodes: GraphNode[]; unassigned: string[]; onOpenNode?: (nodeId: string) => void }) {
+  const [open, setOpen] = useState(true);
+  if (nodes.length === 0) return null;
+  const free = new Set(unassigned);
+  const parts = [
+    { title: "Steps without a bot", nodes: nodes.filter((n) => free.has(n.id)) },
+    { title: "Steps with a bot", nodes: nodes.filter((n) => !free.has(n.id)) },
+  ].filter((p) => p.nodes.length > 0);
+  const item = (n: GraphNode) => {
+    const text = `${n.declaredName ?? n.id} · ${readable(n.state)}`;
+    return <li key={n.id}>{onOpenNode ? <button type="button" className="mv-node" data-state={n.state} onClick={() => onOpenNode(n.id)}>{text}</button> : <span className="mv-node" data-state={n.state}>{text}</span>}</li>;
+  };
+  return (
+    <section className="mv-run-graph mv-pad" aria-label="Run graph">
+      <button type="button" className="mv-fold" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{`Run graph · ${nodes.length} ${nodes.length === 1 ? "step" : "steps"}`}</button>
+      {open && parts.map((p) => (
+        <div key={p.title} className="mv-run-part">
+          <h3>{p.title}</h3>
+          <ol>{p.nodes.map(item)}</ol>
+        </div>
+      ))}
+    </section>
+  );
 }
 
 /** #591: the rail's dot colour family for a bot: working amber, waiting or quiet red, done grey. */
@@ -104,7 +142,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, onJourneys, draftJourneys = 0, agents = [], away = null, onSignal, onReviewAssigned, slots = [] }: Props) {
+export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, runName, lastRecordAt, onTeam, onJourneys, draftJourneys = 0, agents = [], away = null, onSignal, onReviewAssigned, slots = [], runNodes = [], unassignedNodeIds = [], onOpenNode, onOpenBotDetails, onNameBot }: Props) {
   const [chosen, setChosen] = useState<Selection | null>(null);
   const [stepId, setStepId] = useState<string | null>(null);
   // undefined: the group's default (the task that most needs the owner); null: none, a column is chosen.
@@ -175,9 +213,12 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
       </header>
   );
   const page = onTeam ? "full" : undefined;
+  const lanesView = <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots}
+    {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />;
+  const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds} {...(onOpenNode ? { onOpenNode } : {})} />;
   if (sel === null) return <div className="mv" data-wide="true" data-page={page} data-chat={chatOpen ? "open" : undefined}>{header}
-    {sub === "lanes" ? <div className="mv-pad"><LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} /></div>
-      : <p className="mv-none mv-pad">No journeys in this project yet</p>}</div>;
+    {sub === "lanes" ? <div className="mv-pad">{lanesView}</div>
+      : <>{sub === "graph" && runGraph}<p className="mv-none mv-pad">No journeys in this project yet</p></>}</div>;
   const rawGroup: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
   // #591: the live Review row names only the current reviewer (latest assignment on the current head).
   const group: WorkGroup | null = rawGroup ? { ...rawGroup, rows: rawGroup.rows.map((r) => ({ ...r, task: withCurrentReviewer(r.task, lanes) })) } : null;
@@ -262,6 +303,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
           {away && <><span className="mv-sum-fill" /><span className="mv-away">{awayText(away)}</span></>}
         </p>
       )}
+      {sub === "graph" && runGraph}
       <div className="mv-body">
         {sub !== "lanes" && (
           <nav aria-label="Journeys" className="mv-journeys">
@@ -390,7 +432,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
           {sub === "test" && journey && contractId && <TestCanvas frames={testFrames(journey, runFor(contractId))} selected={frame} onSelect={setFrame}
             frameUrl={(id) => frameUrl(id, contractId)} onMarkSafe={(id) => onMarkSafe(id, contractId)}
             {...(onSendBack ? { onSendBack: (id: string) => onSendBack(id, contractId) } : {})} />}
-          {sub === "lanes" && <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} />}
+          {sub === "lanes" && lanesView}
         </div>
       </div>
     </div>

@@ -152,3 +152,10 @@
 .mv-chip .mv-prog[data-kind="alert"] { color: #3A1E1A; }
 @keyframes mv-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .mv-prog[data-kind="spin"] { animation: none; } }
+
+/* #647: the Run graph strip under the summary: one quiet line of node buttons per part. */
+.mv-run-graph { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; font-size: 12px; }
+.mv-run-part { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.mv-run-part h3 { margin: 0; font-size: 11px; font-weight: 500; opacity: .7; }
+.mv-run-part ol { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.mv-node { font: inherit; padding: 2px 8px; border-radius: 6px; border: 1px solid #24272E; background: transparent; color: inherit; cursor: pointer; }

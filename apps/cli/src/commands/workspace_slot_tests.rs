@@ -299,7 +299,13 @@ fn target_root_floor_cap_and_reclaim_are_observed_through_private_admission() {
     };
     let refused = run_admitted_slot_in(&second_request, &second);
     assert!(!refused.output.ok);
-    assert!(refused.output.diagnostics[0].message.contains("cap"));
+    assert_eq!(refused.output.diagnostics[0].path, "/target");
+    assert!(
+        !std::fs::read_to_string(&log)
+            .unwrap()
+            .contains("second start"),
+        "a command refused by the lane target cap must not run"
+    );
     std::fs::remove_dir_all(&first).unwrap();
     let reclaimed = run_admitted_slot_in(&second_request, &second);
     assert!(reclaimed.output.ok);

@@ -164,6 +164,8 @@ def embeds(repo, packages):
                 if "{" in rel or rel.startswith("/"):
                     continue
                 target = (source.parent / rel).resolve()
+                if target == source.resolve():
+                    continue
                 try:
                     out.setdefault(target.relative_to(root).as_posix(), set()).add(p["name"])
                 except ValueError:

@@ -262,6 +262,36 @@ class Reach(unittest.TestCase):
         whole, *_ = reach("extensions/builtin/graphhelm-jpd/schemas/journey-contract.schema.json")
         self.assertIn("graphhelm-cli", whole)
 
+    def test_self_include_stays_narrow_while_cross_file_include_stays_broad(self):
+        # Contract: a source file embedding itself remains a narrow test selection, while a
+        # changed file embedded by another source still reaches that package. The regression is
+        # self-include promotion to package-wide coverage; existing fixture mappings do not cover
+        # self-resolved paths. Cost: temporary files and pure Python reach calculation.
+        with tempfile.TemporaryDirectory() as repo_name:
+            repo = Path(repo_name)
+            source_dir = repo / "apps/cli/tests"
+            source_dir.mkdir(parents=True)
+            (source_dir / "api_http.rs").write_text(
+                'include_str!("api_http.rs");', encoding="utf-8")
+            (source_dir / "fixture.txt").write_text("fixture", encoding="utf-8")
+            (source_dir / "cross_file.rs").write_text(
+                'include_str!("fixture.txt");', encoding="utf-8")
+            packages = [dict(PACKAGES[2],
+                              tests=[{"name": "cli", "src": "apps/cli/tests/cli.rs"}],
+                              bundles={"api_http": "cli", "cross_file": "cli"})]
+            embedded = rt.embeds(repo, packages)
+
+            self.assertNotIn("apps/cli/tests/api_http.rs", embedded)
+            whole, single, *_ = rt.reach(
+                ["apps/cli/tests/api_http.rs"], packages, embedded, repo)
+            self.assertEqual(whole, set())
+            self.assertEqual(single, {("graphhelm-cli", "cli", "api_http")})
+            self.assertTrue(any("api_http::" in command for command in rt.commands(whole, single, [])))
+
+            self.assertEqual(embedded["apps/cli/tests/fixture.txt"], {"graphhelm-cli"})
+            whole, *_ = rt.reach(["apps/cli/tests/fixture.txt"], packages, embedded, repo)
+            self.assertEqual(whole, {"graphhelm-cli"})
+
     def test_an_extension_change_reaches_its_runtime_readers_and_validate(self):
         whole, single, _, _, validate, other = reach("extensions/builtin/graphhelm-development-contracts/skills/merge/SKILL.md")
         self.assertEqual(whole, set())

@@ -84,6 +84,19 @@ def main() -> int:
         payload = hook_input()
     except (ValueError, OSError):
         return 0
+    # Every Stop refreshes this lane's completed PRs. This is best-effort: an offline
+    # Runtime or GitHub must never prevent the host from ending its turn.
+    try:
+        bound = binding(payload)
+        lane = os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload)
+        if bound is not None and lane and ID.fullmatch(lane):
+            execution, token_file, url, _origin, _node = bound
+            cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
+            subprocess.run([cli, "tasks", "reconcile", "--execution", execution,
+                            "--token-file", token_file, "--url", url, "--lane", lane],
+                           capture_output=True, timeout=5)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
     # The host sets this on the continuation caused by a Stop block. One reminder
     # per stop cycle is enough, even when the lane cannot send its reply.
     if payload.get("stop_hook_active") is True:

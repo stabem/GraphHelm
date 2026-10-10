@@ -157,6 +157,7 @@ fn structured_invocation(arguments: &[OsString]) -> Option<&'static str> {
 /// structured argument-error contract instead of only the families that happened to need it first.
 fn top_level_command(argument: &str) -> Option<&'static str> {
     match argument {
+        "tasks" => Some("tasks"),
         "graph" => Some("graph"),
         "schema" => Some("schema"),
         "extension" => Some("extension"),

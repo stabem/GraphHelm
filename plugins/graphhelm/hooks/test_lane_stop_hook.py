@@ -84,6 +84,45 @@ class LaneStopTests(unittest.TestCase):
         with urllib.request.urlopen(req, timeout=5) as response:
             self.assertTrue(json.load(response)["ok"])
 
+    def test_reconcile_records_github_merge_once(self):
+        """A fake gh MERGED reply closes one recorded PR in the disposable Runtime."""
+        root = Path(self.tmp.name)
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        sha = "a" * 40
+        reply = json.dumps({"state": "MERGED", "mergeCommit": {"oid": sha},
+                            "closingIssuesReferences": []})
+        if os.name == "nt":
+            (fake_bin / "gh.cmd").write_text("@echo off\r\necho " + reply + "\r\n")
+        else:
+            fake = fake_bin / "gh"
+            fake.write_text("#!/bin/sh\nprintf '%s\\n' '" + reply + "'\n")
+            fake.chmod(0o755)
+        now = "2026-10-10T00:00:00Z"
+        document = {"schema": "graphhelm-task-event-v1", "taskId": "issue-766",
+                    "revision": 2, "at": now, "pr": 9001, "headSha": "b" * 40,
+                    "journeys": [], "lane": "codex-4", "repo": "stabem/GraphHelm"}
+        signal = {"id": "pr-9001-opened", "source": {"type": "user", "id": "codex-4"},
+                  "type": "task.pr_opened", "severity": "low", "description": json.dumps(document),
+                  "evidence": ["https://github.com/stabem/GraphHelm/pull/9001"], "emittedAt": now}
+        token = Path(self.env["GRAPHHELM_TOKEN_FILE"]).read_text().strip()
+        request = urllib.request.Request(self.url + "/v1/executions/lane-test/signal",
+                  data=json.dumps({"signal": signal}).encode(), headers={"Authorization": "Bearer " + token,
+                  "Content-Type": "application/json", "Idempotency-Key": "pr-9001-opened",
+                  "X-GraphHelm-Actor": "codex-4", "X-GraphHelm-Actor-Type": "agent"})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertTrue(json.load(response)["ok"])
+        environment = {**self.env, "PATH": str(fake_bin) + os.pathsep + self.env.get("PATH", "")}
+        command = [sys.executable, str(HERE / "tasks_reconcile.py"), "--execution", "lane-test",
+                   "--url", self.url, "--token-file", self.env["GRAPHHELM_TOKEN_FILE"],
+                   "--repo", "stabem/GraphHelm", "--lane", "codex-4"]
+        first = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=15)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(json.loads(first.stdout)["merged"], [9001])
+        second = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=15)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(json.loads(second.stdout)["merged"], [])
+
     def stop(self, manifest, active=False):
         # Drive the registered Stop commands, not an unregistered helper. On the parent
         # the Keel hook allows this repeated stop and the addressed note is lost.

@@ -21,6 +21,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum TopLevel {
+    /// Reconcile recorded delivery tasks with GitHub.
+    Tasks(TasksArgs),
     Graph(GraphArgs),
     Schema(SchemaArgs),
     /// Extension package operations. Validation stays offline; the lifecycle subcommands
@@ -113,6 +115,18 @@ pub enum TasksCommand {
         url: Option<String>,
         #[arg(long)]
         token_file: Option<PathBuf>,
+    },
+    Reconcile {
+        #[arg(long)]
+        execution: String,
+        #[arg(long, default_value = "http://127.0.0.1:8791")]
+        url: String,
+        #[arg(long)]
+        token_file: PathBuf,
+        #[arg(long)]
+        lane: Option<String>,
+        #[arg(long, default_value = "stabem/GraphHelm")]
+        repo: String,
     },
 }
 

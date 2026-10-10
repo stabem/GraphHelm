@@ -29,7 +29,10 @@ mod registration {
             .collect();
         let missing: Vec<_> = present.difference(&registered).cloned().collect();
         let stale: Vec<_> = registered.difference(&present).cloned().collect();
-        assert!(missing.is_empty(), "unregistered CLI test files: {missing:?}");
+        assert!(
+            missing.is_empty(),
+            "unregistered CLI test files: {missing:?}"
+        );
         assert!(stale.is_empty(), "missing CLI test files: {stale:?}");
     }
 }

@@ -48,6 +48,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${PLUGIN_ROOT}/hooks/lane_stop_hook.py\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

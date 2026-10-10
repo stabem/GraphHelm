@@ -88,6 +88,14 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
 - Docs-only changes need only the existing applicable docs guards and `git diff --check`, not
   Rust builds, Studio checks or journey previews.
 
+Execute the plan with `python tools/reached-tests/run_reached.py --repo . --base <base>
+--head HEAD --root <root> --lane <lane> --output <outside-repo>/feedback.json`. The runner releases
+the existing slot between Cargo commands instead of holding it for the entire proof script.
+Its 180-second target includes planning, queue and execution. Record the report and any pending
+checks in the PR; a budget miss is never green. This replaces the long-script slot pattern, not
+the existing review or load limits. Broad audits and all-journey coverage remain explicit work,
+not mandatory feedback for every edit. See LANES.md §3 for warm targets and queue limits.
+
 The script prints fmt, clippy and workspace-guard commands whenever Rust is reached. Apply the
 budget above to those commands, including narrowing clippy to touched crates. When `graphhelm`
 is on PATH the Keel plan's class and proof are printed beside the commands.
@@ -172,6 +180,14 @@ merged like any other, and the review says what was not observed.
   crate's text and so are reached by any edit: `cargo +1.97.1 test --locked -p graphhelm-protocols
   --test authored_strings_across_the_workspace` (about one second). #1281 added a string literal in
   a test file, passed its crate's tests, and left `main` red on every platform until #1311.
+- **Reuse preparation, not verdicts.** The author may hand the unchanged worktree and its warm
+  isolated target to the reviewer for sequential use. The author stops all writes and Cargo
+  commands there for the review. The reviewer verifies the remote, exact committed head, clean
+  tree, toolchain/profile/features and target path, then runs the reached commands independently
+  through the slot. Check the head and clean tree again afterward. If any identity changes,
+  the result does not cover the requested head. Do not point a second worktree at that target,
+  copy Cargo fingerprints, or execute binaries from an unverified artifact directory. A separate
+  reviewer target remains valid when the handoff cannot be made, but its cold cost is explicit.
 - Run tests from the **committed** head, not a dirty tree: a check that compares the branch with
   `main` (the freeze rule) sees nothing before the commit exists.
 - The verdict is a word in the comment text: `APPROVE`, `APPROVE-WITH-RISK` (name the risk) or

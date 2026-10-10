@@ -138,15 +138,36 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 - Write Git Bash's full path in the slot command, as above. A bare `bash` or `sh` resolves to WSL.
 - A `cargo check` run allowed outside the slot uses
   `CARGO_TARGET_DIR=D:\gh\<lane>\target-check`.
-- Benchmarks and store seeding run inside the slot too: they load the machine like
-  a build does.
 - Benchmarks, load generators and store seeding run inside the slot too: they load the machine like
   a build does.
 - Urgency does not exempt cargo builds, tests or clippy from the slot.
 - Do not run CPU stress tests on the shared machine.
 - After the machine reboots, every background run is dead. Queue it again; do not wait for it.
-- **One waiting ticket per lane.** Put everything the diff needs in one script instead of queueing
-  several.
+- **One waiting ticket per lane.** An outer runner may contain all reached checks, but each
+  slot invocation runs one Cargo command and exits before the next one queues. Never put the
+  entire outer runner inside the slot. This lets another waiting lane run between commands.
+- **Use the reached-test runner for ordinary feedback (#718):**
+
+      python tools/reached-tests/run_reached.py --repo . --base origin/main --head HEAD --root D:/gh --lane <lane> --output <outside-repo>/feedback.json
+
+  It plans the committed diff and queues each Cargo test or clippy command separately, with six
+  build jobs and two test threads. Fmt, Python, Node, Studio checks and standalone journey tools
+  run outside the Cargo slot, serially. Existing root target rules remain authoritative. The
+  runner does not install dependencies, clean targets, bypass the queue or add holders.
+
+  The default 180-second budget starts before planning and includes waiting. The report lists
+  completed and pending checks and available slot wait/hold times. A late, failed or incomplete
+  run is not a pass. A running command retains the slot until it exits; exceeding the budget never
+  kills only a parent and releases the lock over surviving children. No further check starts
+  after the budget is exhausted. Unmapped paths and whole-package plans require explicit handling;
+  a whole-package exception needs its reason in the card and the runner argument.
+
+  Keep the same isolated worktree target warm across edits. Cold preparation and explicit broad
+  audits may exceed 180 seconds and must be reported as such. Long experiments run as separate
+  commands in an agreed quiet window, not as one script ahead of ordinary changes. With twenty
+  concurrent requests, one local slot cannot guarantee every result within 180 seconds; report
+  the actual miss rather than hiding the queue or increasing CPU pressure.
+
 - Authors and reviewers share one test budget (DELIVERY.md §3). Run only what the diff reaches:
 
       python tools/reached-tests/reached_tests.py

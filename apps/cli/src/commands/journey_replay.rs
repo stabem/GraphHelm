@@ -593,6 +593,7 @@ impl Driver {
             "snapshot" => &["url", "ariaYaml", "controls", "fingerprint"],
             "act" => &["url", "locator"],
             "capture" => &["path", "width", "height", "masked"],
+            "coverage" => &["path", "schema"],
             "show" => &["shown"],
             "close" => &["closed"],
             _ => return Err(failure("replay.driver_frame_invalid", path, 1)),
@@ -663,6 +664,10 @@ impl Driver {
                         && result["height"]
                             .as_u64()
                             .is_some_and(|n| (1..=16384).contains(&n))
+                }
+                "coverage" => {
+                    result["path"] == "coverage.json"
+                        && result["schema"] == "graphhelm-js-coverage/1"
                 }
                 "show" => result["shown"].is_boolean(),
                 "close" => result["closed"] == true,
@@ -1983,7 +1988,16 @@ mod tests {
                 json!({"path":"masked.png","width":1280,"height":720,"masked":false}),
             ),
         ];
-        for (op, request, result) in frames {
+        let invalid_coverage = [
+            json!({"path":"../coverage.json","schema":"graphhelm-js-coverage/1"}),
+            json!({"path":"coverage.json","schema":"wrong"}),
+            json!({"path":"coverage.json","schema":"graphhelm-js-coverage/1","source":"unexpected"}),
+        ];
+        for (op, request, result) in frames.into_iter().chain(
+            invalid_coverage
+                .into_iter()
+                .map(|result| ("coverage", json!({}), result)),
+        ) {
             let (writer, requests) = mpsc::sync_channel::<(Vec<u8>, mpsc::SyncSender<bool>)>(1);
             std::thread::spawn(move || {
                 let (_, ack) = requests.recv().unwrap();

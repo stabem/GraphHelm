@@ -12,20 +12,31 @@ screens:
     title: "A question is waiting under Needs you (demo: asked by planner)"
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: Needs you}, {role: heading, name: planner asks}, {role: button, name: Answer}, {role: button, name: Refuse}]
+    expect: [{role: complementary, name: Chat}, {role: tablist, name: Threads}, {role: region, name: Needs you}, {role: heading, name: planner asks}, {role: button, name: Answer}, {role: button, name: Refuse}]
     scope: [apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/client.ts]
+  - id: mission
+    title: Open the chat from the mission
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: group, name: Go to}, {role: button, name: Chat}]
+    scope: [apps/studio/src/components/mission-view.tsx]
   - id: refused
     title: The refusal is saved and the card leaves Needs you
     url: /?session=studio-fixture
     state: success
-    expect: [{role: region, name: Team}, {role: article, name: Implementação concluída is blocked.}]
-    scope: [apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/components/team-canvas.tsx]
+    expect: [{role: complementary, name: Chat}, {role: tablist, name: Threads}, {role: region, name: Needs you}, {role: article, name: Implementação concluída is blocked.}]
+    scope: [apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/components/chat-column.tsx]
 edges:
   - id: asked.refuse
     from: asked
     to: refused
     acts:
       - {kind: activate, role: button, name: Refuse}
+  - id: mission.chat
+    from: mission
+    to: asked
+    acts:
+      - {kind: activate, role: button, name: Chat}
 paths:
-  main: [asked.refuse]
+  main: [mission.chat, asked.refuse]
 drift: []

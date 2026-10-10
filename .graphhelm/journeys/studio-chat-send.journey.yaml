@@ -20,6 +20,12 @@ screens:
     state: success
     expect: [{role: complementary, name: Chat}, {role: tabpanel, name: Everyone}, {role: textbox, name: Message}]
     scope: [apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/threads.ts, apps/studio/src/runtime/client.ts, apps/studio/src/graph/ledger.ts]
+  - id: mission
+    title: Open the chat from the mission
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: group, name: Go to}, {role: button, name: Chat}]
+    scope: [apps/studio/src/components/mission-view.tsx]
 edges:
   - id: chat.send
     from: chat
@@ -28,6 +34,11 @@ edges:
       - {kind: activate, role: tab, name: Everyone}
       - {kind: enter_text, role: textbox, name: Message, text: "Hello team, please report your status."}
       - {kind: activate, role: button, name: Send}
+  - id: mission.chat
+    from: mission
+    to: chat
+    acts:
+      - {kind: activate, role: button, name: Chat}
 paths:
-  main: [chat.send]
+  main: [mission.chat, chat.send]
 drift: []

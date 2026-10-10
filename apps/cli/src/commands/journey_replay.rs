@@ -1877,6 +1877,50 @@ fn supervise(args: &JourneyReplayArgs, deadline: Instant) -> Outcome {
 mod tests {
     use super::*;
 
+    /// R6: absent or unrelated launcher keys must not default a required secret.
+    /// The browser-only missing-secret check leaves this offline boundary uncovered.
+    /// Cost: milliseconds, in-memory maps; no process, browser, or production seam.
+    #[test]
+    fn preflight_rejects_missing_secrets_and_preserves_the_act_key() {
+        let name = "GRAPHHELM_SECRET_r6_preflight_required";
+        assert!(
+            std::env::var_os(name).is_none(),
+            "test requires an unset key"
+        );
+        let flow = json!({
+            "paths": {"connect": ["login"]},
+            "screens": [{"id": "start", "url": "/"}],
+            "edges": [{"id": "login", "from": "start", "to": "start",
+                "acts": [{"kind": "enter_text", "secret": "r6_preflight_required"}]}]
+        });
+        for (key, accepted) in [
+            (None, false),
+            (Some("GRAPHHELM_SECRET_R6_PREFLIGHT_REQUIRED"), true),
+            (Some("GRAPHHELM_SECRET_OTHER"), false),
+        ] {
+            let launched = key
+                .map(|key| (key.to_owned(), "offline-preflight-canary".to_owned()))
+                .into_iter()
+                .collect();
+            match preflight(&flow, &launched) {
+                Ok(secrets) => {
+                    assert!(accepted, "missing secret was accepted");
+                    assert_eq!(secrets.len(), 1);
+                    assert!(
+                        secrets
+                            .get(name)
+                            .is_some_and(|v| v == "offline-preflight-canary")
+                    );
+                }
+                Err(error) => {
+                    assert!(!accepted, "matching launcher key was refused");
+                    assert_eq!(error.0, "driver.secret_missing");
+                    assert_eq!(error.1, "/edges/0/acts/0");
+                }
+            }
+        }
+    }
+
     /// #585: every runner opens a flow's browser as the flow declares: its viewport (else the
     /// runner's default) and its storage, which `open` carries only when there is some.
     /// Defects named: a declared viewport ignored, or an empty/absent storage sent as a key the

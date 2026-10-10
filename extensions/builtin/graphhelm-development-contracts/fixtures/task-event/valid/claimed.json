@@ -1,1 +1,1 @@
-{"schema":"graphhelm-task-event-v1","taskId":"issue-386","revision":1,"at":"2026-10-07T22:00:00Z","issue":386,"lane":"gh-claude-4","branch":"issue-386-task-events"}
+{"schema":"graphhelm-task-event-v1","taskId":"issue-386","revision":1,"at":"2026-10-07T22:00:00Z","issue":386,"lane":"gh-claude-4","branch":"issue-386-task-events","assignedBy":"gh-claude-orquestrador"}

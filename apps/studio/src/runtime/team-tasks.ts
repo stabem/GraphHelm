@@ -169,6 +169,8 @@ export interface TaskEventRecord {
   issue?: number;
   pr?: number;
   lane?: string;
+  /** The claimant's report of who assigned the work, never independently verified. */
+  assignedBy?: string;
   branch?: string;
   headSha?: string;
   journeys?: string[];
@@ -280,6 +282,10 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
       if (repo === false) return null;
       const issue = count(document.issue);
       const lane = text(document.lane, 128);
+      const assignedBy = document.assignedBy === undefined ? undefined
+        : typeof document.assignedBy === "string" && Array.from(document.assignedBy).length <= 128 && !/\p{Cc}/u.test(document.assignedBy)
+          ? text(document.assignedBy, document.assignedBy.length) : null;
+      if (assignedBy === null || (assignedBy !== undefined && assignedBy === lane)) return null;
       const branch = text(document.branch, 256);
       const said = words(document);
       if (said === false) return null;
@@ -288,7 +294,7 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
       // #577: a claim may name its journeys; a malformed list drops the field, never the claim.
       const journeys = journeyIds(document.journeys);
       return issue !== null && lane === actorId && branch !== null
-        ? { ...base, kind, issue, lane, branch, ...said, ...(repo === null ? {} : { repo }), ...(parent === undefined ? {} : { parent }), ...(journeys === null ? {} : { journeys }) } : null;
+        ? { ...base, kind, issue, lane, branch, ...said, ...(assignedBy === undefined ? {} : { assignedBy }), ...(repo === null ? {} : { repo }), ...(parent === undefined ? {} : { parent }), ...(journeys === null ? {} : { journeys }) } : null;
     }
     case "task.planned": {
       const plan = taskPlan(document);
@@ -376,6 +382,9 @@ export interface TaskState {
   issue: number | null;
   pr: number | null;
   lane: string | null;
+  assignedBy?: string | null;
+  /** Only explicit review assignments; `reviewers` also includes verdict authors. */
+  assignedReviewers?: string[];
   headSha: string | null;
   journeys: string[];
   /** #480: the lane's recorded keel plan; `null` (or absent, before #480) when none was recorded. */
@@ -448,7 +457,7 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
   const add = () => {
     const slice: TaskState = {
       key: "", taskId: event.taskId, branch: null, issue: null, pr: event.kind === "task.claimed" ? null : event.pr ?? null,
-      lane: null, headSha: null, journeys: [], plan: null,
+      lane: null, assignedBy: null, assignedReviewers: [], headSha: null, journeys: [], plan: null,
       step: event.kind === "task.claimed" || event.kind === "task.planned" ? "plan" : "implement", blockedBy: null, reviewers: [], mergeSha: null,
       repoUrl: null, title: null, summary: null, prTitle: null, prSummary: null, strayVerdicts: [], critic: null, recordedHeads: [], parent: null, rounds: [], clock: emptyClock(), lastSequence: 0,
     };
@@ -504,6 +513,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
     const before = state.step;
     switch (event.kind) {
       case "task.claimed":
+        state.assignedBy = event.assignedBy ?? null;
         state.branch = event.branch ?? state.branch;
         state.parent = event.parent ?? state.parent;
         state.title = event.title ?? state.title;
@@ -548,6 +558,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         }
         break;
       case "task.review_assigned":
+        if (event.reviewer && !state.assignedReviewers?.includes(event.reviewer)) (state.assignedReviewers ??= []).push(event.reviewer);
         if (event.reviewer && !state.reviewers.includes(event.reviewer)) state.reviewers.push(event.reviewer);
         break;
       case "task.review_verdict":

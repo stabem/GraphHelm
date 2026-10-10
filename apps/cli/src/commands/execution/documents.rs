@@ -261,12 +261,30 @@ pub(crate) fn validate_task_event(
                 && (document.get("plan").is_none() || document["plan"].is_object())
                 && repo()
                 && words()
+                // #86: an optional claimant report, not a verified delegation.
+                && document.get("assignedBy").is_none_or(|value| {
+                    value.as_str().is_some_and(|assigner| {
+                        !assigner.is_empty()
+                            && assigner.chars().count() <= 128
+                            && !assigner.chars().any(char::is_control)
+                            && assigner != actor_id
+                    })
+                })
                 // #514: the issue whose work turned this task up; optional, a positive number.
                 && (document.get("parent").is_none() || count("parent"))
                 // #577: the journeys the issue serves; optional, the same ids as pr_opened.
                 && (document.get("journeys").is_none() || ids("journeys")),
             &[
-                "issue", "lane", "branch", "plan", "repo", "title", "summary", "parent", "journeys",
+                "issue",
+                "lane",
+                "branch",
+                "plan",
+                "repo",
+                "title",
+                "summary",
+                "parent",
+                "journeys",
+                "assignedBy",
             ],
         ),
         "task.planned" => (

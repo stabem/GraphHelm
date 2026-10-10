@@ -16,6 +16,7 @@
         "at": {"$ref": "#/$defs/at"},
         "issue": {"$ref": "#/$defs/positive"},
         "lane": {"$ref": "#/$defs/actor"},
+        "assignedBy": {"description": "Who ordered the work, as reported by the claiming lane; absent means unknown. The Runtime refuses a value equal to lane.", "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\u0000-\u001f\u007f-\u009f]+$"},
         "branch": {"type": "string", "minLength": 1, "maxLength": 256},
         "plan": {"type": "object"},
         "repo": {"$ref": "#/$defs/repo"},

@@ -16,6 +16,16 @@ function record(sequence: number, kind: string, actorId: string, document: Recor
 }
 
 describe("foldTaskEvents", () => {
+  it("drops self-assigned or malformed claimed assigners (#86)", () => {
+    for (const assignedBy of ["lane", "x".repeat(129), "", null, "bad\nname"]) {
+      expect(parseTaskEvent("task.claimed", "lane", JSON.stringify({ schema: "graphhelm-task-event-v1",
+        taskId: "issue-86", revision: 1, issue: 86, lane: "lane", branch: "issue-86-tree", assignedBy }))).toBeNull();
+    }
+    const assignedBy = "é".repeat(128);
+    expect(parseTaskEvent("task.claimed", "lane", JSON.stringify({ schema: "graphhelm-task-event-v1",
+      taskId: "issue-86", revision: 1, issue: 86, lane: "lane", branch: "issue-86-tree", assignedBy })))
+      .toMatchObject({ assignedBy });
+  });
   it("folds pr_opened, BLOCK, new head, APPROVE and merged into the spec's step sequence", () => {
     const records = [
       record(1, "task.pr_opened", "gh-claude-4", { pr: 384, headSha: "aaaaaaaa", journeys: [], lane: "gh-claude-4" }),

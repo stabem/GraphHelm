@@ -185,6 +185,167 @@ fn actual_exploration_redacts_model_input_and_repeats_the_same_draft() {
     );
 }
 
+// #356 task 7.1: explore and replay separately miss an unreplayable generated draft.
+// This chained observer uses only public CLI calls and existing fixture I/O, no production seam.
+// Cost: opt-in Node/Playwright/Chromium, local ports and Git, about 60s plus build.
+#[test]
+#[ignore = "requires explicitly installed local Playwright/Chromium observer"]
+fn explore_approve_replay_preserves_the_generated_flow_without_model_calls() {
+    use std::io::Write;
+
+    let toolchain = std::env::var_os("GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT")
+        .expect("OBSERVER_MISSING: GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT");
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("fixture.mjs"),
+        include_str!("../../../tools/journey-driver/fixture-server.mjs"),
+    )
+    .unwrap();
+    let app_script = root.path().join("app.mjs");
+    std::fs::write(
+        &app_script,
+        r#"
+import {startFixture} from './fixture.mjs';
+import {writeFileSync} from 'node:fs';
+const fixture=await startFixture();
+// Prove the model tripwire is live, then reset before any journey command.
+const response=await fetch(fixture.modelOrigin+'/positive-control');
+if(response.status!==503 || fixture.counts().model!==1)process.exit(1);
+fixture.reset();
+writeFileSync(new URL('./model-origin',import.meta.url),fixture.modelOrigin);
+process.stdout.write(JSON.stringify({base:fixture.base})+'\n');
+process.stdin.on('data',()=>process.stdout.write(JSON.stringify(fixture.counts())+'\n'));
+process.stdin.on('end',async()=>{await fixture.close();process.exit(0);});
+"#,
+    )
+    .unwrap();
+    let mut fixture = Fixture::start(&app_script);
+    let model_origin = std::fs::read_to_string(root.path().join("model-origin")).unwrap();
+    let model = root.path().join("model.cjs");
+    let transcript = root.path().join("transcript.jsonl");
+    std::fs::write(&model, MODEL).unwrap();
+    let manifest = root.path().join("routes.json");
+    std::fs::write(&manifest, serde_json::to_vec(&json!({"manifestVersion":1,"routes":[{
+        "id":"explore_observer","provider":"anthropic","transport":"native_runtime","runtime":"claude_code",
+        "authentication":"account_subscription","billingMode":"subscription_quota","command":{"program":"node","args":[model,transcript]},
+        "profiles":["software_execution"],"enabled":true,"timeoutSeconds":10}]})).unwrap()).unwrap();
+    let mut projects = Vec::new();
+    let mut drafts = Vec::new();
+    let mut caches = Vec::new();
+    for index in 0..2 {
+        let project = observed_project(root.path(), &format!("project-{index}"), &toolchain);
+        let (code, value) = reply(
+            cli()
+                .args(["journey", "explore", "--id", "checkout", "--base"])
+                .arg(format!("{}/cart", fixture.app.base))
+                .args(["--goal", "Reach the order screen", "--project"])
+                .arg(&project)
+                .arg("--manifest")
+                .arg(&manifest)
+                .args(["--route", "explore_observer", "--secret", "password"])
+                .env("GRAPHHELM_SECRET_password", SECRET),
+        );
+        assert_eq!(code, 0, "{value}");
+        assert_eq!(value["data"]["outcome"], "draft_completed");
+        drafts.push(
+            std::fs::read(project.join(".graphhelm/journeys/checkout.journey.yaml")).unwrap(),
+        );
+        caches.push(std::fs::read(project.join(".graphhelm/journey-cache/checkout.json")).unwrap());
+        projects.push(project);
+    }
+    assert_eq!(drafts[0], drafts[1]);
+    assert_eq!(caches[0], caches[1]);
+    let project = &projects[0];
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(project)
+            .args([
+                "-c",
+                "user.name=Explore observer",
+                "-c",
+                "user.email=explore@example.invalid",
+                "-c",
+                "core.autocrlf=false",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "--quiet", "--object-format=sha1"]);
+    let (code, value) = reply(
+        cli()
+            .args(["init", "--project"])
+            .arg(project)
+            .args(["--harness", "claude-code"]),
+    );
+    assert_eq!(code, 0, "{value}");
+    std::fs::write(
+        project.join(".gitignore"),
+        "node_modules/\n.graphhelm/*\n!.graphhelm/journeys/\n/.mcp.json\n",
+    )
+    .unwrap();
+    git(&["add", "."]);
+    git(&["commit", "--quiet", "--no-verify", "-m", "explored draft"]);
+    let (code, value) = reply(
+        cli()
+            .args(["journey", "approve", "checkout", "--project"])
+            .arg(project)
+            .arg("--token-file")
+            .arg(project.join(".graphhelm/events.token")),
+    );
+    assert_eq!(code, 0, "{value}");
+    git(&["add", "."]);
+    git(&[
+        "commit",
+        "--quiet",
+        "--no-verify",
+        "-m",
+        "approved explored flow",
+    ]);
+    let approved: Value = serde_yaml_ng::from_slice(
+        &std::fs::read(project.join(".graphhelm/journeys/checkout.journey.yaml")).unwrap(),
+    )
+    .unwrap();
+    let digest = approved["approved"]["digest"].as_str().unwrap();
+    let recorded = std::fs::read(&transcript).unwrap();
+    for _ in 0..2 {
+        let (code, value) = reply(
+            cli()
+                .args(["journey", "replay", "checkout", "--project"])
+                .arg(project)
+                .env("GRAPHHELM_SECRET_password", SECRET)
+                .env("OPENAI_API_KEY", "unusable-fixture-key")
+                .env("OPENAI_BASE_URL", &model_origin)
+                .env("ANTHROPIC_BASE_URL", &model_origin)
+                .env("NODE_OPTIONS", ""),
+        );
+        assert_eq!(code, 0, "{value}");
+        assert_eq!(value["data"]["modelCalls"], 0);
+        let paths = value["data"]["paths"].as_array().unwrap();
+        assert_eq!(paths.len(), 1, "{value}");
+        assert_eq!(paths[0]["outcome"], "passed", "{value}");
+        let cache: Value = serde_json::from_slice(
+            &std::fs::read(project.join(".graphhelm/journey-cache/checkout.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(cache["flowDigest"], digest);
+        let stdin = fixture.app.child.stdin.as_mut().unwrap();
+        stdin.write_all(b"counts\n").unwrap();
+        stdin.flush().unwrap();
+        let counts: Value =
+            serde_json::from_str(&fixture.lines.recv_timeout(Duration::from_secs(10)).unwrap())
+                .unwrap();
+        assert_eq!(counts["model"], 0);
+        assert_eq!(std::fs::read(&transcript).unwrap(), recorded);
+    }
+}
+
 const DESTRUCTIVE_MODEL: &str = r#"
 let input=''; process.stdin.setEncoding('utf8');
 process.stdin.on('data',chunk=>input+=chunk);

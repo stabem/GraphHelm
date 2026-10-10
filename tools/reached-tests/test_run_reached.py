@@ -103,7 +103,7 @@ class RunnerContracts(unittest.TestCase):
         self.assertIn("requires", rr._whole_reason({"packages": ["graphhelm-cli"]}, None))
         self.assertIsNone(rr._whole_reason({"packages": ["graphhelm-cli"]}, "shared parser change"))
 
-    def test_browser_observer_is_pending_by_default_and_never_started(self):
+    def test_browser_observer_is_skipped_by_default_and_never_started(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess = __import__("subprocess")
@@ -117,11 +117,12 @@ class RunnerContracts(unittest.TestCase):
                                       "root": "D:/gh", "lane": "test", "budget_seconds": 180,
                                       "allow_whole_package": None, "plan": False, "include_browser": False})()
             with patch.object(rr, "_selector", return_value=plan):
-                self.assertEqual(rr.run(args), 1)
+                self.assertEqual(rr.run(args), 0)
             report = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(report["completed"], [])
-            self.assertEqual(report["pending"], [0])
-            self.assertIn("--include-browser", report["error"])
+            self.assertEqual(report["pending"], [])
+            self.assertEqual(report["skipped"], [{"index": 0, "reason": "no observer"}])
+            self.assertEqual(report["status"], "passed")
 
     def test_browser_observer_is_skipped_by_default_while_plain_steps_run(self):
         with tempfile.TemporaryDirectory() as temp:

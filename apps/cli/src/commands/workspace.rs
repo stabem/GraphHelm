@@ -390,6 +390,7 @@ const DEFAULT_TARGET_CAP: u64 = 3;
 pub(crate) struct TargetRule {
     pub root: PathBuf,
     pub cap: u64,
+    pub min_free_gb: u64,
 }
 
 /// `Ok(None)`: no rule file. A file that cannot be read or does not say where to build is an
@@ -417,9 +418,19 @@ pub(crate) fn target_rule(root: &Path) -> Result<Option<TargetRule>, String> {
             .filter(|cap| (1..=16).contains(cap))
             .ok_or_else(|| format!("{LEDGER}/{SLOT_TARGETS}: cap must be a number from 1 to 16"))?,
     };
+    let min_free_gb = match value.get("minFreeGb") {
+        None => 20,
+        Some(floor) => floor
+            .as_u64()
+            .filter(|floor| *floor <= 4096)
+            .ok_or_else(|| {
+                format!("{LEDGER}/{SLOT_TARGETS}: minFreeGb must be a number from 0 to 4096")
+            })?,
+    };
     Ok(Some(TargetRule {
         root: target_root,
         cap,
+        min_free_gb,
     }))
 }
 
@@ -515,9 +526,9 @@ fn reclaim_target(root: &Path, rule: &TargetRule, lane: &str, name: &str) -> Res
 }
 
 /// The slot's build directory for `worktree` under the owner's rule (#360), and the directories
-/// reclaimed on the way. `record: false` only answers "would this lane go over its cap?", before
+/// reclaimed on the way. `record: false` checks the cap and free-space floor before
 /// the caller queues; `record: true` is called while holding the slot, so it is serialized: it
-/// reclaims the lane's build directories whose worktree is positively gone, enforces the cap, and
+/// reclaims the lane's build directories whose worktree is positively gone, checks the floor and cap, and
 /// records this one. A build directory whose worktree still exists is never deleted here.
 pub(crate) fn slot_target(
     root: &Path,
@@ -565,6 +576,24 @@ pub(crate) fn slot_target(
             }
         }
     }
+    // Sample again while holding the slot: space may have fallen during the queue wait.
+    // This is a check, not a reservation, and never evicts a live target to make room.
+    if rule.min_free_gb != 0 {
+        let free = fs2::available_space(&rule.root).map_err(|_| {
+            format!(
+                "target root {} free space could not be measured (slot-targets.json minFreeGb); check the root and graphhelm workspace sweep",
+                rule.root.display()
+            )
+        })?;
+        if free < rule.min_free_gb * 1024_u64.pow(3) {
+            return Err(format!(
+                "target root {} has {} GB free, below the floor of {} GB (slot-targets.json minFreeGb); inspect graphhelm workspace sweep",
+                rule.root.display(),
+                free / 1024_u64.pow(3),
+                rule.min_free_gb
+            ));
+        }
+    }
     if first_used.is_none() && held.len() as u64 >= rule.cap {
         return Err(format!(
             "lane {lane} already holds {} build directories ({}); remove a worktree it no longer needs (its build directory is reclaimed by the next slot run or by workspace sweep), then run again",
@@ -588,6 +617,46 @@ pub(crate) fn slot_target(
     Ok((target, reclaimed))
 }
 
+#[cfg(test)]
+#[test]
+fn slot_target_reclaims_gone_worktrees_before_refusing_the_held_slot_floor() {
+    // The pre-queue refusal cannot reclaim: that operation must remain serialized. Exercise
+    // the held-slot call directly, without a disk-filling stress test or a production test hook.
+    // Defect: moving the floor ahead of reclaim, or deleting a live target under pressure.
+    // Existing cap/reclaim tests never refuse for disk pressure. Cost: local temp files only.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let fast = dir.path().join("fast");
+    let live = dir.path().join("wt-live");
+    let gone = dir.path().join("wt-gone");
+    for path in [root.join(LEDGER), fast.clone(), live.clone(), gone.clone()] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    let configure = |floor| {
+        std::fs::write(
+            root.join(LEDGER).join(SLOT_TARGETS),
+            json!({"targetRoot": fast, "minFreeGb": floor}).to_string(),
+        )
+        .unwrap();
+        target_rule(&root).unwrap().unwrap()
+    };
+    let rule = configure(0);
+    let (live_target, _) = slot_target(&root, &rule, "lane-a", &live, true).unwrap();
+    let (gone_target, _) = slot_target(&root, &rule, "lane-a", &gone, true).unwrap();
+    std::fs::remove_dir(&gone).unwrap();
+    let rule = configure(4096);
+    assert!(fs2::available_space(&fast).unwrap() < 4096 * 1024_u64.pow(3));
+    let result = slot_target(&root, &rule, "lane-a", &live, true);
+    assert!(
+        result.is_err(),
+        "held-slot check ignored the floor: {result:?}"
+    );
+    assert!(!gone_target.exists());
+    assert!(!target_record_file(&root, "lane-a", "wt-gone").exists());
+    assert!(live_target.is_dir());
+    assert!(target_record_file(&root, "lane-a", "wt-live").is_file());
+}
+
 /// Every lane's recorded build directories for `workspace sweep` and `workspace slot status`.
 fn all_target_records(root: &Path) -> Vec<(String, String, PathBuf)> {
     let Ok(entries) = std::fs::read_dir(root.join(LEDGER).join(TARGET_RECORDS)) else {
@@ -609,14 +678,18 @@ fn all_target_records(root: &Path) -> Vec<(String, String, PathBuf)> {
         .collect()
 }
 
-/// How many build directories each lane holds, for `workspace slot status`.
-pub(crate) fn target_counts(root: &Path) -> Value {
+/// Lane counts and the target root's free-space margin for `workspace slot status`.
+pub(crate) fn target_counts(root: &Path) -> (Value, Value) {
     let mut counts = serde_json::Map::new();
     for (lane, _, _) in all_target_records(root) {
         let count = counts.get(&lane).and_then(Value::as_u64).unwrap_or(0);
         counts.insert(lane, json!(count + 1));
     }
-    Value::Object(counts)
+    let space = target_rule(root).ok().flatten().map(|rule| {
+        json!({"targetRoot": rule.root, "minFreeGb": rule.min_free_gb,
+            "freeGb": fs2::available_space(&rule.root).ok().map(|bytes| bytes / 1024_u64.pow(3))})
+    });
+    (Value::Object(counts), space.unwrap_or(Value::Null))
 }
 
 /// The sweep's half of the rule: a recorded build directory whose worktree is gone is removed

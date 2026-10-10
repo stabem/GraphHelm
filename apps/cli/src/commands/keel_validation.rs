@@ -176,13 +176,12 @@ fn coverage_files(root: &Path) -> Vec<PathBuf> {
         }
         if metadata.is_dir() {
             files.extend(coverage_files(&path));
-        } else if path.file_name().and_then(|name| name.to_str()) == Some("coverage.json") {
-            if std::fs::symlink_metadata(&path)
+        } else if path.file_name().and_then(|name| name.to_str()) == Some("coverage.json")
+            && std::fs::symlink_metadata(&path)
                 .ok()
                 .is_some_and(|meta| meta.is_file() && !meta.file_type().is_symlink())
-            {
-                files.push(path);
-            }
+        {
+            files.push(path);
         }
     }
     files.sort();

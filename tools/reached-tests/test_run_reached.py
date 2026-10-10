@@ -87,6 +87,60 @@ class RunnerContracts(unittest.TestCase):
                 self.assertEqual(rr.run(args), 1)
             self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["status"], "failed")
 
+    def test_runner_executes_selected_pytest_and_unittest_fixtures(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            subprocess = __import__("subprocess")
+            fixture = repo / "test_fixture.py"
+            fixture.write_text("def test_failure():\n    assert False\n", encoding="utf-8")
+            control = repo / "test_control.py"
+            control.write_text("import unittest\nclass Control(unittest.TestCase):\n def test_ok(self): self.assertTrue(True)\n", encoding="utf-8")
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            (repo / "tracked").write_text("x", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked", "test_fixture.py", "test_control.py"], cwd=repo, check=True)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            output = Path(temp).parent / (Path(temp).name + "-pytest-report.json")
+            plan = {"steps": [{"argv": [sys.executable, "-m", "pytest", "-q", "test_fixture.py"], "cwd": ".", "slot": False},
+                              {"argv": [sys.executable, "-m", "unittest", "test_control"], "cwd": ".", "slot": False}]}
+            with patch.object(rr, "_selector", return_value=plan):
+                args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
+                                          "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                                          "allow_whole_package": None, "plan": False})()
+                self.assertEqual(rr.run(args), 1)
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(report["status"], "failed")
+            self.assertEqual(report["completed"][0]["returncode"], 1)
+            self.assertEqual(report["pending"], [1])
+
+    def test_runner_rejects_selected_pytest_file_with_zero_collected_tests(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            subprocess = __import__("subprocess")
+            # A comment can fool the selector's source scan, but pytest collects no tests.
+            (repo / "test_empty.py").write_text("# def test_foo(): pass\n", encoding="utf-8")
+            (repo / "conftest.py").write_text(
+                "def pytest_sessionfinish(session, exitstatus):\n"
+                "    if session.testscollected == 0:\n"
+                "        session.exitstatus = 0\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            (repo / "tracked").write_text("x", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked", "test_empty.py", "conftest.py"], cwd=repo, check=True)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            output = Path(temp).parent / (Path(temp).name + "-zero-pytest-report.json")
+            plan = {"steps": [{"argv": [sys.executable, "-m", "pytest", "-q", "test_empty.py"], "cwd": ".", "slot": False}]}
+            with patch.object(rr, "_selector", return_value=plan):
+                args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
+                                          "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                                          "allow_whole_package": None, "plan": False})()
+                self.assertEqual(rr.run(args), 1)
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(report["status"], "failed")
+            self.assertEqual(report["completed"][0]["returncode"], 1)
+            self.assertEqual(report["completed"][0]["error"], "pytest collected no tests")
+            self.assertIn("no tests ran", report["completed"][0]["tail"])
+
     def test_each_slot_step_gets_its_own_slot_process(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)

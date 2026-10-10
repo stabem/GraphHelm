@@ -149,7 +149,10 @@ describe("MissionView", () => {
     expect(root).toHaveAttribute("data-chat", "open");
     await userEvent.click(chat);
     expect(root).not.toHaveAttribute("data-chat");
-    await userEvent.click(screen.getByRole("button", { name: "Journeys · 2 to approve" }));
+    // #585 R3: a stable accessible name, the live count stays visible text.
+    const journeysButton = screen.getByRole("button", { name: "Journeys" });
+    expect(journeysButton).toHaveTextContent("Journeys · 2 to approve");
+    await userEvent.click(journeysButton);
     expect(onJourneys).toHaveBeenCalledTimes(1);
   });
 

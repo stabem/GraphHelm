@@ -158,7 +158,7 @@ export function MissionView({ journeys, tasks, runFor, lanes, now, frameUrl, onM
           <div className="mv-nav" role="group" aria-label="Go to">
             <button type="button" className="mv-tab" aria-pressed={chatOpen} onClick={() => setChatOpen((o) => !o)}>Chat</button>
             {onJourneys && (
-              <button type="button" className="mv-tab" onClick={onJourneys}>
+              <button type="button" className="mv-tab" aria-label="Journeys" title={draftJourneys > 0 ? `${draftJourneys} journeys waiting for your approval` : undefined} onClick={onJourneys}>
                 {draftJourneys > 0 ? `Journeys · ${draftJourneys} to approve` : "Journeys"}
               </button>
             )}

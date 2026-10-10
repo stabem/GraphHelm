@@ -2935,9 +2935,11 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
    own box, the team canvas keeps the rest, and the dock's cover is reserved below both. */
 #studio-panel-team { display: flex; flex-direction: column; box-sizing: border-box; padding-bottom: var(--dock-reserve, 72px); }
 #studio-panel-team[hidden] { display: none; }
+/* Recorded handoffs share the column with tasks; neither may collapse the live graph. */
+#studio-panel-team > .delegation-tree { flex: 0 1 auto; min-height: 0; max-height: 25%; }
 #studio-panel-team > .task-graphs { flex: 0 1 auto; min-height: 0; max-height: 62%; overflow-y: auto; }
 #studio-panel-team > .task-graphs:last-child { max-height: none; flex: 1 1 auto; }
-#studio-panel-team > .team-canvas { flex: 1 1 auto; height: auto; min-height: 0; }
+#studio-panel-team > .team-canvas { flex: 1 1 auto; height: auto; min-height: min(240px, 40%); }
 .cited-records { z-index: 20; }
 
 .chat-tabpanel { display: contents; }

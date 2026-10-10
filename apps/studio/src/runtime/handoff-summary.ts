@@ -1,4 +1,4 @@
-﻿import type { TaskState } from "./team-tasks";
+import type { TaskState } from "./team-tasks";
 
 /** Only recorded work and obligations, in input order; never recommendations or priorities. */
 export function handoffSummary(tasks: TaskState[]) {

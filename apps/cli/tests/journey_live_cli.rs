@@ -397,11 +397,11 @@ fn launcher_secrets_reach_preflight_without_exporting_other_keys_or_values() {
         Arc,
         atomic::{AtomicBool, Ordering},
     };
-use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant};
 
-#[path = "support/time_scale.rs"]
-mod time_scale;
-use time_scale::scaled;
+    #[path = "support/time_scale.rs"]
+    mod time_scale;
+    use time_scale::scaled;
 
     for args in [
         vec!["watch", "checkout"],

@@ -1353,12 +1353,17 @@ impl Sleeper {
                 ready_tx.send(()).unwrap();
                 // Both phases bounded: an absent ringer must yield an empty result, never
                 // a hung test (the no-ring cases DEPEND on this timing out).
-                match tokio::time::timeout(scaled(Duration::from_secs(10)), server.connect()).await {
+                match tokio::time::timeout(scaled(Duration::from_secs(10)), server.connect()).await
+                {
                     Ok(Ok(())) => {}
                     _ => return (Vec::new(), Vec::new()),
                 }
                 let mut buffer = [0_u8; 8];
-                match tokio::time::timeout(scaled(Duration::from_secs(10)), server.read(&mut buffer)).await
+                match tokio::time::timeout(
+                    scaled(Duration::from_secs(10)),
+                    server.read(&mut buffer),
+                )
+                .await
                 {
                     Ok(Ok(read)) => {
                         // The instant of the ring: snapshot what is durable RIGHT NOW.
@@ -1369,7 +1374,9 @@ impl Sleeper {
                 }
             })
         });
-        ready_rx.recv_timeout(scaled(Duration::from_secs(5))).unwrap();
+        ready_rx
+            .recv_timeout(scaled(Duration::from_secs(5)))
+            .unwrap();
         Self {
             rendezvous_id,
             handle,

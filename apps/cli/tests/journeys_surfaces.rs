@@ -2,6 +2,10 @@
 //! refused contracts and ignored records are reported, never folded; the route is owner-only
 //! and needs the Runtime's `--project`.
 
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -263,7 +267,7 @@ impl Harness {
             .unwrap()
             .trim()
             .to_owned();
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + scaled(Duration::from_secs(10));
         while get(&base, "/health", None).0 != 200 {
             assert!(Instant::now() < deadline, "the server never became healthy");
             std::thread::sleep(Duration::from_millis(50));
@@ -283,7 +287,7 @@ fn get(base: &str, path: &str, bearer: Option<&str>) -> (u16, Value) {
         return (0, Value::Null);
     };
     stream
-        .set_read_timeout(Some(Duration::from_secs(60)))
+        .set_read_timeout(Some(scaled(Duration::from_secs(60))))
         .unwrap();
     stream.write_all(head.as_bytes()).unwrap();
     let mut raw = Vec::new();
@@ -345,7 +349,7 @@ fn mcp_with(harness: &Harness, base: &str, token: &str, arguments: &Value) -> Va
         .arg(&token_file)
         .args(["--actor", "agent-chat", "--actor-type", "agent"])
         .write_stdin(input)
-        .timeout(Duration::from_secs(60))
+        .timeout(scaled(Duration::from_secs(60)))
         .output()
         .unwrap();
     let reply = String::from_utf8(output.stdout)

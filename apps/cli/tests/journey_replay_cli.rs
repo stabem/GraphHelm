@@ -2,6 +2,10 @@
 //! a draft/stale projection or discarding malformed cache bytes. Phase-1 observers never
 //! consume a replay cache. Real CLI/tempdir/Git boundary, no test-only production seam;
 //! cost: seconds after build, offline, no Node/browser/provider required.
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use std::path::Path;
 use std::process::Command;
 
@@ -124,7 +128,7 @@ fn invalid_id_and_partial_recording_bundle_are_input_errors() {
         .spawn()
         .unwrap();
     let held_input = child.stdin.take().unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let deadline = std::time::Instant::now() + scaled(std::time::Duration::from_secs(3));
     let timely = loop {
         if child.try_wait().unwrap().is_some() {
             break true;

@@ -4,6 +4,10 @@
 //! `running` when it cannot start a browser, a kept result served for a changed flow, and a second
 //! run started on every read. Real CLI/tempdir/Git boundary, the installed observer is a tripwire
 //! that must never start; cost: seconds after build, offline, no Node/browser/provider.
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -79,7 +83,7 @@ fn draft() -> tempfile::TempDir {
 
 /// Reads until the background run leaves `running`, within a bound.
 fn settled(project: &Path) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + scaled(Duration::from_secs(60));
     loop {
         let (code, reply) = cli(project, &["preview", "checkout", "--read"]);
         assert_eq!(code, 0, "{reply}");

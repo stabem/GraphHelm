@@ -4,6 +4,10 @@
 //! PNG pixels and fresh CLI/Runtime readers; no public test-only production seam.
 //! Cost: ~30s plus build, Node/Playwright/Chromium explicitly installed, local ports/Git;
 //! no provider/account or network installation. Ordinary offline runs ignore this target.
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -125,10 +129,10 @@ fn git(project: &Path, args: &[&str]) -> String {
 fn http(address: &str, path: &str, token: Option<&str>) -> (String, Vec<u8>) {
     let mut stream = TcpStream::connect(address).unwrap();
     stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
+        .set_read_timeout(Some(scaled(Duration::from_secs(10))))
         .unwrap();
     stream
-        .set_write_timeout(Some(Duration::from_secs(10)))
+        .set_write_timeout(Some(scaled(Duration::from_secs(10))))
         .unwrap();
     write!(
         stream,

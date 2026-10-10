@@ -6,6 +6,10 @@
 //! and a confirm that does not play it.
 //! Cost: ~30s plus build, Node/Playwright/Chromium explicitly installed, local ports/Git; no
 //! provider/account or network installation. Ordinary offline runs ignore this target.
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
+
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -120,7 +124,7 @@ fn git(project: &Path, args: &[&str]) {
 
 /// Reads the kept result until the background run leaves `running`, within a bound.
 fn settled(project: &Path) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(180);
+    let deadline = Instant::now() + scaled(Duration::from_secs(180));
     loop {
         let (code, value) = cli(project, &["journey", "preview", "account", "--read"]);
         assert_eq!(code, 0, "{value}");

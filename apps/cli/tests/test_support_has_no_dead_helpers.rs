@@ -208,7 +208,7 @@ fn a_helper_named_only_in_a_comment_is_still_dead() {
 }
 
 // #549: a fixed real deadline silently bypasses the lane's time-scale knob. Ordinary green
-// runs cannot observe that bypass without loading the host. This source guard costs three
+// runs cannot observe that bypass without loading the host. This source guard costs named-target
 // file reads and no processes or ports. It deliberately excludes fake clocks and sleeps.
 #[test]
 fn named_cli_targets_do_not_bypass_scaled_deadlines() {
@@ -225,7 +225,16 @@ fn named_cli_targets_do_not_bypass_scaled_deadlines() {
     .unwrap();
     let mut violations = Vec::new();
     // Coordinator-approved scope; other test targets remain a recorded residual.
-    for target in ["wake_http", "mcp_stdio", "mcp_discovery"] {
+    for target in [
+        "journey_preview_browser",
+        "journey_preview_cli",
+        "journey_replay_browser",
+        "journey_replay_cli",
+        "journeys_surfaces",
+        "mcp_discovery",
+        "mcp_stdio",
+        "wake_http",
+    ] {
         let path = repository_root().join(format!("apps/cli/tests/{target}.rs"));
         let source = fs::read_to_string(path).expect("named test target exists");
         // Keep line positions while ignoring whole-line comments. Match across newlines too.

@@ -123,6 +123,25 @@ describe("#591 board times the latest activity (record shapes)", () => {
     expect(board(events, 3 * H, ["gh-claude-3"])["gh-claude-3"]!.status).toBe("free");
   });
 
+  it.each(["closes", "issue", "pr"] as const)("another lane's merge ends a claim through %s without changing lastDelivered", (match) => {
+    const events = [
+      ev({ kind: "task.claimed", taskId: "issue-549", lane: "codex-3", issue: 549, at: iso(0) }),
+      ev({ kind: "task.claimed", taskId: "issue-700", lane: "other", issue: match === "pr" ? 549 : 700, at: iso(M) }),
+      ev({ kind: "task.pr_opened", taskId: "issue-700", lane: "other", pr: 701, at: iso(2 * M) }),
+      ev({ kind: "task.merged", taskId: "pr-701", actorId: "reviewer", pr: 701,
+        closes: match === "closes" ? [549] : [], ...(match === "issue" ? { issue: 549 } : {}), at: iso(3 * M) }),
+    ];
+    const delivered = task({ lane: "codex-3", step: "merged", title: "Previous delivery" });
+    for (const at of [3 * H, 4 * M]) {
+      const lanes = laneBars(events, T0 + at, 48 * H);
+      const row = agentBoard([bot("codex-3")], lanes, [delivered], T0 + at).find((r) => r.name === "codex-3");
+      expect(row).toMatchObject({ status: "free", stage: null, lastDelivered: "#7 Previous delivery" });
+      expect(lanes.find((l) => l.lane === "codex-3")!.bars[0]).toMatchObject({ open: false, end: T0 + 3 * M });
+    }
+    events.push(ev({ kind: "task.claimed", taskId: "issue-702", lane: "codex-3", issue: 702, at: iso(3 * H) }));
+    expect(board(events, 3 * H + M, ["codex-3"])["codex-3"]!.status).toBe("working");
+  });
+
   it("the time is since the lane's latest record, naming that record", () => {
     const events = [
       ev({ kind: "task.claimed", lane: "gh-claude-3", issue: 600, at: iso(0) }),

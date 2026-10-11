@@ -139,6 +139,18 @@ class LaneStopTests(unittest.TestCase):
             self.assertEqual(tasks_reconcile.reconcile(args)["inspected"], 1)
         github.assert_called_once_with(9001, "stabem/GraphHelm")
 
+    def test_closed_unmerged_pr_is_recorded_once(self):
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+        opened = ("task.pr_opened", {"taskId": "issue-766", "pr": 9001,
+                  "lane": "codex-4", "repo": "stabem/GraphHelm"}, {})
+        with mock.patch.object(tasks_reconcile, "records", return_value=[opened]), \
+             mock.patch.object(tasks_reconcile, "github", return_value={"state": "CLOSED", "mergedAt": None}), \
+             mock.patch.object(tasks_reconcile, "post_closed") as post:
+            self.assertEqual(tasks_reconcile.reconcile(args)["closed"], [9001])
+        post.assert_called_once()
+
     def test_stop_invokes_configured_cli_reconciliation(self):
         root = Path(self.tmp.name)
         subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)

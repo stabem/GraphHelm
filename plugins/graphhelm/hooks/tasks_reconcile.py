@@ -1,4 +1,4 @@
-"""Reconcile merged GitHub PRs with sealed Runtime task records.
+"""Reconcile finished GitHub PRs with sealed Runtime task records.
 
 The CLI embeds this file, so it also works from an installed GraphHelm binary.
 """
@@ -35,7 +35,7 @@ def records(base, token, execution):
         for event in batch:
             kind = event.get("kind", {})
             detail = kind.get("data", {})
-            if kind.get("type") == "signal_recorded" and detail.get("kind") in ("task.pr_opened", "task.merged"):
+            if kind.get("type") == "signal_recorded" and detail.get("kind") in ("task.pr_opened", "task.merged", "task.closed"):
                 refs = event.get("evidenceRefs", [])
                 if len(refs) == 1:
                     events.append((event, detail, refs[0]["evidenceId"]))
@@ -59,7 +59,7 @@ def records(base, token, execution):
         document = json.loads(envelope["description"])
         if document.get("schema") != "graphhelm-task-event-v1":
             raise ValueError("invalid task document")
-        if detail["kind"] == "task.merged":
+        if detail["kind"] in ("task.merged", "task.closed"):
             refs = envelope.get("evidence", [])
             if len(refs) == 1:
                 match = re.fullmatch(r"https://github\.com/([^/]+/[^/]+)/pull/([1-9][0-9]*)", refs[0])
@@ -73,7 +73,7 @@ def records(base, token, execution):
 
 def github(pr, repo):
     result = subprocess.run(["gh", "pr", "view", str(pr), "--repo", repo,
-                             "--json", "state,mergeCommit,closingIssuesReferences"],
+                             "--json", "state,mergeCommit,mergedAt,closingIssuesReferences"],
                             capture_output=True, text=True, encoding="utf-8", timeout=3, check=True)
     return json.loads(result.stdout)
 
@@ -101,6 +101,28 @@ def post(base, token, execution, pr, task_id, repo, sha, closes):
         raise ValueError("Runtime refused task.merged")
 
 
+def post_closed(base, token, execution, pr, task_id, repo):
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    doc = {"schema": "graphhelm-task-event-v1", "taskId": task_id,
+           "revision": 6, "at": now, "pr": pr, "reason": "abandoned", "by": pr}
+    content = json.dumps({k: v for k, v in doc.items() if k != "at"}, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(("graphhelm\nclosed\n" + content).encode()).hexdigest()[:16]
+    signal_id = f"graphhelm-{task_id}-closed-{digest}"
+    signal = {"id": signal_id, "type": "task.closed", "source": {"type": "user", "id": "graphhelm"},
+              "severity": "low", "emittedAt": now,
+              "evidence": [f"https://github.com/{repo}/pull/{pr}"],
+              "description": json.dumps(doc, separators=(",", ":"))}
+    url = f"{base}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal"
+    headers = {"Authorization": "Bearer " + token, "Content-Type": "application/json",
+               "Idempotency-Key": signal_id, "X-GraphHelm-Actor": "graphhelm",
+               "X-GraphHelm-Actor-Type": "agent"}
+    request = urllib.request.Request(url, data=json.dumps({"signal": signal}).encode(), headers=headers, method="POST")
+    with urllib.request.urlopen(request, timeout=3) as reply:
+        answer = json.load(reply)
+    if answer.get("ok") is not True:
+        raise ValueError("Runtime refused task.closed")
+
+
 def reconcile(args):
     parsed = urllib.parse.urlsplit(args.url)
     if parsed.scheme != "http" or parsed.hostname not in ("127.0.0.1", "localhost", "::1"):
@@ -110,22 +132,27 @@ def reconcile(args):
         raise ValueError("invalid agent token")
     # TODO(#750, #741): fold task.closed and task.released after those records land.
     opened = {}
-    merged = set()
+    finished = set()
     for kind, doc, event in records(args.url.rstrip("/"), token, args.execution):
         pr = doc.get("pr")
         if type(pr) is not int or pr < 1:
             continue
-        if kind == "task.merged":
-            merged.add((doc.get("repo"), pr))
+        if kind in ("task.merged", "task.closed"):
+            finished.add((doc.get("repo"), pr))
         elif (args.lane is None or doc.get("lane") == args.lane) and doc.get("repo") == args.repo and re.fullmatch(r"issue-[1-9][0-9]*", str(doc.get("taskId"))):
             opened[pr] = (doc["taskId"], args.repo)
     done = []
+    closed = []
     for pr, (task_id, repo) in opened.items():
-        if (repo, pr) in merged:
+        if (repo, pr) in finished:
             continue
         result = github(pr, repo)
         commit = result.get("mergeCommit") or {}
         sha = commit.get("oid")
+        if result.get("state") == "CLOSED" and "mergedAt" in result and result["mergedAt"] is None:
+            post_closed(args.url.rstrip("/"), token, args.execution, pr, task_id, repo)
+            closed.append(pr)
+            continue
         if result.get("state") != "MERGED":
             continue
         if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
@@ -134,7 +161,7 @@ def reconcile(args):
                   if issue.get("repository", {}).get("nameWithOwner", repo) == repo]
         post(args.url.rstrip("/"), token, args.execution, pr, task_id, repo, sha, closes)
         done.append(pr)
-    return {"merged": done, "inspected": len(opened), "pendingKinds": ["closed", "released"]}
+    return {"merged": done, "closed": closed, "inspected": len(opened), "pendingKinds": ["released"]}
 
 
 def main():

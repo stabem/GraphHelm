@@ -2618,11 +2618,12 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .journey-failure { margin: 0.5rem 0 0; font-size: 0.85rem; opacity: 0.85; overflow-wrap: anywhere; }
 /* #465: the owner's approval screen: a compact list of journeys, the chosen one as numbered steps
    (Does / Sees), the step a Watch is playing lit, Watch and Approve side by side. */
-.journey-flow-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0 2px 0 0; list-style: none; max-height: 168px; overflow-y: auto; flex: 0 0 auto; }
-.journey-flow-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: baseline; width: 100%; padding: 6px 10px; border: 1px solid var(--edge); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.journey-flow-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0 2px 0 0; list-style: none; flex: 0 0 auto; }
+.journey-flow-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 12px; align-items: baseline; width: 100%; padding: 6px 10px; border: 1px solid var(--edge); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .journey-flow-row[aria-pressed="true"] { border-color: var(--signal); background: var(--signal-wash); }
 .journey-flow-row-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .journey-flow-row-status, .journey-flow-row-steps { font-size: 12px; color: var(--dim); white-space: nowrap; }
+.journey-flow-row-result { font-size: 12px; color: var(--dim); white-space: nowrap; }
 .journey-flow-row[data-status="draft"] .journey-flow-row-status { color: var(--text); }
 .journey-flow-detail { outline: none; }
 .journey-flow-note { margin: 4px 0 0; font-size: 0.85rem; color: var(--dim); }

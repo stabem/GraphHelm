@@ -60,6 +60,19 @@ describe("JourneyFlows", () => {
     expect(screen.getByRole("article", { name: "Journey Flow checkout" })).toBeInTheDocument();
   });
 
+  it("shows a cached preview result in its flow row", async () => {
+    const run = {
+      start: vi.fn(async (id: string) => id === "checkout"
+        ? { state: "ready" as const, kind: "preview" as const, digest: "d1", result: "drift" as const }
+        : { state: "ready" as const, kind: "preview" as const, digest: "d1", result: "pass" as const }),
+      read: vi.fn(async () => ({ state: "ready" as const, kind: "preview" as const, digest: "d1", result: "drift" as const })),
+      screenFrame: vi.fn(async () => null),
+      liveFrame: vi.fn(async () => null),
+    };
+    render(<JourneyFlows view={view} onApprove={vi.fn()} run={run} />);
+    await waitFor(() => expect(within(screen.getByRole("list", { name: "Journeys" })).getByRole("button", { name: /Flow checkout/ }).textContent).toContain("drift"));
+  });
+
   it("shows the selected journey's steps as what it does and what it sees, never codes or paths", async () => {
     render(<JourneyFlows view={view} onApprove={vi.fn()} />);
     const steps = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");

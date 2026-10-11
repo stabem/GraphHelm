@@ -131,11 +131,25 @@ describe("the Journey tab is a column that reserves the dock (#435)", () => {
     expect(panel).toMatch(/padding-bottom:\s*var\(--dock-reserve/);
     expect(rule("#studio-panel-journeys[hidden]")).toMatch(/display:\s*none/);
   });
-  it("scrolls the flow cards in their own box and gives the canvas the rest", () => {
+  it("keeps the flow section in the page-level scroll area", () => {
     const flows = rule(".mv-journey-content > .journey-flows");
-    expect(flows).toMatch(/overflow-y:\s*auto/);
-    expect(flows).toMatch(/max-height:/);
+    expect(flows).not.toMatch(/overflow-y:\s*(?:auto|scroll)/);
+    expect(flows).not.toMatch(/max-height:/);
+    expect(rule(".mv-journey-content")).toMatch(/overflow-y:\s*auto/);
     expect(rule(".mv-journey-content > .journey-canvas")).toMatch(/flex:\s*1/);
+  });
+});
+
+describe("the Journeys list has one scroll owner (#831)", () => {
+  const rule = (selector: string) => {
+    const at = CODE.indexOf(`${selector} {`);
+    return at === -1 ? "" : CODE.slice(at + selector.length + 2, CODE.indexOf("}", at));
+  };
+  it("shows all flow rows without nested vertical scroll boxes", () => {
+    expect(rule(".journey-flow-list")).not.toMatch(/max-height:\s*(?:[0-9]{1,2}|[1-3][0-9]{2})px/);
+    const scrollRules = [".journey-flow-list", ".journey-flows", ".mv-journey-content"]
+      .filter((selector) => /overflow-y:\s*(?:auto|scroll)/.test(rule(selector)));
+    expect(scrollRules).toHaveLength(1);
   });
 });
 

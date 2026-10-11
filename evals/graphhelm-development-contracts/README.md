@@ -15,6 +15,11 @@ claude plugin eval "$tmp/plugin" --trust-plugin
 Each case is `prompt.md` plus `graders/criteria.md` (an LLM judge). The runner adds a no-plugin
 baseline arm, so the delta column shows what the skill itself changes.
 
+Each `-unprompted` case keeps its prompted case's scenario and settings but removes the skill
+instruction, then requires transcript evidence that the expected skill was invoked. It measures
+skill selection separately from behavior after an explicit request; the offline pairing lint
+checks the twins without running a model.
+
 First run (2026-10-05, 3 runs per arm). This is one noisy sample: a review re-run of
 `keel-scope` scored 0.67 with the skill and 1.00 without it, so treat any single-run number as
 +/- one run. Use `--runs` to raise runs per arm before reading a delta as real.

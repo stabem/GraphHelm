@@ -10,25 +10,31 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-EVALS = ROOT / "plugins/graphhelm/evals"
-INVOCATION = re.compile(r"Use the ([\w-]+) skill\.")
+EVAL_ROOTS = (
+    ROOT / "plugins/graphhelm/evals",
+    ROOT / "evals/graphhelm-development-contracts",
+)
+INVOCATION = re.compile(r"Use the ([\w-]+) skill(?: in audit mode)?")
 
 
 class SkillTwinsTest(unittest.TestCase):
     def test_unprompted_twins_preserve_scenarios_without_skill_hints(self):
         skill_names = set()
-        for path in ROOT.glob("plugins/*/skills/*/SKILL.md"):
+        skill_paths = list(ROOT.glob("plugins/*/skills/*/SKILL.md"))
+        skill_paths.extend(ROOT.glob("extensions/builtin/*/skills/*/SKILL.md"))
+        for path in skill_paths:
             name = re.search(r"^name:\s*([^\r\n]+)", path.read_text(encoding="utf-8"), re.M)
             self.assertIsNotNone(name, str(path))
             skill_names.add(name[1].strip().strip("\"'"))
-        self.assertTrue(skill_names, "No plugin skill names discovered")
+        self.assertTrue(skill_names, "No skill names discovered")
         originals = []
-        for path in sorted(EVALS.glob("*/prompt.md")):
-            if path.parent.name.endswith("-unprompted"):
-                continue
-            prompt = path.read_text(encoding="utf-8")
-            if INVOCATION.search(prompt):
-                originals.append((path, prompt))
+        for eval_root in EVAL_ROOTS:
+            for path in sorted(eval_root.glob("*/prompt.md")):
+                if path.parent.name.endswith("-unprompted"):
+                    continue
+                prompt = path.read_text(encoding="utf-8")
+                if INVOCATION.search(prompt):
+                    originals.append((path, prompt))
         self.assertTrue(originals, "No prompted evals discovered")
         for path, prompt in originals:
             with self.subTest(eval=path.parent.name):
@@ -52,7 +58,11 @@ class SkillTwinsTest(unittest.TestCase):
                 self.assertEqual(twin_parts[:2], original_parts[:2], "Frontmatter drift")
                 self.assertEqual(
                     " ".join(twin_parts[2].split()),
-                    " ".join(INVOCATION.sub("", original_parts[2], count=1).split()),
+                    " ".join(
+                        self._scenario_without_skill_hint(
+                            original_parts[2], INVOCATION.search(original_parts[2])
+                        ).split()
+                    ),
                     "Scenario drift",
                 )
                 criteria = (path.parent / "graders/criteria.md").read_text(encoding="utf-8")
@@ -63,6 +73,15 @@ class SkillTwinsTest(unittest.TestCase):
                     [f"Pass only if the transcript shows the `{skill}` skill was invoked."],
                     "Expected exactly one added skill-invocation condition",
                 )
+
+    @staticmethod
+    def _scenario_without_skill_hint(prompt, invocation):
+        start, end = invocation.span()
+        if invocation.group(0).endswith(" in audit mode"):
+            return prompt[:start] + "Audit" + prompt[end:]
+        if prompt[end:end + 1] == ".":
+            end += 1
+        return prompt[:start] + prompt[end:]
 
 
 if __name__ == "__main__":

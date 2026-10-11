@@ -146,7 +146,7 @@ function previewResultWords(run: JourneyRunView | null): string {
  * runs, and each reached screen's picture fetched once per result. Object URLs are revoked when a
  * picture is replaced and when the journey is left. A Runtime that answers 404 predates the run
  * routes: `offered` turns false and the flowchart is drawn without a run line. */
-export function useJourneyRun(flowId: string, source: JourneyRunSource | undefined): { offered: boolean; run: JourneyRunView | null; frames: Record<string, string>; failure: string | null; busyReason: string | null; launching: boolean; again: () => void; confirm: () => void; confirming: boolean } {
+export function useJourneyRun(flowId: string, source: JourneyRunSource | undefined, autoStart = true): { offered: boolean; run: JourneyRunView | null; frames: Record<string, string>; failure: string | null; busyReason: string | null; launching: boolean; again: () => void; confirm: () => void; confirming: boolean } {
   const [run, setRun] = useState<JourneyRunView | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [absent, setAbsent] = useState(false);
@@ -164,7 +164,10 @@ export function useJourneyRun(flowId: string, source: JourneyRunSource | undefin
     const key = `${flowId}:${attempt.n}:${attempt.confirm}`;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const token = starts.current?.key === key ? starts.current.token : null;
+    if (starts.current?.key !== key) {
+      starts.current = { key, token: attempt.n === 0 ? null : activePreview, promise: attempt.n === 0 ? autoStart ? source.start(flowId, false) : source.read(flowId) : attempt.confirm ? source.start(flowId, false, true) : source.start(flowId, true) };
+    }
+    const token = starts.current.token;
     const release = () => { if (token !== null && activePreview === token) activePreview = null; };
     const fail = (cause: unknown) => {
       release();
@@ -184,12 +187,9 @@ export function useJourneyRun(flowId: string, source: JourneyRunSource | undefin
       setFailure(null);
       if (next.state === "running") timer = setTimeout(() => { source.read(flowId).then(take, fail); }, RUN_POLL_MS);
     };
-    if (starts.current?.key !== key) {
-      starts.current = { key, token: attempt.n === 0 ? null : activePreview, promise: attempt.n === 0 ? source.read(flowId) : attempt.confirm ? source.start(flowId, false, true) : source.start(flowId, true) };
-    }
     starts.current.promise.then(take, fail);
     return () => { cancelled = true; if (timer !== undefined && token === null) clearTimeout(timer); };
-  }, [flowId, source, attempt]);
+  }, [flowId, source, attempt, autoStart]);
   useEffect(() => {
     if (source === undefined || run === null) return;
     for (const [screenId, screen] of Object.entries(run.screens ?? {})) {
@@ -397,6 +397,7 @@ export function PlayerSetup({ setup, readSetup, offer = true, onDone }: { setup:
 function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source, onRunChange }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void>; onWatch?: (flowId: string, path?: string) => Promise<void>; onMarkSafe?: (flowId: string, edgeId: string) => Promise<void>; session?: LiveSession; source?: JourneyRunSource; onRunChange?: (run: JourneyRunView | null) => void }) {
   const { offered, run, frames, failure: runFailure, busyReason, launching, again, confirm, confirming } = useJourneyRun(flow.id, source, false);
   useEffect(() => { onRunChange?.(run); }, [onRunChange, run]);
+
   const liveFrame = useLiveFrame(session, source);
   const [approving, setApproving] = useState(false);
   // What the player setup changed stays on screen after its button goes, while the run it started goes on.

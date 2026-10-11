@@ -327,6 +327,9 @@ def reach(changed, packages, embedded, repo=None):
             studio.append(path)
             continue
         hit = False
+        if path.startswith("plugins/graphhelm/hooks/"):
+            tools.add("python -m unittest plugins/graphhelm/hooks/test_lane_stop_hook.py")
+            hit = True
         for prefix, readers in RUNTIME_READERS.items():
             if path.startswith(prefix):
                 single |= {t for t in (target_of(packages, pkg, stem) for pkg, stem in readers) if t}

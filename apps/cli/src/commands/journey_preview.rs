@@ -1224,6 +1224,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             execution: None,
             keyring: None,
             key_id: None,
+            validation_dir: None,
         });
         assert_eq!(outcome.exit_code, 0);
         let during: Value = serde_json::from_slice(
@@ -1382,6 +1383,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             execution: None,
             keyring: None,
             key_id: None,
+            validation_dir: None,
         });
 
         let answer = answer.output.data.unwrap();

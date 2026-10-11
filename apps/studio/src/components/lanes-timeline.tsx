@@ -32,7 +32,7 @@ export interface BotActions {
   onNameBot?: (actorId: string, displayName: string) => void | Promise<unknown>;
 }
 
-interface Props extends BotActions { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[]; agents?: Bot[]; slots?: SlotView[]; historyLoading?: boolean }
+interface Props extends BotActions { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[]; agents?: Bot[]; slots?: SlotView[]; onDemandLanes?: readonly string[]; liveLanes?: readonly string[]; historyLoading?: boolean }
 
 /** #647: the Team canvas's rename control (same gate, labels and save path), on a board row. */
 export function NameBot({ bot, onSave }: { bot: Bot; onSave: (actorId: string, displayName: string) => void | Promise<unknown> }) {
@@ -54,20 +54,20 @@ export function NameBot({ bot, onSave }: { bot: Bot; onSave: (actorId: string, d
 /** The Team canvas showed the rename only for an unnamed, unshared, non-native actor. */
 const nameable = (b: Bot) => b.actorId !== null && b.role === null && !b.native && !b.shared;
 
-const PILL: Record<AgentStatus, string> = { silent: "Silent", stale: "Stale claim", building: "Building", build_wait: "Waiting for build", working: "Working", awaiting: "Awaiting review", waiting: "Waiting", free: "Free" };
+const PILL: Record<AgentStatus, string> = { silent: "Silent", stale: "Stale claim", building: "Building", build_wait: "Waiting for build", working: "Working", awaiting: "Awaiting review", waiting: "Waiting", free: "Free", offline: "Offline" };
 const STAGE: Record<string, string> = { implement: "implementing", review: "reviewing", merge: "merging" };
-type Filter = "all" | "working" | "free" | "silent";
+type Filter = "all" | "working" | "free" | "silent" | "offline";
 
 function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: AgentRow[]; agents?: Bot[] } & BotActions) {
   const [filter, setFilter] = useState<Filter>("all");
-  const count = (f: Filter) => (f === "all" ? rows.length : rows.filter((r) => r.status === f).length);
-  const shown = filter === "all" ? rows : rows.filter((r) => r.status === filter);
+  const count = (f: Filter) => rows.filter((r) => f === "all" ? r.status !== "offline" : r.status === f).length;
+  const shown = rows.filter((r) => filter === "all" ? r.status !== "offline" : r.status === filter);
   return (
     <section className="ab" aria-label="Agents">
       <div className="ab-head">
         <h2>Agents</h2>
         <div className="ab-chips" role="group" aria-label="Filter agents">
-          {(["all", "working", "free", "silent"] as const).map((f) => (
+          {(["all", "working", "free", "silent", "offline"] as const).map((f) => (
             <button key={f} type="button" className="ab-chip" aria-pressed={filter === f} onClick={() => setFilter(f)}>
               {`${f === "all" ? "All" : PILL[f]} ${count(f)}`}
             </button>
@@ -148,13 +148,13 @@ function useTrackWidth(ref: RefObject<HTMLElement | null>): number {
   return w;
 }
 
-export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], slots = [], historyLoading = false, onOpenBotDetails, onNameBot }: Props) {
+export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], slots = [], onDemandLanes = [], liveLanes = [], historyLoading = false, onOpenBotDetails, onNameBot }: Props) {
   const listRef = useRef<HTMLUListElement>(null);
   const trackW = useTrackWidth(listRef);
   if (historyLoading) return <section className="lt-loading" role="status">Loading the team's history…</section>;
   lanes = lanes.filter((l) => !placeholderLane(l.lane));
-  if (lanes.length === 0 && agents.length === 0) return <>{<SlotStrip slots={slots} />}<p className="lt-empty">No agent has recorded work in this window</p></>;
-  const board = agentBoard(agents, lanes, tasks, now, slots);
+  if (lanes.length === 0 && agents.length === 0 && onDemandLanes.length === 0) return <>{<SlotStrip slots={slots} />}<p className="lt-empty">No agent has recorded work in this window</p></>;
+  const board = agentBoard(agents, lanes, tasks, now, slots, onDemandLanes, liveLanes);
   const rank = new Map<string, number>();
   board.forEach((r, i) => rank.set(r.name, i));
   const botOf = (l: Lane) => agents.find((b) => b.actorId === l.lane || b.key === l.lane)?.name;

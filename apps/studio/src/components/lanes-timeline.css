@@ -72,6 +72,7 @@
 .ab-pill[data-status="waiting"] { background: #172338; color: #8FB3D9; }
 .ab-pill[data-status="awaiting"] { background: #172338; color: #9AB8FF; }
 .ab-pill[data-status="stale"] { background: #2A2D34; color: #C7CBD3; }
+.ab-pill[data-status="offline"] { background: #2A2D34; color: #C7CBD3; }
 .ab-pill[data-status="silent"] { background: #3A1E1A; color: #FF8A7E; }
 .ab-name { font-family: var(--mono); font-size: 12.5px; min-width: 13ch; overflow-wrap: normal; word-break: keep-all; hyphens: manual; }
 .ab-what { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; color: #C9CCD2; }

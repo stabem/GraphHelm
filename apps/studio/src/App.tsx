@@ -206,6 +206,7 @@ export default function App({
   /** What the rail calls this folder. Named by the operator; absent, the rail says what it can. */
   const [project, setProject] = useState<string | null>(null);
   const [projectPath, setProjectPath] = useState<string | null>(null);
+  const [onDemandLanes, setOnDemandLanes] = useState<string[]>([]);
   const [projectIdentity, setProjectIdentity] = useState<string | null>(null);
   const [removedRuns, setRemovedRuns] = useState<string[]>([]);
   const removedRunsRef = useRef<string[]>([]);
@@ -1428,7 +1429,7 @@ export default function App({
   const connectionGeneration = useRef(0);
 
   const connect = useCallback(
-    async (token: string, knownProject?: string | null, knownProjectPath?: string | null) => {
+    async (token: string, knownProject?: string | null, knownProjectPath?: string | null, knownOnDemand?: string[]) => {
       connectionAttempted.current = true;
       const generation = ++connectionGeneration.current;
       pollMisses.current = 0;
@@ -1445,15 +1446,18 @@ export default function App({
         // cannot inherit the previous Runtime's browser preferences merely by sharing a tab.
         let identity = knownProject;
         let folder = knownProjectPath ?? null;
+        let roster = knownOnDemand ?? [];
         if (identity === undefined) {
           const opened = await (session ?? devSession)().catch(() => null);
           identity = opened?.token === token ? opened.project : null;
           folder = opened?.token === token ? opened.projectPath ?? null : null;
+          roster = opened?.token === token ? opened.onDemandLanes ?? [] : [];
         }
         if (connectionGeneration.current !== generation) { client.dispose(); return; }
         setProjectIdentity(identity);
         setProject(identity === null ? null : loadProjectName(`${location.origin}:${identity}`, identity));
         setProjectPath(folder);
+        setOnDemandLanes(roster);
         const removed = identity === null ? [] : loadRemovedRuns(`${location.origin}:${identity}`);
         removedRunsRef.current = removed;
         setRemovedRuns(removed);
@@ -1505,7 +1509,7 @@ export default function App({
       // operator typed a token faster than the dev endpoint answered - this continuation
       // discards itself instead of starting a second connection over the manual one.
       if (cancelled || opened === null || connectionAttempted.current) return;
-      await connectRef.current(opened.token, opened.project, opened.projectPath);
+      await connectRef.current(opened.token, opened.project, opened.projectPath, opened.onDemandLanes);
     })();
     return () => {
       cancelled = true;
@@ -3168,7 +3172,7 @@ export default function App({
             </div>
             {(canvasTab === "graph" || canvasTab === "journey") && (
               <div id={canvasTab === "journey" ? "studio-panel-journeys" : "studio-panel-graph"} role="tabpanel" aria-label={canvasTab === "journey" ? "Journeys" : "Graph"} aria-labelledby={canvasTab === "journey" ? "studio-tab-journeys" : undefined}>
-                <SlotPoll client={clientRef.current}>{(slots) => <MissionView wakeListeners={status?.wakeListeners} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={taskGraphs?.executionId === selected ? taskGraphs.records : []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} runFor={missionRunFor}
+                <SlotPoll client={clientRef.current}>{(slots) => <MissionView wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={taskGraphs?.executionId === selected ? taskGraphs.records : []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} runFor={missionRunFor}
                   initialView={canvasTab === "journey" ? "journeys" : "graph"}
                   journeyContent={<>
                     <JourneyFlows view={flowsRead.view} failure={flowsRead.failure} onApprove={approveFlow} focusFlowId={journeyContract}

@@ -7,15 +7,22 @@ import type { MissionTask } from "./mission";
 
 const now = 10 * 3_600_000;
 const M = 60_000;
-const bot = (name: string): Bot => ({ key: name, actorId: name, name, hue: 0, role: null, doingNow: "", lastRecordAt: null, lastSequence: 0,
+const bot = (name: string): Bot => ({ key: name, actorId: name, name, hue: 0, role: null, doingNow: "", lastRecordAt: new Date(now).toISOString(), lastSequence: 0,
   state: "working", quietMinutes: null, shared: false, native: false, tasks: [] });
-const lane = (name: string, bars: Lane["bars"], silent = false): Lane => ({ lane: name, bars, silent, lastEventAt: 0 });
+const lane = (name: string, bars: Lane["bars"], silent = false): Lane => ({ lane: name, bars, silent, lastEventAt: now });
 const bar = (kind: "implement" | "review" | "merge", since: number, open = true, end = now, label = "#7") =>
   ({ kind, label, start: since, end, open, since, taskId: "t7" });
 const task = (over: Partial<MissionTask>): MissionTask => ({ key: "t7", pr: 7, issue: null, title: "Add board", lane: "a", reviewers: [],
   step: "implement", blocked: false, trust: 1, blockedBy: null, rounds: [], headSha: null, mergeSha: null, repoUrl: "https://github.com/o/r", ...over });
 
 describe("agentBoard", () => {
+  it("keeps old idle lanes Offline and roster on-demand lanes Free", () => {
+    const old = { ...lane("old", []), lastEventAt: now - 20 * 3_600_000 };
+    const recent = { ...lane("live", []), lastEventAt: now - M };
+    const rows = agentBoard([], [old, recent], [], now, [], ["codex-14"]);
+    expect(Object.fromEntries(rows.map((r) => [r.name, r.status]))).toEqual({ live: "free", "codex-14": "free", old: "offline" });
+    expect(rows.find((r) => r.name === "old")?.label).toContain("last seen");
+  });
   it("uses the slot's PR label, never an older review assignment", () => {
     const old = { ...lane("rev", []), lastRecord: { kind: "review_assigned", pr: 720, at: now - M } };
     const slots = [{ root: "D:/gh/b", ok: true as const, holder: { lane: "rev", label: "#806", pid: 1, worktree: "D:/gh/rev/wt", heldSeconds: 10 }, waiting: [] }];

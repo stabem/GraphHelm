@@ -78,6 +78,18 @@ describe("LanesTimeline", () => {
     expect(within(board).queryByText("gh-claude-6")).toBeNull();
   });
 
+  it("Free count matches Free rows while old idle lanes stay collapsed under Offline", async () => {
+    const user = fastUserEvent();
+    render(<LanesTimeline lanes={[{ ...lanes[1]!, lastEventAt: now - 20 * 3_600_000 }]} now={now} windowMs={1000} onDemandLanes={["codex-14"]} />);
+    const board = screen.getByRole("list", { name: "Agent board" });
+    await user.click(screen.getByRole("button", { name: "Free 1" }));
+    expect(within(board).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(board).getByText("codex-14")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Offline 1" }));
+    expect(within(board).getByText("gh-claude-6")).toBeInTheDocument();
+    expect(within(board).getByText(/last seen/)).toBeInTheDocument();
+  });
+
   it("timeline rows follow the board order", () => {
     render(<LanesTimeline lanes={[lanes[1]!, lanes[0]!]} now={now} windowMs={1000} />);
     const rows = within(screen.getByRole("list", { name: "Agent lanes" })).getAllByRole("listitem");

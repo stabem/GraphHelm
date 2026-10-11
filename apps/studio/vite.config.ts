@@ -118,11 +118,20 @@ function devSession(env: Record<string, string>): Plugin {
         // to distinguish projects. Only the conventional layout or an explicit path identifies
         // it; an arbitrary event store is never guessed into a source folder.
         const folder = projectFolder(env);
+        let onDemandLanes: string[] = [];
+        if (folder !== null) {
+          try {
+            const team = JSON.parse(readFileSync(join(folder, ".graphhelm", "team.json"), "utf8")) as { onDemandLanes?: unknown };
+            if (Array.isArray(team.onDemandLanes)) onDemandLanes = team.onDemandLanes
+              .filter((name): name is string => typeof name === "string" && name.length > 0 && name.length <= 80).slice(0, 100);
+          } catch { /* An absent roster does not invent available lanes. */ }
+        }
         response.end(JSON.stringify({
           ok: true,
           token,
           project: env.GRAPHHELM_PROJECT || (folder === null ? null : basename(folder)),
           projectPath: folder,
+          onDemandLanes,
         }));
       });
     },

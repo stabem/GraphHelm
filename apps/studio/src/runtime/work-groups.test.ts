@@ -21,7 +21,9 @@ describe("workStage", () => {
     expect(workStage(task("a", { step: "merged" }), true)).toBe("proven");
   });
   it("a released claim is not active work", () => {
-    expect(workStage(task("released", { releasedBy: "gh-claude-1" }), false)).toBe("released");
+    const released = task("released", { issue: 790, releasedBy: "gh-claude-1" });
+    expect(workStage(released, false)).toBe("implement");
+    expect(buildWorkGroups([released], [])[0]).toMatchObject({ open: false, releasedKeys: ["released"] });
   });
   it("Fix: an unanswered BLOCK; once the fix is pushed the work waits in Review (#591)", () => {
     expect(workStage(task("a", { step: "review", blockedBy: { reviewer: "r", headSha: "a", commentUrl: "" }, rounds: [round(null)] }), false)).toBe("fix");

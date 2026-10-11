@@ -26,6 +26,8 @@ export interface WorkGroup {
   journeyIds: string[];
   /** Some task is not merged yet. */
   open: boolean;
+  /** Task slices whose lane released its pre-PR claim. They remain in history, outside active work. */
+  releasedKeys: string[];
   /** The newest record any of its tasks carries. */
   latest: number;
   /** #591: the issue's one-line summary, from the first task that recorded one. */
@@ -66,7 +68,7 @@ export interface PrRow { key: string; task: MissionTask; open: boolean; cells: P
 
 /** #591: blocked work first, then work in flight, then the newest record; ties keep PR order. */
 export function focusTask(rows: TaskState[]): string | null {
-  const rank = (t: TaskState) => (openBlock(t) !== null ? 0 : t.step !== "merged" ? 1 : 2);
+  const rank = (t: TaskState) => (openBlock(t) !== null ? 0 : t.step !== "merged" && t.releasedBy === undefined ? 1 : 2);
   const best = [...rows].sort(byPr).sort((a, b) => rank(a) - rank(b) || (b.lastSequence ?? 0) - (a.lastSequence ?? 0))[0];
   return best?.key ?? null;
 }
@@ -119,11 +121,12 @@ export function buildWorkGroups(tasks: TaskState[], journeys: JourneyView[], run
       tasks: sorted.map(toMissionTask),
       stages: Object.fromEntries(sorted.map((t) => [t.key, workStage(t, proven.has(t.key))])),
       journeyIds: [...new Set(sorted.flatMap((t) => t.journeys))],
-      open: rows.some((r) => r.step !== "merged"),
+      open: rows.some((r) => r.step !== "merged" && r.releasedBy === undefined),
+      releasedKeys: rows.filter((r) => r.releasedBy !== undefined).map((r) => r.key),
       latest: Math.max(...rows.map((r) => r.lastSequence ?? 0)),
       summary: sorted.find((r) => r.summary)?.summary ?? null,
       focus: focusTask(rows),
-      rows: orderRows(rows).map((t) => ({ ...prPath(t, proven.has(t.key)), task: toMissionTask(t) })),
+      rows: orderRows(rows).map((t) => ({ ...prPath(t, proven.has(t.key)), open: t.step !== "merged" && t.releasedBy === undefined, task: toMissionTask(t) })),
     };
   });
   return groups.sort((a, b) => Number(b.open) - Number(a.open) || b.latest - a.latest);

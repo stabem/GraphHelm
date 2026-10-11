@@ -16,6 +16,19 @@ const task = (over: Partial<MissionTask>): MissionTask => ({ key: "t7", pr: 7, i
   step: "implement", blocked: false, trust: 1, blockedBy: null, rounds: [], headSha: null, mergeSha: null, repoUrl: "https://github.com/o/r", ...over });
 
 describe("agentBoard", () => {
+  it("uses the slot's PR label, never an older review assignment", () => {
+    const old = { ...lane("rev", []), lastRecord: { kind: "review_assigned", pr: 720, at: now - M } };
+    const slots = [{ root: "D:/gh/b", ok: true as const, holder: { lane: "rev", label: "#806", pid: 1, worktree: "D:/gh/rev/wt", heldSeconds: 10 }, waiting: [] }];
+    expect(agentBoard([bot("rev")], [old], [], now, slots)[0]).toMatchObject({ status: "building", pr: 806, doing: expect.stringContaining("#806") });
+    slots[0]!.holder.label = "reached-batch-85";
+    expect(agentBoard([bot("rev")], [old], [], now, slots)[0]).toMatchObject({ status: "building", pr: null, doing: "building in D:/gh/b" });
+  });
+
+  it("shows no wait position after the queue stops listing the lane", () => {
+    const old = { ...lane("rev", []), lastRecord: { kind: "review_assigned", pr: 720, at: now - M } };
+    const slots = [{ root: "D:/gh/b", ok: true as const, holder: null, waiting: [] }];
+    expect(agentBoard([bot("rev")], [old], [], now, slots)[0]).toMatchObject({ status: "free", pr: null });
+  });
   it("frees an ended PR-less claim, but keeps review work and a later claim", () => {
     const claim = { ...bar("implement", now - 3 * M, true, now, "issue-782"), issue: 782 };
     const ended = { ...lane("a", [claim]), endedAt: now - M };

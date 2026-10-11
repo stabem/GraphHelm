@@ -110,9 +110,9 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
         }
         break;
       case "task.merged": {
+        if (e.pr !== undefined) for (const lane of lanes.values()) lane.awaiting.delete(e.pr);
         for (const s of e.pr !== undefined ? prSlices.get(e.pr) ?? new Set([slice]) : [slice])
           for (const k of ["implement", "review", "merge"] as const) close(k, s, t);
-        if (author && pr !== undefined) laneOf(author).awaiting.delete(pr);
         // #591: only issue closure ends PR-less claims across lanes. A Refs slice ends only
         // its author's matching claims; other PR slices stay open.
         const issue = e.issue ?? issueOf.get(slice);
@@ -128,9 +128,9 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
         break;
       }
       case "task.closed":
+        if (e.pr !== undefined) for (const lane of lanes.values()) lane.awaiting.delete(e.pr);
         for (const s of e.pr !== undefined ? prSlices.get(e.pr) ?? new Set([slice]) : [slice])
           for (const k of ["implement", "review", "merge"] as const) close(k, s, t);
-        if (author && pr !== undefined) laneOf(author).awaiting.delete(pr);
         break;
       default: break;
     }

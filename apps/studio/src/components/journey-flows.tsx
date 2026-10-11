@@ -510,7 +510,11 @@ export function JourneyFlows({ view, failure = null, onApprove, focusFlowId = nu
       <ul className="journey-flow-list" aria-label="Journeys">
         {view.flows.map((flow) => (
           <li key={flow.id}>
-            <button type="button" className="journey-flow-row" aria-pressed={flow.id === selectedId} data-status={flow.status} onClick={() => setPicked(flow.id)}>
+            <button type="button" className="journey-flow-row" aria-pressed={flow.id === selectedId} data-status={flow.status} onClick={() => {
+              setPicked(flow.id);
+              detail.current?.scrollIntoView?.({ block: "start" });
+              detail.current?.focus();
+            }}>
               <span className="journey-flow-row-title">{splitTitle(flow.title ?? flow.id).name}</span>
               <span className="journey-flow-row-status">{STATUS_LABEL[flow.status]}</span>
               <span className="journey-flow-row-result">{run === undefined ? "" : previewResultWords(flow.id === selectedId ? selectedRun : rowCacheReady ? rowRuns[flow.id] ?? null : null)}</span>

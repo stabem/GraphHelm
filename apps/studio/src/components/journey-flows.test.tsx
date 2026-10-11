@@ -46,6 +46,17 @@ const watchRow = (extra: Partial<LiveSession>): LiveSession => ({
 const pick = (name: string) => userEvent.click(within(screen.getByRole("list", { name: "Journeys" })).getByRole("button", { name: new RegExp(`^Flow ${name}`) }));
 
 describe("JourneyFlows", () => {
+  it("scrolls the selected journey detail into view when a row is chosen", async () => {
+    const scrollIntoView = vi.fn();
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    render(<JourneyFlows view={view} onApprove={vi.fn()} />);
+
+    await pick("broken");
+
+    expect(screen.getByRole("article", { name: "Journey Flow broken" })).toBeInTheDocument();
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+  });
+
   it("lists every journey compactly and opens the first one waiting for approval", () => {
     render(<JourneyFlows view={view} onApprove={vi.fn()} />);
     const rows = within(screen.getByRole("list", { name: "Journeys" })).getAllByRole("button");

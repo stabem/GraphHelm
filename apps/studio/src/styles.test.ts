@@ -172,6 +172,13 @@ describe("the Lanes kanban fits six columns without a minimum-width overflow (#7
   });
 });
 
+describe("the issue graph row title stays inside its five columns (#796)", () => {
+  it("bounds the title to the grid while keeping the full task title available", () => {
+    const graph = STYLESHEETS["./components/mission-graph.css"];
+    expect(graph).toMatch(/\.mg-rowtitle\s*\{[^}]*width:\s*calc\(\(100%\s*-\s*48px\)\s*\/\s*5\)[^}]*white-space:\s*nowrap[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/s);
+  });
+});
+
 describe("the stylesheet and the components agree", () => {
   /** The second half of the same defect: `.blob` survived as modifiers with no base rule, so the
    * element had a colour and no size and would have rendered as nothing. */

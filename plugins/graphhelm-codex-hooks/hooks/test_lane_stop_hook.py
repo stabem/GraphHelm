@@ -122,13 +122,14 @@ class LaneStopTests(unittest.TestCase):
         self.env.pop("GRAPHHELM_HOOK_STATE_DIR", None)
         self.note("request-desktop", to="codex-4")
         start = {"hook_event_name": "SessionStart", "session_id": "session-desktop",
-                 "session_title": "codex-4", "cwd": str(repo)}
+                 "session_title": "codex-4 - journeys", "cwd": str(repo)}
         start_result = subprocess.run([sys.executable, str(HERE / "session_hook.py"),
             "start", "--host", "claude"], input=json.dumps(start), text=True,
             capture_output=True, env=self.env, timeout=12)
         self.assertEqual(start_result.returncode, 0, start_result.stderr)
         lane_file = home / ".graphhelm/lane-sessions/session-desktop.json"
         self.assertTrue(lane_file.exists())
+        self.assertEqual(json.loads(lane_file.read_text())["actor"], "codex-4")
         stop_result = subprocess.run([sys.executable, str(HERE / "lane_stop_hook.py")],
             input=json.dumps({"session_id": "session-desktop", "cwd": str(repo)}),
             text=True, capture_output=True, env=self.env, timeout=12)

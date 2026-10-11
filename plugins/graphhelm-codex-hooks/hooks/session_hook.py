@@ -95,7 +95,12 @@ def _lane_sessions_root() -> Path:
 def _remember_lane(payload: dict) -> None:
     session = payload.get("session_id")
     title = payload.get("session_title")
-    if not isinstance(session, str) or not ID.fullmatch(session) or not isinstance(title, str) or not ID.fullmatch(title):
+    actor = title.split(" - ", 1)[0] if isinstance(title, str) and " - " in title else title
+    if not isinstance(actor, str) or not ID.fullmatch(actor):
+        if isinstance(title, str):
+            print("lane not bound: title has no lane id", file=sys.stderr)
+        return
+    if not isinstance(session, str) or not ID.fullmatch(session):
         return
     root = _lane_sessions_root()
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -108,7 +113,7 @@ def _remember_lane(payload: dict) -> None:
         except OSError:
             continue
     path = root / f"{session}.json"
-    raw = json.dumps({"actor": title, "at": now.isoformat(timespec="seconds")}, separators=(",", ":")).encode()
+    raw = json.dumps({"actor": actor, "at": now.isoformat(timespec="seconds")}, separators=(",", ":")).encode()
     fd, name = tempfile.mkstemp(prefix=f".{session}.", suffix=".tmp", dir=root)
     temporary = Path(name)
     try:

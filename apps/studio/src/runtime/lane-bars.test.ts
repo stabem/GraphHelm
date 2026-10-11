@@ -105,12 +105,14 @@ describe("laneBars", () => {
     expect(lanes.flatMap((l) => l.bars).filter((b) => b.kind === "implement").map((b) => [b.end, b.open])).toEqual([[T0 + 40, false], [T0 + 40, false]]);
   });
 
-  it("ends an absent reviewer's bar when its PR closes", () => {
-    const lanes = laneBars([
-      ev({ kind: "task.review_assigned", reviewer: "rev", pr: 10, at: at(0) }),
-      ev({ kind: "task.closed", pr: 10, at: at(20) }),
-    ], T0 + 30, 1000);
-    expect(lanes[0]!.bars[0]).toMatchObject({ end: T0 + 20, open: false });
+  it("ends an absent reviewer's bar when its PR closes or merges", () => {
+    for (const end of ["task.closed", "task.merged"] as const) {
+      const lanes = laneBars([
+        ev({ kind: "task.review_assigned", reviewer: "rev", pr: 10, at: at(0) }),
+        ev({ kind: end, pr: 10, at: at(20) }),
+      ], T0 + 30, 1000);
+      expect(lanes[0]!.bars[0]).toMatchObject({ end: T0 + 20, open: false });
+    }
   });
 
   it("ends a released claim at its release record", () => {

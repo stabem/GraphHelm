@@ -24,17 +24,30 @@ describe("laneBars", () => {
 
   it("ends the review on its assigned head at verdict", () => {
     const lanes = laneBars([
+      ev({ kind: "task.pr_opened", lane: "dev", pr: 901, headSha: "head1", at: at(-1) }),
       ev({ kind: "task.review_assigned", reviewer: "rev", pr: 901, headSha: "head1", at: at(0) }),
       ev({ kind: "task.review_verdict", reviewer: "rev", pr: 901, headSha: "head1", verdict: "APPROVE" as never, at: at(10) }),
     ], T0 + 20, 1000);
     expect(lanes.find((l) => l.lane === "rev")!.bars.some((bar) => bar.open)).toBe(false);
     expect(agentBoard([{ name: "rev" } as never], lanes, [], T0 + 20)[0]!.status).toBe("free");
   });
+  it("keeps review and author waiting when the verdict head is missing or differs", () => {
+    for (const verdictHead of [undefined, "head2"]) {
+      const lanes = laneBars([
+        ev({ kind: "task.pr_opened", lane: "dev", taskId: "issue-803", pr: 902, headSha: "head1", at: at(0) }),
+        ev({ kind: "task.review_assigned", reviewer: "rev", taskId: "issue-803", pr: 902, headSha: "head1", at: at(1) }),
+        ev({ kind: "task.review_verdict", reviewer: "rev", taskId: "issue-803", pr: 902, headSha: verdictHead, verdict: "APPROVE" as never, at: at(2) }),
+      ], T0 + 20, 1000);
+      expect(lanes.find((l) => l.lane === "rev")!.bars.some((bar) => bar.open)).toBe(true);
+      expect(lanes.find((l) => l.lane === "dev")!.awaiting).toEqual([902]);
+    }
+  });
   it("implement then review then merge", () => {
     const lanes = laneBars([
       ev({ kind: "task.claimed", lane: "dev", pr: 9, at: at(0) }),
-      ev({ kind: "task.review_assigned", reviewer: "rev", pr: 9, at: at(100) }),
-      ev({ kind: "task.review_verdict", reviewer: "rev", verdict: "APPROVE" as never, pr: 9, at: at(200) }),
+      ev({ kind: "task.pr_opened", lane: "dev", pr: 9, headSha: "head9", at: at(50) }),
+      ev({ kind: "task.review_assigned", reviewer: "rev", pr: 9, headSha: "head9", at: at(100) }),
+      ev({ kind: "task.review_verdict", reviewer: "rev", verdict: "APPROVE" as never, pr: 9, headSha: "head9", at: at(200) }),
       ev({ kind: "task.merged", pr: 9, at: at(300) }),
     ], T0 + 400, 1000);
     const dev = lanes.find((l) => l.lane === "dev")!;
@@ -81,8 +94,9 @@ describe("laneBars", () => {
   it("a verdict ends the assigned review for either outcome", () => {
     for (const v of ["APPROVE-WITH-RISK", "BLOCK"] as const) {
       const lanes = laneBars([
-        ev({ kind: "task.review_assigned", reviewer: "rev", at: at(0) }),
-        ev({ kind: "task.review_verdict", reviewer: "rev", verdict: v as never, at: at(10) }),
+        ev({ kind: "task.pr_opened", lane: "dev", pr: 902 + (v === "BLOCK" ? 1 : 0), headSha: "head2", at: at(-1) }),
+        ev({ kind: "task.review_assigned", reviewer: "rev", pr: 902 + (v === "BLOCK" ? 1 : 0), headSha: "head2", at: at(0) }),
+        ev({ kind: "task.review_verdict", reviewer: "rev", pr: 902 + (v === "BLOCK" ? 1 : 0), headSha: "head2", verdict: v as never, at: at(10) }),
       ], T0 + 20, 1000);
       expect(lanes.find((l) => l.lane === "rev")!.bars.some((b) => b.open)).toBe(false);
     }
@@ -90,9 +104,10 @@ describe("laneBars", () => {
 
   it("a repeated assign closes the first bar", () => {
     const lanes = laneBars([
-      ev({ kind: "task.review_assigned", reviewer: "rev", at: at(0) }),
-      ev({ kind: "task.review_assigned", reviewer: "rev", at: at(10) }),
-      ev({ kind: "task.review_verdict", reviewer: "rev", verdict: "BLOCK" as never, at: at(20) }),
+      ev({ kind: "task.pr_opened", lane: "dev", pr: 903, headSha: "head3", at: at(-1) }),
+      ev({ kind: "task.review_assigned", reviewer: "rev", pr: 903, headSha: "head3", at: at(0) }),
+      ev({ kind: "task.review_assigned", reviewer: "rev", pr: 903, headSha: "head3", at: at(10) }),
+      ev({ kind: "task.review_verdict", reviewer: "rev", pr: 903, headSha: "head3", verdict: "BLOCK" as never, at: at(20) }),
     ], T0 + LIVENESS_MS * 2, LIVENESS_MS * 4);
     expect(lanes[0].bars.some((b) => b.open)).toBe(false);
     expect(lanes[0].silent).toBe(false);

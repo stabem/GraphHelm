@@ -136,7 +136,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
         break;
       case "task.review_assigned": close("implement", slice, t); if (e.reviewer) start(e.reviewer, "review", e.taskId, slice, t); break;
       case "task.review_verdict":
-        if (e.headSha === undefined || headOf.get(slice) === undefined || e.headSha === headOf.get(slice)) {
+        if (e.headSha !== undefined && headOf.get(slice) !== undefined && e.headSha === headOf.get(slice)) {
           close("review", slice, t, e.reviewer);
           if (author && pr !== undefined) laneOf(author).awaiting.delete(pr);
         }

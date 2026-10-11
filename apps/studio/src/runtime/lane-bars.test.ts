@@ -105,6 +105,16 @@ describe("laneBars", () => {
     expect(lanes.find((lane) => lane.lane === "first")!.awaiting).toEqual([]);
     expect(lanes.find((lane) => lane.lane === "second")!.awaiting).toEqual([]);
   });
+  it("keeps a merged PR terminal when later records reopen its head", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.pr_opened", lane: "codex-1", pr: 840, headSha: "old-head", at: at(0) }),
+      ev({ kind: "task.merged", actorId: "coordinator", pr: 840, at: at(1) }),
+      ev({ kind: "task.pr_opened", lane: "codex-1", pr: 840, headSha: "new-head", at: at(2) }),
+      ev({ kind: "task.review_assigned", actorId: "coordinator", reviewer: "codex-review", pr: 840, headSha: "new-head", at: at(3) }),
+    ], T0 + 4, 1000);
+    expect(lanes.find((lane) => lane.lane === "codex-1")!.awaiting).not.toContain(840);
+    expect(lanes.flatMap((lane) => lane.bars).filter((bar) => bar.kind === "review" && bar.label === "#840" && bar.open)).toEqual([]);
+  });
   it("ends a claimed PR when it merges or closes, including its awaiting review state", () => {
     for (const end of ["task.merged", "task.closed"] as const) {
       const lanes = laneBars([

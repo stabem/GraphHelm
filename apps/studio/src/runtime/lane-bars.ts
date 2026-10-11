@@ -44,6 +44,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
     const slice = `slice-${index}`;
     if (state.title || state.prTitle) titleOf.set(slice, state.prTitle ?? state.title!);
   });
+  const mergedPrs = new Set<number>();
   const laneOf = (name: string) => {
     let l = lanes.get(name);
     if (!l) { l = { bars: [], last: 0, record: null, awaiting: new Set() }; lanes.set(name, l); }
@@ -134,6 +135,8 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
     if (e.lane && (e.kind === "task.claimed" || e.kind === "task.pr_opened")) authorOf.set(slice, e.lane);
     const pr = prOfKey.get(slice);
     const author = authorOf.get(slice);
+    // A merge is terminal for this PR, even if a delayed record arrives later.
+    if (pr !== undefined && mergedPrs.has(pr)) continue;
     switch (e.kind) {
       case "task.claimed": if (e.lane) start(e.lane, "implement", e.taskId, slice, t); break;
       case "task.pr_opened": if (author && pr !== undefined) laneOf(author).awaiting.add(pr); break;
@@ -151,6 +154,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
         }
         break;
       case "task.merged": {
+        if (e.pr !== undefined) mergedPrs.add(e.pr);
         if (e.pr !== undefined) for (const lane of lanes.values()) lane.awaiting.delete(e.pr);
         for (const s of e.pr !== undefined ? prSlices.get(e.pr) ?? new Set([slice]) : [slice])
           for (const k of ["implement", "review", "merge"] as const) close(k, s, t, e);

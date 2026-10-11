@@ -119,10 +119,12 @@ class TaskRecordTest(unittest.TestCase):
             ("--lane", "lane-b", "review_verdict", "--issue", "9", "--pr", "19", "--head", HEAD_B,
              "--verdict", "APPROVE", "--comment-url", "https://github.com/o/r/pull/19#c2"),
         ]
-        for step in steps:
-            code, out = self.run_step(*step)
-            self.assertEqual(code, 0, out)
-            self.assertTrue(out.startswith("recorded "), out)
+        with patch.object(task_record.subprocess, "run", return_value=subprocess.CompletedProcess(
+                ["gh"], 0, json.dumps({"state": "OPEN"}), "")):
+            for step in steps:
+                code, out = self.run_step(*step)
+                self.assertEqual(code, 0, out)
+                self.assertTrue(out.startswith("recorded "), out)
         # Each pr_opened also records its review_assignment (#508): 4 steps, 6 records.
         self.assertEqual(len({key for key, _ in FakeRuntime.seen}), 6)
 
@@ -654,6 +656,22 @@ class ClosedRequiresGithub(unittest.TestCase):
                                   "--reason", "superseded", "--by", "740"])
         self.assertIn("state=OPEN", str(error.exception))
         self.assertEqual(run.call_args.args[0], ["gh", "pr", "view", "685", "--json", "state,mergedAt",
+                                                 "--repo", "stabem/GraphHelm"])
+        send.assert_not_called()
+
+
+class MergedPrIsTerminal(unittest.TestCase):
+    """#860: no follow-up task record may reopen a merged PR. Local gh/send stubs; no network."""
+
+    def test_pr_opened_refuses_a_merged_pr_without_sending(self):
+        with patch.object(task_record.subprocess, "run", return_value=subprocess.CompletedProcess(
+                ["gh"], 0, json.dumps({"state": "MERGED"}), "")) as run, \
+                patch.object(task_record, "send") as send:
+            with self.assertRaises(SystemExit) as error:
+                task_record.main(["--lane", "test", "--issue", "860", "pr_opened", "--pr", "840",
+                                  "--head", HEAD_B, "--reviewer", "codex-review"])
+        self.assertIn("PR #840 is already merged", str(error.exception))
+        self.assertEqual(run.call_args.args[0], ["gh", "pr", "view", "840", "--json", "state",
                                                  "--repo", "stabem/GraphHelm"])
         send.assert_not_called()
 

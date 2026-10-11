@@ -337,6 +337,10 @@ def reach(changed, packages, embedded, repo=None):
                 hit = True
         if path.startswith(BROWSER_REACHERS):
             tools.add(BROWSER_OBSERVERS)
+        # Fixture behavior is observed by previews of the changed flows. It has no
+        # standalone offline test, so keep it mapped without claiming a proxy pass.
+        if path.startswith("tools/studio-journey-fixture/"):
+            hit = True
         if path.startswith("tools/") and path.count("/") >= 2 and root is not None:
             tool = root / "/".join(path.split("/")[:2])
             py = sorted(f.relative_to(root).as_posix() for f in tool.glob("test_*.py"))

@@ -338,7 +338,7 @@ export function CurrentCard({ cell: c, stage, task: t, health, pace, selected, l
   const flag = health && !(fixing && health.flag === "blocked") ? health : null;
   return (
     <button type="button" className="mg-node" data-state={st} data-stage={stage} data-blocked={t.blocked} data-current="true" data-dense={Boolean(c.sub || flag)}
-      data-pace={Boolean(pace)} aria-pressed={selected} style={left === undefined ? undefined : { left, top }} onClick={onSelect}>
+      data-pace={Boolean(pace)} aria-pressed={selected} aria-label={stage === "merged" ? `${prText(t)} ${base}` : undefined} style={left === undefined ? undefined : { left, top }} onClick={onSelect}>
       <span className="mg-node-head">
         <span className="mg-dot" data-state={st} />
         <span className="mg-node-label">{c.count > 1 ? `${base} ×${c.count}` : base}</span>
@@ -369,7 +369,7 @@ export function IssueGraph({ group, stepFor, selectedTaskKey, selectedCol, onSel
     const pr = t.pr ? `PR #${t.pr}` : "No PR";
     return (
       <div key={r.key} className="mg-row" data-row={r.key} data-open={r.open}>
-        <button type="button" className="mg-rowtitle" aria-pressed={t.key === selectedTaskKey} aria-label={`Row ${pr}: ${t.title}`} title={t.title}
+        <button type="button" className="mg-rowtitle" aria-pressed={t.key === selectedTaskKey} aria-label={`Row ${pr}: ${t.title}${g.planTag ? ` · ${g.planTag}` : ""}`} title={t.title}
           onClick={() => onSelectTask(t.key)}>
           <span className="mg-rowtitle-pr">{pr}</span>{" · "}<span className="mg-rowtitle-text">{t.title}</span>
           {g.planTag && <span className="mg-tag" data-tone={g.planTag === "planning" ? "work" : "ok"}>{g.planTag}</span>}

@@ -404,6 +404,8 @@ export interface TaskState {
   assignedBy?: string | null;
   /** Only explicit review assignments; `reviewers` also includes verdict authors. */
   assignedReviewers?: string[];
+  /** Assignment on the current head only; older reviewers remain in `reviewers`. */
+  currentReviewer?: string | null;
   headSha: string | null;
   journeys: string[];
   /** #480: the lane's recorded keel plan; `null` (or absent, before #480) when none was recorded. */
@@ -485,7 +487,7 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
   const add = () => {
     const slice: TaskState = {
       key: "", taskId: event.taskId, branch: null, issue: null, pr: event.kind === "task.claimed" ? null : event.pr ?? null,
-      lane: null, assignedBy: null, assignedReviewers: [], headSha: null, journeys: [], plan: null,
+      lane: null, assignedBy: null, assignedReviewers: [], currentReviewer: null, headSha: null, journeys: [], plan: null,
       step: event.kind === "task.claimed" || event.kind === "task.planned" ? "plan" : "implement", blockedBy: null, reviewers: [], mergeSha: null,
       repoUrl: null, title: null, summary: null, prTitle: null, prSummary: null, strayVerdicts: [], critic: null, recordedHeads: [], parent: null, rounds: [], clock: emptyClock(), lastSequence: 0,
     };
@@ -572,6 +574,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         state.lane = event.lane ?? state.lane;
         state.prTitle = event.title ?? state.prTitle;
         state.prSummary = event.summary ?? state.prSummary;
+        if (event.headSha !== state.headSha) state.currentReviewer = null;
         state.headSha = event.headSha ?? state.headSha;
         // #577: an empty list on pr_opened does not erase the journeys named at claim.
         state.journeys = event.journeys?.length ? event.journeys : state.journeys;
@@ -597,6 +600,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
       case "task.review_assigned":
         if (event.reviewer && !state.assignedReviewers?.includes(event.reviewer)) (state.assignedReviewers ??= []).push(event.reviewer);
         if (event.reviewer && !state.reviewers.includes(event.reviewer)) state.reviewers.push(event.reviewer);
+        if (event.headSha === state.headSha) state.currentReviewer = event.reviewer ?? null;
         break;
       case "task.review_verdict":
         // A verdict on a head other than the current one says nothing about the current one.

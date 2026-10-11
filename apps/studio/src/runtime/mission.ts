@@ -21,6 +21,7 @@ export interface MissionTask {
   repoUrl: string | null;
   /** #591: reviewers assigned before the current one (on older heads, or replaced); not the live row. */
   reviewerHistory?: string[];
+  currentReviewer?: string | null;
 }
 export interface MissionSummary { proven: number; total: number; inFlight: number; needYou: number; readyUnclaimed: number }
 export interface Mission { contractId: string; title: string; steps: MissionStep[]; tasks: MissionTask[]; summary: MissionSummary }
@@ -73,7 +74,7 @@ export function toMissionTask(raw: TaskState): MissionTask {
   const trust: TrustLevel = t.step === "merged" ? 3 : t.step === "merge" ? 2 : t.pr === null ? 0 : 1;
   return {
     key: t.key, pr: t.pr, issue: t.issue, title: t.prTitle || t.title || t.taskId, lane: t.lane,
-    reviewers: t.reviewers, step: t.step, blocked: block !== null, trust,
+    reviewers: t.reviewers, currentReviewer: t.currentReviewer, step: t.step, blocked: block !== null, trust,
     blockedBy: block ? { reviewer: block.reviewer, headSha: block.headSha } : null,
     rounds: (t.rounds ?? []).map((r) => ({ reviewer: r.reviewer, headSha: r.headSha, fixHead: r.fixHead })),
     headSha: t.headSha ?? null, mergeSha: t.mergeSha ?? null, repoUrl: t.repoUrl ?? null,
@@ -145,7 +146,7 @@ export function withCurrentReviewer(t: MissionTask, lanes: readonly Lane[]): Mis
     const since = b.since ?? b.start;
     if (!best || since >= best.since) best = { lane: l.lane, since };
   }
-  const current = realName(best?.lane) ?? t.reviewers[t.reviewers.length - 1] ?? null;
-  if (current === null) return t;
+  const current = realName(best?.lane) ?? (t.currentReviewer === undefined ? t.reviewers[t.reviewers.length - 1] : realName(t.currentReviewer)) ?? null;
+  if (current === null) return { ...t, reviewers: [], reviewerHistory: t.reviewers };
   return { ...t, reviewers: [current], reviewerHistory: t.reviewers.filter((r) => r !== current) };
 }

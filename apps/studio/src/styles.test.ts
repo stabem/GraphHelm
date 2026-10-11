@@ -270,9 +270,10 @@ describe("the stylesheet and the components agree", () => {
   it("gives the Chat column one scroll region and a docked composer (#325)", () => {
     expect(ruleOf(".chat-column")).toMatch(/grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto/);
     expect(ruleOf(".chat-scroll")).toMatch(/overflow-y:\s*auto/);
-    for (const inner of [".chat-messages", ".chat-tabs", ".question-cards", ".main-chat-rail", ".main-chat"]) {
+    for (const inner of [".chat-messages", ".question-cards", ".main-chat-rail", ".main-chat"]) {
       expect(ruleOf(inner), `${inner} must not scroll or claim a height of its own`).not.toMatch(/overflow(-[xy])?:\s*(auto|scroll)|(^|[^-])height:\s*100%|min-height:\s*100%/);
     }
+    expect(ruleOf(".chat-tabs"), ".chat-tabs must only scroll horizontally").not.toMatch(/overflow-y:\s*(auto|scroll)/);
   });
 
   it("keeps Chat threads on one compact horizontal row and lets long links wrap cleanly (#797)", () => {

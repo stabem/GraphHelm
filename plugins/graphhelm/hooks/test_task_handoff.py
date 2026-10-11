@@ -28,12 +28,14 @@ class RuntimeHandler(BaseHTTPRequestHandler):
     next_sequence = 1
     bad_pages = False
     post_mode = "normal"
+    briefing_data = None
 
     def do_GET(self):
         RuntimeHandler.requests.append(("GET", self.path, dict(self.headers)))
         if self.path.endswith("/briefing"):
-            body = {"ok": True, "data": {"asOfSequence": len(self.events), "nextStep": {"kind": "diagnose"},
-                    "pending": [], "unevaluated": [], "decisions": [], "workDone": []}}
+            body = {"ok": True, "data": self.briefing_data or {"asOfSequence": len(self.events),
+                    "nextStep": {"kind": "diagnose"}, "pending": [], "unevaluated": [],
+                    "decisions": [], "workDone": []}}
         elif "/evidence/" in self.path:
             evidence_id = self.path.rsplit("/", 1)[-1]
             if evidence_id not in self.evidence:
@@ -104,6 +106,7 @@ class HandoffTests(unittest.TestCase):
         RuntimeHandler.events = []; RuntimeHandler.evidence = {}; RuntimeHandler.requests = []
         RuntimeHandler.next_sequence = 1; RuntimeHandler.bad_pages = False
         RuntimeHandler.post_mode = "normal"
+        RuntimeHandler.briefing_data = None
         self.temp = tempfile.TemporaryDirectory()
         token = Path(self.temp.name) / "events.token"; token.write_text("test-token", encoding="utf-8")
         self.env = {"GRAPHHELM_EXECUTION_ID": "run-1", "GRAPHHELM_TOKEN_FILE": str(token),
@@ -127,6 +130,40 @@ class HandoffTests(unittest.TestCase):
         post = [item for item in RuntimeHandler.requests if item[0] == "POST"]
         self.assertEqual(post[0][2]["X-Graphhelm-Actor".title()], MODULE._actor("claude", "sender-1"))
         self.assertNotIn("objective", json.dumps(post))
+
+    def test_receive_preserves_offered_digest_when_current_briefing_advances(self):
+        offered_digest = {"asOfSequence": 10, "nextStep": {"kind": "diagnose"},
+                          "pending": [{"id": "offer-pending"}], "unevaluated": [],
+                          "decisions": [], "workDone": [{"id": "offer-done"}]}
+        first_current = {"asOfSequence": 20, "nextStep": {"kind": "diagnose"},
+                         "pending": [], "unevaluated": [{"id": "current-unevaluated"}],
+                         "decisions": [], "workDone": []}
+        later_current = {"asOfSequence": 30, "nextStep": {"kind": "diagnose"},
+                         "pending": [{"id": "later-pending"}], "unevaluated": [],
+                         "decisions": [], "workDone": []}
+        offered_reference = {"asOfSequence": 10, "nextStep": {"kind": "diagnose"},
+                             "counts": {"pendingCount": 1, "unevaluatedCount": 0,
+                                        "decisionsCount": 0, "workDoneCount": 1}}
+        first_reference = {"asOfSequence": 20, "nextStep": {"kind": "diagnose"},
+                           "counts": {"pendingCount": 0, "unevaluatedCount": 1,
+                                      "decisionsCount": 0, "workDoneCount": 0}}
+        later_reference = {"asOfSequence": 30, "nextStep": {"kind": "diagnose"},
+                           "counts": {"pendingCount": 1, "unevaluatedCount": 0,
+                                      "decisionsCount": 0, "workDoneCount": 0}}
+        with patch.dict(os.environ, self.env, clear=False):
+            RuntimeHandler.briefing_data = offered_digest
+            offered = MODULE.offer("claude", "sender", "codex", "receiver")
+            RuntimeHandler.briefing_data = first_current
+            received = MODULE.receive("codex", "receiver", offered["offerId"])
+            RuntimeHandler.briefing_data = later_current
+            replay = MODULE.receive("codex", "receiver", offered["offerId"])
+        self.assertEqual(received["offeredBriefing"], offered_reference)
+        self.assertEqual(received["briefing"], first_reference)
+        self.assertEqual(replay["offeredBriefing"], offered_reference)
+        self.assertEqual(replay["briefing"], later_reference)
+        self.assertEqual(replay["state"], "already_recorded")
+        self.assertEqual(replay["receiptId"], received["receiptId"])
+        self.assertEqual(len([row for row in RuntimeHandler.requests if row[0] == "POST"]), 2)
 
     def test_lost_http_ack_is_reconciled_from_sealed_records_without_post_retry(self):
         RuntimeHandler.post_mode = "drop"

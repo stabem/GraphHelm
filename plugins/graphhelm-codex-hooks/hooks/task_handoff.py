@@ -327,6 +327,10 @@ def receive(host: str, session: str, offer_id: str) -> dict:
             or details.get("sender") != offer_signal.get("source", {}).get("id")
             or details.get("recipient") != actor):
         raise ValueError("handoff offer metadata is invalid")
+    try:
+        offered_briefing = _validate_digest(details.get("briefing"))
+    except (TypeError, ValueError, KeyError) as error:
+        raise ValueError("handoff offer briefing reference is invalid") from error
     briefing = _briefing(url, token, execution)
     receipt_id = _receipt_id(offer_id, host, session, origin)
     existing = _signal_event(events, receipt_id)
@@ -352,7 +356,8 @@ def receive(host: str, session: str, offer_id: str) -> dict:
         state = "recorded"
     result = {"format": "graphhelm-portable-v1", "phase": "receive", "state": state,
             "executionId": execution, "offerId": offer_id, "receiptId": receipt_id,
-            "recipient": actor, "briefing": briefing, "accepted": False, "activation": "unobserved"}
+            "recipient": actor, "offeredBriefing": offered_briefing, "briefing": briefing,
+            "accepted": False, "activation": "unobserved"}
     if acknowledgement and acknowledgement.get("writeAcknowledgement") == "unobserved":
         result["writeAcknowledgement"] = "unobserved"
     return result
@@ -573,7 +578,7 @@ def _mcp_stdio() -> int:
                 continue
             if method == "initialize":
                 result = {"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {"tools": {}},
-                          "serverInfo": {"name": "graphhelm-task-handoff", "version": "0.1.25"}}
+                          "serverInfo": {"name": "graphhelm-task-handoff", "version": "0.1.26"}}
                 response = _mcp_result(request_id, result)
             elif method == "ping":
                 response = _mcp_result(request_id, {})

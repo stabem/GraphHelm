@@ -188,6 +188,11 @@ original journal event, opens its sealed envelope, reads a fresh bounded briefin
 sealed `task_handoff_received` signal with `replyTo` pointing to the offer. `status` reconstructs
 offers and matching receipts from the Runtime journal.
 
+The `receive` response returns `offeredBriefing`, the bounded digest sealed when the sender
+offered the handoff, alongside `briefing`, the current Runtime digest. On receipt replay,
+`offeredBriefing` stays tied to the original offer while `briefing` may advance. The historical
+digest does not assign current duties or imply task acceptance.
+
 When `status` names an offer ID, it opens only that offer's sealed content. It still validates the
 current recipient's receipt records to determine which reference that offer; receipt matching and
 integrity checks are unchanged. Unfiltered status continues opening all offer records. An unavailable

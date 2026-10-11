@@ -545,7 +545,8 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 }
 .run-when { font-size: 10px; color: var(--faint); }
 /* #1083 F7: the id under a run named by its objective - the address, quieter than the name. */
-.run-address { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+.run-address { display: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+.run-row:hover .run-address, .run-row:focus-within .run-address { display: block; }
 
 .show-more {
   color: var(--dim);
@@ -1843,13 +1844,14 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .project-name { font-size: 14px; }
 .icon-action { min-width: 30px; min-height: 32px; border-radius: 8px; flex-shrink: 0; }
 .project-name-input { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--edge); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 14px; }
-.run-row { display: grid; grid-template-columns: minmax(0, 1fr) 30px; align-items: center; border-radius: 10px; margin: 3px 0; }
+.run-row { position: relative; border-radius: 10px; margin: 3px 0; }
 .run-row.on { background: var(--high); }
 .run-row .run { min-width: 0; border-radius: 10px; padding: 10px 7px; }
 .run-row .run-id { font-size: 12px; }
-.run-row .run-when { font-size: 11px; margin-top: 5px; }
+.run-row .run-when { font-size: 11px; margin-top: 5px; white-space: nowrap; }
 .run-row .avatar { width: 28px; height: 28px; }
-.run-remove { background: transparent; color: var(--faint); }
+.run-remove { position: absolute; top: 50%; right: 0; transform: translateY(-50%); background: transparent; color: var(--faint); opacity: 0; }
+.run-row:hover .run-remove, .run-row:focus-within .run-remove { opacity: 1; }
 .run-remove:hover { color: var(--danger); background: var(--raised); }
 .run-remove-confirm { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; padding: 12px; background: var(--raised); font-size: 13px; line-height: 1.5; border-radius: 8px; }
 .run-remove-confirm > span { flex-basis: 100%; }

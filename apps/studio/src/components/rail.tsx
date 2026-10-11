@@ -338,7 +338,7 @@ export function ProjectRail({
                     </span>
                     <span className="run-lines">
                       <span className="run-id" title={fullLabel}>{title}</span>
-                      {/* The id stays visible below the short title. */}
+                      {/* The id is available on hover or keyboard focus below the short title. */}
                       {label !== run.executionId && (
                         <span className="run-address" title={run.executionId} aria-hidden="true">{run.executionId}</span>
                       )}

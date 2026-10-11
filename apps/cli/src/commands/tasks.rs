@@ -141,7 +141,7 @@ pub(super) fn run(args: &TasksArgs) -> Outcome {
 
 fn failure(message: impl AsRef<str>) -> Outcome {
     Outcome::application(COMMAND, Diagnostic::error(
-        "GHCLI001_ARGUMENT_INVALID", message.as_ref(), "/tasks/reconcile", "tasks-cli",
+        crate::error_codes::GHCLI001_ARGUMENT_INVALID, message.as_ref(), "/tasks/reconcile", "tasks-cli",
     ))
 }
 >>>>>>> 5aa1769e (feat(tasks): reconcile merged PRs at lane stop)

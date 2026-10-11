@@ -56,7 +56,7 @@ function rank(task: TaskState): number {
 function ordered(tasks: TaskState[]): { open: TaskState[]; delivered: TaskState[] } {
   const newest = (a: TaskState, b: TaskState) => b.lastSequence - a.lastSequence;
   return {
-    open: tasks.filter((task) => task.step !== "merged").sort((a, b) => rank(a) - rank(b) || newest(a, b)),
+    open: tasks.filter((task) => task.step !== "merged" && task.releasedBy === undefined).sort((a, b) => rank(a) - rank(b) || newest(a, b)),
     delivered: tasks.filter((task) => task.step === "merged").sort(newest),
   };
 }

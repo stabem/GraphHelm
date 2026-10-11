@@ -94,7 +94,10 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       titleOf.set(slice, e.title);
       for (const v of open.values()) if (v.slice === slice) v.bar.displayLabel = `${e.pr !== undefined ? `#${e.pr}` : e.issue !== undefined ? `#${e.issue}` : e.taskId} ${e.title}`;
     }
-    if (e.headSha !== undefined && (e.kind === "task.pr_opened" || e.kind === "task.claimed")) headOf.set(slice, e.headSha);
+    if (e.headSha !== undefined && (e.kind === "task.pr_opened" || e.kind === "task.claimed")) {
+      if (e.kind === "task.pr_opened" && headOf.has(slice) && headOf.get(slice) !== e.headSha) close("review", slice, t);
+      headOf.set(slice, e.headSha);
+    }
     if (e.lane && (e.kind === "task.claimed" || e.kind === "task.pr_opened")) authorOf.set(slice, e.lane);
     const pr = prOfKey.get(slice);
     const author = authorOf.get(slice);
@@ -102,7 +105,11 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       case "task.claimed": if (e.lane) start(e.lane, "implement", e.taskId, slice, t); break;
       case "task.pr_opened": if (author && pr !== undefined) laneOf(author).awaiting.add(pr); break;
       case "task.released": close("implement", slice, t, e.lane); break;
-      case "task.review_assigned": close("implement", slice, t); if (e.reviewer) start(e.reviewer, "review", e.taskId, slice, t); break;
+      case "task.review_assigned":
+        close("implement", slice, t);
+        if (e.headSha !== undefined && e.headSha === headOf.get(slice)) close("review", slice, t);
+        if (e.reviewer) start(e.reviewer, "review", e.taskId, slice, t);
+        break;
       case "task.review_verdict":
         if (e.headSha !== undefined && headOf.get(slice) !== undefined && e.headSha === headOf.get(slice)) {
           close("review", slice, t, e.reviewer);

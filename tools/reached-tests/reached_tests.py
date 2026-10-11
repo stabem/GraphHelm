@@ -30,6 +30,7 @@ Nothing else is reached by a docs-only diff. When `graphhelm` is on PATH, the Ke
 proof for the same paths are printed too. Standard library only.
 """
 import argparse
+import ast
 import json
 import os
 import re
@@ -351,17 +352,73 @@ def reach(changed, packages, embedded, repo=None):
         companion_prefix = "plugins/graphhelm-codex-hooks/hooks/"
         if path.startswith((hook_prefix, companion_prefix)) and root is not None:
             hook_path = Path(hook_prefix) / Path(path).name
+            hook_dir = root / hook_prefix
+            changed_file = root / path
+            if hook_path.name.startswith("test_") and hook_path.suffix == ".py" and not changed_file.is_file():
+                # Git's name-only diff includes the missing side of a rename. Never
+                # read or schedule that path; retain every surviving hook observer.
+                survivors = sorted(f.relative_to(root).as_posix()
+                                   for f in hook_dir.glob("test_*.py") if f.is_file())
+                if survivors:
+                    tools |= {python_test_tool(root, test) for test in survivors}
+                else:
+                    other.append({"path": path, "reason": "deleted hook test has no surviving observer"})
+                hit = True
             if path.startswith(companion_prefix):
                 # The companion ships the same hooks; observe behavior and byte parity.
-                tools.add(python_test_tool(root, hook_prefix + "test_session_hook.py"))
-            if hook_path.name.startswith("test_") and hook_path.suffix == ".py":
+                parity = hook_dir / "test_session_hook.py"
+                if parity.is_file():
+                    tools.add(python_test_tool(root, parity.relative_to(root).as_posix()))
+            if hook_path.name.startswith("test_") and hook_path.suffix == ".py" and changed_file.is_file():
                 tools.add(python_test_tool(root, path))
                 hit = True
             elif hook_path.suffix == ".py":
                 specific = hook_path.with_name("test_" + hook_path.name)
-                tests = ([specific.as_posix()] if (root / specific).is_file() else
-                         sorted(f.relative_to(root).as_posix()
-                                for f in (root / hook_prefix).glob("test_*.py")))
+                tests = [specific.as_posix()] if (root / specific).is_file() else []
+                # A changed helper reaches the tests of its actual local importers.
+                # Parse imports instead of guessing from matching filenames.
+                if changed_file.is_file() and hook_path.suffix == ".py":
+                    module = hook_path.stem
+                    source_dir = changed_file.parent
+                    for source in sorted(source_dir.glob("*.py")):
+                        if source == changed_file or source.name.startswith("test_"):
+                            continue
+                        try:
+                            tree = ast.parse(source.read_text(encoding="utf-8", errors="replace"))
+                        except SyntaxError:
+                            # An unreadable edge makes the local graph uncertain; the
+                            # existing all-hook observer fallback below is conservative.
+                            tests = []
+                            break
+                        imports_module = any(
+                            (isinstance(node, ast.ImportFrom) and node.module == module)
+                            or (isinstance(node, ast.Import) and any(alias.name == module for alias in node.names))
+                            for node in ast.walk(tree)
+                        )
+                        if imports_module:
+                            consumer_test = source.with_name("test_" + source.name)
+                            if (root / consumer_test).is_file():
+                                tests.append(consumer_test.relative_to(root).as_posix())
+                # Keep the parity test when its source actually reads this file.
+                parity = hook_dir / "test_session_hook.py"
+                if changed_file.is_file() and parity.is_file():
+                    parity_text = parity.read_text(encoding="utf-8", errors="replace")
+                    parity_names = set(re.findall(
+                        r'\(SCRIPT\.parent\s*/\s*["\']([^"\']+)["\']\)\.read_bytes\(\)', parity_text
+                    ))
+                    script_name = re.search(
+                        r'SCRIPT\s*=.*?with_name\(["\']([^"\']+)["\']\)', parity_text
+                    )
+                    if script_name and "SCRIPT.read_bytes()" in parity_text:
+                        parity_names.add(script_name.group(1))
+                    if hook_path.name in parity_names:
+                        tests.append((Path(hook_prefix) / parity.name).as_posix())
+                tests = sorted(set(tests))
+                if not tests:
+                    tests = sorted(f.relative_to(root).as_posix() for f in hook_dir.glob("test_*.py") if f.is_file())
+                if not tests and changed_file.is_file():
+                    other.append({"path": path, "reason": "hook change has no surviving observer"})
+                    hit = True
                 tools |= {python_test_tool(root, test) for test in tests}
                 hit = hit or bool(tests)
         if path in embedded:
@@ -704,13 +761,15 @@ def main(argv):
     whole, single, studio, tools, validate, other = reach(changed, packages, embedded, repo)
     package_plans, unsupported = expand_whole_packages(whole, packages)
     lint = lint_scope(changed, packages, embedded)
+    unsupported_hook_observers = [item for item in other if isinstance(item, dict)]
+    unmapped = [item for item in other if isinstance(item, str)]
     result = {"changed": changed, "packages": sorted(whole), "broadPackages": sorted(whole),
               "targets": [{"package": p, "test": t, "module": m} for p, t, m in sorted(single, key=lambda s: (s[0], s[1], s[2] or ""))],
-              "studio": studio, "tools": tools, "validate": validate, "unmapped": other,
+              "studio": studio, "tools": tools, "validate": validate, "unmapped": unmapped,
               "commands": commands(whole, single, studio, tools, validate, lint, package_plans, packages),
               "steps": steps(whole, single, studio, tools, validate, lint, repo, package_plans, packages),
               "lintPackages": sorted(lint),
-              "unsupported": unsupported,
+              "unsupported": unsupported + unsupported_hook_observers,
               "keelPlan": keel_plan(repo, changed)}
     if args.json:
         print(json.dumps(result, indent=1))
@@ -718,8 +777,8 @@ def main(argv):
     print(f"{len(changed)} changed paths; {len(whole)} whole packages, {len(single)} single targets, {len(studio)} Studio files")
     if result["keelPlan"]:
         print(f"keel plan: {result['keelPlan']}")
-    if other:
-        print("not mapped to any test (check by hand): " + ", ".join(other))
+    if unmapped:
+        print("not mapped to any test (check by hand): " + ", ".join(unmapped))
     for cmd in result["commands"]:
         print(cmd)
     return 0

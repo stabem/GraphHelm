@@ -24,7 +24,7 @@ import { useEffect, useState } from "react";
 import { Activity, Check, Folder, FolderPlus, ListFilter, Pencil, Plus, RotateCcw, Trash2, X, SlidersHorizontal } from "lucide-react";
 
 import type { ExecutionSummary, RuntimePreviousExit } from "../runtime/types";
-import { hueOf, initialOf, readable, runLabel, verdictOf } from "./format";
+import { ago, hueOf, initialOf, readable, runLabel, verdictOf } from "./format";
 
 /** How the rail groups its runs. "day" is the default: the work of each day together, the day
  * touched last on top, so the run being worked on now is the first thing on the list. */
@@ -88,11 +88,28 @@ function recentFirst(runs: ExecutionSummary[]): ExecutionSummary[] {
   });
 }
 
-function activityTime(value: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-    second: "2-digit", timeZoneName: "short",
-  }).format(new Date(value));
+function railTitle(value: string): string {
+  const oneLine = value.replace(/\s+/g, " ").trim();
+  if (oneLine.length <= 40) return oneLine;
+  const words = oneLine.split(" ");
+  let title = "";
+  for (const word of words) {
+    const next = title ? `${title} ${word}` : word;
+    if (next.length > 39) break;
+    title = next;
+  }
+  return title ? `${title}…` : "Run";
+}
+
+function relativeActivity(value: string | null | undefined): string {
+  if (!value || !Number.isFinite(Date.parse(value))) return "Time unknown";
+  if (dayOf(Date.parse(value)).label === "Yesterday") return "yesterday";
+  const age = ago(value);
+  if (age === "now") return age;
+  if (age.endsWith("m")) return `${age.slice(0, -1)} min ago`;
+  if (age.endsWith("h")) return `${age.slice(0, -1)} h ago`;
+  if (age.endsWith("d")) return `${age.slice(0, -1)} d ago`;
+  return age;
 }
 
 function hasRecordedActivity(run: ExecutionSummary): boolean {
@@ -150,8 +167,8 @@ export function ProjectRail({
   onRemoveRun?: (id: string) => void;
   onRestoreRun?: (id: string) => void;
   /** What each run is ABOUT, by id, read from its briefing (#1077). A generated `run-<uuid>`
-   * wears its objective as its name; the id stays on the row as its address. Absent (older
-   * Runtime, not read yet) the row says the id, which is what it always said. */
+   * wears its objective as its name; the id stays available on hover or keyboard focus. Absent
+   * (older Runtime, not read yet) the row says the id, which is what it always said. */
   briefings?: Record<string, { objective: string | null; name?: string | null } | null>;
   /** Selected-run display only. The Runtime attention value remains unchanged in Details. */
   selectedPresentation?: { key: string; status: string } | null;
@@ -295,15 +312,20 @@ export function ProjectRail({
                 // #1083 F7: the row's own declared objective first (one index read names every
                 // row), the briefing a selection already read as the fallback for an older
                 // Runtime whose rows do not carry it.
+                const briefing = typeof run.objective === "string" ? { objective: run.objective } : briefings[run.executionId];
                 const label = runLabel(
                   run.executionId,
-                  typeof run.objective === "string" ? { objective: run.objective } : briefings[run.executionId],
+                  briefing,
                 );
-                const lastEventLabel = run.lastEventAt && Number.isFinite(Date.parse(run.lastEventAt))
-                  ? `Last event ${activityTime(run.lastEventAt)}` : `Last event unknown · status ${readable(run.status)}`;
+                const fullObjective = briefing?.objective?.trim() ?? "";
+                const fullLabel = fullObjective || label;
+                const titleSource = fullObjective.split(/\r?\n/, 1)[0].replace(/\s+/g, " ").trim() || label;
+                const title = railTitle(titleSource);
+                const relativeTime = relativeActivity(run.lastEventAt);
+                const metaStatus = reviewCount > 0 ? `${reviewCount} result${reviewCount === 1 ? " needs" : "s need"} review` : readable(run.status);
                 return (
                   <div key={run.executionId} className={`run-row ${rowKey} ${on ? "on" : ""}`}>
-                  <button type="button" className={`run ${rowKey} ${on ? "on" : ""}`} aria-current={on ? "true" : undefined} aria-label={`${label}${label !== run.executionId ? `, run ${run.executionId}` : ""}; ${lastEventLabel}; ${rowStatus}`} onClick={() => onSelect(run.executionId)} title={rowStatus}>
+                  <button type="button" className={`run ${rowKey} ${on ? "on" : ""}`} aria-current={on ? "true" : undefined} aria-label={`${title}; ${relativeTime} · ${metaStatus}`} onClick={() => onSelect(run.executionId)} title={rowStatus}>
                     {/* Each room wears its own derived colour, like a contact in a messenger -
                         the same hue its actors' avatars key off nothing, but the ROOM's identity
                         comes from its id, stable across every view. */}
@@ -315,22 +337,15 @@ export function ProjectRail({
                       {initialOf(run.executionId)}
                     </span>
                     <span className="run-lines">
-                      {/* The objective when there is one, the id otherwise - and the id ALWAYS
-                          on the row as its title, so a name never hides the address. */}
-                      {/* #1098 D4: the hover says what is CUT. Two runs whose objectives share a
-                          prefix ellipsise to the same words, and this title used to answer with
-                          the execution id — which the next line already prints in full. The name
-                          line titles the name; the address line titles the address. */}
-                      <span className="run-id" title={label}>{label}</span>
-                      {/* #1083 F7: a run named by its objective still shows its address, as
-                          secondary text - never only on hover. */}
+                      <span className="run-id" title={fullLabel}>{title}</span>
+                      {/* The id stays available on hover or keyboard focus, after the short title. */}
                       {label !== run.executionId && (
-                        <span className="run-address" title={run.executionId}>{run.executionId}</span>
+                        <span className="run-address" title={run.executionId} aria-hidden="true">{run.executionId}</span>
                       )}
                       <span className="run-when">
                         {run.lastEventAt && Number.isFinite(Date.parse(run.lastEventAt))
-                          ? <time dateTime={run.lastEventAt} title={run.lastEventAt}>{lastEventLabel}</time>
-                          : lastEventLabel}
+                          ? <time dateTime={run.lastEventAt}>{relativeTime} · {metaStatus}</time>
+                          : `${relativeTime} · ${metaStatus}`}
                         {/* #1064: a run started under the fixture executor says so in the index
                           * too, not only once opened — the word, never a glyph. */}
                         {run.executor === "fixture" && (

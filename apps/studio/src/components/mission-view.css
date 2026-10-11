@@ -171,5 +171,7 @@
 .mv-progress-bar { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; background: #1B1D22; }
 .mv-progress-part { min-width: 4px; height: 100%; }
 .mv-progress-part[style*="flex-grow: 0"] { display: none; }
+.mv-progress-part[data-progress="work"] { box-sizing: border-box; border: 1px solid #F5A524; background: transparent; }
+.mv-progress-part[data-progress="merged"] { box-sizing: border-box; border: 1px solid #8FB3D9; background: repeating-linear-gradient(120deg, transparent 0 3px, #8FB3D955 3px 4px); }
 .mv-progress-text { font-family: var(--mono); font-size: 11px; line-height: 1.35; color: #A9AEB8; }
 .mv-pr-chip[data-alert="true"] { box-shadow: inset 0 -2px 0 #FF6B5E; }

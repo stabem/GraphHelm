@@ -160,20 +160,33 @@ function JourneyRailButton({ mission, selected, onSelect }: { mission: Mission; 
 }
 export function JourneyProgress({ statuses }: { statuses: string[] }) {
   const total = statuses.length, proven = statuses.filter((s) => s === "proven").length;
-  const work = statuses.filter((s) => s === "preview_only").length;
-  const remaining = total - proven - work;
-  const words = `${total}\u00a0${total === 1 ? "step" : "steps"} · ${proven}\u00a0proven · ${work}\u00a0in\u00a0work · ${remaining}\u00a0not\u00a0proven`;
-  const accessibleWords = `${total} ${total === 1 ? "step" : "steps"} · ${proven} proven · ${work} in work · ${remaining} not proven`;
+  const work = statuses.filter((s) => s === "work").length;
+  const merged = statuses.filter((s) => s === "merged").length;
+  const remaining = total - proven - work - merged;
+  const words = `${total}\u00a0${total === 1 ? "step" : "steps"} · ${proven}\u00a0proven · ${work}\u00a0in\u00a0work · ${merged}\u00a0merged,\u00a0not\u00a0proven · ${remaining}\u00a0not\u00a0proven`;
+  const accessibleWords = `${total} ${total === 1 ? "step" : "steps"} · ${proven} proven · ${work} in work · ${merged} merged, not proven · ${remaining} not proven`;
   return (
     <span className="mv-progress">
       <span className="mv-progress-bar" role="img" aria-label={accessibleWords}>
         <span className="mv-progress-part" data-progress="proven" title="Proven" style={{ flexGrow: proven, background: SEG_TONE.proven }} />
-        <span className="mv-progress-part" data-progress="work" title="In work" style={{ flexGrow: work, background: SEG_TONE.work }} />
+        <span className="mv-progress-part" data-progress="work" title="In work (outlined)" style={{ flexGrow: work }} />
+        <span className="mv-progress-part" data-progress="merged" title="Merged, not proven (hatched)" style={{ flexGrow: merged }} />
         <span className="mv-progress-part" data-progress="remaining" title="Not proven" style={{ flexGrow: remaining, background: SEG_TONE.ready }} />
       </span>
       <span className="mv-progress-text">{words}</span>
     </span>
   );
+}
+
+function journeyStepProgress(mission: Mission): string[] {
+  const placed = layoutMission(mission).placed;
+  return mission.steps.map((step) => {
+    if (step.status === "proven") return "proven";
+    const tasks = placed.filter((p) => p.col === step.index).map((p) => p.task);
+    if (tasks.some((t) => t.step !== "merged")) return "work";
+    if (tasks.some((t) => t.step === "merged")) return "merged";
+    return "remaining";
+  });
 }
 
 const SEG_TONE: Record<string, string> = { proven: "#4ADE9B", merged: "#8FB3D9", work: "#F5A524", stalled: "#FF6B5E", ready: "#24272E" };
@@ -404,7 +417,7 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
               return (
                 <div key={m.contractId} className="mv-jcard" data-selected={on}>
                   <JourneyRailButton mission={m} selected={on} onSelect={() => pickProof(m.contractId)} />
-                  <JourneyProgress statuses={m.steps.map((x) => x.status)} />
+                  {historyLoading ? <span className="mv-progress-text" role="status">… loading work</span> : <JourneyProgress statuses={journeyStepProgress(m)} />}
                 </div>
               );
             })}

@@ -453,9 +453,10 @@ fn open_beneath(
     Ok((file, pinned))
 }
 
-/// Snapshot consumers use the same root-and-ancestor no-follow walk as source reads. The held
-/// directory handles stay alive beside the file so a checked ancestor cannot be replaced while
-/// the caller hashes or copies it.
+/// Snapshot consumers use the same no-follow descendant walk as source reads. The selected root
+/// and its ancestors are broker-trusted and stable; Windows canonicalization accepts their
+/// resolved identity. Held descendant handles pin the checked chain on Windows and directory
+/// descriptors bind traversal on Unix while the caller hashes or copies the file.
 pub(crate) fn open_snapshot_file(
     root: &Path,
     relative: &RelativePath,

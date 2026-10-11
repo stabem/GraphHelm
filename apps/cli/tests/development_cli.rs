@@ -281,7 +281,7 @@ fn code_index_refuses_dirty_tracked_source_without_writing_the_checkout() {
     assert!(!output.status.success());
     assert_eq!(envelope["ok"], false);
     assert_eq!(envelope["diagnostics"][0]["code"], "GHTOOL_CBM_BUILD");
-    assert_eq!(envelope["diagnostics"][0]["pointer"], "/");
+    assert_eq!(envelope["diagnostics"][0]["path"], "/");
     assert!(
         envelope["diagnostics"][0]["message"]
             .as_str()

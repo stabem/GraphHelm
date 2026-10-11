@@ -558,7 +558,7 @@ fn directory_entries(
         })
 }
 
-fn open_directory_child(_parent: &File, _name: &OsString, path: &Path) -> Result<File, HostError> {
+fn open_directory_child(_parent: &File, _name: &OsString, _path: &Path) -> Result<File, HostError> {
     #[cfg(unix)]
     {
         use std::os::fd::{AsRawFd, FromRawFd};
@@ -581,7 +581,7 @@ fn open_directory_child(_parent: &File, _name: &OsString, path: &Path) -> Result
     }
     #[cfg(not(unix))]
     {
-        open_directory(path)
+        open_directory(_path)
     }
 }
 

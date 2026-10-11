@@ -72,8 +72,8 @@ reuse that bundle for repeated queries only after its source, store, executable,
 evidence still validate. A query opens one contained provider call and closes its process tree; it
 does not start a watcher, retain an MCP daemon, modify the global Runtime/MCP configuration, or
 silently assemble Runtime context ports. A timeout bounds the provider process execution after
-preparation; it does not make unbounded filesystem or snapshot preparation safe. Refuse stale,
-partial, timed-out, cancelled, truncated, or otherwise incomplete evidence.
+preparation; it does not make unbounded filesystem or snapshot preparation safe. Keep partial coverage as partial; refuse stale, timed-out, cancelled, truncated, or otherwise
+incomplete process evidence.
 
 Do not launch a per-agent memory server or watcher to retain an answer. An optional external
 provider must run through the contained broker, with native process-tree closure evidence on the

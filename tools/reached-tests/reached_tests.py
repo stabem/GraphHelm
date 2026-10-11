@@ -469,8 +469,27 @@ def _group_single(single):
             entry["unfiltered"] = True
         else:
             entry["modules"].add(module + "::")
-    return [(package, target, None if entry["unfiltered"] else tuple(sorted(entry["modules"])))
-            for (package, target), entry in sorted(grouped.items())]
+    grouped_items = [(package, target, None if entry["unfiltered"] else tuple(sorted(entry["modules"])))
+                     for (package, target), entry in sorted(grouped.items())]
+    by_key = {(package, target): (package, target, modules)
+              for package, target, modules in grouped_items}
+    pair = ("bin:graphhelm", "cli")
+    if all(("graphhelm-cli", target) in by_key for target in pair):
+        left = by_key[("graphhelm-cli", pair[0])]
+        right = by_key[("graphhelm-cli", pair[1])]
+        if left[2] is not None and right[2] is not None:
+            grouped_items = [item for item in grouped_items
+                             if item[0:2] not in {("graphhelm-cli", pair[0]),
+                                                  ("graphhelm-cli", pair[1])}]
+            grouped_items.append(("graphhelm-cli", pair,
+                                  tuple(sorted(set(left[2]) | set(right[2])))))
+    return sorted(grouped_items, key=lambda item: (item[0], str(item[1])))
+
+
+def _target_flags(target):
+    if isinstance(target, tuple):
+        return ["--bin", target[0][4:], "--test", target[1]]
+    return ["--bin", target[4:]] if target.startswith("bin:") else ["--test", target]
 
 
 def commands(whole, single, studio, tools=(), validate=(), lint_packages=None, package_plans=None):
@@ -485,7 +504,7 @@ def commands(whole, single, studio, tools=(), validate=(), lint_packages=None, p
         else:
             cmds.append(f"cargo {TOOLCHAIN} test --locked -p {name} {TEST_THREADS}")
     for package, target, modules in _group_single(single):
-        kind = f"--bin {target[4:]}" if target.startswith("bin:") else f"--test {target}"
+        kind = " ".join(_target_flags(target))
         filters = "" if modules is None else " " + " ".join(modules)
         cmds.append(f"cargo {TOOLCHAIN} test --locked -p {package} {kind} {TEST_THREADS}{filters}")
     rust = sorted(whole | {s[0] for s in single})
@@ -554,7 +573,7 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
             out.append({"argv": ["cargo", TOOLCHAIN, "test", "--locked", "-p", name, *TEST_THREADS.split()],
                         "cwd": ".", "slot": True})
     for package, target, modules in _group_single(single):
-        kind = ["--bin", target[4:]] if target.startswith("bin:") else ["--test", target]
+        kind = _target_flags(target)
         argv = ["cargo", TOOLCHAIN, "test", "--locked", "-p", package, *kind]
         argv.extend(TEST_THREADS.split())
         if modules is not None:

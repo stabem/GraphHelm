@@ -237,7 +237,8 @@ fn admit_command(command: &[String]) -> Result<(), String> {
     };
     cursor += 1;
     let mut package_count = 0;
-    let mut target_count = 0;
+    let mut packages = Vec::new();
+    let mut targets = Vec::new();
     let mut filter = false;
     while let Some(raw) = command.get(cursor) {
         cursor += 1;
@@ -261,7 +262,7 @@ fn admit_command(command: &[String]) -> Result<(), String> {
             | "--exclude" | "-j" | "--jobs" | "--tests" | "--bins" | "--examples" | "--benches" => {
                 return Err("workspace-wide commands and target overrides cannot occupy the ordinary slot; name each package and test target".into());
             }
-            "--lib" | "--doc" if inline.is_none() => target_count += 1,
+            "--lib" | "--doc" if inline.is_none() => targets.push((flag.to_owned(), String::new())),
             "--all-targets" if kind == "clippy" && inline.is_none() => {}
             "--locked"
             | "--offline"
@@ -302,8 +303,9 @@ fn admit_command(command: &[String]) -> Result<(), String> {
                 }
                 if matches!(flag, "-p" | "--package") {
                     package_count += 1;
+                    packages.push(value.to_owned());
                 } else if matches!(flag, "--test" | "--bin" | "--example" | "--bench") {
-                    target_count += 1;
+                    targets.push((flag.to_owned(), value.to_owned()));
                 }
             }
             _ if !raw.starts_with('-') && kind == "test" && !filter => filter = true,
@@ -317,11 +319,21 @@ fn admit_command(command: &[String]) -> Result<(), String> {
     if package_count == 0 {
         return Err("workspace slot requires an explicit package".into());
     }
-    if kind == "test" && target_count == 0 {
+    if kind == "test" && targets.is_empty() {
         return Err("workspace slot test requires an explicit test target".into());
     }
-    if kind == "test" && (package_count != 1 || target_count != 1) {
+    if kind == "test" && package_count != 1 {
         return Err("workspace slot test accepts one package and one explicit target; split different executables before queueing".into());
+    }
+    if kind == "test" && targets.len() > 1 {
+        let supported_pair = packages.len() == 1
+            && packages[0] == "graphhelm-cli"
+            && targets.len() == 2
+            && targets.contains(&("--bin".to_owned(), "graphhelm".to_owned()))
+            && targets.contains(&("--test".to_owned(), "cli".to_owned()));
+        if !supported_pair {
+            return Err("workspace slot test accepts one target, or the graphhelm-cli --bin graphhelm plus --test cli pair".into());
+        }
     }
     Ok(())
 }
@@ -349,6 +361,76 @@ mod admission_tests {
             ]))
             .is_ok()
         );
+    }
+
+    #[test]
+    fn admits_the_bounded_graphhelm_cli_pair() {
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--bin",
+                "graphhelm",
+                "--test",
+                "cli",
+                "--",
+                "commands::workspace_slot::",
+                "workspace_cli::",
+            ]))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn refuses_third_repeated_or_unsafe_targets() {
+        for args in [
+            vec![
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--bin",
+                "graphhelm",
+                "--test",
+                "cli",
+                "--test",
+                "other",
+            ],
+            vec![
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--bin",
+                "graphhelm",
+                "--bin",
+                "graphhelm",
+            ],
+            vec![
+                "cargo",
+                "test",
+                "-p",
+                "other",
+                "--bin",
+                "graphhelm",
+                "--test",
+                "cli",
+            ],
+            vec![
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--test",
+                "cli",
+                "--example",
+                "fixture",
+            ],
+        ] {
+            assert!(admit_command(&argv(&args)).is_err(), "{args:?}");
+        }
     }
 
     #[test]

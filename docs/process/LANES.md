@@ -86,8 +86,10 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   script outside the slot. A direct CLI slot invocation still acquires once per submitted Cargo
   command; the reached-test runner batches short commands by default. Unscoped package tests,
   workspace-wide commands and target-directory overrides are refused too. Multiple package or
-  target selectors in one `cargo test` command are refused before queueing; split different
-  executables into separate leases. Clippy may still name multiple touched packages. This is enforced by
+  target selectors in one `cargo test` command are refused before queueing; the sole exception is
+  one `graphhelm-cli` command naming both `--bin graphhelm` and `--test cli`. That pair is admitted
+  only as two distinct explicit targets; all other different executables stay separate. Clippy may
+  still name multiple touched packages. This is enforced by
   upgraded CLI binaries; an old installed binary retains the old behavior until upgraded.
 - Run `npm ci --prefer-offline --no-audit --no-fund`, `vitest --maxWorkers=1`, `tsc`, and standalone
   journey previews outside the Cargo slot, serially within the lane. Cargo-based browser observers
@@ -159,8 +161,10 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   explicit path on its next invocation. Keep the Runtime executable and launch settings separate.
 
   Selected modules of the same Rust test executable share one invocation with multiple libtest
-  filters. This preserves the selected test set and avoids queueing once per module. Different
-  executables remain separate commands. A broad selection is still a broad audit; bundling is
+  filters. This preserves the selected test set and avoids queueing once per module. The reached
+  selector also coalesces filtered `graphhelm-cli` `--bin graphhelm` and `--test cli` selections,
+  carrying the union of both filter sets. All other different executables remain separate commands.
+  A broad selection is still a broad audit; bundling is
   not permission to execute every module or to omit required checks to meet the time target.
 
   **Feedback batches (default; `--no-batch-slot` opts out, requires an upgraded CLI):** after moving only the

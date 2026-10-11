@@ -112,6 +112,10 @@ commands are refused before queueing. Use an upgraded CLI; old installed binarie
 The commands below are reference forms, not a default checklist. Broad test and clippy scopes
 require the card's reason and must be split into explicit package/target commands:
 
+The reached-test selector may coalesce only filtered `graphhelm-cli` `--bin graphhelm` and
+`--test cli` selections into one command with the union of their filters. The slot admits that
+exact two-target pair only; all other multiple target selectors remain separate or are refused.
+
 ```powershell
 cargo +1.97.1 fmt --all -- --check
 cargo +1.97.1 clippy -p graphhelm-cli --all-targets --all-features --locked -- -D warnings

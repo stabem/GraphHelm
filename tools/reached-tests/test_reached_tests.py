@@ -241,6 +241,29 @@ class Reach(unittest.TestCase):
                         and step["argv"][5] == "graphhelm-cli"]
         self.assertEqual([" ".join(argv) for argv in step_targets], [expected])
 
+    def test_cli_unit_and_integration_filters_coalesce_and_union(self):
+        single = {
+            ("graphhelm-cli", "bin:graphhelm", "commands::workspace_slot"),
+            ("graphhelm-cli", "cli", "workspace_cli"),
+        }
+        expected = "cargo +1.97.1 test --locked -p graphhelm-cli --bin graphhelm --test cli -- --test-threads=2 commands::workspace_slot:: workspace_cli::"
+        commands = [command for command in rt.commands(set(), single, [])
+                    if command.startswith("cargo +1.97.1 test --locked -p graphhelm-cli")]
+        self.assertEqual(commands, [expected])
+        steps = [step["argv"] for step in rt.steps(set(), single, [])
+                 if step["argv"][:3] == ["cargo", "+1.97.1", "test"]
+                 and step["argv"][5] == "graphhelm-cli"]
+        self.assertEqual([" ".join(argv) for argv in steps], [expected])
+
+    def test_coalescing_requires_both_filtered_targets(self):
+        single = {
+            ("graphhelm-cli", "bin:graphhelm", None),
+            ("graphhelm-cli", "cli", "workspace_cli"),
+        }
+        commands = [command for command in rt.commands(set(), single, [])
+                    if command.startswith("cargo +1.97.1 test --locked -p graphhelm-cli")]
+        self.assertEqual(len(commands), 2)
+
     def test_a_test_file_of_its_own_reaches_its_target(self):
         _, single, *_ = reach("core/policy/tests/keel.rs")
         self.assertEqual(single, {("graphhelm-policy", "keel", None)})

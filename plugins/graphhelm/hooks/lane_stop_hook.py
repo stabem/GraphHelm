@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from urllib.parse import quote
@@ -91,9 +92,18 @@ def main() -> int:
         lane = os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload)
         if bound is not None and lane and ID.fullmatch(lane):
             execution, token_file, url, _origin, _node = bound
+            cwd = payload.get("cwd")
+            if not isinstance(cwd, str) or not Path(cwd).is_dir():
+                return 0
+            remote = subprocess.run(["git", "-C", cwd, "remote", "get-url", "origin"],
+                                    capture_output=True, text=True, timeout=1, check=True).stdout.strip()
+            match = re.fullmatch(r"(?:git@github\.com:|https://github\.com/)([^/\s]+/[^/\s]+?)(?:\.git)?", remote)
+            if match is None:
+                return 0
             cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
             subprocess.run([cli, "tasks", "reconcile", "--execution", execution,
-                            "--token-file", token_file, "--url", url, "--lane", lane],
+                            "--token-file", token_file, "--url", url, "--lane", lane,
+                            "--repo", match.group(1)],
                            capture_output=True, timeout=5)
     except (OSError, ValueError, subprocess.SubprocessError):
         pass

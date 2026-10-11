@@ -141,6 +141,9 @@ class LaneStopTests(unittest.TestCase):
 
     def test_stop_invokes_configured_cli_reconciliation(self):
         root = Path(self.tmp.name)
+        subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(root), "remote", "add", "origin",
+                        "git@github.com:stabem/GraphHelm.git"], check=True, capture_output=True)
         output = root / "cli-args.txt"
         script = root / "record_cli.py"
         script.write_text("import sys\nfrom pathlib import Path\n"
@@ -160,6 +163,7 @@ class LaneStopTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("tasks reconcile --execution lane-test", output.read_text())
         self.assertIn("--lane codex-4", output.read_text())
+        self.assertIn("--repo stabem/GraphHelm", output.read_text())
 
     def stop(self, manifest, active=False):
         # Drive the registered Stop commands, not an unregistered helper. On the parent

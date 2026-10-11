@@ -115,6 +115,9 @@ require the card's reason and must be split into explicit package/target command
 The reached-test selector may coalesce only filtered `graphhelm-cli` `--bin graphhelm` and
 `--test cli` selections into one command with the union of their filters. The slot admits that
 exact two-target pair only; all other multiple target selectors remain separate or are refused.
+Whole-package `graphhelm-cli --test cli` plans must use registered bundle-module filters, skip
+prior modules on later filters, and add a `--skip` complement for inline/root tests; missing bundle
+metadata is unsupported, never a broad unfiltered fallback.
 
 ```powershell
 cargo +1.97.1 fmt --all -- --check

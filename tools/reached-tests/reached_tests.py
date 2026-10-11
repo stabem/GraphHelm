@@ -395,6 +395,25 @@ def _target_argv(package, target):
     return None
 
 
+def _cli_bundle_steps(package, target):
+    """Partition the CLI integration target without losing inline/root tests."""
+    if package["name"] != CLI or target.get("kind") != "test" or target.get("name") != "cli":
+        return None
+    modules = sorted(module for module, target_name in package.get("bundles", {}).items()
+                     if target_name == "cli")
+    if not modules:
+        return []
+    base = ["cargo", TOOLCHAIN, "test", "--locked", "-p", package["name"], "--test", "cli",
+            "--", "--test-threads=2"]
+    steps = []
+    for index, module in enumerate(modules):
+        prior = sum((["--skip", previous + "::"] for previous in modules[:index]), [])
+        steps.append({"argv": [*base, *prior, module + "::"], "cwd": ".", "slot": True})
+    steps.append({"argv": [*base, *sum((["--skip", module + "::"] for module in modules), [])],
+                  "cwd": ".", "slot": True})
+    return steps
+
+
 def expand_whole_packages(whole, packages):
     """Expand package-wide Cargo test semantics into target steps and explicit unsupported items."""
     by_name = {p["name"]: p for p in packages}
@@ -438,6 +457,15 @@ def expand_whole_packages(whole, packages):
                 if target["kind"] not in ("custom-build", "bench"):
                     unsupported.append({"package": name, "target": target["name"],
                                         "kind": target["kind"], "reason": "unsupported Cargo target kind"})
+                continue
+            if name == CLI and target.get("kind") == "test" and target.get("name") == "cli":
+                bundle_steps = _cli_bundle_steps(package, target)
+                if not bundle_steps:
+                    unsupported.append({"package": name, "target": target["name"],
+                                        "kind": target["kind"],
+                                        "reason": "CLI test bundle metadata is missing or empty"})
+                    continue
+                package_steps.extend(bundle_steps)
                 continue
             if target["kind"] in ("lib", "proc-macro") and target.get("doctest") and target.get("test"):
                 package_steps.append({"argv": argv, "cwd": ".", "slot": True})

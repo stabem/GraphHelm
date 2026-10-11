@@ -163,7 +163,10 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   Selected modules of the same Rust test executable share one invocation with multiple libtest
   filters. This preserves the selected test set and avoids queueing once per module. The reached
   selector also coalesces filtered `graphhelm-cli` `--bin graphhelm` and `--test cli` selections,
-  carrying the union of both filter sets. All other different executables remain separate commands.
+  carrying the union of both filter sets. A whole-package `graphhelm-cli --test cli` plan is
+  partitioned by its registered bundle modules, with prior-module skips on later filters, plus one
+  `--skip` complement for inline/root tests;
+  missing bundle metadata is unsupported. All other different executables remain separate commands.
   A broad selection is still a broad audit; bundling is
   not permission to execute every module or to omit required checks to meet the time target.
 

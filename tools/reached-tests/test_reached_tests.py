@@ -123,6 +123,7 @@ class Reach(unittest.TestCase):
             {"name": "fixture", "kind": "example", "test": False, "doctest": False},
             {"name": "bench", "kind": "bench", "test": False, "doctest": False},
         ]}]
+        packages[0]["bundles"] = {"alpha": "cli", "beta": "cli"}
         plans, unsupported = rt.expand_whole_packages({"graphhelm-cli"}, packages)
         self.assertEqual(unsupported, [])
         argv = [step["argv"] for step in plans["graphhelm-cli"]]
@@ -136,6 +137,19 @@ class Reach(unittest.TestCase):
                                                "--", "--test-threads=2"] for step in plans["graphhelm-cli"]))
         commands = rt.commands({"graphhelm-cli"}, set(), [], package_plans=plans)
         self.assertNotIn("cargo +1.97.1 test --locked -p graphhelm-cli -- --test-threads=2", commands)
+        cli_steps = [step["argv"] for step in plans["graphhelm-cli"] if "--test" in step["argv"]]
+        self.assertEqual(cli_steps, [
+            ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli", "--test", "cli", "--", "--test-threads=2", "alpha::"],
+            ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli", "--test", "cli", "--", "--test-threads=2", "--skip", "alpha::", "beta::"],
+            ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli", "--test", "cli", "--", "--test-threads=2", "--skip", "alpha::", "--skip", "beta::"],
+        ])
+
+    def test_cli_bundle_metadata_is_required_for_whole_package_partition(self):
+        plans, unsupported = rt.expand_whole_packages({"graphhelm-cli"}, [{"name": "graphhelm-cli", "targets": [
+            {"name": "cli", "kind": "test", "test": True, "doctest": False},
+        ], "bundles": {}}])
+        self.assertEqual(plans["graphhelm-cli"], [])
+        self.assertIn("bundle metadata", unsupported[0]["reason"])
 
     def test_whole_package_required_features_are_explicitly_unsupported(self):
         plans, unsupported = rt.expand_whole_packages({"graphhelm-cli"}, [{"name": "graphhelm-cli", "targets": [

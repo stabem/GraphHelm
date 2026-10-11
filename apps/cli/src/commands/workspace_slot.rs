@@ -240,11 +240,19 @@ fn admit_command(command: &[String]) -> Result<(), String> {
     let mut packages = Vec::new();
     let mut targets = Vec::new();
     let mut filter = false;
+    let mut after_separator = false;
+    let mut tail = Vec::new();
+    let mut no_run = false;
     while let Some(raw) = command.get(cursor) {
         cursor += 1;
         if raw == "--" {
             // Cargo stops parsing here. Remaining arguments belong to libtest or clippy.
-            break;
+            after_separator = true;
+            continue;
+        }
+        if after_separator {
+            tail.push(raw.clone());
+            continue;
         }
         let (flag, inline) = if let Some((flag, value)) = raw.split_once('=') {
             (flag, Some(value))
@@ -276,9 +284,9 @@ fn admit_command(command: &[String]) -> Result<(), String> {
             | "--verbose"
             | "-v"
             | "-vv"
-            | "--no-run"
             | "--keep-going"
                 if inline.is_none() => {}
+            "--no-run" if inline.is_none() => no_run = true,
             "--timings" => {}
             "-p" | "--package" | "--test" | "--bin" | "--example" | "--bench" | "-F"
             | "--features" | "--target" | "--profile" | "--message-format" | "--color" => {
@@ -308,7 +316,9 @@ fn admit_command(command: &[String]) -> Result<(), String> {
                     targets.push((flag.to_owned(), value.to_owned()));
                 }
             }
-            _ if !raw.starts_with('-') && kind == "test" && !filter => filter = true,
+            _ if !raw.starts_with('-') && !raw.is_empty() && kind == "test" && !filter => {
+                filter = true
+            }
             _ => {
                 return Err(format!(
                     "unsupported Cargo slot option {raw}; use direct scoped Cargo commands"
@@ -333,6 +343,60 @@ fn admit_command(command: &[String]) -> Result<(), String> {
             && targets.contains(&("--test".to_owned(), "cli".to_owned()));
         if !supported_pair {
             return Err("workspace slot test accepts one target, or the graphhelm-cli --bin graphhelm plus --test cli pair".into());
+        }
+    }
+    if kind == "test"
+        && packages.len() == 1
+        && packages[0] == "graphhelm-cli"
+        && targets
+            .iter()
+            .any(|(flag, value)| flag == "--test" && value == "cli")
+        && !no_run
+    {
+        let mut scoped = filter;
+        let mut index = 0;
+        while index < tail.len() {
+            match tail[index].as_str() {
+                "--test-threads" => {
+                    if tail.get(index + 1).is_none() {
+                        return Err("libtest --test-threads requires a value".into());
+                    }
+                    index += 2;
+                    continue;
+                }
+                value if value.starts_with("--test-threads=") => {}
+                "--format" | "--color" | "--logfile" | "--shuffle-seed" | "-Z" => {
+                    if tail.get(index + 1).is_none() {
+                        return Err("libtest option requires a value".into());
+                    }
+                    index += 1;
+                }
+                value
+                    if value.starts_with("--format=")
+                        || value.starts_with("--color=")
+                        || value.starts_with("--logfile=")
+                        || value.starts_with("--shuffle-seed=") => {}
+                "--list" => scoped = true,
+                "--skip" => {
+                    let value = tail.get(index + 1).filter(|value| !value.starts_with('-'));
+                    if value.is_none() || value.is_some_and(String::is_empty) {
+                        return Err("libtest --skip requires a filter value".into());
+                    }
+                    scoped = true;
+                    index += 1;
+                }
+                value if value.starts_with("--skip=") && value.len() > "--skip=".len() => {
+                    scoped = true
+                }
+                "--exact" | "--nocapture" | "--ignored" | "--include-ignored" | "--show-output" => {
+                }
+                value if !value.starts_with('-') && !value.is_empty() => scoped = true,
+                value => return Err(format!("unsupported libtest option {value}")),
+            }
+            index += 1;
+        }
+        if !scoped {
+            return Err("graphhelm-cli --test cli must name a filter or --skip complement".into());
         }
     }
     Ok(())
@@ -380,6 +444,94 @@ mod admission_tests {
                 "workspace_cli::",
             ]))
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn refuses_unfiltered_cli_bundle_but_allows_scoped_and_skip_forms() {
+        let cases: &[(bool, &[&str])] = &[
+            (true, &["root::", "--", "--test-threads=2"]),
+            (true, &["--", "root::", "--test-threads=2"]),
+            (true, &["--no-run"]),
+            (true, &["--", "--list"]),
+            (false, &["--", ""]),
+            (false, &[""]),
+            (false, &["--", "--skip", ""]),
+            (false, &["--", "--no-run"]),
+        ];
+        for (accepted, tail) in cases {
+            let mut command = argv(&["cargo", "test", "-p", "graphhelm-cli", "--test", "cli"]);
+            command.extend(tail.iter().map(|value| (*value).to_owned()));
+            assert_eq!(admit_command(&command).is_ok(), *accepted, "{tail:?}");
+        }
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--test",
+                "cli",
+            ]))
+            .is_err()
+        );
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--test",
+                "cli",
+                "--",
+                "--test-threads=2",
+                "--format",
+                "json",
+            ]))
+            .is_err()
+        );
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--test",
+                "cli",
+                "--",
+                "--test-threads=2",
+                "root::",
+            ]))
+            .is_ok()
+        );
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--test",
+                "cli",
+                "--",
+                "--test-threads=2",
+                "--skip",
+                "registered::",
+            ]))
+            .is_ok()
+        );
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--test",
+                "cli",
+                "--",
+                "--test-threads=2",
+                "--skip",
+            ]))
+            .is_err()
         );
     }
 

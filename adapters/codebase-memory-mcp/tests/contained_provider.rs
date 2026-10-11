@@ -176,7 +176,10 @@ fn request_for(reader_snapshot: &str, index_generation: &str) -> StructuralIndex
             tool: "structural-code-index".to_owned(),
             action: "search_graph".to_owned(),
         },
-        requested_paths: vec!["core/events/src/local.rs".to_owned()],
+        requested_paths: vec![
+            "core/events/src/local.rs".to_owned(),
+            "core/events/src/store.rs".to_owned(),
+        ],
         negative_scopes: Vec::new(),
         limits: DeclaredLimits {
             max_results: 50,
@@ -366,6 +369,100 @@ fn a_grouped_page_yields_its_files_rather_than_nothing() {
         files,
         vec!["core/tool-broker/src/record.rs"],
         "the group header carries the path; that is what it exists for"
+    );
+}
+
+/// A search result can contain several symbols from one file. Runtime receipts count the
+/// deduplicated file hits returned by this adapter, so the receipt remains valid and partial.
+#[test]
+fn multiple_symbols_from_one_file_yield_a_valid_partial_receipt() {
+    let (_project, _staging, session, _workspace, project) = composed("provider-dedup");
+    let reader = WorkspaceSourceReader::open(
+        &project,
+        SourceReaderLimits {
+            max_files: 100_000,
+            max_bytes: 1024 * 1024 * 1024,
+        },
+    )
+    .unwrap();
+    let repo = reader.current_snapshot();
+    let provider = provider_over(session, repo.as_str(), "multi-symbol");
+    let mut request = request_for(repo.as_str(), repo.as_str());
+    request.requested_paths = vec!["src/lib.rs".to_owned()];
+
+    let receipt = retrieve_coverage(&provider, &reader, &request)
+        .expect("multiple symbols in one file must produce a valid bounded receipt");
+    let wire: serde_json::Value = serde_json::from_slice(&receipt.stable_bytes().unwrap()).unwrap();
+
+    assert_eq!(
+        wire.pointer("/body/hits").unwrap(),
+        &serde_json::json!(["src/lib.rs"])
+    );
+    assert_eq!(
+        wire.pointer("/body/totalResults").unwrap(),
+        &serde_json::json!(1)
+    );
+    assert_eq!(
+        wire.pointer("/body/pages/0/results").unwrap(),
+        &serde_json::json!(1)
+    );
+    assert_eq!(
+        wire.pointer("/body/coverage").unwrap(),
+        &serde_json::json!("partial")
+    );
+    // File projection must not convert incomplete, inconsistent or out-of-request source
+    // evidence into an accepted receipt. Reuse the same real consumer boundary.
+    for mode in [
+        "multi-symbol-incomplete",
+        "multi-symbol-bad-total",
+        "multi-symbol-foreign",
+    ] {
+        let (_project, _staging, session, _workspace, project) = composed(mode);
+        let reader = WorkspaceSourceReader::open(
+            &project,
+            SourceReaderLimits {
+                max_files: 100_000,
+                max_bytes: 1024 * 1024 * 1024,
+            },
+        )
+        .unwrap();
+        let repo = reader.current_snapshot();
+        let provider = provider_over(session, repo.as_str(), mode);
+        let mut request = request_for(repo.as_str(), repo.as_str());
+        request.requested_paths = vec!["src/lib.rs".to_owned()];
+        assert!(
+            retrieve_coverage(&provider, &reader, &request).is_err(),
+            "{mode} must remain refused"
+        );
+    }
+}
+
+#[test]
+fn multiple_paths_use_escaped_file_selection() {
+    let (_project, _staging, session, _workspace, project) = composed("provider-selection");
+    let reader = WorkspaceSourceReader::open(
+        &project,
+        SourceReaderLimits {
+            max_files: 100_000,
+            max_bytes: 1024 * 1024 * 1024,
+        },
+    )
+    .unwrap();
+    let repo = reader.current_snapshot();
+    let provider = provider_over(session, repo.as_str(), "multi-path-selection");
+    let mut request = request_for(repo.as_str(), repo.as_str());
+    request.requested_paths = vec!["src/lib.rs".to_owned(), "src/a.b.rs".to_owned()];
+
+    let receipt = retrieve_coverage(&provider, &reader, &request)
+        .expect("escaped qn file selection must produce a bounded receipt");
+    let wire: serde_json::Value = serde_json::from_slice(&receipt.stable_bytes().unwrap()).unwrap();
+    assert_eq!(
+        wire.pointer("/body/hits").unwrap(),
+        &serde_json::json!(["src/a.b.rs", "src/lib.rs"])
+    );
+    assert_eq!(
+        wire.pointer("/body/totalResults").unwrap(),
+        &serde_json::json!(2)
     );
 }
 

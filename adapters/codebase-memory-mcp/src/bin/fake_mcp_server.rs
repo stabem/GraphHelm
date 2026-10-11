@@ -45,6 +45,58 @@ fn main() {
                 let _ = stdout.flush();
                 continue;
             }
+            Some("tools/call") if mode.starts_with("multi-symbol") => serde_json::json!({
+                "jsonrpc": "2.0", "id": id,
+                "result": {
+                    "structuredContent": {
+                        "total": if mode == "multi-symbol-incomplete" || mode == "multi-symbol-bad-total" {3} else {2},
+                        "cols": ["qn", "label", "file", "lines", "rank"],
+                        "rows": [
+                            ["p.src.lib.first", "Function", "src/lib.rs", "1-2", -20.0],
+                            ["p.src.lib.second", "Function", if mode == "multi-symbol-foreign" {"src/other.rs"} else {"src/lib.rs"}, "4-5", -18.0]
+                        ],
+                        "has_more": mode == "multi-symbol-incomplete"
+                    },
+                    "isError": false
+                }
+            }),
+            Some("tools/call") if mode == "multi-path-selection" => {
+                let pattern = message.pointer("/params/arguments/qn_pattern");
+                let arguments = message.pointer("/params/arguments");
+                if arguments
+                    .and_then(|value| value.get("label"))
+                    .and_then(|value| value.as_str())
+                    != Some("File")
+                    || arguments
+                        .and_then(|value| value.get("format"))
+                        .and_then(|value| value.as_str())
+                        != Some("json")
+                    || arguments.and_then(|value| value.get("query")).is_some()
+                    || pattern.and_then(|value| value.as_str())
+                        != Some(r"\.(src\.lib\.rs|src\.a\.b\.rs)\.__file__$")
+                {
+                    serde_json::json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "error": {"code": -32602, "message": "unexpected qn_pattern"}
+                    })
+                } else {
+                    serde_json::json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "result": {
+                            "structuredContent": {
+                                "total": 2,
+                                "cols": ["qn", "label", "file", "lines", "rank"],
+                                "rows": [
+                                    ["p.src.lib.__file__", "File", "src/lib.rs", "1-5", -20.0],
+                                    ["p.src.a_dot_b.__file__", "File", "src/a.b.rs", "1-5", -18.0]
+                                ],
+                                "has_more": false
+                            },
+                            "isError": false
+                        }
+                    })
+                }
+            }
             // The real provider's measured contract (codebase-memory-mcp 0.10.8): without
             // `"format":"json"` in the arguments, search_graph answers a human-readable text
             // block in `content` and NO structuredContent — which the house decoder refuses.

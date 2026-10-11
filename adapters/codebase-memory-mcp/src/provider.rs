@@ -145,7 +145,14 @@ impl ContainedIndexProvider {
     /// The one-shot MCP conversation: initialize, initialized, one tools/call. Newline-delimited
     /// JSON-RPC, the transport's own framing.
     fn request_lines(&self, request: &StructuralIndexRequest) -> Vec<u8> {
-        let query = request.requested_paths.join(" ");
+        let qn_pattern = qn_file_pattern(&request.requested_paths);
+        let arguments = serde_json::json!({
+            "project": self.project,
+            "qn_pattern": qn_pattern,
+            "limit": request.limits.max_results,
+            "format": "json",
+            "label": "File"
+        });
         let lines = [
             serde_json::json!({
                 "jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -159,10 +166,7 @@ impl ContainedIndexProvider {
                 // all (measured, 0.10.8): without it search_graph returns a text block the
                 // house decoder refuses. "detail" is not in the tool's schema and was silently
                 // ignored — dropped rather than transmitted as a false claim.
-                "params": {"name": "search_graph",
-                            "arguments": {"project": self.project, "query": query,
-                                          "limit": request.limits.max_results,
-                                          "format": "json"}}
+                "params": {"name": "search_graph", "arguments": arguments}
             }),
         ];
         let mut bytes = Vec::new();
@@ -228,6 +232,16 @@ impl StructuralCodeIndex for ContainedIndexProvider {
         )
         .map_err(|_| StructuralCodeIndexError::Unavailable)?;
 
+        let row_count = page.rows().len()
+            + page
+                .groups()
+                .iter()
+                .map(|group| group.rows().len())
+                .sum::<usize>();
+        if !page.has_more() && page.total() != row_count as u64 {
+            return Err(StructuralCodeIndexError::Unavailable);
+        }
+
         // Hits: the `file` column of each row (detail "ids" carries qn only, so fall back to the
         // row's last string cell when no file column exists); unique, first-appearance order.
         let file_column = page.columns().iter().position(|name| name == "file");
@@ -255,6 +269,11 @@ impl StructuralCodeIndex for ContainedIndexProvider {
             {
                 hits.push(path.to_owned());
             }
+        }
+
+        let requested = request.requested_paths.iter().collect::<BTreeSet<_>>();
+        if hits.iter().any(|path| !requested.contains(path)) {
+            return Err(StructuralCodeIndexError::Unavailable);
         }
 
         // ALWAYS Partial, and the consumer enforces exactly this: a BestEffort provider claiming
@@ -292,22 +311,10 @@ impl StructuralCodeIndex for ContainedIndexProvider {
             )
             .collect();
 
-        let total = u32::try_from(page.total()).unwrap_or(u32::MAX);
-        // Grouped pages carry their rows INSIDE the groups, so counting only the flat list
-        // reported zero results beside a non-empty hit list — the same half-fix as the extraction
-        // itself, one field further along (Codex, after my grouped-page fix).
-        // A grouped page's RESULTS are its rows, and this field is page evidence about the
-        // provider's answer — not about the hit set. Counting group rows is right here; what
-        // would be wrong is letting that number stand in for hits, since a group is one FILE
-        // however many symbols it carries. `hits` above is deduplicated by path and `total`
-        // comes from the provider; this is the third quantity and it counts rows.
-        let row_count = page.rows().len()
-            + page
-                .groups()
-                .iter()
-                .map(|group| group.rows().len())
-                .sum::<usize>();
-        let results = u32::try_from(row_count).unwrap_or(u32::MAX);
+        // Runtime receipts represent file hits, while the provider's page total and rows count
+        // symbols. Several symbols can therefore map to one hit; report the deduplicated count
+        // so the receipt's bounded page, total, and hit counts describe the same evidence.
+        let results = u32::try_from(hits.len()).unwrap_or(u32::MAX);
         let stdout_bytes = captured.stdout.len() as u64;
         Ok(graphhelm_runtime::ports::StructuralIndexResponse {
             plan_binding: request.plan_binding.clone(),
@@ -325,8 +332,34 @@ impl StructuralCodeIndex for ContainedIndexProvider {
                 bytes: stdout_bytes,
                 has_more: page.has_more(),
             }],
-            total_results: total,
+            total_results: results,
             hits,
         })
     }
+}
+
+fn qn_file_pattern(paths: &[String]) -> String {
+    let alternatives = paths
+        .iter()
+        .map(|path| {
+            let dotted = path.replace('/', ".");
+            escape_regex(&dotted)
+        })
+        .collect::<Vec<_>>()
+        .join("|");
+    format!(r"\.({alternatives})\.__file__$")
+}
+
+fn escape_regex(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if matches!(
+            character,
+            '\\' | '.' | '^' | '$' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
 }

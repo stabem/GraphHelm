@@ -112,7 +112,7 @@ def post(base, token, execution, pr, task_id, repo, sha, closes):
 def post_end(base, token, execution, kind, task_id, repo, lane, fields):
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     doc = {"schema": "graphhelm-task-event-v1", "taskId": task_id,
-           "revision": 2, "at": now, **fields}
+           "revision": 6 if kind == "closed" else 2, "at": now, **fields}
     content = json.dumps({k: v for k, v in doc.items() if k != "at"}, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256((lane + "\n" + kind + "\n" + content).encode()).hexdigest()[:16]
     signal_id = f"{lane}-{task_id}-{kind}-{digest}"

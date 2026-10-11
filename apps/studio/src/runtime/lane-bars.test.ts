@@ -38,6 +38,19 @@ describe("laneBars", () => {
     ], T0 + 10, 1000);
     expect(lanes[0]!.bars[0]).toMatchObject({ label: "#822", displayLabel: "#822 Close false timeline bars" });
   });
+  it("ends a same-lane re-claim bar when its already-open PR merges", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "codex-4", actorId: "codex-4", taskId: "issue-86", at: at(0) }),
+      ev({ kind: "task.pr_opened", lane: "codex-4", actorId: "codex-4", taskId: "issue-86", pr: 658, headSha: "head1", at: at(10) }),
+      ev({ kind: "task.claimed", lane: "codex-4", actorId: "codex-4", taskId: "issue-86", at: at(20) }),
+      ev({ kind: "task.pr_opened", lane: "codex-4", actorId: "codex-4", taskId: "issue-86", pr: 658, headSha: "head2", at: at(30) }),
+      ev({ kind: "task.merged", actorId: "coordinator", taskId: "issue-86", pr: 658, at: at(40) }),
+    ], T0 + 50, 1000);
+    expect(lanes.find((lane) => lane.lane === "codex-4")!.bars.filter((bar) => bar.open)).toEqual([]);
+    expect(lanes.find((lane) => lane.lane === "codex-4")!.silent).toBe(false);
+    expect(lanes.find((lane) => lane.lane === "codex-4")!.bars).toHaveLength(2);
+    expect(lanes.find((lane) => lane.lane === "codex-4")!.bars[1]).toMatchObject({ label: "#658", end: T0 + 40, open: false });
+  });
   it.each([false, true])("keeps each PR title with its slice after reorder (ended first: %s)", (endedFirst) => {
     const records: TimedTaskEvent[] = [];
     if (endedFirst) records.push(

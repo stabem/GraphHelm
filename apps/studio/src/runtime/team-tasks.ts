@@ -538,6 +538,7 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
 export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: TaskEventRecord, slice: TaskState) => void): TaskState[] {
   const slices: TaskState[] = [];
   const ended = new Set<TaskState>();
+  const firstPrOpening = new Map<TaskState, number>();
   for (const event of [...records].sort((a, b) => a.sequence - b.sequence)) {
     if (event.kind === "task.released") {
       const open = slices.filter((slice) => slice.taskId === event.taskId && slice.lane === event.lane
@@ -550,7 +551,22 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
       }
       continue;
     }
+    if (event.kind === "task.pr_opened") {
+      const existing = slices.find((slice) => slice.pr === event.pr && slice.taskId === event.taskId && slice.lane === event.lane);
+      const openedAt = existing === undefined ? undefined : firstPrOpening.get(existing);
+      if (openedAt !== undefined) {
+        for (let index = slices.length - 1; index >= 0; index--) {
+          const claim = slices[index];
+          if (claim !== existing && claim.taskId === event.taskId && claim.lane === event.lane
+            && claim.pr === null && claim.releasedBy === undefined && claim.step !== "merged"
+            && claim.claimSequence !== undefined && claim.claimSequence > openedAt && claim.claimSequence < event.sequence) {
+            slices.splice(index, 1);
+          }
+        }
+      }
+    }
     const state = sliceFor(slices, event);
+    if (event.kind === "task.pr_opened" && !firstPrOpening.has(state)) firstPrOpening.set(state, event.sequence);
     onRoute?.(event, state);
     if (ended.has(state)) continue;
     if (state.step === "merged") continue;

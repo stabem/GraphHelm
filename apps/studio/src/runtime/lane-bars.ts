@@ -43,6 +43,8 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
   const headOf = new Map<string, string>();
   const authorOf = new Map<string, string>();
   const issueOf = new Map<string, number>();
+  const claimSequenceOf = new Map<string, number>();
+  const absorbedBars = new Map<number, LaneBar[]>();
   // Read titles from the same completed slices that feed the kanban. Older records may
   // carry a title only on the claim or PR opening, not on later timeline records.
   keys.forEach((slice, state) => {
@@ -128,6 +130,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       }
     }
     if (e.issue !== undefined) issueOf.set(slice, e.issue);
+    if (e.kind === "task.claimed") claimSequenceOf.set(slice, e.sequence);
     if (typeof e.title === "string" && !titleOf.has(slice)) {
       titleOf.set(slice, e.title);
       for (const v of open.values()) if (v.slice === slice) v.bar.displayLabel = `${e.pr !== undefined ? `#${e.pr}` : e.issue !== undefined ? `#${e.issue}` : e.taskId} ${e.title}`;
@@ -137,6 +140,22 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       headOf.set(slice, e.headSha);
     }
     if (e.lane && (e.kind === "task.claimed" || e.kind === "task.pr_opened")) authorOf.set(slice, e.lane);
+    if (e.kind === "task.pr_opened" && e.pr !== undefined && e.lane) {
+      const opening = events.find((candidate) => candidate.kind === "task.pr_opened" && candidate.pr === e.pr
+        && candidate.lane === e.lane && candidate.taskId === e.taskId && candidate.sequence < e.sequence);
+      const firstOpening = opening?.sequence ?? e.sequence;
+      for (const value of open.values()) {
+        const claimedAt = claimSequenceOf.get(value.slice);
+        if (value.lane === e.lane && value.bar.kind === "implement" && value.bar.taskId === e.taskId
+          && claimedAt !== undefined && claimedAt > firstOpening && claimedAt < e.sequence) {
+          value.bar.label = `#${e.pr}`;
+          const bars = absorbedBars.get(e.pr) ?? [];
+          bars.push(value.bar);
+          absorbedBars.set(e.pr, bars);
+          open.delete([value.bar.kind, value.slice, value.lane].join("|"));
+        }
+      }
+    }
     const pr = prOfKey.get(slice);
     const author = authorOf.get(slice);
     // A merge is terminal for this PR, even if a delayed record arrives later.
@@ -160,6 +179,10 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       case "task.merged": {
         if (e.pr !== undefined) mergedPrs.add(e.pr);
         if (e.pr !== undefined) for (const lane of lanes.values()) lane.awaiting.delete(e.pr);
+        if (e.pr !== undefined) for (const bar of absorbedBars.get(e.pr) ?? []) {
+          finish(bar, t);
+          bar.endedBy = { kind: "merged", actor: e.actorId };
+        }
         for (const s of e.pr !== undefined ? prSlices.get(e.pr) ?? new Set([slice]) : [slice])
           for (const k of ["implement", "review", "merge"] as const) close(k, s, t, e);
         // #591: only issue closure ends PR-less claims across lanes. A Refs slice ends only
@@ -178,6 +201,10 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       }
       case "task.closed":
         if (e.pr !== undefined) for (const lane of lanes.values()) lane.awaiting.delete(e.pr);
+        if (e.pr !== undefined) for (const bar of absorbedBars.get(e.pr) ?? []) {
+          finish(bar, t);
+          bar.endedBy = { kind: "closed", actor: e.actorId };
+        }
         for (const s of e.pr !== undefined ? prSlices.get(e.pr) ?? new Set([slice]) : [slice])
           for (const k of ["implement", "review", "merge"] as const) close(k, s, t, e);
         break;

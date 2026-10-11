@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { bucketKanban, kanbanColumn, KANBAN_COLUMNS } from "./work-kanban";
+import { buildWorkGroups } from "./work-groups";
 import type { StageHealth, HealthFlag } from "./stage-health";
+import type { TaskState } from "./team-tasks";
 
 const h = (flag: HealthFlag): StageHealth => ({ flag, text: flag, tone: "green", elapsedMs: null, elapsed: null });
 
@@ -31,5 +33,22 @@ describe("kanbanColumn", () => {
     expect(b.review).toEqual(["a"]);
     expect(b.silent).toEqual(["b"]);
     expect(b.implement).toEqual([]);
+  });
+});
+
+describe("released claims", () => {
+  it("does not put a released claim in any kanban column", () => {
+    const task: TaskState = {
+      key: "issue-790:4618", taskId: "issue-790", branch: "issue-790-released-claim", issue: 790, pr: null,
+      lane: "L", headSha: null, journeys: [], step: "implement", blockedBy: null, reviewers: [], mergeSha: null,
+      repoUrl: null, strayVerdicts: [], title: "Released claim", summary: null, prTitle: null, prSummary: null,
+      critic: null, recordedHeads: [], parent: null, rounds: [], clock: {} as TaskState["clock"], lastSequence: 4979,
+      claimSequence: 4618, releasedBy: "L",
+    };
+    const [group] = buildWorkGroups([task], []);
+    const buckets = bucketKanban(group!.rows.filter((row) => row.open), (row) => kanbanColumn(group!.stages[row.key]!, null));
+    expect(Object.values(buckets).flat()).toEqual([]);
+    expect(group!.tasks).toHaveLength(1);
+    expect(group!.stages[task.key]).toBe("implement");
   });
 });

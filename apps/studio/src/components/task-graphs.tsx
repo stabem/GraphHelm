@@ -99,9 +99,10 @@ export function orderedCards(tasks: TaskState[]): { open: Card[]; released: Card
   const open = all.filter((entry) => entry.open.length > 0)
     .sort((a, b) => rank(a.open[0]) - rank(b.open[0]) || latest(b.card.rows) - latest(a.card.rows));
   const released = all.filter((entry) => entry.released.length > 0).sort((a, b) => latest(b.released) - latest(a.released));
-  const delivered = all.filter((entry) => entry.delivered.length > 0).sort((a, b) => latest(b.delivered) - latest(a.delivered));
+  const delivered = all.filter((entry) => entry.open.length === 0 && entry.delivered.length > 0)
+    .sort((a, b) => latest(b.delivered) - latest(a.delivered));
   return {
-    open: open.map((entry) => ({ ...entry.card, rows: entry.open })),
+    open: open.map((entry) => ({ ...entry.card, rows: [...entry.open, ...entry.delivered] })),
     released: released.map((entry) => ({ ...entry.card, rows: entry.released })),
     delivered: delivered.map((entry) => ({ ...entry.card, rows: entry.delivered })),
   };

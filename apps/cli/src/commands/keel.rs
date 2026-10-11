@@ -638,10 +638,9 @@ fn card_from_markdown(text: &str) -> serde_json::Value {
                 if let Some(path) = item
                     .strip_prefix('`')
                     .and_then(|value| value.strip_suffix('`'))
+                    .filter(|path| !path.is_empty())
                 {
-                    if !path.is_empty() {
-                        items.push(path.to_owned());
-                    }
+                    items.push(path.to_owned());
                 }
             }
             continue;

@@ -3,6 +3,7 @@
 .proof-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px 24px; }
 .proof-title { display: flex; flex-direction: column; gap: 6px; flex: 1 1 320px; min-width: 0; }
 .proof-title h2 { margin: 0; font-size: 24px; font-weight: 600; overflow-wrap: break-word; }
+.proof-draft-note { font-size: 12px; }
 .proof-cap { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #8D929C; overflow-wrap: break-word; }
 .proof-sub { color: #A9AEB8; line-height: 1.45; overflow-wrap: break-word; }
 .proof-clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
@@ -49,6 +50,7 @@
 .proof-ev-mark[data-mark="warn"] { color: #F5A524; }
 .proof-ev-txt { min-width: 0; color: #C7CBD3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .proof-call { display: flex; flex-direction: column; gap: 8px; align-items: stretch; min-width: 0; }
+.proof-replay { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .proof-hint { color: #A9AEB8; font-size: 12px; line-height: 1.4; overflow-wrap: break-word; }
 .proof-primary, .proof-secondary { box-sizing: border-box; min-height: 40px; padding: 0 14px; border-radius: 8px; font: 600 13px var(--sans); cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; text-align: center; text-decoration: none; }

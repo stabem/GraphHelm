@@ -18,6 +18,12 @@ const mission: Mission = {
 };
 
 describe("ProofTable", () => {
+  it("#813: draft note is a muted line below the clean question", () => {
+    render(<ProofTable mission={{ ...mission, title: "Add a model (draft: the test setup has no model gateway)" }} onOpenTest={vi.fn()} />);
+    expect(screen.getByRole("heading", { name: 'Can I trust “Add a model”?' })).toBeInTheDocument();
+    expect(screen.getByText("Draft: the test setup has no model gateway")).toHaveClass("proof-sub");
+  });
+
   it("one row per step: promise, status badge, custody chips and the call", async () => {
     const onOpenTest = vi.fn();
     render(<ProofTable mission={mission} onOpenTest={onOpenTest} />);
@@ -44,9 +50,10 @@ describe("ProofTable", () => {
     expect(onOpenTest).toHaveBeenCalledWith("next");
   });
 
-  it("without a replay handler the replay button is disabled and says where it starts", async () => {
+  it("without a replay handler the disabled replay button has helper text", async () => {
     const { unmount } = render(<ProofTable mission={mission} onOpenTest={vi.fn()} />);
-    expect(screen.getByRole("button", { name: /Replay whole journey — start it from the journey panel/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Replay whole journey" })).toBeDisabled();
+    expect(screen.getByText("Start it from the journey panel.")).toBeInTheDocument();
     unmount();
     const onReplay = vi.fn();
     render(<ProofTable mission={mission} onOpenTest={vi.fn()} onReplay={onReplay} />);

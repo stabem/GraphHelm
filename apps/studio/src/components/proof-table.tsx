@@ -28,17 +28,21 @@ interface Props {
 
 export function ProofTable({ mission, onOpenTest, frameUrl, onReplay }: Props) {
   const placed = layoutMission(mission).placed;
+  const draft = mission.title.match(/^(.*?)\s*\(draft:\s*(.*?)\)\s*$/i);
+  const title = draft?.[1] ?? mission.title;
+  const draftNote = draft?.[2];
   return (
     <section className="proof" aria-label="Proof">
       <div className="proof-head">
         <div className="proof-title">
           <span className="proof-cap">{`Journey · proof · ${mission.summary.proven}/${mission.summary.total} proven`}</span>
-          <h2>{`Can I trust “${mission.title}”?`}</h2>
+          <h2>{`Can I trust “${title}”?`}</h2>
+          {draftNote && <span className="proof-sub proof-draft-note">{`Draft: ${draftNote}`}</span>}
           <span className="proof-sub">Every step is a promise to a person. Each row shows who built it, what checked it, and the frame the replay saw.</span>
         </div>
         {onReplay
           ? <button type="button" className="proof-primary" onClick={onReplay}>Replay whole journey</button>
-          : <button type="button" className="proof-primary" disabled title="Start the replay from the journey panel">Replay whole journey — start it from the journey panel</button>}
+          : <div className="proof-replay"><button type="button" className="proof-primary" disabled>Replay whole journey</button><span className="proof-hint">Start it from the journey panel.</span></div>}
       </div>
       <div className="proof-cols" aria-hidden="true"><span>Step</span><span>Promise</span><span>Replay saw</span><span>Chain of custody · evidence</span><span>Your call</span></div>
       <ol className="proof-rows" aria-label="Steps">

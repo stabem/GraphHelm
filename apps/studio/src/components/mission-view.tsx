@@ -139,16 +139,29 @@ export function GroupProgress({ states }: { states: string[] }) {
 }
 
 /** #744: the same bar for a journey's steps on the Proof rail. */
-const STEP_TONE: Record<string, (typeof PROGRESS_ORDER)[number]> = { proven: "proven", preview_only: "work", failed: "stalled", needs_you: "stalled", not_run: "ready" };
+function splitDraftTitle(title: string): { name: string; note: string | null } {
+  const match = title.match(/^(.*?)\s*\(draft:\s*(.*?)\)\s*$/i);
+  return match ? { name: match[1]!, note: match[2]! } : { name: title, note: null };
+}
+function JourneyRailButton({ mission, selected, onSelect }: { mission: Mission; selected: boolean; onSelect(): void }) {
+  const { name, note } = splitDraftTitle(mission.title);
+  return <button type="button" className="mv-journey" aria-pressed={selected} title={note ? `Draft: ${note}` : name} onClick={onSelect}>
+    <span className="mv-journey-title">{name}</span>
+    {note && <span className="mv-draft-tag" title={note}>draft</span>}
+    <span className="mv-journey-count">{`${mission.summary.proven}/${mission.summary.total}`}</span>
+  </button>;
+}
 export function JourneyProgress({ statuses }: { statuses: string[] }) {
-  const tones = statuses.map((s) => STEP_TONE[s] ?? "ready");
-  const counts = PROGRESS_ORDER.map((k) => [k, tones.filter((t) => t === k).length] as const).filter(([, n]) => n > 0);
   const total = statuses.length, proven = statuses.filter((s) => s === "proven").length;
-  const words = `${total} ${total === 1 ? "step" : "steps"} · ${proven} proven`;
+  const work = statuses.filter((s) => s === "preview_only").length;
+  const remaining = total - proven - work;
+  const words = `${total} ${total === 1 ? "step" : "steps"} · ${proven} proven · ${work} in work · ${remaining} not proven`;
   return (
     <span className="mv-progress">
       <span className="mv-progress-bar" role="img" aria-label={words}>
-        {counts.map(([k, n]) => <span key={k} className="mv-progress-part" style={{ flexGrow: n, background: SEG_TONE[k] }} />)}
+        <span className="mv-progress-part" data-progress="proven" title="Proven" style={{ flexGrow: proven, background: SEG_TONE.proven }} />
+        <span className="mv-progress-part" data-progress="work" title="In work" style={{ flexGrow: work, background: SEG_TONE.work }} />
+        <span className="mv-progress-part" data-progress="remaining" title="Not proven" style={{ flexGrow: remaining, background: SEG_TONE.ready }} />
       </span>
       <span className="mv-progress-text">{words}</span>
     </span>
@@ -382,10 +395,7 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
               const on = m.contractId === contractId;
               return (
                 <div key={m.contractId} className="mv-jcard" data-selected={on}>
-                  <button type="button" className="mv-journey" aria-pressed={on} title={m.title} onClick={() => pickProof(m.contractId)}>
-                    <span className="mv-journey-title">{m.title}</span>
-                    <span className="mv-journey-count">{`${m.summary.proven}/${m.summary.total}`}</span>
-                  </button>
+                  <JourneyRailButton mission={m} selected={on} onSelect={() => pickProof(m.contractId)} />
                   <JourneyProgress statuses={m.steps.map((x) => x.status)} />
                 </div>
               );

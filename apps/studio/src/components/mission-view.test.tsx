@@ -137,7 +137,7 @@ describe("MissionView", () => {
       .toEqual(["Watch plays inside the Studio0/1", "Add a model2/2"]);
     // No linked journey: the one with a recorded run is preselected.
     expect(within(rail).getByRole("button", { name: /Add a model/ })).toHaveAttribute("aria-pressed", "true");
-    expect(within(rail).getByText("2 steps · 2 proven")).toBeInTheDocument();
+    expect(within(rail).getByText("2 steps · 2 proven · 0 in work · 0 not proven")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Open the test canvas for step 2" }));
     const browser = screen.getByRole("region", { name: "Emulated browser" });
     expect(within(browser).getByRole("img")).toHaveAttribute("src", "/frames/add/save.png");
@@ -147,6 +147,22 @@ describe("MissionView", () => {
     expect(screen.getByRole("button", { name: "Open test for step 1" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
     expect(screen.getByRole("region", { name: "Work by issue" })).toBeInTheDocument();
+  });
+
+  it("#813: draft note is separate from the journey name and 0/2 has no proven fill", async () => {
+    const two: JourneyView[] = [{ ...journeys[0]!, contractId: "add", title: "Add a model (draft: the test setup has no model gateway, so the Add model button is off)",
+      steps: ["open", "save"].map((id) => ({ stepId: id, screen: { screenId: id, title: id, scopePaths: [] }, promises: [] })) }];
+    const { container } = render(<MissionView journeys={two} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Proof" }));
+    const rail = screen.getByRole("navigation", { name: "Journeys" });
+    const item = within(rail).getByRole("button", { name: /Add a model/ });
+    expect(item.querySelector(".mv-journey-title")).toHaveTextContent("Add a model");
+    expect(item.querySelector(".mv-journey-title")).not.toHaveTextContent("draft:");
+    expect(item).toHaveTextContent("draft");
+    expect(item).toHaveAttribute("title", expect.stringContaining("test setup has no model gateway"));
+    const bar = container.querySelector(".mv-progress-bar")!;
+    expect(bar.querySelector('[data-progress="proven"]')).toHaveStyle({ flexGrow: "0" });
+    expect(bar).toHaveAccessibleName(expect.stringContaining("in work"));
   });
 
   it("full page: breadcrumb, no Team in the nav, live indicator", () => {

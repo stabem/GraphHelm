@@ -125,6 +125,20 @@ class LaneStopTests(unittest.TestCase):
             self.assertEqual(tasks_reconcile.reconcile(args)["inspected"], 0)
         github.assert_not_called()
 
+    def test_merged_pr_in_other_repository_does_not_suppress_opened_pr(self):
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+        events = [("task.merged", {"taskId": "issue-766", "pr": 9001,
+                   "repo": "someone/else"}, {}),
+                  ("task.pr_opened", {"taskId": "issue-766", "pr": 9001,
+                   "lane": "codex-4", "repo": "stabem/GraphHelm"}, {})]
+        reply = {"state": "OPEN", "mergeCommit": None, "closingIssuesReferences": []}
+        with mock.patch.object(tasks_reconcile, "records", return_value=events), \
+             mock.patch.object(tasks_reconcile, "github", return_value=reply) as github:
+            self.assertEqual(tasks_reconcile.reconcile(args)["inspected"], 1)
+        github.assert_called_once_with(9001, "stabem/GraphHelm")
+
     def test_stop_invokes_configured_cli_reconciliation(self):
         root = Path(self.tmp.name)
         output = root / "cli-args.txt"

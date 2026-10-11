@@ -75,7 +75,7 @@ def github(pr, repo):
 def post(base, token, execution, pr, task_id, repo, sha, closes):
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     doc = {"schema": "graphhelm-task-event-v1", "taskId": task_id,
-           "revision": 5, "at": now, "pr": pr, "mergeSha": sha,
+           "revision": 5, "at": now, "pr": pr, "repo": repo, "mergeSha": sha,
            "closes": closes, "merger": "graphhelm"}
     content = json.dumps({k: v for k, v in doc.items() if k != "at"}, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(("graphhelm\nmerged\n" + content).encode()).hexdigest()[:16]
@@ -110,12 +110,12 @@ def reconcile(args):
         if type(pr) is not int or pr < 1:
             continue
         if kind == "task.merged":
-            merged.add(pr)
+            merged.add((doc.get("repo"), pr))
         elif (args.lane is None or doc.get("lane") == args.lane) and doc.get("repo") == args.repo and re.fullmatch(r"issue-[1-9][0-9]*", str(doc.get("taskId"))):
             opened[pr] = (doc["taskId"], args.repo)
     done = []
     for pr, (task_id, repo) in opened.items():
-        if pr in merged:
+        if (repo, pr) in merged:
             continue
         result = github(pr, repo)
         commit = result.get("mergeCommit") or {}

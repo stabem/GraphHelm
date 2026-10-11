@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 //! Best-effort process-boundary record. The caller's exit status belongs to the agent run.
 use std::path::Path;
 use std::time::Duration;
@@ -107,7 +106,6 @@ pub(crate) fn run_ended(
         Err(_) => unavailable("Runtime unavailable"),
     }
 }
-=======
 use std::process::Command;
 
 use graphhelm_protocols::Diagnostic;
@@ -126,7 +124,10 @@ pub(super) fn run(args: &TasksArgs) -> Outcome {
         token_file,
         lane,
         repo,
-    } = &args.command;
+    } = &args.command
+    else {
+        return failure("unsupported tasks command");
+    };
     let python = if cfg!(windows) { "python" } else { "python3" };
     let mut child = Command::new(python);
     child
@@ -150,8 +151,8 @@ pub(super) fn run(args: &TasksArgs) -> Outcome {
                 Err(_) => failure("reconciler returned invalid JSON"),
             }
         }
-        Ok(output) => failure(String::from_utf8_lossy(&output.stderr).trim()),
-        Err(error) => failure(format!("could not start Python reconciler: {error}")),
+        Ok(_) => failure("reconciler failed; check the Runtime binding and agent token"),
+        Err(_) => failure("could not start Python reconciler"),
     }
 }
 
@@ -166,4 +167,3 @@ fn failure(message: impl AsRef<str>) -> Outcome {
         ),
     )
 }
->>>>>>> 5aa1769e (feat(tasks): reconcile merged PRs at lane stop)

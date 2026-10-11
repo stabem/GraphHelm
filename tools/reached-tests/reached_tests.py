@@ -348,11 +348,44 @@ def reach(changed, packages, embedded, repo=None):
             js = sorted(f.relative_to(root).as_posix() for f in tool.glob("*.test.mjs") if ".browser." not in f.name)
             tools |= {python_test_tool(root, f) for f in py} | ({f"node --test {' '.join(js)}"} if js else set())
             hit = hit or bool(py or js)
-        hook_prefix = "plugins/graphhelm/hooks/"
+        plugin_parts = path.split("/")
+        plugin_path = path.startswith("plugins/")
+        hook_index = next((index for index, part in enumerate(plugin_parts)
+                           if part == "hooks" and index >= 2), None) if plugin_path else None
+        plugin_name = plugin_parts[1] if plugin_path and len(plugin_parts) > 1 else None
+        hook_prefix = ("/".join(plugin_parts[:hook_index + 1]) + "/"
+                       if hook_index is not None else None)
         companion_prefix = "plugins/graphhelm-codex-hooks/hooks/"
-        if path.startswith((hook_prefix, companion_prefix)) and root is not None:
-            hook_path = Path(hook_prefix) / Path(path).name
-            hook_dir = root / hook_prefix
+        if plugin_path and root is not None:
+            manifest_path = (plugin_name is not None and
+                             ((len(plugin_parts) >= 3 and plugin_parts[2] in {".mcp.json", "plugin.json"}) or
+                             (len(plugin_parts) >= 4 and plugin_parts[2] in {".claude-plugin", ".codex-plugin"}
+                               and plugin_parts[-1].endswith(".json"))))
+            if manifest_path:
+                # Plugin manifest and version contracts are exercised by the existing
+                # plugin evaluators; validation runs only for builtin packages.
+                test_paths = ["tools/evals/test_skill_twins.py"]
+                test_paths.append("plugins/graphhelm/hooks/test_session_hook.py")
+                for test_path in test_paths:
+                    if (root / test_path).is_file():
+                        tools.add(python_test_tool(root, test_path))
+                if plugin_parts[1] == "builtin" and len(plugin_parts) >= 3:
+                    validate.add("/".join(plugin_parts[:3]))
+                hit = True
+            elif any(part.lower() in {"skills", "agents"} for part in plugin_parts[2:]) or path.lower().endswith(("skill.md", "agent.md")):
+                test_path = "tools/evals/test_skill_twins.py"
+                if (root / test_path).is_file():
+                    tools.add(python_test_tool(root, test_path))
+                hit = True
+            elif hook_prefix is None:
+                # Plugin assets without a matching observer are docs-like: classify
+                # them without stopping the selector as unmapped.
+                hit = True
+
+        if hook_prefix and root is not None:
+            observed_hook_prefix = "plugins/graphhelm/hooks/" if path.startswith(companion_prefix) else hook_prefix
+            hook_path = Path(observed_hook_prefix) / Path(path).name
+            hook_dir = root / observed_hook_prefix
             changed_file = root / path
             if hook_path.name.startswith("test_") and hook_path.suffix == ".py" and not changed_file.is_file():
                 # Git's name-only diff includes the missing side of a rename. Never
@@ -366,13 +399,17 @@ def reach(changed, packages, embedded, repo=None):
                 hit = True
             if path.startswith(companion_prefix):
                 # The companion ships the same hooks; observe behavior and byte parity.
-                parity = hook_dir / "test_session_hook.py"
+                parity = root / "plugins/graphhelm/hooks/test_session_hook.py"
                 if parity.is_file():
                     tools.add(python_test_tool(root, parity.relative_to(root).as_posix()))
+                    hit = True
             if hook_path.name.startswith("test_") and hook_path.suffix == ".py" and changed_file.is_file():
                 tools.add(python_test_tool(root, path))
                 hit = True
-            elif hook_path.suffix == ".py":
+            elif hook_path.name.startswith("test_") and changed_file.is_file():
+                tools.add(python_test_tool(root, path))
+                hit = True
+            else:
                 specific = hook_path.with_name("test_" + hook_path.name)
                 tests = [specific.as_posix()] if (root / specific).is_file() else []
                 # A changed helper reaches the tests of its actual local importers.
@@ -400,7 +437,7 @@ def reach(changed, packages, embedded, repo=None):
                             if (root / consumer_test).is_file():
                                 tests.append(consumer_test.relative_to(root).as_posix())
                 # Keep the parity test when its source actually reads this file.
-                parity = hook_dir / "test_session_hook.py"
+                parity = root / "plugins/graphhelm/hooks/test_session_hook.py"
                 if changed_file.is_file() and parity.is_file():
                     parity_text = parity.read_text(encoding="utf-8", errors="replace")
                     parity_names = set(re.findall(
@@ -412,7 +449,7 @@ def reach(changed, packages, embedded, repo=None):
                     if script_name and "SCRIPT.read_bytes()" in parity_text:
                         parity_names.add(script_name.group(1))
                     if hook_path.name in parity_names:
-                        tests.append((Path(hook_prefix) / parity.name).as_posix())
+                        tests.append(parity.relative_to(root).as_posix())
                 tests = sorted(set(tests))
                 if not tests:
                     tests = sorted(f.relative_to(root).as_posix() for f in hook_dir.glob("test_*.py") if f.is_file())

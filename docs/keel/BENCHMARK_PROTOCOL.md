@@ -42,6 +42,7 @@ exclusion reasons. A new manifest cannot recreate missing historical controls. M
 sets `costKnown: false`; it is never treated as zero. `admitted` means identity controls matched,
 not that exchangeability, quality, or savings have been established. Statistical estimation and
 minimum meaningful gain are later work under #183.
+Rows whose sessions are not named by any repeat appear in `unmatched` and never join a group.
 
 The claim is **equal or better delivered-code quality at lower total cost per proven delivery**.
 Input-token reduction alone is a diagnostic, not a win. A unit is one independently started

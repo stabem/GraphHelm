@@ -538,7 +538,7 @@ def cmd_pair_audit(a: argparse.Namespace) -> None:
             raise ValueError("each row needs a nonempty sessionId")
         by_session.setdefault(session, []).append(row)
     admitted, excluded = [], []
-    seen_tasks, seen_repeats = set(), set()
+    seen_tasks, seen_repeats, declared_sessions = set(), set(), set()
     control_keys = ("parent", "evaluator", "environment", "budget", "timeout")
     for group in groups:
         if not isinstance(group, dict):
@@ -577,6 +577,7 @@ def cmd_pair_audit(a: argparse.Namespace) -> None:
             ids = (repeat["baseline"], repeat["candidate"])
             if any(not isinstance(s, str) or not s for s in ids):
                 raise ValueError("repeat session identities must be nonempty strings")
+            declared_sessions.update(ids)
             if ids[0] == ids[1] or any(s in seen_repeats for s in ids):
                 reason = "duplicate_session"
             else:
@@ -607,9 +608,10 @@ def cmd_pair_audit(a: argparse.Namespace) -> None:
         if kept:
             admitted.append({"task": task, "repeats": [item for item, _ in kept],
                              "costKnown": all(known for _, known in kept)})
+    unmatched = sorted(set(by_session) - declared_sessions)
     print(json.dumps({"version": 1, "comparison": manifest["comparison"],
                       "weighting": manifest["weighting"], "admitted": admitted,
-                      "excluded": excluded}, sort_keys=True))
+                      "excluded": excluded, "unmatched": unmatched}, sort_keys=True))
 
 
 def cmd_run(a: argparse.Namespace) -> None:

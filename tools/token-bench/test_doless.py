@@ -753,6 +753,7 @@ def test_pair_audit_admits_only_frozen_task_pairs(tmp_path):
     assert proc.returncode == 0
     assert report["admitted"] == [{"task": "one", "repeats": [{"baseline": "a1", "candidate": "k1"}],
                                     "costKnown": True}]
+    assert report["unmatched"] == []
     assert "recommendation" not in report and "savings" not in report
 
     cases = [([good[0], row("k1", "other", "k")], "task_mismatch"),
@@ -766,6 +767,9 @@ def test_pair_audit_admits_only_frozen_task_pairs(tmp_path):
         assert report["admitted"] == []
         assert reason in [item["reason"] for item in report["excluded"]]
         assert "recommendation" not in report and "savings" not in report
+    _, report = audit(good + [row("orphan", "one", "a")],
+                      [{"baseline": "a1", "candidate": "k1"}])
+    assert report["unmatched"] == ["orphan"]
 
 
 def test_configured_run_records_requested_effort_and_incomplete_usage(tmp_path, monkeypatch):

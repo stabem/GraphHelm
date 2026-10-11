@@ -231,3 +231,26 @@ all build/query freshness checks share that helper. The existing CLI source-refu
 also stages a new file and invokes the real CLI with a relative project root. It failed before
 the fix by reaching the invalid provider, then passed with source-population refusal before
 provider invocation. The absolute dirty-source cell and owned-workspace cleanup remain covered.
+
+
+## Default Keel instruction delivery
+
+Keel applies the reuse policy without a new owner request. It starts with current task evidence,
+uses a contained Codebase Memory task bundle when useful for a named structural gap, and falls
+back to focused source reads for missing, stale or partial evidence. Loading Keel does not build
+an index. Delegated briefs carry resolvable citations and bindings without borrowing another
+actor's identity or assuming cross-actor cache reuse.
+
+The existing SessionStart reminder now includes that policy. The existing bound SubagentStart
+hook emits the same bounded static instruction through `hookSpecificOutput.additionalContext`,
+including duplicate telemetry deliveries; SubagentStop and invalid identities emit no context.
+Unbound hooks remain silent without their existing opt-in. Neither hook starts a provider,
+indexes a project, reads source, adds a Runtime request, or creates a background process.
+The main and Codex companion scripts remain identical.
+
+The native hook-output tests distinguish this instruction boundary from host/model activation.
+They preserve briefing sanitization and cached compaction behavior. Installing updated skill and
+script bytes, validating contribution hashes, or manually invoking a hook does not prove that
+an already running host refreshed its loaded prompt or that every future agent will comply.
+Existing sessions receive the change only at their next supported instruction boundary; they
+are never restarted to force it. Retain that limitation in installation reports.

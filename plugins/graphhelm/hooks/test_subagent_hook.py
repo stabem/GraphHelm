@@ -104,6 +104,13 @@ class SubagentHookTests(unittest.TestCase):
     def test_request_contains_protocol_identity_and_phase(self):
         result = self.run_hook("start")
         self.assertEqual(result.stderr, "")
+        # The parent reminder alone cannot observe a child's context boundary.
+        context = json.loads(result.stdout)["hookSpecificOutput"]
+        self.assertEqual(context["hookEventName"], "SubagentStart")
+        self.assertIn("Reuse current task evidence before tools", context["additionalContext"])
+        self.assertIn("code-index build/query", context["additionalContext"])
+        self.assertLessEqual(len(context["additionalContext"]), 900)
+        self.assertEqual(len(Handler.requests), 1)
         signal = Handler.requests[0][2]["signal"]
         details = json.loads(signal["description"])
         self.assertEqual(signal["type"], "agent_subagent_started")
@@ -111,6 +118,10 @@ class SubagentHookTests(unittest.TestCase):
                                    "executionId": "run-test", "host": "codex", "parentSessionId": "parent-1",
                                    "phase": "started", "protocol": "graphhelm-subagent-v1"})
         self.assertEqual(Handler.requests[0][2]["signal"]["source"]["id"], "codex-session-parent-1")
+        repeated = self.run_hook("start")
+        self.assertEqual(json.loads(repeated.stdout)["hookSpecificOutput"]["hookEventName"], "SubagentStart")
+        self.assertIn("code-index build/query", json.loads(repeated.stdout)["hookSpecificOutput"]["additionalContext"])
+        self.assertEqual(len(Handler.requests), 1)
 
     def test_long_parent_uses_same_bounded_actor_identity(self):
         parent = "p" * 128
@@ -127,11 +138,17 @@ class SubagentHookTests(unittest.TestCase):
         wrong = self.run_hook("start", {"hook_event_name": "SessionStart", "session_id": "parent-1", "agent_id": "child-1", "agent_type": "worker"})
         self.assertIn("unobserved", bad.stderr)
         self.assertIn("unobserved", wrong.stderr)
+        self.assertEqual(bad.stdout, "")
+        self.assertEqual(wrong.stdout, "")
         self.assertEqual(Handler.requests, [])
 
     def test_duplicate_is_suppressed_with_stable_id(self):
-        self.assertEqual(self.run_hook("stop").stderr, "")
-        self.assertEqual(self.run_hook("stop").stderr, "")
+        first = self.run_hook("stop")
+        second = self.run_hook("stop")
+        self.assertEqual(first.stderr, "")
+        self.assertEqual(second.stderr, "")
+        self.assertEqual(first.stdout, "")
+        self.assertEqual(second.stdout, "")
         posts = [item for item in Handler.requests if item[0] == "POST"]
         self.assertEqual(len(posts), 1)
 

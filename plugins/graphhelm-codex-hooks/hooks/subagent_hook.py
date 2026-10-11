@@ -14,6 +14,7 @@ import urllib.parse
 
 from session_hook import (
     ID,
+    KEEL_CONTEXT,
     PORTABLE_HOST,
     MAX_STATE,
     _claim_lock,
@@ -203,6 +204,11 @@ def _run(payload: dict, host: str, event: str) -> None:
     bound = binding()
     if bound is None:
         return
+    if event == "SubagentStart":
+        # Static guidance reaches the child even when telemetry is already delivered.
+        # No provider, source retrieval, additional Runtime read or access-policy change.
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "SubagentStart", "additionalContext": KEEL_CONTEXT}}))
     execution, token_file, url, origin, node = bound
     phase = PHASES[event]
     path = _state_path(execution, origin, host, parent, child, agent_type, phase)

@@ -377,6 +377,13 @@ class Reach(unittest.TestCase):
             (hooks / "lane_stop_hook.py").write_text("", encoding="utf-8")
             (hooks / "test_lane_stop_hook.py").write_text("", encoding="utf-8")
             (hooks / "test_other_hook.py").write_text("", encoding="utf-8")
+            (hooks / "test_session_hook.py").write_text("", encoding="utf-8")
+
+            # A companion edit must reach behavior and the package-mirror contract.
+            *_, tools, _, other = reach("plugins/graphhelm-codex-hooks/hooks/lane_stop_hook.py", repo=repo)
+            self.assertEqual(tools, ["python -m unittest plugins/graphhelm/hooks/test_lane_stop_hook.py",
+                                     "python -m unittest plugins/graphhelm/hooks/test_session_hook.py"])
+            self.assertEqual(other, [])
 
             *_, tools, _, other = reach("plugins/graphhelm/hooks/lane_stop_hook.py", repo=repo)
             self.assertEqual(tools, ["python -m unittest plugins/graphhelm/hooks/test_lane_stop_hook.py"])

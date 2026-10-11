@@ -348,8 +348,12 @@ def reach(changed, packages, embedded, repo=None):
             tools |= {python_test_tool(root, f) for f in py} | ({f"node --test {' '.join(js)}"} if js else set())
             hit = hit or bool(py or js)
         hook_prefix = "plugins/graphhelm/hooks/"
-        if path.startswith(hook_prefix) and root is not None:
-            hook_path = Path(path)
+        companion_prefix = "plugins/graphhelm-codex-hooks/hooks/"
+        if path.startswith((hook_prefix, companion_prefix)) and root is not None:
+            hook_path = Path(hook_prefix) / Path(path).name
+            if path.startswith(companion_prefix):
+                # The companion ships the same hooks; observe behavior and byte parity.
+                tools.add(python_test_tool(root, hook_prefix + "test_session_hook.py"))
             if hook_path.name.startswith("test_") and hook_path.suffix == ".py":
                 tools.add(python_test_tool(root, path))
                 hit = True

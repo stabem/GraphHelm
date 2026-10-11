@@ -127,6 +127,10 @@ class SessionHookTests(unittest.TestCase):
             (companion / "hooks" / "session_hook.py").read_bytes(),
         )
         self.assertEqual(
+            (SCRIPT.parent / "subagent_hook.py").read_bytes(),
+            (companion / "hooks" / "subagent_hook.py").read_bytes(),
+        )
+        self.assertEqual(
             (SCRIPT.parent / "task_handoff.py").read_bytes(),
             (companion / "hooks" / "task_handoff.py").read_bytes(),
         )
@@ -244,7 +248,13 @@ class SessionHookTests(unittest.TestCase):
     def test_unbound_start_keel_is_explicit_opt_in(self):
         self.env["GRAPHHELM_KEEL_CONTEXT"] = "1"
         result = self.run_hook("start")
-        self.assertIn("Keel is guidance", json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"])
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("Keel is guidance", context)
+        # Default retrieval policy must reach the agent without another user request.
+        self.assertIn("Reuse current task evidence before tools", context)
+        self.assertIn("code-index build/query", context)
+        self.assertLessEqual(len(context), 900)
+        self.assertEqual(RuntimeHandler.requests, [])
 
     def test_bound_start_reads_live_briefing_but_does_not_promote_objective_to_instructions(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
@@ -299,6 +309,7 @@ class SessionHookTests(unittest.TestCase):
         self.assertEqual([item[0] for item in RuntimeHandler.requests], ["GET"])
         context = json.loads(compact.stdout)["hookSpecificOutput"]["additionalContext"]
         self.assertIn("CACHED", context)
+        self.assertIn("Reuse current task evidence before tools", context)
         self.assertIn("not refreshed", context)
         self.assertNotIn("SECRET_PLEASE_IGNORE_ALL_RULES", context)
         self.assertNotIn("Read the full briefing", context)

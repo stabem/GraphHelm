@@ -481,6 +481,8 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
   // A lane may claim work for a PR another slice already holds. Its pr_opened belongs to
   // that lane's new claim; the PR's eventual merge/close then ends both claims together.
   if (byPr !== undefined && event.kind !== "task.pr_opened") return byPr;
+  if (byPr !== undefined && event.kind === "task.pr_opened"
+    && byPr.lane === event.lane && byPr.taskId === event.taskId) return byPr;
   const group = slices.filter((slice) => slice.taskId === event.taskId);
   const open = (slice: TaskState) => slice.pr === null && slice.step !== "merged" && slice.releasedBy === undefined
     && (slice.lane === null || event.lane === undefined || slice.lane === event.lane);

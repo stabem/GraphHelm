@@ -537,6 +537,16 @@ def cmd_pair_audit(a: argparse.Namespace) -> None:
         if not isinstance(session, str) or not session:
             raise ValueError("each row needs a nonempty sessionId")
         by_session.setdefault(session, []).append(row)
+    declared_counts: dict[str, int] = {}
+    for group in groups:
+        if isinstance(group, dict) and isinstance(group.get("repeats"), list):
+            for repeat in group["repeats"]:
+                if isinstance(repeat, dict):
+                    for side in ("baseline", "candidate"):
+                        session = repeat.get(side)
+                        if isinstance(session, str) and session:
+                            declared_counts[session] = declared_counts.get(session, 0) + 1
+    duplicated_sessions = {session for session, count in declared_counts.items() if count > 1}
     admitted, excluded = [], []
     seen_tasks, seen_repeats, declared_sessions = set(), set(), set()
     control_keys = ("parent", "evaluator", "environment", "budget", "timeout")
@@ -578,7 +588,7 @@ def cmd_pair_audit(a: argparse.Namespace) -> None:
             if any(not isinstance(s, str) or not s for s in ids):
                 raise ValueError("repeat session identities must be nonempty strings")
             declared_sessions.update(ids)
-            if ids[0] == ids[1] or any(s in seen_repeats for s in ids):
+            if ids[0] == ids[1] or any(s in duplicated_sessions or s in seen_repeats for s in ids):
                 reason = "duplicate_session"
             else:
                 seen_repeats.update(ids)

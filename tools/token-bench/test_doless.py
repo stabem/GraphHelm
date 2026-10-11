@@ -770,6 +770,13 @@ def test_pair_audit_admits_only_frozen_task_pairs(tmp_path):
     _, report = audit(good + [row("orphan", "one", "a")],
                       [{"baseline": "a1", "candidate": "k1"}])
     assert report["unmatched"] == ["orphan"]
+    duplicate = [row("shared-a", "one", "a"), row("shared-k", "one", "k"),
+                 row("other-a", "one", "a"), row("other-k", "one", "k")]
+    _, report = audit(duplicate, [{"baseline": "shared-a", "candidate": "shared-k"},
+                                  {"baseline": "shared-a", "candidate": "other-k"},
+                                  {"baseline": "other-a", "candidate": "other-k"}])
+    assert report["admitted"] == []
+    assert [item["reason"] for item in report["excluded"]] == ["duplicate_session"] * 3
 
 
 def test_configured_run_records_requested_effort_and_incomplete_usage(tmp_path, monkeypatch):

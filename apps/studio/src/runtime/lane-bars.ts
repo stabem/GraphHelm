@@ -30,7 +30,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
   const open = new Map<string, { lane: string; bar: LaneBar; slice: string }>();
   // The kanban fold assigns every record to a slice; stable indices also survive PR renames.
   const routed = new Map<number, string>();
-  foldTaskEvents(events.map(({ at, ...event }) => ({ ...event, occurredAt: at })),
+  const slices = foldTaskEvents(events.map(({ at, ...event }) => ({ ...event, occurredAt: at })),
     (event, index) => routed.set(event.sequence, `slice-${index}`));
   const prOfKey = new Map<string, number>();
   const prSlices = new Map<number, Set<string>>();
@@ -38,6 +38,12 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
   const headOf = new Map<string, string>();
   const authorOf = new Map<string, string>();
   const issueOf = new Map<string, number>();
+  // Read titles from the same completed slices that feed the kanban. Older records may
+  // carry a title only on the claim or PR opening, not on later timeline records.
+  slices.forEach((state, index) => {
+    const slice = `slice-${index}`;
+    if (state.title || state.prTitle) titleOf.set(slice, state.prTitle ?? state.title!);
+  });
   const laneOf = (name: string) => {
     let l = lanes.get(name);
     if (!l) { l = { bars: [], last: 0, record: null, awaiting: new Set() }; lanes.set(name, l); }
@@ -70,6 +76,13 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       }
     }
   };
+  const closePr = (pr: number, t: number, event: TimedTaskEvent, kind?: BarKind, head?: string, onlySlice?: string) => {
+    for (const [key, value] of [...open]) {
+      if (prOfKey.get(value.slice) !== pr || (onlySlice && value.slice !== onlySlice) || (kind && value.bar.kind !== kind)
+        || (head && value.bar.headSha !== head)) continue;
+      value.bar.end = t; value.bar.open = false; value.bar.endedBy = { kind: event.kind.replace(/^task\./, ""), actor: event.actorId }; open.delete(key);
+    }
+  };
   for (const e of [...events].sort((a, b) => a.sequence - b.sequence)) {
     const t = Date.parse(e.at);
     if (!Number.isFinite(t)) continue;
@@ -89,7 +102,11 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       matching.add(slice);
       prSlices.set(e.pr, matching);
       if (e.kind === "task.pr_opened") {
-        for (const v of open.values()) if (v.slice === slice) v.bar.label = `#${e.pr}`;
+        for (const v of open.values()) if (v.slice === slice) {
+          v.bar.label = `#${e.pr}`;
+          const title = titleOf.get(slice);
+          if (title) v.bar.displayLabel = `#${e.pr} ${title}`;
+        }
       }
     }
     // #591: any record a lane leaves (claim, plan, pr_opened, assignment, verdict, merge) is a sign of life.
@@ -106,7 +123,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       }
     }
     if (e.issue !== undefined) issueOf.set(slice, e.issue);
-    if (typeof e.title === "string") {
+    if (typeof e.title === "string" && !titleOf.has(slice)) {
       titleOf.set(slice, e.title);
       for (const v of open.values()) if (v.slice === slice) v.bar.displayLabel = `${e.pr !== undefined ? `#${e.pr}` : e.issue !== undefined ? `#${e.issue}` : e.taskId} ${e.title}`;
     }
@@ -127,8 +144,9 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
         if (e.reviewer) start(e.reviewer, "review", e.taskId, slice, t);
         break;
       case "task.review_verdict":
+        if (e.pr !== undefined && e.headSha !== undefined) closePr(e.pr, t, e, "review", e.headSha, slice);
         if (e.headSha !== undefined && headOf.get(slice) !== undefined && e.headSha === headOf.get(slice)) {
-          close("review", slice, t, e, e.reviewer);
+          if (e.pr === undefined) close("review", slice, t, e, e.reviewer);
           if (author && pr !== undefined) laneOf(author).awaiting.delete(pr);
         }
         break;

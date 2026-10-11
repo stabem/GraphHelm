@@ -183,7 +183,7 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
           <span className="lt-key" data-kind="implement">Implement</span>
           <span className="lt-key" data-kind="review">Review</span>
           <span className="lt-key" data-kind="merge">Merge + proof</span>
-          <span className="lt-key" data-kind="silent">Silent / blocked</span>
+          <span className="lt-key" data-kind="silent">Stalled interval</span>
           <span className="lt-key" data-kind="presence">Agent status</span>
           <span className="lt-key" data-kind="now">Now</span>
         </div>

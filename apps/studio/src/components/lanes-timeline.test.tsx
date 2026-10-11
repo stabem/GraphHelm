@@ -4,6 +4,7 @@ import { LanesTimeline } from "./lanes-timeline";
 import type { MissionTask } from "../runtime/mission";
 import { fastUserEvent } from "../test/user-event";
 import css from "./lanes-timeline.css?raw";
+import { laneBars, type TimedTaskEvent } from "../runtime/lane-bars";
 
 const now = 1_000_000;
 const lanes = [
@@ -17,6 +18,19 @@ const t = (over: Partial<MissionTask>): MissionTask => ({
 const round = { reviewer: "r", headSha: "h", fixHead: "f" };
 
 describe("LanesTimeline", () => {
+  it("renders the PR number and title in a bar, with the full label in its tooltip", () => {
+    const events = [
+      { sequence: 1, actorId: "dev", taskId: "issue-809", kind: "task.claimed", lane: "dev", issue: 809, title: "Old issue title", at: "2026-10-09T00:00:00Z" },
+      { sequence: 2, actorId: "dev", taskId: "issue-809", kind: "task.pr_opened", lane: "dev", pr: 822, title: "Close false timeline bars", at: "2026-10-09T00:00:01Z" },
+    ] as TimedTaskEvent[];
+    const at = Date.parse("2026-10-09T00:00:10Z");
+    const { container } = render(<LanesTimeline lanes={laneBars(events, at, 1000)} now={at} windowMs={1000} />);
+    const bar = container.querySelector(".lt-bar")!;
+    expect(bar).toHaveTextContent("#822 Close false timeline bars");
+    expect(bar.getAttribute("title")).toContain("#822 Close false timeline bars");
+    expect(css).toMatch(/\.lt-bar-label[^}]*text-overflow: ellipsis/);
+  });
+
   it("hatches only the middle quiet span and counts it in the tooltip", () => {
     const hour = 3_600_000;
     const closed = { lane: "dev", silent: false, lastEventAt: now, bars: [{
@@ -58,7 +72,21 @@ describe("LanesTimeline", () => {
     render(<LanesTimeline lanes={lanes} now={now} windowMs={1000} />);
     const row = within(screen.getByRole("list", { name: "Agent lanes" })).getByText("gh-claude-5").closest("li")!;
     expect(within(row).getByText("silent")).toBeInTheDocument();
-    expect(row.querySelector('[data-silent="true"]')).not.toBeNull();
+    expect(row.querySelector('[data-silent="true"]')).toBeInTheDocument();
+  });
+  it("hatches only the stalled part of each open bar", () => {
+    const hour = 3_600_000;
+    const current = 4 * hour;
+    const { container } = render(<LanesTimeline lanes={[{
+      lane: "dev", silent: false, lastEventAt: current, bars: [
+        { kind: "implement", label: "#1", start: 0, end: current, open: true, lastActivityAt: hour },
+        { kind: "review", label: "#2", start: 2 * hour, end: current, open: true, lastActivityAt: current },
+      ],
+    }]} now={current} windowMs={current} />);
+    const bars = container.querySelectorAll(".lt-bar");
+    expect(bars[0]).toHaveAttribute("data-silent", "true");
+    expect(bars[0]!.querySelector(".lt-stall")).toHaveStyle({ left: "37.5%" });
+    expect(bars[1]).toHaveAttribute("data-silent", "false");
   });
 
   it("shows the last merged PR per lane, else a dash", () => {

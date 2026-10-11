@@ -8,6 +8,50 @@ let seq = 0;
 const ev = (e: Partial<TimedTaskEvent>): TimedTaskEvent => ({ actorId: "a", sequence: seq++, taskId: "t1", ...e }) as TimedTaskEvent;
 
 describe("laneBars", () => {
+  it("ends every lane's bars for a PR when it merges or closes", () => {
+    for (const end of ["task.merged", "task.closed"] as const) {
+      const lanes = laneBars([
+        ev({ kind: "task.claimed", lane: "author", taskId: "issue-809", issue: 809, at: at(0) }),
+        ev({ kind: "task.pr_opened", lane: "author", taskId: "issue-809", pr: 816, headSha: "head1", at: at(1) }),
+        ev({ kind: "task.review_assigned", reviewer: "codex-review", taskId: "pr-816", pr: 816, headSha: "head1", at: at(2) }),
+        ev({ kind: end, taskId: "pr-816", pr: 816, at: at(3) }),
+      ], T0 + 10, 1000);
+      expect(lanes.flatMap((lane) => lane.bars)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: "implement", end: T0 + 2, open: false }),
+        expect.objectContaining({ kind: "review", end: T0 + 3, open: false }),
+      ]));
+    }
+  });
+
+  it("ends a pool-assigned review on a verdict for the same PR head from a real reviewer", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.pr_opened", lane: "author", taskId: "issue-809", pr: 816, headSha: "head1", at: at(0) }),
+      ev({ kind: "task.review_assigned", reviewer: "codex-review", taskId: "pr-816", pr: 816, headSha: "head1", at: at(1) }),
+      ev({ kind: "task.review_verdict", reviewer: "codexrev-2", taskId: "pr-816", pr: 816, headSha: "head1", verdict: "APPROVE" as never, at: at(2) }),
+    ], T0 + 10, 1000);
+    expect(lanes.find((lane) => lane.lane === "codex-review")!.bars[0]).toMatchObject({ end: T0 + 2, open: false });
+  });
+  it("uses the folded PR title on an older claim bar", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "dev", taskId: "issue-809", issue: 809, title: "Old issue title", at: at(0) }),
+      ev({ kind: "task.pr_opened", lane: "dev", taskId: "issue-809", pr: 822, title: "Close false timeline bars", at: at(1) }),
+    ], T0 + 10, 1000);
+    expect(lanes[0]!.bars[0]).toMatchObject({ label: "#822", displayLabel: "#822 Close false timeline bars" });
+  });
+  it("keeps another slice's review open when a verdict routes to the same PR and head", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "a", taskId: "issue-1", branch: "one", at: at(0) }),
+      ev({ kind: "task.pr_opened", lane: "a", taskId: "issue-1", pr: 10, headSha: "head", at: at(1) }),
+      ev({ kind: "task.review_assigned", reviewer: "pool-a", taskId: "issue-1", pr: 10, headSha: "head", at: at(2) }),
+      ev({ kind: "task.claimed", lane: "b", taskId: "issue-1", branch: "two", headSha: "head", at: at(3) }),
+      ev({ kind: "task.review_assigned", reviewer: "pool-b", taskId: "issue-1", headSha: "head", at: at(4) }),
+      ev({ kind: "task.pr_opened", lane: "b", taskId: "issue-1", pr: 10, headSha: "head", at: at(5) }),
+      ev({ kind: "task.review_verdict", reviewer: "real-a", taskId: "issue-1", pr: 10, headSha: "head", at: at(6) }),
+    ], T0 + 10, 1000);
+    expect(lanes.find((l) => l.lane === "pool-a")!.bars[0]).toMatchObject({ end: T0 + 6, open: false });
+    expect(lanes.find((l) => l.lane === "pool-b")!.bars[0]).toMatchObject({ open: true });
+  });
+
   it("keeps a silent gap between two records on the same claim", () => {
     const hour = 3_600_000;
     const lanes = laneBars([
@@ -141,12 +185,14 @@ describe("laneBars", () => {
     expect(lanes.flatMap((l) => l.bars).filter((b) => b.kind === "implement").map((b) => [b.end, b.open])).toEqual([[T0 + 40, false], [T0 + 40, false]]);
   });
 
-  it("ends an absent reviewer's bar when its PR closes", () => {
-    const lanes = laneBars([
-      ev({ kind: "task.review_assigned", reviewer: "rev", pr: 10, at: at(0) }),
-      ev({ kind: "task.closed", pr: 10, at: at(20) }),
-    ], T0 + 30, 1000);
-    expect(lanes[0]!.bars[0]).toMatchObject({ end: T0 + 20, open: false });
+  it("ends an absent reviewer's bar when its PR closes or merges", () => {
+    for (const end of ["task.closed", "task.merged"] as const) {
+      const lanes = laneBars([
+        ev({ kind: "task.review_assigned", reviewer: "rev", pr: 10, at: at(0) }),
+        ev({ kind: end, pr: 10, at: at(20) }),
+      ], T0 + 30, 1000);
+      expect(lanes[0]!.bars[0]).toMatchObject({ end: T0 + 20, open: false });
+    }
   });
 
   it("ends a released claim at its release record", () => {

@@ -278,6 +278,18 @@ describe("foldTaskEvents slices (#460)", () => {
     ]);
   });
 
+  it("keeps a later head of the same PR on its original claim (#859)", () => {
+    const claim = (sequence: number) =>
+      record(sequence, "task.claimed", "codex-2", { taskId: "issue-830", issue: 830, lane: "codex-2", branch: "issue-830-fix" });
+    const opened = (sequence: number, headSha: string) =>
+      record(sequence, "task.pr_opened", "codex-2", { taskId: "issue-830", pr: 854, headSha, journeys: [], lane: "codex-2" });
+    const tasks = foldTaskEvents([claim(1), claim(2), opened(3, "aaaaaaaa"), opened(4, "bbbbbbbb")]);
+
+    expect(tasks.filter((task) => task.pr === 854)).toHaveLength(1);
+    expect(tasks.find((task) => task.pr === 854)).toMatchObject({ headSha: "bbbbbbbb", branch: "issue-830-fix" });
+    expect(tasks.filter((task) => task.pr === null)).toHaveLength(1);
+  });
+
   it("shows the second claim as its own slice before it has a PR", () => {
     const tasks = foldTaskEvents(records.slice(0, 4));
     expect(tasks.map((task) => [task.pr, task.step])).toEqual([[456, "review"], [null, "plan"]]);
@@ -306,7 +318,7 @@ describe("merges recorded by another lane (#765)", () => {
       .toEqual([[691, "merged", "bbbbbbbb", 5], [722, "merged", "bbbbbbbb", 5]]);
   });
 
-  it("removes every claim of a closed PR even when they share one issue (#807)", () => {
+  it("removes the closed PR slice while a duplicate claim stays PR-less (#807, #859)", () => {
     const events = [
       record(1, "task.claimed", "codex-4", { taskId: "issue-86", issue: 86, lane: "codex-4", branch: "issue-86-first" }),
       record(2, "task.pr_opened", "codex-4", { taskId: "issue-86", pr: 9, headSha: "aaaaaaaa", journeys: [], lane: "codex-4" }),
@@ -314,7 +326,7 @@ describe("merges recorded by another lane (#765)", () => {
       record(4, "task.pr_opened", "codex-4", { taskId: "issue-86", pr: 9, headSha: "aaaaaaaa", journeys: [], lane: "codex-4" }),
       record(5, "task.closed", "coordinator", { taskId: "pr-9", pr: 9, reason: "superseded", by: 10 }),
     ];
-    expect(foldTaskEvents(events.slice(0, 4)).filter((task) => task.pr === 9)).toHaveLength(2);
+    expect(foldTaskEvents(events.slice(0, 4)).filter((task) => task.pr === 9)).toHaveLength(1);
     expect(foldTaskEvents(events).filter((task) => task.pr === 9)).toHaveLength(0);
   });
 

@@ -5,6 +5,7 @@
 // played. Cost: jsdom render, no network.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 
 import { fastUserEvent } from "../test/user-event";
 import type { JourneyFlowView, JourneyFlowsView, LiveSession } from "../runtime/types";
@@ -314,6 +315,29 @@ describe("JourneyFlows run", () => {
     return made;
   };
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  it("names a lost preview runner", async () => {
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start: vi.fn(async () => ({ state: "failed" as const, reason: "preview.runner_lost" })) })} />);
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("the browser runner stopped before the test finished"));
+  });
+
+  it("does not show old Passed badges while a newer run fails", async () => {
+    const passed = { state: "ready" as const, kind: "preview" as const, result: "pass" as const, screens: { cart: { result: "pass" as const } } };
+    const failed = { state: "failed" as const, reason: "preview.runner_lost", screens: passed.screens };
+    const start = vi.fn().mockResolvedValueOnce(passed).mockResolvedValueOnce(failed);
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start })} />);
+    await waitFor(() => expect(screen.getByRole("list", { name: "Steps" })).toHaveTextContent("Passed"));
+    await userEvent.click(screen.getByRole("button", { name: "Run again" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveAttribute("data-state", "failed"));
+    expect(screen.getByRole("list", { name: "Steps" })).not.toHaveTextContent("Passed");
+  });
+
+  it("starts one preview per selection in StrictMode", async () => {
+    const start = vi.fn(async () => ({ state: "none" as const }));
+    render(<StrictMode><JourneyFlows view={one} onApprove={vi.fn()} run={source({ start })} /></StrictMode>);
+    await waitFor(() => expect(screen.getByRole("status")).toHaveAttribute("data-state", "none"));
+    expect(start).toHaveBeenCalledTimes(1);
+  });
 
   it("runs the journey's test when it is opened and shows each card's picture and result in words", async () => {
     urls();

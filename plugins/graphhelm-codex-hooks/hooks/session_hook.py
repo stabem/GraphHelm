@@ -29,7 +29,13 @@ STATUSES = {"completed", "failed", "cancelled"}
 KEEL_CONTEXT = ("Keel is guidance and measurement, not a pass/fail ritual. Start from the task's "
                 "promise and named paths. For a bounded code change, record scope, promise, and "
                 "the smallest command that observes it. Keep skipped and unobserved separate from "
-                "passed. A session ending does not prove task completion.")
+                "passed. A session ending does not prove task completion. "
+                "Reuse current task evidence before tools. This is the default; do not wait for "
+                "an owner reminder. For a source gap, load the installed keel skill and use "
+                "contained code-index build/query when useful, with a valid private task bundle "
+                "and your own actor. Pass resolvable evidence and this policy to subagents. "
+                "Fall back to focused source reads for stale, partial or unavailable evidence. "
+                "Never start a memory server/watcher in hooks or retain a provider process.")
 
 
 def hook_input() -> dict:

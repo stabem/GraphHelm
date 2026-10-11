@@ -1,6 +1,6 @@
 ---
 name: keel
-description: "Work under the Keel development model: load a contract card instead of the tree, spend a declared write surface, prove a promise against a named defect, and read the watchdog's verdict as a routing state. Use before writing code in any project that adopted GraphHelm."
+description: "Work under the Keel development model: load a contract card instead of the tree, spend a declared write surface, prove a promise against a named defect, and read the watchdog's verdict as a routing state. Use by default for code work and context retrieval in projects that adopted GraphHelm; no explicit user invocation is needed."
 ---
 
 # Keel, in brief
@@ -66,8 +66,35 @@ GraphHelm's Runtime can reuse bounded search results from the same immutable sea
 within one drive; it still reads the selected source and compiles each node's capsule with its own
 id and budget. Live searches and unavailable sources keep their existing fallback behavior.
 
-For the explicit Codebase Memory integration, use the operator-local atomic code-index build/query
-methods when the Keel card names them. Build once into the card's private immutable bundle, then
+This is the default context policy for every Keel task, not an owner opt-in. Apply it before
+retrieval and carry it in delegated briefs; do not ask the owner to request reuse again. Record
+any structural retrieval gap and its named source paths in the task card yourself. This does not
+expand the task's source permissions or authorize another agent's actor identity.
+
+Use the contained Codebase Memory code-index methods by default when a valid task bundle already
+exists or repeated structural retrieval would avoid more work than a focused source search.
+For a single known symbol or a cheaper targeted read, use the existing source tools. Never build
+an index merely because a session or subagent started. If the provider or a verified executable
+pin is unavailable, use a focused source fallback and record the missing capability; do not
+install or start a memory service to hide it.
+
+The CLI methods are `graphhelm --json tool code-index build` and
+`graphhelm --json tool code-index query`. Both take `--project`, `--staging`, `--bundle`,
+`--executable`, `--sha256`, and your own `--actor`; query also takes bounded `--path` arguments.
+Resolve the installed CLI/provider pin once per task and retain the parameters in the card.
+Use a private bundle outside the source project and a disposable staging directory for each call.
+Prefer an already validated result present in context to another tool call. If a tool lookup is
+needed, query the same task bundle with the same request and your own stable actor; the CLI
+validates freshness before returning `reused: true` and `providerInvocations: 0`.
+
+Pass the question, source binding, resolvable evidence path/citations, coverage, bundle location,
+and this policy to subagents. They must preserve their own actor and permissions; cross-actor
+cache hits are not promised. Do not pass raw source bodies unnecessarily or treat an evidence
+path alone as proof that a receiver can access it. If freshness or coverage cannot be established,
+read the missing source. Rebuild refused stale bundles into a new private location only when the
+same bounded retrieval gap still justifies it; never sweep or overwrite another session's bundle.
+
+Build once into the card's private immutable bundle, then
 reuse that bundle for repeated queries only after its source, store, executable, request, and broker
 evidence still validate. A query opens one contained provider call and closes its process tree; it
 does not retain a background indexing watcher or an MCP daemon, modify the global Runtime/MCP configuration, or

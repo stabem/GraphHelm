@@ -5,6 +5,45 @@ the methodology improves software delivery.
 
 ## Claim and unit of comparison
 
+### Frozen cohort admission (offline first slice)
+
+`python tools/token-bench/doless.py pair-audit --manifest cohort.json --rows rows.jsonl`
+prints a JSON admission report. It does not run models, estimate improvement, or recommend a
+treatment. Version 1 is an opt-in local manifest; it does not change collection or the descriptive
+table/Pareto reports. The exact rows-file bytes are frozen by `rowsSha256` (lowercase SHA-256 hex).
+Both inputs are limited to 4 MiB, rows to 10,000 and task groups/repeats to 1,000 each.
+
+```json
+{
+  "version": 1,
+  "rowsSha256": "<64 lowercase hex digits of the complete rows.jsonl bytes>",
+  "comparison": "methodology",
+  "weighting": "equal_task",
+  "groups": [{
+    "task": "frozen-task-id", "taskSnapshot": "snapshot-digest", "split": "train",
+    "controls": {"parent": "commit", "evaluator": "digest", "environment": "digest",
+                 "budget": "policy-digest", "timeout": "policy-digest"},
+    "baseline": {"arm": "a", "configDigest": "baseline-config-digest"},
+    "candidate": {"arm": "k", "configDigest": "candidate-config-digest"},
+    "treatmentDifferences": ["arm", "configDigest"],
+    "repeats": [{"baseline": "baseline-session-id", "candidate": "candidate-session-id"}]
+  }]
+}
+```
+
+`comparison` is the intended comparison label; `weighting` is `equal_task` or `equal_repeat`.
+Each referenced JSONL row must have `sessionId`, `task`, `taskSnapshot`, `split`, `arm`,
+`configDigest`, and the same five `controls` values. The manifest names exact session identities
+and every planned repeat, including incomplete attempts. Row order and the run counter never
+define a pair. Configurations may differ only where `treatmentDifferences` declares `arm` or
+`configDigest`; other control changes are excluded. Duplicate session IDs, missing historical
+baseline rows, unmatched candidates, task/snapshot/config/control conflicts receive explicit
+exclusion reasons. A new manifest cannot recreate missing historical controls. Missing `costUsd`
+sets `costKnown: false`; it is never treated as zero. `admitted` means identity controls matched,
+not that exchangeability, quality, or savings have been established. Statistical estimation and
+minimum meaningful gain are later work under #183.
+Rows whose sessions are not named by any repeat appear in `unmatched` and never join a group.
+
 The claim is **equal or better delivered-code quality at lower total cost per proven delivery**.
 Input-token reduction alone is a diagnostic, not a win. A unit is one independently started
 agent session on one frozen task and one arm. A paired task uses the same parent commit, issue

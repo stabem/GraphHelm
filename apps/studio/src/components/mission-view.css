@@ -70,9 +70,10 @@
 .mv-cap { padding: 0 2px 6px; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #8D929C; }
 .mv-jcard { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 10px; border: 1px solid transparent; }
 .mv-jcard[data-selected="true"] { gap: 10px; padding: 12px; background: #121318; border-color: #23262D; }
-.mv-journey { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; min-width: 0; padding: 0; border: 0; background: none; color: #C7CBD3; font: inherit; text-align: left; cursor: pointer; }
+.mv-journey { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; min-width: 0; padding: 0; border: 0; background: none; color: #C7CBD3; font: inherit; text-align: left; cursor: pointer; }
 .mv-jcard[data-selected="true"] .mv-journey { color: #E9E7E2; font-weight: 600; }
-.mv-journey-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mv-journey-title { flex: 1; min-width: 0; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.mv-draft-tag { flex: none; padding: 1px 5px; border: 1px solid #574322; border-radius: 999px; color: #F5C76B; font: 10px var(--mono); }
 .mv-journey-count { flex: none; font-family: var(--mono); font-size: 11px; font-weight: 400; color: #A9AEB8; }
 .mv-journey-meta { font-family: var(--mono); font-size: 11px; color: #8D929C; }
 .mv-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(24px, 1fr)); gap: 4px; }
@@ -169,5 +170,6 @@
 .mv-progress { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .mv-progress-bar { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; background: #1B1D22; }
 .mv-progress-part { min-width: 4px; height: 100%; }
+.mv-progress-part[style*="flex-grow: 0"] { display: none; }
 .mv-progress-text { font-family: var(--mono); font-size: 11px; line-height: 1.35; color: #A9AEB8; }
 .mv-pr-chip[data-alert="true"] { box-shadow: inset 0 -2px 0 #FF6B5E; }

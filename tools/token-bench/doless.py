@@ -27,6 +27,8 @@ Commands:
   python tools/token-bench/doless.py pareto [--split test] [--prompt-style issue] [--svg chart.svg]
                                           score AND cost per arm, and which arms are on the
                                           Pareto frontier (also: `table --pareto`)
+  python tools/token-bench/doless.py pair-audit --manifest FILE --rows FILE
+                                          offline identity admission; JSON, no model sessions
 
 `run --arm a --treatment routed --inference-config FILE` selects each task's declared `kind`
 using doless/routed.json. FILE maps small, standard and large to the existing uniform capability
@@ -500,6 +502,116 @@ def observed_cost(row: dict) -> float | None:
     return float(cost) if type(cost) in (int, float) and math.isfinite(cost) and cost >= 0 else None
 
 
+def cmd_pair_audit(a: argparse.Namespace) -> None:
+    """Admit frozen task-level pairs without interpreting their score or cost."""
+    limit = 4 * 1024 * 1024
+    def bounded(path: str) -> bytes:
+        with open(path, "rb") as source:
+            raw = source.read(limit + 1)
+        if len(raw) > limit:
+            raise ValueError("pair-audit input exceeds 4 MiB")
+        return raw
+
+    raw_rows = bounded(a.rows)
+    manifest = json.loads(bounded(a.manifest))
+    if not isinstance(manifest, dict) or manifest.get("version") != 1:
+        raise ValueError("pair-audit requires manifest version 1")
+    if manifest.get("rowsSha256") != hashlib.sha256(raw_rows).hexdigest():
+        raise ValueError("rowsSha256 does not match the frozen rows file")
+    if not isinstance(manifest.get("comparison"), str) or not manifest["comparison"]:
+        raise ValueError("comparison is required")
+    if manifest.get("weighting") not in ("equal_task", "equal_repeat"):
+        raise ValueError("weighting must be equal_task or equal_repeat")
+    groups = manifest.get("groups")
+    if not isinstance(groups, list) or not groups or len(groups) > 1000:
+        raise ValueError("groups must contain 1..1000 task groups")
+    lines = raw_rows.splitlines()
+    if len(lines) > 10000:
+        raise ValueError("rows exceed 10000")
+    rows = [json.loads(line) for line in lines]
+    if any(not isinstance(row, dict) for row in rows):
+        raise ValueError("each row must be an object")
+    by_session: dict[str, list[dict]] = {}
+    for row in rows:
+        session = row.get("sessionId")
+        if not isinstance(session, str) or not session:
+            raise ValueError("each row needs a nonempty sessionId")
+        by_session.setdefault(session, []).append(row)
+    admitted, excluded = [], []
+    seen_tasks, seen_repeats = set(), set()
+    control_keys = ("parent", "evaluator", "environment", "budget", "timeout")
+    for group in groups:
+        if not isinstance(group, dict):
+            raise ValueError("group must be an object")
+        task = group.get("task")
+        if not isinstance(task, str) or not task or task in seen_tasks:
+            raise ValueError("task identities must be nonempty and unique")
+        seen_tasks.add(task)
+        controls = group.get("controls")
+        if (not isinstance(controls, dict) or set(controls) != set(control_keys)
+                or any(not isinstance(controls[k], str) or not controls[k] for k in control_keys)):
+            raise ValueError("all frozen controls are required")
+        if group.get("split") not in ("train", "test") or not isinstance(group.get("taskSnapshot"), str) or not group["taskSnapshot"]:
+            raise ValueError("split and taskSnapshot are required")
+        for side in ("baseline", "candidate"):
+            arm = group.get(side)
+            if not isinstance(arm, dict) or set(arm) != {"arm", "configDigest"} or any(
+                    not isinstance(v, str) or not v for v in arm.values()):
+                raise ValueError("both arms need arm and configDigest")
+        differences = group.get("treatmentDifferences")
+        if (not isinstance(differences, list) or not differences or
+                len(differences) != len(set(map(str, differences))) or
+                any(d not in ("arm", "configDigest") for d in differences)):
+            raise ValueError("treatmentDifferences must declare arm/configDigest")
+        actual = [key for key in ("arm", "configDigest")
+                  if group["baseline"][key] != group["candidate"][key]]
+        if sorted(differences) != sorted(actual):
+            raise ValueError("treatmentDifferences conflict with frozen arms")
+        repeats = group.get("repeats")
+        if not isinstance(repeats, list) or not repeats or len(repeats) > 1000:
+            raise ValueError("each group needs 1..1000 repeats")
+        kept = []
+        for repeat in repeats:
+            if not isinstance(repeat, dict) or set(repeat) != {"baseline", "candidate"}:
+                raise ValueError("repeat needs baseline and candidate identities")
+            ids = (repeat["baseline"], repeat["candidate"])
+            if any(not isinstance(s, str) or not s for s in ids):
+                raise ValueError("repeat session identities must be nonempty strings")
+            if ids[0] == ids[1] or any(s in seen_repeats for s in ids):
+                reason = "duplicate_session"
+            else:
+                seen_repeats.update(ids)
+                matches = [by_session.get(s, []) for s in ids]
+                if any(len(found) > 1 for found in matches):
+                    reason = "duplicate_session"
+                elif not matches[0]:
+                    reason = "missing_control"
+                elif not matches[1]:
+                    reason = "unmatched_candidate"
+                else:
+                    left, right = matches[0][0], matches[1][0]
+                    reason = None
+                    for side, row in (("baseline", left), ("candidate", right)):
+                        if row.get("task") != task:
+                            reason = "task_mismatch"; break
+                        if row.get("taskSnapshot") != group["taskSnapshot"] or row.get("split") != group["split"]:
+                            reason = "snapshot_mismatch"; break
+                        if row.get("arm") != group[side]["arm"] or row.get("configDigest") != group[side]["configDigest"]:
+                            reason = "configuration_mismatch"; break
+                        if row.get("controls") != controls:
+                            reason = "control_mismatch"; break
+            if reason:
+                excluded.append({"task": task, "repeat": repeat, "reason": reason})
+            else:
+                kept.append((repeat, all(observed_cost(row) is not None for row in (left, right))))
+        if kept:
+            admitted.append({"task": task, "repeats": [item for item, _ in kept],
+                             "costKnown": all(known for _, known in kept)})
+    print(json.dumps({"version": 1, "comparison": manifest["comparison"],
+                      "weighting": manifest["weighting"], "admitted": admitted,
+                      "excluded": excluded}, sort_keys=True))
+
+
 def cmd_run(a: argparse.Namespace) -> None:
     task = load_tasks()[a.task]
     executor = getattr(a, "executor", "claude")
@@ -827,6 +939,10 @@ def main() -> None:
     f.add_argument("--svg", help="also write the chart (.svg, or .html to wrap it)")
     f.set_defaults(fn=cmd_pareto)
     s = sub.add_parser("split"); s.set_defaults(fn=cmd_split)
+    audit = sub.add_parser("pair-audit")
+    audit.add_argument("--manifest", required=True)
+    audit.add_argument("--rows", required=True)
+    audit.set_defaults(fn=cmd_pair_audit)
     a = p.parse_args(); a.fn(a)
 
 

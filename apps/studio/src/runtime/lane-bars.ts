@@ -12,6 +12,8 @@ export interface LaneBar {
 export interface LaneRecord { kind: string; pr?: number; issue?: number; at: number }
 export interface Lane {
   lane: string; bars: LaneBar[]; silent: boolean; lastEventAt: number;
+  /** Latest observed session end for this lane. */
+  endedAt?: number;
   lastRecord?: LaneRecord | null;
   /** #591: PRs this lane opened that wait on a review: no verdict on their newest head, not merged. */
   awaiting?: number[];

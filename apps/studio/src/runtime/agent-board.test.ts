@@ -16,6 +16,13 @@ const task = (over: Partial<MissionTask>): MissionTask => ({ key: "t7", pr: 7, i
   step: "implement", blocked: false, trust: 1, blockedBy: null, rounds: [], headSha: null, mergeSha: null, repoUrl: "https://github.com/o/r", ...over });
 
 describe("agentBoard", () => {
+  it("frees an ended PR-less claim, but keeps review work and a later claim", () => {
+    const claim = { ...bar("implement", now - 3 * M, true, now, "issue-782"), issue: 782 };
+    const ended = { ...lane("a", [claim]), endedAt: now - M };
+    expect(agentBoard([bot("a")], [ended], [], now)[0]).toMatchObject({ status: "free", label: "ended without a PR" });
+    expect(agentBoard([bot("a")], [{ ...ended, awaiting: [7] }], [], now)[0]!.status).toBe("awaiting");
+    expect(agentBoard([bot("a")], [{ ...ended, bars: [claim, bar("implement", now)] }], [], now)[0]!.status).toBe("working");
+  });
   it("status rules: implement working, review/merge waiting, stall silent, no open bar free", () => {
     const rows = agentBoard([bot("a"), bot("b"), bot("c"), bot("d"), bot("e")], [
       lane("a", [bar("implement", now - 10 * M)]), lane("b", [bar("review", now - 5 * M)]), lane("c", [bar("merge", now - 5 * M)], true),

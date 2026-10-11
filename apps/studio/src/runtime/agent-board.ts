@@ -74,8 +74,11 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
     const staleClaim = (b: LaneBar) => b.kind === "implement" && !b.label.startsWith("#") && quietMs > STALE_CLAIM_MS;
     const allOpen = (lane?.bars ?? []).filter((b) => b.open);
     const awaiting = lane?.awaiting ?? [];
+    const endedClaim = (b: LaneBar) => b.kind === "implement" && !b.label.startsWith("#")
+      && lane?.endedAt !== undefined && lane.endedAt > (b.since ?? b.start);
     // An implement bar on a PR its lane opened and that waits on review is not writing.
-    const openBars = allOpen.filter((b) => !staleClaim(b) && !(b.kind === "implement" && awaiting.some((p) => b.label === `#${p}`)));
+    const openBars = allOpen.filter((b) => !staleClaim(b) && !endedClaim(b)
+      && !(b.kind === "implement" && awaiting.some((p) => b.label === `#${p}`)));
     if (!openBars.some((b) => b.kind === "implement")) {
       const rt = tasks.find((t) => t.step !== "merged" && t.step !== "merge" && t.pr !== null
         && !hasVerdictOnHead(t, ids)
@@ -97,6 +100,10 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
         return { name, status: "awaiting", stage: null, pr: p, title: task?.title ?? null, label: `awaiting review #${p}`, doing: `awaiting review #${p}${task ? ` ${task.title}` : ""}`,
           href: task?.repoUrl ? `${task.repoUrl}/pull/${p}` : null, lastDelivered: last, ...when };
       }
+      const ended = allOpen.find(endedClaim);
+      if (ended) return { name, status: "free", stage: null, pr: null, title: null,
+        label: "ended without a PR", doing: `ended without a PR · ${ended.issue !== undefined ? `#${ended.issue}` : ended.label}`,
+        href: null, lastDelivered: last, ...when };
       const stale = allOpen.find(staleClaim);
       if (stale) {
         const ref = stale.issue !== undefined ? `#${stale.issue}` : stale.label;

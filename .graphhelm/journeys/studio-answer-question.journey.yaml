@@ -8,35 +8,35 @@ actors: [owner]
 secrets: []
 risks: [critical_ux, ambiguous_behavior]
 screens:
-  - id: run
-    title: A run has a question for the owner
-    url: /?session=studio-fixture
-    state: stable
-    expect: [{role: button, name: 1 decision needs you}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx]
-  - id: asked
-    title: The pending question is shown in the run panel
-    url: /?session=studio-fixture
-    state: stable
-    expect: [{role: region, name: Needs you}, {role: heading, name: planner asks}, {role: button, name: Answer}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts]
   - id: answering
     title: The run panel addresses the asking agent
     url: /?session=studio-fixture
     state: stable
     expect: [{role: textbox, name: Say something into this run}, {role: button, name: Send}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/panel.tsx]
+  - id: asked
+    title: The pending question is shown in the run panel
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: region, name: Needs you}, {role: heading, name: planner asks}, {role: button, name: Answer}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts]
+  - id: run
+    title: A run has a question for the owner
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: button, name: 1 decision needs you}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx]
 edges:
-  - id: run.asked
-    from: run
-    to: asked
-    acts:
-      - {kind: activate, role: button, name: 1 decision needs you}
   - id: asked.answering
     from: asked
     to: answering
     acts:
       - {kind: activate, role: button, name: Answer}
+  - id: run.asked
+    from: run
+    to: asked
+    acts:
+      - {kind: activate, role: button, name: 1 decision needs you}
 paths:
   main: [run.asked, asked.answering]
 drift: []

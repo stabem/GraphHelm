@@ -8,18 +8,18 @@ actors: [owner]
 secrets: []
 risks: [critical_ux, ambiguous_behavior]
 screens:
-  - id: run
-    title: A question needs an owner decision
-    url: /?session=studio-fixture
-    state: stable
-    expect: [{role: button, name: 1 decision needs you}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx]
   - id: asked
     title: The run panel offers Refuse on the question
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Needs you}, {role: heading, name: planner asks}, {role: button, name: Refuse}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts]
+  - id: run
+    title: A question needs an owner decision
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: button, name: 1 decision needs you}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx]
 edges:
   - id: run.asked
     from: run

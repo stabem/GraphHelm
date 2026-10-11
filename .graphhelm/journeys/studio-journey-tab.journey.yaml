@@ -8,18 +8,18 @@ actors: [owner]
 secrets: []
 risks: [critical_ux]
 screens:
-  - id: run
-    title: A run is open on its Mission graph
-    url: /?session=studio-fixture
-    state: stable
-    expect: [{role: region, name: Canvas}, {role: tablist, name: Mission views}, {role: tab, name: Proof}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/mission-view.tsx]
   - id: proof
     title: Proof shows the journey and its review actions
     url: /?session=studio-fixture
     state: stable
     expect: [{role: tabpanel, name: Proof}, {role: region, name: Proof}, {role: navigation, name: Journeys}, {role: group, name: Journey actions}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/mission-view.tsx, apps/studio/src/components/proof-table.tsx]
+  - id: run
+    title: A run is open on its Mission graph
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: region, name: Canvas}, {role: tablist, name: Mission views}, {role: tab, name: Proof}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/mission-view.tsx]
 edges:
   - id: run.proof
     from: run

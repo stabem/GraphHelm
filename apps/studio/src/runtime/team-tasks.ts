@@ -628,6 +628,21 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
     }
     const resumesAfterGap = (event.kind === "task.claimed" || event.kind === "task.planned" || (event.kind === "task.pr_opened" && before === state.step)) && event.lane === state.lane;
     clockStep(state.clock, timed(before), timed(state.step), event.occurredAt, resumesAfterGap);
+    if (event.kind === "task.merged" || event.kind === "task.closed") {
+      for (const claim of slices) {
+        if (claim === state || claim.pr !== event.pr || claim.step === "merged" || ended.has(claim)) continue;
+        const claimBefore = claim.step;
+        claim.lastSequence = event.sequence;
+        if (event.kind === "task.closed") {
+          ended.add(claim);
+        } else {
+          claim.step = "merged";
+          claim.mergeSha = event.mergeSha ?? null;
+          claim.blockedBy = null;
+        }
+        clockStep(claim.clock, timed(claimBefore), timed(claim.step), event.occurredAt);
+      }
+    }
     if (event.kind === "task.merged" && event.closes !== undefined) {
       for (const claim of slices) {
         if (claim !== state && (claim.pr === null || claim.pr === event.pr) && claim.step !== "merged"

@@ -313,7 +313,7 @@ describe("JourneyFlows focus", () => {
   });
 });
 
-// #519 (owner: opening a journey runs its test; each card is the emulated screen; a click expands
+// #519: a journey shows its cached test; only a Run click starts a preview; each card expands
 // it inside the Studio). Regressions caught: a journey opened without its test starting, a card
 // without the picture or the result of its step, a failure shown as a code instead of words, a
 // card that opens a window instead of an in-app view, a Watch whose live page never shows, and a
@@ -325,7 +325,9 @@ describe("JourneyFlows run", () => {
     start: vi.fn(async () => ({ state: "ready" as const, kind: "preview" as const, digest: "d1", result: "fail" as const, ranAt: "2026-10-08T21:00:00Z",
       screens: { cart: { frame: true, result: "pass" as const }, pay: { frame: true, result: "fail" as const, reason: "expect_missing", seen: "Sign in" }, done: { frame: false, reason: "not_reached" } },
       edges: { "cart.checkout": { result: "pass" as const } } })),
-    read: vi.fn(async () => ({ state: "none" as const })),
+    read: vi.fn(async () => ({ state: "ready" as const, kind: "preview" as const, digest: "d1", result: "fail" as const, ranAt: "2026-10-08T21:00:00Z",
+      screens: { cart: { frame: true, result: "pass" as const }, pay: { frame: true, result: "fail" as const, reason: "expect_missing", seen: "Sign in" }, done: { frame: false, reason: "not_reached" } },
+      edges: { "cart.checkout": { result: "pass" as const } } })),
     screenFrame: vi.fn(async (_flow: string, screenId: string) => frame(screenId)),
     liveFrame: vi.fn(async () => null),
     ...extra,
@@ -341,15 +343,15 @@ describe("JourneyFlows run", () => {
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
   it("names a lost preview runner", async () => {
-    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start: vi.fn(async () => ({ state: "failed" as const, reason: "preview.runner_lost" })) })} />);
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ read: vi.fn(async () => ({ state: "failed" as const, reason: "preview.runner_lost" })) })} />);
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("the browser runner stopped before the test finished"));
   });
 
   it("does not show old Passed badges while a newer run fails", async () => {
-    const passed = { state: "ready" as const, kind: "preview" as const, result: "pass" as const, screens: { cart: { result: "pass" as const } } };
+    const passed = { state: "ready" as const, kind: "preview" as const, result: "pass" as const, screens: { cart: { frame: false, result: "pass" as const } } };
     const failed = { state: "failed" as const, reason: "preview.runner_lost", screens: passed.screens };
-    const start = vi.fn().mockResolvedValueOnce(passed).mockResolvedValueOnce(failed);
-    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start })} />);
+    const start = vi.fn().mockResolvedValueOnce(failed);
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ read: vi.fn(async () => passed), start })} />);
     await waitFor(() => expect(screen.getByRole("list", { name: "Steps" })).toHaveTextContent("Passed"));
     await userEvent.click(screen.getByRole("button", { name: "Run again" }));
     await waitFor(() => expect(screen.getByRole("status")).toHaveAttribute("data-state", "failed"));
@@ -376,13 +378,44 @@ describe("JourneyFlows run", () => {
     render(<StrictMode><JourneyFlows view={one} onApprove={vi.fn()} run={source({ start })} /></StrictMode>);
     await waitFor(() => expect(screen.getByRole("status")).toHaveAttribute("data-state", "none"));
     expect(start).toHaveBeenCalledTimes(1);
+
   });
 
-  it("runs the journey's test when it is opened and shows each card's picture and result in words", async () => {
+  it("does not start previews when selecting three uncached flows", async () => {
+    const start = vi.fn();
+    render(<JourneyFlows view={{ flows: [flow("first"), flow("second"), flow("third")] }} onApprove={vi.fn()} run={source({ start, read: vi.fn(async () => ({ state: "none" as const })) })} />);
+    await pick("second");
+    await pick("third");
+    await pick("first");
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("refuses a second Run while another flow is running and says why", async () => {
+    let finish!: (value: { state: "ready"; kind: "preview"; result: "pass" }) => void;
+    const pending = new Promise<{ state: "ready"; kind: "preview"; result: "pass" }>((resolve) => { finish = resolve; });
+    const start = vi.fn(() => pending);
+    render(<JourneyFlows view={{ flows: [flow("first"), flow("second")] }} onApprove={vi.fn()} run={source({ start, read: vi.fn(async () => ({ state: "none" as const })) })} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    await pick("second");
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("alert")).toHaveTextContent("another journey is still running");
+    await act(async () => finish({ state: "ready", kind: "preview", result: "pass" }));
+  });
+
+  it("reads the cached result without starting a preview in StrictMode", async () => {
+    const start = vi.fn(async () => ({ state: "none" as const }));
+    render(<StrictMode><JourneyFlows view={one} onApprove={vi.fn()} run={source({ start, read: vi.fn(async () => ({ state: "none" as const })) })} /></StrictMode>);
+    await waitFor(() => expect(screen.getByRole("status")).toHaveAttribute("data-state", "none"));
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("shows the cached journey test and each card's picture and result in words", async () => {
     urls();
     const run = source();
     render(<JourneyFlows view={one} onApprove={vi.fn()} run={run} />);
-    expect(run.start).toHaveBeenCalledWith("checkout", false);
+    expect(run.start).not.toHaveBeenCalled();
     const cards = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
     await waitFor(() => expect(cards[0]!.querySelector("img")).not.toBeNull());
     expect(cards.map((card) => card.textContent)).toEqual([
@@ -421,16 +454,16 @@ describe("JourneyFlows run", () => {
     const running = { state: "running" as const, digest: "d1", current: "pay", screens: { cart: { frame: true, result: "pass" as const } } };
     const ready = { state: "ready" as const, kind: "replay" as const, digest: "d1", result: "pass" as const,
       screens: { cart: { frame: true, result: "pass" as const }, pay: { frame: true, result: "pass" as const }, done: { frame: true, result: "pass" as const } } };
-    const run = source({ start: vi.fn(async () => running), read: vi.fn(async () => ready) });
+    const run = source({ start: vi.fn(async () => ready), read: vi.fn().mockResolvedValueOnce(running).mockResolvedValue(ready) });
     render(<JourneyFlows view={one} onApprove={vi.fn()} run={run} />);
     const cards = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
     await waitFor(() => expect(cards[1]).toHaveTextContent("Running…"));
     expect(screen.getByRole("status")).toHaveTextContent("Running this journey's test…");
     expect(screen.getByRole("button", { name: "Run again" })).toBeDisabled();
-    expect(run.read).not.toHaveBeenCalled();
+    expect(run.read).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1000);
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^Test passed$/));
-    expect(run.read).toHaveBeenCalledTimes(1);
+    expect(run.read).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(cards[2]!.querySelector("img")).not.toBeNull());
     await userEvent.click(screen.getByRole("button", { name: "Run again" }));
     expect(run.start).toHaveBeenLastCalledWith("checkout", true);
@@ -441,7 +474,7 @@ describe("JourneyFlows run", () => {
     const start = vi.fn(async () => ({ state: "ready" as const, kind: "preview" as const, digest: "d1", result: "pass" as const,
       screens: { cart: { frame: true, result: "pass" as const }, pay: { frame: false, reason: "not_reached" }, done: { frame: false, reason: "not_reached" } },
       edges: { "cart.checkout": { result: "skipped" as const, reason: "guard_refused" }, "pay.submit": { result: null, reason: "not_reached" } } }));
-    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start })} />);
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ read: start })} />);
     const cards = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
     await waitFor(() => expect(cards[1]).toHaveTextContent(/^2Skipped/));
     expect(cards[2]).toHaveTextContent(/^3Not reached/);
@@ -458,18 +491,18 @@ describe("JourneyFlows run", () => {
     ["replay.act_value_missing", "a step types something but the journey does not say what"],
     ["replay.entry_missing", "the journey's first screen has no fixed address to open"],
   ])("says %s in words", async (reason, words) => {
-    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start: vi.fn(async () => ({ state: "failed" as const, reason })) })} />);
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ read: vi.fn(async () => ({ state: "failed" as const, reason })) })} />);
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(`Couldn't run this journey's test: ${words}.`));
     expect(screen.getByRole("status").textContent).not.toContain(reason);
   });
 
   it("says in words why the test could not run", async () => {
-    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start: vi.fn(async () => ({ state: "failed" as const, reason: "watch.app_down" })) })} />);
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ read: vi.fn(async () => ({ state: "failed" as const, reason: "watch.app_down" })) })} />);
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Couldn't run this journey's test: the app it opens isn't running."));
     expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
     cleanup();
     // A launcher that fails or hangs is its own code, not "something went wrong in the Runtime".
-    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start: vi.fn(async () => ({ state: "failed" as const, reason: "watch.launch_failed" })) })} />);
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ read: vi.fn(async () => ({ state: "failed" as const, reason: "watch.launch_failed" })) })} />);
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Couldn't run this journey's test: the app under test didn't start."));
   });
 
@@ -477,13 +510,13 @@ describe("JourneyFlows run", () => {
   // Cost: one jsdom render; no production seam or browser required.
   it("shows the original refusal beside an internal run failure", async () => {
     const failed = { state: "failed" as const, reason: "internal", detail: { code: "driver.locator_missing", pointer: "/edges/2/acts/0" } };
-    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start: vi.fn(async () => failed) })} />);
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ read: vi.fn(async () => failed) })} />);
     expect(await screen.findByText(/something went wrong in the Runtime/)).toHaveTextContent("(driver.locator_missing at /edges/2/acts/0)");
   });
 
   it("draws the flowchart without a run line on a Runtime that has no run route", async () => {
     const start = vi.fn(async () => { throw Object.assign(new Error("The Runtime replied 404."), { httpStatus: 404 }); });
-    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start })} />);
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ read: start })} />);
     await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
     expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
     expect(within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem")).toHaveLength(3);
@@ -492,7 +525,7 @@ describe("JourneyFlows run", () => {
   it("shows the live page on the card a Watch is playing", async () => {
     const made = urls();
     const liveFrame = vi.fn(async () => frame("live-page"));
-    render(<JourneyFlows view={one} onApprove={vi.fn()} onWatch={vi.fn()} run={source({ liveFrame, start: vi.fn(async () => ({ state: "none" as const })) })}
+    render(<JourneyFlows view={one} onApprove={vi.fn()} onWatch={vi.fn()} run={source({ liveFrame, read: vi.fn(async () => ({ state: "none" as const })) })}
       sessions={[watchRow({ edge: "cart.checkout", actIndex: 0, frame: true })]} />);
     const cards = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
     await waitFor(() => expect(cards[1]!.querySelector("img")).not.toBeNull());
@@ -553,7 +586,7 @@ describe("JourneyFlows mark safe", () => {
     const onMarkSafe = vi.fn(async () => { throw new Error("only a draft's act is marked safe"); });
     const run: JourneyRunSource = {
       start: vi.fn(async () => ({ state: "ready" as const, kind: "preview" as const, result: "pass" as const, screens: {}, edges: { "cart.checkout": { result: "skipped" as const, reason: "guard_refused" } } })),
-      read: vi.fn(async () => ({ state: "none" as const })), screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null),
+      read: vi.fn(async () => ({ state: "ready" as const, kind: "preview" as const, result: "pass" as const, screens: {}, edges: { "cart.checkout": { result: "skipped" as const, reason: "guard_refused" } } })), screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null),
     };
     render(<JourneyFlows view={one()} onApprove={vi.fn()} onMarkSafe={onMarkSafe} run={run} />);
     const item = await screen.findByText(/This step does: Clicks “Checkout”\./);
@@ -592,11 +625,11 @@ describe("JourneyFlows held step", () => {
     const cards = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
     expect(cards[2]).toHaveTextContent(/^3Waiting for you/);
     expect(screen.queryByRole("list", { name: "Skipped steps" })).toBeNull();
-    expect(start.mock.calls).toEqual([["checkout", false]]);
+    expect(start).not.toHaveBeenCalled();
 
     await userEvent.click(within(bar).getByRole("button", { name: "Run it" }));
     await waitFor(() => expect(screen.queryByRole("group", { name: "Step waiting for you" })).toBeNull());
-    expect(start.mock.calls).toEqual([["checkout", false], ["checkout", false, true]]);
+    expect(start.mock.calls).toEqual([["checkout", false, true]]);
     expect(screen.getByRole("status")).toHaveTextContent(/^Test passed/);
   });
 

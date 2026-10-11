@@ -80,7 +80,7 @@ describe("prPath (#591)", () => {
     ]);
     const open = prPath(task("a", { ...base, lane: "gh-claude-1", step: "review", blockedBy: blocked, rounds: [{ ...r1, fixHead: null }] }), false);
     expect(open.cells[2]).toMatchObject({ who: "by gh-claude-7", mark: "BLOCK" });
-    expect(open.cells[3]).toMatchObject({ state: "current", title: "Fixing", who: "gh-claude-1", sub: "after BLOCK by gh-claude-7" });
+    expect(open.cells[3]).toMatchObject({ state: "current", title: "Needs fix · not started", who: "gh-claude-1", sub: "after BLOCK by gh-claude-7" });
     expect(open.edges).toEqual([{ row: "a", from: 0, to: 1, kind: "done" }, { row: "a", from: 1, to: 2, kind: "done" }, { row: "a", from: 2, to: 3, kind: "next" }]);
     const pushed = prPath(task("a", { ...base, step: "review", rounds: [r1] }), false);
     expect(pushed.cells.slice(2, 4).map((c) => [c.stage, c.state, c.label, c.mark, c.title])).toEqual([

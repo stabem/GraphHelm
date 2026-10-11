@@ -304,6 +304,20 @@ describe("foldTaskEvents slices (#460)", () => {
 });
 
 describe("merges recorded by another lane (#765)", () => {
+  it("absorbs a same-lane re-claim into its existing PR before merge (#871)", () => {
+    const events = [
+      record(4417, "task.claimed", "codex-4", { taskId: "issue-86", issue: 86, lane: "codex-4", branch: "issue-86-live-tree" }),
+      record(4422, "task.pr_opened", "codex-4", { taskId: "issue-86", pr: 658, headSha: "aaaaaaaa", journeys: [], lane: "codex-4" }),
+      record(4426, "task.claimed", "codex-4", { taskId: "issue-86", issue: 86, lane: "codex-4", branch: "issue-86-live-tree" }),
+      record(4430, "task.pr_opened", "codex-4", { taskId: "issue-86", pr: 658, headSha: "bbbbbbbb", journeys: [], lane: "codex-4" }),
+      record(4437, "task.merged", "coordinator", { taskId: "pr-658", pr: 658, mergeSha: "cccccccc", closes: [], merger: "coordinator" }),
+    ];
+    expect(foldTaskEvents(events.slice(0, 4)).filter((task) => task.pr === null)).toHaveLength(0);
+    const tasks = foldTaskEvents(events);
+    expect(tasks.filter((task) => task.pr === null)).toHaveLength(0);
+    expect(tasks.filter((task) => task.pr === 658)).toMatchObject([{ step: "merged", mergeSha: "cccccccc" }]);
+  });
+
   it("ends both claims of one PR when its merge closes only the first issue (#807)", () => {
     const events = [
       record(1, "task.claimed", "codex-14", { taskId: "issue-691", issue: 691, lane: "codex-14", branch: "issue-691-fix" }),

@@ -41,6 +41,7 @@ describe("laneBars", () => {
       expect(lanes.find((l) => l.lane === "rev")!.bars.some((bar) => bar.open)).toBe(true);
       expect(lanes.find((l) => l.lane === "dev")!.awaiting).toEqual([902]);
     }
+  });
   it("ends a closed PR's implement bar", () => {
     const lanes = laneBars([
       ev({ kind: "task.claimed", lane: "dev", issue: 86, taskId: "issue-86", at: at(0) }),

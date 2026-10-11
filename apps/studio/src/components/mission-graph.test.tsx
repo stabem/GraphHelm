@@ -204,7 +204,7 @@ describe("IssueGraph live pace (#591)", () => {
       expect(bars.length).toBe(2); // the card and the inspector header
       const bar = bars[0]!;
       expect(bar).toHaveAttribute("aria-valuenow", "50");
-      expect(bar).toHaveAttribute("aria-label", "Needs fix · not started for 1h, 0.5 times the usual time");
+      expect(bar).toHaveAttribute("aria-label", "Fixing for 1h, 0.5 times the usual time");
       expect(bar).toHaveAttribute("data-tone", "green");
       expect(screen.getAllByText("0.5× typical").length).toBe(2);
       expect(screen.getAllByText("1h 00m 04s").length).toBe(2);

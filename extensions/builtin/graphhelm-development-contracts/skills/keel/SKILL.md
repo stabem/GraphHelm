@@ -52,3 +52,22 @@ reported as unobserved, not as passed.
 The full rules (the card and its bounds, surface counting, the verdict and its causes, the index,
 where to spend time): `REFERENCE.md` beside this file. Read it only when this digest does not
 answer your question.
+
+## Reuse current evidence before retrieving again
+
+Start with the task's existing capsule, source citations and proof records. Ask for more context
+only for a named gap: a missing caller, stale source, incomplete coverage or a new question. Do
+not repeat a tool call just to reread an answer already present in the current context. A reference
+only replaces content when the receiving agent can resolve it.
+
+Keep reuse scoped to the current task and authorized source generation. A commit id or a TTL alone
+does not prove freshness: dirty files, exclusions and permissions can change without a commit.
+GraphHelm's Runtime can reuse bounded search results from the same immutable search/reader pair
+within one drive; it still reads the selected source and compiles each node's capsule with its own
+id and budget. Live searches and unavailable sources keep their existing fallback behavior.
+
+Do not launch a per-agent memory server or watcher to retain an answer. An optional external
+provider must run through the contained broker, with native process-tree closure evidence on the
+host OS. A frontend exiting alone does not prove its daemon closed. Preserve unrelated sessions.
+Report actual tool calls and bytes separately from token estimates; reuse is not measured token
+savings. Installed skill copies need the normal update before this guidance takes effect there.

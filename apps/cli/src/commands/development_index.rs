@@ -337,7 +337,6 @@ fn query_inner(args: &CodeIndexQueryArgs) -> Result<serde_json::Value, String> {
         &workspace,
         &executable,
         &manifest,
-        source_snapshot,
         signal.clone(),
         actor,
         &reader,
@@ -355,11 +354,11 @@ fn query_in_workspace(
     workspace: &Tier1Workspace,
     executable: &graphhelm_tool_host::verified::VerifiedExecutable,
     manifest: &BundleManifest,
-    source_snapshot: String,
     signal: Option<CancelSignal>,
     actor: String,
     reader: &ManifestSourceReader,
 ) -> Result<serde_json::Value, String> {
+    let source_snapshot = manifest.source_snapshot.clone();
     let current_paths = tracked_files(workspace.root())?;
     let expected_paths = manifest.files.keys().cloned().collect::<Vec<_>>();
     if current_paths != expected_paths

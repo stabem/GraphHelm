@@ -192,3 +192,16 @@ after correction. ADR-034's unchanged framing ceiling was also exercised: an ext
 message failed the exact message-count assertion, and an undeclared client failed population
 enumeration; restored guards passed. An earlier line-ending mutation broke the guard harness and
 is retained as a setup failure, not the ceiling proof.
+
+`code-index-concurrent-1/observation.json` observes two overlapping direct queries using the same
+project and staging root, with separate bundles. One returns `GHTOOL011_CANCELLED`; the other
+returns a real `src/lib.rs` hit. All observed owned CBM identities closed, all baseline identities
+survived, and the observer killed nothing. The source was then integrated with current main;
+reviewed-head checks and a fresh task-binary smoke establish the final source state separately.
+
+The initial reached-test run exceeded its 180-second target (213.953 s, twelve completed checks,
+remaining checks pending). It is incomplete, not a pass. An existing reached CLI HTTP target
+alone consumed 88 seconds. Completing this selected dependency surface uses an explicitly
+recorded 900-second run budget; it does not claim the 180-second target was met. No extra test
+scope was added to compensate. A first clippy run also refused an eight-argument composition
+function; removing a redundant source identity argument addresses that finding.

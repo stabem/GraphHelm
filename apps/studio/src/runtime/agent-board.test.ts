@@ -149,8 +149,8 @@ describe("#591 board times the latest activity (record shapes)", () => {
       ev({ kind: "task.merged", taskId: "pr-615", pr: 615, mergeSha: "mmm", at: iso(4 * H) }),
     ];
     const rows = board(events, 25 * H, ["gh-claude-3", "gh-claude-5"]);
-    expect(rows["gh-claude-3"]!.status).toBe("free");
-    expect(rows["gh-claude-5"]!.status).toBe("free");
+    expect(rows["gh-claude-3"]!.status).toBe("offline");
+    expect(rows["gh-claude-5"]!.status).toBe("offline");
   });
 
   it("a second claim of the same lane on the issue ends when that lane's PR merges", () => {
@@ -160,7 +160,7 @@ describe("#591 board times the latest activity (record shapes)", () => {
       ev({ kind: "task.pr_opened", lane: "gh-claude-3", issue: 600, pr: 615, headSha: "aaa", at: iso(1 * H) }),
       ev({ kind: "task.merged", pr: 615, at: iso(2 * H) }),
     ];
-    expect(board(events, 3 * H, ["gh-claude-3"])["gh-claude-3"]!.status).toBe("free");
+    expect(board(events, 3 * H, ["gh-claude-3"])["gh-claude-3"]!.status).toBe("offline");
   });
 
   it.each(["closes", "issue", "pr"] as const)("another lane's merge only ends a claim through closes: %s, preserving lastDelivered", (match) => {
@@ -176,7 +176,7 @@ describe("#591 board times the latest activity (record shapes)", () => {
       const lanes = laneBars(events, T0 + at, 48 * H);
       const row = agentBoard([bot("codex-3")], lanes, [delivered], T0 + at).find((r) => r.name === "codex-3");
       const closed = match === "closes";
-      expect(row).toMatchObject({ status: closed ? "free" : at === 3 * H ? "stale" : "working",
+      expect(row).toMatchObject({ status: closed ? (at === 3 * H ? "offline" : "free") : at === 3 * H ? "stale" : "working",
         stage: closed || at === 3 * H ? null : "implement", lastDelivered: "#7 Previous delivery" });
       expect(lanes.find((l) => l.lane === "codex-3")!.bars[0]).toMatchObject({ open: !closed, end: T0 + (closed ? 3 * M : at) });
     }
@@ -233,6 +233,6 @@ describe("#591 board times the latest activity (record shapes)", () => {
     const assigned = [...open, ev({ kind: "task.review_assigned", reviewer: "gh-claude-5", pr: 613, at: iso(1 * H + 2 * M) })];
     expect(board(assigned, 1 * H + 5 * M, ["gh-claude-3"])["gh-claude-3"]!.status).toBe("awaiting");
     const merged = [...assigned, ev({ kind: "task.merged", pr: 613, at: iso(2 * H) })];
-    expect(board(merged, 2 * H + M, ["gh-claude-3"])["gh-claude-3"]!.status).toBe("free");
+    expect(board(merged, 2 * H + M, ["gh-claude-3"])["gh-claude-3"]!.status).toBe("offline");
   });
 });

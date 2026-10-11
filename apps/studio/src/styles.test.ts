@@ -132,10 +132,10 @@ describe("the Journey tab is a column that reserves the dock (#435)", () => {
     expect(rule("#studio-panel-journeys[hidden]")).toMatch(/display:\s*none/);
   });
   it("scrolls the flow cards in their own box and gives the canvas the rest", () => {
-    const flows = rule("#studio-panel-journeys > .journey-flows");
+    const flows = rule(".mv-journey-content > .journey-flows");
     expect(flows).toMatch(/overflow-y:\s*auto/);
     expect(flows).toMatch(/max-height:/);
-    expect(rule("#studio-panel-journeys > .journey-canvas")).toMatch(/flex:\s*1/);
+    expect(rule(".mv-journey-content > .journey-canvas")).toMatch(/flex:\s*1/);
   });
 });
 

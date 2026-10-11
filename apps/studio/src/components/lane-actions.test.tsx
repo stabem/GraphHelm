@@ -27,7 +27,8 @@ describe("LaneActions", () => {
     rerender(<LaneActions {...base} askedAt={10 * M} onAsked={onAsked} send={send} now={12 * M} />);
     expect(screen.getByText("Asked 2 min ago · waiting")).toBeInTheDocument();
     rerender(<LaneActions {...base} askedAt={10 * M} onAsked={onAsked} send={send} now={13 * M} lastSeenAt={12 * M} />);
-    expect(screen.getByText("Answered 1 min ago")).toBeInTheDocument();
+    expect(screen.getByText(/Asked 3 min ago.*waiting/)).toBeInTheDocument();
+    expect(screen.getByText(/Activity observed 1 min ago; reply is unconfirmed/)).toBeInTheDocument();
   });
   it("an ask without a live listener says nobody is listening", async () => {
     const send = vi.fn().mockResolvedValue(undefined);

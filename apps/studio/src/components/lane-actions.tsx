@@ -53,7 +53,7 @@ export function LaneActions({ lane, step, pr, roster, lastSeenAt, now, askedAt, 
       setBusy(false);
     }
   };
-  const answered = askedAt !== null && lastSeenAt !== null && lastSeenAt > askedAt;
+  const activityAfterAsk = askedAt !== null && lastSeenAt !== null && lastSeenAt > askedAt;
   const choices = roster.filter((r) => r.name !== lane);
   const ask = () => {
     const at = now;
@@ -83,7 +83,7 @@ export function LaneActions({ lane, step, pr, roster, lastSeenAt, now, askedAt, 
     <div className="mg-section mg-lane-actions">
       <span className="mg-cap">Owner</span>
       <div className="mg-actions">
-        {askedAt !== null && !answered ? <span className="mg-muted">{`Asked ${ago(now - askedAt)} · ${askedListening === true ? "waiting" : askedListening === false ? "nobody is listening" : "listener status unavailable"}`}</span> : (
+        {askedAt !== null ? <span className="mg-muted">{`Asked ${ago(now - askedAt)} · ${askedListening === true ? "waiting" : askedListening === false ? "nobody is listening" : "listener status unavailable"}`}</span> : (
           <button type="button" className="mg-secondary" disabled={busy} onClick={ask}>{`Ask ${lane} for status`}</button>
         )}
         <span className="mg-menu-anchor">
@@ -102,7 +102,7 @@ export function LaneActions({ lane, step, pr, roster, lastSeenAt, now, askedAt, 
           )}
         </span>
       </div>
-      {answered && <p className="mg-muted">{`Answered ${ago(now - lastSeenAt!)}`}</p>}
+      {activityAfterAsk && <p className="mg-muted">{`Activity observed ${ago(now - lastSeenAt!)}; reply is unconfirmed`}</p>}
       {target && (
         <div className="mg-confirm" role="group" aria-label="Confirm hand-off">
           <span>{`Hand ${step.toLowerCase()} of ${prText} to ${target}?`}</span>

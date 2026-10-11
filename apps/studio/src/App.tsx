@@ -9,15 +9,15 @@ import { recordReviewAssigned } from "./runtime/review-assign";
  * node's window and a bot's details open beside them, never over the canvas.
  *
  * ONE SCROLL REGION. The thread scrolls, because a log is unbounded. The stage pans. Nothing else
- * scrolls inside anything else — the previous shape nested three scroll containers and every
+ * scrolls inside anything else â€” the previous shape nested three scroll containers and every
  * gesture landed in the wrong one.
  *
  * IT OPENS CONNECTED. The dev server hands the page the token the Runtime already wrote to disk
  * (`runtime/session.ts`), so nobody copies a hex string out of a terminal. Where that endpoint
- * does not exist — a built bundle served elsewhere — the gate appears. The token itself still
+ * does not exist â€” a built bundle served elsewhere â€” the gate appears. The token itself still
  * never leaves memory: not storage, not a cookie, not a URL, not a log line.
  *
- * Board marks (positions, ink, notes) ARE kept, per run, in this browser only — see
+ * Board marks (positions, ink, notes) ARE kept, per run, in this browser only â€” see
  * `graph/board.ts` for why that exception is the operator's own notes and not a widening of the
  * token rule. Disconnecting erases them.
  */
@@ -144,7 +144,7 @@ const EVENT_PAGE_SIZE = 1000;
 const EVENT_PAGE_PARALLEL = 4;
 const LIST_PAGE_SIZE = 20;
 
-/** What the window is showing, or `none` — which is the DEFAULT and the point: the board is what
+/** What the window is showing, or `none` â€” which is the DEFAULT and the point: the board is what
  * you came to look at, and a panel that opens over it on arrival hides the thing it describes.
  * The window is a deliberate act: click a block, or click the run's name. */
 type Focus =
@@ -219,19 +219,19 @@ export default function App({
   const [connecting, setConnecting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  /** Which composer is mid-send / holds the failure — "run", "talk" or "agent" — so an error
+  /** Which composer is mid-send / holds the failure â€” "run", "talk" or "agent" â€” so an error
    * lands only in the box that produced it. `null` means idle / no failure. */
   const [saying, setSaying] = useState<string | null>(null);
   const [sayError, setSayError] = useState<{ via: string; text: string } | null>(null);
   /** Bumped when an attention action asks the message box to take the cursor. A nonce rather
    * than a boolean: the second click must focus again even though the panel is already open. */
   const [sayFocusNonce, setSayFocusNonce] = useState(0);
-  /** Who that action wants the message addressed to — the asker of the pending question, or
+  /** Who that action wants the message addressed to â€” the asker of the pending question, or
    * `null` for the room. Set BEFORE the nonce bumps, so the composer retargets every time:
    * five independent reviewers found the answer shipping as a DM to a stale recipient. */
   const [sayTo, setSayTo] = useState<string | null>(null);
   /** The question the next message ANSWERS, when the attention block chose the target. The
-   * ledger retires a debt only via a reply whose replyTo names the question's signalId — and
+   * ledger retires a debt only via a reply whose replyTo names the question's signalId â€” and
    * the banner's own button used to send none, leaving the debt immortal from this UI (two
    * blind round-4 reviewers). Rides only while the recipient is still that asker. */
   const [sayAnswer, setSayAnswer] = useState<{ asker: string; signalId: string | null } | null>(
@@ -240,13 +240,13 @@ export default function App({
   /** Disconnect asks twice: it erases the token and every stored board, and it sits one slip
    * away from Refresh. First click arms; the arm decays on its own. */
   const [leaving, setLeaving] = useState(false);
-  /** True while a key is auto-repeating on the disconnect button — key-repeat clicks carry
+  /** True while a key is auto-repeating on the disconnect button â€” key-repeat clicks carry
    * detail 0 and would sail through the double-click guard (round-3 speedrunner). */
   const keyHeld = useRef(false);
   /** Bumped when the dock's resume button finds no graph file path: the board opens the box and
    * puts the cursor there instead of resume sitting disabled with its excuse in a tooltip. */
   const [fileFocusNonce, setFileFocusNonce] = useState(0);
-  /** Whether the run's conversation column is open. Closing the panel closes the PANEL — the
+  /** Whether the run's conversation column is open. Closing the panel closes the PANEL â€” the
    * run, its board and its crew stay; the run's name in the top strip brings it back. The old
    * wiring deselected the whole run and left "This board is empty" over 19 messages. */
   const [talkOpen, setTalkOpen] = useState(false);
@@ -395,7 +395,7 @@ export default function App({
 
   /** ONE identity for "the events, or none yet". Building `events?.events ?? []` inline handed
    * every consumer a FRESH empty array per render while a run loaded; the envelope hooks then
-   * committed fresh state per pass, and the pair looped through microtasks — 70,201 renders
+   * committed fresh state per pass, and the pair looped through microtasks â€” 70,201 renders
    * measured before anything else ran. The hooks now also bail on equal commits; this memo
    * removes the other half and stops rebuilding every derivation per render. */
   const eventList = useMemo(() => events?.events ?? [], [events]);
@@ -441,7 +441,7 @@ export default function App({
    * The old single read of `{ after: 0, limit: 200 }` froze the tail at event 200: the poll kept
    * succeeding on the same first page while new replies stayed invisible, and the page went on
    * looking live. The page bound is a runaway-loop guard, not a truncation anyone reaches: 600
-   * pages of 200 covers 120,000 events, above the store's own 100,000-event ceiling — the earlier
+   * pages of 200 covers 120,000 events, above the store's own 100,000-event ceiling â€” the earlier
    * 50-page cap could stop an initial rebuild at 10,000 events with the head reported current
    * (PR #467 review), which is a partial projection wearing a live face. */
   const readEvents = useCallback(
@@ -553,7 +553,7 @@ export default function App({
       } catch (reason) {
         // Guarded like the success path: a superseded run's FAILURE must not banner the run the
         // operator moved to, and its finally must not clear that run's busy flag (PR #467 review
-        // — the success path was guarded in round 3 and this completion was not).
+        // â€” the success path was guarded in round 3 and this completion was not).
         if (clientRef.current !== client || selectedRef.current !== id) return;
         setError(messageOf(reason, "This execution could not be read."));
       } finally {
@@ -596,7 +596,7 @@ export default function App({
    * transient miss on a background read is not something the operator can act on; the next tick
    * either heals it or the explicit actions surface the real error).
    */
-  /** Consecutive background reads that failed; three in a row flips the rail to "stale" —
+  /** Consecutive background reads that failed; three in a row flips the rail to "stale" â€”
    * a dead Runtime was indistinguishable from a quiet room under a badge stuck on "live". */
   const pollMisses = useRef(0);
   const [stale, setStale] = useState(false);
@@ -752,7 +752,7 @@ export default function App({
       if (!closeProjectDocument()) return;
       // #1098 D1: leaving the draft is PART of selecting a run. The composer is chosen ahead of
       // the selection (`draft !== null ?` in the render), so a draft left standing kept its fake
-      // one-node overview on screen under the selected run's header — through a second run click,
+      // one-node overview on screen under the selected run's header â€” through a second run click,
       // and clearable only by `discard`. The draft is SET ASIDE WHOLE, not thrown away: its words
       // above, and its identity and error here (PR #1167 review, P1). A parked draft that came
       // back under a fresh execution id would turn its own retry into a duplicate run.
@@ -784,7 +784,7 @@ export default function App({
       setTopology(null);
       setTopologyError("");
       verificationGeneration.current += 1;
-      // A recipient chosen in one run must not address a message in another — nor may a send
+      // A recipient chosen in one run must not address a message in another â€” nor may a send
       // failure, an in-flight send's busy display, an act-note, or a pending answer's signalId
       // follow the operator across runs. `saying` in particular: cleared HERE, and the old
       // send's guarded finally then leaves it alone, so the new run's box never witnesses a
@@ -802,7 +802,7 @@ export default function App({
       setBoard(stored);
       // The path this board was pointed at last time comes back with the board, so the shape
       // check below can re-run without anyone re-typing a Runtime-host path. The check is armed
-      // HERE, from the REMEMBERED path only — arming it from the live field made the first
+      // HERE, from the REMEMBERED path only â€” arming it from the live field made the first
       // typed character fire a verify on a one-letter path.
       setGraphFile(stored.graphFile);
       graphFileRef.current = stored.graphFile;
@@ -1077,7 +1077,7 @@ export default function App({
         }
         // The act-note is set AFTER the selection: `select` clears the previous run's evidence
         // (a note must never follow the operator across runs), and setting it first meant the
-        // "Started — done" line was wiped by the very selection it announced (#1077 review).
+        // "Started â€” done" line was wiped by the very selection it announced (#1077 review).
         if (onScreen) setEvidence(evidenceOfStart);
         await loadList();
       } catch (reason) {
@@ -1146,14 +1146,14 @@ export default function App({
 
   /** One shape check against one EXPLICIT path. The auto-verify passes the remembered path
    * directly instead of going through the live field: arming was already blind to typing, but
-   * firing read `graphFile` back out of state — so editing the box during the run's first load
+   * firing read `graphFile` back out of state â€” so editing the box during the run's first load
    * verified a half-typed path (round-3 speedrunner). */
   const verifyPath = useCallback(
     async (file: string) => {
       const client = clientRef.current;
       if (!client || file.length === 0) return;
       // The run this verification belongs to, captured before the await: a slow read armed for
-      // run A (or for a path since retyped) must not install its proof over run B's board — a
+      // run A (or for a path since retyped) must not install its proof over run B's board â€” a
       // drawn edge reads as evidence, so a stale one is the worst thing this could commit
       // (PR #467 review, same family as the selectedRef guard on loadExecution).
       const forRun = selectedRef.current;
@@ -1182,7 +1182,7 @@ export default function App({
   const autoVerify = useRef<{ id: string; path: string } | null>(null);
   /** Re-verifies the REMEMBERED path, once, as soon as the events it checks against have
    * arrived. Armed by select(); both arming and firing are blind to the live field. The
-   * verification itself is UNCHANGED — verifyTopology still refuses an unproven edge. */
+   * verification itself is UNCHANGED â€” verifyTopology still refuses an unproven edge. */
   useEffect(() => {
     const want = autoVerify.current;
     if (want === null || want.id !== selected || events === null) return;
@@ -1198,7 +1198,7 @@ export default function App({
     return () => clearTimeout(timer);
   }, [leaving]);
 
-  /** Kept in a ref so the WebMCP hooks — registered once per connection — always call the CURRENT
+  /** Kept in a ref so the WebMCP hooks â€” registered once per connection â€” always call the CURRENT
    * closure. Passing the callbacks directly would freeze the first render's copies into the tool
    * table, and the page would stop updating after the first agent call. */
   const hooksRef = useRef({
@@ -1258,7 +1258,7 @@ export default function App({
    * Answering a parked node (#1186): claim, then clear, then re-read.
    *
    * TWO WRITES, AND THE SECOND ONE CAN FAIL AFTER THE FIRST LANDED. A claim is spent whether or
-   * not its clearance arrives — the wait it answered is no longer open to a second claim — so a
+   * not its clearance arrives â€” the wait it answered is no longer open to a second claim â€” so a
    * clear that throws must NOT surface as "nothing happened". It returns `unknown` carrying the
    * claim's sequence, and the form tells the person to re-open the node rather than retry into a
    * `duplicate_completion` refusal.
@@ -1275,7 +1275,7 @@ export default function App({
       // BOUND AT THE PRESS, not armed earlier: `graphFile` is a dependency, so the callback the
       // button holds is rebuilt whenever the box changes and a press always carries what the box
       // says now. That is the opposite arrangement from `verifyPath`, which must NOT read the
-      // live box — its read is armed long before it fires, and a half-typed path drawing edges
+      // live box â€” its read is armed long before it fires, and a half-typed path drawing edges
       // was the defect there. Here the person presses after typing, and the path they can see is
       // the path that travels.
       // Thrown, not returned: nothing was sent, and every returned outcome describes something
@@ -1494,7 +1494,7 @@ export default function App({
    * appears. Only a token that exists and is then refused produces a message, and it comes from
    * `connect` like any other refusal.
    *
-   * Boot ONLY — the effect has no dependencies and reaches `connect` through a ref. Listing
+   * Boot ONLY â€” the effect has no dependencies and reaches `connect` through a ref. Listing
    * `connect` would re-run this whenever its identity changed and re-open the session behind the
    * operator's back after they deliberately disconnected.
    */
@@ -1527,7 +1527,7 @@ export default function App({
     clientRef.current?.dispose();
     clientRef.current = null;
     clearBoards();
-    // The button PROMISES erasure — and the module maps (drafts, opened sealed words) were
+    // The button PROMISES erasure â€” and the module maps (drafts, opened sealed words) were
     // surviving it, restoring a half-typed draft from the "erased" session and able to serve
     // one store's words as another's (three round-4 reviewers).
     resetPanelCaches();
@@ -1675,7 +1675,7 @@ export default function App({
         // connection is still the one it was fired over: rail clicks stay live while a mutation
         // flies, Runtime B can hold the same execution id as Runtime A, and installing run A's
         // statusAfter (and its approval target) under run B's name is how a press meant for A
-        // appends to B (PR #467 review — the same guards loadExecution carries).
+        // appends to B (PR #467 review â€” the same guards loadExecution carries).
         if (clientRef.current !== client || selectedRef.current !== next.executionId) return;
         setEvidence(next);
         if (next.statusAfter) observeStatus(next.statusAfter);
@@ -1762,7 +1762,7 @@ export default function App({
   }, []);
   const documentSavingChanged = useCallback((saving: boolean) => { documentSaving.current = saving; }, []);
 
-  /** Says something into the selected run. Its own busy/error pair rather than the shared ones —
+  /** Says something into the selected run. Its own busy/error pair rather than the shared ones â€”
    * and TAGGED BY SURFACE: with the run panel and a chat column open side by side, one shared
    * error painted "could not be sent" into every composer at once, so the operator could not tell
    * which of their messages actually failed (round-3 markets). */
@@ -1890,9 +1890,9 @@ export default function App({
       text: envelopes[event.sequence]?.text?.trim() || null,
     })), [eventList, envelopes]);
   // THE LEDGER OF UNANSWERED QUESTIONS. The attention block used to name the debtor ("start is
-  // waiting for input") and never the debt — the question itself was nowhere on screen, and the
+  // waiting for input") and never the debt â€” the question itself was nowhere on screen, and the
   // owner's verbatim reaction was "needs me FOR WHAT?". A question is a recorded fact: an agent's
-  // signal addressed to the operator by envelope. Derived, never guessed — an unaddressed room
+  // signal addressed to the operator by envelope. Derived, never guessed â€” an unaddressed room
   // message is not a question, because quoting the WRONG message is worse than quoting none.
   //
   // Two rules a second review round added, both about honesty of settlement:
@@ -1904,7 +1904,7 @@ export default function App({
   // banner shows - two derivations of "who is owed" is how the surfaces start disagreeing.
   const { pendingQuestion, owedCards } = useMemo(() => {
     const owed = openQuestions(eventList, envelopes, OPERATOR_ACTOR.id);
-    // One card per creditor, newest first — this same derivation feeds the composer's reply
+    // One card per creditor, newest first â€” this same derivation feeds the composer's reply
     // hints, so the banner and the box below it can never again disagree about who is owed.
     const cards: Array<{ id: string; at: string | null }> = [];
     for (const debt of owed) {
@@ -1937,7 +1937,7 @@ export default function App({
     const key = replyKey;
     const setCurrentIssue = (text: string) => setReplyIssue({ key, text });
     if (routes === null) {
-      setCurrentIssue("Checking the available model routes…");
+      setCurrentIssue("Checking the available model routesâ€¦");
       return;
     }
     // #396: no judge route is a state, not an error. The chat shows no Jev card (there is
@@ -2037,11 +2037,11 @@ export default function App({
             const nodeValue = value.value !== null && typeof value.value === "object" ? value.value as Record<string, unknown> : null;
             const name = nodeValue !== null && typeof nodeValue.name === "string" ? nodeValue.name : null;
             const objective = nodeValue !== null && typeof nodeValue.objective === "string" ? nodeValue.objective : null;
-            steps.push([id, name, objective].filter((part): part is string => part !== null && part.length > 0).join(" · "));
+            steps.push([id, name, objective].filter((part): part is string => part !== null && part.length > 0).join(" Â· "));
           }
           else if (value.op === "addEdge" && (value.edge !== null && typeof value.edge === "object" || value.value !== null && typeof value.value === "object")) {
             const edge = (value.edge ?? value.value) as Record<string, unknown>;
-            if (typeof edge.from === "string" && typeof edge.to === "string") edges.push(`${edge.from} → ${edge.to}`);
+            if (typeof edge.from === "string" && typeof edge.to === "string") edges.push(`${edge.from} â†’ ${edge.to}`);
           } else if (typeof value.op === "string") steps.push(value.op);
         }
         if (steps.length === 0 && edges.length === 0) throw new Error("typed proposal has no reviewable operations");
@@ -2150,7 +2150,7 @@ export default function App({
   const [thread, setThread] = useState(EVERYONE);
   const [threadOpened, setThreadOpened] = useState<Record<string, number>>({});
   // #402: until the owner picks a thread, a run that needs them opens on the Needs you thread,
-  // where the cards now live (spec §8); otherwise on Everyone.
+  // where the cards now live (spec Â§8); otherwise on Everyone.
   const [threadChosen, setThreadChosen] = useState(false);
   useEffect(() => { setThread(EVERYONE); setThreadOpened({}); setThreadChosen(false); }, [selected]);
   // #410: the landing is real thread state, so unread tracking marks the thread actually shown.
@@ -2595,7 +2595,7 @@ export default function App({
     model.edgesKnown || connectionTone === "refused"
       ? (journalTopology ? topologyNote(journalTopology) : topologyError || topologyNote(visibleTopology))
       : "Verify the graph to connect work nodes.",
-  ].join(" · ");
+  ].join(" Â· ");
   const runtimePreferenceKey = projectIdentity === null ? null : `${location.origin}:${projectIdentity}`;
   const visibleExecutions = executions.filter((run) => !removedRuns.includes(run.executionId));
   const renameProject = (name: string): boolean => {
@@ -2737,7 +2737,7 @@ export default function App({
     <div className={`app ${projectsOpen ? "projects-open" : ""} ${conversationVisible ? "conversation-open" : ""}`} data-document-open={openDocument !== null} style={{ "--rail": `${railWidth}px` } as CSSProperties}>
       <ProjectRail
         projects={[{ name: project ?? "this runtime", path: projectPath, runs: visibleExecutions.map((run) => run.executionId === selected && pendingOwnerReview ? { ...run, attention: "needs_you" as const } : run) }]}
-        selectedPresentation={recordedWorkBehindGraphWait ? { key: "calm", status: "agent work recorded · graph step waiting" } : null}
+        selectedPresentation={recordedWorkBehindGraphWait ? { key: "calm", status: "agent work recorded Â· graph step waiting" } : null}
         selected={selected}
         connected={connected}
         previousExit={previousExit}
@@ -2851,7 +2851,7 @@ export default function App({
             <summary>Run details</summary>
             <div className="topbar-menu-body">
             {routes !== null && jevAvailability(judgeRoutes.length) === "absent" && <p className="jev-absent-note">{JEV_ABSENT_NOTE}</p>}
-            {effectiveVerdict && <span className={`tag ${recordedWorkBehindGraphWait || needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "calm" : status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : effectiveVerdict.key}`}>{recordedWorkBehindGraphWait ? "agent work recorded · graph step waiting" : status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "graph waiting; no request recorded" : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{effectiveVerdict.label}</>}</span>}
+            {effectiveVerdict && <span className={`tag ${recordedWorkBehindGraphWait || needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "calm" : status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : effectiveVerdict.key}`}>{recordedWorkBehindGraphWait ? "agent work recorded Â· graph step waiting" : status?.status === "completed" && status.executor === "fixture" ? "demonstration completed Â· scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed Â· ${unverifiedResults} results need review` : needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "graph waiting; no request recorded" : stalledAfterFailure ? "blocked Â· retry decision" : <>{status?.status && `${readable(status.status)} Â· `}{effectiveVerdict.label}</>}</span>}
             {webmcp === "available" ? (
               <span className="toolchips">
                 {tools.map((name) => {
@@ -2867,7 +2867,7 @@ export default function App({
                       title={mine ? activity.detail : undefined}
                     >
                       {name.replace("graphhelm_", "")}
-                      {refused ? " ✕" : ""}
+                      {refused ? " âœ•" : ""}
                     </span>
                   );
                 })}
@@ -2892,7 +2892,7 @@ export default function App({
               onClick={(click) => {
                 if (leaving) {
                   // The second half of an accidental double-click arrives with detail > 1, and
-                  // a HELD Enter key delivers a stream of detail-0 clicks flagged as repeats —
+                  // a HELD Enter key delivers a stream of detail-0 clicks flagged as repeats â€”
                   // both are one continuous gesture, the very slip the arm exists for. Only a
                   // separate, deliberate activation fires.
                   if (click.detail > 1 || keyHeld.current) return;
@@ -2989,7 +2989,7 @@ export default function App({
             {error && !busy ? (
               <><strong>This run could not be opened.</strong><p>{error}</p><button type="button" onClick={() => void loadExecution(selected)}>Try again</button></>
             ) : (
-              <><LoaderCircle className="spin" aria-hidden="true" /><strong>Opening this run…</strong><p>Reading its state and event history. Large runs may take a moment.</p></>
+              <><LoaderCircle className="spin" aria-hidden="true" /><strong>Opening this runâ€¦</strong><p>Reading its state and event history. Large runs may take a moment.</p></>
             )}
           </section>
         ) : (
@@ -3058,7 +3058,7 @@ export default function App({
                   Jev route
                   <select value={activeJudgeRoute ?? ""} onChange={(event) => setJudgeRoute(event.target.value)}>
                     <option value="">Choose a route</option>
-                    {judgeRoutes.map((route) => <option key={route.id} value={route.id}>{route.model ?? route.id} · {route.id}</option>)}
+                    {judgeRoutes.map((route) => <option key={route.id} value={route.id}>{route.model ?? route.id} Â· {route.id}</option>)}
                   </select>
                 </label>
               )}
@@ -3172,7 +3172,7 @@ export default function App({
             </div>
             {(canvasTab === "graph" || canvasTab === "journey") && (
               <div id={canvasTab === "journey" ? "studio-panel-journeys" : "studio-panel-graph"} role="tabpanel" aria-label={canvasTab === "journey" ? "Journeys" : "Graph"} aria-labelledby={canvasTab === "journey" ? "studio-tab-journeys" : undefined}>
-                <SlotPoll client={clientRef.current}>{(slots) => <MissionView wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={taskGraphs?.executionId === selected ? taskGraphs.records : []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} runFor={missionRunFor}
+                <SlotPoll client={clientRef.current}>{(slots) => <MissionView wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} flows={flowsRead.view?.flows ?? []} tasks={runTasks ?? []} taskRecords={taskGraphs?.executionId === selected ? taskGraphs.records : []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} runFor={missionRunFor}
                   initialView={canvasTab === "journey" ? "journeys" : "graph"}
                   journeyContent={<>
                     <JourneyFlows view={flowsRead.view} failure={flowsRead.failure} onApprove={approveFlow} focusFlowId={journeyContract}
@@ -3233,7 +3233,7 @@ export default function App({
               <summary role="button" aria-expanded={runActionsOpen}>Run actions</summary>
               <div className="execution-menu">
               {!ended && (<>
-              <span title={legality.pause ?? "Nothing new starts; work already in flight finishes and is joined — the run exits by quiescence."}>
+              <span title={legality.pause ?? "Nothing new starts; work already in flight finishes and is joined â€” the run exits by quiescence."}>
                 <button
                   type="button"
                   onClick={() =>
@@ -3247,7 +3247,7 @@ export default function App({
                   }
                   disabled={busy || legality.pause !== undefined}
                 >
-                  pause · finish in-flight
+                  pause Â· finish in-flight
                 </button>
               </span>
               <span title={legality.pause ?? "Interrupts work in flight; every interrupted node is recorded before the pause folds."}>
@@ -3264,7 +3264,7 @@ export default function App({
                   }
                   disabled={busy || legality.pause !== undefined}
                 >
-                  pause now · interrupt
+                  pause now Â· interrupt
                 </button>
               </span>
               </>)}
@@ -3273,7 +3273,7 @@ export default function App({
                   Draft to review
                   <select value={governedDraftId} onChange={(event) => setGovernedDraftId(event.target.value)} disabled={busy}>
                     <option value="">Select a sealed draft</option>
-                    {durableProposals.map((proposal) => <option value={proposal.draftId} key={proposal.draftId}>{proposal.draftId} · {proposal.digest}</option>)}
+                    {durableProposals.map((proposal) => <option value={proposal.draftId} key={proposal.draftId}>{proposal.draftId} Â· {proposal.digest}</option>)}
                   </select>
                 </label>
               )}
@@ -3294,13 +3294,13 @@ export default function App({
               {selectedDraftProposal !== null && (
                 <section className="proposal-review" aria-label="Typed proposal review">
                   <strong>Review draft {selectedDraftProposal.draftId}</strong>
-                  <span>Proposal digest · {selectedDraftProposal.digest}</span>
-                  {proposalReview.state === "loading" && <span>Opening the sealed typed proposal…</span>}
+                  <span>Proposal digest Â· {selectedDraftProposal.digest}</span>
+                  {proposalReview.state === "loading" && <span>Opening the sealed typed proposalâ€¦</span>}
                   {proposalReview.state === "unavailable" && <span>{proposalReview.reason ?? "The typed proposal descriptor is unavailable."}</span>}
                   {proposalReview.state === "ready" && <>
-                    <span>Proposed nodes · {proposalReview.nodeIds.length} (shown separately from published work)</span>
-                    <span>Proposed steps · {proposalReview.steps.join(", ") || "none"}</span>
-                    <span>Proposed dependencies · {proposalReview.edges.join(", ") || "none"}</span>
+                    <span>Proposed nodes Â· {proposalReview.nodeIds.length} (shown separately from published work)</span>
+                    <span>Proposed steps Â· {proposalReview.steps.join(", ") || "none"}</span>
+                    <span>Proposed dependencies Â· {proposalReview.edges.join(", ") || "none"}</span>
                   </>}
                 </section>
               )}
@@ -3352,7 +3352,7 @@ export default function App({
               {approvalNeedsPause && (
                 <p className="hint">Pause the running task first. After it is paused, approve the node.</p>
               )}
-              {/* In plain dock text, not a tooltip: a disabled button never shows its title —
+              {/* In plain dock text, not a tooltip: a disabled button never shows its title â€”
                 * the exact channel the resume fix three lines down already condemned. */}
               {waitingInstead && (
                 <p className="hint">
@@ -3403,7 +3403,7 @@ export default function App({
                   disabled={busy || legality.resume !== undefined}
                   title={
                     graphFile.trim().length === 0 && resumeGraph === null
-                      ? "resume re-reads the graph file — click to point at it"
+                      ? "resume re-reads the graph file â€” click to point at it"
                       : undefined
                   }
                 >
@@ -3439,7 +3439,7 @@ export default function App({
                 </p>
               ) : confirmCancel ? (
                 <span className="confirm-cancel">
-                  <span>cancel this run? every unfinished node is recorded Cancelled — no undo.</span>
+                  <span>cancel this run? every unfinished node is recorded Cancelled â€” no undo.</span>
                   <button
                     type="button"
                     className="danger"
@@ -3463,7 +3463,7 @@ export default function App({
                   </button>
                 </span>
               ) : (
-                <span title={legality.cancel ?? "Cancel this run — asks first; cancelling records every unfinished node as Cancelled."}>
+                <span title={legality.cancel ?? "Cancel this run â€” asks first; cancelling records every unfinished node as Cancelled."}>
                   <button
                     type="button"
                     className="danger"
@@ -3487,7 +3487,7 @@ export default function App({
                 {budgetRemedies.map((remedy) => (
                   <span key={remedy.node} className="remedy">
                     <span>
-                      {remedy.node} has been silent {remedy.observedSilenceSeconds}s with no declared budget —
+                      {remedy.node} has been silent {remedy.observedSilenceSeconds}s with no declared budget â€”
                     </span>
                     <input
                       type="number"
@@ -3537,18 +3537,18 @@ export default function App({
                 {({ approve: "Approved", pause: "Paused", resume: "Resumed", start: "Started", cancel: "Cancelled", sweep: "Swept", amendBudget: "Budget declared for" } as Record<string, string>)[
                   evidence.action
                 ] ?? evidence.action}
-                {evidence.node ? ` ${evidence.node}` : ""}{" — "}
+                {evidence.node ? ` ${evidence.node}` : ""}{" â€” "}
                 {evidence.result === "succeeded" ? "done" : evidence.result} (log {evidence.headBefore}{" "}
-                → {evidence.headAfter ?? "?"})
-                {evidence.actor.type !== "owner" ? ` · by ${evidence.actor.type}:${evidence.actor.id}` : ""}
+                â†’ {evidence.headAfter ?? "?"})
+                {evidence.actor.type !== "owner" ? ` Â· by ${evidence.actor.type}:${evidence.actor.id}` : ""}
                 {/* A refusal says WHY, in the Runtime's words: a bare "refused" next to a button
                   * the operator just pressed is a question, not an answer - and the If-Match
                   * conflict is the refusal a person can only act on if they are told the run moved. */}
                 {evidence.result === "refused" && evidence.diagnostics[0] !== undefined
-                  ? ` · ${evidence.diagnostics[0].message}`
+                  ? ` Â· ${evidence.diagnostics[0].message}`
                   : ""}
                 {evidence.result === "unknown"
-                  ? " · the Runtime accepted it but the verification read failed — do not treat this as done"
+                  ? " Â· the Runtime accepted it but the verification read failed â€” do not treat this as done"
                   : ""}
               </p>
             )}
@@ -3586,7 +3586,7 @@ export default function App({
                             // was open when the panel rendered". It cannot: it reads the same
                             // `status` from the same render closure as the `waitSeq` prop above,
                             // so the two are the same value by construction and neither is
-                            // fresher than the render. A ref would not help either — React state
+                            // fresher than the render. A ref would not help either â€” React state
                             // cannot change without a re-render, and a re-render rebuilds this
                             // closure.
                             //

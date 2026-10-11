@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+﻿import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
 import { JourneyProgress, MissionView } from "./mission-view";
 import type { JourneyView } from "../runtime/types";
+import type { JourneyFlowView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
 
 const journeys: JourneyView[] = [{
@@ -181,7 +182,7 @@ describe("MissionView", () => {
     expect(item).toHaveAttribute("title", expect.stringContaining("test setup has no model gateway"));
     const bar = container.querySelector(".mv-progress-bar")!;
     expect(bar.querySelector('[data-progress="proven"]')).toHaveStyle({ flexGrow: "0" });
-    expect(bar).toHaveAccessibleName(expect.stringContaining("in work"));
+    expect(bar).toHaveAccessibleName(expect.stringContaining("not proven"));
   });
 
   it("full page: breadcrumb, no Team in the nav, live indicator", () => {

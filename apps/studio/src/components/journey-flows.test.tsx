@@ -8,7 +8,7 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import { StrictMode } from "react";
 
 import { fastUserEvent } from "../test/user-event";
-import type { JourneyFlowView, JourneyFlowsView, LiveSession } from "../runtime/types";
+import type { JourneyFlowView, JourneyFlowsView, JourneyRunView, LiveSession } from "../runtime/types";
 import { RuntimeClient } from "../runtime/client";
 import { JourneyFlows, PlayerSetup, type JourneyRunSource } from "./journey-flows";
 
@@ -330,6 +330,21 @@ describe("JourneyFlows run", () => {
     await userEvent.click(screen.getByRole("button", { name: "Run again" }));
     await waitFor(() => expect(screen.getByRole("status")).toHaveAttribute("data-state", "failed"));
     expect(screen.getByRole("list", { name: "Steps" })).not.toHaveTextContent("Passed");
+  });
+
+  it("clears the previous pass while Run again is still starting", async () => {
+    const passed = { state: "ready" as const, kind: "preview" as const, result: "pass" as const, screens: { cart: { result: "pass" as const } } };
+    let finishRetry!: (run: JourneyRunView) => void;
+    const pending = new Promise<JourneyRunView>((resolve) => { finishRetry = resolve; });
+    const start = vi.fn().mockResolvedValueOnce(passed).mockReturnValueOnce(pending);
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start })} />);
+    await waitFor(() => expect(screen.getByRole("list", { name: "Steps" })).toHaveTextContent("Passed"));
+    await userEvent.click(screen.getByRole("button", { name: "Run again" }));
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("status")).toHaveTextContent("Starting this journey's test");
+    expect(screen.getByRole("list", { name: "Steps" })).not.toHaveTextContent("Passed");
+    finishRetry({ state: "failed", reason: "preview.runner_lost" });
+    await waitFor(() => expect(screen.getByRole("status")).toHaveAttribute("data-state", "failed"));
   });
 
   it("starts one preview per selection in StrictMode", async () => {

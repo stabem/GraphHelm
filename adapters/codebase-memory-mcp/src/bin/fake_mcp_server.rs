@@ -6,6 +6,7 @@
 //! is how a cell observes WHICH bytes the funnel actually serves there.
 
 use std::io::{BufRead, Write};
+use std::time::Duration;
 
 fn main() {
     let mode = std::env::args()
@@ -86,8 +87,14 @@ fn main() {
                 "error": {"code": -32601, "message": "method not found"}
             }),
         };
+        let is_hanging_call = mode == "fixture-then-hang"
+            && message.get("method").and_then(|method| method.as_str()) == Some("tools/call");
         let _ = stdout.write_all(reply.to_string().as_bytes());
         let _ = stdout.write_all(b"\n");
         let _ = stdout.flush();
+        if is_hanging_call {
+            std::thread::sleep(Duration::from_secs(30));
+            break;
+        }
     }
 }

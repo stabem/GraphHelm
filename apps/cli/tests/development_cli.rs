@@ -1,8 +1,8 @@
 //! The development-contract CLI surface (#223), family 3: `development memory-status`.
 //!
 //! The command reports the governed memory vocabulary and the moves policy allows. It reads the
-//! shipped `memory-transition.yaml` — a declared, digest-bound contribution of the built-in package
-//! — rather than restating the vocabulary, so this adapter never becomes a second producer of one
+//! shipped `memory-transition.yaml` â€” a declared, digest-bound contribution of the built-in package
+//! â€” rather than restating the vocabulary, so this adapter never becomes a second producer of one
 //! closed set.
 
 use std::collections::BTreeSet;
@@ -88,7 +88,7 @@ fn accounting_reports_the_provenance_wire_spelling_not_the_debug_rendering() {
 ///
 /// The production change this catches: transcribing the vocabulary into the adapter. A hand-copied
 /// list stays green on the day the policy changes and reports the old answer confidently, which is
-/// worse than failing — it is the shape of a second producer of one vocabulary.
+/// worse than failing â€” it is the shape of a second producer of one vocabulary.
 #[test]
 fn memory_status_reports_the_shipped_policy_rather_than_a_copy_of_it() {
     let envelope = run_memory_status();
@@ -133,8 +133,8 @@ fn memory_status_reports_the_shipped_policy_rather_than_a_copy_of_it() {
 /// watching.
 ///
 /// The comparison is DERIVED on both sides. The runtime half is obtained by asking
-/// `apply_publication_transition` about every publication-state/transition pair — the one oracle,
-/// probed, never a transcription of it — and the policy half by reading the shipped document. A
+/// `apply_publication_transition` about every publication-state/transition pair â€” the one oracle,
+/// probed, never a transcription of it â€” and the policy half by reading the shipped document. A
 /// hand-written expectation on either side would be a third copy.
 ///
 /// Scoped to the PUBLICATION axis (ADR-032): the shipped policy's `allowedPublicationTransitions`
@@ -206,4 +206,145 @@ fn the_shipped_policy_and_the_runtime_allow_exactly_the_same_publication_moves()
          Left is what `apply_publication_transition` actually does, right is what \
          memory-transition.yaml declares."
     );
+}
+
+/// Contract: explicit indexing must refuse dirty tracked bytes before invoking the provider,
+/// remove its disposable worktree, and leave the original checkout unwritten. A regression that
+/// hashes the original tree but indexes HEAD, or runs the sandbox funnel in the original checkout,
+/// fails this cell. Existing provider fixtures receive caller-asserted source identities and miss
+/// this assembly defect. No test-only production seam: the verified CLI binary is deliberately an
+/// invalid provider and must never be invoked. The relative-path cell protects staged population
+/// admission against resolving the original Git root inside the disposable worktree. Existing
+/// absolute-path fixtures cannot observe that bypass. Cost: one executable hash, two local Git
+/// worktrees and no external provider or network.
+#[test]
+fn code_index_refuses_dirty_tracked_source_without_writing_the_checkout() {
+    use sha2::{Digest as _, Sha256};
+    use std::io::Read as _;
+    use std::process::Command;
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(project.join(".gitattributes"), "* -text\n").unwrap();
+    std::fs::write(project.join("src/lib.rs"), "pub fn original() {}\n").unwrap();
+    for arguments in [
+        vec!["init", "--quiet"],
+        vec!["add", "-A"],
+        vec!["commit", "--quiet", "-m", "source"],
+    ] {
+        let output = Command::new("git")
+            .args(["-c", "core.hooksPath=NUL"])
+            .args(arguments)
+            .current_dir(&project)
+            .env("GIT_AUTHOR_NAME", "cbm-cli-test")
+            .env("GIT_AUTHOR_EMAIL", "cbm@test.invalid")
+            .env("GIT_COMMITTER_NAME", "cbm-cli-test")
+            .env("GIT_COMMITTER_EMAIL", "cbm@test.invalid")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "local Git fixture failed");
+    }
+    std::fs::write(project.join("src/lib.rs"), "pub fn dirty() {}\n").unwrap();
+    let executable = assert_cmd::cargo::cargo_bin!("graphhelm");
+    let mut file = std::fs::File::open(executable).unwrap();
+    let mut hasher = Sha256::new();
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut chunk).unwrap();
+        if count == 0 {
+            break;
+        }
+        hasher.update(&chunk[..count]);
+    }
+    let staging = temporary.path().join("staging");
+    let bundle = temporary.path().join("bundle");
+    let executable_sha256 = hex::encode(hasher.finalize());
+    for relative in [false, true] {
+        if relative {
+            std::fs::write(project.join("src/lib.rs"), "pub fn original() {}\n").unwrap();
+            std::fs::write(project.join("src/added.rs"), "pub fn added() {}\n").unwrap();
+            let added = Command::new("git")
+                .args(["-c", "core.hooksPath=NUL", "add", "src/added.rs"])
+                .current_dir(&project)
+                .output()
+                .unwrap();
+            assert!(
+                added.status.success(),
+                "local staged-population fixture failed"
+            );
+        }
+        let output = Command::new(executable)
+            .args([
+                "--json",
+                "tool",
+                "code-index",
+                "build",
+                "--actor",
+                "cbm-cli-test",
+            ])
+            .arg("--project")
+            .arg(if relative {
+                std::path::Path::new(".")
+            } else {
+                project.as_path()
+            })
+            .arg("--staging")
+            .arg(&staging)
+            .arg("--bundle")
+            .arg(&bundle)
+            .arg("--executable")
+            .arg(executable)
+            .arg("--sha256")
+            .arg(&executable_sha256)
+            .current_dir(&project)
+            .env_remove("GRAPHHELM_ACTOR")
+            .output()
+            .unwrap();
+        let envelope: Value = serde_json::from_slice(&output.stdout).expect("CLI JSON refusal");
+        assert!(!output.status.success());
+        assert_eq!(envelope["ok"], false);
+        assert_eq!(envelope["diagnostics"][0]["code"], "GHTOOL_CBM_BUILD");
+        assert_eq!(envelope["diagnostics"][0]["path"], "/");
+        assert!(
+            envelope["diagnostics"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("source"),
+            "the refusal must name source mismatch: {envelope}"
+        );
+        if relative {
+            assert!(
+                envelope["diagnostics"][0]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("tracked-file population differs"),
+                "relative project must refuse staged source before launching a provider: {envelope}"
+            );
+        }
+        assert!(
+            !bundle.exists(),
+            "a refused build must not publish a bundle"
+        );
+        for name in [".home", ".tmp", ".cbm-cache"] {
+            assert!(
+                !project.join(name).exists(),
+                "sandbox scratch leaked into original checkout"
+            );
+        }
+        let listing = Command::new("git")
+            .args(["worktree", "list", "--porcelain"])
+            .current_dir(&project)
+            .output()
+            .unwrap();
+        assert!(listing.status.success());
+        assert_eq!(
+            String::from_utf8(listing.stdout)
+                .unwrap()
+                .lines()
+                .filter(|line| line.starts_with("worktree "))
+                .count(),
+            1,
+            "the refused build must remove only its own disposable worktree"
+        );
+    }
 }

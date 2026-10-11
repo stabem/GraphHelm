@@ -11,9 +11,9 @@ node identity and budget. Partial results and empty searches do not establish co
 
 The production consumer is `compile_for_node_cancellable` in `core/runtime/src/context.rs`, used
 by the drive's context ports. Keel can supply a retained immutable search/reader pair. Live source
-ports remain uncached. Reuse is limited to the project pair; execution-tree callbacks keep their existing retrieval. Cache contention bypasses reuse without waiting, so concurrent single-flight deduplication is not promised. The memo holds at most 32 entries and 64 KiB of candidate-path bytes; it stores no source excerpts. This change does not activate the optional Codebase Memory adapter: its
+ports remain uncached. Reuse is limited to the project pair; execution-tree callbacks keep their existing retrieval. Cache contention bypasses reuse without waiting, so concurrent single-flight deduplication is not promised. The memo holds at most 32 entries and 64 KiB of candidate-path bytes; it stores no source excerpts. The first Runtime memo slice did not activate the optional Codebase Memory adapter: its
 concrete consumer is currently the development benchmark/tests, and ADR-034's activation amendment
-remains proposed. Runtime query reuse does not establish production CBM structural retrieval.
+remained proposed at that head. Runtime query reuse does not establish production CBM structural retrieval.
 
 ## Native Windows observation before implementation
 
@@ -66,8 +66,9 @@ the listed scenarios and preserve the earlier failed attempts in the cumulative 
 | Different node ids and budgets still compile their own capsules | Context-chain compile assertions | Retain fresh source reads and existing budget/refit logic. |
 
 These are ordinary native/automated observations, not a typed JPD certification. No browser screen
-is changed. Product cancellation/timeout of the actual provider, successful indexed structural
-search, sustained peak memory, cross-drive persistence and token savings remain unobserved.
+is changed. At the first memo slice, product cancellation/timeout and successful indexed structural search
+remained unobserved. The follow-up observations below address those separately. Sustained peak
+memory, automatic crash disk cleanup, TCP teardown and model-token savings are not established.
 
 ## Upstream assessment
 
@@ -83,3 +84,150 @@ upstream claims, not local compatibility tests.
 join a daemon. The native observation above, rather than the label "CLI", establishes the listed
 closure results. Different agents still consume model tokens when reading results; neither a
 zero-LLM retrieval service nor fewer searches proves lower total model cost.
+
+
+## Direct containment follow-up: cancellation and timeout
+
+Source baseline: `0c63bdacf767aefd97a4154eb8219b8bb1958517`. The provider executable remained the
+same SHA-256 listed above; no provider upgrade or shared configuration change was made.
+
+The external observer compiled a temporary native Rust integration observer against the actual
+`ContainedProviderSession`, `CancelSignal` and `ProcessLimits`. It launched the verified installed
+Codebase Memory binary with the fixed three-message MCP request, not a process-tree mock. The
+observer raised cancellation only after seeing both owned frontend and daemon alive. Timeout was
+the product's own process deadline; an outer safety kill was never counted as a pass. The temporary
+provider-dependent test was archived outside the repository and removed before versioned tests.
+
+| Case | Product stimulus | Observer elapsed | Session call elapsed | Result |
+| --- | --- | ---: | ---: | --- |
+| `cancel-native-4` | Real `CancelSignal.cancel()` after frontend and daemon appeared | 12.547 s | 1.289 s | `cancelled=true`, `timedOut=false`, complete tree termination; zero observed owned survivors; baseline CBM identities preserved. |
+| `timeout-native-6` | Two-second `ProcessLimits.timeout`, without raising cancellation | 14.188 s | 2.163 s | `timedOut=true`, `cancelled=false`, complete tree termination; zero observed owned survivors; baseline CBM identities preserved. |
+| `cancel-native-3` | Same product cancellation with a verified stdin-holder and real CBM descendants | 6.797 s | 3.217 s | Cancellation and complete closure passed; baseline preserved. |
+| `timeout-native-3` | Eight-second product timeout with the same holder and real CBM descendants | 11.594 s | 8.210 s | Timeout and complete closure passed; baseline preserved. |
+
+These direct requests used an absent project to observe lifecycle, not successful indexed search.
+The observer's total duration includes private worktree creation and executable hashing; the
+process deadline does not bound that preparation. Neither output reader was abandoned or lost.
+Raw reports are in `.graphhelm/proof-786/<case>/observation.json` beneath the owner-authorized
+private profile root. Scripts, build logs and archived observer source are in the isolated
+`codex-memory/issue-786-direct` lane.
+
+Failures remain evidence: `cancel-native-2` failed before provider launch because a Windows Store
+Python alias could not be read; the corrected holder used the physical executable. The direct
+three-second timeout attempt finished naturally, so it did not observe expiration. The one-second
+attempt did expire and close its owned frontend but did not observe both CBM processes alive, so
+it was not promoted to daemon-timeout proof. The earlier tester admission request contained a
+UTF-8 BOM and failed before launch. No failed setup is counted as a retrieval or closure pass.
+
+A separate installed-broker `index-admission-1` request built a real tiny committed Rust source
+with `cli index_repository`: provider exit 0, `status=indexed`, eight nodes and seven edges in
+6.719 seconds. All observed frontend, daemon, indexing worker and console processes closed;
+baseline CBM identities survived. This establishes the installed builder contract, not yet the new
+CLI's end-to-end build/query contract.
+
+## Explicit direct integration
+
+The direct surface is `graphhelm tool code-index build|query`. It is opt-in per invocation, with
+explicit project, staging root, bundle, verified executable digest and actor. It does not replace
+or restart a shared MCP/Runtime, install a memory server, or silently assemble Runtime context
+ports. The bundled Keel skill teaches callers to reuse current evidence and this explicit bundle.
+Existing installed skill copies require their ordinary update; this patch does not edit them.
+
+```powershell
+$cbm = 'C:/Users/gabri/AppData/Local/Programs/codebase-memory-mcp/codebase-memory-mcp.exe'
+$sha = 'b4b403b1d7c4def3785f148b93f345ce8427858f4f5489ce28580c4387a336a6'
+# Choose private, non-overlapping roots. The bundle must not already exist.
+graphhelm --json tool code-index build --project C:/private/source --staging C:/private/staging --bundle C:/private/index --executable $cbm --sha256 $sha --actor my-task
+graphhelm --json tool code-index query --project C:/private/source --staging C:/private/staging --bundle C:/private/index --executable $cbm --sha256 $sha --actor my-task --path src/lib.rs
+```
+
+The builder indexes a disposable committed-HEAD worktree only after matching its selected bytes
+and file population to the actual project's current Git index. Dirty tracked files and staged
+additions refuse. A successful builder result is followed by bounded store copying and durable
+file writes into a unique temporary sibling; the final bundle appears only after publication.
+Failed preparation removes only that invocation's temporary sibling and leaves the destination
+retryable. A small per-destination publication lock file remains on disk, without an open handle
+between commands. A crash may leave owned scratch; automatic crash disk cleanup is unobserved.
+
+A query verifies the executable, project identity, current tracked population, selected source
+bytes and pinned store generation. Successful receipts are capped at 32 evidence entries of
+128 KiB each per bundle. Reuse revalidates the exact request and actual broker record against
+current source; it reports `reused=true` and `providerInvocations=0`. Different actors, requests,
+source/store generations or executable digests cannot borrow that cached receipt. Concurrent
+queries against the same bundle refuse contention; separate bundles use independent locks and
+workspace IDs. Cancellation/timeout never become success even if a valid reply was buffered.
+
+Chosen project, staging and bundle ancestor chains are owner-trusted and must remain stable.
+Descendant source/store reads refuse links, reparse points and special files and enforce file,
+entry, path, depth and byte limits while reading. This does not claim adversarial root-chain or
+destination-ancestor replacement protection. Sidecar digests detect staleness/corruption, not
+forgery by the local bundle owner. Query preparation still copies and hashes bounded data; reuse
+eliminates a provider invocation, not all local work. Process timeout starts after preparation.
+A preexisting cancel marker refuses before provisioning; a later marker cancels the provider
+call, with preparation between these points bounded by its own existing limits rather than this
+timeout. No model-token or peak-memory saving is claimed.
+
+### Direct Windows observations
+
+`code-index-final-1/observation.json`, beneath the same authorized private proof root, records:
+real index build; a real `src/lib.rs` hit with partial coverage; repeat reuse with zero provider
+invocations; staged-addition and dirty-source refusal before CBM launch; preexisting cancellation
+without a new bundle or CBM launch; and actual two-second query expiration. The timeout produced
+`GHTOOL_CBM_QUERY` with a persisted `timed_out` invocation, and both observed owned CBM processes
+closed. An initial post-daemon cancellation marker arrived too late and the query completed
+normally; that attempt remains recorded as normal completion, not cancellation proof.
+
+`code-index-live-cancel-1/observation.json` closes that CLI cancellation gap: the marker was raised
+after observing the owned frontend; the query returned a persisted `host_error` invocation with
+`GHTOOL011_CANCELLED`. No owned process survived and no outer observer kill was used. The earlier
+`cancel-native-4` separately observed cancellation after both frontend and daemon were alive.
+All three baseline PID/creation identities remained present across these direct CLI cases.
+
+Offline regressions retain the native boundary obligations without requiring an installed CBM:
+valid reply followed by process timeout must refuse; snapshot file bounds and Windows child
+junction refusal; dirty-source refusal and owned workspace cleanup; failed bundle publication
+and retry. The parent provider accepted a buffered valid reply after timeout (RED), and the
+parent snapshot copied through a child junction (RED). The corresponding focused checks passed
+after correction. ADR-034's unchanged framing ceiling was also exercised: an extra fourth
+message failed the exact message-count assertion, and an undeclared client failed population
+enumeration; restored guards passed. An earlier line-ending mutation broke the guard harness and
+is retained as a setup failure, not the ceiling proof.
+
+`code-index-concurrent-1/observation.json` observes two overlapping direct queries using the same
+project and staging root, with separate bundles. One returns `GHTOOL011_CANCELLED`; the other
+returns a real `src/lib.rs` hit. All observed owned CBM identities closed, all baseline identities
+survived, and the observer killed nothing. The source was then integrated with current main;
+reviewed-head checks and a fresh task-binary smoke establish the final source state separately.
+
+The initial reached-test run exceeded its 180-second target (213.953 s, twelve completed checks,
+remaining checks pending). It is incomplete, not a pass. An existing reached CLI HTTP target
+alone consumed 88 seconds. Completing this selected dependency surface uses an explicitly
+recorded 900-second run budget; it does not claim the 180-second target was met. No extra test
+scope was added to compensate. A first clippy run also refused an eight-argument composition
+function; removing a redundant source identity argument addresses that finding.
+
+
+The 900-second author completion attempt also remained incomplete: the same-head continuation
+finished a reached wake/concurrency target successfully in 338.27 seconds, after the runner's
+remaining budget had expired. Its passed assertions are retained as late evidence, never as a
+successful bounded run. Remaining selected commands are completed separately with an explicit
+1,800-second completion budget; the original target and failed/incomplete receipts remain visible.
+No additional scope is selected. This budget bounds admission between commands, not an already
+running test's wall time.
+
+A resource regression also exposed queued directory names being charged only when visited.
+Parent buffers remain alive during recursion, so both copying and generation hashing now charge
+each complete admitted directory buffer before descending. The focused test created three local
+empty child directories, stopped at the depth boundary and observed all three names charged;
+it failed with one charged entry before the fix and passed afterward. This protects the global
+entry allocation bound without a provider, network, ordering assumption or test-only seam.
+
+
+Independent review found that `--project .` passed the original project spelling to `git -C`
+while Git ran inside the disposable workspace. A staged addition therefore bypassed population
+admission although the equivalent absolute project path refused. The review blocked merge.
+`tracked_files_at` now resolves the original project before changing the child working directory;
+all build/query freshness checks share that helper. The existing CLI source-refusal observer now
+also stages a new file and invokes the real CLI with a relative project root. It failed before
+the fix by reaching the invalid provider, then passed with source-population refusal before
+provider invocation. The absolute dirty-source cell and owned-workspace cleanup remain covered.

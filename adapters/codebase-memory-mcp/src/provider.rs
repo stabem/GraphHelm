@@ -28,7 +28,7 @@ use std::collections::BTreeSet;
 use graphhelm_runtime::ports::{StructuralCodeIndex, StructuralCodeIndexError};
 use graphhelm_runtime::retrieval::StructuralIndexRequest;
 use graphhelm_tool_broker::record::{ToolCallRecord, ToolDisposition, digest_hex};
-use graphhelm_tool_host::process::ProcessLimits;
+use graphhelm_tool_host::process::{CancelSignal, CapturedProcess, ProcessLimits};
 use graphhelm_tool_host::session::ContainedProviderSession;
 
 use crate::{DecodeLimits, decode_search_graph};
@@ -53,6 +53,8 @@ pub struct ContainedIndexProvider {
     actor: String,
     limits: DecodeLimits,
     process_limits: ProcessLimits,
+    cancel_signal: Option<CancelSignal>,
+    last_invocation: std::sync::Mutex<Option<ToolCallRecord>>,
 }
 
 impl ContainedIndexProvider {
@@ -74,6 +76,69 @@ impl ContainedIndexProvider {
             actor,
             limits,
             process_limits,
+            cancel_signal: None,
+            last_invocation: std::sync::Mutex::new(None),
+        }
+    }
+
+    #[must_use]
+    pub fn with_cancel_signal(mut self, signal: CancelSignal) -> Self {
+        self.cancel_signal = Some(signal);
+        self
+    }
+
+    #[must_use]
+    pub fn last_invocation(&self) -> Option<ToolCallRecord> {
+        self.last_invocation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn invocation_record(
+        &self,
+        captured: &CapturedProcess,
+        request: &StructuralIndexRequest,
+    ) -> ToolCallRecord {
+        let disposition = if captured.readers_abandoned || captured.reader_lost {
+            ToolDisposition::HostError {
+                code: "GHTOOL013_CAPTURE_LOST".to_owned(),
+            }
+        } else if captured.cancelled {
+            ToolDisposition::HostError {
+                code: "GHTOOL011_CANCELLED".to_owned(),
+            }
+        } else if captured.timed_out {
+            ToolDisposition::TimedOut
+        } else {
+            match captured.exit_code {
+                Some(code) => ToolDisposition::Completed { exit_code: code },
+                None => ToolDisposition::HostError {
+                    code: "GHTOOL007_EXIT_UNKNOWN".to_owned(),
+                },
+            }
+        };
+        ToolCallRecord {
+            tool: request.provider.tool.clone(),
+            action: request.provider.action.clone(),
+            actor: self.actor.clone(),
+            program_allowlist: BTreeSet::new(),
+            tier: graphhelm_tool_broker::effect::IsolationTier::Tier1,
+            disposition,
+            stdout_sha256: digest_hex(&captured.stdout),
+            stdout_bytes: captured.stdout.len() as u64,
+            stderr_sha256: digest_hex(&captured.stderr),
+            stderr_bytes: captured.stderr.len() as u64,
+            truncated: captured.truncated,
+            reused: false,
+            verified_executable: Some(graphhelm_tool_broker::record::VerifiedExecutableIdentity {
+                path: self.session.executable().path().display().to_string(),
+                sha256: self.session.executable().sha256().to_owned(),
+            }),
+            contained_session: Some(self.session.identity().clone()),
+            commit: None,
+            landed_ref: None,
+            recovered_workspace: false,
         }
     }
 
@@ -114,20 +179,38 @@ impl StructuralCodeIndex for ContainedIndexProvider {
         &self,
         request: &StructuralIndexRequest,
     ) -> Result<graphhelm_runtime::ports::StructuralIndexResponse, StructuralCodeIndexError> {
+        *self
+            .last_invocation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         let stdin = self.request_lines(request);
         let captured = self
             .session
-            // #180: not wired to a cancel signal. This session is opened by the provider, not
-            // by a ToolHost, so there is no host-scoped signal to share -- its bound stays the
-            // deadline. Passing None is a declared limit, not an oversight: cancelling a run
-            // does not yet reach a contained index child.
             .call(
                 &self.provider_arguments,
                 Some(&stdin),
                 &self.process_limits,
-                None,
+                self.cancel_signal.as_ref(),
             )
             .map_err(|_| StructuralCodeIndexError::Unavailable)?;
+
+        let record = self.invocation_record(&captured, request);
+        *self
+            .last_invocation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(record.clone());
+
+        // A reply is usable only when the host can account for the complete, successful
+        // process. A valid reply emitted before a timeout or cancellation is still refused.
+        if captured.exit_code != Some(0)
+            || captured.truncated
+            || captured.timed_out
+            || captured.cancelled
+            || captured.readers_abandoned
+            || captured.reader_lost
+        {
+            return Err(StructuralCodeIndexError::Unavailable);
+        }
 
         // The reply to id 2 is the LAST id-bearing line; provider prose on other lines is not
         // consulted. A missing or malformed reply is unavailability, not a partial answer.
@@ -226,35 +309,6 @@ impl StructuralCodeIndex for ContainedIndexProvider {
                 .sum::<usize>();
         let results = u32::try_from(row_count).unwrap_or(u32::MAX);
         let stdout_bytes = captured.stdout.len() as u64;
-        let record = ToolCallRecord {
-            tool: request.provider.tool.clone(),
-            action: request.provider.action.clone(),
-            actor: self.actor.clone(),
-            program_allowlist: BTreeSet::new(),
-            tier: graphhelm_tool_broker::effect::IsolationTier::Tier1,
-            disposition: match captured.exit_code {
-                Some(code) => ToolDisposition::Completed { exit_code: code },
-                None => ToolDisposition::HostError {
-                    code: "GHTOOL007_EXIT_UNKNOWN".to_owned(),
-                },
-            },
-            stdout_sha256: digest_hex(&captured.stdout),
-            stdout_bytes,
-            stderr_sha256: digest_hex(&captured.stderr),
-            stderr_bytes: captured.stderr.len() as u64,
-            truncated: captured.truncated,
-            reused: false,
-            // A named program in a named session -- D-042's closing demand, produced.
-            verified_executable: Some(graphhelm_tool_broker::record::VerifiedExecutableIdentity {
-                path: self.session.executable().path().display().to_string(),
-                sha256: self.session.executable().sha256().to_owned(),
-            }),
-            contained_session: Some(self.session.identity().clone()),
-            commit: None,
-            landed_ref: None,
-            recovered_workspace: false,
-        };
-
         Ok(graphhelm_runtime::ports::StructuralIndexResponse {
             plan_binding: request.plan_binding.clone(),
             step: request.step.clone(),

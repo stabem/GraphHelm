@@ -221,3 +221,13 @@ each complete admitted directory buffer before descending. The focused test crea
 empty child directories, stopped at the depth boundary and observed all three names charged;
 it failed with one charged entry before the fix and passed afterward. This protects the global
 entry allocation bound without a provider, network, ordering assumption or test-only seam.
+
+
+Independent review found that `--project .` passed the original project spelling to `git -C`
+while Git ran inside the disposable workspace. A staged addition therefore bypassed population
+admission although the equivalent absolute project path refused. The review blocked merge.
+`tracked_files_at` now resolves the original project before changing the child working directory;
+all build/query freshness checks share that helper. The existing CLI source-refusal observer now
+also stages a new file and invokes the real CLI with a relative project root. It failed before
+the fix by reaching the invalid provider, then passed with source-population refusal before
+provider invocation. The absolute dirty-source cell and owned-workspace cleanup remain covered.

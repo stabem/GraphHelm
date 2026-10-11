@@ -213,7 +213,10 @@ fn the_shipped_policy_and_the_runtime_allow_exactly_the_same_publication_moves()
 /// hashes the original tree but indexes HEAD, or runs the sandbox funnel in the original checkout,
 /// fails this cell. Existing provider fixtures receive caller-asserted source identities and miss
 /// this assembly defect. No test-only production seam: the verified CLI binary is deliberately an
-/// invalid provider and must never be invoked. Cost: one executable hash and local Git worktree.
+/// invalid provider and must never be invoked. The relative-path cell protects staged population
+/// admission against resolving the original Git root inside the disposable worktree. Existing
+/// absolute-path fixtures cannot observe that bypass. Cost: one executable hash, two local Git
+/// worktrees and no external provider or network.
 #[test]
 fn code_index_refuses_dirty_tracked_source_without_writing_the_checkout() {
     use sha2::{Digest as _, Sha256};
@@ -255,63 +258,93 @@ fn code_index_refuses_dirty_tracked_source_without_writing_the_checkout() {
     }
     let staging = temporary.path().join("staging");
     let bundle = temporary.path().join("bundle");
-    let output = Command::new(executable)
-        .args([
-            "--json",
-            "tool",
-            "code-index",
-            "build",
-            "--actor",
-            "cbm-cli-test",
-        ])
-        .arg("--project")
-        .arg(&project)
-        .arg("--staging")
-        .arg(&staging)
-        .arg("--bundle")
-        .arg(&bundle)
-        .arg("--executable")
-        .arg(executable)
-        .arg("--sha256")
-        .arg(hex::encode(hasher.finalize()))
-        .env_remove("GRAPHHELM_ACTOR")
-        .output()
-        .unwrap();
-    let envelope: Value = serde_json::from_slice(&output.stdout).expect("CLI JSON refusal");
-    assert!(!output.status.success());
-    assert_eq!(envelope["ok"], false);
-    assert_eq!(envelope["diagnostics"][0]["code"], "GHTOOL_CBM_BUILD");
-    assert_eq!(envelope["diagnostics"][0]["path"], "/");
-    assert!(
-        envelope["diagnostics"][0]["message"]
-            .as_str()
-            .unwrap()
-            .contains("source"),
-        "the refusal must name source mismatch: {envelope}"
-    );
-    assert!(
-        !bundle.exists(),
-        "a refused build must not publish a bundle"
-    );
-    for name in [".home", ".tmp", ".cbm-cache"] {
+    let executable_sha256 = hex::encode(hasher.finalize());
+    for relative in [false, true] {
+        if relative {
+            std::fs::write(project.join("src/lib.rs"), "pub fn original() {}\n").unwrap();
+            std::fs::write(project.join("src/added.rs"), "pub fn added() {}\n").unwrap();
+            let added = Command::new("git")
+                .args(["-c", "core.hooksPath=NUL", "add", "src/added.rs"])
+                .current_dir(&project)
+                .output()
+                .unwrap();
+            assert!(
+                added.status.success(),
+                "local staged-population fixture failed"
+            );
+        }
+        let output = Command::new(executable)
+            .args([
+                "--json",
+                "tool",
+                "code-index",
+                "build",
+                "--actor",
+                "cbm-cli-test",
+            ])
+            .arg("--project")
+            .arg(if relative {
+                std::path::Path::new(".")
+            } else {
+                project.as_path()
+            })
+            .arg("--staging")
+            .arg(&staging)
+            .arg("--bundle")
+            .arg(&bundle)
+            .arg("--executable")
+            .arg(executable)
+            .arg("--sha256")
+            .arg(&executable_sha256)
+            .current_dir(&project)
+            .env_remove("GRAPHHELM_ACTOR")
+            .output()
+            .unwrap();
+        let envelope: Value = serde_json::from_slice(&output.stdout).expect("CLI JSON refusal");
+        assert!(!output.status.success());
+        assert_eq!(envelope["ok"], false);
+        assert_eq!(envelope["diagnostics"][0]["code"], "GHTOOL_CBM_BUILD");
+        assert_eq!(envelope["diagnostics"][0]["path"], "/");
         assert!(
-            !project.join(name).exists(),
-            "sandbox scratch leaked into original checkout"
+            envelope["diagnostics"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("source"),
+            "the refusal must name source mismatch: {envelope}"
+        );
+        if relative {
+            assert!(
+                envelope["diagnostics"][0]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("tracked-file population differs"),
+                "relative project must refuse staged source before launching a provider: {envelope}"
+            );
+        }
+        assert!(
+            !bundle.exists(),
+            "a refused build must not publish a bundle"
+        );
+        for name in [".home", ".tmp", ".cbm-cache"] {
+            assert!(
+                !project.join(name).exists(),
+                "sandbox scratch leaked into original checkout"
+            );
+        }
+        let listing = Command::new("git")
+            .args(["worktree", "list", "--porcelain"])
+            .current_dir(&project)
+            .output()
+            .unwrap();
+        assert!(listing.status.success());
+        assert_eq!(
+            String::from_utf8(listing.stdout)
+                .unwrap()
+                .lines()
+                .filter(|line| line.starts_with("worktree "))
+                .count(),
+            1,
+            "the refused build must remove only its own disposable worktree"
         );
     }
-    let listing = Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(&project)
-        .output()
-        .unwrap();
-    assert!(listing.status.success());
-    assert_eq!(
-        String::from_utf8(listing.stdout)
-            .unwrap()
-            .lines()
-            .filter(|line| line.starts_with("worktree "))
-            .count(),
-        1,
-        "the refused build must remove only its own disposable worktree"
-    );
 }

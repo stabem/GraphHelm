@@ -653,6 +653,11 @@ fn tracked_files(project: &Path) -> Result<Vec<String>, String> {
 fn tracked_files_at(workspace: &Path, original: Option<&Path>) -> Result<Vec<String>, String> {
     let mut arguments = vec!["-c".to_owned(), "core.fsmonitor=false".to_owned()];
     if let Some(project) = original {
+        // Git runs in the disposable workspace. Resolve caller-relative paths before that cwd
+        // change so this reads the original index rather than the worktree's HEAD index.
+        let project = project
+            .canonicalize()
+            .map_err(|_| "the original project root is unreadable".to_owned())?;
         arguments.push("-C".to_owned());
         arguments.push(project.to_string_lossy().into_owned());
     }

@@ -53,6 +53,19 @@ describe("laneBars", () => {
       expect.objectContaining({ kind: "review", start: T0 + 2, open: true }),
     ]);
   });
+  it("ends a placeholder review after a released claim is reclaimed (#851)", () => {
+    const taskId = "issue-851";
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "old", taskId, issue: 851, claimSequence: 1, sequence: 1, at: at(0) }),
+      ev({ kind: "task.released", lane: "old", taskId, claimSequence: 1, sequence: 2, at: at(1) }),
+      ev({ kind: "task.claimed", lane: "dev", taskId, issue: 851, claimSequence: 3, sequence: 3, at: at(2) }),
+      ev({ kind: "task.review_assigned", reviewer: "placeholder", taskId, pr: 852, headSha: "head1", sequence: 4, at: at(3) }),
+      ev({ kind: "task.pr_opened", lane: "dev", taskId, pr: 852, headSha: "head1", sequence: 5, at: at(4) }),
+      ev({ kind: "task.review_assigned", reviewer: "reviewer", taskId, pr: 852, headSha: "head1", sequence: 6, at: at(5) }),
+    ], T0 + 6, 1000);
+    expect(lanes.find((lane) => lane.lane === "placeholder")!.bars[0]).toMatchObject({ end: T0 + 5, open: false });
+    expect(lanes.find((lane) => lane.lane === "reviewer")!.bars[0]).toMatchObject({ start: T0 + 5, open: true });
+  });
   it("ends the older head's review bar when a new head opens", () => {
     const lanes = laneBars([
       ev({ kind: "task.pr_opened", lane: "dev", pr: 832, headSha: "head-a", at: at(0) }),

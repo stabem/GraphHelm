@@ -128,6 +128,20 @@ describe("foldTaskEvents", () => {
       .toEqual([["same", "lane-a"], ["same", null]]);
   });
 
+  it("routes a review record to the new claim instead of the released slice (#851)", () => {
+    const taskId = "issue-851";
+    const events = [
+      record(1, "task.claimed", "lane-a", { taskId, issue: 851, lane: "lane-a", branch: "old" }),
+      record(2, "task.released", "lane-a", { taskId, lane: "lane-a", claimSequence: 1, reason: "Handed over" }),
+      record(3, "task.claimed", "lane-b", { taskId, issue: 851, lane: "lane-b", branch: "new" }),
+      record(4, "task.review_assigned", "lane-b", { taskId, pr: 852, headSha: "aaaaaaaa", reviewer: "reviewer" }),
+    ];
+    const slices = foldTaskEvents(events);
+    expect(slices).toHaveLength(2);
+    expect(slices.find((slice) => slice.branch === "old")).toMatchObject({ lane: "lane-a", releasedBy: "lane-a", pr: null, reviewers: [] });
+    expect(slices.find((slice) => slice.branch === "new")).toMatchObject({ lane: "lane-b", pr: 852, reviewers: ["reviewer"] });
+  });
+
   it("a claim after release reopens the same branch", () => {
     const claimed = (sequence: number) => ({
       ...parseTaskEvent("task.claimed", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 1, at: "now", issue: 729, lane: "lane-a", branch: "same" }))!,

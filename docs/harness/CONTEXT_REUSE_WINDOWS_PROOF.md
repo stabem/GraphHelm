@@ -276,3 +276,12 @@ alone. It covers repeated symbols in one file and multi-file selection with a li
 filename; the same cell preserves incomplete, inconsistent and out-of-request result refusals.
 Actual native cache reuse, process closure and agent handoff must be observed separately from
 these fixture checks. Preserve failed attempts and other-session process churn in that report.
+
+
+Independent native review found a further suffix collision: with `src/lib.rs` and
+`nested/src/lib.rs` indexed, the former query was refused because the unanchored project prefix
+also selected the latter. The selector now anchors both ends of the complete qualified name,
+including its escaped project. The offline selection observer evaluates the emitted wire pattern
+against independent qualified names using Git's existing extended-regex engine; it observes
+nested suffix, literal-dot and foreign-project exclusion instead of comparing an expected request
+string. The native provider remains the authority for its own query semantics.

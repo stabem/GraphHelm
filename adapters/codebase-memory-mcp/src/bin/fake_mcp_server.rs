@@ -61,7 +61,7 @@ fn main() {
                 }
             }),
             Some("tools/call") if mode == "multi-path-selection" => {
-                let pattern = message.pointer("/params/arguments/qn_pattern");
+                std::fs::write("observed-query.json", message.to_string()).unwrap();
                 let arguments = message.pointer("/params/arguments");
                 if arguments
                     .and_then(|value| value.get("label"))
@@ -72,8 +72,6 @@ fn main() {
                         .and_then(|value| value.as_str())
                         != Some("json")
                     || arguments.and_then(|value| value.get("query")).is_some()
-                    || pattern.and_then(|value| value.as_str())
-                        != Some(r"\.(src\.lib\.rs|src\.a\.b\.rs)\.__file__$")
                 {
                     serde_json::json!({
                         "jsonrpc": "2.0", "id": id,

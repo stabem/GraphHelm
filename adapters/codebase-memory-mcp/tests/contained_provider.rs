@@ -439,7 +439,7 @@ fn multiple_symbols_from_one_file_yield_a_valid_partial_receipt() {
 
 #[test]
 fn multiple_paths_use_escaped_file_selection() {
-    let (_project, _staging, session, _workspace, project) = composed("provider-selection");
+    let (_project, _staging, session, workspace, project) = composed("provider-selection");
     let reader = WorkspaceSourceReader::open(
         &project,
         SourceReaderLimits {
@@ -455,6 +455,62 @@ fn multiple_paths_use_escaped_file_selection() {
 
     let receipt = retrieve_coverage(&provider, &reader, &request)
         .expect("escaped qn file selection must produce a bounded receipt");
+    // Observe the actual wire selector against independent qualified names. Git's existing ERE
+    // engine evaluates the escaped-literal/union/anchor subset used by the native provider;
+    // unlike literal request equality this catches suffix collisions and an unescaped dot.
+    // Cost: one local git grep, in addition to the existing contained fake process; no new tool.
+    let observed: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(workspace.root().join("observed-query.json")).unwrap(),
+    )
+    .unwrap();
+    let pattern = observed
+        .pointer("/params/arguments/qn_pattern")
+        .and_then(serde_json::Value::as_str)
+        .unwrap();
+    let candidates = tempfile::tempdir().unwrap();
+    std::fs::write(
+        candidates.path().join("nodes.txt"),
+        concat!(
+            "graphhelm-main.src.lib.rs.__file__\n",
+            "graphhelm-main.src.a.b.rs.__file__\n",
+            "graphhelm-main.nested.src.lib.rs.__file__\n",
+            "graphhelm-main.src.aXb.rs.__file__\n",
+            "other.graphhelm-main.src.lib.rs.__file__\n",
+        ),
+    )
+    .unwrap();
+    let selected = Command::new("git")
+        .args([
+            "grep",
+            "--no-index",
+            "--extended-regexp",
+            "-h",
+            "--no-color",
+            "--no-line-number",
+            "--no-column",
+            "--no-heading",
+            "--no-break",
+            "-e",
+            pattern,
+            "--",
+            "nodes.txt",
+        ])
+        .current_dir(candidates.path())
+        .output()
+        .unwrap();
+    assert!(
+        selected.status.success(),
+        "selector must find the requested files: {}",
+        String::from_utf8_lossy(&selected.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(selected.stdout)
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "graphhelm-main.src.lib.rs.__file__\ngraphhelm-main.src.a.b.rs.__file__\n",
+        "selection must exclude a nested suffix, wildcard-dot sibling and foreign project"
+    );
+
     let wire: serde_json::Value = serde_json::from_slice(&receipt.stable_bytes().unwrap()).unwrap();
     assert_eq!(
         wire.pointer("/body/hits").unwrap(),

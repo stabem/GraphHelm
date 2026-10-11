@@ -19,9 +19,9 @@
 //!   `contained_session` (the session identity): a receipt bound to this record is bound to *a
 //!   named program in a named session*, D-042's closing demand, now produced rather than argued.
 //!
-//! **The query rule, mechanical:** the request's `requested_paths` joined with spaces become the
-//! BM25 query. No reformulation, no second call. A richer plan vocabulary (symbols, scopes) is
-//! the plan compiler's to grow; this producer transmits what the request declares.
+//! **The query rule, mechanical:** select the requested File nodes by their complete qualified
+//! names, with the project and literal paths escaped. No reformulation or second call; the
+//! resulting file receipt remains partial structural evidence.
 
 use std::collections::BTreeSet;
 
@@ -145,7 +145,7 @@ impl ContainedIndexProvider {
     /// The one-shot MCP conversation: initialize, initialized, one tools/call. Newline-delimited
     /// JSON-RPC, the transport's own framing.
     fn request_lines(&self, request: &StructuralIndexRequest) -> Vec<u8> {
-        let qn_pattern = qn_file_pattern(&request.requested_paths);
+        let qn_pattern = qn_file_pattern(&self.project, &request.requested_paths);
         let arguments = serde_json::json!({
             "project": self.project,
             "qn_pattern": qn_pattern,
@@ -338,7 +338,7 @@ impl StructuralCodeIndex for ContainedIndexProvider {
     }
 }
 
-fn qn_file_pattern(paths: &[String]) -> String {
+fn qn_file_pattern(project: &str, paths: &[String]) -> String {
     let alternatives = paths
         .iter()
         .map(|path| {
@@ -347,7 +347,7 @@ fn qn_file_pattern(paths: &[String]) -> String {
         })
         .collect::<Vec<_>>()
         .join("|");
-    format!(r"\.({alternatives})\.__file__$")
+    format!(r"^{}\.({alternatives})\.__file__$", escape_regex(project))
 }
 
 fn escape_regex(value: &str) -> String {

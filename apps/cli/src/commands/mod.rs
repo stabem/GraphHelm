@@ -59,7 +59,7 @@ use crate::output::Outcome;
 
 pub fn run(command: TopLevel) -> Outcome {
     match command {
-        TopLevel::Tasks(args) => match args.command {
+        TopLevel::Tasks(args) => match &args.command {
             TasksCommand::RunEnded {
                 execution,
                 lane,
@@ -69,14 +69,15 @@ pub fn run(command: TopLevel) -> Outcome {
                 url,
                 token_file,
             } => tasks::run_ended(
-                &execution,
-                &lane,
-                exit,
+                execution,
+                lane,
+                *exit,
                 result_file.as_deref(),
                 run_id.as_deref(),
                 url.as_deref(),
                 token_file.as_deref(),
             ),
+            _ => tasks::run(&args),
         },
         TopLevel::Graph(graph) => match graph.command {
             GraphCommand::Validate { file } => validate::run(&file),

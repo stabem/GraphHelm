@@ -15,7 +15,10 @@ import tempfile
 import time
 import threading
 import unittest
+from unittest import mock
 import urllib.request
+
+from plugins.graphhelm.hooks import tasks_reconcile
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
@@ -83,6 +86,96 @@ class LaneStopTests(unittest.TestCase):
               "X-GraphHelm-Actor": actor, "X-GraphHelm-Actor-Type": "owner" if actor == "owner" else "agent"})
         with urllib.request.urlopen(req, timeout=5) as response:
             self.assertTrue(json.load(response)["ok"])
+
+    def test_reconcile_records_github_merge_once(self):
+        """A fake gh MERGED reply closes one recorded PR in the disposable Runtime."""
+        sha = "a" * 40
+        reply = {"state": "MERGED", "mergeCommit": {"oid": sha},
+                 "closingIssuesReferences": []}
+        now = "2026-10-10T00:00:00Z"
+        document = {"schema": "graphhelm-task-event-v1", "taskId": "issue-766",
+                    "revision": 2, "at": now, "pr": 9001, "headSha": "b" * 40,
+                    "journeys": [], "lane": "codex-4", "repo": "stabem/GraphHelm"}
+        signal = {"id": "pr-9001-opened", "source": {"type": "user", "id": "codex-4"},
+                  "type": "task.pr_opened", "severity": "low", "description": json.dumps(document),
+                  "evidence": ["https://github.com/stabem/GraphHelm/pull/9001"], "emittedAt": now}
+        token = Path(self.env["GRAPHHELM_TOKEN_FILE"]).read_text().strip()
+        request = urllib.request.Request(self.url + "/v1/executions/lane-test/signal",
+                  data=json.dumps({"signal": signal}).encode(), headers={"Authorization": "Bearer " + token,
+                  "Content-Type": "application/json", "Idempotency-Key": "pr-9001-opened",
+                  "X-GraphHelm-Actor": "codex-4", "X-GraphHelm-Actor-Type": "agent"})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertTrue(json.load(response)["ok"])
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+        with mock.patch.object(tasks_reconcile, "github", return_value=reply) as github:
+            self.assertEqual(tasks_reconcile.reconcile(args)["merged"], [9001])
+            self.assertEqual(tasks_reconcile.reconcile(args)["merged"], [])
+        github.assert_called_once_with(9001, "stabem/GraphHelm")
+
+    def test_reconcile_ignores_opened_pr_from_another_repository(self):
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+        opened = ("task.pr_opened", {"taskId": "issue-766", "pr": 9001,
+                  "lane": "codex-4", "repo": "someone/else"}, {})
+        with mock.patch.object(tasks_reconcile, "records", return_value=[opened]), \
+             mock.patch.object(tasks_reconcile, "github") as github:
+            self.assertEqual(tasks_reconcile.reconcile(args)["inspected"], 0)
+        github.assert_not_called()
+
+    def test_merged_pr_in_other_repository_does_not_suppress_opened_pr(self):
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+        events = [("task.merged", {"taskId": "issue-766", "pr": 9001,
+                   "repo": "someone/else"}, {}),
+                  ("task.pr_opened", {"taskId": "issue-766", "pr": 9001,
+                   "lane": "codex-4", "repo": "stabem/GraphHelm"}, {})]
+        reply = {"state": "OPEN", "mergeCommit": None, "closingIssuesReferences": []}
+        with mock.patch.object(tasks_reconcile, "records", return_value=events), \
+             mock.patch.object(tasks_reconcile, "github", return_value=reply) as github:
+            self.assertEqual(tasks_reconcile.reconcile(args)["inspected"], 1)
+        github.assert_called_once_with(9001, "stabem/GraphHelm")
+
+    def test_closed_unmerged_pr_remains_pending(self):
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+        opened = ("task.pr_opened", {"taskId": "issue-766", "pr": 9001,
+                  "lane": "codex-4", "repo": "stabem/GraphHelm"}, {})
+        with mock.patch.object(tasks_reconcile, "records", return_value=[opened]), \
+             mock.patch.object(tasks_reconcile, "github", return_value={"state": "CLOSED", "mergedAt": None}):
+            result = tasks_reconcile.reconcile(args)
+        self.assertEqual(result["merged"], [])
+        self.assertIn("closed", result["pendingKinds"])
+
+    def test_stop_invokes_configured_cli_reconciliation(self):
+        root = Path(self.tmp.name)
+        subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(root), "remote", "add", "origin",
+                        "git@github.com:stabem/GraphHelm.git"], check=True, capture_output=True)
+        output = root / "cli-args.txt"
+        script = root / "record_cli.py"
+        script.write_text("import sys\nfrom pathlib import Path\n"
+                          f"Path({str(output)!r}).write_text(' '.join(sys.argv[1:]))\n")
+        if os.name == "nt":
+            cli = root / "configured-graphhelm.cmd"
+            cli.write_text(f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n')
+        else:
+            cli = root / "configured-graphhelm"
+            cli.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n')
+            cli.chmod(0o755)
+        self.env["GRAPHHELM_CLI"] = str(cli)
+        result = subprocess.run([sys.executable, str(HERE / "lane_stop_hook.py")],
+            input=json.dumps({"cwd": str(root), "session_id": "test-session",
+                              "stop_hook_active": True}), text=True, capture_output=True,
+            env=self.env, timeout=12)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("tasks reconcile --execution lane-test", output.read_text())
+        self.assertIn("--lane codex-4", output.read_text())
+        self.assertIn("--repo stabem/GraphHelm", output.read_text())
 
     def stop(self, manifest, active=False):
         # Drive the registered Stop commands, not an unregistered helper. On the parent
@@ -223,6 +316,19 @@ class LaneStopTests(unittest.TestCase):
                 self.assertTrue(any(d.get("decision") == "block" for d in decisions), decisions)
                 self.assertIn("read the notes addressed to you", decisions[-1]["reason"])
                 self.assertEqual(self.stop(manifest, active=True), [])
+
+    def test_non_github_origins_still_remind_about_unread_notes(self):
+        self.note("origin-note", to="codex-4")
+        root = Path(self.tmp.name)
+        subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
+        for remote in ("ssh://git@github.com/stabem/GraphHelm.git", "https://gitlab.com/a/b.git"):
+            with self.subTest(remote=remote):
+                subprocess.run(["git", "-C", str(root), "remote", "remove", "origin"], capture_output=True)
+                subprocess.run(["git", "-C", str(root), "remote", "add", "origin", remote], check=True)
+                for manifest in MANIFESTS:
+                    with self.subTest(manifest=manifest):
+                        decisions = self.stop(manifest)
+                        self.assertTrue(any(d.get("decision") == "block" for d in decisions), decisions)
 
     def test_runtime_down_allows_stop(self):
         self.stop_server()

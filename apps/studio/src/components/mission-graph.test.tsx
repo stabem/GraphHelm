@@ -238,6 +238,21 @@ describe("PaceBlock colour (#591)", () => {
 });
 
 describe("PR #581's shape on the Graph (#591)", () => {
+  it("a stalled review card names its reviewer once", async () => {
+    vi.useFakeTimers();
+    try {
+      const { MissionView } = await import("./mission-view");
+      const NOW = Date.parse("2026-10-09T12:00:00Z");
+      const task = ts("pr-822", { issue: 809, pr: 822, prTitle: "Review bars", step: "review", lane: "codex-6", reviewers: ["codexrev-1"],
+        clock: { since: new Date(NOW - 2 * 3_600_000).toISOString(), spent: {} } });
+      const lanes = [{ lane: "codexrev-1", bars: [], silent: true, lastEventAt: NOW - 87 * 60_000 }];
+      const { container } = render(<MissionView journeys={[]} tasks={[task]} runFor={() => null} lanes={lanes} now={NOW} frameUrl={() => ""} onMarkSafe={vi.fn()} />);
+      const card = container.querySelector('.mg-node[data-current="true"]')!;
+      expect(card).toHaveAttribute("data-state", "stalled");
+      expect(card.querySelector(".mg-health-text")).toHaveTextContent("silent 1h 27m");
+      expect(card.textContent?.match(/codexrev-1/g)).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  });
   it("a pushed fix reads Re-review waiting on the reviewer, timed from the push, with no Blocked by flag", async () => {
     vi.useFakeTimers();
     try {
@@ -270,7 +285,8 @@ describe("PR #581's shape on the Graph (#591)", () => {
       const lanes = [{ lane: "gh-claude-9", bars: [], silent: true, lastEventAt: NOW - 70 * 60_000 }];
       const { container } = render(<MissionView journeys={[]} tasks={[task]} runFor={() => null} lanes={lanes} now={NOW} frameUrl={() => ""} onMarkSafe={vi.fn()} />);
       expect(container.querySelector('.mg-node[data-current="true"] .mg-node-label')).toHaveTextContent("Stalled");
-      expect(screen.getAllByText("gh-claude-9 silent 1h 10m").length).toBe(2);
+      expect(container.querySelector('.mg-node[data-current="true"] .mg-health-text')).toHaveTextContent("silent 1h 10m");
+      expect(screen.getByText("gh-claude-9 silent 1h 10m")).toBeInTheDocument();
       expect(container.querySelector('.mg-act-dot[data-tone="green"]')).toBeNull();
     } finally { vi.useRealTimers(); }
   });

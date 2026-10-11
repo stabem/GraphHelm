@@ -94,6 +94,8 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
 - a whole-package `graphhelm-cli` `cli` target is partitioned by registered bundle modules, with
   prior-module skips and a final `--skip` complement for inline/root tests; missing bundle metadata
   remains incomplete;
+- an unfiltered single selection of that same `cli` target uses the same metadata-backed partition;
+  it cannot fall back to one broad command;
 - `tests/support/` or a fixture reaches its package's tests;
 - a crate's source reaches that crate and every crate that depends on it;
 - a file a crate embeds (`include_str!`) reaches that crate, and an extension package reaches the

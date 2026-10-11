@@ -68,6 +68,18 @@ class Reach(unittest.TestCase):
         bundle = (repo / "apps/cli/tests/cli.rs").read_text(encoding="utf-8")
         self.assertIn("fn every_top_level_test_file_is_registered()", bundle)
 
+    def test_registration_bundle_change_uses_partitioned_cli_observer(self):
+        repo = Path(__file__).resolve().parents[2]
+        packages = rt.workspace(repo)
+        whole, single, *_ = rt.reach(["apps/cli/tests/cli.rs"], packages, {}, repo)
+        self.assertEqual(whole, set())
+        self.assertEqual(single, {("graphhelm-cli", "cli", None)})
+        commands = rt.commands(whole, single, [], package_metadata=packages)
+        self.assertNotIn("cargo +1.97.1 test --locked -p graphhelm-cli --test cli -- --test-threads=2", commands)
+        self.assertTrue(any("--test cli -- --test-threads=2 " in command and "--skip" not in command
+                            for command in commands))
+        self.assertTrue(any("--skip" in command for command in commands))
+
     def test_a_journey_flow_file_reaches_the_scope_guard_and_journey_validate(self):
         # #504 review: a flows-only diff (#430-style) printed no test, only "unmapped".
         whole, single, studio, tools, validate, other = reach(".graphhelm/journeys/checkout.journey.yaml")

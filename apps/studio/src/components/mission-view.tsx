@@ -220,7 +220,7 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
             <span className="mv-logo" aria-hidden="true">G</span>
             <span className="mv-brand">GraphHelm</span><span className="mv-slash">/</span>
             <span className="mv-dim">{`Run ${runName}`}</span><span className="mv-slash">/</span>
-            <span className="mv-brand">Mission graph</span>
+            <span className="mv-brand">{sub === "journeys" ? "Journeys" : "Mission graph"}</span>
           </div>
         )}
         <div role="tablist" aria-label="Mission views" className="mv-tabs">
@@ -272,7 +272,7 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
   </>;
   const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} {...(onOpenNode ? { onOpenNode } : {})} />;
   if (sel === null) return <div className="mv" data-wide="true" data-page={page} data-chat={chatOpen ? "open" : undefined}>{header}
-    {sub === "journeys" ? <div className="mv-pad">{journeyContent}</div>
+    {sub === "journeys" ? <div className="mv-journey-content">{journeyContent}</div>
       : sub === "lanes" ? <div className="mv-pad">{lanesView}</div>
       : <>{sub === "graph" && runGraph}<p className="mv-none mv-pad">No journeys in this project yet</p></>}</div>;
   const rawGroup: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
@@ -362,7 +362,7 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
     // data-wide: the Studio layout gives the mission view the whole main area (mission-view.css).
     <div className="mv" data-wide="true" data-page={page} data-chat={chatOpen ? "open" : undefined}>
       {header}
-      {sub === "journeys" ? <div className="mv-pad">{journeyContent}</div> : <>
+      {sub === "journeys" ? <div className="mv-journey-content">{journeyContent}</div> : <>
       {gsum && sub === "graph" && (
         <p className="mg-summary mv-summary" aria-label="Summary">
           <span className="mg-sum" data-tone="proven"><b>{`${gsum.proven}/${group!.tasks.length}`}</b> proven</span>

@@ -622,7 +622,7 @@ describe("live team layout", () => {
     expect(layout).toHaveAttribute("data-mobile-tab", "chat");
     await userEvent.click(tabs.getByRole("tab", { name: "Journeys" }));
     expect(layout).toHaveAttribute("data-mobile-tab", "journeys");
-    expect(screen.getByRole("tab", { name: "Journey" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Journeys" })).toHaveAttribute("aria-pressed", "true");
     await userEvent.click(tabs.getByRole("tab", { name: "Team" }));
     expect(layout).toHaveAttribute("data-mobile-tab", "team");
   });

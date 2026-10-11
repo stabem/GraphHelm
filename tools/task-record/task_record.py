@@ -111,6 +111,22 @@ def closed_on_github(pr, repo):
         sys.exit(f"task_record: could not confirm an unmerged closed PR {pr}: state={state}, mergedAt={merged_at}")
 
 
+def refuse_merged_pr_record(pr, repo):
+    """Refuse a follow-up opening record when GitHub says its PR is already merged."""
+    command = ["gh", "pr", "view", str(pr), "--json", "state"]
+    if repo:
+        command += ["--repo", repo]
+    try:
+        reply = json.loads(subprocess.run(command, capture_output=True, text=True,
+                                          encoding="utf-8", timeout=60, check=True).stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        sys.exit(f"task_record: could not confirm the state of PR {pr}")
+    if not isinstance(reply, dict) or not isinstance(reply.get("state"), str):
+        sys.exit(f"task_record: could not confirm the state of PR {pr}: invalid GitHub response")
+    if reply["state"] == "MERGED":
+        sys.exit(f"task_record: PR #{pr} is already merged")
+
+
 def words(args):
     """#477: `title` and `summary` for an opening record: the flags win, else GitHub. Over the
     standard's length only warns; over what the Runtime accepts is clipped, so a long title never
@@ -371,6 +387,8 @@ def main(argv):
     args = parse(argv)
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     doc = document(args, now)
+    if args.kind in ("pr_opened", "review_assigned") and not args.no_github:
+        refuse_merged_pr_record(args.pr, args.repo)
     if args.kind == "merged" and not args.dry_run:
         if args.no_github:
             sys.exit("task_record: --no-github is refused for merged unless --dry-run is set")

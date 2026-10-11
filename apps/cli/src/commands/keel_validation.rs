@@ -296,6 +296,23 @@ fn collect_functions(
     }
 }
 
+fn ambiguous_source_hashes(artifacts: &[Value]) -> BTreeSet<String> {
+    artifacts
+        .iter()
+        .flat_map(|artifact| artifact["scripts"].as_array().into_iter().flatten())
+        .flat_map(|script| {
+            let sources = script["sources"].as_array()?;
+            (sources.len() > 1).then(|| {
+                sources
+                    .iter()
+                    .filter_map(|source| source["sha256"].as_str().map(str::to_owned))
+                    .collect::<Vec<_>>()
+            })
+        })
+        .flatten()
+        .collect()
+}
+
 fn complete_artifact(artifact: &Value) -> bool {
     if artifact["schema"] != "graphhelm-js-coverage/1"
         || artifact["execution"] != "completed"
@@ -365,6 +382,26 @@ fn function_key(item: &Value) -> String {
 fn suppress_positive_candidates(used: &[Value], candidates: &mut Vec<Value>) {
     let positive: BTreeSet<_> = used.iter().map(function_key).collect();
     candidates.retain(|item| !positive.contains(&function_key(item)));
+}
+
+fn suppress_ambiguous_candidates(
+    ambiguous: &BTreeSet<String>,
+    candidates: &mut Vec<Value>,
+    unknown: &mut Vec<Value>,
+) {
+    let mut retained = Vec::with_capacity(candidates.len());
+    for mut item in candidates.drain(..) {
+        let is_ambiguous = item["sourceSha256"]
+            .as_str()
+            .is_some_and(|hash| ambiguous.contains(hash));
+        if is_ambiguous {
+            item["reason"] = "ambiguous_source_mapping".into();
+            unknown.push(item);
+        } else {
+            retained.push(item);
+        }
+    }
+    *candidates = retained;
 }
 
 pub(crate) fn run(repo: &Path) -> Outcome {
@@ -516,6 +553,13 @@ pub(crate) fn run(repo: &Path) -> Outcome {
         && expected_paths.is_subset(&collected_paths)
         && !input_changed
         && !journeys_changed;
+    for path in &mut paths {
+        path["negativeEvidenceEligible"] = if sweep_valid {
+            path["negativeEvidenceEligible"].clone()
+        } else {
+            false.into()
+        };
+    }
     let mut used = Vec::new();
     let mut not_observed = Vec::new();
     let mut unknown = Vec::new();
@@ -532,6 +576,8 @@ pub(crate) fn run(repo: &Path) -> Outcome {
             &mut unknown,
         );
     }
+    let ambiguous = ambiguous_source_hashes(&artifacts);
+    suppress_ambiguous_candidates(&ambiguous, &mut not_observed, &mut unknown);
     suppress_positive_candidates(&used, &mut not_observed);
     let associated: BTreeSet<String> = used
         .iter()
@@ -744,5 +790,61 @@ mod tests {
         let mut failed = valid;
         failed["execution"] = "held".into();
         assert!(!complete_artifact(&failed));
+    }
+
+    #[test]
+    fn multi_source_hash_vetoes_candidates_across_paths_but_keeps_unique_source() {
+        let mut current = BTreeMap::new();
+        current.insert("src/ambiguous.js".to_owned(), "ambiguous".to_owned());
+        current.insert("src/unique.js".to_owned(), "unique".to_owned());
+        let mut ambiguous_path = artifact(json!([{"sha256":"ambiguous"}]));
+        ambiguous_path["path"] = "first".into();
+        let mut multi_source = artifact(json!([
+            {"sha256":"ambiguous"},
+            {"sha256":"other"}
+        ]));
+        multi_source["path"] = "third".into();
+
+        let mut used = Vec::new();
+        let mut candidates = Vec::new();
+        let mut unknown = Vec::new();
+        collect_functions(
+            &ambiguous_path,
+            &current,
+            true,
+            &mut used,
+            &mut candidates,
+            &mut unknown,
+        );
+        let mut unique_candidate = artifact(json!([{"sha256":"unique"}]));
+        unique_candidate["path"] = "second".into();
+        collect_functions(
+            &unique_candidate,
+            &current,
+            true,
+            &mut used,
+            &mut candidates,
+            &mut unknown,
+        );
+
+        suppress_ambiguous_candidates(
+            &ambiguous_source_hashes(&[multi_source]),
+            &mut candidates,
+            &mut unknown,
+        );
+
+        assert!(
+            candidates
+                .iter()
+                .all(|item| item["sourceSha256"] != "ambiguous")
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|item| item["sourceSha256"] == "unique")
+        );
+        assert!(unknown.iter().any(|item| {
+            item["sourceSha256"] == "ambiguous" && item["reason"] == "ambiguous_source_mapping"
+        }));
     }
 }

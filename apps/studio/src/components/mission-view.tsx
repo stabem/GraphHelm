@@ -108,23 +108,6 @@ export function RunGraphStrip({ nodes, unassigned, onOpenNode }: { nodes: GraphN
   );
 }
 
-/** #591: the rail's dot colour family for a bot: working amber, waiting or quiet red, done grey. */
-/** #591: open work spins; blocked or stuck work shows a static red "!" instead. */
-export function ProgressIcon({ alert = false }: { alert?: boolean }) {
-  if (alert) return (
-    <svg className="mv-prog" data-kind="alert" role="img" aria-label="blocked" viewBox="0 0 12 12" width="12" height="12">
-      <circle cx="6" cy="6" r="5" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M6 3.2v3.3M6 8.4v.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  );
-  return (
-    <svg className="mv-prog" data-kind="spin" role="img" aria-label="in progress" viewBox="0 0 12 12" width="12" height="12">
-      <circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" strokeOpacity=".25" strokeWidth="1.5" />
-      <path d="M6 1.5a4.5 4.5 0 0 1 4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 export function agentTone(b: Bot): "work" | "stalled" | "idle" {
   return b.state === "working" ? "work" : b.state === "done" ? "idle" : "stalled";
 }

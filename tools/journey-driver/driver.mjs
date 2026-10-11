@@ -181,9 +181,9 @@ function coverageArtifact(entries, limitations, collection = 'captured') {
     for (const fn of inputFunctions.slice(0, 4096)) {
       if (functionTotal >= COVERAGE_FUNCTION_MAX) { reasons.push('total function count was bounded'); break; }
       const inputRanges = Array.isArray(fn.ranges) ? fn.ranges : [];
-      if (inputRanges.length > 64) reasons.push('range count was bounded');
-      const ranges = inputRanges.slice(0, 64).filter(range => plain(range) && Number.isSafeInteger(range.startOffset) && Number.isSafeInteger(range.endOffset) && Number.isSafeInteger(range.count) && range.startOffset >= 0 && range.endOffset >= range.startOffset && range.count >= 0).map(range => ({startOffset: range.startOffset, endOffset: range.endOffset, count: range.count}));
-      if (ranges.length !== Math.min(inputRanges.length, 64)) reasons.push('invalid coverage range was omitted');
+      if (inputRanges.length > COVERAGE_RANGE_MAX - rangeTotal) { reasons.push('total range count was bounded'); break; }
+      const ranges = inputRanges.filter(range => plain(range) && Number.isSafeInteger(range.startOffset) && Number.isSafeInteger(range.endOffset) && Number.isSafeInteger(range.count) && range.startOffset >= 0 && range.endOffset >= range.startOffset && range.count >= 0).map(range => ({startOffset: range.startOffset, endOffset: range.endOffset, count: range.count}));
+      if (ranges.length !== inputRanges.length) reasons.push('invalid coverage range was omitted');
       if (!ranges.length) continue;
       if (rangeTotal + ranges.length > COVERAGE_RANGE_MAX) { reasons.push('total range count was bounded'); break; }
       if (typeof fn.functionName === 'string' && Buffer.byteLength(fn.functionName) > 256) reasons.push('function name was bounded');
@@ -191,7 +191,7 @@ function coverageArtifact(entries, limitations, collection = 'captured') {
       functionTotal += 1; rangeTotal += ranges.length;
     }
     if (source !== null && !mapped.hashes.length) reasons.push('source or inline source map was unusable');
-    if (mapped.mapped && mapped.hashes.length > 1) reasons.push('multiple original source hashes were retained');
+    if (mapped.mapped && mapped.hashes.length > 1) limitations.push('multiple original source hashes were retained; association remains unknown');
     const script = {url: coveragePath(entry.url), generatedSha256: source === null ? null : hashSource(source), sources: mapped.hashes.map(sha256 => ({sha256})), functions};
     scripts.push(script);
   }

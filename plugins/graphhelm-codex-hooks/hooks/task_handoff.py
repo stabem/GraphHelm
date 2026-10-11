@@ -1,4 +1,4 @@
-"""Explicit, provider-neutral task handoff over the existing Runtime contracts.
+﻿"""Explicit, provider-neutral task handoff over the existing Runtime contracts.
 
 This adapter records two typed Graph Signals.  It never assigns a node and never says that a
 recipient understood or accepted the work.  The Runtime's sealed evidence is the source of truth;
@@ -578,7 +578,7 @@ def _mcp_stdio() -> int:
                 continue
             if method == "initialize":
                 result = {"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {"tools": {}},
-                          "serverInfo": {"name": "graphhelm-task-handoff", "version": "0.1.25"}}
+                          "serverInfo": {"name": "graphhelm-task-handoff", "version": "0.1.26"}}
                 response = _mcp_result(request_id, result)
             elif method == "ping":
                 response = _mcp_result(request_id, {})

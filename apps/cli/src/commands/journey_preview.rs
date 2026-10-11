@@ -171,6 +171,11 @@ const RUNNER_GRACE: Duration = Duration::from_secs(60);
 fn alive(pid: u64) -> Liveness {
     #[cfg(windows)]
     {
+        // 0 and the all-ones sentinel cannot name a Windows process. `tasklist` rejects
+        // the latter as an invalid filter rather than reporting a missing process.
+        if pid == 0 || pid >= u32::MAX as u64 {
+            return Liveness::Dead;
+        }
         let Ok(output) = Command::new("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
             .stdin(Stdio::null())

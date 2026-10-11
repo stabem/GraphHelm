@@ -8,6 +8,19 @@ let seq = 0;
 const ev = (e: Partial<TimedTaskEvent>): TimedTaskEvent => ({ actorId: "a", sequence: seq++, taskId: "t1", ...e }) as TimedTaskEvent;
 
 describe("laneBars", () => {
+  it("keeps a silent gap between two records on the same claim", () => {
+    const hour = 3_600_000;
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "dev", actorId: "dev", taskId: "issue-783", at: at(0) }),
+      ev({ kind: "task.planned", lane: "dev", actorId: "dev", taskId: "issue-783", at: at(5 * 60_000) }),
+      ev({ kind: "task.planned", lane: "dev", actorId: "dev", taskId: "issue-783", at: at(13 * hour + 42 * 60_000) }),
+      ev({ kind: "task.pr_opened", lane: "dev", actorId: "dev", taskId: "issue-783", pr: 783, at: at(13 * hour + 47 * 60_000) }),
+      ev({ kind: "task.review_assigned", actorId: "coordinator", reviewer: "reviewer", taskId: "issue-783", pr: 783, at: at(13 * hour + 52 * 60_000) }),
+    ], T0 + 13 * hour + 52 * 60_000, 14 * hour);
+    expect(lanes.find((lane) => lane.lane === "dev")!.bars[0]!.quietSpans).toEqual([
+      { start: T0 + 35 * 60_000, end: T0 + 13 * hour + 42 * 60_000 },
+    ]);
+  });
   it("marks a late supervisor release as quiet after the claimant's last record", () => {
     const lanes = laneBars([
       ev({ kind: "task.claimed", lane: "dev", actorId: "dev", taskId: "issue-548", sequence: 100, at: at(0) }),

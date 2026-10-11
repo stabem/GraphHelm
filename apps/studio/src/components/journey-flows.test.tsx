@@ -359,26 +359,25 @@ describe("JourneyFlows run", () => {
   });
 
   it("clears the previous pass while Run again is still starting", async () => {
-    const passed = { state: "ready" as const, kind: "preview" as const, result: "pass" as const, screens: { cart: { result: "pass" as const } } };
+    const passed = { state: "ready" as const, kind: "preview" as const, result: "pass" as const, screens: { cart: { frame: false, result: "pass" as const } } };
     let finishRetry!: (run: JourneyRunView) => void;
     const pending = new Promise<JourneyRunView>((resolve) => { finishRetry = resolve; });
-    const start = vi.fn().mockResolvedValueOnce(passed).mockReturnValueOnce(pending);
-    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start })} />);
+    const start = vi.fn().mockReturnValueOnce(pending);
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ read: vi.fn(async () => passed), start })} />);
     await waitFor(() => expect(screen.getByRole("list", { name: "Steps" })).toHaveTextContent("Passed"));
     await userEvent.click(screen.getByRole("button", { name: "Run again" }));
-    expect(start).toHaveBeenCalledTimes(2);
+    expect(start).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("status")).toHaveTextContent("Starting this journey's test");
     expect(screen.getByRole("list", { name: "Steps" })).not.toHaveTextContent("Passed");
     finishRetry({ state: "failed", reason: "preview.runner_lost" });
     await waitFor(() => expect(screen.getByRole("status")).toHaveAttribute("data-state", "failed"));
   });
 
-  it("starts one preview per selection in StrictMode", async () => {
+  it("reads cached state without a preview in StrictMode", async () => {
     const start = vi.fn(async () => ({ state: "none" as const }));
-    render(<StrictMode><JourneyFlows view={one} onApprove={vi.fn()} run={source({ start })} /></StrictMode>);
+    render(<StrictMode><JourneyFlows view={one} onApprove={vi.fn()} run={source({ start, read: vi.fn(async () => ({ state: "none" as const })) })} /></StrictMode>);
     await waitFor(() => expect(screen.getByRole("status")).toHaveAttribute("data-state", "none"));
-    expect(start).toHaveBeenCalledTimes(1);
-
+    expect(start).not.toHaveBeenCalled();
   });
 
   it("does not start previews when selecting three uncached flows", async () => {
@@ -459,7 +458,7 @@ describe("JourneyFlows run", () => {
     const cards = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
     await waitFor(() => expect(cards[1]).toHaveTextContent("Running…"));
     expect(screen.getByRole("status")).toHaveTextContent("Running this journey's test…");
-    expect(screen.getByRole("button", { name: "Run again" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
     expect(run.read).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1000);
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^Test passed$/));

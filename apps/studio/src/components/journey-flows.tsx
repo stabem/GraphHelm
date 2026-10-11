@@ -219,11 +219,12 @@ export function useJourneyRun(flowId: string, source: JourneyRunSource | undefin
     activePreview = Symbol(flowId);
     setBusyReason(null);
     setStarting(true);
-    setRun(null);
-    setFrames({});
+    if (!confirm) { setRun(null); setFrames({}); }
     setFailure(null);
-    for (const entry of held.current.values()) if (entry.url !== null) URL.revokeObjectURL(entry.url);
-    held.current.clear();
+    if (!confirm) {
+      for (const entry of held.current.values()) if (entry.url !== null) URL.revokeObjectURL(entry.url);
+      held.current.clear();
+    }
     setAttempt((before) => ({ n: before.n + 1, confirm }));
   };
   return { offered: source !== undefined && !absent, run, frames, failure, busyReason, launching: starting, again: () => launch(false), confirm: () => launch(true), confirming: attempt.confirm && starting };

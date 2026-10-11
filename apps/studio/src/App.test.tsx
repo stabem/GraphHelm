@@ -684,7 +684,7 @@ describe("live team layout", () => {
     await screen.findByRole("article", { name: "Journey paid flow" });
     expect(startJourneyRun).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Run" }));
-    await waitFor(() => expect(startJourneyRun).toHaveBeenCalledWith("paid", false, "demo-deploy"));
+    await waitFor(() => expect(startJourneyRun).toHaveBeenCalledWith("paid", true, "demo-deploy"));
   });
 });
 

@@ -47,4 +47,9 @@ describe("the dev session", () => {
       token: "fixture", project: "fixture-project", projectPath: "fixtures/project",
     });
   });
+
+  it("accepts only bounded on-demand lane names from the local session", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ token: "fixture", onDemandLanes: ["codex-14", 5, ""] }), { status: 200 }));
+    expect((await devSession(fetchImpl as never, "?session=known"))?.onDemandLanes).toEqual(["codex-14"]);
+  });
 });

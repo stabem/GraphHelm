@@ -31,6 +31,7 @@ export interface DevSession {
   project: string | null;
   /** The absolute source folder, when the local launcher can identify it. */
   projectPath?: string | null;
+  onDemandLanes?: string[];
 }
 
 export async function devSession(
@@ -70,12 +71,14 @@ export async function devSession(
   const named = typeof project === "string" ? project.trim() : "";
   const projectPath = (payload as { projectPath?: unknown }).projectPath;
   const folder = typeof projectPath === "string" ? projectPath.trim() : "";
+  const roster = (payload as { onDemandLanes?: unknown }).onDemandLanes;
   return {
     token: trimmed,
     // Bounded and rendered as text: it is a label from the operator's own environment, but it
     // reaches the DOM and nothing else validates it.
     project: named.length > 0 && named.length <= 120 ? named : null,
     projectPath: folder.length > 0 && folder.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(folder) ? folder : null,
+    ...(Array.isArray(roster) ? { onDemandLanes: roster.filter((name): name is string => typeof name === "string" && name.length > 0 && name.length <= 80).slice(0, 100) } : {}),
   };
 }
 

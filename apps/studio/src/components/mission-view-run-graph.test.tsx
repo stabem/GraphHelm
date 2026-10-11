@@ -18,7 +18,7 @@ describe("#647 MissionView: the Team canvas controls on the Graph page", () => {
   it("keeps the reopened name field and draft when the saved alias arrives", async () => {
     const userEvent = fastUserEvent();
     const onNameBot = vi.fn();
-    const props = { ...base, lanes: [], onNameBot };
+    const props = { ...base, lanes: [], onNameBot, onDemandLanes: ["planner"] };
     const { rerender } = render(<MissionView {...props} agents={[bot("planner", "planner")]} />);
     await userEvent.click(screen.getByRole("tab", { name: "Lanes" }));
     await userEvent.click(screen.getByRole("button", { name: "Name this bot" }));
@@ -49,7 +49,7 @@ describe("#647 MissionView: the Team canvas controls on the Graph page", () => {
     const onOpenBotDetails = vi.fn();
     const onNameBot = vi.fn();
     const lanes: Lane[] = [{ lane: "lane-a", bars: [], silent: false, lastEventAt: 0 }];
-    render(<MissionView {...base} lanes={lanes} agents={[bot("planner", "planner"), bot("lane-a", "Alice")]}
+    render(<MissionView {...base} lanes={lanes} agents={[bot("planner", "planner"), bot("lane-a", "Alice")]} onDemandLanes={["planner", "lane-a"]}
       onOpenBotDetails={onOpenBotDetails} onNameBot={onNameBot} />);
     await userEvent.click(screen.getByRole("tab", { name: "Lanes" }));
     const board = screen.getByRole("list", { name: "Agent board" });

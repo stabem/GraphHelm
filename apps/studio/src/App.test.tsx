@@ -739,6 +739,7 @@ describe("opening", () => {
     await open(client, null, false);
     await userEvent.click(screen.getByRole("tab", { name: "Lanes" }));
     const board = within(await screen.findByRole("region", { name: "Agents" }));
+    await userEvent.click(board.getByRole("button", { name: /^Offline / }));
     await userEvent.click(board.getByRole("button", { name: "Details" }));
     expect(within(await screen.findByLabelText("Agent planner")).getByRole("heading", { name: "planner" })).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Close planner" }));

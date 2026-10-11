@@ -4,7 +4,8 @@ import type { MissionTask } from "./mission";
 import { ordinal, slotDuration, slotStatus, type SlotView } from "./slots";
 
 /** #591 Lanes board: who is free, who does what, and for how long. */
-export type AgentStatus = "silent" | "stale" | "building" | "build_wait" | "working" | "awaiting" | "waiting" | "free";
+export type AgentStatus = "silent" | "stale" | "building" | "build_wait" | "working" | "awaiting" | "waiting" | "free" | "offline";
+export const FREE_LIVENESS_MS = 15 * 60_000;
 /** #591: a claim with no PR and no record of its lane for this long is a stale claim, not work. */
 export const STALE_CLAIM_MS = 2 * 3_600_000;
 export interface AgentRow {
@@ -29,7 +30,7 @@ export interface AgentRow {
   doing?: string | null;
 }
 
-const ORDER: Record<AgentStatus, number> = { silent: 0, stale: 1, building: 2, build_wait: 3, working: 4, awaiting: 5, waiting: 6, free: 7 };
+const ORDER: Record<AgentStatus, number> = { silent: 0, stale: 1, building: 2, build_wait: 3, working: 4, awaiting: 5, waiting: 6, free: 7, offline: 8 };
 
 function latestOf(lane: Lane | undefined, now: number): { latest: string | null; forMs: number | null } {
   const rec = lane?.lastRecord;
@@ -54,7 +55,7 @@ function hasVerdictOnHead(t: MissionTask, names: string[]): boolean {
 
 /** One row per bot, plus a row per lane no bot claims; silent first, then working (longest
  * first), then waiting, then free. Silent is the lane-bars STALL rule (`Lane.silent`). */
-export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now: number, slots: SlotView[] = []): AgentRow[] {
+export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now: number, slots: SlotView[] = [], onDemand: readonly string[] = [], live: readonly string[] = []): AgentRow[] {
   bots = bots.filter((b) => !blank(b.name));
   lanes = lanes.filter((l) => !blank(l.lane));
   const used = new Set<Lane>();
@@ -64,6 +65,8 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
     return { name: b.name, lane };
   });
   for (const l of lanes) if (!used.has(l)) pairs.push({ name: l.lane, lane: l });
+  for (const name of onDemand) if (!blank(name) && !pairs.some((p) => p.name === name || p.lane?.lane === name
+    || bots.some((b) => b.name === p.name && (b.key === name || b.actorId === name)))) pairs.push({ name, lane: undefined });
   const delivered = new Map<string, string>();
   for (const t of tasks) if (t.step === "merged" && t.lane) delivered.set(t.lane, `${t.pr ? `#${t.pr} ` : ""}${t.title}`);
   const rows0 = pairs.map(({ name, lane }): AgentRow => {
@@ -122,9 +125,17 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
   });
   // #636: a lane holding or queued for a build slot shows that, whatever its bars say.
   const rows = rows0.map((r, i): AgentRow => {
-    const ids = [r.name, pairs[i]!.lane?.lane].filter((n): n is string => !!n);
+    const bot = bots.find((b) => b.name === r.name);
+    const ids = [r.name, pairs[i]!.lane?.lane, bot?.key, bot?.actorId].filter((n): n is string => !!n);
     const slot = ids.map((n) => slotStatus(n, slots)).find((x) => x !== null) ?? null;
-    if (!slot) return r;
+    if (!slot) {
+      if (r.status !== "free" || onDemand.some((name) => ids.includes(name)) || live.some((name) => ids.includes(name))) return r;
+      const seen = Math.max(pairs[i]!.lane?.lastEventAt ?? 0,
+        ...bots.filter((b) => ids.includes(b.name) || (b.actorId !== null && ids.includes(b.actorId)))
+          .map((b) => b.lastRecordAt === null ? 0 : Date.parse(b.lastRecordAt)).filter(Number.isFinite));
+      if (seen > 0 && now - seen < FREE_LIVENESS_MS) return r;
+      return { ...r, status: "offline", label: `Offline · last seen ${seen > 0 ? `${span(Math.max(0, now - seen))} ago` : "never"}` };
+    }
     const source = slots.find((s) => s.ok && s.root === slot.root);
     const label = source?.ok ? slot.kind === "building" ? source.holder?.label : source.waiting.find((w) => ids.includes(w.lane))?.label : null;
     const pr = label && /^#([1-9]\d*)$/.exec(label)?.[1];

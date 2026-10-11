@@ -79,6 +79,7 @@ interface Props {
   slots?: SlotView[];
   /** Actors with an armed, unconsumed wake lease; absent on older Runtimes. */
   wakeListeners?: string[];
+  onDemandLanes?: string[];
   /** #647: the run's graph nodes for the Run graph strip; empty, the strip is omitted. */
   runNodes?: GraphNode[];
   /** #647: node ids no bot holds a task for (App's unassignedSteps), listed as the Team canvas did. */
@@ -196,7 +197,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, run, onRun, runName, lastRecordAt, onTeam, onJourneys, journeyContent, initialView = "graph", draftJourneys = 0, agents = [], historyLoading = false, away = null, onSignal, onReviewAssigned, wakeListeners, slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, run, onRun, runName, lastRecordAt, onTeam, onJourneys, journeyContent, initialView = "graph", draftJourneys = 0, agents = [], historyLoading = false, away = null, onSignal, onReviewAssigned, wakeListeners, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
   const [chosen, setChosen] = useState<Selection | null>(null);
   const [stepId, setStepId] = useState<string | null>(null);
   // undefined: the group's default (the task that most needs the owner); null: none, a column is chosen.
@@ -287,7 +288,7 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
   };
   const lanesView = <>
     <WorkKanban items={kanbanItems} onOpen={openOnGraph} historyLoading={historyLoading} />
-    <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} historyLoading={historyLoading}
+    <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} onDemandLanes={onDemandLanes} liveLanes={wakeListeners} historyLoading={historyLoading}
       {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
   </>;
   const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} {...(onOpenNode ? { onOpenNode } : {})} />;

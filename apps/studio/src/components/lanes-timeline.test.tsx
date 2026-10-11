@@ -126,7 +126,7 @@ describe("LanesTimeline", () => {
     render(<LanesTimeline lanes={lanes} now={now} windowMs={1000} />);
     const board = screen.getByRole("list", { name: "Agent board" });
     expect(within(board).getAllByRole("listitem").map((li) => li.querySelector(".ab-name")!.textContent)).toEqual(["gh-claude-5", "gh-claude-6"]);
-    expect(screen.getByRole("button", { name: "All 2" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Available 2" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Working 0" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Free 1" }));
     expect(within(board).getAllByRole("listitem")).toHaveLength(1);
@@ -134,6 +134,28 @@ describe("LanesTimeline", () => {
     await user.click(screen.getByRole("button", { name: "Silent 1" }));
     expect(within(board).getByText("Silent")).toBeInTheDocument();
     expect(within(board).queryByText("gh-claude-6")).toBeNull();
+  });
+
+  it("offers Waiting rows directly and keeps Offline status in sync with the board", async () => {
+    const user = fastUserEvent();
+    const offlineLane = { ...lanes[1]!, lane: "old-idle", lastEventAt: now - 60 * 60_000 };
+    render(<LanesTimeline lanes={[offlineLane]} now={now} windowMs={1000} tasks={[t({ pr: 4, lane: null, reviewers: ["reviewer"], currentReviewer: "reviewer", step: "review" })]} agents={[{ name: "reviewer", key: "reviewer", actorId: "reviewer", hue: 0, role: null, doingNow: "", lastRecordAt: new Date(now).toISOString(), lastSequence: 0, state: "working", quietMinutes: null, shared: false, native: false, tasks: [] }]} />);
+    const timelineRows = within(screen.getByRole("list", { name: "Agent lanes" }));
+    expect(within(timelineRows.getByText("old-idle").closest("li")!).getByText("offline")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Waiting 1" }));
+    expect(within(screen.getByRole("list", { name: "Agent board" })).getByText("reviewer")).toBeInTheDocument();
+  });
+
+  it("Free count matches Free rows while old idle lanes stay collapsed under Offline", async () => {
+    const user = fastUserEvent();
+    render(<LanesTimeline lanes={[{ ...lanes[1]!, lastEventAt: now - 20 * 3_600_000 }]} now={now} windowMs={1000} onDemandLanes={["codex-14"]} />);
+    const board = screen.getByRole("list", { name: "Agent board" });
+    await user.click(screen.getByRole("button", { name: "Free 1" }));
+    expect(within(board).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(board).getByText("codex-14")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Offline 1" }));
+    expect(within(board).getByText("gh-claude-6")).toBeInTheDocument();
+    expect(within(board).getByText(/last seen/)).toBeInTheDocument();
   });
 
   it("timeline rows follow the board order", () => {

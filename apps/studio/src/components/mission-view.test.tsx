@@ -75,7 +75,7 @@ describe("MissionView", () => {
   it("lanes tab shows the lane cards", async () => {
     const userEvent = fastUserEvent();
     const lanes = [{ lane: "gh-claude-3", silent: false, lastEventAt: 0, bars: [] }];
-    render(<MissionView journeys={journeys} tasks={[]} lanes={lanes} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    render(<MissionView journeys={journeys} tasks={[]} lanes={lanes} now={0} onDemandLanes={["gh-claude-3"]} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
     await userEvent.click(screen.getByRole("tab", { name: "Lanes" }));
     expect(screen.getByText("FREE HANDS").parentElement).toHaveTextContent("gh-claude-3");
     expect(screen.queryByRole("navigation", { name: "Journeys" })).toBeNull();

@@ -4112,6 +4112,31 @@ describe("the exchange", () => {
     });
   }
 
+  it("does not call an owner ask sent when Runtime receipt is unknown", async () => {
+    const description = JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-771", revision: 1,
+      at: "2026-10-11T12:00:00Z", issue: 771, lane: "codex-12", branch: "issue-771-unconfirmed-note" });
+    const content = JSON.stringify({ id: "task-771", source: { type: "user", id: "codex-12" }, type: "task.claimed", description });
+    const hash = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
+    const client = talkingClient({
+      getEvents: vi.fn(async () => ({ head: 15, events: [{ sequence: 15, kind: "signal_recorded",
+        payload: { kind: "task.claimed", sourceId: "codex-12", sourceKind: "user", signalId: "task-771", envelopeSha256: hash },
+        occurredAt: "2026-10-11T12:00:00Z", actorId: "codex-12", actorType: "agent", idempotencyKey: "k-task-771",
+        eventId: "event-task-771", evidenceRefs: ["ev-task-771"] }] })),
+      readEvidence: vi.fn(async () => ({ evidenceId: "ev-task-771", mediaType: "application/json" as const, sensitivity: "internal" as const,
+        contentSha256: `sha256:${hash}`, content })),
+      signal: vi.fn(async () => ({ ...PAUSED_EVIDENCE, action: "signal" as const, result: "unknown" as const,
+        diagnostics: [{ code: "unconfirmed", severity: "warning" as const, path: "/", message: "receipt unavailable", source: "runtime" }] })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    const mission = await screen.findByRole("region", { name: "Canvas" });
+    await userEvent.click(within(mission).getByRole("button", { name: /Row issue #771/ }));
+    await userEvent.click(within(mission).getByRole("button", { name: "Ask codex-12 for status" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/unconfirmed/i);
+    expect(screen.queryByText(/Asked .*waiting/)).not.toBeInTheDocument();
+    expect(client.signal).toHaveBeenCalledTimes(1);
+  });
+
   /** THE CLAIM THE WHOLE FEATURE RESTS ON, and the one an operator cannot verify for themselves.
    *
    * D-036 keeps free-form content OUT of event payloads, so the words of a message are not in the

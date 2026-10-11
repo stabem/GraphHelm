@@ -3194,6 +3194,7 @@ export default function App({
                     const client = clientRef.current;
                     if (!client || selected === "") throw new Error("No Runtime is connected.");
                     const evidence = await client.signal(selected, note.description, { to: note.to, kind: note.type });
+                    if (evidence.result === "unknown") throw new Error("The Runtime may have received the note, but the result is unconfirmed. Check the activity log before trying again.");
                     if (evidence.result === "refused") throw new Error(evidence.diagnostics[0]?.message ?? "The Runtime refused the note.");
                   }} />}</SlotPoll>
               </div>

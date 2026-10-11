@@ -5,9 +5,11 @@ nobody depends on, a cli test bundle, and one embedded schema. The repository-bu
 offline Cargo metadata. Each case is a real diff shape from this repository.
 """
 import json
+import io
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -405,6 +407,166 @@ class Reach(unittest.TestCase):
         self.assertEqual(tools, ["python -m unittest plugins/graphhelm/hooks/test_lane_stop_hook.py",
                                  "python -m unittest plugins/graphhelm/hooks/test_other_hook.py"])
         self.assertEqual(other, [])
+
+    def test_every_plugins_path_selects_its_observer_or_is_docs_like(self):
+        """Keep plugin manifests, markdown, and all hook extensions mapped.
+
+        Cost: temporary filesystem fixtures only; milliseconds, no Cargo or network.
+        """
+        with tempfile.TemporaryDirectory() as repo:
+            hooks = Path(repo, "plugins", "graphhelm", "hooks")
+            hooks.mkdir(parents=True)
+            (hooks / "session_hook.py").write_text("", encoding="utf-8")
+            (hooks / "test_session_hook.py").write_text("import unittest\n", encoding="utf-8")
+            companion_hooks = Path(repo, "plugins", "graphhelm-codex-hooks", "hooks")
+            companion_hooks.mkdir(parents=True)
+            (companion_hooks / "session_hook.py").write_text("", encoding="utf-8")
+            (companion_hooks / "test_session_hook.py").write_text("import unittest\n", encoding="utf-8")
+            other_hooks = Path(repo, "plugins", "example-plugin", "hooks")
+            other_hooks.mkdir(parents=True)
+            (other_hooks / "worker.mjs").write_text("", encoding="utf-8")
+            (other_hooks / "test_worker.py").write_text("import unittest\n", encoding="utf-8")
+            plugin = Path(repo, "plugins", "graphhelm", ".claude-plugin")
+            plugin.mkdir(parents=True)
+            (plugin / "plugin.json").write_text("{}", encoding="utf-8")
+            (plugin / "marketplace.json").write_text("{}", encoding="utf-8")
+            (Path(repo, "plugins", "graphhelm", "plugin.json")).write_text("{}", encoding="utf-8")
+            (Path(repo, "plugins", "graphhelm", ".mcp.json")).write_text("{}", encoding="utf-8")
+            (Path(repo, "plugins", "graphhelm", "SKILL.md")).write_text("# skill\n", encoding="utf-8")
+            skill = Path(repo, "plugins", "graphhelm", "skills", "graphhelm-setup", "SKILL.md")
+            skill.parent.mkdir(parents=True)
+            skill.write_text("# skill\n", encoding="utf-8")
+            agent = Path(repo, "plugins", "graphhelm", "agents", "worker.md")
+            agent.parent.mkdir(parents=True)
+            agent.write_text("# agent\n", encoding="utf-8")
+            (Path(repo, "plugins", "graphhelm", "README.md")).write_text("# docs\n", encoding="utf-8")
+            eval_test = Path(repo, "tools", "evals", "test_skill_twins.py")
+            eval_test.parent.mkdir(parents=True)
+            eval_test.write_text("import unittest\n", encoding="utf-8")
+
+            changed = [
+                # The real PR #841 path classes: plugin manifest/version, MCP manifest,
+                # skill and agent markdown, and a hook source.
+                "plugins/graphhelm-codex-hooks/.codex-plugin/plugin.json",
+                "plugins/graphhelm-codex-hooks/hooks/session_hook.py",
+                "plugins/graphhelm/.claude-plugin/plugin.json",
+                "plugins/graphhelm/.codex-plugin/plugin.json",
+                "plugins/graphhelm/.claude-plugin/marketplace.json",
+                "plugins/graphhelm/plugin.json",
+                "plugins/graphhelm/.mcp.json",
+                "plugins/graphhelm/SKILL.md",
+                "plugins/graphhelm/skills/graphhelm-setup/SKILL.md",
+                "plugins/graphhelm/agents/worker.md",
+                "plugins/graphhelm/hooks/session_hook.py",
+                "plugins/graphhelm/README.md",
+                "plugins/example-plugin/hooks/worker.mjs",
+            ]
+            *_, tools, validate, other = reach(*changed, repo=repo)
+
+        self.assertEqual(validate, [])
+        self.assertEqual(set(tools), {
+            "python -m unittest plugins/graphhelm/hooks/test_session_hook.py",
+            "python -m unittest plugins/example-plugin/hooks/test_worker.py",
+            "python -m unittest tools/evals/test_skill_twins.py",
+        })
+        self.assertEqual(other, [])
+
+    def test_shared_hook_imports_reach_consumer_tests_and_parity_reader(self):
+        """Protect real imports/readers; existing filename-only fixtures miss shared helpers.
+
+        Cost: filesystem fixtures only, milliseconds; no network or Cargo.
+        """
+        with tempfile.TemporaryDirectory() as repo:
+            hooks = Path(repo, "plugins", "graphhelm", "hooks")
+            hooks.mkdir(parents=True)
+            files = {
+                "session_hook.py": "",
+                "subagent_hook.py": "from session_hook import request\n",
+                "task_handoff.py": "from session_hook import request\n",
+                "run_team.py": "from task_handoff import request\nfrom session_hook import ID\n",
+                "keel_stop_hook.py": "",
+                "keel_pretool_hook.py": "from keel_stop_hook import CARD\n",
+                "test_session_hook.py": (
+                    'SCRIPT = Path(__file__).with_name("session_hook.py")\n'
+                    'SCRIPT.read_bytes()\n'
+                    '(SCRIPT.parent / "subagent_hook.py").read_bytes()\n'
+                    '(SCRIPT.parent / "task_handoff.py").read_bytes()\n'
+                    '(SCRIPT.parent / "run_team.py").read_bytes()\n'
+                ),
+                "test_subagent_hook.py": "",
+                "test_task_handoff.py": "",
+                "test_run_team.py": "",
+                "test_keel_stop_hook.py": "",
+                "test_keel_pretool_hook.py": "",
+            }
+            for name, content in files.items():
+                (hooks / name).write_text(content, encoding="utf-8")
+
+            *_, tools, _, other = reach("plugins/graphhelm/hooks/session_hook.py", repo=repo)
+            self.assertEqual(set(tools), {
+                "python -m unittest plugins/graphhelm/hooks/test_session_hook.py",
+                "python -m unittest plugins/graphhelm/hooks/test_subagent_hook.py",
+                "python -m unittest plugins/graphhelm/hooks/test_task_handoff.py",
+                "python -m unittest plugins/graphhelm/hooks/test_run_team.py",
+            })
+            self.assertEqual(other, [])
+
+            *_, tools, _, other = reach("plugins/graphhelm/hooks/keel_stop_hook.py", repo=repo)
+            self.assertEqual(set(tools), {
+                "python -m unittest plugins/graphhelm/hooks/test_keel_stop_hook.py",
+                "python -m unittest plugins/graphhelm/hooks/test_keel_pretool_hook.py",
+            })
+            self.assertEqual(other, [])
+
+            *_, tools, _, other = reach("plugins/graphhelm/hooks/subagent_hook.py", repo=repo)
+            self.assertIn("python -m unittest plugins/graphhelm/hooks/test_session_hook.py", tools)
+            self.assertIn("python -m unittest plugins/graphhelm/hooks/test_subagent_hook.py", tools)
+            self.assertEqual(other, [])
+
+    def test_deleted_or_renamed_hook_test_paths_preserve_surviving_observers(self):
+        """A missing path must not be read or executed; surviving tests remain selected.
+
+        Cost: filesystem fixtures only, milliseconds; no network or Cargo.
+        """
+        with tempfile.TemporaryDirectory() as repo:
+            hooks = Path(repo, "plugins", "graphhelm", "hooks")
+            hooks.mkdir(parents=True)
+            (hooks / "test_session_hook.py").write_text("import unittest\n", encoding="utf-8")
+            (hooks / "test_lane_stop_hook.py").write_text("import unittest\n", encoding="utf-8")
+            (hooks / "test_lane_exit_hook.py").write_text("import unittest\n", encoding="utf-8")
+
+            # Deleted path, and the old side of a rename: neither may become a command.
+            for old_path in ("test_retired_hook.py", "test_old_lane_hook.py"):
+                *_, tools, _, other = reach("plugins/graphhelm/hooks/" + old_path, repo=repo)
+                self.assertEqual(set(tools), {
+                    "python -m unittest plugins/graphhelm/hooks/test_session_hook.py",
+                    "python -m unittest plugins/graphhelm/hooks/test_lane_exit_hook.py",
+                    "python -m unittest plugins/graphhelm/hooks/test_lane_stop_hook.py",
+                })
+                self.assertEqual(other, [])
+            *_, tools, _, other = reach("plugins/graphhelm/hooks/test_lane_exit_hook.py", repo=repo)
+            self.assertIn("python -m unittest plugins/graphhelm/hooks/test_lane_exit_hook.py", tools)
+            self.assertEqual(other, [])
+
+    def test_deleted_hook_test_without_surviving_observer_is_explicitly_unsupported(self):
+        """Do not silently pass a deleted observer when no replacement remains.
+
+        Cost: filesystem fixture only, milliseconds; no network or Cargo.
+        """
+        with tempfile.TemporaryDirectory() as repo:
+            hooks = Path(repo, "plugins", "graphhelm", "hooks")
+            hooks.mkdir(parents=True)
+            with patch.object(rt, "run", return_value="plugins/graphhelm/hooks/test_removed.py"), \
+                    patch.object(rt, "workspace", return_value=[]), patch.object(rt, "embeds", return_value={}), \
+                    patch.object(rt.shutil, "which", return_value=None):
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(rt.main(["--repo", repo, "--base", "base", "--head", "head", "--json"]), 0)
+        plan = json.loads(output.getvalue())
+        self.assertEqual(plan["tools"], [])
+        self.assertEqual(plan["unmapped"], [])
+        self.assertEqual(plan["unsupported"], [{"path": "plugins/graphhelm/hooks/test_removed.py",
+                                                "reason": "deleted hook test has no surviving observer"}])
 
     def test_pytest_function_module_is_selected_with_pytest_runner(self):
         with tempfile.TemporaryDirectory() as repo:

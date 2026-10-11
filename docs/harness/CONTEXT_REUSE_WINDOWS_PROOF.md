@@ -254,3 +254,34 @@ script bytes, validating contribution hashes, or manually invoking a hook does n
 an already running host refreshed its loaded prompt or that every future agent will comply.
 Existing sessions receive the change only at their next supported instruction boundary; they
 are never restarted to force it. Retain that limitation in installation reports.
+
+
+## Real-source receipt correction (issue 823)
+
+The first real-source audit indexed 25 implementation/test files successfully, but both queries
+were refused. The captured native provider reply matched the failed invocation's stdout digest:
+the path words selected 50 symbol rows out of 805 and advertised another page. It did not select
+the requested file. Separately, several symbol rows can belong to one file, while Runtime
+receipts require their page counts and totals to agree with their distinct file hits.
+
+The adapter now uses an escaped, anchored qualified-name union with `label: "File"` in the same
+one `search_graph` call. A native three-file diagnostic returned exactly those three File nodes
+and no further page. The adapter checks complete raw page counts before projecting to distinct
+file hits and refuses unexpected returned paths. Receipt coverage remains Partial. Unfinished
+pages, malformed counts, stale source and incomplete process evidence remain refusals; no
+additional MCP messages, fallback service or persistent connection were introduced.
+
+The offline regression reaches `retrieve_coverage`, rather than accepting the adapter response
+alone. It covers repeated symbols in one file and multi-file selection with a literal dot in a
+filename; the same cell preserves incomplete, inconsistent and out-of-request result refusals.
+Actual native cache reuse, process closure and agent handoff must be observed separately from
+these fixture checks. Preserve failed attempts and other-session process churn in that report.
+
+
+Independent native review found a further suffix collision: with `src/lib.rs` and
+`nested/src/lib.rs` indexed, the former query was refused because the unanchored project prefix
+also selected the latter. The selector now anchors both ends of the complete qualified name,
+including its escaped project. The offline selection observer evaluates the emitted wire pattern
+against independent qualified names using Git's existing extended-regex engine; it observes
+nested suffix, literal-dot and foreign-project exclusion instead of comparing an expected request
+string. The native provider remains the authority for its own query semantics.

@@ -4,6 +4,7 @@ import { LanesTimeline } from "./lanes-timeline";
 import type { MissionTask } from "../runtime/mission";
 import { fastUserEvent } from "../test/user-event";
 import css from "./lanes-timeline.css?raw";
+import { laneBars, type TimedTaskEvent } from "../runtime/lane-bars";
 
 const now = 1_000_000;
 const lanes = [
@@ -17,6 +18,32 @@ const t = (over: Partial<MissionTask>): MissionTask => ({
 const round = { reviewer: "r", headSha: "h", fixHead: "f" };
 
 describe("LanesTimeline", () => {
+  it("renders the PR number and title in a bar, with the full label in its tooltip", () => {
+    const events = [
+      { sequence: 1, actorId: "dev", taskId: "issue-809", kind: "task.claimed", lane: "dev", issue: 809, title: "Old issue title", at: "2026-10-09T00:00:00Z" },
+      { sequence: 2, actorId: "dev", taskId: "issue-809", kind: "task.pr_opened", lane: "dev", pr: 822, title: "Close false timeline bars", at: "2026-10-09T00:00:01Z" },
+    ] as TimedTaskEvent[];
+    const at = Date.parse("2026-10-09T00:00:10Z");
+    const { container } = render(<LanesTimeline lanes={laneBars(events, at, 1000)} now={at} windowMs={1000} />);
+    const bar = container.querySelector(".lt-bar")!;
+    expect(bar).toHaveTextContent("#822 Close false timeline bars");
+    expect(bar.getAttribute("title")).toContain("#822 Close false timeline bars");
+    expect(css).toMatch(/\.lt-bar-label[^}]*text-overflow: ellipsis/);
+  });
+  it("hatches a closed bar's quiet time and explains its end record", () => {
+    const hour = 3_600_000;
+    const closed = { lane: "dev", silent: false, lastEventAt: now, bars: [{
+      kind: "implement" as const, label: "#548", start: now - 27 * hour, end: now, open: false,
+      lastActivityAt: now - 27 * hour, endedBy: { kind: "released", actor: "supervisor" },
+    }] };
+    const { container } = render(<LanesTimeline lanes={[closed]} now={now} windowMs={28 * hour} />);
+    const bar = container.querySelector<HTMLElement>('.lt-bar[data-kind="implement"]')!;
+    expect(bar.dataset.silent).toBe("true");
+    expect(parseFloat(bar.querySelector<HTMLElement>(".lt-stall")!.style.left)).toBeCloseTo(100 / 54);
+    expect(bar.title).toContain("worked 30m");
+    expect(bar.title).toContain("quiet 1d 2h");
+    expect(bar.title).toContain("ended by released (supervisor)");
+  });
   it("places bars on the window", () => {
     render(<LanesTimeline lanes={lanes} now={now} windowMs={1000} />);
     const bar = screen.getByText("#559 implement").closest("[data-kind]") as HTMLElement;
@@ -28,7 +55,7 @@ describe("LanesTimeline", () => {
     render(<LanesTimeline lanes={lanes} now={now} windowMs={1000} />);
     const row = within(screen.getByRole("list", { name: "Agent lanes" })).getByText("gh-claude-5").closest("li")!;
     expect(within(row).getByText("silent")).toBeInTheDocument();
-    expect(row.querySelector('[data-silent="true"]')).toBeNull();
+    expect(row.querySelector('[data-silent="true"]')).toBeInTheDocument();
   });
   it("hatches only the stalled part of each open bar", () => {
     const hour = 3_600_000;

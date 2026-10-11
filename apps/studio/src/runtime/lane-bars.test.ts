@@ -51,6 +51,36 @@ describe("laneBars", () => {
     expect(lanes.find((l) => l.lane === "pool-a")!.bars[0]).toMatchObject({ end: T0 + 6, open: false });
     expect(lanes.find((l) => l.lane === "pool-b")!.bars[0]).toMatchObject({ open: true });
   });
+  it("marks a late supervisor release as quiet after the claimant's last record", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "dev", actorId: "dev", taskId: "issue-548", sequence: 100, at: at(0) }),
+      ev({ kind: "task.released", lane: "dev", actorId: "supervisor", taskId: "issue-548", claimSequence: 100, sequence: 101, at: at(27 * 3_600_000) } as never),
+    ], T0 + 27 * 3_600_000, 28 * 3_600_000);
+    expect(lanes.find((lane) => lane.lane === "dev")!.bars[0]).toMatchObject({
+      lastActivityAt: T0, end: T0 + 27 * 3_600_000, endedBy: { kind: "released", actor: "supervisor" },
+    });
+    expect(lanes.find((lane) => lane.lane === "dev")!.bars[0]!.lastActivityAt! + LIVENESS_MS).toBe(T0 + LIVENESS_MS);
+  });
+
+  it("keeps a frequently recording claim solid through PR opening", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "dev", actorId: "dev", taskId: "issue-549", at: at(0) }),
+      ev({ kind: "task.planned", lane: "dev", actorId: "dev", taskId: "issue-549", at: at(10 * 60_000) }),
+      ev({ kind: "task.pr_opened", lane: "dev", actorId: "dev", taskId: "issue-549", pr: 550, at: at(20 * 60_000) }),
+      ev({ kind: "task.review_assigned", actorId: "coordinator", reviewer: "reviewer", taskId: "issue-549", pr: 550, at: at(25 * 60_000) }),
+    ], T0 + 25 * 60_000, 30 * 60_000);
+    const bar = lanes.find((lane) => lane.lane === "dev")!.bars[0]!;
+    expect(bar.lastActivityAt! + LIVENESS_MS).toBeGreaterThanOrEqual(bar.end);
+  });
+  it.each(["task.merged", "task.closed"] as const)("clears every author's awaiting PR when another slice records %s", (end) => {
+    const lanes = laneBars([
+      ev({ kind: "task.pr_opened", taskId: "issue-814", lane: "first", pr: 811, at: at(0) }),
+      ev({ kind: "task.pr_opened", taskId: "issue-814", lane: "second", pr: 811, at: at(1) }),
+      ev({ kind: end, taskId: "pr-811", pr: 811, at: at(2) }),
+    ], T0 + 3, 1000);
+    expect(lanes.find((lane) => lane.lane === "first")!.awaiting).toEqual([]);
+    expect(lanes.find((lane) => lane.lane === "second")!.awaiting).toEqual([]);
+  });
   it("ends a claimed PR when it merges or closes, including its awaiting review state", () => {
     for (const end of ["task.merged", "task.closed"] as const) {
       const lanes = laneBars([
@@ -73,6 +103,42 @@ describe("laneBars", () => {
     ], T0 + 20, 1000);
     expect(lanes.find((l) => l.lane === "rev")!.bars.some((bar) => bar.open)).toBe(false);
     expect(agentBoard([{ name: "rev" } as never], lanes, [], T0 + 20)[0]!.status).toBe("free");
+  });
+  it("ends a replaced reviewer's bar when the same head is reassigned", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.pr_opened", lane: "dev", pr: 832, headSha: "head1", at: at(0) }),
+      ev({ kind: "task.review_assigned", reviewer: "codex-review", pr: 832, headSha: "head1", at: at(1) }),
+      ev({ kind: "task.review_assigned", reviewer: "codexrev-2", pr: 832, headSha: "head1", at: at(2) }),
+    ], T0 + 3, 1000);
+    expect(lanes.find((l) => l.lane === "codex-review")!.bars).toEqual([
+      expect.objectContaining({ kind: "review", end: T0 + 2, open: false }),
+    ]);
+    expect(lanes.find((l) => l.lane === "codexrev-2")!.bars).toEqual([
+      expect.objectContaining({ kind: "review", start: T0 + 2, open: true }),
+    ]);
+  });
+  it("ends a placeholder review after a released claim is reclaimed (#851)", () => {
+    const taskId = "issue-851";
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "old", taskId, issue: 851, claimSequence: 1, sequence: 1, at: at(0) }),
+      ev({ kind: "task.released", lane: "old", taskId, claimSequence: 1, sequence: 2, at: at(1) }),
+      ev({ kind: "task.claimed", lane: "dev", taskId, issue: 851, claimSequence: 3, sequence: 3, at: at(2) }),
+      ev({ kind: "task.review_assigned", reviewer: "placeholder", taskId, pr: 852, headSha: "head1", sequence: 4, at: at(3) }),
+      ev({ kind: "task.pr_opened", lane: "dev", taskId, pr: 852, headSha: "head1", sequence: 5, at: at(4) }),
+      ev({ kind: "task.review_assigned", reviewer: "reviewer", taskId, pr: 852, headSha: "head1", sequence: 6, at: at(5) }),
+    ], T0 + 6, 1000);
+    expect(lanes.find((lane) => lane.lane === "placeholder")!.bars[0]).toMatchObject({ end: T0 + 5, open: false });
+    expect(lanes.find((lane) => lane.lane === "reviewer")!.bars[0]).toMatchObject({ start: T0 + 5, open: true });
+  });
+  it("ends the older head's review bar when a new head opens", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.pr_opened", lane: "dev", pr: 832, headSha: "head-a", at: at(0) }),
+      ev({ kind: "task.review_assigned", reviewer: "old", pr: 832, headSha: "head-a", at: at(1) }),
+      ev({ kind: "task.pr_opened", lane: "dev", pr: 832, headSha: "head-b", at: at(2) }),
+      ev({ kind: "task.review_assigned", reviewer: "new", pr: 832, headSha: "head-b", at: at(3) }),
+    ], T0 + 4, 1000);
+    expect(lanes.find((l) => l.lane === "old")!.bars[0]).toMatchObject({ end: T0 + 2, open: false });
+    expect(lanes.find((l) => l.lane === "new")!.bars[0]).toMatchObject({ start: T0 + 3, open: true });
   });
   it("keeps review and author waiting when the verdict head is missing or differs", () => {
     for (const verdictHead of [undefined, "head2"]) {
@@ -140,7 +206,7 @@ describe("laneBars", () => {
     ], T0 + 400, 1000);
     const dev = lanes.find((l) => l.lane === "dev")!;
     const rev = lanes.find((l) => l.lane === "rev")!;
-    expect(dev.bars).toEqual([{ kind: "implement", label: "#9", start: T0, end: T0 + 100, open: false, taskId: "t1", since: T0, lastActivityAt: T0 + 100 }]);
+    expect(dev.bars).toEqual([{ kind: "implement", label: "#9", start: T0, end: T0 + 100, open: false, taskId: "t1", since: T0, lastActivityAt: T0, endedBy: { kind: "review_assigned", actor: "a" } }]);
     expect(rev.bars.map((b) => [b.kind, b.start - T0, b.end - T0, b.open])).toEqual([["review", 100, 200, false]]);
   });
 

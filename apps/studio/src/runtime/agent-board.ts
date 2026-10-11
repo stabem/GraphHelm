@@ -82,7 +82,7 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
     if (!openBars.some((b) => b.kind === "implement")) {
       const rt = tasks.find((t) => t.step !== "merged" && t.step !== "merge" && t.pr !== null
         && !hasVerdictOnHead(t, ids)
-        && (t.reviewers.some((r) => ids.includes(r)) || openBars.some((b) => b.kind === "review" && ((b.taskId !== undefined && b.taskId === t.key) || b.label === `#${t.pr}`))));
+        && !!t.currentReviewer && ids.includes(t.currentReviewer));
       if (rt) {
         const last0 = delivered.get(name) ?? (lane ? delivered.get(lane.lane) : undefined) ?? null;
         return {
@@ -125,10 +125,17 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
     const ids = [r.name, pairs[i]!.lane?.lane].filter((n): n is string => !!n);
     const slot = ids.map((n) => slotStatus(n, slots)).find((x) => x !== null) ?? null;
     if (!slot) return r;
+    const source = slots.find((s) => s.ok && s.root === slot.root);
+    const label = source?.ok ? slot.kind === "building" ? source.holder?.label : source.waiting.find((w) => ids.includes(w.lane))?.label : null;
+    const pr = label && /^#([1-9]\d*)$/.exec(label)?.[1];
+    const slotPr = pr ? Number(pr) : null;
+    const slotTask = slotPr === null ? null : tasks.find((t) => t.pr === slotPr) ?? null;
     const d = slotDuration(slot.seconds);
     return slot.kind === "building"
-      ? { ...r, status: "building", label: `Building · ${d}`, doing: `building in ${slot.root}${r.pr ? ` · #${r.pr}` : ""}`, stageMs: slot.seconds * 1000 }
-      : { ...r, status: "build_wait", label: `Waiting for build · ${ordinal(slot.position)} · ${d}`, doing: `waiting for a build slot in ${slot.root}${r.pr ? ` · #${r.pr}` : ""}`, stageMs: slot.seconds * 1000 };
+      ? { ...r, status: "building", pr: slotPr, title: slotTask?.title ?? null, href: slotTask?.repoUrl && slotPr ? `${slotTask.repoUrl}/pull/${slotPr}` : null,
+        label: `Building · ${d}`, doing: `building in ${slot.root}${slotPr ? ` · #${slotPr}` : ""}`, stageMs: slot.seconds * 1000 }
+      : { ...r, status: "build_wait", pr: slotPr, title: slotTask?.title ?? null, href: slotTask?.repoUrl && slotPr ? `${slotTask.repoUrl}/pull/${slotPr}` : null,
+        label: `Waiting for build · ${ordinal(slot.position)} · ${d}`, doing: `waiting for a build slot in ${slot.root}${slotPr ? ` · #${slotPr}` : ""}`, stageMs: slot.seconds * 1000 };
   });
   return rows.sort((a, b) => ORDER[a.status] - ORDER[b.status]
     || (a.status === "working" ? (b.stageMs ?? 0) - (a.stageMs ?? 0) : 0)

@@ -210,12 +210,16 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
                 {l.bars.map((b, i) => {
                   const text = b.displayLabel ?? `${b.label} ${b.kind}`;
                   const frac = (b.end - b.start) / windowMs;
-                  const lastActivity = b.lastActivityAt ?? l.lastEventAt;
-                  const stallStart = Math.max(b.start, lastActivity + LIVENESS_MS);
-                  const stalled = b.open && lastActivity > 0 && stallStart < b.end;
+                  const stallStart = Math.max(b.start, b.lastActivityAt !== undefined
+                    ? b.lastActivityAt + LIVENESS_MS : l.lastEventAt > 0 ? l.lastEventAt + LIVENESS_MS : b.start);
+                  const stalled = b.lastActivityAt !== undefined ? stallStart < b.end : l.silent && b.open && stallStart < b.end;
+                  const worked = Math.max(0, Math.min(b.end, stallStart) - b.start);
+                  const quiet = Math.max(0, b.end - Math.max(b.start, stallStart));
                   return (
                     <div key={i} className="lt-bar" data-kind={b.kind} data-silent={stalled} data-subrow={pack.row[i]}
-                      title={`${text}${b.displayLabel ? ` · ${b.kind}` : ""} · ${stageDuration(b.end - b.start)}${b.open ? " so far" : ""}`}
+                      title={b.lastActivityAt !== undefined
+                        ? `${text}${b.displayLabel ? ` · ${b.kind}` : ""} · worked ${stageDuration(worked)} · quiet ${stageDuration(quiet)}${b.open ? " so far" : b.endedBy ? ` · ended by ${b.endedBy.kind} (${b.endedBy.actor})` : ""}`
+                        : `${text}${b.displayLabel ? ` · ${b.kind}` : ""} · ${stageDuration(b.end - b.start)}${b.open ? " so far" : ""}`}
                       style={{ left: pct((b.start - from) / windowMs), width: pct(frac), top: TRACK_PAD + pack.row[i]! * (SUB_H + SUB_GAP), height: SUB_H }}>
                       {stalled && <span className="lt-stall" aria-hidden="true" style={{ left: pct((stallStart - b.start) / (b.end - b.start)) }} />}
                       {frac * trackW >= MIN_LABEL_PX && <span className="lt-bar-label">{text}</span>}

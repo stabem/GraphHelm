@@ -105,6 +105,7 @@ const RUN_REASON: Record<string, string> = {
   "driver.observer_missing": "the browser player isn't installed in this project yet",
   "preview.busy": "another run is still going",
   "preview.budget_exceeded": "it took longer than allowed",
+  "preview.runner_lost": "the browser runner stopped before the test finished",
   "watch.launch_failed": "the app under test didn't start",
   // #586: what stops a run before or at a step, which used to read as an internal error.
   "driver.secret_missing": "this journey needs a secret the Runtime was not given",
@@ -147,9 +148,11 @@ export function useJourneyRun(flowId: string, source: JourneyRunSource | undefin
   // A start is in flight: set with the click itself, cleared by that start's own answer or
   // failure. Not derived from what the answer says, so two equal failures in a row still clear it.
   const [starting, setStarting] = useState(false);
+  const starts = useRef<{ key: string; promise: Promise<JourneyRunView> } | null>(null);
   const held = useRef(new Map<string, { key: string; url: string | null }>());
   useEffect(() => {
     if (source === undefined) return undefined;
+    const key = `${flowId}:${attempt.n}:${attempt.confirm}`;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const fail = (cause: unknown) => {
@@ -165,7 +168,10 @@ export function useJourneyRun(flowId: string, source: JourneyRunSource | undefin
       setFailure(null);
       if (next.state === "running") timer = setTimeout(() => { source.read(flowId).then(take, fail); }, RUN_POLL_MS);
     };
-    (attempt.confirm ? source.start(flowId, false, true) : source.start(flowId, attempt.n > 0)).then(take, fail);
+    if (starts.current?.key !== key) {
+      starts.current = { key, promise: attempt.confirm ? source.start(flowId, false, true) : source.start(flowId, attempt.n > 0) };
+    }
+    starts.current.promise.then(take, fail);
     return () => { cancelled = true; if (timer !== undefined) clearTimeout(timer); };
   }, [flowId, source, attempt]);
   useEffect(() => {
@@ -440,7 +446,7 @@ function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source }: { flo
           {onWatch && <button type="button" onClick={() => watch(path)} disabled={starting || playing}>{`Watch “${path}”`}</button>}
         </div>
       ))}
-      <JourneyFlowchart flow={flow} run={run} frames={frames} current={watched[current]?.screen.id ?? null} liveFrame={liveFrame} />
+      <JourneyFlowchart flow={flow} run={runFailure === null && (run?.state === "ready" || run?.state === "running") ? run : null} frames={runFailure === null && (run?.state === "ready" || run?.state === "running") ? frames : {}} current={watched[current]?.screen.id ?? null} liveFrame={liveFrame} />
       {session !== undefined && <p className="journey-flow-watch" role="status">{watchWords(session, watched, current)}</p>}
       {onMarkSafe && flow.status === "draft" && skipped.length > 0 && <SkippedSteps flow={flow} edges={skipped} onMarkSafe={onMarkSafe} />}
       {session?.state === "playing" && typeof session.caption === "string" && session.caption !== "" && (

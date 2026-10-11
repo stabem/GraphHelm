@@ -78,5 +78,8 @@ ureq = "=3.4.0"
 lto = "thin"
 codegen-units = 1
 
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.test]
-debug = 1
+debug = "line-tables-only"

@@ -85,7 +85,7 @@ def main() -> int:
         payload = hook_input()
     except (ValueError, OSError):
         return 0
-    # Every Stop refreshes this lane's completed PRs. This is best-effort: an offline
+    # Every Stop refreshes this lane's finished PRs and released claims. An offline
     # Runtime or GitHub must never prevent the host from ending its turn.
     try:
         bound = binding(payload)

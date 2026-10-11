@@ -114,7 +114,7 @@ def main() -> int:
     try:
         result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--scan"],
                                 input=json.dumps(payload), text=True,
-                                capture_output=True, timeout=2)
+                                capture_output=True, timeout=8)
         status = result.returncode
     except (OSError, subprocess.SubprocessError):
         status = 2

@@ -214,6 +214,34 @@ class LaneStopTests(unittest.TestCase):
         self.assertEqual(post.call_args.args[-1], {"lane": "codex-4", "claimSequence": 12,
                                                    "reason": "Issue reassigned"})
 
+    def test_latest_release_closes_all_earlier_claims_for_same_issue(self):
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+        records = [("task.claimed", {"taskId": "issue-766", "lane": "codex-4",
+                    "repo": "stabem/GraphHelm"}, {"sequence": n}) for n in (12, 14)]
+        records.append(("task.released", {"taskId": "issue-766", "lane": "codex-4",
+                        "repo": "stabem/GraphHelm", "claimSequence": 14}, {"sequence": 15}))
+        with mock.patch.object(tasks_reconcile, "records", return_value=records), \
+             mock.patch.object(tasks_reconcile, "github_issue", return_value={"state": "CLOSED", "assignees": []}), \
+             mock.patch.object(tasks_reconcile, "post_end") as post:
+            self.assertEqual(tasks_reconcile.reconcile(args)["released"], [])
+        post.assert_not_called()
+
+    def test_release_from_another_issue_does_not_hide_claim(self):
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+        records = [("task.claimed", {"taskId": "issue-766", "lane": "codex-4",
+                    "repo": "stabem/GraphHelm"}, {"sequence": 12}),
+                   ("task.released", {"taskId": "issue-999", "lane": "codex-4",
+                    "repo": "stabem/GraphHelm", "claimSequence": 12}, {"sequence": 13})]
+        with mock.patch.object(tasks_reconcile, "records", return_value=records), \
+             mock.patch.object(tasks_reconcile, "github_issue", return_value={"state": "CLOSED", "assignees": []}), \
+             mock.patch.object(tasks_reconcile, "post_end") as post:
+            self.assertEqual(tasks_reconcile.reconcile(args)["released"], [766])
+        self.assertEqual(post.call_args.args[-1]["claimSequence"], 12)
+
     def test_stop_invokes_configured_cli_reconciliation(self):
         root = Path(self.tmp.name)
         subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)

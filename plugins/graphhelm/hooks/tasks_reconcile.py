@@ -66,6 +66,12 @@ def records(base, token, execution):
                 match = re.fullmatch(r"https://github\.com/([^/]+/[^/]+)/pull/([1-9][0-9]*)", refs[0])
                 if match and int(match.group(2)) == document.get("pr"):
                     document["repo"] = match.group(1)
+        elif detail["kind"] == "task.released":
+            refs = envelope.get("evidence", [])
+            if len(refs) == 1:
+                match = re.fullmatch(r"https://github\.com/([^/]+/[^/]+)/issues/([1-9][0-9]*)", refs[0])
+                if match and f"issue-{match.group(2)}" == document.get("taskId"):
+                    document["repo"] = match.group(1)
         return detail["kind"], document, event
 
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -147,14 +153,14 @@ def reconcile(args):
     opened = {}
     finished = set()
     claims = {}
-    releases = set()
+    releases = {}
     for kind, doc, event in records(args.url.rstrip("/"), token, args.execution):
         task_id = doc.get("taskId")
         lane = doc.get("lane")
         if kind == "task.claimed" and lane == args.lane and doc.get("repo") == args.repo and re.fullmatch(r"issue-[1-9][0-9]*", str(task_id)):
             claims.setdefault(task_id, []).append(event["sequence"])
-        elif kind == "task.released" and lane == args.lane:
-            releases.add(doc.get("claimSequence"))
+        elif kind == "task.released" and lane == args.lane and doc.get("repo") == args.repo and re.fullmatch(r"issue-[1-9][0-9]*", str(task_id)):
+            releases.setdefault(task_id, set()).add(doc.get("claimSequence"))
         pr = doc.get("pr")
         if type(pr) is not int or pr < 1:
             continue
@@ -164,8 +170,8 @@ def reconcile(args):
             opened[pr] = (doc["taskId"], args.repo)
             if task_id in claims:
                 for sequence in claims[task_id]:
-                    if sequence not in releases:
-                        releases.add(sequence)
+                    if sequence not in releases.get(task_id, set()):
+                        releases.setdefault(task_id, set()).add(sequence)
                         break
     done = []
     closed = []
@@ -195,7 +201,9 @@ def reconcile(args):
         done.append(pr)
     released = []
     for task_id, sequences in claims.items():
-        outstanding = [sequence for sequence in sequences if sequence not in releases]
+        latest_release = max((sequence for sequence in releases.get(task_id, set())
+                              if type(sequence) is int), default=0)
+        outstanding = [sequence for sequence in sequences if sequence > latest_release]
         if not outstanding:
             continue
         issue = int(task_id.removeprefix("issue-"))

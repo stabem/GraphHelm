@@ -46,7 +46,7 @@
 //! number that lets `tokens_saved` be a checkable claim instead of nothing.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use graphhelm_protocols::{GraphNode, RawSha256};
 use serde::{Deserialize, Serialize};
@@ -255,6 +255,39 @@ pub enum ContextRoot {
     Execution,
 }
 
+const MAX_QUERY_CACHE_ENTRIES: usize = 32;
+const MAX_QUERY_CACHE_PATH_BYTES: usize = 64 * 1024;
+const MAX_QUERY_CACHE_EXECUTION_ID_BYTES: usize = 256;
+
+/// A drive-local memo of bounded candidate paths. It intentionally excludes source bytes and
+/// provider errors; the reader and capsule compiler still run for every node.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct QueryCacheKey {
+    execution_id: String,
+    source_digest: RawSha256,
+    terms: Vec<String>,
+    bounds: [u64; 6],
+}
+
+struct QueryCacheEntry {
+    key: QueryCacheKey,
+    search_port: Weak<dyn BoundedSourceSearch>,
+    reader_port: Weak<dyn BoundedSourceReader>,
+    result: crate::ports::SourceSearchResult,
+    path_bytes: usize,
+}
+
+#[derive(Default)]
+struct QueryCacheState {
+    entries: Vec<QueryCacheEntry>,
+    path_bytes: usize,
+}
+
+#[derive(Default)]
+struct QueryCache {
+    state: Mutex<QueryCacheState>,
+}
+
 /// The per-node summaries a drive produced, in the caller's hands once the drive returns.
 ///
 /// The driver returns a projection and only a projection; the content-free summary of what
@@ -262,7 +295,13 @@ pub enum ContextRoot {
 /// (the HTTP `start`/`resume` handler) can publish it beside the projection without reading
 /// sealed evidence back. Keyed by node id; a retried node overwrites its earlier attempt.
 #[derive(Clone, Default)]
-pub struct ContextLedger(Arc<Mutex<BTreeMap<String, NodeContextSummary>>>);
+pub struct ContextLedger(Arc<ContextLedgerInner>);
+
+#[derive(Default)]
+struct ContextLedgerInner {
+    summaries: Mutex<BTreeMap<String, NodeContextSummary>>,
+    query_cache: QueryCache,
+}
 
 impl ContextLedger {
     #[must_use]
@@ -272,6 +311,7 @@ impl ContextLedger {
 
     pub fn record(&self, node: &str, summary: NodeContextSummary) {
         self.0
+            .summaries
             .lock()
             .expect("the context ledger mutex is never poisoned: no panic holds it")
             .insert(node.to_owned(), summary);
@@ -280,9 +320,95 @@ impl ContextLedger {
     #[must_use]
     pub fn snapshot(&self) -> BTreeMap<String, NodeContextSummary> {
         self.0
+            .summaries
             .lock()
             .expect("the context ledger mutex is never poisoned: no panic holds it")
             .clone()
+    }
+
+    fn cached_search(
+        &self,
+        execution_id: &str,
+        search: &Arc<dyn BoundedSourceSearch>,
+        reader: &Arc<dyn BoundedSourceReader>,
+        terms: &[String],
+    ) -> Option<Result<crate::ports::SourceSearchResult, SourceSearchError>> {
+        let search_digest = search.snapshot_digest();
+        if search_digest.is_none() || search_digest != reader.snapshot_digest() {
+            return None;
+        }
+        if execution_id.len() > MAX_QUERY_CACHE_EXECUTION_ID_BYTES {
+            return None;
+        }
+        if terms.is_empty() {
+            return None;
+        }
+        let key = QueryCacheKey {
+            execution_id: execution_id.to_owned(),
+            source_digest: search_digest.expect("checked above"),
+            terms: terms.to_vec(),
+            bounds: [
+                SEARCH_BOUNDS.max_entries_visited as u64,
+                SEARCH_BOUNDS.max_files_scanned as u64,
+                SEARCH_BOUNDS.max_bytes_scanned,
+                SEARCH_BOUNDS.max_results as u64,
+                SEARCH_BOUNDS.max_terms as u64,
+                SEARCH_BOUNDS.max_term_bytes,
+            ],
+        };
+        let Ok(mut state) = self.0.query_cache.state.try_lock() else {
+            // A concurrent producer must not make another node wait on a provider call. It
+            // performs the existing bounded search and leaves the cache untouched.
+            return None;
+        };
+        let search_port = Arc::downgrade(search);
+        let reader_port = Arc::downgrade(reader);
+        if let Some(index) = state.entries.iter().position(|entry| {
+            entry.key == key
+                && Weak::ptr_eq(&entry.search_port, &search_port)
+                && Weak::ptr_eq(&entry.reader_port, &reader_port)
+        }) {
+            let entry = state.entries.remove(index);
+            let result = entry.result.clone();
+            state.entries.insert(0, entry);
+            return Some(Ok(result));
+        }
+
+        let result = search.search_with_provenance(terms, &SEARCH_BOUNDS);
+        let cacheable = result.as_ref().is_ok_and(|result| {
+            result.paths.len() <= MAX_CANDIDATES
+                && result.paths.iter().all(|path| {
+                    recordable_source_path(path) && !sensitive_path(path) && !secret_shaped(path)
+                })
+                && result.paths.iter().map(|path| path.len()).sum::<usize>()
+                    <= MAX_QUERY_CACHE_PATH_BYTES
+        });
+        if cacheable {
+            let result = result.as_ref().expect("cacheable result").clone();
+            let bytes = result.paths.iter().map(|path| path.len()).sum::<usize>();
+            state.path_bytes += bytes;
+            state.entries.insert(
+                0,
+                QueryCacheEntry {
+                    key,
+                    search_port,
+                    reader_port,
+                    result,
+                    path_bytes: bytes,
+                },
+            );
+            while state.entries.len() > MAX_QUERY_CACHE_ENTRIES
+                || state.path_bytes > MAX_QUERY_CACHE_PATH_BYTES
+            {
+                if let Some(removed) = state.entries.pop() {
+                    state.path_bytes = state.path_bytes.saturating_sub(removed.path_bytes);
+                } else {
+                    break;
+                }
+            }
+        }
+        drop(state);
+        Some(result)
     }
 }
 
@@ -355,6 +481,8 @@ pub struct NodeContextSummary {
     pub eligible_candidate_tokens: u64,
     pub compiled_input_tokens: u64,
     pub tokens_saved: u64,
+    /// Logical bounded queries consumed. A memo hit still consumes one logical page; this is not
+    /// a count of provider process or backend invocations.
     pub retrieval_pages: u64,
     pub zero_result_queries: u64,
     pub retrieval_fallbacks: u64,
@@ -529,12 +657,16 @@ pub fn compile_for_node_cancellable(
             }
         }
     }
-    Ok(retrieve_and_compile(
+    Ok(retrieve_and_compile_in_cached(
+        ContextRoot::Project,
         ports.search.as_ref(),
         ports.reader.as_ref(),
         &terms,
         &capsule_id,
         budget,
+        ports
+            .ledger
+            .cached_search(execution_id, &ports.search, &ports.reader, &terms),
     ))
 }
 
@@ -610,6 +742,18 @@ pub fn retrieve_and_compile_in(
     capsule_id: &str,
     budget: usize,
 ) -> CompiledContext {
+    retrieve_and_compile_in_cached(root, search, reader, terms, capsule_id, budget, None)
+}
+
+fn retrieve_and_compile_in_cached(
+    root: ContextRoot,
+    search: &dyn BoundedSourceSearch,
+    reader: &dyn BoundedSourceReader,
+    terms: &[String],
+    capsule_id: &str,
+    budget: usize,
+    cached_search_result: Option<Result<crate::ports::SourceSearchResult, SourceSearchError>>,
+) -> CompiledContext {
     let mut summary = NodeContextSummary {
         tokenizer: TOKENIZER_ID.to_owned(),
         estimator: ESTIMATOR_ID.to_owned(),
@@ -644,7 +788,9 @@ pub fn retrieve_and_compile_in(
         return fallback(summary, ContextFallback::NoTerms);
     }
     summary.retrieval_pages = 1;
-    let search_result = match search.search_with_provenance(terms, &SEARCH_BOUNDS) {
+    let search_result = match cached_search_result
+        .unwrap_or_else(|| search.search_with_provenance(terms, &SEARCH_BOUNDS))
+    {
         Ok(result) => result,
         Err(SourceSearchError::Unavailable) => {
             summary.search_origin = SourceSearchOrigin::Fallback;

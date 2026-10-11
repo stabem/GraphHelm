@@ -6,7 +6,10 @@
 //! are proven in `adapters/tool-host` (containment) and `apps/cli` (the journey).
 
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use graphhelm_protocols::{GraphNode, NodeType, Optionality};
 use graphhelm_runtime::context::{
@@ -93,6 +96,42 @@ struct ProvenanceSearch {
     paths: Vec<String>,
     provenance: SourceSearchProvenance,
     snapshot_digest: Option<graphhelm_protocols::RawSha256>,
+}
+
+struct CountingProvenanceSearch {
+    paths: Vec<String>,
+    calls: Arc<AtomicUsize>,
+    snapshot_digest: Option<graphhelm_protocols::RawSha256>,
+}
+
+impl BoundedSourceSearch for CountingProvenanceSearch {
+    fn search(
+        &self,
+        terms: &[String],
+        bounds: &SourceSearchBounds,
+    ) -> Result<Vec<String>, SourceSearchError> {
+        self.search_with_provenance(terms, bounds)
+            .map(|result| result.paths)
+    }
+
+    fn search_with_provenance(
+        &self,
+        _terms: &[String],
+        _bounds: &SourceSearchBounds,
+    ) -> Result<graphhelm_runtime::ports::SourceSearchResult, SourceSearchError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(graphhelm_runtime::ports::SourceSearchResult {
+            paths: self.paths.clone(),
+            provenance: SourceSearchProvenance {
+                origin: SourceSearchOrigin::Snapshot,
+                reason: SourceSearchReason::ImmutableSnapshot,
+            },
+        })
+    }
+
+    fn snapshot_digest(&self) -> Option<graphhelm_protocols::RawSha256> {
+        self.snapshot_digest.clone()
+    }
 }
 
 impl BoundedSourceSearch for ProvenanceSearch {
@@ -2144,6 +2183,174 @@ fn the_execution_tree_is_read_when_it_exists_and_the_summary_says_so() {
     for summary in [&no_port.summary, &read.summary, &unavailable.summary] {
         assert_record_validates(summary);
     }
+}
+
+// Contract #786: reuse completed queries, while node ids and budgets remain fresh.
+// Defects: repeated backend searches, replayed node capsules, unbounded memo growth.
+// Existing direct retrieval tests have no shared ledger. Cost: in-memory only, under one second.
+#[test]
+fn an_immutable_search_result_is_reused_for_nodes_in_one_execution() {
+    use graphhelm_runtime::context::{ContextPorts, compile_for_node};
+
+    let digest = "a".repeat(64);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let reader = Arc::new(
+        FakeReader::with(&[("src/checkout.rs", b"fn ballots() {}\n")])
+            .with_snapshot_digest(&digest),
+    );
+    let ports = ContextPorts {
+        search: Arc::new(CountingProvenanceSearch {
+            paths: vec!["src/checkout.rs".to_owned()],
+            calls: Arc::clone(&calls),
+            snapshot_digest: Some(graphhelm_protocols::RawSha256::parse(digest.clone()).unwrap()),
+        }),
+        reader: reader.clone(),
+        ledger: graphhelm_runtime::context::ContextLedger::new(),
+        execution_tree: None,
+    };
+    let node = agent_node("Count the ballots.");
+
+    let first = compile_for_node(&ports, "exec-cache", "first", 1, &node).unwrap();
+    let second = compile_for_node(&ports, "exec-cache", "second", 1, &node).unwrap();
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        reader.reads.lock().unwrap().len(),
+        2,
+        "source is read for each node"
+    );
+    assert_eq!(first.summary.sources, second.summary.sources);
+    assert_eq!(first.summary.search_origin, SourceSearchOrigin::Snapshot);
+    assert!(first.text.contains("fn ballots() {}"));
+    assert_ne!(
+        first.text, second.text,
+        "capsule ids belong to their own nodes"
+    );
+    assert_ne!(first.summary.digest, second.summary.digest);
+    let mut small = node.clone();
+    small
+        .properties
+        .insert("context".to_owned(), serde_json::json!({"budgetBytes": 1}));
+    let tiny = compile_for_node(&ports, "exec-cache", "tiny", 1, &small).unwrap();
+    assert!(tiny.text.is_empty());
+    assert_eq!(
+        tiny.summary.fallback,
+        Some(ContextFallback::NothingFitsBudget)
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "budget changes refit, not research"
+    );
+    for index in 0..33 {
+        let question = agent_node(&format!("Count ballots query{index}"));
+        compile_for_node(&ports, "exec-cache", "evict", 1, &question).unwrap();
+    }
+    let recent = agent_node("Count ballots query32");
+    compile_for_node(&ports, "exec-cache", "recent", 1, &recent).unwrap();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        34,
+        "most recent question is retained"
+    );
+    compile_for_node(&ports, "exec-cache", "evicted", 1, &node).unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 35, "old question was evicted");
+}
+
+// Contract #786: a shared ledger never crosses executions or source-port pairs.
+// Defect: digest alone becomes an authorization key; live or secret paths enter the memo.
+// Existing retrieval tests have no repeated node compile. Cost: in-memory only, under one second.
+#[test]
+fn immutable_search_cache_is_scoped_to_execution_and_port_pair() {
+    use graphhelm_runtime::context::{ContextPorts, compile_for_node};
+
+    let digest = "b".repeat(64);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let ports = ContextPorts {
+        search: Arc::new(CountingProvenanceSearch {
+            paths: vec!["src/checkout.rs".to_owned()],
+            calls: Arc::clone(&calls),
+            snapshot_digest: Some(graphhelm_protocols::RawSha256::parse(digest.clone()).unwrap()),
+        }),
+        reader: Arc::new(
+            FakeReader::with(&[("src/checkout.rs", b"fn ballots() {}\n")])
+                .with_snapshot_digest(&digest),
+        ),
+        ledger: graphhelm_runtime::context::ContextLedger::new(),
+        execution_tree: None,
+    };
+    let node = agent_node("Count the ballots.");
+    compile_for_node(&ports, "exec-cache", "first", 1, &node).unwrap();
+    compile_for_node(&ports, "exec-cache", "second", 1, &node).unwrap();
+    compile_for_node(&ports, "exec-other", "third", 1, &node).unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+    let changed_reader = ContextPorts {
+        search: Arc::clone(&ports.search),
+        reader: Arc::new(
+            FakeReader::with(&[("src/checkout.rs", b"fn reader_scope() {}\n")])
+                .with_snapshot_digest(&digest),
+        ),
+        ledger: ports.ledger.clone(),
+        execution_tree: None,
+    };
+    let scoped = compile_for_node(&changed_reader, "exec-cache", "reader", 1, &node).unwrap();
+    assert!(scoped.text.contains("fn reader_scope() {}"));
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        3,
+        "different reader forces search"
+    );
+    let other_calls = Arc::new(AtomicUsize::new(0));
+    let other_ports = ContextPorts {
+        search: Arc::new(CountingProvenanceSearch {
+            paths: vec!["src/checkout.rs".to_owned()],
+            calls: Arc::clone(&other_calls),
+            snapshot_digest: Some(graphhelm_protocols::RawSha256::parse(digest.clone()).unwrap()),
+        }),
+        reader: Arc::clone(&ports.reader),
+        ledger: ports.ledger.clone(),
+        execution_tree: None,
+    };
+    compile_for_node(&other_ports, "exec-cache", "other", 1, &node).unwrap();
+    assert_eq!(other_calls.load(Ordering::SeqCst), 1);
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let ports = ContextPorts {
+        search: Arc::new(CountingProvenanceSearch {
+            paths: vec!["src/checkout.rs".to_owned()],
+            calls: Arc::clone(&calls),
+            snapshot_digest: None,
+        }),
+        reader: Arc::new(FakeReader::with(&[(
+            "src/checkout.rs",
+            b"fn ballots() {}\n",
+        )])),
+        ledger: graphhelm_runtime::context::ContextLedger::new(),
+        execution_tree: None,
+    };
+    let node = agent_node("Count the ballots.");
+    compile_for_node(&ports, "exec-live", "first", 1, &node).unwrap();
+    compile_for_node(&ports, "exec-live", "second", 1, &node).unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+    let secret_calls = Arc::new(AtomicUsize::new(0));
+    let digest = "c".repeat(64);
+    let secret_ports = ContextPorts {
+        search: Arc::new(CountingProvenanceSearch {
+            paths: vec![".env".to_owned()],
+            calls: Arc::clone(&secret_calls),
+            snapshot_digest: Some(graphhelm_protocols::RawSha256::parse(digest.clone()).unwrap()),
+        }),
+        reader: Arc::new(
+            FakeReader::with(&[(".env", b"TOKEN=hidden\n")]).with_snapshot_digest(&digest),
+        ),
+        ledger: graphhelm_runtime::context::ContextLedger::new(),
+        execution_tree: None,
+    };
+    compile_for_node(&secret_ports, "exec-secret", "first", 1, &node).unwrap();
+    compile_for_node(&secret_ports, "exec-secret", "second", 1, &node).unwrap();
+    assert_eq!(secret_calls.load(Ordering::SeqCst), 2);
 }
 
 /// A record sealed before #1086 carries no `root`; it still reads back, as the project.

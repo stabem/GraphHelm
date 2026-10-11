@@ -31,6 +31,26 @@ describe("laneBars", () => {
     ], T0 + 10, 1000);
     expect(lanes.find((lane) => lane.lane === "codex-review")!.bars[0]).toMatchObject({ end: T0 + 2, open: false });
   });
+  it("uses the folded PR title on an older claim bar", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "dev", taskId: "issue-809", issue: 809, title: "Old issue title", at: at(0) }),
+      ev({ kind: "task.pr_opened", lane: "dev", taskId: "issue-809", pr: 822, title: "Close false timeline bars", at: at(1) }),
+    ], T0 + 10, 1000);
+    expect(lanes[0]!.bars[0]).toMatchObject({ label: "#822", displayLabel: "#822 Close false timeline bars" });
+  });
+  it("keeps another slice's review open when a verdict routes to the same PR and head", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "a", taskId: "issue-1", branch: "one", at: at(0) }),
+      ev({ kind: "task.pr_opened", lane: "a", taskId: "issue-1", pr: 10, headSha: "head", at: at(1) }),
+      ev({ kind: "task.review_assigned", reviewer: "pool-a", taskId: "issue-1", pr: 10, headSha: "head", at: at(2) }),
+      ev({ kind: "task.claimed", lane: "b", taskId: "issue-1", branch: "two", headSha: "head", at: at(3) }),
+      ev({ kind: "task.review_assigned", reviewer: "pool-b", taskId: "issue-1", headSha: "head", at: at(4) }),
+      ev({ kind: "task.pr_opened", lane: "b", taskId: "issue-1", pr: 10, headSha: "head", at: at(5) }),
+      ev({ kind: "task.review_verdict", reviewer: "real-a", taskId: "issue-1", pr: 10, headSha: "head", at: at(6) }),
+    ], T0 + 10, 1000);
+    expect(lanes.find((l) => l.lane === "pool-a")!.bars[0]).toMatchObject({ end: T0 + 6, open: false });
+    expect(lanes.find((l) => l.lane === "pool-b")!.bars[0]).toMatchObject({ open: true });
+  });
   it("ends a claimed PR when it merges or closes, including its awaiting review state", () => {
     for (const end of ["task.merged", "task.closed"] as const) {
       const lanes = laneBars([
@@ -118,7 +138,7 @@ describe("laneBars", () => {
     ], T0 + 400, 1000);
     const dev = lanes.find((l) => l.lane === "dev")!;
     const rev = lanes.find((l) => l.lane === "rev")!;
-    expect(dev.bars).toEqual([{ kind: "implement", label: "#9", start: T0, end: T0 + 100, open: false, taskId: "t1", since: T0 }]);
+    expect(dev.bars).toEqual([{ kind: "implement", label: "#9", start: T0, end: T0 + 100, open: false, taskId: "t1", since: T0, lastActivityAt: T0 + 100 }]);
     expect(rev.bars.map((b) => [b.kind, b.start - T0, b.end - T0, b.open])).toEqual([["review", 100, 200, false]]);
   });
 

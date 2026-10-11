@@ -1,5 +1,5 @@
 import "./lanes-timeline.css";
-import { packBars, placeholderLane, type Lane } from "../runtime/lane-bars";
+import { LIVENESS_MS, packBars, placeholderLane, type Lane } from "../runtime/lane-bars";
 import { stageDuration } from "../runtime/stage-health";
 import type { MissionTask } from "../runtime/mission";
 import type { Bot } from "../runtime/team";
@@ -183,7 +183,7 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
           <span className="lt-key" data-kind="implement">Implement</span>
           <span className="lt-key" data-kind="review">Review</span>
           <span className="lt-key" data-kind="merge">Merge + proof</span>
-          <span className="lt-key" data-kind="silent">Silent / blocked</span>
+          <span className="lt-key" data-kind="silent">Stalled interval</span>
           <span className="lt-key" data-kind="presence">Agent status</span>
           <span className="lt-key" data-kind="now">Now</span>
         </div>
@@ -210,8 +210,9 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
                 {l.bars.map((b, i) => {
                   const text = b.displayLabel ?? `${b.label} ${b.kind}`;
                   const frac = (b.end - b.start) / windowMs;
-                  const stallStart = Math.max(b.start, l.lastEventAt > 0 ? l.lastEventAt + 30 * 60_000 : b.start);
-                  const stalled = l.silent && b.open && stallStart < b.end;
+                  const lastActivity = b.lastActivityAt ?? l.lastEventAt;
+                  const stallStart = Math.max(b.start, lastActivity + LIVENESS_MS);
+                  const stalled = b.open && lastActivity > 0 && stallStart < b.end;
                   return (
                     <div key={i} className="lt-bar" data-kind={b.kind} data-silent={stalled} data-subrow={pack.row[i]}
                       title={`${text}${b.displayLabel ? ` · ${b.kind}` : ""} · ${stageDuration(b.end - b.start)}${b.open ? " so far" : ""}`}

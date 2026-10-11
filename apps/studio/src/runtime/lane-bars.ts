@@ -6,6 +6,7 @@ export type BarKind = "implement" | "review" | "merge";
 export interface LaneBar {
   kind: BarKind; label: string; start: number; end: number; open: boolean; taskId?: string; since?: number;
   displayLabel?: string;
+  lastActivityAt?: number;
   /** #591: the issue a claim names; the head a review was assigned on. */
   issue?: number; headSha?: string;
 }
@@ -28,13 +29,19 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
   const open = new Map<string, { lane: string; bar: LaneBar; slice: string }>();
   // The kanban fold assigns every record to a slice; stable indices also survive PR renames.
   const routed = new Map<number, string>();
-  foldTaskEvents(events.map(({ at, ...event }) => ({ ...event, occurredAt: at })),
+  const slices = foldTaskEvents(events.map(({ at, ...event }) => ({ ...event, occurredAt: at })),
     (event, index) => routed.set(event.sequence, `slice-${index}`));
   const prOfKey = new Map<string, number>();
   const titleOf = new Map<string, string>();
   const headOf = new Map<string, string>();
   const authorOf = new Map<string, string>();
   const issueOf = new Map<string, number>();
+  // Read titles from the same completed slices that feed the kanban. Older records may
+  // carry a title only on the claim or PR opening, not on later timeline records.
+  slices.forEach((state, index) => {
+    const slice = `slice-${index}`;
+    if (state.title || state.prTitle) titleOf.set(slice, state.prTitle ?? state.title!);
+  });
   const laneOf = (name: string) => {
     let l = lanes.get(name);
     if (!l) { l = { bars: [], last: 0, record: null, awaiting: new Set() }; lanes.set(name, l); }
@@ -48,7 +55,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
     const issue = issueOf.get(slice);
     const title = titleOf.get(slice);
     const label = pr !== undefined ? `#${pr}` : taskId;
-    const bar: LaneBar = { kind, label, ...(title ? { displayLabel: `${pr !== undefined ? `#${pr}` : issue !== undefined ? `#${issue}` : taskId} ${title}` } : {}), start: t, end: now, open: true, taskId, since: t };
+    const bar: LaneBar = { kind, label, ...(title ? { displayLabel: `${pr !== undefined ? `#${pr}` : issue !== undefined ? `#${issue}` : taskId} ${title}` } : {}), start: t, end: now, open: true, taskId, since: t, lastActivityAt: t };
     if (issue !== undefined) bar.issue = issue;
     if (kind === "review" && headOf.has(slice)) bar.headSha = headOf.get(slice);
     laneOf(lane).bars.push(bar);
@@ -61,9 +68,9 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       }
     }
   };
-  const closePr = (pr: number, t: number, kind?: BarKind, head?: string) => {
+  const closePr = (pr: number, t: number, kind?: BarKind, head?: string, onlySlice?: string) => {
     for (const [key, value] of [...open]) {
-      if (prOfKey.get(value.slice) !== pr || (kind && value.bar.kind !== kind)
+      if (prOfKey.get(value.slice) !== pr || (onlySlice && value.slice !== onlySlice) || (kind && value.bar.kind !== kind)
         || (head && value.bar.headSha !== head)) continue;
       value.bar.end = t; value.bar.open = false; open.delete(key);
     }
@@ -73,10 +80,15 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
     if (!Number.isFinite(t)) continue;
     const slice = routed.get(e.sequence);
     if (slice === undefined) continue;
+    for (const v of open.values()) if (v.slice === slice && t >= (v.bar.lastActivityAt ?? 0)) v.bar.lastActivityAt = t;
     if (e.pr !== undefined) {
       prOfKey.set(slice, e.pr);
       if (e.kind === "task.pr_opened") {
-        for (const v of open.values()) if (v.slice === slice) v.bar.label = `#${e.pr}`;
+        for (const v of open.values()) if (v.slice === slice) {
+          v.bar.label = `#${e.pr}`;
+          const title = titleOf.get(slice);
+          if (title) v.bar.displayLabel = `#${e.pr} ${title}`;
+        }
       }
     }
     // #591: any record a lane leaves (claim, plan, pr_opened, assignment, verdict, merge) is a sign of life.
@@ -93,7 +105,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       }
     }
     if (e.issue !== undefined) issueOf.set(slice, e.issue);
-    if (typeof e.title === "string") {
+    if (typeof e.title === "string" && !titleOf.has(slice)) {
       titleOf.set(slice, e.title);
       for (const v of open.values()) if (v.slice === slice) v.bar.displayLabel = `${e.pr !== undefined ? `#${e.pr}` : e.issue !== undefined ? `#${e.issue}` : e.taskId} ${e.title}`;
     }
@@ -107,7 +119,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       case "task.released": close("implement", slice, t, e.lane); break;
       case "task.review_assigned": close("implement", slice, t); if (e.reviewer) start(e.reviewer, "review", e.taskId, slice, t); break;
       case "task.review_verdict":
-        if (e.pr !== undefined && e.headSha !== undefined) closePr(e.pr, t, "review", e.headSha);
+        if (e.pr !== undefined && e.headSha !== undefined) closePr(e.pr, t, "review", e.headSha, slice);
         if (e.headSha !== undefined && headOf.get(slice) !== undefined && e.headSha === headOf.get(slice)) {
           if (e.pr === undefined) close("review", slice, t);
           if (author && pr !== undefined) laneOf(author).awaiting.delete(pr);

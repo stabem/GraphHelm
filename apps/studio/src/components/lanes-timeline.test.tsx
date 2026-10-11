@@ -28,7 +28,21 @@ describe("LanesTimeline", () => {
     render(<LanesTimeline lanes={lanes} now={now} windowMs={1000} />);
     const row = within(screen.getByRole("list", { name: "Agent lanes" })).getByText("gh-claude-5").closest("li")!;
     expect(within(row).getByText("silent")).toBeInTheDocument();
-    expect(row.querySelector('[data-silent="true"]')).not.toBeNull();
+    expect(row.querySelector('[data-silent="true"]')).toBeNull();
+  });
+  it("hatches only the stalled part of each open bar", () => {
+    const hour = 3_600_000;
+    const current = 4 * hour;
+    const { container } = render(<LanesTimeline lanes={[{
+      lane: "dev", silent: false, lastEventAt: current, bars: [
+        { kind: "implement", label: "#1", start: 0, end: current, open: true, lastActivityAt: hour },
+        { kind: "review", label: "#2", start: 2 * hour, end: current, open: true, lastActivityAt: current },
+      ],
+    }]} now={current} windowMs={current} />);
+    const bars = container.querySelectorAll(".lt-bar");
+    expect(bars[0]).toHaveAttribute("data-silent", "true");
+    expect(bars[0]!.querySelector(".lt-stall")).toHaveStyle({ left: "37.5%" });
+    expect(bars[1]).toHaveAttribute("data-silent", "false");
   });
 
   it("shows the last merged PR per lane, else a dash", () => {

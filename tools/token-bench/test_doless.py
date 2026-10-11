@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import select
@@ -719,6 +720,52 @@ def test_reports_separate_inference_configurations_and_keep_unknown_cost_unknown
     summary = doless.summarise(rows)
     assert summary[("t", "a")]["cost"] is None
     assert summary[("t", "a@sha256:one")]["cost"] == 0.2
+
+
+def test_pair_audit_admits_only_frozen_task_pairs(tmp_path):
+    """A marginal PASS or equal cost cannot pair distinct identities; local subprocesses, <1s."""
+    rows_path = tmp_path / "rows.jsonl"
+    manifest_path = tmp_path / "manifest.json"
+    controls = {"parent": "p", "evaluator": "e", "environment": "env", "budget": "b", "timeout": "t"}
+
+    def row(session, task, arm, snapshot="snap", config=None):
+        return {"sessionId": session, "task": task, "taskSnapshot": snapshot, "split": "train",
+                "arm": arm, "configDigest": config or arm, "controls": controls,
+                "verdict": "PASS", "costUsd": 1.0}
+
+    def audit(rows, repeats):
+        raw = "".join(json.dumps(r) + "\n" for r in rows).encode()
+        rows_path.write_bytes(raw)
+        manifest = {"version": 1, "rowsSha256": hashlib.sha256(raw).hexdigest(),
+                    "comparison": "methodology", "weighting": "equal_task",
+                    "groups": [{"task": "one", "taskSnapshot": "snap", "split": "train",
+                                "controls": controls, "baseline": {"arm": "a", "configDigest": "a"},
+                                "candidate": {"arm": "k", "configDigest": "k"},
+                                "treatmentDifferences": ["arm", "configDigest"], "repeats": repeats}]}
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(HERE / "doless.py"), "pair-audit",
+                               "--manifest", str(manifest_path), "--rows", str(rows_path)],
+                              capture_output=True, text=True)
+        return proc, json.loads(proc.stdout) if proc.stdout else None
+
+    good = [row("a1", "one", "a"), row("k1", "one", "k")]
+    proc, report = audit(good, [{"baseline": "a1", "candidate": "k1"}])
+    assert proc.returncode == 0
+    assert report["admitted"] == [{"task": "one", "repeats": [{"baseline": "a1", "candidate": "k1"}],
+                                    "costKnown": True}]
+    assert "recommendation" not in report and "savings" not in report
+
+    cases = [([good[0], row("k1", "other", "k")], "task_mismatch"),
+             ([good[0], row("k1", "one", "k", snapshot="changed")], "snapshot_mismatch"),
+             ([good[0], row("k1", "one", "k", config="other")], "configuration_mismatch"),
+             ([good[0], good[0], good[1]], "duplicate_session"),
+             ([good[1]], "missing_control")]
+    for rows, reason in cases:
+        proc, report = audit(rows, [{"baseline": "a1", "candidate": "k1"}])
+        assert proc.returncode == 0, proc.stderr
+        assert report["admitted"] == []
+        assert reason in [item["reason"] for item in report["excluded"]]
+        assert "recommendation" not in report and "savings" not in report
 
 
 def test_configured_run_records_requested_effort_and_incomplete_usage(tmp_path, monkeypatch):

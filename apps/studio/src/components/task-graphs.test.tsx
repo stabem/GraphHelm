@@ -167,6 +167,18 @@ describe("TaskGraphs order (#481)", () => {
   const opened = (n: number, seq: number) => record(seq, `issue-${n}`, "task.pr_opened", "gh-claude-2", { pr: n + 100, headSha: head, journeys: [], lane: "gh-claude-2" });
   const number = (group: HTMLElement) => /#(\d+)/.exec(group.getAttribute("aria-label") ?? "")?.[1];
 
+  it("moves a released claim out of open Tasks while keeping its history", () => {
+    const events = [claim(790), claim(791)];
+    const { rerender } = render(<TaskGraphs tasks={foldTaskEvents(events)} onOpenJourney={vi.fn()} />);
+    expect(screen.getAllByRole("group").map(number)).toEqual(["791", "790"]);
+    const released = record(8000, "issue-790", "task.released", "gh-claude-2", {
+      lane: "gh-claude-2", claimSequence: 7900, reason: "claim ended",
+    });
+    rerender(<TaskGraphs tasks={foldTaskEvents([...events, released])} onOpenJourney={vi.fn()} />);
+    expect(screen.getAllByRole("group").filter((group) => !group.closest("details")).map(number)).toEqual(["791"]);
+    expect(within(screen.getByText("Released (1)").closest("details")!).getByRole("group", { name: /issue #790/i })).toBeInTheDocument();
+  });
+
   it("puts blocked, then in review, then implementing first, newest first, and folds delivered tasks last", () => {
     const tasks = foldTaskEvents([
       claim(1),

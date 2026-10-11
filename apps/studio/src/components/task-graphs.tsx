@@ -53,10 +53,11 @@ export function plainTitle(text: string): string {
 function rank(task: TaskState): number {
   return task.blockedBy !== null ? 0 : task.step === "review" || task.step === "merge" ? 1 : 2;
 }
-function ordered(tasks: TaskState[]): { open: TaskState[]; delivered: TaskState[] } {
+function ordered(tasks: TaskState[]): { open: TaskState[]; released: TaskState[]; delivered: TaskState[] } {
   const newest = (a: TaskState, b: TaskState) => b.lastSequence - a.lastSequence;
   return {
-    open: tasks.filter((task) => task.step !== "merged").sort((a, b) => rank(a) - rank(b) || newest(a, b)),
+    open: tasks.filter((task) => task.step !== "merged" && task.releasedBy === undefined).sort((a, b) => rank(a) - rank(b) || newest(a, b)),
+    released: tasks.filter((task) => task.releasedBy !== undefined && task.step !== "merged").sort(newest),
     delivered: tasks.filter((task) => task.step === "merged").sort(newest),
   };
 }
@@ -92,14 +93,19 @@ function cardsOf(tasks: TaskState[]): Card[] {
   return [...cards.values()];
 }
 /** A card sits where its worst open row would; it is delivered only when every row is merged. */
-export function orderedCards(tasks: TaskState[]): { open: Card[]; delivered: Card[] } {
+export function orderedCards(tasks: TaskState[]): { open: Card[]; released: Card[]; delivered: Card[] } {
   const all = cardsOf(tasks).map((card) => ({ card, ...ordered(card.rows) }));
   const latest = (rows: TaskState[]) => Math.max(...rows.map((row) => row.lastSequence));
   const open = all.filter((entry) => entry.open.length > 0)
     .sort((a, b) => rank(a.open[0]) - rank(b.open[0]) || latest(b.card.rows) - latest(a.card.rows));
-  const delivered = all.filter((entry) => entry.open.length === 0).sort((a, b) => latest(b.card.rows) - latest(a.card.rows));
-  const rowsInOrder = (entry: (typeof all)[number]): Card => ({ ...entry.card, rows: [...entry.open, ...entry.delivered] });
-  return { open: open.map(rowsInOrder), delivered: delivered.map(rowsInOrder) };
+  const released = all.filter((entry) => entry.released.length > 0).sort((a, b) => latest(b.released) - latest(a.released));
+  const delivered = all.filter((entry) => entry.open.length === 0 && entry.delivered.length > 0)
+    .sort((a, b) => latest(b.delivered) - latest(a.delivered));
+  return {
+    open: open.map((entry) => ({ ...entry.card, rows: [...entry.open, ...entry.delivered] })),
+    released: released.map((entry) => ({ ...entry.card, rows: entry.released })),
+    delivered: delivered.map((entry) => ({ ...entry.card, rows: entry.delivered })),
+  };
 }
 
 /** #477: the rows whose last record moved since the previous render, marked for a few seconds so
@@ -338,7 +344,7 @@ export function TaskGraphs({ tasks, onOpenJourney, now: fixedNow }: TaskGraphsPr
   if (tasks.length === 0) return null;
   // #562: a critic round for a task nobody claimed is not a task card.
   const unclaimed = tasks.filter(isUnclaimedCritic);
-  const { open, delivered } = orderedCards(tasks.filter((task) => !isUnclaimedCritic(task)));
+  const { open, released, delivered } = orderedCards(tasks.filter((task) => !isUnclaimedCritic(task)));
   const clocks = tasks.filter((task) => task.step === "merged").map((task) => task.clock);
   const steps: TimedStep[] = ["plan", "critic", "implement", "review", "merge"];
   const timing: Timing = {
@@ -358,6 +364,12 @@ export function TaskGraphs({ tasks, onOpenJourney, now: fixedNow }: TaskGraphsPr
             </p>
           ))}
         </div>
+      )}
+      {released.length > 0 && (
+        <details className="task-graphs-delivered">
+          <summary>Released ({released.length})</summary>
+          {released.map((card) => <CardView key={card.key} card={card} changed={changed} onOpenJourney={onOpenJourney} timing={timing} />)}
+        </details>
       )}
       {delivered.length > 0 && (
         <details className="task-graphs-delivered">

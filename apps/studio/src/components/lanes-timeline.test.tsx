@@ -17,6 +17,20 @@ const t = (over: Partial<MissionTask>): MissionTask => ({
 const round = { reviewer: "r", headSha: "h", fixHead: "f" };
 
 describe("LanesTimeline", () => {
+  it("hatches a closed bar's quiet time and explains its end record", () => {
+    const hour = 3_600_000;
+    const closed = { lane: "dev", silent: false, lastEventAt: now, bars: [{
+      kind: "implement" as const, label: "#548", start: now - 27 * hour, end: now, open: false,
+      lastActivityAt: now - 27 * hour, endedBy: { kind: "released", actor: "supervisor" },
+    }] };
+    const { container } = render(<LanesTimeline lanes={[closed]} now={now} windowMs={28 * hour} />);
+    const bar = container.querySelector<HTMLElement>('.lt-bar[data-kind="implement"]')!;
+    expect(bar.dataset.silent).toBe("true");
+    expect(parseFloat(bar.querySelector<HTMLElement>(".lt-stall")!.style.left)).toBeCloseTo(100 / 54);
+    expect(bar.title).toContain("worked 30m");
+    expect(bar.title).toContain("quiet 1d 2h");
+    expect(bar.title).toContain("ended by released (supervisor)");
+  });
   it("places bars on the window", () => {
     render(<LanesTimeline lanes={lanes} now={now} windowMs={1000} />);
     const bar = screen.getByText("#559 implement").closest("[data-kind]") as HTMLElement;

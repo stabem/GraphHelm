@@ -14,6 +14,9 @@ export interface StepClock {
   spent: Partial<Record<TimedStep, number>>;
 }
 
+/** #591: gaps at least this long are lane stalls, not active work (#781). */
+export const ACTIVE_GAP_MS = 30 * 60_000;
+
 export function emptyClock(): StepClock {
   return { since: null, spent: {} };
 }
@@ -26,13 +29,17 @@ function millis(at: string | null | undefined): number | null {
 
 /** Moves the clock when a record changes the slice's step. A record that leaves the step as it was
  * (an assignment, a stray verdict) only starts the clock when it had no start yet. */
-export function clockStep(clock: StepClock, before: string, after: string, at: string | null | undefined): void {
+export function clockStep(clock: StepClock, before: string, after: string, at: string | null | undefined, resumeAfterGap = false): void {
   const now = millis(at);
+  const since = millis(clock.since);
+  if (resumeAfterGap && since !== null && now !== null && now >= since && now - since >= ACTIVE_GAP_MS) {
+    clock.since = at!;
+    return;
+  }
   if (before === after) {
     if (clock.since === null && now !== null) clock.since = at!;
     return;
   }
-  const since = millis(clock.since);
   if (since !== null && now !== null && now >= since && (before === "plan" || before === "critic" || before === "implement" || before === "review" || before === "merge")) {
     clock.spent[before] = (clock.spent[before] ?? 0) + (now - since);
   }

@@ -151,12 +151,13 @@ function splitDraftTitle(title: string): { name: string; note: string | null } {
   const match = title.match(/^(.*?)\s*\(draft:\s*(.*?)\)\s*$/i);
   return match ? { name: match[1]!, note: match[2]! } : { name: title, note: null };
 }
-function JourneyRailButton({ mission, flow, selected, onSelect }: { mission: Mission; flow?: JourneyFlowView; selected: boolean; onSelect(): void }) {
+function JourneyRailButton({ mission, flow, duplicateTitle, selected, onSelect }: { mission: Mission; flow?: JourneyFlowView; duplicateTitle: boolean; selected: boolean; onSelect(): void }) {
   const { name, note } = splitDraftTitle(mission.title);
   const stale = flow !== undefined && flow.title !== null && (flow.title !== mission.title || flow.screens.length !== mission.steps.length || flow.screens.some((screen, index) => screen.id !== mission.steps[index]?.stepId));
   const title = stale && flow.title ? flow.title : name;
-  return <button type="button" className="mv-journey" aria-pressed={selected} title={note ? `Draft: ${note}` : title} onClick={onSelect}>
+  return <button type="button" className="mv-journey mv-proof-journey" aria-pressed={selected} title={note ? `Draft: ${note}` : title} onClick={onSelect}>
     <span className="mv-journey-title">{title}</span>
+    {duplicateTitle && <span className="mv-journey-id">{mission.contractId}</span>}
     {note && <span className="mv-draft-tag" title={note}>draft</span>}
     {stale && <span className="mv-draft-tag" title="The compiled contract does not match the current flow">contract out of date</span>}
     <span className="mv-journey-count">{`${mission.summary.proven}/${mission.summary.total}`}</span>
@@ -240,6 +241,10 @@ export function MissionView({ journeys, flows = [], tasks, taskRecords = [], run
   const [unlinkedOpen, setUnlinkedOpen] = useState(false);
   const missions = useMemo(() => journeys.map((j) => buildMission(j, runFor(j.contractId), tasks, taskRecords)), [journeys, tasks, taskRecords, runFor]);
   const [goneQuietOpen, setGoneQuietOpen] = useState(false);
+  const proofTitles = missions.map((m) => {
+    const flow = flows.find((f) => f.id === m.contractId);
+    return flow?.title && flow.title !== m.title ? flow.title : splitDraftTitle(m.title).name;
+  });
   const groups = useMemo(() => buildWorkGroups(tasks, journeys, runFor), [tasks, journeys, runFor]);
   const orphans = useMemo(() => unlinkedTasks(journeys, tasks), [journeys, tasks]);
   const allTasks = useMemo(() => tasks.map(toMissionTask), [tasks]);

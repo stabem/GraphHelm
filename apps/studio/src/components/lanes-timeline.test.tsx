@@ -17,6 +17,22 @@ const t = (over: Partial<MissionTask>): MissionTask => ({
 const round = { reviewer: "r", headSha: "h", fixHead: "f" };
 
 describe("LanesTimeline", () => {
+  it("hatches only the middle quiet span and counts it in the tooltip", () => {
+    const hour = 3_600_000;
+    const closed = { lane: "dev", silent: false, lastEventAt: now, bars: [{
+      kind: "implement" as const, label: "#783", start: now - 14 * hour, end: now, open: false,
+      lastActivityAt: now - 5 * 60_000,
+      quietSpans: [{ start: now - 13 * hour, end: now - hour }],
+    }] };
+    const { container } = render(<LanesTimeline lanes={[closed]} now={now} windowMs={14 * hour} />);
+    const bar = container.querySelector<HTMLElement>('.lt-bar[data-kind="implement"]')!;
+    const hatch = bar.querySelector<HTMLElement>(".lt-stall")!;
+    expect(bar.dataset.silent).toBe("true");
+    expect(parseFloat(hatch.style.left)).toBeCloseTo(100 / 14, 1);
+    expect(parseFloat(hatch.style.width)).toBeCloseTo(1200 / 14, 1);
+    expect(bar.title).toContain("worked 2h");
+    expect(bar.title).toContain("quiet 12h");
+  });
   it("hatches a closed bar's quiet time and explains its end record", () => {
     const hour = 3_600_000;
     const closed = { lane: "dev", silent: false, lastEventAt: now, bars: [{

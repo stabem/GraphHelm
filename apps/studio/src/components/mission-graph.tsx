@@ -345,7 +345,7 @@ export function CurrentCard({ cell: c, stage, task: t, health, pace, selected, l
         <span className="mg-node-pr">{prText(t)}</span>
       </span>
       <span className="mg-node-title" title={t.title}>{t.title}</span>
-      {c.sub && <span className="mg-node-sub" title={c.sub}>{c.sub}</span>}
+      {c.sub && <span className="mg-node-sub" title={c.sub.replace(who, "").trim()}>{c.sub.replace(who, "").trim()}</span>}
       {flag && <HealthFlag health={flag} time={false} />}
       <span className="mg-node-foot">
         <WhoLine who={who} />

@@ -251,7 +251,9 @@ describe("PR #581's shape on the Graph (#591)", () => {
       const { container } = render(<MissionView journeys={[]} tasks={[task]} runFor={() => null} lanes={lanes} now={NOW} frameUrl={() => ""} onMarkSafe={vi.fn()} />);
       const card = container.querySelector('.mg-node[data-current="true"]')!;
       expect(card.querySelector(".mg-node-label")).toHaveTextContent("Re-review");
-      expect(card.querySelector(".mg-node-sub")).toHaveTextContent("waiting on gh-claude-8");
+      expect(card.querySelector(".mg-node-sub")).toHaveTextContent("waiting on");
+      expect(card.querySelector(".mg-node-sub")).not.toHaveTextContent("gh-claude-8");
+      expect(card.querySelector(".mg-node-who")!.textContent).toBe("gh-claude-8");
       expect(card.querySelector(".mg-node-who")).toHaveTextContent("gh-claude-8");
       expect(card).toHaveTextContent("3h 00m 00s");
       expect(container).not.toHaveTextContent("Fixing");

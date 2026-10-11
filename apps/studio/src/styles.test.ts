@@ -343,3 +343,10 @@ describe("Graph tab on a phone (#591)", () => {
     expect(sheet).toMatch(/\.mv\[data-wide="true"\]:not\(\[data-chat="open"\]\)\)\s*>\s*:is\(\.chat-column\)/);
   });
 });
+
+describe("Proof progress text stays readable in narrow cards", () => {
+  it("keeps each count and its word together", () => {
+    const rule = (CSS.match(/\.mv-progress-text\s*\{([^}]*)\}/g) ?? []).join(" ");
+    expect(rule).toMatch(/white-space:\s*nowrap/);
+  });
+});

@@ -203,7 +203,7 @@ export function ChatColumn(props: ChatColumnProps) {
             <button key={candidate.key} type="button" role="tab" aria-selected={candidate.key === thread?.key}
               className={candidate.older ? "chat-tab-older" : undefined}
               aria-label={unread > 0 ? `${candidate.label}, ${unread} unread` : candidate.label} onClick={() => props.onSelect(candidate.key)}>
-              {candidate.label}{unread > 0 && <span className="chat-unread" aria-hidden="true">{unread}</span>}
+              {candidate.label}{unread > 0 && <span className="chat-unread" aria-label={`${unread} unread`}>{unread}</span>}
             </button>
           );
         })}

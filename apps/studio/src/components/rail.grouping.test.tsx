@@ -26,7 +26,7 @@ const rail = (runs: ExecutionSummary[]) => render(
   />,
 );
 
-const order = () => screen.getAllByRole("button", { name: /; Last event/ }).map((button) => button.textContent ?? "");
+const order = () => screen.getAllByRole("button", { name: /; (?:yesterday|now|\d+ (?:min|h|d) ago)/ }).map((button) => button.textContent ?? "");
 
 afterEach(() => window.localStorage.clear());
 

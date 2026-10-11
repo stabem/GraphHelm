@@ -10,8 +10,8 @@ import type { ExecutionSummary } from "../runtime/types";
 /**
  * #1083 F7: the rail listed CLI- and HTTP-started runs by their execution id although the store
  * held their objective; only composer-started `run-<uuid>` rows were named. Every row with an
- * objective is named by it now, and the id stays ON the row as secondary text - the address a
- * CLI command needs - rather than only in a tooltip. A row whose briefing has no objective keeps
+ * objective is named by it now, and the rail keeps the full text in a tooltip while showing a
+ * short title. A row whose briefing has no objective keeps
  * its id as its only name, once.
  */
 const row = (executionId: string): ExecutionSummary => ({
@@ -26,6 +26,40 @@ const row = (executionId: string): ExecutionSummary => ({
 });
 
 describe("naming rows on the rail", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("keeps a long run name to one short title and a relative status line", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-11T12:00:00.000Z"));
+    const objective = "Produce a deployment report for the conservative core strategy before the October release review";
+    render(
+      <ProjectRail
+        projects={[{ name: "store", runs: [{ ...row("core_conservative_2026_10_10"), executor: "gateway", objective, lastEventAt: "2026-10-11T10:00:00.000Z" }] }]}
+        selected=""
+        connected
+        hasMore={false}
+        busy={false}
+        onSelect={vi.fn()}
+        onLoadMore={vi.fn()}
+        onNewTask={vi.fn()}
+        onAddProject={vi.fn()}
+        onOpenModels={vi.fn()}
+      />,
+    );
+
+    const run = screen.getByRole("button", { name: /Produce a deployment report/ });
+    const title = within(run).getByText(/Produce a deployment report for the/);
+    expect(title?.textContent?.slice(0, -1)).toBe("Produce a deployment report for the");
+    expect(title?.textContent?.endsWith("…")).toBe(true);
+    expect(title.textContent!.length).toBeLessThanOrEqual(40);
+    expect(title).toHaveAttribute("title", objective);
+    expect(run).toHaveTextContent("2 h ago · completed");
+    expect(run).toHaveAccessibleName(/2 h ago · completed/);
+    expect(run).not.toHaveTextContent("Last event");
+    expect(run).not.toHaveTextContent("2026-10-11T10:00:00.000Z");
+    expect(run).not.toHaveAccessibleName(/core_conservative_2026_10_10/);
+  });
+
   it("names a cancelled run as cancelled even when its stored attention is calm", () => {
     render(
       <ProjectRail
@@ -150,15 +184,15 @@ describe("activity-ordered run history", () => {
     const unknownTime = screen.getByRole("group", { name: /activity time unknown/i });
     const unknownRows = within(unknownTime).getAllByRole("button");
     expect(unknownRows[0]).toHaveTextContent("invalid-time");
-    expect(unknownRows[0]).toHaveTextContent("status completed");
+    expect(unknownRows[0]).toHaveTextContent("Time unknown · completed");
     expect(unknownRows[1]).toHaveTextContent("missing-time");
-    expect(unknownRows[1]).toHaveTextContent("status blocked");
-    expect(unknownTime).toHaveTextContent("Last event unknown");
+    expect(unknownRows[1]).toHaveTextContent("Time unknown · blocked");
+    expect(unknownTime).toHaveTextContent("Time unknown");
     expect(screen.getByRole("group", { name: /status unknown/i })).toHaveTextContent("unknown");
     expect(screen.getByRole("button", { name: /show history/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /newer-history/ })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /show history/i }));
-    expect(screen.getByRole("button", { name: /newer-history/ })).toHaveTextContent("Last event");
+    expect(screen.getByRole("button", { name: /newer-history/ })).toHaveTextContent("ago");
     expect(screen.getByText(/Loaded runs only/)).toBeInTheDocument();
   });
 
@@ -203,18 +237,21 @@ describe("a truncated row says its whole name on hover", () => {
     );
   }
 
-  it("titles the name line with the full name, not with the id printed below it", () => {
+  it("shows a short word-bounded title and keeps the full name on hover", () => {
     railWithCollidingNames();
-    const first = screen.getByRole("button", { name: new RegExp(long) });
-    const name = within(first).getByText(long);
+    const name = screen.getAllByText(/Produzir build de homologacao para o/)[0];
+    const first = name.closest("button");
+    expect(first).not.toBeNull();
     expect(name).toHaveClass("run-id");
     expect(name).toHaveAttribute("title", long);
+    expect(name.textContent!.length).toBeLessThanOrEqual(40);
+    expect(name.textContent!.slice(0, -1)).toBe("Produzir build de homologacao para o");
+    expect(first).not.toHaveAccessibleName(/run-aaaa1111/);
   });
 
-  it("titles the address line with the full id, which is what gets cut", () => {
+  it("keeps the visible address available as its own hover title", () => {
     railWithCollidingNames();
-    const second = screen.getByRole("button", { name: new RegExp(other) });
-    expect(within(second).getByText("run-bbbb2222")).toHaveAttribute("title", "run-bbbb2222");
+    expect(screen.getByText("run-bbbb2222")).toHaveAttribute("title", "run-bbbb2222");
   });
 
   // #1171: the models entry point had no cell at all. A review lane proved it by rewiring

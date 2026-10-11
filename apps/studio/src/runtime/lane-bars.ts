@@ -136,7 +136,6 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       case "task.review_verdict":
         if (e.pr !== undefined && e.headSha !== undefined) closePr(e.pr, t, e, "review", e.headSha, slice);
         if (e.headSha !== undefined && headOf.get(slice) !== undefined && e.headSha === headOf.get(slice)) {
-          if (e.pr === undefined) close("review", slice, t);
           if (e.pr === undefined) close("review", slice, t, e, e.reviewer);
           if (author && pr !== undefined) laneOf(author).awaiting.delete(pr);
         }

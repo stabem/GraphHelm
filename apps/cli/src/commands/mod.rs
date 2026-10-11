@@ -69,8 +69,8 @@ pub fn run(command: TopLevel) -> Outcome {
                 url,
                 token_file,
             } => tasks::run_ended(
-                &execution,
-                &lane,
+                execution,
+                lane,
                 *exit,
                 result_file.as_deref(),
                 run_id.as_deref(),

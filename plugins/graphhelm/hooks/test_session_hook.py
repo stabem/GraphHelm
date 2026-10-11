@@ -127,6 +127,10 @@ class SessionHookTests(unittest.TestCase):
             (companion / "hooks" / "session_hook.py").read_bytes(),
         )
         self.assertEqual(
+            (SCRIPT.parent / "subagent_hook.py").read_bytes(),
+            (companion / "hooks" / "subagent_hook.py").read_bytes(),
+        )
+        self.assertEqual(
             (SCRIPT.parent / "task_handoff.py").read_bytes(),
             (companion / "hooks" / "task_handoff.py").read_bytes(),
         )

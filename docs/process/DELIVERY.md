@@ -122,8 +122,8 @@ batch boundaries instead of holding it for the entire proof script. Pass `--no-b
 force one slot invocation per Cargo command; `--batch-slot` remains accepted for compatibility.
 The CLI enforces direct, package-scoped Cargo admission before creating a ticket; scripts and
 workspace-wide commands are refused. Test invocations name targets. Explicit whole-package
-plans enumerate their target obligations and release between them; authorization never silently
-narrows coverage. This enforcement requires an upgraded CLI binary.
+plans enumerate every target as a separate command and release at the same bounded batch
+boundaries; authorization never silently narrows coverage. This enforcement requires an upgraded CLI binary.
 Its 180-second target includes planning, queue and execution. Record the report and any pending
 checks in the PR; a budget miss is never green. This replaces the long-script slot pattern, not
 the existing review or load limits. Reached browser observers additionally require

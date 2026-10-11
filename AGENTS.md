@@ -118,6 +118,8 @@ exact two-target pair only; all other multiple target selectors remain separate 
 Whole-package `graphhelm-cli --test cli` plans must use registered bundle-module filters, skip
 prior modules on later filters, and add a `--skip` complement for inline/root tests; missing bundle
 metadata is unsupported, never a broad unfiltered fallback.
+The same partition applies when a single reached target is the unfiltered `graphhelm-cli` `cli`
+bundle; the renderer requires supplied bundle metadata.
 
 ```powershell
 cargo +1.97.1 fmt --all -- --check

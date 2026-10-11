@@ -165,12 +165,19 @@ class SessionHookTests(unittest.TestCase):
             self.assertEqual(module._lane_actor({"session_id": "s1"}), "gh-claude-6")
 
     def test_invalid_title_reports_unbound_session(self):
-        result = subprocess.run([sys.executable, str(SCRIPT), "start", "--host", "claude"],
-            input=json.dumps({"hook_event_name": "SessionStart", "session_id": "s1",
-                              "session_title": "just words here"}), text=True,
-            capture_output=True, env=self.env, timeout=12)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("lane not bound: title has no lane id", result.stdout)
+        env = {**self.env, "GRAPHHELM_KEEL_CONTEXT": "1"}
+        for output_format in ("native", "portable"):
+            with self.subTest(output_format=output_format):
+                args = [sys.executable, str(SCRIPT), "start", "--host", "claude"]
+                if output_format == "portable":
+                    args += ["--format", "portable"]
+                result = subprocess.run(args,
+                    input=json.dumps({"hook_event_name": "SessionStart", "session_id": "s1",
+                                      "session_title": "just words here"}), text=True,
+                    capture_output=True, env=env, timeout=12)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIsInstance(json.loads(result.stdout), dict)
+                self.assertIn("lane not bound: title has no lane id", result.stderr)
 
     def test_hook_input_accepts_fragmented_json_without_waiting_for_eof(self):
         spec = importlib.util.spec_from_file_location("session_hook_framing", SCRIPT)

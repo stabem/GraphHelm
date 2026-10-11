@@ -98,7 +98,7 @@ def _remember_lane(payload: dict) -> None:
     actor = title.split(" - ", 1)[0] if isinstance(title, str) and " - " in title else title
     if not isinstance(actor, str) or not ID.fullmatch(actor):
         if isinstance(title, str):
-            print("lane not bound: title has no lane id")
+            print("lane not bound: title has no lane id", file=sys.stderr)
         return
     if not isinstance(session, str) or not ID.fullmatch(session):
         return

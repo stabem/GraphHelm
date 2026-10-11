@@ -198,7 +198,14 @@ export function useJourneyRun(flowId: string, source: JourneyRunSource | undefin
       kept.clear();
     };
   }, []);
-  return { offered: source !== undefined && !absent, run, frames, failure, again: () => setAttempt((before) => ({ n: before.n + 1, confirm: false })), confirm: () => { setStarting(true); setAttempt((before) => ({ n: before.n + 1, confirm: true })); }, confirming: attempt.confirm && starting };
+  return { offered: source !== undefined && !absent, run, frames, failure, again: () => {
+    for (const entry of held.current.values()) if (entry.url !== null) URL.revokeObjectURL(entry.url);
+    held.current.clear();
+    setFrames({});
+    setRun(null);
+    setFailure(null);
+    setAttempt((before) => ({ n: before.n + 1, confirm: false }));
+  }, confirm: () => { setStarting(true); setAttempt((before) => ({ n: before.n + 1, confirm: true })); }, confirming: attempt.confirm && starting };
 }
 
 /** The page a Watch is playing (#519): read five times a second while it plays, and once more

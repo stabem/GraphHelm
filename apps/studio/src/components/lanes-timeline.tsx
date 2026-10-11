@@ -56,20 +56,21 @@ const nameable = (b: Bot) => b.actorId !== null && b.role === null && !b.native 
 
 const PILL: Record<AgentStatus, string> = { silent: "Silent", stale: "Stale claim", building: "Building", build_wait: "Waiting for build", working: "Working", awaiting: "Awaiting review", waiting: "Waiting", free: "Free", offline: "Offline" };
 const STAGE: Record<string, string> = { implement: "implementing", review: "reviewing", merge: "merging" };
-type Filter = "all" | "working" | "free" | "silent" | "offline";
+type Filter = "all" | "working" | "waiting" | "free" | "silent" | "offline";
 
 function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: AgentRow[]; agents?: Bot[] } & BotActions) {
   const [filter, setFilter] = useState<Filter>("all");
-  const count = (f: Filter) => rows.filter((r) => f === "all" ? r.status !== "offline" : r.status === f).length;
-  const shown = rows.filter((r) => filter === "all" ? r.status !== "offline" : r.status === filter);
+  const matches = (r: AgentRow, f: Filter) => f === "all" ? r.status !== "offline" : f === "waiting" ? r.status === "waiting" || r.status === "awaiting" || r.status === "build_wait" : r.status === f;
+  const count = (f: Filter) => rows.filter((r) => matches(r, f)).length;
+  const shown = rows.filter((r) => matches(r, filter));
   return (
     <section className="ab" aria-label="Agents">
       <div className="ab-head">
         <h2>Agents</h2>
         <div className="ab-chips" role="group" aria-label="Filter agents">
-          {(["all", "working", "free", "silent", "offline"] as const).map((f) => (
+          {(["all", "working", "waiting", "free", "silent", "offline"] as const).map((f) => (
             <button key={f} type="button" className="ab-chip" aria-pressed={filter === f} onClick={() => setFilter(f)}>
-              {`${f === "all" ? "All" : PILL[f]} ${count(f)}`}
+              {`${f === "all" ? "Available" : f === "waiting" ? "Waiting" : PILL[f]} ${count(f)}`}
             </button>
           ))}
         </div>
@@ -166,6 +167,13 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
   const ticks: string[] = [];
   for (let h = hours; h > 0; h -= step) ticks.push(`−${h}h`);
   const delivered = lastDelivered(tasks);
+  const boardByLane = new Map<string, AgentRow>();
+  for (const row of board) {
+    boardByLane.set(row.name, row);
+    const bot = agents.find((b) => b.name === row.name);
+    if (bot?.actorId) boardByLane.set(bot.actorId, row);
+    if (bot?.key) boardByLane.set(bot.key, row);
+  }
   // #591: free hands are the board's Free rows: no open slice, no PR awaiting review, no review owed.
   const cards = { ...laneCards(lanes, tasks), free: board.filter((r) => r.status === "free").map((r) => r.name) };
   const card = (items: string[]) => (items.length ? items.join(", ") : "none right now");
@@ -196,14 +204,16 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
       <ul className="lt-lanes" aria-label="Agent lanes" ref={listRef}>
         {lanes.map((l) => {
           const open = l.bars.some((b) => b.open);
+          const status = boardByLane.get(l.lane)?.status;
+          const presence = status === "offline" ? "offline" : status === "silent" || l.silent ? "silent" : status === "working" || status === "building" ? "busy" : status === "free" ? "idle" : open ? "busy" : "idle";
           const pack = packBars(l.bars);
           const trackH = pack.rows * SUB_H + (pack.rows - 1) * SUB_GAP + TRACK_PAD * 2;
           return (
             <li key={l.lane} className="lt-row lt-lane" style={{ height: Math.max(44, trackH + 14) }}>
               <span className="lt-who">
-                <span className="lt-dot" data-state={l.silent ? "silent" : open ? "busy" : "idle"} />
+                <span className="lt-dot" data-state={presence} />
                 <span className="lt-name">{botOf(l) ?? l.lane}</span>
-                {l.silent ? <span className="lt-flag" data-flag="silent">silent</span> : !open && <span className="lt-flag" data-flag="free">free</span>}
+                {presence === "silent" ? <span className="lt-flag" data-flag="silent">silent</span> : presence === "offline" ? <span className="lt-flag" data-flag="offline">offline</span> : presence === "idle" && <span className="lt-flag" data-flag="free">free</span>}
               </span>
               <div className="lt-track" style={{ height: trackH }} data-subrows={pack.rows}>
                 <span className="lt-nowline" aria-hidden="true" />

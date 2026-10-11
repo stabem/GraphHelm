@@ -24,9 +24,11 @@
 .lt-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: #5C6170; }
 .lt-dot[data-state="busy"] { background: var(--mv-work); }
 .lt-dot[data-state="silent"] { background: var(--mv-stalled); }
+.lt-dot[data-state="offline"] { background: #8D929C; }
 .lt-name { font-family: var(--mono); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lt-flag { font-family: var(--mono); font-size: 10px; padding: 2px 6px; border-radius: 4px; background: #1B1E2C; color: var(--mv-ready); }
 .lt-flag[data-flag="silent"] { background: #3A1E1A; color: #FF8A7E; }
+.lt-flag[data-flag="offline"] { background: #2A2D34; color: #C7CBD3; }
 .lt-track { position: relative; height: 24px; box-sizing: border-box; background: #101115; border-radius: 6px; border: 1px solid #1A1C21; overflow: hidden; }
 .lt-bar { position: absolute; height: 18px; border-radius: 4px; min-width: 2px; display: flex; align-items: center; padding: 0 6px; box-sizing: border-box; overflow: hidden;
   font-family: var(--mono); font-size: 10.5px; font-weight: 500; color: #0B0C0F; background: var(--mv-implement); }
@@ -63,7 +65,7 @@
 @media (min-width: 1700px) {
   .ab-rows { grid-template-columns: minmax(96px, max-content) minmax(13ch, max-content) minmax(0, 1fr) minmax(0, 260px) minmax(0, 2fr) auto; }
 }
-.ab-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; gap: 14px; align-items: center; padding: 8px 12px; line-height: 1.35; border-radius: 8px; background: #111216; border: 1px solid #1A1C21; }
+.ab-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; gap: 14px; align-items: center; padding: 8px 12px; line-height: 1.35; border-radius: 8px; background: #111216; border: 1px solid #1A1C21; min-width: 0; }
 .ab-row:hover { background: #16181D; border-color: #2A2D35; }
 .ab-row:focus-within { border-color: #4A4F5C; }
 .ab-act:focus-visible, .ab-chip:focus-visible, .ab-what a:focus-visible { outline: 2px solid #8FB3D9; outline-offset: 2px; }
@@ -77,7 +79,8 @@
 .ab-name { font-family: var(--mono); font-size: 12.5px; min-width: 13ch; overflow-wrap: normal; word-break: keep-all; hyphens: manual; }
 .ab-what { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; color: #C9CCD2; }
 .ab-doing { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
-.ab-tag { display: inline-block; max-width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 6px; background: #1C1F25; border: 1px solid #2A2D35; color: #C7CBD3; }
+.ab-tag { display: inline-block; max-width: 100%; min-width: 0; box-sizing: border-box; font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 6px; background: #1C1F25; border: 1px solid #2A2D35; color: #C7CBD3; }
+.ab-tag > span { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 .ab-last { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
 .ab-what a { color: #8FB3D9; }
 .ab-for { font-family: var(--mono); font-size: 12px; color: #E9E7E2; overflow-wrap: break-word; }

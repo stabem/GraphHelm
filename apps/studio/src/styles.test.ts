@@ -164,7 +164,11 @@ describe("the Team tab is a column that reserves the dock (#481)", () => {
 describe("the Lanes kanban fits six columns without a minimum-width overflow (#759)", () => {
   it("lets the six columns shrink to the available board width", () => {
     expect(STYLESHEETS["./components/work-kanban.css"])
-      .toMatch(/\.wk\s*\{[^}]*grid-template-columns:\s*repeat\(6,\s*minmax\(0,\s*1fr\)\)/s);
+      .toMatch(/\.wk\s*\{[^}]*grid-template-columns:\s*repeat\(6,\s*minmax\(0,\s*1fr\)\)[^}]*min-width:\s*0/s);
+  });
+  it("keeps card titles within two lines before truncating", () => {
+    const kanban = STYLESHEETS["./components/work-kanban.css"];
+    expect(kanban).toMatch(/\.wk \.mg-node-title\s*\{[^}]*-webkit-line-clamp:\s*2[^}]*overflow:\s*hidden/s);
   });
 });
 

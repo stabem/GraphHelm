@@ -263,6 +263,20 @@ Record only as yourself. Recording as another lane is a protocol violation the R
 
 ## 5. Naming and messages
 
+### Codex process end
+
+The coordinator launcher records a process end after `codex exec` returns. Preserve its exit
+code; the record is best effort and does not turn a failed run into success. Add this line before
+the launcher's final `echo done` (with its existing lane, tag, result path and saved exit code):
+
+    graphhelm tasks run-ended --lane "%LANE%" --exit %CODEX_EXIT% --run-id "%TAG%" --result-file "%RESULT_FILE%" --token-file "F:\github\GraphHelm\.graphhelm\events.agent.token"
+
+`TAG` must be unique per run and stable on retry. The reference Windows wrapper is
+`tools/codex-launcher/run-codex.cmd`. The `SessionEnd` hook remains installed. A run end
+record uses the lane as actor; a retry of the same tag keeps the same signal id. If the Runtime
+is down, the command reports `recorded: false` and exits zero. The launcher retains the original
+`codex exec` exit code.
+
 ### Autonomous lane wake loop
 
 Studio's **Ask for status** appends an `operator_note` addressed with `to: <lane>` on the

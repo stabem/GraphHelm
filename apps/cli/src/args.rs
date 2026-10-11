@@ -32,6 +32,8 @@ pub enum TopLevel {
     /// about which operation families actually exist as it grows.
     Development(DevelopmentArgs),
     Events(EventsArgs),
+    /// Record the end of a lane's external agent process.
+    Tasks(TasksArgs),
     Execution(ExecutionArgs),
     Gateway(GatewayArgs),
     /// Invokes one brokered tool call against a project (Tier 0 reads in place, Tier 1 in an
@@ -85,6 +87,33 @@ pub enum TopLevel {
     Update(UpdateArgs),
     /// Install and keep current the bundled GraphHelm skills in a host's own skills directory.
     Skills(SkillsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct TasksArgs {
+    #[command(subcommand)]
+    pub command: TasksCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TasksCommand {
+    RunEnded {
+        #[arg(long, default_value = "gh-team")]
+        execution: String,
+        #[arg(long)]
+        lane: String,
+        #[arg(long)]
+        exit: Option<i32>,
+        #[arg(long)]
+        result_file: Option<PathBuf>,
+        /// Stable unique identifier for this process run; use the same value on retries.
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        url: Option<String>,
+        #[arg(long)]
+        token_file: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Args)]

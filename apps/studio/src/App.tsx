@@ -2305,8 +2305,16 @@ export default function App({
   const missionLanes = useMemo(() => {
     const records = taskGraphs?.executionId === selected ? taskGraphs.records : [];
     const timed: TimedTaskEvent[] = records.flatMap((r) => (r.occurredAt ? [{ ...r, at: r.occurredAt }] : []));
-    return laneBars(timed, clock, 14 * 3_600_000);
-  }, [taskGraphs, selected, clock]);
+    const lanes = laneBars(timed, clock, 14 * 3_600_000);
+    for (const event of eventList) {
+      if (event.kind !== "signal_recorded" || !event.payload || typeof event.payload !== "object"
+        || !("kind" in event.payload) || event.payload.kind !== "agent_session_ended" || !event.actorId) continue;
+      const lane = lanes.find((row) => row.lane === event.actorId);
+      const at = event.occurredAt ? Date.parse(event.occurredAt) : NaN;
+      if (lane && Number.isFinite(at) && (lane.endedAt === undefined || at > lane.endedAt)) lane.endedAt = at;
+    }
+    return lanes;
+  }, [taskGraphs, selected, clock, eventList]);
   const watchFlow = useCallback(async (flowId: string, path?: string) => {
     const client = clientRef.current;
     if (client === null) throw new Error("Not connected.");

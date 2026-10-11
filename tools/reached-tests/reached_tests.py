@@ -347,6 +347,19 @@ def reach(changed, packages, embedded, repo=None):
             js = sorted(f.relative_to(root).as_posix() for f in tool.glob("*.test.mjs") if ".browser." not in f.name)
             tools |= {python_test_tool(root, f) for f in py} | ({f"node --test {' '.join(js)}"} if js else set())
             hit = hit or bool(py or js)
+        hook_prefix = "plugins/graphhelm/hooks/"
+        if path.startswith(hook_prefix) and root is not None:
+            hook_path = Path(path)
+            if hook_path.name.startswith("test_") and hook_path.suffix == ".py":
+                tools.add(python_test_tool(root, path))
+                hit = True
+            elif hook_path.suffix == ".py":
+                specific = hook_path.with_name("test_" + hook_path.name)
+                tests = ([specific.as_posix()] if (root / specific).is_file() else
+                         sorted(f.relative_to(root).as_posix()
+                                for f in (root / hook_prefix).glob("test_*.py")))
+                tools |= {python_test_tool(root, test) for test in tests}
+                hit = hit or bool(tests)
         if path in embedded:
             whole |= embedded[path]
             hit = True

@@ -6,6 +6,7 @@ export type BarKind = "implement" | "review" | "merge";
 export interface LaneBar {
   kind: BarKind; label: string; start: number; end: number; open: boolean; taskId?: string; since?: number;
   lastActivityAt?: number; endedBy?: { kind: string; actor: string };
+  quietSpans?: { start: number; end: number }[];
   displayLabel?: string;
   /** #591: the issue a claim names; the head a review was assigned on. */
   issue?: number; headSha?: string;
@@ -51,7 +52,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
   const start = (lane: string, kind: BarKind, taskId: string, slice: string, t: number) => {
     const k = [kind, slice, lane].join("|");
     const prev = open.get(k);
-    if (prev) { prev.bar.end = t; prev.bar.open = false; prev.bar.endedBy = { kind: "claimed", actor: lane }; open.delete(k); }
+    if (prev) { finish(prev.bar, t); prev.bar.endedBy = { kind: "claimed", actor: lane }; open.delete(k); }
     const pr = prOfKey.get(slice);
     const issue = issueOf.get(slice);
     const title = titleOf.get(slice);
@@ -62,10 +63,16 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
     laneOf(lane).bars.push(bar);
     open.set(k, { lane, bar, slice });
   };
+  const finish = (bar: LaneBar, t: number) => {
+    const quietStart = (bar.lastActivityAt ?? bar.since ?? bar.start) + LIVENESS_MS;
+    if (quietStart < t) (bar.quietSpans ??= []).push({ start: quietStart, end: t });
+    bar.end = t;
+    bar.open = false;
+  };
   const close = (kind: BarKind, slice: string, t: number, event: TimedTaskEvent, lane?: string) => {
     for (const [k, v] of [...open]) {
       if (k.startsWith(`${kind}|${slice}|`) && (!lane || v.lane === lane)) {
-        v.bar.end = t; v.bar.open = false; v.bar.endedBy = { kind: event.kind.replace(/^task\./, ""), actor: event.actorId }; open.delete(k);
+        finish(v.bar, t); v.bar.endedBy = { kind: event.kind.replace(/^task\./, ""), actor: event.actorId }; open.delete(k);
       }
     }
   };
@@ -83,8 +90,11 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
     if (slice === undefined) continue;
     // Ending records describe the boundary, not continuous work in the gap before it.
     if (e.kind === "task.planned" || e.kind === "task.pr_opened" || e.kind === "task.critic_verdict") {
-      for (const v of open.values()) if (v.slice === slice && v.lane === e.actorId)
-        v.bar.lastActivityAt = Math.max(v.bar.lastActivityAt ?? v.bar.since ?? v.bar.start, t);
+      for (const v of open.values()) if (v.slice === slice && v.lane === e.actorId) {
+        const last = v.bar.lastActivityAt ?? v.bar.since ?? v.bar.start;
+        if (last + LIVENESS_MS < t) (v.bar.quietSpans ??= []).push({ start: last + LIVENESS_MS, end: t });
+        v.bar.lastActivityAt = Math.max(last, t);
+      }
     }
     if (e.pr !== undefined) {
       prOfKey.set(slice, e.pr);
@@ -153,7 +163,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
           if ((v.bar.issue !== undefined && e.closes?.includes(v.bar.issue))
             || (v.lane === author && (v.bar.taskId === e.taskId
               || (issue !== undefined && v.bar.issue === issue)))) {
-            v.bar.end = t; v.bar.open = false; v.bar.endedBy = { kind: "merged", actor: e.actorId }; open.delete(k);
+            finish(v.bar, t); v.bar.endedBy = { kind: "merged", actor: e.actorId }; open.delete(k);
           }
         }
         break;

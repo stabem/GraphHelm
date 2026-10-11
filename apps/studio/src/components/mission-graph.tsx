@@ -336,6 +336,9 @@ export function CurrentCard({ cell: c, stage, task: t, health, pace, selected, l
   const who = cardWho(c, stage, t);
   // The Fixing card's sub-line already names the BLOCK; its "Blocked by" flag would say it twice.
   const flag = health && !(fixing && health.flag === "blocked") ? health : null;
+  const silentLane = flag?.flag === "stalled" ? flag.text.split(" silent ")[0] : null;
+  const cardFlag = flag && silentLane && who.split(/ → |, /).includes(silentLane)
+    ? { ...flag, text: flag.text.slice(silentLane.length + 1) } : flag;
   return (
     <button type="button" className="mg-node" data-state={st} data-stage={stage} data-blocked={t.blocked} data-current="true" data-dense={Boolean(c.sub || flag)}
       data-pace={Boolean(pace)} aria-pressed={selected} aria-label={stage === "merged" ? `${prText(t)} ${base}` : undefined} style={left === undefined ? undefined : { left, top }} onClick={onSelect}>
@@ -345,8 +348,8 @@ export function CurrentCard({ cell: c, stage, task: t, health, pace, selected, l
         <span className="mg-node-pr">{prText(t)}</span>
       </span>
       <span className="mg-node-title" title={t.title}>{t.title}</span>
-      {c.sub && <span className="mg-node-sub" title={c.sub}>{c.sub}</span>}
-      {flag && <HealthFlag health={flag} time={false} />}
+      {c.sub && <span className="mg-node-sub" title={c.sub.replace(who, "").trim()}>{c.sub.replace(who, "").trim()}</span>}
+      {cardFlag && <HealthFlag health={cardFlag} time={false} />}
       <span className="mg-node-foot">
         <WhoLine who={who} />
         {!pace && health?.elapsed && <span className="mg-node-time">{health.elapsed}</span>}

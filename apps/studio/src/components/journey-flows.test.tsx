@@ -8,7 +8,7 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import { StrictMode } from "react";
 
 import { fastUserEvent } from "../test/user-event";
-import type { JourneyFlowView, JourneyFlowsView, LiveSession } from "../runtime/types";
+import type { JourneyFlowView, JourneyFlowsView, JourneyRunView, LiveSession } from "../runtime/types";
 import { RuntimeClient } from "../runtime/client";
 import { JourneyFlows, PlayerSetup, type JourneyRunSource } from "./journey-flows";
 
@@ -47,6 +47,17 @@ const watchRow = (extra: Partial<LiveSession>): LiveSession => ({
 const pick = (name: string) => userEvent.click(within(screen.getByRole("list", { name: "Journeys" })).getByRole("button", { name: new RegExp(`^Flow ${name}`) }));
 
 describe("JourneyFlows", () => {
+  it("scrolls the selected journey detail into view when a row is chosen", async () => {
+    const scrollIntoView = vi.fn();
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    render(<JourneyFlows view={view} onApprove={vi.fn()} />);
+
+    await pick("broken");
+
+    expect(screen.getByRole("article", { name: "Journey Flow broken" })).toBeInTheDocument();
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+  });
+
   it("lists every journey compactly and opens the first one waiting for approval", () => {
     render(<JourneyFlows view={view} onApprove={vi.fn()} />);
     const rows = within(screen.getByRole("list", { name: "Journeys" })).getAllByRole("button");
@@ -59,6 +70,19 @@ describe("JourneyFlows", () => {
     expect(rows[1]).toHaveAttribute("aria-pressed", "true");
     expect(screen.getAllByRole("article")).toHaveLength(1);
     expect(screen.getByRole("article", { name: "Journey Flow checkout" })).toBeInTheDocument();
+  });
+
+  it("shows a cached preview result in its flow row", async () => {
+    const run = {
+      start: vi.fn(async (id: string) => id === "checkout"
+        ? { state: "ready" as const, kind: "preview" as const, digest: "d1", result: "drift" as const }
+        : { state: "ready" as const, kind: "preview" as const, digest: "d1", result: "pass" as const }),
+      read: vi.fn(async () => ({ state: "ready" as const, kind: "preview" as const, digest: "d1", result: "drift" as const })),
+      screenFrame: vi.fn(async () => null),
+      liveFrame: vi.fn(async () => null),
+    };
+    render(<JourneyFlows view={view} onApprove={vi.fn()} run={run} />);
+    await waitFor(() => expect(within(screen.getByRole("list", { name: "Journeys" })).getByRole("button", { name: /Flow checkout/ }).textContent).toContain("drift"));
   });
 
   it("shows the selected journey's steps as what it does and what it sees, never codes or paths", async () => {
@@ -330,6 +354,21 @@ describe("JourneyFlows run", () => {
     await userEvent.click(screen.getByRole("button", { name: "Run again" }));
     await waitFor(() => expect(screen.getByRole("status")).toHaveAttribute("data-state", "failed"));
     expect(screen.getByRole("list", { name: "Steps" })).not.toHaveTextContent("Passed");
+  });
+
+  it("clears the previous pass while Run again is still starting", async () => {
+    const passed = { state: "ready" as const, kind: "preview" as const, result: "pass" as const, screens: { cart: { result: "pass" as const } } };
+    let finishRetry!: (run: JourneyRunView) => void;
+    const pending = new Promise<JourneyRunView>((resolve) => { finishRetry = resolve; });
+    const start = vi.fn().mockResolvedValueOnce(passed).mockReturnValueOnce(pending);
+    render(<JourneyFlows view={one} onApprove={vi.fn()} run={source({ start })} />);
+    await waitFor(() => expect(screen.getByRole("list", { name: "Steps" })).toHaveTextContent("Passed"));
+    await userEvent.click(screen.getByRole("button", { name: "Run again" }));
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("status")).toHaveTextContent("Starting this journey's test");
+    expect(screen.getByRole("list", { name: "Steps" })).not.toHaveTextContent("Passed");
+    finishRetry({ state: "failed", reason: "preview.runner_lost" });
+    await waitFor(() => expect(screen.getByRole("status")).toHaveAttribute("data-state", "failed"));
   });
 
   it("starts one preview per selection in StrictMode", async () => {

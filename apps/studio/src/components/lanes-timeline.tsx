@@ -212,16 +212,21 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
                   const frac = (b.end - b.start) / windowMs;
                   const stallStart = Math.max(b.start, b.lastActivityAt !== undefined
                     ? b.lastActivityAt + LIVENESS_MS : l.lastEventAt > 0 ? l.lastEventAt + LIVENESS_MS : b.start);
-                  const stalled = b.lastActivityAt !== undefined ? stallStart < b.end : l.silent && b.open && stallStart < b.end;
-                  const worked = Math.max(0, Math.min(b.end, stallStart) - b.start);
-                  const quiet = Math.max(0, b.end - Math.max(b.start, stallStart));
+                  const spans = b.quietSpans?.map((span) => ({ start: Math.max(b.start, span.start), end: Math.min(b.end, span.end) }))
+                    .filter((span) => span.start < span.end) ?? [];
+                  if (!b.open && !b.quietSpans && b.lastActivityAt !== undefined && stallStart < b.end) spans.push({ start: stallStart, end: b.end });
+                  if (b.open && b.lastActivityAt !== undefined && stallStart < b.end) spans.push({ start: stallStart, end: b.end });
+                  if (b.lastActivityAt === undefined && l.silent && b.open && stallStart < b.end) spans.push({ start: stallStart, end: b.end });
+                  const stalled = spans.length > 0;
+                  const quiet = spans.reduce((sum, span) => sum + span.end - span.start, 0);
+                  const worked = Math.max(0, b.end - b.start - quiet);
                   return (
                     <div key={i} className="lt-bar" data-kind={b.kind} data-silent={stalled} data-subrow={pack.row[i]}
                       title={b.lastActivityAt !== undefined
                         ? `${text}${b.displayLabel ? ` · ${b.kind}` : ""} · worked ${stageDuration(worked)} · quiet ${stageDuration(quiet)}${b.open ? " so far" : b.endedBy ? ` · ended by ${b.endedBy.kind} (${b.endedBy.actor})` : ""}`
                         : `${text}${b.displayLabel ? ` · ${b.kind}` : ""} · ${stageDuration(b.end - b.start)}${b.open ? " so far" : ""}`}
                       style={{ left: pct((b.start - from) / windowMs), width: pct(frac), top: TRACK_PAD + pack.row[i]! * (SUB_H + SUB_GAP), height: SUB_H }}>
-                      {stalled && <span className="lt-stall" aria-hidden="true" style={{ left: pct((stallStart - b.start) / (b.end - b.start)) }} />}
+                      {spans.map((span, index) => <span key={index} className="lt-stall" aria-hidden="true" style={{ left: pct((span.start - b.start) / (b.end - b.start)), width: pct((span.end - span.start) / (b.end - b.start)) }} />)}
                       {frac * trackW >= MIN_LABEL_PX && <span className="lt-bar-label">{text}</span>}
                     </div>
                   );

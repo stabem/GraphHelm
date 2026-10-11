@@ -134,6 +134,13 @@ function runWords(run: JourneyRunView): string {
   return run.kind === "preview" ? `${result} (a preview: a draft's run is never proof)` : result;
 }
 
+function previewResultWords(run: JourneyRunView | null): string {
+  if (run === null || run.state === "none") return "not run";
+  if (run.state === "running") return "running";
+  if (run.state === "failed") return "failed";
+  return run.result ?? (run.held ? "failed" : "not run");
+}
+
 /** The journey's run (#519): started when the journey is opened, read once a second while it
  * runs, and each reached screen's picture fetched once per result. Object URLs are revoked when a
  * picture is replaced and when the journey is left. A Runtime that answers 404 predates the run
@@ -198,7 +205,14 @@ export function useJourneyRun(flowId: string, source: JourneyRunSource | undefin
       kept.clear();
     };
   }, []);
-  return { offered: source !== undefined && !absent, run, frames, failure, again: () => setAttempt((before) => ({ n: before.n + 1, confirm: false })), confirm: () => { setStarting(true); setAttempt((before) => ({ n: before.n + 1, confirm: true })); }, confirming: attempt.confirm && starting };
+  return { offered: source !== undefined && !absent, run, frames, failure, again: () => {
+    for (const entry of held.current.values()) if (entry.url !== null) URL.revokeObjectURL(entry.url);
+    held.current.clear();
+    setFrames({});
+    setRun(null);
+    setFailure(null);
+    setAttempt((before) => ({ n: before.n + 1, confirm: false }));
+  }, confirm: () => { setStarting(true); setAttempt((before) => ({ n: before.n + 1, confirm: true })); }, confirming: attempt.confirm && starting };
 }
 
 /** The page a Watch is playing (#519): read five times a second while it plays, and once more
@@ -365,8 +379,9 @@ export function PlayerSetup({ setup, readSetup, offer = true, onDone }: { setup:
   );
 }
 
-function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void>; onWatch?: (flowId: string, path?: string) => Promise<void>; onMarkSafe?: (flowId: string, edgeId: string) => Promise<void>; session?: LiveSession; source?: JourneyRunSource }) {
+function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source, onRunChange }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void>; onWatch?: (flowId: string, path?: string) => Promise<void>; onMarkSafe?: (flowId: string, edgeId: string) => Promise<void>; session?: LiveSession; source?: JourneyRunSource; onRunChange?: (run: JourneyRunView | null) => void }) {
   const { offered, run, frames, failure: runFailure, again, confirm, confirming } = useJourneyRun(flow.id, source);
+  useEffect(() => { onRunChange?.(run); }, [onRunChange, run]);
   const liveFrame = useLiveFrame(session, source);
   const [approving, setApproving] = useState(false);
   // What the player setup changed stays on screen after its button goes, while the run it started goes on.
@@ -464,6 +479,9 @@ function flowOf(flows: JourneyFlowView[], journeyId: string | null | undefined):
 }
 
 export function JourneyFlows({ view, failure = null, onApprove, focusFlowId = null, sessions = null, onWatch, onMarkSafe, onSelect, run }: JourneyFlowsProps) {
+  const [rowRuns, setRowRuns] = useState<Record<string, JourneyRunView | null>>({});
+  const [selectedRun, setSelectedRun] = useState<JourneyRunView | null>(null);
+  const [rowCacheReady, setRowCacheReady] = useState(false);
   const focused = view === null ? null : flowOf(view.flows, focusFlowId);
   const [picked, setPicked] = useState<string | null>(null);
   const detail = useRef<HTMLDivElement>(null);
@@ -486,22 +504,40 @@ export function JourneyFlows({ view, failure = null, onApprove, focusFlowId = nu
   const selectedId = view.flows.some((flow) => flow.id === picked) ? picked : (waiting ?? view.flows[0]!).id;
   const selected = view.flows.find((flow) => flow.id === selectedId)!;
   const watching = (sessions ?? []).find((session) => session.mode === "watch" && session.flowId === selected.id);
+  useEffect(() => {
+    if (run === undefined) return;
+    let active = true;
+    Promise.all(view.flows.filter((flow) => flow.id !== selectedId).map(async (flow) => {
+      try {
+        const result = await run.read(flow.id);
+        return [flow.id, result] as const;
+      } catch {
+        return [flow.id, null] as const;
+      }
+    })).then((entries) => { if (active) { setRowRuns(Object.fromEntries(entries)); setRowCacheReady(true); } });
+    return () => { active = false; };
+  }, [run, view.flows, selectedId]);
   return (
     <section className="journey-flows" aria-label="Journey flows">
       <h2>Journeys to approve</h2>
       <ul className="journey-flow-list" aria-label="Journeys">
         {view.flows.map((flow) => (
           <li key={flow.id}>
-            <button type="button" className="journey-flow-row" aria-pressed={flow.id === selectedId} data-status={flow.status} onClick={() => setPicked(flow.id)}>
+            <button type="button" className="journey-flow-row" aria-pressed={flow.id === selectedId} data-status={flow.status} onClick={() => {
+              setPicked(flow.id);
+              detail.current?.scrollIntoView?.({ block: "start" });
+              detail.current?.focus();
+            }}>
               <span className="journey-flow-row-title">{splitTitle(flow.title ?? flow.id).name}</span>
               <span className="journey-flow-row-status">{STATUS_LABEL[flow.status]}</span>
+              <span className="journey-flow-row-result">{run === undefined ? "" : previewResultWords(flow.id === selectedId ? selectedRun : rowCacheReady ? rowRuns[flow.id] ?? null : null)}</span>
               <span className="journey-flow-row-steps">{stepsOf(flow).length} steps{pathsOf(flow).length > 1 ? ` · ${pathsOf(flow).length} ways` : ""}</span>
             </button>
           </li>
         ))}
       </ul>
       <div ref={detail} tabIndex={-1} className="journey-flow-detail">
-        <Detail key={selected.id} flow={selected} onApprove={onApprove} {...(onWatch ? { onWatch } : {})} {...(onMarkSafe ? { onMarkSafe } : {})} {...(watching ? { session: watching } : {})} {...(run ? { source: run } : {})} />
+        <Detail key={selected.id} flow={selected} onApprove={onApprove} onRunChange={setSelectedRun} {...(onWatch ? { onWatch } : {})} {...(onMarkSafe ? { onMarkSafe } : {})} {...(watching ? { session: watching } : {})} {...(run ? { source: run } : {})} />
       </div>
     </section>
   );

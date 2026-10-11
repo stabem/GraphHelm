@@ -80,7 +80,7 @@ describe("prPath (#591)", () => {
     ]);
     const open = prPath(task("a", { ...base, lane: "gh-claude-1", step: "review", blockedBy: blocked, rounds: [{ ...r1, fixHead: null }] }), false);
     expect(open.cells[2]).toMatchObject({ who: "by gh-claude-7", mark: "BLOCK" });
-    expect(open.cells[3]).toMatchObject({ state: "current", title: "Fixing", who: "gh-claude-1", sub: "after BLOCK by gh-claude-7" });
+    expect(open.cells[3]).toMatchObject({ state: "current", title: "Needs fix · not started", who: "gh-claude-1", sub: "after BLOCK by gh-claude-7" });
     expect(open.edges).toEqual([{ row: "a", from: 0, to: 1, kind: "done" }, { row: "a", from: 1, to: 2, kind: "done" }, { row: "a", from: 2, to: 3, kind: "next" }]);
     const pushed = prPath(task("a", { ...base, step: "review", rounds: [r1] }), false);
     expect(pushed.cells.slice(2, 4).map((c) => [c.stage, c.state, c.label, c.mark, c.title])).toEqual([
@@ -94,6 +94,13 @@ describe("prPath (#591)", () => {
     ]);
     expect(prPath(done, false).edges).toContainEqual({ row: "a", from: 3, to: 2, kind: "done" });
     expect(cells(done, true).slice(-1)).toEqual([["proven", "current", "Proven", "✓"]]);
+  });
+  it("a BLOCK stays not started until the author records after it and starts its timer at BLOCK", () => {
+    const base = { pr: 7, step: "review" as const, lane: "codex-13", blockedBy: { reviewer: "codex-review", headSha: "a", commentUrl: "" },
+      rounds: [{ ...round(null), blockedAt: "2026-10-11T20:00:00Z" }], blockedSequence: 20, authorLastSequence: 10 };
+    const group = (extra: Partial<TaskState> = {}) => buildWorkGroups([task("a", { ...base, ...extra })], [])[0]!;
+    expect(group().rows[0]!.cells.find((cell) => cell.stage === "fix")).toMatchObject({ title: "Needs fix · not started", time: "2026-10-11T20:00:00Z" });
+    expect(group({ authorLastSequence: 21 }).rows[0]!.cells.find((cell) => cell.stage === "fix")).toMatchObject({ title: "Fixing", time: "2026-10-11T20:00:00Z" });
   });
   it("an unrecorded plan the work moved past reads skipped; no BLOCK draws no Fix cell", () => {
     const c = cells(task("a", { step: "merge", reviewers: ["r"] }));

@@ -162,8 +162,8 @@ describe("IssueGraph (#591)", () => {
     const health = { o: { flag: "blocked" as const, text: "Blocked by gh-claude-7", tone: "orange" as const, elapsedMs: 77 * 60_000, elapsed: "1h 17m" } };
     const { container } = render(<IssueGraph group={group} stepFor={() => undefined} selectedTaskKey="o" selectedCol={null} onSelectTask={vi.fn()} onSelectCol={vi.fn()} onOpenTest={vi.fn()} health={health} />);
     const card = container.querySelector('.mg-row[data-row="o"] .mg-node[data-current="true"]')!;
-    // #591: a BLOCK opens a Fixing card for the author; the sub-line names the BLOCK, the time sits on the who line.
-    expect(card.querySelector(".mg-node-label")).toHaveTextContent("Fixing");
+    // #834: this fixture has no author record after BLOCK, so the card says the fix has not started.
+    expect(card.querySelector(".mg-node-label")).toHaveTextContent("Needs fix · not started");
     expect(card).toHaveAttribute("data-state", "work");
     expect(card.querySelector(".mg-node-sub")).toHaveTextContent("after BLOCK by gh-claude-7");
     expect(card.querySelector(".mg-node-foot")).toHaveTextContent("gh-claude-11h 17m");

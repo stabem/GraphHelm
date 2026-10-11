@@ -1,6 +1,6 @@
 import "./mission-view.css";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { JourneyFlowView, JourneyRunView, JourneyView } from "../runtime/types";
+import { useEffect, useMemo, useState } from "react";
+import type { JourneyFlowView, JourneyFlowsView, JourneyRunView, JourneyView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
 import type { TaskEventRecord } from "../runtime/team-tasks";
 import type { Lane } from "../runtime/lane-bars";
@@ -25,7 +25,7 @@ import type { SlotView } from "../runtime/slots";
 import type { GraphNode } from "../graph/model";
 import { readable } from "./format";
 
-type Sub = "graph" | "proof" | "test" | "lanes" | "journeys";
+type Sub = "graph" | "proof" | "test" | "lanes";
 const WINDOW_MS = 14 * 3_600_000;
 const GONE_QUIET_MS = 24 * 3_600_000;
 
@@ -37,7 +37,6 @@ function timerTask(task: TaskState): TaskState {
 
 interface Props {
   journeys: JourneyView[];
-  flows?: JourneyFlowView[];
   tasks: TaskState[];
   taskRecords?: TaskEventRecord[];
   runFor(contractId: string): JourneyRunView | null;
@@ -48,8 +47,6 @@ interface Props {
   onMarkSafe(stepId: string, contractId: string): void | Promise<void>;
   /** Absent: the Test canvas shows Send back as not available yet. */
   onSendBack?: (stepId: string, contractId: string) => void;
-  /** Absent: the Proof view's "Replay whole journey" is disabled and says where the replay starts. */
-  onReplay?: (contractId: string) => void;
   /** #746: present, opening a journey's test runs it (the Journey tab's run source). */
   run?: JourneyRunSource;
   /** #746: each state of that run, so the Proof rows read it. */
@@ -60,13 +57,11 @@ interface Props {
   lastRecordAt?: number | null;
   /** #583: present, the view is the full page. The owner retired the Team tab (Lanes replaces it), so the nav no longer offers it. */
   onTeam?: () => void;
-  /** #630: opens the Journey canvas, where the owner approves draft journeys. Absent: no Journeys item. */
-  onJourneys?: () => void;
-  /** The existing journey list and detail, shown inside the persistent Studio navigation. */
-  journeyContent?: ReactNode;
-  initialView?: "graph" | "journeys";
-  /** #630: draft journeys waiting for approval; shown on the Journeys item when above zero. */
-  draftJourneys?: number;
+  initialView?: "graph" | "proof";
+  focusJourneyId?: string | null;
+  flows?: JourneyFlowsView | null;
+  onApprove?: (flowId: string) => Promise<void>;
+  onWatch?: (flowId: string) => Promise<void>;
   /** #591: "Agents right now" in the rail, from the team model. */
   agents?: Bot[];
   /** The selected run's initial task history read has not settled yet. */
@@ -228,7 +223,15 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ journeys, flows = [], tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, run, onRun, runName, lastRecordAt, onTeam, onJourneys, journeyContent, initialView = "graph", draftJourneys = 0, agents = [], historyLoading = false, away = null, onSignal, onReviewAssigned, wakeListeners, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, away = null, onSignal, onReviewAssigned, wakeListeners, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+  const journeys = useMemo(() => {
+    const known = new Set(compiledJourneys.map((journey) => journey.contractId));
+    return [...compiledJourneys, ...(flows?.flows ?? []).filter((flow) => !known.has(flow.id)).map((flow): JourneyView => ({
+      contractId: flow.id, title: flow.title ?? flow.id, arrows: [],
+      steps: flow.screens.map((screen) => ({ stepId: screen.id, screen: { screenId: screen.id, title: screen.title ?? screen.id, scopePaths: [] }, promises: [] })),
+    }))];
+  }, [compiledJourneys, flows]);
+
   const [chosen, setChosen] = useState<Selection | null>(null);
   const [stepId, setStepId] = useState<string | null>(null);
   // undefined: the group's default (the task that most needs the owner); null: none, a column is chosen.
@@ -237,11 +240,12 @@ export function MissionView({ journeys, flows = [], tasks, taskRecords = [], run
   // #591: when the owner asked a lane for status, by PR + lane; kept here so it survives selecting another PR.
   const [askedAt, setAskedAt] = useState<Record<string, { at: number; listening: boolean | null }>>({});
   const [sub, setSub] = useState<Sub>(initialView);
-  // #630: the wide Graph hides the chat column; this opens it beside the Graph.
-  const [chatOpen, setChatOpen] = useState(false);
   const [frame, setFrame] = useState(0);
   // #744: the journey the Proof rail shows; null: preselected from the Graph selection.
-  const [proofJid, setProofJid] = useState<string | null>(null);
+  const [proofJid, setProofJid] = useState<string | null>(focusJourneyId);
+  useEffect(() => { if (focusJourneyId !== null) { setProofJid(focusJourneyId); setSub("proof"); } }, [focusJourneyId]);
+  const [flowError, setFlowError] = useState<string | null>(null);
+  const [flowBusy, setFlowBusy] = useState(false);
   // #591: one shared one-second clock for the live card timers, anchored on the `now` the parent gave.
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -276,7 +280,7 @@ export function MissionView({ journeys, flows = [], tasks, taskRecords = [], run
             <span className="mv-logo" aria-hidden="true">G</span>
             <span className="mv-brand">GraphHelm</span><span className="mv-slash">/</span>
             <span className="mv-dim">{`Run ${runName}`}</span><span className="mv-slash">/</span>
-            <span className="mv-brand">{sub === "journeys" ? "Journeys" : "Mission graph"}</span>
+            <span className="mv-brand">Mission graph</span>
           </div>
         )}
         <div role="tablist" aria-label="Mission views" className="mv-tabs">
@@ -285,20 +289,6 @@ export function MissionView({ journeys, flows = [], tasks, taskRecords = [], run
               onClick={() => (t.id === "team" ? onTeam?.() : setSub(t.id))}>{t.label}</button>
           ))}
         </div>
-        {runName !== undefined && (
-          <div className="mv-nav" role="group" aria-label="Go to">
-            <button type="button" className="mv-tab" aria-pressed={chatOpen} onClick={() => setChatOpen((o) => !o)}>Chat</button>
-            {onJourneys && (
-              <button type="button" className="mv-tab" aria-label="Journeys" aria-pressed={sub === "journeys"} aria-describedby={draftJourneys > 0 ? "mv-journeys-count" : undefined} onClick={() => { setSub("journeys"); onJourneys(); }}>
-                {draftJourneys > 0 ? `Journeys · ${draftJourneys} to approve` : "Journeys"}
-              </button>
-            )}
-            {/* #641: the name stays "Journeys" for journey flows; the count reaches screen readers as the description. */}
-            {onJourneys && draftJourneys > 0 && (
-              <span id="mv-journeys-count" hidden>{`${draftJourneys} ${draftJourneys === 1 ? "journey waits" : "journeys wait"} for your approval`}</span>
-            )}
-          </div>
-        )}
         {sub === "test" && <button type="button" className="mv-back" onClick={() => setSub("proof")}>‹ Back to proof</button>}
         {lastRecordAt != null && Number.isFinite(lastRecordAt) && (
           <span className="mv-live"><span className="mv-live-dot" aria-hidden="true" />{`live · last record ${ago(now - lastRecordAt)}`}</span>
@@ -327,9 +317,8 @@ export function MissionView({ journeys, flows = [], tasks, taskRecords = [], run
       {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
   </>;
   const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} {...(onOpenNode ? { onOpenNode } : {})} />;
-  if (sel === null) return <div className="mv" data-wide="true" data-page={page} data-chat={chatOpen ? "open" : undefined}>{header}
-    {sub === "journeys" ? <div className="mv-journey-content">{journeyContent}</div>
-      : sub === "lanes" ? <div className="mv-pad">{lanesView}</div>
+  if (sel === null) return <div className="mv" data-wide="true" data-page={page}>{header}
+    {sub === "lanes" ? <div className="mv-pad">{lanesView}</div>
       : <>{sub === "graph" && runGraph}<p className="mv-none mv-pad">No journeys in this project yet</p></>}</div>;
   const rawGroup: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
   // #591: the live Review row names only the current reviewer (latest assignment on the current head).
@@ -351,6 +340,8 @@ export function MissionView({ journeys, flows = [], tasks, taskRecords = [], run
     : linkedId ?? journeys.find((j) => { const r = runFor(j.contractId); return r !== null && r.state !== "none"; })?.contractId ?? journeys[0]?.contractId ?? null;
   const journey = journeys.find((j) => j.contractId === (proofMode ? proofId : linkedId)) ?? null;
   const contractId = journey?.contractId ?? null;
+  const flow: JourneyFlowView | undefined = flows?.flows.find((item) => item.id === contractId);
+  const draftCount = flows?.flows.filter((item) => item.status === "draft" || item.status === "approval_stale").length ?? 0;
   const mission = contractId ? missions.find((m) => m.contractId === contractId)! : null;
   const openTest = (id: string) => {
     if (!journey) return;
@@ -360,7 +351,7 @@ export function MissionView({ journeys, flows = [], tasks, taskRecords = [], run
   };
   const reset = () => { setProofJid(null); setStepId(null); setTaskKey(undefined); setStageCol(null); if (sub === "test") setSub("graph"); };
   const pickJourney = (id: string) => { setChosen({ kind: "journey", id }); reset(); };
-  const pickProof = (id: string) => { setProofJid(id); setStepId(null); setSub("proof"); };
+  const pickProof = (id: string) => { setProofJid(id); setStepId(null); setFlowError(null); setSub("proof"); };
   const pickGroup = (key: string, task: string | null = null) => {
     setChosen({ kind: "group", key }); reset(); setTaskKey(task ?? undefined);
     if (sub === "test") setSub("graph");
@@ -416,9 +407,8 @@ export function MissionView({ journeys, flows = [], tasks, taskRecords = [], run
   } : null;
   return (
     // data-wide: the Studio layout gives the mission view the whole main area (mission-view.css).
-    <div className="mv" data-wide="true" data-page={page} data-chat={chatOpen ? "open" : undefined}>
+    <div className="mv" data-wide="true" data-page={page}>
       {header}
-      {sub === "journeys" ? <div className="mv-journey-content">{journeyContent}</div> : <>
       {gsum && sub === "graph" && (
         <p className="mg-summary mv-summary" aria-label="Summary">
           <span className="mg-sum" data-tone="proven"><b>{`${gsum.proven}/${group!.tasks.length}`}</b> proven</span>
@@ -433,6 +423,7 @@ export function MissionView({ journeys, flows = [], tasks, taskRecords = [], run
         {proofMode && (
           <nav aria-label="Journeys" className="mv-journeys">
             <span className="mv-cap">Journeys</span>
+            {draftCount > 0 && <span className="mv-cap">{`${draftCount} to approve`}</span>}
             {missions.length === 0 && <p className="mv-none">No journeys in this project yet</p>}
             {missions.map((m) => {
               const on = m.contractId === contractId;
@@ -572,8 +563,10 @@ export function MissionView({ journeys, flows = [], tasks, taskRecords = [], run
             {...(inspectorActions ? { inspectorActions } : {})} />}
           {sub === "graph" && !group && mission && <MissionGraph mission={mission} selectedStepId={stepId} selectedTaskKey={taskKey ?? null}
             onSelectStep={(id) => { setStepId(id); setTaskKey(null); }} onSelectTask={pickTask} onOpenTest={openTest} />}
-          {sub === "proof" && (mission && contractId ? <ProofTable mission={mission} onOpenTest={openTest} frameUrl={(id) => frameUrl(id, contractId)}
-            {...(onReplay ? { onReplay: () => onReplay(contractId) } : {})} />
+          {sub === "proof" && (mission && contractId ? <ProofTable key={contractId} mission={mission} flow={flow} onOpenTest={openTest} frameUrl={(id) => frameUrl(id, contractId)}
+            run={run} onApprove={onApprove} onWatch={onWatch} busy={flowBusy} onBusy={setFlowBusy} error={flowError} onActionError={setFlowError}
+            {...(onRun ? { onRun: (value: JourneyRunView) => onRun(contractId, value) } : {})}
+            />
             : <p className="mv-empty">No journeys in this project yet</p>)}
           {sub === "test" && journey && contractId && (run
             ? <ProofRun key={contractId} journey={journey} source={run} selected={frame} onSelect={setFrame}
@@ -586,7 +579,6 @@ export function MissionView({ journeys, flows = [], tasks, taskRecords = [], run
           {sub === "lanes" && lanesView}
         </div>
       </div>
-      </>}
     </div>
   );
 }

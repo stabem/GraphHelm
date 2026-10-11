@@ -1,9 +1,20 @@
-import type { JourneyRunView, JourneyView } from "./types";
-import { actionText } from "../components/journey-canvas";
+import type { JourneyRunView, JourneyView, StepAction } from "./types";
 import { skippedEdgeInto } from "./mission";
 
 export type FrameStatus = "running" | "passed" | "failed" | "waits_for_you" | "not_run";
 export interface TestFrame { stepId: string; n: number; verb: "SEES" | "DOES" | "EXPECT"; text: string; status: FrameStatus; reason: string | null; expected: string[] }
+
+const ACTION_VERB: Record<string, string> = {
+  navigate: "Goes to", activate: "Clicks", enter_text: "Types into", select: "Chooses",
+  upload: "Uploads a file to", download: "Downloads", wait_for: "Waits for", inspect: "Looks at",
+  submit: "Submits", recover: "Recovers with", approve: "Approves",
+};
+
+export function actionText(action: StepAction): string {
+  if (action.kind === "navigate" && (action.strategy === "url" || /^(\/|https?:)/.test(action.target))) return `Opens ${action.target}`;
+  const verb = ACTION_VERB[action.kind] ?? action.kind.replace(/_/g, " ");
+  return `${verb} “${action.target}”`;
+}
 
 /** `running`: the step id a live run is on (#746); that step reads "running" until it has a result. */
 export function testFrames(journey: JourneyView, run: JourneyRunView | null, running: string | null = null): TestFrame[] {

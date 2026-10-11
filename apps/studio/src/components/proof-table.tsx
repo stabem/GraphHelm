@@ -1,8 +1,11 @@
 import "./proof-table.css";
+import { useEffect, useRef } from "react";
 import type { Mission, StepStatus } from "../runtime/mission";
 import { layoutMission } from "../runtime/mission-layout";
 import { STATUS_LABEL } from "./mission-graph";
 import { MiniBrowser } from "./issue-proof";
+import type { JourneyFlowView, JourneyRunView } from "../runtime/types";
+import { useJourneyRun, type JourneyRunSource } from "./journey-flows";
 
 const HINT: Record<StepStatus, string> = {
   proven: "Proven by a machine. Seen by you closes the ladder.",
@@ -22,11 +25,31 @@ interface Props {
   onOpenTest(stepId: string): void;
   /** The recorded frame for a step, if any; absent or null draws the placeholder browser. */
   frameUrl?: (stepId: string) => string | null;
-  /** Absent: the replay starts from the journey panel, so the button says so and is disabled. */
-  onReplay?: () => void;
+  flow?: JourneyFlowView;
+  run?: JourneyRunSource;
+  onApprove?: (flowId: string) => Promise<void>;
+  onWatch?: (flowId: string) => Promise<void>;
+  busy?: boolean;
+  onBusy?: (value: boolean) => void;
+  error?: string | null;
+  onActionError?: (value: string | null) => void;
+  onRun?: (run: JourneyRunView) => void;
 }
 
-export function ProofTable({ mission, onOpenTest, frameUrl, onReplay }: Props) {
+export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove, onWatch, busy = false, onBusy, error, onActionError, onRun }: Props) {
+  const preview = useJourneyRun(mission.contractId, flow ? run : undefined, false);
+  const reported = useRef<JourneyRunView | null>(null);
+  useEffect(() => {
+    if (preview.run !== null && preview.run.state !== "none" && preview.run !== reported.current) {
+      reported.current = preview.run;
+      onRun?.(preview.run);
+    }
+  }, [preview.run, onRun]);
+  const act = (action: () => Promise<void>) => {
+    onBusy?.(true);
+    onActionError?.(null);
+    void action().catch((cause: unknown) => onActionError?.(cause instanceof Error ? cause.message : String(cause))).finally(() => onBusy?.(false));
+  };
   const placed = layoutMission(mission).placed;
   const draft = mission.title.match(/^(.*?)\s*\(draft:\s*(.*?)\)\s*$/i);
   const title = draft?.[1] ?? mission.title;
@@ -40,10 +63,15 @@ export function ProofTable({ mission, onOpenTest, frameUrl, onReplay }: Props) {
           {draftNote && <span className="proof-sub proof-draft-note">{`Draft: ${draftNote}`}</span>}
           <span className="proof-sub">Every step is a promise to a person. Each row shows who built it, what checked it, and the frame the replay saw.</span>
         </div>
-        {onReplay
-          ? <button type="button" className="proof-primary" onClick={onReplay}>Replay whole journey</button>
-          : <div className="proof-replay"><button type="button" className="proof-primary" disabled>Replay whole journey</button><span className="proof-hint">Start it from the journey panel.</span></div>}
       </div>
+      {flow && <div className="proof-flow-actions" role="group" aria-label="Journey actions">
+        <span>{flow.status === "draft" ? "Waiting for your approval" : flow.status === "approval_stale" ? "Changed since approval" : flow.status === "approved" ? "Approved" : "Can't be read"}</span>
+        {flow.status !== "approved" && <button type="button" disabled={!flow.approvable || busy || !onApprove} onClick={() => onApprove && act(() => onApprove(flow.id))}>Approve</button>}
+        {onWatch && <button type="button" disabled={busy} onClick={() => act(() => onWatch(flow.id))}>Watch</button>}
+        {run && <button type="button" disabled={preview.launching || preview.run?.state === "running"} onClick={preview.again}>Run again</button>}
+        {preview.run?.state === "ready" && <span>{preview.run.kind === "preview" ? "Preview only — not proof" : "Replay recorded"}</span>}
+        {(error || preview.failure || preview.busyReason) && <p role="alert">{error ?? preview.failure ?? preview.busyReason}</p>}
+      </div>}
       <div className="proof-cols" aria-hidden="true"><span>Step</span><span>Promise</span><span>Replay saw</span><span>Chain of custody · evidence</span><span>Your call</span></div>
       <ol className="proof-rows" aria-label="Steps">
         {mission.steps.map((s) => {

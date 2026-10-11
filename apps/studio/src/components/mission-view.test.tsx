@@ -27,7 +27,7 @@ describe("MissionView", () => {
     const contract = { ...journeys[0]!, contractId: "names", title: "Old title" };
     const flow = { id: "names", title: "Give a bot a display name in Lanes", status: "approved", approved: null, drift: [], findings: [], approvable: false,
       screens: [{ id: "mark", url: "/", state: "ready" }], edges: [], paths: {} } as JourneyFlowView;
-    render(<MissionView journeys={[contract]} flows={[flow]} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    render(<MissionView journeys={[contract]} flows={{ flows: [flow] }} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
     await fastUserEvent().click(screen.getByRole("tab", { name: "Proof" }));
     const item = screen.getByRole("button", { name: /Give a bot a display name in Lanes/ });
     expect(item.querySelector(".mv-journey-title")).toHaveTextContent(flow.title!);
@@ -69,6 +69,22 @@ describe("MissionView", () => {
     expect(first.querySelector(".mv-progress-text")!.textContent).toBe(before);
     expect(first.querySelector('[data-progress="proven"]')).toHaveStyle({ flexGrow: "0" });
     expect(first.querySelector('[data-progress="work"]')).not.toHaveStyle({ background: "#4ADE9B" });
+  it("moves draft approval to Proof and removes old navigation", async () => {
+    const user = fastUserEvent();
+    const onApprove = vi.fn().mockResolvedValue(undefined);
+    const onWatch = vi.fn().mockResolvedValue(undefined);
+    render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0} runFor={() => null}
+      frameUrl={() => null} onMarkSafe={vi.fn()} runName="r"
+      flows={{ flows: [{ id: "watch", title: "Watch plays inside the Studio", status: "draft", approved: null,
+        drift: [], findings: [], approvable: true, screens: [], edges: [], paths: {} }] }} onApprove={onApprove} onWatch={onWatch} />);
+    expect(screen.queryByRole("button", { name: "Chat" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Journeys" })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "Proof" }));
+    expect(screen.getByText("1 to approve")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+    expect(onApprove).toHaveBeenCalledWith("watch");
+    await user.click(screen.getByRole("button", { name: "Watch" }));
+    expect(onWatch).toHaveBeenCalledWith("watch");
   });
   it("goes graph → proof → test canvas on the chosen step", async () => {
     const userEvent = fastUserEvent();
@@ -233,28 +249,6 @@ describe("MissionView", () => {
     expect(screen.getByText("live · last record 12 s ago")).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Team" })).toBeNull();
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Graph", "Lanes", "Proof"]);
-  });
-
-  it("#630: Chat toggles the chat column; Journeys opens the Journey canvas with a draft count", async () => {
-    const userEvent = fastUserEvent();
-    const onJourneys = vi.fn();
-    const { container } = render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()}
-      runName="r" onJourneys={onJourneys} draftJourneys={2} />);
-    const chat = screen.getByRole("button", { name: "Chat" });
-    const root = container.querySelector(".mv")!;
-    expect(chat).toHaveAttribute("aria-pressed", "false");
-    expect(root).not.toHaveAttribute("data-chat");
-    await userEvent.click(chat);
-    expect(chat).toHaveAttribute("aria-pressed", "true");
-    expect(root).toHaveAttribute("data-chat", "open");
-    await userEvent.click(chat);
-    expect(root).not.toHaveAttribute("data-chat");
-    // #585 R3: a stable accessible name, the live count stays visible text.
-    const journeysButton = screen.getByRole("button", { name: "Journeys" });
-    expect(journeysButton).toHaveTextContent("Journeys · 2 to approve");
-    expect(journeysButton).toHaveAccessibleDescription("2 journeys wait for your approval");
-    await userEvent.click(journeysButton);
-    expect(onJourneys).toHaveBeenCalledTimes(1);
   });
 
   it("no last record time: the live indicator is omitted", () => {

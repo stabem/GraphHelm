@@ -37,7 +37,6 @@ const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
  */
 const SET_ELSEWHERE: Record<string, string> = {
   "--rail": "App.tsx writes it inline from the operator's dragged width; the CSS reads it with a fallback",
-  "--chat-w": "chat-column.tsx writes it inline from the operator's dragged chat width (#327); the CSS reads it with a fallback",
   "--dock-reserve": "App.tsx writes it inline on .scene from the docks' measured height (#1083 F9); the CSS reads it with a fallback",
   "--bot-hue": "team-canvas.tsx writes it inline on each .team-bot from the bot persona hue; the CSS reads it for the avatar, outline and pulse",
 };
@@ -121,44 +120,6 @@ describe("issue graph cell labels stay whole", () => {
     const label = css.split("\n").find((line) => line.startsWith(".mg-cell-label {")) ?? "";
     expect(label).toMatch(/flex: none/);
     expect(label).not.toMatch(/text-overflow: ellipsis|overflow: hidden/);
-  });
-});
-
-describe("the Journey tab is a column that reserves the dock (#435)", () => {
-  /** Found while the owner rehearsed approvals at 1024 px: the flow cards grew the tab panel to
-   * 6,759 px, the dock (absolute at the scene's bottom) covered the first Approve buttons, and
-   * the journey canvas sat below all the cards. Text-level, so it can only see that the rules
-   * exist; the viewport measurement is the PR's observer. */
-  const rule = (selector: string) => {
-    const at = CODE.indexOf(`${selector} {`);
-    return at === -1 ? "" : CODE.slice(at + selector.length + 2, CODE.indexOf("}", at));
-  };
-  it("lays the tab panel out as a flex column with the dock's cover reserved below it", () => {
-    const panel = rule("#studio-panel-journeys");
-    expect(panel).toMatch(/display:\s*flex/);
-    expect(panel).toMatch(/flex-direction:\s*column/);
-    expect(panel).toMatch(/padding-bottom:\s*var\(--dock-reserve/);
-    expect(rule("#studio-panel-journeys[hidden]")).toMatch(/display:\s*none/);
-  });
-  it("keeps the flow section in the page-level scroll area", () => {
-    const flows = rule(".mv-journey-content > .journey-flows");
-    expect(flows).not.toMatch(/overflow-y:\s*(?:auto|scroll)/);
-    expect(flows).not.toMatch(/max-height:/);
-    expect(rule(".mv-journey-content")).toMatch(/overflow-y:\s*auto/);
-    expect(rule(".mv-journey-content > .journey-canvas")).toMatch(/flex:\s*1/);
-  });
-});
-
-describe("the Journeys list has one scroll owner (#831)", () => {
-  const rule = (selector: string) => {
-    const at = CODE.indexOf(`${selector} {`);
-    return at === -1 ? "" : CODE.slice(at + selector.length + 2, CODE.indexOf("}", at));
-  };
-  it("shows all flow rows without nested vertical scroll boxes", () => {
-    expect(rule(".journey-flow-list")).not.toMatch(/max-height:\s*(?:[0-9]{1,2}|[1-3][0-9]{2})px/);
-    const scrollRules = [".journey-flow-list", ".journey-flows", ".mv-journey-content"]
-      .filter((selector) => /overflow-y:\s*(?:auto|scroll)/.test(rule(selector)));
-    expect(scrollRules).toHaveLength(1);
   });
 });
 
@@ -296,26 +257,6 @@ describe("the stylesheet and the components agree", () => {
     expect(ruleOf(".app")).toMatch(/position:\s*relative/);
     expect(ruleOf(".app")).toMatch(/overflow:\s*hidden/);
     expect(ruleOf(".projects")).toMatch(/position:\s*relative/);
-    expect(ruleOf(".chat-scroll")).toMatch(/position:\s*relative/);
-  });
-
-  // #325: cards, tabs, messages and MainChat each scrolled or claimed full height, and the flex
-  // column squeezed the composer to zero. One scroll row, one docked row, no inner scrollers.
-  it("gives the Chat column one scroll region and a docked composer (#325)", () => {
-    expect(ruleOf(".chat-column")).toMatch(/grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto/);
-    expect(ruleOf(".chat-scroll")).toMatch(/overflow-y:\s*auto/);
-    for (const inner of [".chat-messages", ".question-cards", ".main-chat-rail", ".main-chat"]) {
-      expect(ruleOf(inner), `${inner} must not scroll or claim a height of its own`).not.toMatch(/overflow(-[xy])?:\s*(auto|scroll)|(^|[^-])height:\s*100%|min-height:\s*100%/);
-    }
-    expect(ruleOf(".chat-tabs"), ".chat-tabs must only scroll horizontally").not.toMatch(/overflow-y:\s*(auto|scroll)/);
-  });
-
-  it("keeps Chat threads on one compact horizontal row and lets long links wrap cleanly (#797)", () => {
-    const tabs = ruleOf(".chat-tabs");
-    expect(tabs).toMatch(/flex-wrap:\s*nowrap/);
-    expect(tabs).toMatch(/overflow-x:\s*auto/);
-    expect(tabs).toMatch(/max-height:\s*40px/);
-    expect(ruleOf(".chat-text")).toMatch(/overflow-wrap:\s*anywhere/);
   });
 
   it("keeps the Chat column below the top bar at narrow viewport widths (#797)", () => {
@@ -327,43 +268,6 @@ describe("the stylesheet and the components agree", () => {
     expect(rule).not.toMatch(/flex-basis:\s*100%/);
     expect(rule).toMatch(/white-space:\s*nowrap/);
     expect(rule).toMatch(/text-overflow:\s*ellipsis/);
-  });
-});
-
-describe("the journey map keeps its cards readable in a narrow column (#443)", () => {
-  /** Found by the #301 observer walk at 1440 px: the canvas column was 453 px, the journey picker
-   * grew to its longest option (916 px) and was clipped by `overflow-x: hidden`, and each step's
-   * card got 70 px beside its Open-live chip and 96 px arrow, so a title wrapped one word per line.
-   * Text-level, like #435's guard; the viewport measurement is the PR's observer. */
-  const rule = (selector: string) => {
-    const at = CODE.indexOf(`${selector} {`);
-    return at === -1 ? "" : CODE.slice(at + selector.length + 2, CODE.indexOf("}", at));
-  };
-  it("caps the journey picker at the column width", () => {
-    expect(rule(".journey-picker select")).toMatch(/max-width:\s*100%/);
-  });
-  it("gives every card a readable minimum width and lets steps wrap instead of squeezing it", () => {
-    const basis = /flex:\s*\d+\s+\d+\s+(\d+)px/.exec(rule(".journey-card"));
-    expect(basis && Number(basis[1])).toBeGreaterThanOrEqual(160);
-    const step = rule(".journey-step");
-    expect(step).toMatch(/flex-wrap:\s*wrap/);
-    expect(step).not.toMatch(/max-width:\s*264px/);
-  });
-});
-
-describe("Graph tab on a phone (#591)", () => {
-  it("hides the chat column for the wide Graph tab only above the phone breakpoint", () => {
-    const sheet = STYLESHEETS["./components/mission-view.css"].replace(/\/\*[\s\S]*?\*\//g, "");
-    const hide = /([^{}]*\.chat-column[^{}]*)\{[^}]*display:\s*none/.exec(sheet.replace(/@media[^{]*\{/g, (m) => `${m}\n`));
-    expect(hide).not.toBeNull();
-    const before = sheet.slice(0, sheet.indexOf(hide![1].trim()));
-    const media = before.lastIndexOf("@media");
-    expect(media).toBeGreaterThanOrEqual(0);
-    expect(before.slice(media)).toMatch(/^@media\s*\(min-width:\s*769px\)\s*\{[^}]*$/);
-  });
-  it("#630: the wide rule does not apply while the owner has chat open", () => {
-    const sheet = STYLESHEETS["./components/mission-view.css"].replace(/\/\*[\s\S]*?\*\//g, "");
-    expect(sheet).toMatch(/\.mv\[data-wide="true"\]:not\(\[data-chat="open"\]\)\)\s*>\s*:is\(\.chat-column\)/);
   });
 });
 

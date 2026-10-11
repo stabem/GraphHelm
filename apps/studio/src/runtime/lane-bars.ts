@@ -118,9 +118,9 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
         const issue = e.issue ?? issueOf.get(slice);
         for (const [k, v] of [...open]) {
           const [kind, s] = k.split("|");
-          if (kind !== "implement" || !s!.includes("#claim-")) continue;
+          if (kind !== "implement" || prOfKey.has(s!)) continue;
           if ((v.bar.issue !== undefined && e.closes?.includes(v.bar.issue))
-            || (v.lane === author && (s!.startsWith(`${e.taskId}#`)
+            || (v.lane === author && (v.bar.taskId === e.taskId
               || (issue !== undefined && v.bar.issue === issue)))) {
             v.bar.end = t; v.bar.open = false; open.delete(k);
           }

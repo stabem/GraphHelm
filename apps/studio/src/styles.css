@@ -2692,16 +2692,10 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 /* Tab panels preserve the canvas height without changing the column layout. */
 .scene > [role="tabpanel"] { height: 100%; min-height: 0; }
 
-/* #435: the Journey tab is a column inside the scene: the flow cards (#353) scroll in their own
-   box above the journey canvas, the canvas keeps the rest, and the dock's cover (`--dock-reserve`,
-   measured by the App) is reserved below both, so no Approve button sits under Run actions and
-   the canvas is never pushed thousands of pixels below the fold. */
+/* The Journeys view keeps the dock's measured cover below the Mission shell. Its flow and
+   canvas layout lives in mission-view.css with the persistent navigation. */
 #studio-panel-journeys { display: flex; flex-direction: column; box-sizing: border-box; padding-bottom: var(--dock-reserve, 72px); }
 #studio-panel-journeys[hidden] { display: none; }
-#studio-panel-journeys > .journey-flows { flex: 0 1 auto; min-height: 0; max-height: 62%; overflow-y: auto; }
-/* #465: a draft has no proof map below; its journey takes the whole panel. */
-#studio-panel-journeys > .journey-flows:last-child { max-height: none; flex: 1 1 auto; }
-#studio-panel-journeys > .journey-canvas { flex: 1 1 auto; height: auto; }
 /* #481 (owner: "n deixa rolar a pagina"): the Team tab is the same kind of column. The task list
    scrolled with the page and was clipped under Run actions after ~11 rows; it now scrolls in its
    own box, the team canvas keeps the rest, and the dock's cover is reserved below both. */

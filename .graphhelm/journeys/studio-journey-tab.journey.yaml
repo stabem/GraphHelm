@@ -9,11 +9,11 @@ secrets: []
 risks: [critical_ux]
 screens:
   - id: journey
-    title: The Journey tab (empty until a journey has screenshots)
+    title: Journeys inside the Studio shell
     url: /?session=studio-fixture
     state: empty
-    expect: [{role: tab, name: Journey}, {role: tabpanel, name: Journeys}, {role: region, name: Journey flows}, {role: heading, name: Journeys to approve}]
-    scope: [apps/studio/src/components/journey-canvas.tsx, apps/studio/src/components/journey-flows.tsx, apps/studio/src/components/right-panel.tsx, apps/studio/src/runtime/journeys.ts]
+    expect: [{role: tablist, name: Mission views}, {role: tab, name: Graph}, {role: button, name: Journeys}, {role: tabpanel, name: Journeys}, {role: region, name: Journey flows}, {role: heading, name: Journeys to approve}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/mission-view.tsx, apps/studio/src/components/journey-canvas.tsx, apps/studio/src/components/journey-flows.tsx, apps/studio/src/components/right-panel.tsx, apps/studio/src/runtime/journeys.ts]
   - id: run
     title: A run is open on its Mission graph
     url: /?session=studio-fixture

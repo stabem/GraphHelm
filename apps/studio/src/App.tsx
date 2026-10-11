@@ -3131,13 +3131,13 @@ export default function App({
             )}
 
             <section className="canvas-column" aria-label="Canvas">
-            {canvasTab !== "graph" && handover !== null && !handoverHidden && (
+            {canvasTab === "team" && handover !== null && !handoverHidden && (
               <HandoverCard handover={handover} onOpen={openRecords} onDismiss={markSeen} onHide={hideHandover} />
             )}
             {/* #583: the Graph tab is the whole page: its own top bar replaces the banner and this strip. */}
-            {canvasTab !== "graph" && <div className="canvas-tabs" role="tablist" aria-label="Canvas views">
+            {canvasTab === "team" && <div className="canvas-tabs" role="tablist" aria-label="Canvas views">
               <button type="button" role="tab" aria-selected={canvasTab === "team"} onClick={() => chooseCanvas("team")}>Team (live)</button>
-              <button type="button" role="tab" aria-selected={canvasTab === "journey"} onClick={() => chooseCanvas("journey")}>Journey</button>
+              <button type="button" role="tab" aria-selected={false} onClick={() => chooseCanvas("journey")}>Journey</button>
               <button type="button" role="tab" aria-selected={false} onClick={() => chooseCanvas("graph")}>Graph</button>
             </div>}
             <div
@@ -3166,24 +3166,21 @@ export default function App({
                   <p className={`connection-note ${connectionTone}`} role="status">{connectionNote}</p></>} />
             )}
             </div>
-            <div id="studio-panel-journeys" role="tabpanel" aria-labelledby="studio-tab-journeys" hidden={canvasTab !== "journey"}>
-            {canvasTab === "journey" && <JourneyFlows view={flowsRead.view} failure={flowsRead.failure} onApprove={approveFlow} focusFlowId={journeyContract}
-              sessions={liveSessions} onSelect={selectFlow} run={journeyRun} onMarkSafe={markFlowEdgeSafe} {...(liveSessions === null ? {} : { onWatch: watchFlow })} />}
-            {/* #465: the proof map follows the journey chosen in the list; a draft has nothing proven
-              * yet, so its owner sees Watch and Approve above instead of capture labels. */}
-            {canvasTab === "journey" && (chosenFlow === null || chosenFlow.status !== "draft") && (
-              <JourneyCanvas view={journeysView} failed={journeysFailed} failure={journeysFailure} contractId={chosenFlow?.id ?? journeyContract} onSelectContract={setJourneyContract}
-                pickerHidden={chosenFlow !== null}
-                loadImage={(id, run) => (clientRef.current === null ? Promise.reject(new Error("no client")) : clientRef.current.readImage(run ?? selected, id))}
-                executionId={selected}
-                events={eventList} botName={botNameOf} beforeAfter={beforeAfter} onOpenRecords={openRecords}
-                detailStepId={journeyDetail} onDetailStepChange={setJourneyDetail}
-                {...(liveSessions === null ? {} : { liveSessions, opening: liveOpening, onOpenLive: openLive, onCloseLive: closeLive })} />
-            )}
-            </div>
-            {canvasTab === "graph" && (
-              <div id="studio-panel-graph" role="tabpanel" aria-label="Graph">
+            {(canvasTab === "graph" || canvasTab === "journey") && (
+              <div id={canvasTab === "journey" ? "studio-panel-journeys" : "studio-panel-graph"} role="tabpanel" aria-label={canvasTab === "journey" ? "Journeys" : "Graph"} aria-labelledby={canvasTab === "journey" ? "studio-tab-journeys" : undefined}>
                 <SlotPoll client={clientRef.current}>{(slots) => <MissionView wakeListeners={status?.wakeListeners} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={taskGraphs?.executionId === selected ? taskGraphs.records : []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} runFor={missionRunFor}
+                  initialView={canvasTab === "journey" ? "journeys" : "graph"}
+                  journeyContent={<>
+                    <JourneyFlows view={flowsRead.view} failure={flowsRead.failure} onApprove={approveFlow} focusFlowId={journeyContract}
+                      sessions={liveSessions} onSelect={selectFlow} run={journeyRun} onMarkSafe={markFlowEdgeSafe} {...(liveSessions === null ? {} : { onWatch: watchFlow })} />
+                    {(chosenFlow === null || chosenFlow.status !== "draft") &&
+                      <JourneyCanvas view={journeysView} failed={journeysFailed} failure={journeysFailure} contractId={chosenFlow?.id ?? journeyContract} onSelectContract={setJourneyContract}
+                        pickerHidden={chosenFlow !== null}
+                        loadImage={(id, run) => (clientRef.current === null ? Promise.reject(new Error("no client")) : clientRef.current.readImage(run ?? selected, id))}
+                        executionId={selected} events={eventList} botName={botNameOf} beforeAfter={beforeAfter} onOpenRecords={openRecords}
+                        detailStepId={journeyDetail} onDetailStepChange={setJourneyDetail}
+                        {...(liveSessions === null ? {} : { liveSessions, opening: liveOpening, onOpenLive: openLive, onCloseLive: closeLive })} />}
+                  </>}
                   run={journeyRun} onRun={recordMissionRun}
                   lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe}
                   runName={selected} lastRecordAt={Date.parse(eventList[eventList.length - 1]?.occurredAt ?? "")} onTeam={() => chooseCanvas("team")} onJourneys={() => chooseCanvas("journey")}

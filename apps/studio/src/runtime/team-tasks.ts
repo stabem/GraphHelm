@@ -476,7 +476,9 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
   // Merge records may use `pr-N` as their task id even when the author claimed `issue-N`.
   // The PR identifies the existing slice across those task ids.
   const byPr = event.pr === undefined ? undefined : slices.find((slice) => slice.pr === event.pr);
-  if (byPr !== undefined) return byPr;
+  // A lane may claim work for a PR another slice already holds. Its pr_opened belongs to
+  // that lane's new claim; the PR's eventual merge/close then ends both claims together.
+  if (byPr !== undefined && event.kind !== "task.pr_opened") return byPr;
   const group = slices.filter((slice) => slice.taskId === event.taskId);
   const open = (slice: TaskState) => slice.pr === null && slice.step !== "merged" && slice.releasedBy === undefined
     && (slice.lane === null || event.lane === undefined || slice.lane === event.lane);
@@ -515,6 +517,7 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
     if (event.pr !== undefined) claimed.pr = event.pr;
     return claimed;
   }
+  if (byPr !== undefined) return byPr;
   // A record without a PR (none is admitted today) stays with the newest slice of its task.
   if (event.pr === undefined && group.length > 0) return group[group.length - 1];
   return add();
@@ -627,7 +630,8 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
     clockStep(state.clock, timed(before), timed(state.step), event.occurredAt, resumesAfterGap);
     if (event.kind === "task.merged" && event.closes !== undefined) {
       for (const claim of slices) {
-        if (claim !== state && claim.pr === null && claim.step !== "merged" && claim.issue !== null && event.closes.includes(claim.issue)) {
+        if (claim !== state && (claim.pr === null || claim.pr === event.pr) && claim.step !== "merged"
+          && claim.issue !== null && event.closes.includes(claim.issue)) {
           const claimBefore = claim.step;
           claim.step = "merged";
           claim.mergeSha = event.mergeSha ?? null;

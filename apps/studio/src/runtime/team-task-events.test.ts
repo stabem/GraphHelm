@@ -278,6 +278,18 @@ describe("foldTaskEvents slices (#460)", () => {
 });
 
 describe("merges recorded by another lane (#765)", () => {
+  it("ends a duplicate-PR claim when the existing PR slice ends (#795)", () => {
+    const tasks = foldTaskEvents([
+      record(1, "task.claimed", "lane-a", { taskId: "issue-1", issue: 1, lane: "lane-a", branch: "issue-1-first" }),
+      record(2, "task.pr_opened", "lane-a", { taskId: "issue-1", pr: 9, headSha: "aaaaaaaa", journeys: [], lane: "lane-a" }),
+      record(3, "task.claimed", "lane-b", { taskId: "issue-1", issue: 1, lane: "lane-b", branch: "issue-1-duplicate" }),
+      record(4, "task.pr_opened", "lane-b", { taskId: "issue-1", pr: 9, headSha: "cccccccc", journeys: [], lane: "lane-b" }),
+      record(5, "task.merged", "coordinator", { taskId: "pr-9", pr: 9, mergeSha: "bbbbbbbb", closes: [1], merger: "coordinator" }),
+    ]);
+
+    expect(tasks.find((task) => task.lane === "lane-b" && task.pr === 9)).toMatchObject({ step: "merged", mergeSha: "bbbbbbbb" });
+  });
+
   it("ends the opened PR slice even when the merge uses a PR task id", () => {
     const tasks = foldTaskEvents([
       record(1, "task.claimed", "codex-14", { taskId: "issue-691", issue: 691, lane: "codex-14", branch: "issue-691-fix" }),

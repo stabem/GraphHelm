@@ -325,7 +325,7 @@ export function ProjectRail({
                 const metaStatus = reviewCount > 0 ? `${reviewCount} result${reviewCount === 1 ? " needs" : "s need"} review` : readable(run.status);
                 return (
                   <div key={run.executionId} className={`run-row ${rowKey} ${on ? "on" : ""}`}>
-                  <button type="button" className={`run ${rowKey} ${on ? "on" : ""}`} aria-current={on ? "true" : undefined} aria-label={`${title}; ${relativeTime} · ${metaStatus}`} onClick={() => onSelect(run.executionId)} title={rowStatus}>
+                  <button type="button" className={`run ${rowKey} ${on ? "on" : ""}`} aria-current={on ? "true" : undefined} aria-label={`${title}; ${relativeTime} · ${metaStatus}; ${rowStatus}`} onClick={() => onSelect(run.executionId)} title={rowStatus}>
                     {/* Each room wears its own derived colour, like a contact in a messenger -
                         the same hue its actors' avatars key off nothing, but the ROOM's identity
                         comes from its id, stable across every view. */}

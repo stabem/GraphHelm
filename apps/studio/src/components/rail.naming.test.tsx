@@ -184,9 +184,9 @@ describe("activity-ordered run history", () => {
     const unknownTime = screen.getByRole("group", { name: /activity time unknown/i });
     const unknownRows = within(unknownTime).getAllByRole("button");
     expect(unknownRows[0]).toHaveTextContent("invalid-time");
-    expect(unknownRows[0]).toHaveTextContent("status completed");
+    expect(unknownRows[0]).toHaveTextContent("Time unknown · completed");
     expect(unknownRows[1]).toHaveTextContent("missing-time");
-    expect(unknownRows[1]).toHaveTextContent("status blocked");
+    expect(unknownRows[1]).toHaveTextContent("Time unknown · blocked");
     expect(unknownTime).toHaveTextContent("Time unknown");
     expect(screen.getByRole("group", { name: /status unknown/i })).toHaveTextContent("unknown");
     expect(screen.getByRole("button", { name: /show history/i })).toBeInTheDocument();

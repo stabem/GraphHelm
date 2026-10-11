@@ -100,7 +100,9 @@ touched crates only unless the card names and justifies broader lint coverage. C
 
 For execution use `python tools/reached-tests/run_reached.py --repo . --base origin/main
 --head HEAD --root <root> --lane <lane> --output <outside-repo>/feedback.json`. It releases the
-existing Cargo slot between commands and measures the 180-second target including queue time.
+existing Cargo slot at bounded batch boundaries by default and measures the 180-second target
+including queue time. Use `--no-batch-slot` only when one-command leases are needed; the older
+`--batch-slot` spelling remains accepted.
 A late or incomplete run is not success. Keep isolated targets warm; reviewers may sequentially
 reuse an unchanged worktree after verifying its identity (DELIVERY.md §4). Never share a mutable
 target across worktrees or wrap this outer runner in another slot. The CLI admits only direct,

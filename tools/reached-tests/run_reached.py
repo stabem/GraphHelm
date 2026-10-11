@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Run the reached-test plan with bounded build-slot leases.
 
-The selector owns reachability. This runner owns only orchestration: every Cargo
-step gets its own slot invocation by default; --batch-slot groups short adjacent
-Cargo checks. Format, Python, and Studio steps run directly. No command is passed through a shell. Whole-package plans are expanded
+The selector owns reachability. This runner owns only orchestration: short adjacent Cargo
+checks use one bounded slot batch by default; --no-batch-slot opts out and --batch-slot
+remains accepted for compatibility. Format, Python, and Studio steps run directly. No command is passed through a shell. Whole-package plans are expanded
 by the selector into explicit Cargo targets; targets requiring features are
 reported as unsupported and remain incomplete rather than being silently skipped.
 """
@@ -343,7 +343,9 @@ def run(args: argparse.Namespace) -> int:
                 report["pending"].remove(index)
             queue: float | None = 0.0
             held: float | None = 0.0
-            batch_mode = bool(getattr(args, "batch_slot", False))
+            # Batch is the safe default for the official runner. Keep the fallback for
+            # tests and embedders that construct an Args object directly.
+            batch_mode = bool(getattr(args, "batch_slot", True))
             order = _execution_order(steps, batch_mode)
             work = [entry for entry in order if entry["index"] not in skip_browser]
             while work:
@@ -500,8 +502,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--allow-whole-package")
     ap.add_argument("--include-browser", action="store_true",
                     help="allow selector steps marked observer=browser when local Playwright is installed")
-    ap.add_argument("--batch-slot", action="store_true",
-                    help="opt in to the versioned serial Cargo slot batch protocol")
+    batch = ap.add_mutually_exclusive_group()
+    batch.add_argument("--batch-slot", dest="batch_slot", action="store_true",
+                       help="use the versioned serial Cargo slot batch protocol (default)")
+    batch.add_argument("--no-batch-slot", dest="batch_slot", action="store_false",
+                       help="run each Cargo command in its own slot invocation")
+    ap.set_defaults(batch_slot=True)
     ap.add_argument("--plan", action="store_true")
     return run(ap.parse_args(argv))
 

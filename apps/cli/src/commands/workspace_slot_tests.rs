@@ -424,8 +424,33 @@ fn admitted_slot_serializes_real_children_in_arrival_order_and_cleans_tickets() 
         let request = request(&second_root, "lane-b", "second", &second_command);
         run_admitted_slot(&request)
     });
-    assert!(first.join().unwrap().output.ok);
-    assert!(second.join().unwrap().output.ok);
+    let first = first.join().unwrap();
+    let second = second.join().unwrap();
+    assert!(first.output.ok);
+    assert!(second.output.ok);
+    let first_data = first.output.data.unwrap();
+    let second_data = second.output.data.unwrap();
+    assert!(first_data["heldSeconds"].is_f64(), "{first_data}");
+    assert!(second_data["waitedSeconds"].is_f64(), "{second_data}");
+    assert!(second_data["heldSeconds"].is_f64(), "{second_data}");
+    assert!(
+        first_data["heldSeconds"]
+            .as_f64()
+            .is_some_and(|seconds| seconds > 0.0),
+        "{first_data}"
+    );
+    assert!(
+        second_data["waitedSeconds"]
+            .as_f64()
+            .is_some_and(|seconds| seconds > 0.0),
+        "{second_data}"
+    );
+    assert!(
+        second_data["heldSeconds"]
+            .as_f64()
+            .is_some_and(|seconds| seconds > 0.0),
+        "{second_data}"
+    );
     let lines = std::fs::read_to_string(&*first_log).unwrap();
     assert_eq!(lines.lines().count(), 4, "{lines}");
     assert!(

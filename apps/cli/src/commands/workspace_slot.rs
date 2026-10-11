@@ -798,12 +798,12 @@ fn run_admitted_slot_in_with_batch(
         }
         std::thread::sleep(POLL);
     };
-    let waited = started.elapsed().as_secs();
+    let waited = started.elapsed().as_secs_f64();
+    let held_clock = Instant::now();
     let mut holder = &slot;
     let _ = holder.set_len(0);
     let _ = writeln!(holder, "{lane} {label} pid={}", std::process::id());
     let held_since = unix_now();
-    let held_clock = Instant::now();
     let _ = std::fs::write(
         dir.join(HOLDER),
         json!({"lane": lane, "label": label, "pid": std::process::id(),
@@ -904,7 +904,7 @@ fn run_admitted_slot_in_with_batch(
         };
         (status.code().unwrap_or(1), None)
     };
-    let held = started.elapsed().as_secs() - waited;
+    let held = held_clock.elapsed().as_secs_f64();
     release(slot, ticket);
     let mut data = json!({"lane": lane, "label": label, "exitCode": code, "waitedSeconds": waited,
         "heldSeconds": held, "targetDir": target.to_string_lossy(), "cleaned": cleaned,

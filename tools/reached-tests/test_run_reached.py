@@ -13,6 +13,15 @@ import run_reached as rr
 
 
 class RunnerContracts(unittest.TestCase):
+    def test_batch_cli_defaults_on_and_supports_explicit_opt_out(self):
+        with patch.object(rr, "run", return_value=0) as run:
+            self.assertEqual(rr.main(["--output", "feedback.json"]), 0)
+            self.assertTrue(run.call_args.args[0].batch_slot)
+            self.assertEqual(rr.main(["--output", "feedback.json", "--no-batch-slot"]), 0)
+            self.assertFalse(run.call_args.args[0].batch_slot)
+            self.assertEqual(rr.main(["--output", "feedback.json", "--batch-slot"]), 0)
+            self.assertTrue(run.call_args.args[0].batch_slot)
+
     def test_batch_order_hoists_only_fmt_and_keeps_selector_indices(self):
         steps, error = rr._steps({"steps": [
             {"argv": ["python", "-c", "pass"], "cwd": ".", "slot": False},
@@ -106,7 +115,7 @@ class RunnerContracts(unittest.TestCase):
 
             args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
                                       "root": "D:/gh", "lane": "test", "budget_seconds": 180,
-                                      "allow_whole_package": None, "plan": False, "batch_slot": True,
+                                      "allow_whole_package": None, "plan": False,
                                       "graphhelm": sys.executable})()
             with patch.object(rr, "_selector", return_value=plan), patch.object(rr, "_git", side_effect=fake_git), \
                     patch.object(rr.subprocess, "run", side_effect=fake_run):
@@ -406,7 +415,7 @@ class RunnerContracts(unittest.TestCase):
             self.assertEqual(report["completed"][0]["error"], "pytest collected no tests")
             self.assertIn("no tests ran", report["completed"][0]["tail"])
 
-    def test_each_slot_step_gets_its_own_slot_process(self):
+    def test_no_batch_opt_out_keeps_each_slot_step_in_its_own_process(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess = __import__("subprocess")
@@ -432,7 +441,7 @@ class RunnerContracts(unittest.TestCase):
             with patch.object(rr, "_selector", return_value=plan), patch.object(rr.subprocess, "run", side_effect=fake_run):
                 args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
                                           "root": "D:/gh", "lane": "test", "budget_seconds": 180,
-                                          "allow_whole_package": None, "plan": False,
+                                          "allow_whole_package": None, "plan": False, "batch_slot": False,
                                           "graphhelm": sys.executable})()
                 self.assertEqual(rr.run(args), 0)
             self.assertEqual(len(calls), 2)

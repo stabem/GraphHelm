@@ -15,7 +15,10 @@ import tempfile
 import time
 import threading
 import unittest
+from unittest import mock
 import urllib.request
+
+from plugins.graphhelm.hooks import tasks_reconcile
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
@@ -86,18 +89,9 @@ class LaneStopTests(unittest.TestCase):
 
     def test_reconcile_records_github_merge_once(self):
         """A fake gh MERGED reply closes one recorded PR in the disposable Runtime."""
-        root = Path(self.tmp.name)
-        fake_bin = root / "bin"
-        fake_bin.mkdir()
         sha = "a" * 40
-        reply = json.dumps({"state": "MERGED", "mergeCommit": {"oid": sha},
-                            "closingIssuesReferences": []})
-        if os.name == "nt":
-            (fake_bin / "gh.cmd").write_text("@echo off\r\necho " + reply + "\r\n")
-        else:
-            fake = fake_bin / "gh"
-            fake.write_text("#!/bin/sh\nprintf '%s\\n' '" + reply + "'\n")
-            fake.chmod(0o755)
+        reply = {"state": "MERGED", "mergeCommit": {"oid": sha},
+                 "closingIssuesReferences": []}
         now = "2026-10-10T00:00:00Z"
         document = {"schema": "graphhelm-task-event-v1", "taskId": "issue-766",
                     "revision": 2, "at": now, "pr": 9001, "headSha": "b" * 40,
@@ -112,16 +106,13 @@ class LaneStopTests(unittest.TestCase):
                   "X-GraphHelm-Actor": "codex-4", "X-GraphHelm-Actor-Type": "agent"})
         with urllib.request.urlopen(request, timeout=5) as response:
             self.assertTrue(json.load(response)["ok"])
-        environment = {**self.env, "PATH": str(fake_bin) + os.pathsep + self.env.get("PATH", "")}
-        command = [sys.executable, str(HERE / "tasks_reconcile.py"), "--execution", "lane-test",
-                   "--url", self.url, "--token-file", self.env["GRAPHHELM_TOKEN_FILE"],
-                   "--repo", "stabem/GraphHelm", "--lane", "codex-4"]
-        first = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=15)
-        self.assertEqual(first.returncode, 0, first.stderr)
-        self.assertEqual(json.loads(first.stdout)["merged"], [9001])
-        second = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=15)
-        self.assertEqual(second.returncode, 0, second.stderr)
-        self.assertEqual(json.loads(second.stdout)["merged"], [])
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+        with mock.patch.object(tasks_reconcile, "github", return_value=reply) as github:
+            self.assertEqual(tasks_reconcile.reconcile(args)["merged"], [9001])
+            self.assertEqual(tasks_reconcile.reconcile(args)["merged"], [])
+        github.assert_called_once_with(9001, "stabem/GraphHelm")
 
     def stop(self, manifest, active=False):
         # Drive the registered Stop commands, not an unregistered helper. On the parent

@@ -20,6 +20,9 @@ describe("workStage", () => {
     expect(workStage(task("a", { step: "merged" }), false)).toBe("merged");
     expect(workStage(task("a", { step: "merged" }), true)).toBe("proven");
   });
+  it("a released claim is not active work", () => {
+    expect(workStage(task("released", { releasedBy: "gh-claude-1" }), false)).toBe("released");
+  });
   it("Fix: an unanswered BLOCK; once the fix is pushed the work waits in Review (#591)", () => {
     expect(workStage(task("a", { step: "review", blockedBy: { reviewer: "r", headSha: "a", commentUrl: "" }, rounds: [round(null)] }), false)).toBe("fix");
     expect(workStage(task("a", { step: "review", rounds: [round("b")] }), false)).toBe("review");

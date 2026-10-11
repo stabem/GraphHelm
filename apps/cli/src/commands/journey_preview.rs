@@ -200,7 +200,10 @@ fn alive(pid: u64) -> Liveness {
 
 #[cfg(windows)]
 fn tasklist_liveness(text: &str, pid: u64) -> Liveness {
-    if text.lines().any(|line| line.starts_with('"') && line.contains(&format!(",\"{pid}\""))) {
+    if text
+        .lines()
+        .any(|line| line.starts_with('"') && line.contains(&format!(",\"{pid}\"")))
+    {
         Liveness::Alive
     } else if text.contains("INFO: No tasks are running which match the specified criteria.") {
         Liveness::Dead

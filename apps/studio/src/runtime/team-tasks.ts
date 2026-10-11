@@ -514,7 +514,7 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
     if (event.kind === "task.planned") return add();
   }
   const claimed = group.filter((slice) => event.kind === "task.pr_opened" ? open(slice)
-    : slice.pr === null && slice.step !== "merged").at(0);
+    : slice.pr === null && slice.step !== "merged" && slice.releasedBy === undefined).at(0);
   if (claimed !== undefined) {
     if (event.pr !== undefined) claimed.pr = event.pr;
     return claimed;

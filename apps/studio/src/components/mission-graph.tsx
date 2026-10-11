@@ -344,7 +344,7 @@ export function CurrentCard({ cell: c, stage, task: t, health, pace, selected, l
       data-pace={Boolean(pace)} aria-pressed={selected} aria-label={stage === "merged" ? `${prText(t)} ${base}` : undefined} style={left === undefined ? undefined : { left, top }} onClick={onSelect}>
       <span className="mg-node-head">
         <span className="mg-dot" data-state={st} />
-        <span className="mg-node-label">{c.count > 1 ? `${base} ×${c.count}` : base}</span>
+        <span className="mg-node-label">{base}</span>
         <span className="mg-node-pr">{prText(t)}</span>
       </span>
       <span className="mg-node-title" title={t.title}>{t.title}</span>

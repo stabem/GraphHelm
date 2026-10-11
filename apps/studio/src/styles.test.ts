@@ -115,6 +115,15 @@ describe("every token is real", () => {
   });
 });
 
+describe("issue graph cell labels stay whole", () => {
+  it("keeps the stage label full width so the mark gives up space first", async () => {
+    const css = (await import("./components/mission-graph.css?raw")).default as string;
+    const label = css.split("\n").find((line) => line.startsWith(".mg-cell-label {")) ?? "";
+    expect(label).toMatch(/flex: none/);
+    expect(label).not.toMatch(/text-overflow: ellipsis|overflow: hidden/);
+  });
+});
+
 describe("the Journey tab is a column that reserves the dock (#435)", () => {
   /** Found while the owner rehearsed approvals at 1024 px: the flow cards grew the tab panel to
    * 6,759 px, the dock (absolute at the scene's bottom) covered the first Approve buttons, and

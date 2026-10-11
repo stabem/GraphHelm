@@ -132,7 +132,7 @@
 .mg-cell:focus-visible, .mg-rowtitle:focus-visible, .mg-fold:focus-visible { outline: 2px solid #9AB8FF; outline-offset: 2px; }
 .mg-cell-line { display: flex; align-items: baseline; gap: 6px; width: 100%; min-width: 0; white-space: nowrap; }
 .mg-cell-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.mg-cell-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mg-cell-label { flex: none; }
 .mg-cell-mark, .mg-cell .mg-tag { flex: none; }
 .mg-cell .mg-tag { margin-left: auto; padding: 0 4px; font-size: 10px; }
 .mg-cell-sub { color: #8D929C; }

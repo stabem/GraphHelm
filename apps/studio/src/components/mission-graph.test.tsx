@@ -276,6 +276,14 @@ describe("PR #581's shape on the Graph (#591)", () => {
       expect(screen.getByText("fix pushed 66613c95")).toBeInTheDocument();
     } finally { vi.useRealTimers(); }
   });
+  it("a re-review card shows the round count once, not the review total", () => {
+    const rounds = [1, 2, 3].map((n) => ({ reviewer: `reviewer-${n}`, headSha: `head-${n}`, commentUrl: "", fixHead: `fix-${n}`, blockedAt: null, fixedAt: null }));
+    const group = buildWorkGroups([ts("p", { issue: 809, pr: 822, prTitle: "Counters", step: "review", rounds, reviewers: ["reviewer-3"] })], [])[0]!;
+    const { container } = render(<IssueGraph group={group} stepFor={() => undefined} selectedTaskKey={null} selectedCol={null} onSelectTask={vi.fn()} onSelectCol={vi.fn()} onOpenTest={vi.fn()} />);
+    const label = container.querySelector('.mg-node[data-current="true"] .mg-node-label')!;
+    expect(label.textContent).toBe("Re-review ×3");
+    expect(label.textContent?.match(/×/g) ?? []).toHaveLength(1);
+  });
   it("a lane silent 1h 10m reads Stalled on the card and in the inspector, and the dot is red", async () => {
     vi.useFakeTimers();
     try {

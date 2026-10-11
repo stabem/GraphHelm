@@ -1,5 +1,5 @@
 import "./mission-view.css";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { JourneyRunView, JourneyView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
 import type { TaskEventRecord } from "../runtime/team-tasks";
@@ -25,7 +25,7 @@ import type { SlotView } from "../runtime/slots";
 import type { GraphNode } from "../graph/model";
 import { readable } from "./format";
 
-type Sub = "graph" | "proof" | "test" | "lanes";
+type Sub = "graph" | "proof" | "test" | "lanes" | "journeys";
 const WINDOW_MS = 14 * 3_600_000;
 const GONE_QUIET_MS = 24 * 3_600_000;
 
@@ -55,6 +55,9 @@ interface Props {
   onTeam?: () => void;
   /** #630: opens the Journey canvas, where the owner approves draft journeys. Absent: no Journeys item. */
   onJourneys?: () => void;
+  /** The existing journey list and detail, shown inside the persistent Studio navigation. */
+  journeyContent?: ReactNode;
+  initialView?: "graph" | "journeys";
   /** #630: draft journeys waiting for approval; shown on the Journeys item when above zero. */
   draftJourneys?: number;
   /** #591: "Agents right now" in the rail, from the team model. */
@@ -173,7 +176,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, run, onRun, runName, lastRecordAt, onTeam, onJourneys, draftJourneys = 0, agents = [], historyLoading = false, away = null, onSignal, onReviewAssigned, wakeListeners, slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, run, onRun, runName, lastRecordAt, onTeam, onJourneys, journeyContent, initialView = "graph", draftJourneys = 0, agents = [], historyLoading = false, away = null, onSignal, onReviewAssigned, wakeListeners, slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
   const [chosen, setChosen] = useState<Selection | null>(null);
   const [stepId, setStepId] = useState<string | null>(null);
   // undefined: the group's default (the task that most needs the owner); null: none, a column is chosen.
@@ -181,7 +184,7 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
   const [stageCol, setStageCol] = useState<number | null>(null);
   // #591: when the owner asked a lane for status, by PR + lane; kept here so it survives selecting another PR.
   const [askedAt, setAskedAt] = useState<Record<string, { at: number; listening: boolean | null }>>({});
-  const [sub, setSub] = useState<Sub>("graph");
+  const [sub, setSub] = useState<Sub>(initialView);
   // #630: the wide Graph hides the chat column; this opens it beside the Graph.
   const [chatOpen, setChatOpen] = useState(false);
   const [frame, setFrame] = useState(0);
@@ -230,7 +233,7 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
           <div className="mv-nav" role="group" aria-label="Go to">
             <button type="button" className="mv-tab" aria-pressed={chatOpen} onClick={() => setChatOpen((o) => !o)}>Chat</button>
             {onJourneys && (
-              <button type="button" className="mv-tab" aria-label="Journeys" aria-describedby={draftJourneys > 0 ? "mv-journeys-count" : undefined} onClick={onJourneys}>
+              <button type="button" className="mv-tab" aria-label="Journeys" aria-pressed={sub === "journeys"} aria-describedby={draftJourneys > 0 ? "mv-journeys-count" : undefined} onClick={() => { setSub("journeys"); onJourneys(); }}>
                 {draftJourneys > 0 ? `Journeys · ${draftJourneys} to approve` : "Journeys"}
               </button>
             )}
@@ -269,7 +272,8 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
   </>;
   const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} {...(onOpenNode ? { onOpenNode } : {})} />;
   if (sel === null) return <div className="mv" data-wide="true" data-page={page} data-chat={chatOpen ? "open" : undefined}>{header}
-    {sub === "lanes" ? <div className="mv-pad">{lanesView}</div>
+    {sub === "journeys" ? <div className="mv-pad">{journeyContent}</div>
+      : sub === "lanes" ? <div className="mv-pad">{lanesView}</div>
       : <>{sub === "graph" && runGraph}<p className="mv-none mv-pad">No journeys in this project yet</p></>}</div>;
   const rawGroup: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
   // #591: the live Review row names only the current reviewer (latest assignment on the current head).
@@ -358,6 +362,7 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
     // data-wide: the Studio layout gives the mission view the whole main area (mission-view.css).
     <div className="mv" data-wide="true" data-page={page} data-chat={chatOpen ? "open" : undefined}>
       {header}
+      {sub === "journeys" ? <div className="mv-pad">{journeyContent}</div> : <>
       {gsum && sub === "graph" && (
         <p className="mg-summary mv-summary" aria-label="Summary">
           <span className="mg-sum" data-tone="proven"><b>{`${gsum.proven}/${group!.tasks.length}`}</b> proven</span>
@@ -528,6 +533,7 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
           {sub === "lanes" && lanesView}
         </div>
       </div>
+      </>}
     </div>
   );
 }

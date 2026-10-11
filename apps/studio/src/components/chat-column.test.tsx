@@ -43,6 +43,16 @@ describe("composerMode", () => {
 });
 
 describe("ChatColumn", () => {
+  it("mounts only the recent 50 messages until older history is requested", async () => {
+    const messages = Array.from({ length: 120 }, (_, i) => msg(i + 1, "coordinator", null, `Line ${i + 1}`));
+    const threads = chatThreads(messages, BOTS, "studio-operator");
+    render(<ChatColumn {...props({ threads })} />);
+    expect(document.querySelectorAll(".chat-message")).toHaveLength(50);
+    expect(screen.getByText("Line 120")).toBeInTheDocument();
+    expect(screen.queryByText("Line 1")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "older messages (70)" }));
+    expect(screen.getByText("Line 1")).toBeInTheDocument();
+  });
   it("shows thread tabs with unread counts, one per task", async () => {
     const p = props();
     render(<ChatColumn {...p} />);

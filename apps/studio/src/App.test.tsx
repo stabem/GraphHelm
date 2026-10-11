@@ -530,6 +530,19 @@ describe("live team layout", () => {
     expect(within(nav).getAllByRole("tab").map((t) => t.textContent)).toEqual(["Graph", "Lanes", "Proof"]);
   });
 
+  it("keeps the Studio navigation when Journeys opens, then returns to the mission graph", async () => {
+    sessionStorage.clear();
+    await open(stubClient());
+    await userEvent.click(await screen.findByRole("button", { name: "Journeys" }));
+    const nav = screen.getByRole("tablist", { name: "Mission views" });
+    expect(within(nav).getByRole("tab", { name: "Graph" })).toBeInTheDocument();
+    expect(within(nav).getByRole("tab", { name: "Lanes" })).toBeInTheDocument();
+    expect(within(nav).getByRole("tab", { name: "Proof" })).toBeInTheDocument();
+    expect(screen.queryByRole("tablist", { name: "Canvas views" })).toBeNull();
+    await userEvent.click(within(nav).getByRole("tab", { name: "Graph" }));
+    expect(screen.getByText("Mission graph")).toBeInTheDocument();
+  });
+
   it("does not show run A's handover after switching to run B", async () => {
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-calm", "1");

@@ -66,6 +66,7 @@ export function composerMode(thread: ChatThread | undefined, nativeKeys: Readonl
 
 /** Within this many pixels of the end counts as "at the bottom" (sub-pixel rounding, a last line). */
 const BOTTOM_SLACK = 48;
+const RECENT_MESSAGES = 50;
 
 function prefersReducedMotion(): boolean {
   try {
@@ -83,6 +84,7 @@ export function ChatColumn(props: ChatColumnProps) {
     : props.threads.find((candidate) => candidate.key === props.selected) ?? props.threads[0];
   // #393: task threads that are merged or quiet fold under "older", shown on request.
   const [showOlder, setShowOlder] = useState(false);
+  const [showOlderMessages, setShowOlderMessages] = useState(false);
   const olderCount = props.threads.filter((candidate) => candidate.older && candidate.key !== thread?.key).length;
   const mode = composerMode(thread, props.nativeKeys);
   // One draft per thread: a single shared draft followed the operator across tabs, so text
@@ -149,9 +151,12 @@ export function ChatColumn(props: ChatColumnProps) {
   const [unseen, setUnseen] = useState(false);
   // #396: an agent filter on any thread; "" shows every line. Reset when the thread changes.
   const [onlyFrom, setOnlyFrom] = useState("");
-  useEffect(() => { setOnlyFrom(""); }, [thread?.key]);
+  useEffect(() => { setOnlyFrom(""); setShowOlderMessages(false); }, [thread?.key]);
   const speakers = [...new Set((thread?.messages ?? []).map((message) => message.sender))];
-  const messages = props.selected === NEEDS_YOU ? [] : (thread?.messages ?? []).filter((message) => onlyFrom === "" || message.sender === onlyFrom);
+  const filteredMessages = props.selected === NEEDS_YOU ? [] : (thread?.messages ?? []).filter((message) => onlyFrom === "" || message.sender === onlyFrom);
+  const olderMessageCount = Math.max(0, filteredMessages.length - RECENT_MESSAGES);
+  const messages = showOlderMessages || (props.highlight !== null && filteredMessages.slice(0, olderMessageCount).some((message) => message.sequence === props.highlight))
+    ? filteredMessages : filteredMessages.slice(-RECENT_MESSAGES);
   const lastId = messages.at(-1)?.id ?? "";
   const toBottom = useCallback((smooth: boolean) => {
     const el = scroller.current;
@@ -223,6 +228,7 @@ export function ChatColumn(props: ChatColumnProps) {
         </label>
       )}
       <ol className="chat-messages" role="tabpanel" aria-label={thread?.label ?? "Everyone"}>
+        {olderMessageCount > 0 && !showOlderMessages && <li><button type="button" onClick={() => setShowOlderMessages(true)}>{`older messages (${olderMessageCount})`}</button></li>}
         {thread?.key === EVERYONE && props.openingCount > 0 && <li className="chat-opening">Opening {props.openingCount} sealed records…</li>}
         {messages.map((message) => {
           const name = props.names[message.sender] ?? (message.sender === "studio-operator" ? "You" : message.sender);

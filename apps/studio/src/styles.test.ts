@@ -275,6 +275,18 @@ describe("the stylesheet and the components agree", () => {
     }
   });
 
+  it("keeps Chat threads on one compact horizontal row and lets long links wrap cleanly (#797)", () => {
+    const tabs = ruleOf(".chat-tabs");
+    expect(tabs).toMatch(/flex-wrap:\s*nowrap/);
+    expect(tabs).toMatch(/overflow-x:\s*auto/);
+    expect(tabs).toMatch(/max-height:\s*40px/);
+    expect(ruleOf(".chat-text")).toMatch(/overflow-wrap:\s*anywhere/);
+  });
+
+  it("keeps the Chat column below the top bar at narrow viewport widths (#797)", () => {
+    expect(CODE).toMatch(/\.chat-col\s*\{[^}]*grid-row:\s*2\s*\/\s*3/);
+  });
+
   it("keeps the selected-run identity on one line instead of one glyph per row (#325)", () => {
     const rule = ruleOf(".run-selection-identity");
     expect(rule).not.toMatch(/flex-basis:\s*100%/);

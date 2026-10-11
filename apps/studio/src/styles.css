@@ -1926,6 +1926,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   .stage { margin: 8px; }
   .talk { position: absolute; inset: 0 auto 0 0; z-index: 8; width: min(360px, 100%); box-shadow: var(--float); }
   .chat-col, .node-col { inset: 0 0 0 auto; z-index: 10; }
+  .chat-col { position: relative; inset: auto; grid-column: 1; grid-row: 2 / 3; width: 100%; max-width: none; min-height: 0; }
   .scene { width: 100%; }
   .studio-columns:has(> .node-col, > .chat-col) .scene .dock { display: none; }
   .topbar .run-name { max-width: none; }
@@ -1941,7 +1942,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   .topbar .tag { font-size: 10px; }
   .app > .rail { top: 56px; } /* drops from the toolbar row, over the run title */
   .stage { border-radius: 12px; }
-  .talk, .chat-col, .node-col { width: 100%; }
+  .talk, .node-col { width: 100%; }
   .panel-head { padding: 10px 12px; }
   .saybox textarea, .composer textarea, .composer select, .field input, .project-name-input, .thread-search input { font-size: 16px; }
   .tools button, .dock button { min-height: 44px; }
@@ -2473,7 +2474,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .chat-dock { min-width: 0; border-top: 1px solid var(--edge); background: var(--void); }
 .chat-principal-history { padding: 0 10px 10px; }
 .chat-principal-history[hidden] { display: none; }
-.chat-tabs { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--edge); background: var(--void); }
+.chat-tabs { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: nowrap; gap: 4px; max-height: 40px; overflow-x: auto; overflow-y: hidden; padding: 4px 8px; border-bottom: 1px solid var(--edge); background: var(--void); scrollbar-width: thin; }
 .chat-tabs [role="tab"] { white-space: nowrap; padding: 4px 10px; border-radius: 999px; border: 1px solid transparent; background: none; color: inherit; }
 .chat-tabs [aria-selected="true"] { border-color: var(--edge); font-weight: 600; }
 .chat-unread { margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--signal); color: var(--signal-ink); font-size: 11px; }

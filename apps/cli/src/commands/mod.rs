@@ -33,8 +33,8 @@ mod serve;
 mod simulate;
 mod skills;
 mod studio;
-mod tool;
 mod tasks;
+mod tool;
 mod topology;
 mod validate;
 mod wake_wait;
@@ -51,17 +51,31 @@ use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator};
 use crate::args::{
     CredentialCommand, DevelopmentCommand, DraftCommand, EventsCommand, ExecutionCommand,
     ExtensionCommand, GateCommand, GatewayCommand, GraphCommand, KeelCommand, KeelTestCommand,
-    KeyringCommand, QualityCommand, RouteCommand, SchemaCommand, SynthesizeArgs, ToolCommand,
-    TopLevel,
-    TasksCommand,
+    KeyringCommand, QualityCommand, RouteCommand, SchemaCommand, SynthesizeArgs, TasksCommand,
+    ToolCommand, TopLevel,
 };
 use crate::output::Outcome;
 
 pub fn run(command: TopLevel) -> Outcome {
     match command {
         TopLevel::Tasks(args) => match args.command {
-            TasksCommand::RunEnded { execution, lane, exit, result_file, run_id, url, token_file } =>
-                tasks::run_ended(&execution, &lane, exit, result_file.as_deref(), run_id.as_deref(), url.as_deref(), token_file.as_deref()),
+            TasksCommand::RunEnded {
+                execution,
+                lane,
+                exit,
+                result_file,
+                run_id,
+                url,
+                token_file,
+            } => tasks::run_ended(
+                &execution,
+                &lane,
+                exit,
+                result_file.as_deref(),
+                run_id.as_deref(),
+                url.as_deref(),
+                token_file.as_deref(),
+            ),
         },
         TopLevel::Graph(graph) => match graph.command {
             GraphCommand::Validate { file } => validate::run(&file),

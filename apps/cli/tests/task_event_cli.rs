@@ -22,29 +22,45 @@ fn run_ended_posts_once_per_logical_run_and_fails_open() {
         let mut ids = Vec::new();
         for _ in 0..2 {
             let (mut stream, _) = listener.accept().unwrap();
-            stream.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
             let mut bytes = Vec::new();
             let mut chunk = [0_u8; 4096];
             loop {
                 let n = stream.read(&mut chunk).unwrap();
                 bytes.extend_from_slice(&chunk[..n]);
-                if bytes.windows(4).any(|w| w == b"\r\n\r\n") { break; }
+                if bytes.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
             }
             let request = String::from_utf8_lossy(&bytes);
             assert!(request.contains("POST /v1/executions/gh-team/signal"));
-            assert!(request.to_ascii_lowercase().contains("x-graphhelm-actor: codex-x"));
+            assert!(
+                request
+                    .to_ascii_lowercase()
+                    .contains("x-graphhelm-actor: codex-x")
+            );
             let headers_end = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
-            let length = request.lines().find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length:")
-                .and_then(|n| n.trim().parse::<usize>().ok())).unwrap();
+            let length = request
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .and_then(|n| n.trim().parse::<usize>().ok())
+                })
+                .unwrap();
             while bytes.len() - headers_end < length {
                 let n = stream.read(&mut chunk).unwrap();
                 bytes.extend_from_slice(&chunk[..n]);
             }
-            let body: serde_json::Value = serde_json::from_slice(&bytes[headers_end..headers_end + length]).unwrap();
+            let body: serde_json::Value =
+                serde_json::from_slice(&bytes[headers_end..headers_end + length]).unwrap();
             assert_eq!(body["signal"]["type"], "agent_session_ended");
             assert_eq!(body["signal"]["source"]["id"], "codex-x");
             ids.push(body["signal"]["id"].as_str().unwrap().to_owned());
-            let reply = b"{\"ok\":true,\"command\":\"execution.signal\",\"data\":{},\"diagnostics\":[]}";
+            let reply =
+                b"{\"ok\":true,\"command\":\"execution.signal\",\"data\":{},\"diagnostics\":[]}";
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", reply.len()).unwrap();
             stream.write_all(reply).unwrap();
         }
@@ -52,13 +68,41 @@ fn run_ended_posts_once_per_logical_run_and_fails_open() {
     });
     for _ in 0..2 {
         Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-            .args(["tasks", "run-ended", "--lane", "codex-x", "--exit", "0", "--run-id", "test-run", "--url", &url,
-                "--token-file", token.to_str().unwrap()]).assert().success();
+            .args([
+                "tasks",
+                "run-ended",
+                "--lane",
+                "codex-x",
+                "--exit",
+                "0",
+                "--run-id",
+                "test-run",
+                "--url",
+                &url,
+                "--token-file",
+                token.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
     }
     server.join().unwrap();
     Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args(["tasks", "run-ended", "--lane", "codex-x", "--exit", "0", "--run-id", "other-run", "--url", &url,
-            "--token-file", token.to_str().unwrap()]).assert().success();
+        .args([
+            "tasks",
+            "run-ended",
+            "--lane",
+            "codex-x",
+            "--exit",
+            "0",
+            "--run-id",
+            "other-run",
+            "--url",
+            &url,
+            "--token-file",
+            token.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
 }
 
 use assert_cmd::Command;

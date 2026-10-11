@@ -111,8 +111,8 @@ def reconcile(args):
             continue
         if kind == "task.merged":
             merged.add(pr)
-        elif (args.lane is None or doc.get("lane") == args.lane) and re.fullmatch(r"issue-[1-9][0-9]*", str(doc.get("taskId"))):
-            opened[pr] = (doc["taskId"], doc.get("repo") or args.repo)
+        elif (args.lane is None or doc.get("lane") == args.lane) and doc.get("repo") == args.repo and re.fullmatch(r"issue-[1-9][0-9]*", str(doc.get("taskId"))):
+            opened[pr] = (doc["taskId"], args.repo)
     done = []
     for pr, (task_id, repo) in opened.items():
         if pr in merged:

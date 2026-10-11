@@ -114,6 +114,39 @@ class LaneStopTests(unittest.TestCase):
             self.assertEqual(tasks_reconcile.reconcile(args)["merged"], [])
         github.assert_called_once_with(9001, "stabem/GraphHelm")
 
+    def test_reconcile_ignores_opened_pr_from_another_repository(self):
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+        opened = ("task.pr_opened", {"taskId": "issue-766", "pr": 9001,
+                  "lane": "codex-4", "repo": "someone/else"}, {})
+        with mock.patch.object(tasks_reconcile, "records", return_value=[opened]), \
+             mock.patch.object(tasks_reconcile, "github") as github:
+            self.assertEqual(tasks_reconcile.reconcile(args)["inspected"], 0)
+        github.assert_not_called()
+
+    def test_stop_invokes_configured_cli_reconciliation(self):
+        root = Path(self.tmp.name)
+        output = root / "cli-args.txt"
+        script = root / "record_cli.py"
+        script.write_text("import sys\nfrom pathlib import Path\n"
+                          f"Path({str(output)!r}).write_text(' '.join(sys.argv[1:]))\n")
+        if os.name == "nt":
+            cli = root / "configured-graphhelm.cmd"
+            cli.write_text(f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n')
+        else:
+            cli = root / "configured-graphhelm"
+            cli.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n')
+            cli.chmod(0o755)
+        self.env["GRAPHHELM_CLI"] = str(cli)
+        result = subprocess.run([sys.executable, str(HERE / "lane_stop_hook.py")],
+            input=json.dumps({"cwd": str(root), "session_id": "test-session",
+                              "stop_hook_active": True}), text=True, capture_output=True,
+            env=self.env, timeout=12)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("tasks reconcile --execution lane-test", output.read_text())
+        self.assertIn("--lane codex-4", output.read_text())
+
     def stop(self, manifest, active=False):
         # Drive the registered Stop commands, not an unregistered helper. On the parent
         # the Keel hook allows this repeated stop and the addressed note is lost.

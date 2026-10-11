@@ -41,6 +41,48 @@ describe("laneBars", () => {
       expect(lanes.find((l) => l.lane === "rev")!.bars.some((bar) => bar.open)).toBe(true);
       expect(lanes.find((l) => l.lane === "dev")!.awaiting).toEqual([902]);
     }
+  it("ends a closed PR's implement bar", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "dev", issue: 86, taskId: "issue-86", at: at(0) }),
+      ev({ kind: "task.pr_opened", lane: "dev", pr: 661, taskId: "issue-86", at: at(10) }),
+      ev({ kind: "task.closed", pr: 661, taskId: "issue-86", at: at(20) }),
+    ], T0 + 30, 1000);
+    expect(lanes[0]!.bars[0]).toMatchObject({ end: T0 + 20, open: false });
+  });
+
+  it("ends both slices holding a merged PR", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "a", taskId: "issue-1", at: at(0) }),
+      ev({ kind: "task.pr_opened", lane: "a", pr: 10, taskId: "issue-1", at: at(10) }),
+      ev({ kind: "task.claimed", lane: "b", taskId: "issue-1", at: at(20) }),
+      ev({ kind: "task.pr_opened", lane: "b", pr: 10, taskId: "issue-1", at: at(30) }),
+      ev({ kind: "task.merged", pr: 10, taskId: "pr-10", at: at(40) }),
+    ], T0 + 50, 1000);
+    expect(lanes.flatMap((l) => l.bars).filter((b) => b.kind === "implement").map((b) => [b.end, b.open])).toEqual([[T0 + 40, false], [T0 + 40, false]]);
+  });
+
+  it("ends an absent reviewer's bar when its PR closes", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.review_assigned", reviewer: "rev", pr: 10, at: at(0) }),
+      ev({ kind: "task.closed", pr: 10, at: at(20) }),
+    ], T0 + 30, 1000);
+    expect(lanes[0]!.bars[0]).toMatchObject({ end: T0 + 20, open: false });
+  });
+
+  it("ends a released claim at its release record", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "dev", taskId: "issue-1", sequence: 1, at: at(0) }),
+      ev({ kind: "task.released", lane: "dev", taskId: "issue-1", claimSequence: 1, sequence: 2, at: at(20) } as never),
+    ], T0 + 30, 1000);
+    expect(lanes[0]!.bars[0]).toMatchObject({ end: T0 + 20, open: false });
+  });
+
+  it("uses the PR title, or the issue title before PR, in bar labels", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "dev", taskId: "issue-1", issue: 1, title: "Fix confusing timeline", at: at(0) } as never),
+      ev({ kind: "task.pr_opened", lane: "dev", taskId: "issue-1", pr: 10, title: "Show truthful task bars", at: at(10) } as never),
+    ], T0 + 20, 1000);
+    expect(lanes[0]!.bars[0]!.label).toBe("#10 Show truthful task bars");
   });
   it("implement then review then merge", () => {
     const lanes = laneBars([

@@ -275,7 +275,7 @@ describe("PR #581's shape on the Graph (#591)", () => {
 });
 
 describe("IssueGraph owner asks (#591)", () => {
-  it("each row's title is a full-width line above its cells, whole, with a tooltip", () => {
+  it("each row's title precedes its cells and exposes the full text on hover", () => {
     const long = "fix(build): two CLI binaries share one target directory and the second build overwrites the first one silently";
     const group = buildWorkGroups([ts("a", { pr: 609, prTitle: long, step: "review" }), ts("b", { pr: 610, prTitle: "Short", step: "review" })], [])[0]!;
     const { container } = render(<IssueGraph group={group} stepFor={() => undefined} selectedTaskKey={null} selectedCol={null} onSelectTask={vi.fn()} onSelectCol={vi.fn()} onOpenTest={vi.fn()} />);
@@ -289,12 +289,14 @@ describe("IssueGraph owner asks (#591)", () => {
     expect((row.querySelector(".mg-cells .mg-cell") as HTMLElement).style.gridColumn).toBe("1");
     expect(container.querySelector(".mg-rowhead")).toBeNull();
   });
-  it("title and grid css: wrap, never truncate; five shared tracks; real gaps between rows and columns", async () => {
+  it("title and grid css: contain long labels; five shared tracks; real gaps between rows and columns", async () => {
     const css = (await import("./mission-graph.css?raw")).default as string;
     const rule = (sel: string) => css.split("\n").find((l) => l.startsWith(`${sel} {`)) ?? "";
-    expect(rule(".mg-rowtitle")).toMatch(/white-space: normal/);
+    expect(rule(".mg-rowtitle")).toMatch(/width: calc\(\(100% - 48px\) \/ 5\)/);
+    expect(rule(".mg-rowtitle")).toMatch(/white-space: nowrap/);
+    expect(rule(".mg-rowtitle")).toMatch(/overflow: hidden/);
     expect(rule(".mg-rowtitle")).toMatch(/font-size: 12.5px/);
-    expect(rule(".mg-rowtitle")).not.toMatch(/ellipsis/);
+    expect(rule(".mg-rowtitle")).toMatch(/text-overflow: ellipsis/);
     expect(rule(".mg-grid")).toMatch(/grid-template-columns: repeat\(5, minmax\(140px, 1fr\)\)/);
     expect(Number(rule(".mg-grid").match(/column-gap: (\d+)px/)![1])).toBeGreaterThanOrEqual(12);
     expect(Number(rule(".mg-rows").match(/gap: (\d+)px/)![1])).toBeGreaterThanOrEqual(12);

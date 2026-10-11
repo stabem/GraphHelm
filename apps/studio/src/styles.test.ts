@@ -164,7 +164,18 @@ describe("the Team tab is a column that reserves the dock (#481)", () => {
 describe("the Lanes kanban fits six columns without a minimum-width overflow (#759)", () => {
   it("lets the six columns shrink to the available board width", () => {
     expect(STYLESHEETS["./components/work-kanban.css"])
-      .toMatch(/\.wk\s*\{[^}]*grid-template-columns:\s*repeat\(6,\s*minmax\(0,\s*1fr\)\)/s);
+      .toMatch(/\.wk\s*\{[^}]*grid-template-columns:\s*repeat\(6,\s*minmax\(0,\s*1fr\)\)[^}]*min-width:\s*0/s);
+  });
+  it("keeps card titles within two lines before truncating", () => {
+    const kanban = STYLESHEETS["./components/work-kanban.css"];
+    expect(kanban).toMatch(/\.wk \.mg-node-title\s*\{[^}]*-webkit-line-clamp:\s*2[^}]*overflow:\s*hidden/s);
+  });
+});
+
+describe("the issue graph row title stays inside its five columns (#796)", () => {
+  it("bounds the title to the grid while keeping the full task title available", () => {
+    const graph = STYLESHEETS["./components/mission-graph.css"];
+    expect(graph).toMatch(/\.mg-rowtitle\s*\{[^}]*width:\s*calc\(\(100%\s*-\s*48px\)\s*\/\s*5\)[^}]*white-space:\s*nowrap[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/s);
   });
 });
 

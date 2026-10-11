@@ -171,36 +171,21 @@ const RUNNER_GRACE: Duration = Duration::from_secs(60);
 fn alive(pid: u64) -> Liveness {
     #[cfg(windows)]
     {
-        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, GetLastError};
-        use windows_sys::Win32::System::Threading::{
-            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        let Ok(output) = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+        else {
+            return Liveness::Unknown;
         };
-        let Ok(pid) = u32::try_from(pid) else {
-            return Liveness::Dead;
+        if !output.status.success() {
+            return Liveness::Unknown;
+        }
+        let Ok(text) = String::from_utf8(output.stdout) else {
+            return Liveness::Unknown;
         };
-        // SAFETY: OpenProcess returns an owned handle or null; the handle is closed below.
-        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-        if handle.is_null() {
-            // ERROR_INVALID_PARAMETER means the PID does not exist; access and other API
-            // failures do not prove that the runner is gone.
-            return if unsafe { GetLastError() } == ERROR_INVALID_PARAMETER {
-                Liveness::Dead
-            } else {
-                Liveness::Unknown
-            };
-        }
-        let mut exit_code = 0;
-        // SAFETY: handle is valid and exit_code points to writable storage.
-        let queried = unsafe { GetExitCodeProcess(handle, &mut exit_code) };
-        // SAFETY: this function owns the handle returned by OpenProcess.
-        unsafe { CloseHandle(handle) };
-        if queried == 0 {
-            Liveness::Unknown
-        } else if exit_code == 259 {
-            Liveness::Alive
-        } else {
-            Liveness::Dead
-        }
+        tasklist_liveness(&text, pid)
     }
     #[cfg(not(windows))]
     {
@@ -210,6 +195,17 @@ fn alive(pid: u64) -> Liveness {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Liveness::Dead,
             Err(_) => Liveness::Unknown,
         }
+    }
+}
+
+#[cfg(windows)]
+fn tasklist_liveness(text: &str, pid: u64) -> Liveness {
+    if text.lines().any(|line| line.starts_with('"') && line.contains(&format!(",\"{pid}\""))) {
+        Liveness::Alive
+    } else if text.contains("INFO: No tasks are running which match the specified criteria.") {
+        Liveness::Dead
+    } else {
+        Liveness::Unknown
     }
 }
 

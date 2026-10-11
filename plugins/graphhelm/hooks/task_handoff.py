@@ -1,4 +1,4 @@
-﻿"""Explicit, provider-neutral task handoff over the existing Runtime contracts.
+"""Explicit, provider-neutral task handoff over the existing Runtime contracts.
 
 This adapter records two typed Graph Signals.  It never assigns a node and never says that a
 recipient understood or accepted the work.  The Runtime's sealed evidence is the source of truth;

@@ -156,13 +156,13 @@ describe("#636 build-slot queue", () => {
   const slots = parseSlots({ slots: [{ root: "D:/gh", holder: { lane: "gh-claude-1", heldSeconds: 240, worktree: null }, waiting: [
     { lane: "x", waitedSeconds: 5 }, { lane: "gh-claude-2", waitedSeconds: 720, worktree: null }] }] });
   it("a building owner lane silent 9h reads building, never Stalled", () => {
-    expect(stageHealth(ts("a"), [lane("gh-claude-1", NOW - 9 * H)], [], NOW, false, slots)).toMatchObject({ flag: "building", text: "building · 4m (D:/gh)", tone: "blue" });
+    expect(stageHealth(ts("a"), [lane("gh-claude-1", NOW - 9 * H, "a")], [], NOW, false, slots)).toMatchObject({ flag: "building", text: "building · 4m (D:/gh)", tone: "blue" });
   });
   it("a waiting owner lane reads waiting Nth, never Slow", () => {
     const t = ts("a", { lane: "gh-claude-2", clock: { since: iso(NOW - 100 * H), spent: {} } });
     const group = [done("p", M), done("q", M), done("r", M)];
     expect(stageHealth(t, [lane("gh-claude-2", NOW)], group, NOW)?.flag).toBe("slow");
-    expect(stageHealth(t, [lane("gh-claude-2", NOW)], group, NOW, false, slots)).toMatchObject({ flag: "waiting_build", text: "waiting for build · 2nd · 12m" });
+    expect(stageHealth(t, [lane("gh-claude-2", NOW, "a")], group, NOW, false, slots)).toMatchObject({ flag: "waiting_build", text: "waiting for build · 2nd · 12m" });
   });
   it("a queued lane counts as alive", () => {
     expect(laneLiveness("gh-claude-2", [lane("gh-claude-2", NOW - 9 * H)], [], NOW).live).toBe(false);
@@ -170,7 +170,9 @@ describe("#636 build-slot queue", () => {
   });
   it("a released slot wait no longer appears on its card", () => {
     const task = ts("issue-808", { lane: "reviewer", step: "review", pr: 808, headSha: "bbbbbbbb", reviewers: ["reviewer"] });
-    const lanes = [lane("reviewer", NOW, "issue-808")];
+    const reviewer = lane("reviewer", NOW);
+    reviewer.bars = [{ kind: "review", label: "#808", taskId: "issue-808", headSha: "bbbbbbbb", start: NOW - M, end: NOW, open: true }];
+    const lanes = [reviewer];
     const waiting = parseSlots({ slots: [{ root: "D:/gh", holder: null, waiting: [{ lane: "reviewer", waitedSeconds: 120 }] }] });
     const released = parseSlots({ slots: [{ root: "D:/gh", holder: null, waiting: [] }] });
     expect(stageHealth(task, lanes, [task], NOW, false, waiting)?.flag).toBe("waiting_build");

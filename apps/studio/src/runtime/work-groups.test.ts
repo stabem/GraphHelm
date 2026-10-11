@@ -184,3 +184,9 @@ describe("a pushed fix after a BLOCK (#591, PR #581's shape)", () => {
     expect(workStage({ ...t581, headSha: "1a1a1a1a00", blockedBy: { reviewer: "gh-claude-8", headSha: "1a1a1a1a00", commentUrl: "" }, rounds: [{ ...t581.rounds[0]!, fixHead: null }] }, false)).toBe("fix");
   });
 });
+
+it("the current review card names the reviewer assigned to the current head", () => {
+  const t = task("issue-808", { pr: 808, step: "review", headSha: "bbbbbbbb", reviewers: ["old", "new"], currentReviewer: "new",
+    rounds: [{ reviewer: "old", headSha: "aaaaaaaa", commentUrl: "", fixHead: "bbbbbbbb", blockedAt: null, fixedAt: null }] });
+  expect(prPath(t, false).cells.find((cell) => cell.stage === "review")).toMatchObject({ who: "new", sub: "waiting on new" });
+});

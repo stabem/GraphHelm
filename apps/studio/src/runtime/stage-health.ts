@@ -46,7 +46,19 @@ export const ownerRole = (t: TaskState): OwnerRole => (t.step === "review" && !o
 
 export function ownerLane(t: TaskState): string | null {
   if (t.step !== "review" || openBlock(t)) return t.lane;
-  return pushedFix(t)?.reviewer || t.reviewers[t.reviewers.length - 1] || null;
+  return t.currentReviewer === undefined
+    ? pushedFix(t)?.reviewer || t.reviewers[t.reviewers.length - 1] || null
+    : t.currentReviewer;
+}
+
+/** A slot names a lane, so attribute it to that lane's latest open bar, not every PR it touched. */
+function slotBelongsToTask(t: TaskState, owner: string | null, lanes: Lane[]): boolean {
+  const bars = lanes.find((lane) => lane.lane === owner)?.bars.filter((bar) => bar.open) ?? [];
+  if (!bars.length) return false;
+  const latest = bars.reduce((a, b) => (b.since ?? b.start) >= (a.since ?? a.start) ? b : a);
+  const kind = t.step === "review" && !openBlock(t) ? "review" : "implement";
+  return latest.kind === kind && (latest.label === `#${t.pr}` || latest.taskId === t.taskId)
+    && (kind !== "review" || !t.headSha || !latest.headSha || latest.headSha === t.headSha);
 }
 
 export interface Liveness { live: boolean; sinceMs: number | null }
@@ -114,7 +126,7 @@ export function stageHealth(t: TaskState, lanes: Lane[], groupTasks: TaskState[]
   if (needsYou) return { ...base, flag: "needs_you", text: "Needs you", tone: "red" };
   const owner = ownerLane(t);
   // #636: the owner lane building or waiting for a build slot is never Slow or Stalled.
-  const slot = slotStatus(owner, slots);
+  const slot = slotBelongsToTask(t, owner, lanes) ? slotStatus(owner, slots) : null;
   if (slot) return { ...base, flag: slot.kind === "building" ? "building" : "waiting_build", text: slotText(slot), tone: "blue" };
   const live = laneLiveness(owner, lanes, groupTasks, now);
   if (!live.live && live.sinceMs !== null) {

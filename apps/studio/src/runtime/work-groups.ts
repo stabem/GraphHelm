@@ -164,11 +164,12 @@ export function prPath(raw: TaskState, proven: boolean): Omit<PrRow, "task"> {
   const block = openBlock(t);
   const reviews = rounds.length + (block ? 0 : approved || t.step === "review" ? 1 : 0);
   const lastRound = rounds[rounds.length - 1];
-  const lastReviewer = block?.reviewer || (approved ? t.reviewers[t.reviewers.length - 1] : null) || lastRound?.reviewer || null;
+  const headReviewer = t.currentReviewer === undefined ? t.reviewers[t.reviewers.length - 1] ?? null : t.currentReviewer;
+  const lastReviewer = block?.reviewer || (approved ? headReviewer : null) || (t.currentReviewer === undefined ? lastRound?.reviewer : null) || null;
   // #591: the fix answering the last BLOCK is pushed and the re-review has not answered yet.
   const fixPushed = !block && t.step === "review" && Boolean(lastRound?.fixHead);
   const blocker = block ? block.reviewer || "a reviewer" : null;
-  const reReviewer = lastRound?.reviewer || t.reviewers[t.reviewers.length - 1] || null;
+  const reReviewer = t.currentReviewer === undefined ? lastRound?.reviewer || headReviewer : headReviewer;
   if (block) add("review", { state: "block", mark: "BLOCK", who: `by ${blocker}`, count: Math.max(1, reviews), label: counted("Review", reviews) });
   else if (fixPushed) add("review", { who: reReviewer, sub: reReviewer ? `waiting on ${reReviewer}` : null, count: reviews, label: counted("Re-review", rounds.length), title: counted("Re-review", rounds.length), time: spent(t, "review") });
   else add("review", { who: lastReviewer, count: Math.max(1, reviews), label: counted("Review", reviews), time: spent(t, "review") });

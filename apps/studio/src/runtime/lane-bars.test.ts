@@ -8,6 +8,29 @@ let seq = 0;
 const ev = (e: Partial<TimedTaskEvent>): TimedTaskEvent => ({ actorId: "a", sequence: seq++, taskId: "t1", ...e }) as TimedTaskEvent;
 
 describe("laneBars", () => {
+  it("ends every lane's bars for a PR when it merges or closes", () => {
+    for (const end of ["task.merged", "task.closed"] as const) {
+      const lanes = laneBars([
+        ev({ kind: "task.claimed", lane: "author", taskId: "issue-809", issue: 809, at: at(0) }),
+        ev({ kind: "task.pr_opened", lane: "author", taskId: "issue-809", pr: 816, headSha: "head1", at: at(1) }),
+        ev({ kind: "task.review_assigned", reviewer: "codex-review", taskId: "pr-816", pr: 816, headSha: "head1", at: at(2) }),
+        ev({ kind: end, taskId: "pr-816", pr: 816, at: at(3) }),
+      ], T0 + 10, 1000);
+      expect(lanes.flatMap((lane) => lane.bars)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: "implement", end: T0 + 2, open: false }),
+        expect.objectContaining({ kind: "review", end: T0 + 3, open: false }),
+      ]));
+    }
+  });
+
+  it("ends a pool-assigned review on a verdict for the same PR head from a real reviewer", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.pr_opened", lane: "author", taskId: "issue-809", pr: 816, headSha: "head1", at: at(0) }),
+      ev({ kind: "task.review_assigned", reviewer: "codex-review", taskId: "pr-816", pr: 816, headSha: "head1", at: at(1) }),
+      ev({ kind: "task.review_verdict", reviewer: "codexrev-2", taskId: "pr-816", pr: 816, headSha: "head1", verdict: "APPROVE" as never, at: at(2) }),
+    ], T0 + 10, 1000);
+    expect(lanes.find((lane) => lane.lane === "codex-review")!.bars[0]).toMatchObject({ end: T0 + 2, open: false });
+  });
   it("ends a claimed PR when it merges or closes, including its awaiting review state", () => {
     for (const end of ["task.merged", "task.closed"] as const) {
       const lanes = laneBars([

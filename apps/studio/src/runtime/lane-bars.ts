@@ -31,7 +31,6 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
   foldTaskEvents(events.map(({ at, ...event }) => ({ ...event, occurredAt: at })),
     (event, index) => routed.set(event.sequence, `slice-${index}`));
   const prOfKey = new Map<string, number>();
-  const prSlices = new Map<number, Set<string>>();
   const titleOf = new Map<string, string>();
   const headOf = new Map<string, string>();
   const authorOf = new Map<string, string>();
@@ -62,6 +61,13 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       }
     }
   };
+  const closePr = (pr: number, t: number, kind?: BarKind, head?: string) => {
+    for (const [key, value] of [...open]) {
+      if (prOfKey.get(value.slice) !== pr || (kind && value.bar.kind !== kind)
+        || (head && value.bar.headSha !== head)) continue;
+      value.bar.end = t; value.bar.open = false; open.delete(key);
+    }
+  };
   for (const e of [...events].sort((a, b) => a.sequence - b.sequence)) {
     const t = Date.parse(e.at);
     if (!Number.isFinite(t)) continue;
@@ -69,9 +75,6 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
     if (slice === undefined) continue;
     if (e.pr !== undefined) {
       prOfKey.set(slice, e.pr);
-      const matching = prSlices.get(e.pr) ?? new Set<string>();
-      matching.add(slice);
-      prSlices.set(e.pr, matching);
       if (e.kind === "task.pr_opened") {
         for (const v of open.values()) if (v.slice === slice) v.bar.label = `#${e.pr}`;
       }
@@ -104,14 +107,15 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
       case "task.released": close("implement", slice, t, e.lane); break;
       case "task.review_assigned": close("implement", slice, t); if (e.reviewer) start(e.reviewer, "review", e.taskId, slice, t); break;
       case "task.review_verdict":
+        if (e.pr !== undefined && e.headSha !== undefined) closePr(e.pr, t, "review", e.headSha);
         if (e.headSha !== undefined && headOf.get(slice) !== undefined && e.headSha === headOf.get(slice)) {
-          close("review", slice, t, e.reviewer);
+          if (e.pr === undefined) close("review", slice, t);
           if (author && pr !== undefined) laneOf(author).awaiting.delete(pr);
         }
         break;
       case "task.merged": {
-        for (const s of e.pr !== undefined ? prSlices.get(e.pr) ?? new Set([slice]) : [slice])
-          for (const k of ["implement", "review", "merge"] as const) close(k, s, t);
+        if (e.pr !== undefined) closePr(e.pr, t);
+        else for (const k of ["implement", "review", "merge"] as const) close(k, slice, t);
         if (author && pr !== undefined) laneOf(author).awaiting.delete(pr);
         // #591: only issue closure ends PR-less claims across lanes. A Refs slice ends only
         // its author's matching claims; other PR slices stay open.
@@ -128,8 +132,8 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
         break;
       }
       case "task.closed":
-        for (const s of e.pr !== undefined ? prSlices.get(e.pr) ?? new Set([slice]) : [slice])
-          for (const k of ["implement", "review", "merge"] as const) close(k, s, t);
+        if (e.pr !== undefined) closePr(e.pr, t);
+        else for (const k of ["implement", "review", "merge"] as const) close(k, slice, t);
         if (author && pr !== undefined) laneOf(author).awaiting.delete(pr);
         break;
       default: break;

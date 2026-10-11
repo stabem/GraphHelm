@@ -4129,8 +4129,9 @@ describe("the exchange", () => {
     });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
     const mission = await screen.findByRole("region", { name: "Canvas" });
-    await userEvent.click(within(mission).getByRole("button", { name: /Row issue #771/ }));
+    await userEvent.click(await within(mission).findByRole("button", { name: /Row No PR/ }));
     await userEvent.click(within(mission).getByRole("button", { name: "Ask codex-12 for status" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/unconfirmed/i);
     expect(screen.queryByText(/Asked .*waiting/)).not.toBeInTheDocument();

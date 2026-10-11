@@ -8,6 +8,28 @@ let seq = 0;
 const ev = (e: Partial<TimedTaskEvent>): TimedTaskEvent => ({ actorId: "a", sequence: seq++, taskId: "t1", ...e }) as TimedTaskEvent;
 
 describe("laneBars", () => {
+  it("ends a claimed PR when it merges or closes, including its awaiting review state", () => {
+    for (const end of ["task.merged", "task.closed"] as const) {
+      const lanes = laneBars([
+        ev({ kind: "task.claimed", lane: "dev", taskId: "issue-803", issue: 803, at: at(0) }),
+        ev({ kind: "task.pr_opened", lane: "dev", taskId: "issue-803", pr: 900, at: at(10) }),
+        ev({ kind: end, taskId: "pr-900", pr: 900, at: at(20) }),
+      ], T0 + 30, 1000);
+      const dev = lanes.find((l) => l.lane === "dev")!;
+      expect(dev.bars.some((bar) => bar.open)).toBe(false);
+      expect(dev.awaiting).toEqual([]);
+      expect(agentBoard([{ name: "dev" } as never], lanes, [], T0 + 30)[0]!.status).toBe("free");
+    }
+  });
+
+  it("ends the review on its assigned head at verdict", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.review_assigned", reviewer: "rev", pr: 901, headSha: "head1", at: at(0) }),
+      ev({ kind: "task.review_verdict", reviewer: "rev", pr: 901, headSha: "head1", verdict: "APPROVE" as never, at: at(10) }),
+    ], T0 + 20, 1000);
+    expect(lanes.find((l) => l.lane === "rev")!.bars.some((bar) => bar.open)).toBe(false);
+    expect(agentBoard([{ name: "rev" } as never], lanes, [], T0 + 20)[0]!.status).toBe("free");
+  });
   it("implement then review then merge", () => {
     const lanes = laneBars([
       ev({ kind: "task.claimed", lane: "dev", pr: 9, at: at(0) }),
@@ -18,7 +40,7 @@ describe("laneBars", () => {
     const dev = lanes.find((l) => l.lane === "dev")!;
     const rev = lanes.find((l) => l.lane === "rev")!;
     expect(dev.bars).toEqual([{ kind: "implement", label: "#9", start: T0, end: T0 + 100, open: false, taskId: "t1", since: T0 }]);
-    expect(rev.bars.map((b) => [b.kind, b.start - T0, b.end - T0, b.open])).toEqual([["review", 100, 200, false], ["merge", 200, 300, false]]);
+    expect(rev.bars.map((b) => [b.kind, b.start - T0, b.end - T0, b.open])).toEqual([["review", 100, 200, false]]);
   });
 
   it("open bar runs to now", () => {
@@ -56,13 +78,13 @@ describe("laneBars", () => {
     expect(lanes.find((l) => l.lane === "x")!.bars[0].start).toBe(T0 + 400);
   });
 
-  it("APPROVE-WITH-RISK opens a merge bar, BLOCK does not", () => {
-    for (const [v, n] of [["APPROVE-WITH-RISK", 1], ["BLOCK", 0]] as const) {
+  it("a verdict ends the assigned review for either outcome", () => {
+    for (const v of ["APPROVE-WITH-RISK", "BLOCK"] as const) {
       const lanes = laneBars([
         ev({ kind: "task.review_assigned", reviewer: "rev", at: at(0) }),
         ev({ kind: "task.review_verdict", reviewer: "rev", verdict: v as never, at: at(10) }),
       ], T0 + 20, 1000);
-      expect(lanes.find((l) => l.lane === "rev")!.bars.filter((b) => b.kind === "merge")).toHaveLength(n);
+      expect(lanes.find((l) => l.lane === "rev")!.bars.some((b) => b.open)).toBe(false);
     }
   });
 

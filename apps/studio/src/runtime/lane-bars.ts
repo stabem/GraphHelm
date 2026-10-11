@@ -136,9 +136,10 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
         break;
       case "task.review_assigned": close("implement", slice, t); if (e.reviewer) start(e.reviewer, "review", e.taskId, slice, t); break;
       case "task.review_verdict":
-        close("review", slice, t, e.reviewer);
-        if (author && pr !== undefined) laneOf(author).awaiting.delete(pr);
-        if (e.reviewer && String(e.verdict).startsWith("APPROVE")) start(e.reviewer, "merge", e.taskId, slice, t);
+        if (e.headSha === undefined || headOf.get(slice) === undefined || e.headSha === headOf.get(slice)) {
+          close("review", slice, t, e.reviewer);
+          if (author && pr !== undefined) laneOf(author).awaiting.delete(pr);
+        }
         break;
       case "task.merged": {
         for (const k of ["implement", "review", "merge"] as const) close(k, slice, t);
@@ -157,6 +158,10 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
         }
         break;
       }
+      case "task.closed":
+        for (const k of ["implement", "review", "merge"] as const) close(k, slice, t);
+        if (author && pr !== undefined) laneOf(author).awaiting.delete(pr);
+        break;
       default: break;
     }
   }

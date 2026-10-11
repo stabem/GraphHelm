@@ -73,16 +73,16 @@ describe("agentBoard", () => {
   describe("reviewing", () => {
     const pr = (over: Partial<MissionTask>) => task({ key: "t9", pr: 9, title: "Fix it", lane: "a", step: "review", headSha: "h2", ...over });
     it("a lane assigned as reviewer on an open PR is Reviewing, not Free", () => {
-      const [r] = agentBoard([bot("rev")], [lane("rev", [])], [pr({ reviewers: ["rev"] })], now);
+      const [r] = agentBoard([bot("rev")], [lane("rev", [])], [pr({ reviewers: ["rev"], currentReviewer: "rev" })], now);
       expect(r).toMatchObject({ status: "waiting", label: "Reviewing", doing: "reviewing #9 Fix it", pr: 9, forMs: null });
     });
     it("time is since the reviewer's latest record", () => {
       const l = { ...lane("rev", [bar("review", now - 12 * M, true, now, "#9")]), lastRecord: { kind: "review_assigned", pr: 9, at: now - 12 * M } };
-      const [r] = agentBoard([bot("rev")], [l], [pr({ reviewers: ["rev"] })], now);
+      const [r] = agentBoard([bot("rev")], [l], [pr({ reviewers: ["rev"], currentReviewer: "rev" })], now);
       expect(r).toMatchObject({ status: "waiting", label: "Reviewing", forMs: 12 * M, latest: "review_assigned #9 · 12m ago" });
     });
     it("Working wins when the lane also implements", () => {
-      const [r] = agentBoard([bot("a")], [lane("a", [bar("implement", now - 5 * M)])], [pr({ reviewers: ["a"] })], now);
+      const [r] = agentBoard([bot("a")], [lane("a", [bar("implement", now - 5 * M)])], [pr({ reviewers: ["a"], currentReviewer: "a" })], now);
       expect(r!.status).toBe("working");
       expect(r!.label ?? null).toBeNull();
     });
@@ -96,8 +96,21 @@ describe("agentBoard", () => {
       expect(done!.status).toBe("free");
       const [blocked] = agentBoard([bot("rev")], [lane("rev", [])], [pr({ reviewers: ["rev"], blocked: true, blockedBy: { reviewer: "rev", headSha: "h2" } })], now);
       expect(blocked!.status).toBe("free");
-      const [again] = agentBoard([bot("rev")], [lane("rev", [])], [pr({ reviewers: ["rev"], headSha: "h3", rounds: [round] })], now);
+      const [again] = agentBoard([bot("rev")], [lane("rev", [])], [pr({ reviewers: ["rev"], headSha: "h3", rounds: [round], currentReviewer: "rev" })], now);
       expect(again!.status).toBe("waiting");
+    });
+    it("only the replacement on the current head is Reviewing", () => {
+      const rows = agentBoard([bot("codex-review"), bot("codexrev-2")], [lane("codex-review", []), lane("codexrev-2", [])],
+        [pr({ reviewers: ["codex-review", "codexrev-2"], currentReviewer: "codexrev-2" })], now);
+      expect(rows.find((r) => r.name === "codex-review")!.status).toBe("free");
+      expect(rows.find((r) => r.name === "codexrev-2")).toMatchObject({ status: "waiting", label: "Reviewing" });
+    });
+    it("frees the reviewer of an older blocked head", () => {
+      const rows = agentBoard([bot("old"), bot("new")], [lane("old", []), lane("new", [])],
+        [pr({ headSha: "head-b", reviewers: ["old", "new"], currentReviewer: "new",
+          rounds: [{ reviewer: "old", headSha: "head-a", fixHead: "head-b" }] })], now);
+      expect(rows.find((r) => r.name === "old")!.status).toBe("free");
+      expect(rows.find((r) => r.name === "new")!.label).toBe("Reviewing");
     });
   });
 

@@ -40,6 +40,29 @@ describe("laneBars", () => {
     expect(lanes.find((l) => l.lane === "rev")!.bars.some((bar) => bar.open)).toBe(false);
     expect(agentBoard([{ name: "rev" } as never], lanes, [], T0 + 20)[0]!.status).toBe("free");
   });
+  it("ends a replaced reviewer's bar when the same head is reassigned", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.pr_opened", lane: "dev", pr: 832, headSha: "head1", at: at(0) }),
+      ev({ kind: "task.review_assigned", reviewer: "codex-review", pr: 832, headSha: "head1", at: at(1) }),
+      ev({ kind: "task.review_assigned", reviewer: "codexrev-2", pr: 832, headSha: "head1", at: at(2) }),
+    ], T0 + 3, 1000);
+    expect(lanes.find((l) => l.lane === "codex-review")!.bars).toEqual([
+      expect.objectContaining({ kind: "review", end: T0 + 2, open: false }),
+    ]);
+    expect(lanes.find((l) => l.lane === "codexrev-2")!.bars).toEqual([
+      expect.objectContaining({ kind: "review", start: T0 + 2, open: true }),
+    ]);
+  });
+  it("ends the older head's review bar when a new head opens", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.pr_opened", lane: "dev", pr: 832, headSha: "head-a", at: at(0) }),
+      ev({ kind: "task.review_assigned", reviewer: "old", pr: 832, headSha: "head-a", at: at(1) }),
+      ev({ kind: "task.pr_opened", lane: "dev", pr: 832, headSha: "head-b", at: at(2) }),
+      ev({ kind: "task.review_assigned", reviewer: "new", pr: 832, headSha: "head-b", at: at(3) }),
+    ], T0 + 4, 1000);
+    expect(lanes.find((l) => l.lane === "old")!.bars[0]).toMatchObject({ end: T0 + 2, open: false });
+    expect(lanes.find((l) => l.lane === "new")!.bars[0]).toMatchObject({ start: T0 + 3, open: true });
+  });
   it("keeps review and author waiting when the verdict head is missing or differs", () => {
     for (const verdictHead of [undefined, "head2"]) {
       const lanes = laneBars([

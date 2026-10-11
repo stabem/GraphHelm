@@ -82,7 +82,7 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
     if (!openBars.some((b) => b.kind === "implement")) {
       const rt = tasks.find((t) => t.step !== "merged" && t.step !== "merge" && t.pr !== null
         && !hasVerdictOnHead(t, ids)
-        && (t.reviewers.some((r) => ids.includes(r)) || openBars.some((b) => b.kind === "review" && ((b.taskId !== undefined && b.taskId === t.key) || b.label === `#${t.pr}`))));
+        && !!t.currentReviewer && ids.includes(t.currentReviewer));
       if (rt) {
         const last0 = delivered.get(name) ?? (lane ? delivered.get(lane.lane) : undefined) ?? null;
         return {

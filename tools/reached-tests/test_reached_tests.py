@@ -408,6 +408,69 @@ class Reach(unittest.TestCase):
                                  "python -m unittest plugins/graphhelm/hooks/test_other_hook.py"])
         self.assertEqual(other, [])
 
+    def test_every_plugins_path_selects_its_observer_or_is_docs_like(self):
+        """Keep plugin manifests, markdown, and all hook extensions mapped.
+
+        Cost: temporary filesystem fixtures only; milliseconds, no Cargo or network.
+        """
+        with tempfile.TemporaryDirectory() as repo:
+            hooks = Path(repo, "plugins", "graphhelm", "hooks")
+            hooks.mkdir(parents=True)
+            (hooks / "session_hook.py").write_text("", encoding="utf-8")
+            (hooks / "test_session_hook.py").write_text("import unittest\n", encoding="utf-8")
+            companion_hooks = Path(repo, "plugins", "graphhelm-codex-hooks", "hooks")
+            companion_hooks.mkdir(parents=True)
+            (companion_hooks / "session_hook.py").write_text("", encoding="utf-8")
+            (companion_hooks / "test_session_hook.py").write_text("import unittest\n", encoding="utf-8")
+            other_hooks = Path(repo, "plugins", "example-plugin", "hooks")
+            other_hooks.mkdir(parents=True)
+            (other_hooks / "worker.mjs").write_text("", encoding="utf-8")
+            (other_hooks / "test_worker.py").write_text("import unittest\n", encoding="utf-8")
+            plugin = Path(repo, "plugins", "graphhelm", ".claude-plugin")
+            plugin.mkdir(parents=True)
+            (plugin / "plugin.json").write_text("{}", encoding="utf-8")
+            (plugin / "marketplace.json").write_text("{}", encoding="utf-8")
+            (Path(repo, "plugins", "graphhelm", "plugin.json")).write_text("{}", encoding="utf-8")
+            (Path(repo, "plugins", "graphhelm", ".mcp.json")).write_text("{}", encoding="utf-8")
+            (Path(repo, "plugins", "graphhelm", "SKILL.md")).write_text("# skill\n", encoding="utf-8")
+            skill = Path(repo, "plugins", "graphhelm", "skills", "graphhelm-setup", "SKILL.md")
+            skill.parent.mkdir(parents=True)
+            skill.write_text("# skill\n", encoding="utf-8")
+            agent = Path(repo, "plugins", "graphhelm", "agents", "worker.md")
+            agent.parent.mkdir(parents=True)
+            agent.write_text("# agent\n", encoding="utf-8")
+            (Path(repo, "plugins", "graphhelm", "README.md")).write_text("# docs\n", encoding="utf-8")
+            eval_test = Path(repo, "tools", "evals", "test_skill_twins.py")
+            eval_test.parent.mkdir(parents=True)
+            eval_test.write_text("import unittest\n", encoding="utf-8")
+
+            changed = [
+                # The real PR #841 path classes: plugin manifest/version, MCP manifest,
+                # skill and agent markdown, and a hook source.
+                "plugins/graphhelm-codex-hooks/.codex-plugin/plugin.json",
+                "plugins/graphhelm-codex-hooks/hooks/session_hook.py",
+                "plugins/graphhelm/.claude-plugin/plugin.json",
+                "plugins/graphhelm/.codex-plugin/plugin.json",
+                "plugins/graphhelm/.claude-plugin/marketplace.json",
+                "plugins/graphhelm/plugin.json",
+                "plugins/graphhelm/.mcp.json",
+                "plugins/graphhelm/SKILL.md",
+                "plugins/graphhelm/skills/graphhelm-setup/SKILL.md",
+                "plugins/graphhelm/agents/worker.md",
+                "plugins/graphhelm/hooks/session_hook.py",
+                "plugins/graphhelm/README.md",
+                "plugins/example-plugin/hooks/worker.mjs",
+            ]
+            *_, tools, validate, other = reach(*changed, repo=repo)
+
+        self.assertEqual(validate, [])
+        self.assertEqual(set(tools), {
+            "python -m unittest plugins/graphhelm/hooks/test_session_hook.py",
+            "python -m unittest plugins/example-plugin/hooks/test_worker.py",
+            "python -m unittest tools/evals/test_skill_twins.py",
+        })
+        self.assertEqual(other, [])
+
     def test_shared_hook_imports_reach_consumer_tests_and_parity_reader(self):
         """Protect real imports/readers; existing filename-only fixtures miss shared helpers.
 

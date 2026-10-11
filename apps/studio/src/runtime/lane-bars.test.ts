@@ -70,6 +70,15 @@ describe("laneBars", () => {
     expect(lanes[0]!.bars.map((bar) => [bar.start - T0, bar.end - T0, bar.open])).toEqual([[0, 30, true], [10, 20, false]]);
   });
 
+  it("a released sole claim leaves its lane Free on the Agents board", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", lane: "dev", taskId: "issue-803", issue: 803, sequence: 20, at: at(0) }),
+      ev({ kind: "task.released", lane: "dev", taskId: "issue-803", sequence: 21, claimSequence: 20, reason: "Stopped", at: at(10) } as never),
+    ], T0 + 20, 1000);
+    expect(lanes[0]!.bars).toEqual([expect.objectContaining({ open: false, end: T0 + 10 })]);
+    expect(agentBoard([{ name: "dev" } as never], lanes, [], T0 + 20)[0]!.status).toBe("free");
+  });
+
   it("silence threshold", () => {
     const events = [ev({ kind: "task.review_assigned", reviewer: "rev", at: at(0) })];
     expect(laneBars(events, T0 + LIVENESS_MS - 1, LIVENESS_MS * 2)[0].silent).toBe(false);

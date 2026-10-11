@@ -893,7 +893,7 @@
           "id": "skill/keel",
           "kind": "skill",
           "path": "skills/keel/SKILL.md",
-          "sha256": "sha256:7fc38f9f1ef16c9e4c37d8771dcce3d4fd0ac8c4349cdc8c522df7a37b8c7bc8",
+          "sha256": "sha256:6f7b690d8dd452af334728c8b4688c8cfb3c051573a9a0ee477060008a545fac",
           "effects": [
             "artifact.propose",
             "runtime.connect",

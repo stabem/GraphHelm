@@ -941,6 +941,7 @@ dependencies = [
  "fs2",
  "getrandom 0.4.3",
  "graphhelm-architect",
+ "graphhelm-codebase-memory-mcp",
  "graphhelm-development-benchmark",
  "graphhelm-events",
  "graphhelm-execution",

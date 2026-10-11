@@ -66,6 +66,15 @@ GraphHelm's Runtime can reuse bounded search results from the same immutable sea
 within one drive; it still reads the selected source and compiles each node's capsule with its own
 id and budget. Live searches and unavailable sources keep their existing fallback behavior.
 
+For the explicit Codebase Memory integration, use the operator-local atomic code-index build/query
+methods when the Keel card names them. Build once into the card's private immutable bundle, then
+reuse that bundle for repeated queries only after its source, store, executable, request, and broker
+evidence still validate. A query opens one contained provider call and closes its process tree; it
+does not start a watcher, retain an MCP daemon, modify the global Runtime/MCP configuration, or
+silently assemble Runtime context ports. A timeout bounds the provider process execution after
+preparation; it does not make unbounded filesystem or snapshot preparation safe. Refuse stale,
+partial, timed-out, cancelled, truncated, or otherwise incomplete evidence.
+
 Do not launch a per-agent memory server or watcher to retain an answer. An optional external
 provider must run through the contained broker, with native process-tree closure evidence on the
 host OS. A frontend exiting alone does not prove its daemon closed. Preserve unrelated sessions.

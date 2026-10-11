@@ -956,7 +956,15 @@ ADR-032 or any earlier ADR.
 
 ## 39. ADR-034 — The contained producer's framing: the revisit trigger governs layer GROWTH, and the layer did not grow
 
-**Status:** proposed.
+**Status:** accepted under the Orchestrator's delegated project authority for issue #786.
+
+**Acceptance evidence:** the existing guards were run red against deliberate violations and green
+after restoring the unchanged three-message producer and the tree-derived client population:
+`ceiling-fourth-valid-red.log` (exit 101 at the four-message assertion) ->
+`ceiling-restored-green.log` (5 tests), and `population-new-client-red.log` (exit 101) ->
+`population-restored-green.log` (2 tests). No fourth message or new client was retained. These
+guards are the acceptance control; the direct operator CLI remains an explicit build/query surface
+and does not auto-assemble Runtime context ports or keep a provider daemon alive.
 
 **Context:** D-042 and ADR-028 require live provider retrieval to run over a **maintained MCP SDK
 session**; ADR-028's rejected alternatives include *"expanding GraphHelm's hand-rolled MCP server

@@ -1,9 +1,10 @@
-//! Pure, fail-closed decoding for recorded codebase-memory-mcp tool results.
+//! Bounded Codebase Memory decoding and contained-provider composition.
 //!
-//! This crate deliberately owns no MCP transport, process launch, index creation, cache path,
-//! retry, or source fallback. ADR-028 reserves live access for a future broker-managed SDK session
-//! over an immutable provider snapshot. The public functions here only decode bytes that an
-//! authorized caller already obtained and recorded.
+//! The decoder remains pure and fail-closed. [`provider::ContainedIndexProvider`] is the explicit
+//! live-query composition: it uses a broker-owned contained session over an immutable provider
+//! snapshot, forwards the caller's cancellation signal when supplied, and refuses incomplete
+//! process captures before decoding. Index creation, cache ownership, retries, and source fallback
+//! remain outside this crate; no daemon or Runtime context port is activated implicitly.
 
 use std::collections::HashSet;
 

@@ -1,6 +1,7 @@
 mod adoption;
 pub(crate) mod architect;
 mod development;
+mod development_index;
 mod draft;
 mod events;
 mod execution;
@@ -49,10 +50,10 @@ use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator};
 
 use crate::args::{
-    CredentialCommand, DevelopmentCommand, DraftCommand, EventsCommand, ExecutionCommand,
-    ExtensionCommand, GateCommand, GatewayCommand, GraphCommand, KeelCommand, KeelTestCommand,
-    KeyringCommand, QualityCommand, RouteCommand, SchemaCommand, SynthesizeArgs, TasksCommand,
-    ToolCommand, TopLevel,
+    CodeIndexCommand, CredentialCommand, DevelopmentCommand, DraftCommand, EventsCommand,
+    ExecutionCommand, ExtensionCommand, GateCommand, GatewayCommand, GraphCommand, KeelCommand,
+    KeelTestCommand, KeyringCommand, QualityCommand, RouteCommand, SchemaCommand, SynthesizeArgs,
+    TasksCommand, ToolCommand, TopLevel,
 };
 use crate::output::Outcome;
 
@@ -500,6 +501,10 @@ pub fn run(command: TopLevel) -> Outcome {
             }),
         },
         TopLevel::Tool(tool_args) => match tool_args.command {
+            ToolCommand::CodeIndex(args) => match args.command {
+                CodeIndexCommand::Build(args) => development_index::build(&args),
+                CodeIndexCommand::Query(args) => development_index::query(&args),
+            },
             ToolCommand::Invoke {
                 project,
                 staging,

@@ -1,23 +1,23 @@
 //! The production `SourceReader` (#543): the identity of the bytes a retrieval would serve NOW.
 //!
 //! The port's contract (`core/runtime/src/ports.rs`) is one sentence with a trap in it: the id
-//! must derive from CONTENT, never from a ref — a commit id survives an uncommitted edit, so a
+//! must derive from CONTENT, never from a ref â€” a commit id survives an uncommitted edit, so a
 //! ref-answering reader makes the whole staleness mechanism say "fresh" about bytes that moved.
 //! The runtime cannot check this (both are opaque ids); the guards in
 //! `tests/workspace_source_reader.rs` are what catch an implementor, and the uncommitted-edit
 //! cell is the one that separates the two.
 //!
-//! The digest oracle is `snapshot::tree_generation` — the SAME function #539's pinned snapshot
+//! The digest oracle is `snapshot::tree_generation` â€” the SAME function #539's pinned snapshot
 //! uses, on purpose: one place decides how a tree's bytes become an identity, so the reader and
 //! the pin cannot drift into disagreeing about what "the same bytes" means.
 //!
 //! **Bounds, stated:** `open` walks once and refuses a workspace beyond the declared limits, so
 //! the cost is paid and named at construction (`O(files + bytes)` per snapshot call, against a
 //! workspace whose size `open` capped). A workspace that GROWS past the bound after `open` still
-//! digests — the bound is an admission control, not a per-call guarantee, and a Tier 1 workspace
+//! digests â€” the bound is an admission control, not a per-call guarantee, and a Tier 1 workspace
 //! is house-provisioned and disposable.
 //!
-//! **Fail-closed unreadability:** the trait is infallible, so a read failure cannot refuse — it
+//! **Fail-closed unreadability:** the trait is infallible, so a read failure cannot refuse â€” it
 //! answers instead with a one-time identity that never repeats and never equals a content id.
 //! Every consumer comparison therefore reads as STALE, which is the refusing side of every gate
 //! this port feeds.
@@ -50,13 +50,13 @@ pub struct WorkspaceSourceReader {
     root: PathBuf,
     failure_counter: AtomicU64,
     /// Per-instance salt for failure identities (L's #556 finding): a counter salted only by
-    /// the root REPEATS across instances — reader A and reader B, first failure each, same id —
+    /// the root REPEATS across instances â€” reader A and reader B, first failure each, same id â€”
     /// and a binding recorded during unreadability would then compare EQUAL against a fresh
     /// reader's failure and read FRESH: a fail-open inside the fail-closed mechanism, in the
     /// exact scenario it exists for. Three sources, each named for the collision IT covers: the
     /// process id separates processes, the construction instant separates pid reuse across
     /// boots, and the process-wide instance sequence is what separates two readers inside one
-    /// process — including two opened in the same clock tick, which the instant alone cannot.
+    /// process â€” including two opened in the same clock tick, which the instant alone cannot.
     instance_salt: String,
 }
 
@@ -135,16 +135,16 @@ fn measure_tree(root: &Path, files: &mut usize, bytes: &mut u64) -> Result<(), H
 /// a canonical project root, and nothing else.
 ///
 /// It is a separate type from [`WorkspaceSourceReader`] on purpose. That reader's `open` walks
-/// and sizes the whole tree at admission — the right price for a tree IDENTITY — but a project
+/// and sizes the whole tree at admission â€” the right price for a tree IDENTITY â€” but a project
 /// with a `target/` or `node_modules/` beside its sources is refused there by declared bounds,
 /// and refusing every such project the capsule is exactly the outcome this chain exists to avoid.
 /// Reading one file's prefix costs `O(max_bytes)` whatever the tree holds, so this reader admits
 /// the root the same way the search channel does (a real, canonical directory) and pays per read.
 ///
 /// **Containment, three times.** The path is parsed as a [`RelativePath`] (no `..`, no absolute
-/// or drive form, no backslash) and then resolved through `workspace::resolve_within` — the
+/// or drive form, no backslash) and then resolved through `workspace::resolve_within` â€” the
 /// per-component no-follow walk plus the canonical-ancestor check the tool workspace has used
-/// since #538 — so a link, a junction or a reparse point anywhere in the chain is
+/// since #538 â€” so a link, a junction or a reparse point anywhere in the chain is
 /// [`SourceReadError::Escape`]. That walk is over PATHS, so the open does not trust it (#1086):
 /// `open_beneath` traverses again from the root's own handle, refusing a link at EVERY component
 /// (Unix: `openat` with `O_NOFOLLOW`; Windows: each ancestor opened as itself and held against
@@ -245,7 +245,7 @@ impl WorkspaceExcerptReader {
         // path-based open (#1086 item 1). The open below does not trust the walk: it traverses
         // from the root handle, refusing a link at every component.
         #[cfg(unix)]
-        let file = open_beneath(&self.root, &relative)?;
+        let (file, _pinned) = open_beneath(&self.root, &relative)?;
         // `_pinned` keeps every ancestor open, denying rename and delete, until the post-read
         // identity check below has run.
         #[cfg(windows)]
@@ -271,7 +271,7 @@ impl WorkspaceExcerptReader {
 ///
 /// **Which errno means a link.** `ELOOP` (Linux, macOS) and `EMLINK` (FreeBSD) are what
 /// `O_NOFOLLOW` returns for a link and are [`SourceReadError::Escape`]. Linux checks
-/// `O_DIRECTORY` first, so an ANCESTOR that is a link fails with `ENOTDIR` — the same errno a
+/// `O_DIRECTORY` first, so an ANCESTOR that is a link fails with `ENOTDIR` â€” the same errno a
 /// component that is a regular file produces. The two are told apart by `fstatat` with
 /// `AT_SYMLINK_NOFOLLOW` on the name that failed: a link is `Escape`, anything else stays
 /// `Unreadable`. Both are refusals; a swap between the failed open and the `fstatat` changes
@@ -283,7 +283,10 @@ impl WorkspaceExcerptReader {
 /// read; closing it before the read needs `openat2(RESOLVE_BENEATH)`, which is Linux-only and
 /// not in the pinned `libc` surface this crate uses on every Unix.
 #[cfg(unix)]
-fn open_beneath(root: &Path, relative: &RelativePath) -> Result<std::fs::File, SourceReadError> {
+fn open_beneath(
+    root: &Path,
+    relative: &RelativePath,
+) -> Result<(std::fs::File, Vec<std::fs::File>), SourceReadError> {
     use std::ffi::CString;
     use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
     use std::os::unix::ffi::OsStrExt as _;
@@ -309,6 +312,7 @@ fn open_beneath(root: &Path, relative: &RelativePath) -> Result<std::fs::File, S
     let mut current = unsafe { OwnedFd::from_raw_fd(fd) };
     let components: Vec<&str> = relative.as_str().split('/').collect();
     let last = components.len() - 1;
+    let mut pinned = Vec::new();
     for (index, component) in components.iter().enumerate() {
         let name = CString::new(*component).map_err(|_| SourceReadError::Escape)?;
         let flags = if index == last {
@@ -326,10 +330,21 @@ fn open_beneath(root: &Path, relative: &RelativePath) -> Result<std::fs::File, S
                 &name,
             ));
         }
+        // Keep every directory descriptor alive through the read. This prevents an ancestor
+        // already checked from being renamed while the final file is consumed.
+        if index == last {
+            // SAFETY: `fd` was just returned by a successful `openat` and nothing else owns it.
+            pinned.push(std::fs::File::from(current));
+            return Ok((
+                std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) }),
+                pinned,
+            ));
+        }
+        pinned.push(std::fs::File::from(current));
         // SAFETY: `fd` was just returned by a successful `openat` and nothing else owns it.
         current = unsafe { OwnedFd::from_raw_fd(fd) };
     }
-    Ok(std::fs::File::from(current))
+    Err(SourceReadError::Escape)
 }
 
 /// Classify a failed `O_NOFOLLOW` open of `name` in `directory` (see `open_beneath`): `ELOOP`
@@ -377,7 +392,7 @@ fn names_a_link(directory: std::os::fd::RawFd, name: &std::ffi::CStr) -> bool {
 /// item 1), Windows half. Windows has no `openat` in std, so every ancestor is opened BY PATH
 /// with `FILE_FLAG_OPEN_REPARSE_POINT` (a junction or symlink is opened as itself, never
 /// traversed) and refused if it carries `FILE_ATTRIBUTE_REPARSE_POINT`, and every handle is held
-/// with a share mode that DENIES delete — which is what a rename needs — so no ancestor already
+/// with a share mode that DENIES delete â€” which is what a rename needs â€” so no ancestor already
 /// checked can be renamed or replaced while the next one is opened and the file is read. The final
 /// handle is then identity-checked: `GetFinalPathNameByHandleW` must place the file inside the
 /// canonical root.
@@ -436,6 +451,33 @@ fn open_beneath(
         return Err(SourceReadError::Escape);
     }
     Ok((file, pinned))
+}
+
+/// Snapshot consumers use the same root-and-ancestor no-follow walk as source reads. The held
+/// directory handles stay alive beside the file so a checked ancestor cannot be replaced while
+/// the caller hashes or copies it.
+pub(crate) fn open_snapshot_file(
+    root: &Path,
+    relative: &RelativePath,
+) -> Result<(std::fs::File, Vec<std::fs::File>), HostError> {
+    #[cfg(unix)]
+    let opened = open_beneath(root, relative);
+    #[cfg(windows)]
+    let opened = {
+        let canonical = root
+            .canonicalize()
+            .map_err(|source| HostError::Prepare { source })?;
+        open_beneath(&canonical, relative)
+    };
+    opened.map_err(|error| match error {
+        SourceReadError::Escape => HostError::Escape,
+        _ => HostError::Prepare {
+            source: std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "snapshot path could not be opened safely",
+            ),
+        },
+    })
 }
 
 /// Whether the file behind `file`'s handle lives inside `root`, by the path the handle itself
@@ -521,7 +563,7 @@ impl ExecutionTreePort for ExecutionContextTree {
 }
 
 /// Read the bounded prefix and RE-CHECK, after the read, that the path still names the file
-/// the bytes came from — the same post-read half `source_channel` keeps. A check before the
+/// the bytes came from â€” the same post-read half `source_channel` keeps. A check before the
 /// read alone leaves the read itself as the window: a file swapped or moved through the path
 /// while the bytes were in flight would be cited under a path that no longer holds them.
 /// Refused as the same [`SourceReadError::Escape`] the pre-read check refuses with.
@@ -541,7 +583,7 @@ fn excerpt_still_named(
 /// handle.
 ///
 /// The length is `fstat` on the handle the bytes are read from, taken after the identity check
-/// — never the path's `lstat` from before the open, which a replace or a resize between the two
+/// â€” never the path's `lstat` from before the open, which a replace or a resize between the two
 /// leaves stale: a file swapped or truncated in that window would otherwise be declared with
 /// the OLD length and a complete read reported as a prefix, or a prefix as complete. The
 /// declared length is also never below the bytes actually read: a file that grew between the

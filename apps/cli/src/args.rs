@@ -937,6 +937,82 @@ pub struct DevelopmentArgs {
     pub command: DevelopmentCommand,
 }
 
+#[derive(Debug, Args)]
+pub struct CodeIndexArgs {
+    #[command(subcommand)]
+    pub command: CodeIndexCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CodeIndexCommand {
+    /// Build one immutable Codebase Memory index bundle in a broker-owned workspace.
+    Build(CodeIndexBuildArgs),
+    /// Query an existing immutable Codebase Memory bundle in one fresh workspace.
+    Query(CodeIndexQueryArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CodeIndexBuildArgs {
+    /// The source repository to index.
+    #[arg(long)]
+    pub project: PathBuf,
+    /// A staging directory outside the project for the ephemeral Tier 1 workspace.
+    #[arg(long)]
+    pub staging: PathBuf,
+    /// The new bundle directory. It must not already exist.
+    #[arg(long)]
+    pub bundle: PathBuf,
+    /// Absolute path to the pinned Codebase Memory executable.
+    #[arg(long)]
+    pub executable: PathBuf,
+    /// SHA-256 digest of the executable bytes.
+    #[arg(long)]
+    pub sha256: String,
+    /// Stable actor identity recorded in the bundle provenance.
+    #[arg(long)]
+    pub actor: Option<String>,
+    /// Process deadline for the indexing process, in seconds.
+    #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u64).range(1..=300))]
+    pub timeout_seconds: u64,
+    /// Optional file whose presence cancels the provider call.
+    #[arg(long)]
+    pub cancel_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct CodeIndexQueryArgs {
+    /// The source repository whose current bytes must match the bundle manifest.
+    #[arg(long)]
+    pub project: PathBuf,
+    /// A staging directory outside the project for this one query.
+    #[arg(long)]
+    pub staging: PathBuf,
+    /// The immutable bundle produced by `code-index build`.
+    #[arg(long)]
+    pub bundle: PathBuf,
+    /// Absolute path to the pinned Codebase Memory executable.
+    #[arg(long)]
+    pub executable: PathBuf,
+    /// SHA-256 digest of the executable bytes.
+    #[arg(long)]
+    pub sha256: String,
+    /// Stable actor identity for this provider invocation.
+    #[arg(long)]
+    pub actor: Option<String>,
+    /// Process deadline for the query, in seconds.
+    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=300))]
+    pub timeout_seconds: u64,
+    /// Optional file whose presence cancels the provider call.
+    #[arg(long)]
+    pub cancel_file: Option<PathBuf>,
+    /// Repository-relative paths sent as one bounded search query.
+    #[arg(long = "path", required = true, num_args = 1..)]
+    pub paths: Vec<String>,
+    /// Maximum number of provider results.
+    #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u32).range(1..=500))]
+    pub limit: u32,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum DevelopmentCommand {
     /// Resolve layered code rules into one contract (#218's resolver, exposed here).
@@ -1635,6 +1711,8 @@ pub struct ToolArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum ToolCommand {
+    /// Explicit one-shot Codebase Memory index construction and retrieval.
+    CodeIndex(CodeIndexArgs),
     /// One authorized tool call, end to end: authorize -> route by tier -> execute -> record.
     Invoke {
         #[arg(long)]

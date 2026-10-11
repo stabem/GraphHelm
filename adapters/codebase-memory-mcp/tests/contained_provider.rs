@@ -9,9 +9,9 @@ use std::time::Duration;
 
 use graphhelm_codebase_memory_mcp::DecodeLimits;
 use graphhelm_codebase_memory_mcp::provider::ContainedIndexProvider;
-use graphhelm_runtime::ports::{SourceReader, StructuralCodeIndex};
+use graphhelm_runtime::ports::{SourceReader, StructuralCodeIndex, StructuralCodeIndexError};
 use graphhelm_runtime::retrieval::{StructuralIndexRequest, retrieve_coverage};
-use graphhelm_tool_broker::record::digest_hex;
+use graphhelm_tool_broker::record::{ToolDisposition, digest_hex};
 use graphhelm_tool_host::process::ProcessLimits;
 use graphhelm_tool_host::session::ContainedProviderSession;
 use graphhelm_tool_host::snapshot::pin_snapshot;
@@ -88,6 +88,15 @@ fn provider_over(
     indexed_over: &str,
     mode: &str,
 ) -> ContainedIndexProvider {
+    provider_over_with_limits(session, indexed_over, mode, process_limits())
+}
+
+fn provider_over_with_limits(
+    session: ContainedProviderSession,
+    indexed_over: &str,
+    mode: &str,
+    limits: ProcessLimits,
+) -> ContainedIndexProvider {
     ContainedIndexProvider::new(
         session,
         graphhelm_protocols::OpaqueId::parse(indexed_over).unwrap(),
@@ -95,7 +104,7 @@ fn provider_over(
         "graphhelm-main".to_owned(),
         "retrieval-runtime".to_owned(),
         DecodeLimits::default(),
-        process_limits(),
+        limits,
     )
 }
 
@@ -358,4 +367,48 @@ fn a_grouped_page_yields_its_files_rather_than_nothing() {
         vec!["core/tool-broker/src/record.rs"],
         "the group header carries the path; that is what it exists for"
     );
+}
+
+/// Meaningful-test audit: this observes the retrieval promise at the adapter boundary. The
+/// plausible regression is accepting a valid MCP result emitted before the provider hangs until
+/// the host timeout; existing fixture tests only cover a clean exit and therefore miss it. The
+/// test uses the real contained session and fake provider process, with no production-only seam;
+/// it costs one bounded two-second child invocation.
+#[test]
+fn a_valid_reply_before_timeout_is_refused_and_recorded() {
+    let (_project, _staging, session, workspace, project) = composed("provider-timeout");
+    let reader = WorkspaceSourceReader::open(
+        &project,
+        SourceReaderLimits {
+            max_files: 100_000,
+            max_bytes: 1024 * 1024 * 1024,
+        },
+    )
+    .unwrap();
+    let repo = reader.current_snapshot();
+    let provider = provider_over_with_limits(
+        session,
+        repo.as_str(),
+        "fixture-then-hang",
+        ProcessLimits {
+            timeout: Duration::from_secs(2),
+            max_output_bytes: 1024 * 1024,
+        },
+    );
+    let request = request_for(repo.as_str(), repo.as_str());
+
+    let refused = provider.retrieve(&request);
+    assert!(matches!(
+        refused,
+        Err(StructuralCodeIndexError::Unavailable)
+    ));
+    let record = provider
+        .last_invocation()
+        .expect("the refused timeout still leaves invocation evidence");
+    assert_eq!(record.disposition, ToolDisposition::TimedOut);
+    assert!(
+        record.stdout_bytes > 0,
+        "the fixture reply was emitted before the hang"
+    );
+    workspace.remove().unwrap();
 }

@@ -2784,5 +2784,3 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 
 .chat-unread { display: inline-block; }
 .chat-tabs [role="tab"] { display: inline-flex; align-items: center; gap: 6px; }
-
-.chat-tabs [role="tab"] { display: inline-flex; align-items: center; gap: 6px; }

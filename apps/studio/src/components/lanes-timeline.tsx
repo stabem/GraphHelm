@@ -184,6 +184,8 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
           <span className="lt-key" data-kind="review">Review</span>
           <span className="lt-key" data-kind="merge">Merge + proof</span>
           <span className="lt-key" data-kind="silent">Silent / blocked</span>
+          <span className="lt-key" data-kind="presence">Agent status</span>
+          <span className="lt-key" data-kind="now">Now</span>
         </div>
       </div>
       <div className="lt-row lt-axis" aria-hidden="true">
@@ -206,13 +208,16 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
               <div className="lt-track" style={{ height: trackH }} data-subrows={pack.rows}>
                 <span className="lt-nowline" aria-hidden="true" />
                 {l.bars.map((b, i) => {
-                  const text = `${b.label} ${b.kind}`;
+                  const text = b.displayLabel ?? `${b.label} ${b.kind}`;
                   const frac = (b.end - b.start) / windowMs;
+                  const stallStart = Math.max(b.start, l.lastEventAt > 0 ? l.lastEventAt + 30 * 60_000 : b.start);
+                  const stalled = l.silent && b.open && stallStart < b.end;
                   return (
-                    <div key={i} className="lt-bar" data-kind={b.kind} data-silent={l.silent && b.open} data-subrow={pack.row[i]}
-                      title={`${text} · ${stageDuration(b.end - b.start)}${b.open ? " so far" : ""}`}
+                    <div key={i} className="lt-bar" data-kind={b.kind} data-silent={stalled} data-subrow={pack.row[i]}
+                      title={`${text}${b.displayLabel ? ` · ${b.kind}` : ""} · ${stageDuration(b.end - b.start)}${b.open ? " so far" : ""}`}
                       style={{ left: pct((b.start - from) / windowMs), width: pct(frac), top: TRACK_PAD + pack.row[i]! * (SUB_H + SUB_GAP), height: SUB_H }}>
-                      {frac * trackW >= MIN_LABEL_PX && <span>{text}</span>}
+                      {stalled && <span className="lt-stall" aria-hidden="true" style={{ left: pct((stallStart - b.start) / (b.end - b.start)) }} />}
+                      {frac * trackW >= MIN_LABEL_PX && <span className="lt-bar-label">{text}</span>}
                     </div>
                   );
                 })}

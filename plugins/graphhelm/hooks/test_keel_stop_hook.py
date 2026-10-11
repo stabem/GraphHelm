@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,7 +33,8 @@ class KeelStopHook(unittest.TestCase):
 
     def run_hook(self, **payload):
         payload.setdefault("cwd", str(self.repo))
-        env = dict(os.environ, PATH=os.path.dirname(sys.executable) + os.pathsep + "/usr/bin:/bin")
+        git_dir = os.path.dirname(shutil.which("git"))
+        env = dict(os.environ, PATH=os.pathsep.join((os.path.dirname(sys.executable), git_dir, os.environ["PATH"])))
         out = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(payload),
                              capture_output=True, text=True, env=env, check=True).stdout
         return json.loads(out) if out.strip() else None

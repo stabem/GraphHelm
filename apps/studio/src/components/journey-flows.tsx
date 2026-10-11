@@ -42,7 +42,7 @@ export interface JourneyFlowsProps {
   onMarkSafe?: (flowId: string, edgeId: string) => Promise<void>;
   /** The journey the owner selected (and its status), so the proof map below follows it. */
   onSelect?: (flowId: string, status: JourneyFlowView["status"]) => void;
-  /** Opening a journey runs its test and shows each screen as it was rendered (#519). Absent: the
+  /** An explicit Run starts a test and shows each screen as it was rendered. Absent: the
    * flowchart is drawn without pictures or results. */
   run?: JourneyRunSource;
 }
@@ -97,6 +97,7 @@ function currentStep(steps: Step[], session: LiveSession | undefined): number {
 
 const RUN_POLL_MS = 1000;
 const LIVE_FRAME_MS = 200;
+let activePreview: symbol | null = null;
 
 /** Why a run could not start or finish, in words; the Runtime's closed list of codes picks them. */
 const RUN_REASON: Record<string, string> = {
@@ -141,46 +142,54 @@ function previewResultWords(run: JourneyRunView | null): string {
   return run.result ?? (run.held ? "failed" : "not run");
 }
 
-/** The journey's run (#519): started when the journey is opened, read once a second while it
+/** The journey's cached run is read when opened; only an explicit click starts a preview. It is read once a second while it
  * runs, and each reached screen's picture fetched once per result. Object URLs are revoked when a
  * picture is replaced and when the journey is left. A Runtime that answers 404 predates the run
  * routes: `offered` turns false and the flowchart is drawn without a run line. */
-export function useJourneyRun(flowId: string, source: JourneyRunSource | undefined): { offered: boolean; run: JourneyRunView | null; frames: Record<string, string>; failure: string | null; again: () => void; confirm: () => void; confirming: boolean } {
+export function useJourneyRun(flowId: string, source: JourneyRunSource | undefined, autoStart = true): { offered: boolean; run: JourneyRunView | null; frames: Record<string, string>; failure: string | null; busyReason: string | null; launching: boolean; again: () => void; confirm: () => void; confirming: boolean } {
   const [run, setRun] = useState<JourneyRunView | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [absent, setAbsent] = useState(false);
   const [frames, setFrames] = useState<Record<string, string>>({});
-  // Which start this is: the first open, a Run again (`force`), or a confirmed held step.
+  // Which request this is: the initial cached read, a Run (`force`), or a confirmed held step.
   const [attempt, setAttempt] = useState<{ n: number; confirm: boolean }>({ n: 0, confirm: false });
   // A start is in flight: set with the click itself, cleared by that start's own answer or
   // failure. Not derived from what the answer says, so two equal failures in a row still clear it.
   const [starting, setStarting] = useState(false);
-  const starts = useRef<{ key: string; promise: Promise<JourneyRunView> } | null>(null);
+  const [busyReason, setBusyReason] = useState<string | null>(null);
+  const starts = useRef<{ key: string; token: symbol | null; promise: Promise<JourneyRunView> } | null>(null);
   const held = useRef(new Map<string, { key: string; url: string | null }>());
   useEffect(() => {
     if (source === undefined) return undefined;
     const key = `${flowId}:${attempt.n}:${attempt.confirm}`;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    if (starts.current?.key !== key) {
+      starts.current = { key, token: attempt.n === 0 ? null : activePreview, promise: attempt.n === 0 ? autoStart ? source.start(flowId, false) : source.read(flowId) : attempt.confirm ? source.start(flowId, false, true) : source.start(flowId, true) };
+    }
+    const token = starts.current.token;
+    const release = () => { if (token !== null && activePreview === token) activePreview = null; };
     const fail = (cause: unknown) => {
+      release();
       if (cancelled) return;
       setStarting(false);
       if (typeof cause === "object" && cause !== null && (cause as { httpStatus?: unknown }).httpStatus === 404) setAbsent(true);
       else setFailure(cause instanceof Error ? cause.message : String(cause));
     };
     const take = (next: JourneyRunView) => {
-      if (cancelled) return;
+      if (next.state !== "running") release();
+      if (cancelled) {
+        if (next.state === "running" && token !== null) timer = setTimeout(() => { source.read(flowId).then(take, fail); }, RUN_POLL_MS);
+        return;
+      }
       setStarting(false);
       setRun(next);
       setFailure(null);
       if (next.state === "running") timer = setTimeout(() => { source.read(flowId).then(take, fail); }, RUN_POLL_MS);
     };
-    if (starts.current?.key !== key) {
-      starts.current = { key, promise: attempt.confirm ? source.start(flowId, false, true) : source.start(flowId, attempt.n > 0) };
-    }
     starts.current.promise.then(take, fail);
-    return () => { cancelled = true; if (timer !== undefined) clearTimeout(timer); };
-  }, [flowId, source, attempt]);
+    return () => { cancelled = true; if (timer !== undefined && token === null) clearTimeout(timer); };
+  }, [flowId, source, attempt, autoStart]);
   useEffect(() => {
     if (source === undefined || run === null) return;
     for (const [screenId, screen] of Object.entries(run.screens ?? {})) {
@@ -205,14 +214,21 @@ export function useJourneyRun(flowId: string, source: JourneyRunSource | undefin
       kept.clear();
     };
   }, []);
-  return { offered: source !== undefined && !absent, run, frames, failure, again: () => {
-    for (const entry of held.current.values()) if (entry.url !== null) URL.revokeObjectURL(entry.url);
-    held.current.clear();
-    setFrames({});
-    setRun(null);
+  const launch = (confirm: boolean) => {
+    if (activePreview !== null) { setBusyReason("Can't run this journey: another journey is still running in this tab."); return; }
+    activePreview = Symbol(flowId);
+    setBusyReason(null);
+    setStarting(true);
+    if (!confirm) { setRun(null); setFrames({}); }
     setFailure(null);
-    setAttempt((before) => ({ n: before.n + 1, confirm: false }));
-  }, confirm: () => { setStarting(true); setAttempt((before) => ({ n: before.n + 1, confirm: true })); }, confirming: attempt.confirm && starting };
+    if (!confirm) {
+      for (const entry of held.current.values()) if (entry.url !== null) URL.revokeObjectURL(entry.url);
+      held.current.clear();
+    }
+    setAttempt((before) => ({ n: before.n + 1, confirm }));
+  };
+  return { offered: source !== undefined && !absent, run, frames, failure, busyReason, launching: starting, again: () => launch(false), confirm: () => launch(true), confirming: attempt.confirm && starting };
+
 }
 
 /** The page a Watch is playing (#519): read five times a second while it plays, and once more
@@ -380,8 +396,9 @@ export function PlayerSetup({ setup, readSetup, offer = true, onDone }: { setup:
 }
 
 function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source, onRunChange }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void>; onWatch?: (flowId: string, path?: string) => Promise<void>; onMarkSafe?: (flowId: string, edgeId: string) => Promise<void>; session?: LiveSession; source?: JourneyRunSource; onRunChange?: (run: JourneyRunView | null) => void }) {
-  const { offered, run, frames, failure: runFailure, again, confirm, confirming } = useJourneyRun(flow.id, source);
+  const { offered, run, frames, failure: runFailure, busyReason, launching, again, confirm, confirming } = useJourneyRun(flow.id, source, false);
   useEffect(() => { onRunChange?.(run); }, [onRunChange, run]);
+
   const liveFrame = useLiveFrame(session, source);
   const [approving, setApproving] = useState(false);
   // What the player setup changed stays on screen after its button goes, while the run it started goes on.
@@ -442,7 +459,8 @@ function Detail({ flow, onApprove, onWatch, onMarkSafe, session, source, onRunCh
             {runFailure !== null ? `Couldn't run this journey's test: ${runFailure}` : run === null ? "Starting this journey's test…" : runWords(run)}
             {run?.state === "ready" && run.ranAt !== undefined && <> · ran <time dateTime={run.ranAt}>{new Date(run.ranAt).toLocaleString()}</time></>}
           </p>
-          <button type="button" onClick={again} disabled={run?.state === "running" || (run === null && runFailure === null)}>Run again</button>
+          <button type="button" onClick={again} disabled={run?.state === "running" || launching}>{run?.state === "ready" || run?.state === "failed" ? "Run again" : "Run"}</button>
+          {busyReason !== null && <p role="alert">{busyReason}</p>}
           {source?.setupPlayer && (source.readPlayerSetup || (run?.state === "failed" && run.reason === "driver.observer_missing")) && <PlayerSetup setup={source.setupPlayer} readSetup={source.readPlayerSetup} offer={run?.state === "failed" && run.reason === "driver.observer_missing"} onDone={(note) => { setInstalled(note); again(); }} />}
           {installed !== null && <p className="journey-flow-note">{installed}</p>}
         </div>

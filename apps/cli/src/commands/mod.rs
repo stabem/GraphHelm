@@ -37,7 +37,6 @@ mod studio;
 mod tasks;
 mod tool;
 mod topology;
-mod tasks;
 mod validate;
 mod wake_wait;
 mod workspace;

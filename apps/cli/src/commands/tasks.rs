@@ -120,28 +120,50 @@ const COMMAND: &str = "tasks.reconcile";
 const SCRIPT: &str = include_str!("../../../../plugins/graphhelm/hooks/tasks_reconcile.py");
 
 pub(super) fn run(args: &TasksArgs) -> Outcome {
-    let TasksCommand::Reconcile { execution, url, token_file, lane, repo } = &args.command;
+    let TasksCommand::Reconcile {
+        execution,
+        url,
+        token_file,
+        lane,
+        repo,
+    } = &args.command;
     let python = if cfg!(windows) { "python" } else { "python3" };
     let mut child = Command::new(python);
-    child.arg("-c").arg(SCRIPT)
-        .arg("--execution").arg(execution)
-        .arg("--url").arg(url)
-        .arg("--token-file").arg(token_file)
-        .arg("--repo").arg(repo);
-    if let Some(lane) = lane { child.arg("--lane").arg(lane); }
+    child
+        .arg("-c")
+        .arg(SCRIPT)
+        .arg("--execution")
+        .arg(execution)
+        .arg("--url")
+        .arg(url)
+        .arg("--token-file")
+        .arg(token_file)
+        .arg("--repo")
+        .arg(repo);
+    if let Some(lane) = lane {
+        child.arg("--lane").arg(lane);
+    }
     match child.output() {
-        Ok(output) if output.status.success() => match serde_json::from_slice::<Value>(&output.stdout) {
-            Ok(data) => Outcome::success(COMMAND, data),
-            Err(_) => failure("reconciler returned invalid JSON"),
-        },
+        Ok(output) if output.status.success() => {
+            match serde_json::from_slice::<Value>(&output.stdout) {
+                Ok(data) => Outcome::success(COMMAND, data),
+                Err(_) => failure("reconciler returned invalid JSON"),
+            }
+        }
         Ok(output) => failure(String::from_utf8_lossy(&output.stderr).trim()),
         Err(error) => failure(format!("could not start Python reconciler: {error}")),
     }
 }
 
 fn failure(message: impl AsRef<str>) -> Outcome {
-    Outcome::application(COMMAND, Diagnostic::error(
-        crate::error_codes::GHCLI001_ARGUMENT_INVALID, message.as_ref(), "/tasks/reconcile", "tasks-cli",
-    ))
+    Outcome::application(
+        COMMAND,
+        Diagnostic::error(
+            crate::error_codes::GHCLI001_ARGUMENT_INVALID,
+            message.as_ref(),
+            "/tasks/reconcile",
+            "tasks-cli",
+        ),
+    )
 }
 >>>>>>> 5aa1769e (feat(tasks): reconcile merged PRs at lane stop)

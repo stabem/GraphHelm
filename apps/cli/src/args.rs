@@ -21,8 +21,6 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum TopLevel {
-    /// Reconcile recorded delivery tasks with GitHub.
-    Tasks(TasksArgs),
     Graph(GraphArgs),
     Schema(SchemaArgs),
     /// Extension package operations. Validation stays offline; the lifecycle subcommands

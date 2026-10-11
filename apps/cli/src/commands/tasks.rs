@@ -112,7 +112,6 @@ use graphhelm_protocols::Diagnostic;
 use serde_json::Value;
 
 use crate::args::{TasksArgs, TasksCommand};
-use crate::output::Outcome;
 
 const COMMAND: &str = "tasks.reconcile";
 const SCRIPT: &str = include_str!("../../../../plugins/graphhelm/hooks/tasks_reconcile.py");

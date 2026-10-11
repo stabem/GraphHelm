@@ -205,3 +205,19 @@ alone consumed 88 seconds. Completing this selected dependency surface uses an e
 recorded 900-second run budget; it does not claim the 180-second target was met. No extra test
 scope was added to compensate. A first clippy run also refused an eight-argument composition
 function; removing a redundant source identity argument addresses that finding.
+
+
+The 900-second author completion attempt also remained incomplete: the same-head continuation
+finished a reached wake/concurrency target successfully in 338.27 seconds, after the runner's
+remaining budget had expired. Its passed assertions are retained as late evidence, never as a
+successful bounded run. Remaining selected commands are completed separately with an explicit
+1,800-second completion budget; the original target and failed/incomplete receipts remain visible.
+No additional scope is selected. This budget bounds admission between commands, not an already
+running test's wall time.
+
+A resource regression also exposed queued directory names being charged only when visited.
+Parent buffers remain alive during recursion, so both copying and generation hashing now charge
+each complete admitted directory buffer before descending. The focused test created three local
+empty child directories, stopped at the depth boundary and observed all three names charged;
+it failed with one charged entry before the fix and passed afterward. This protects the global
+entry allocation bound without a provider, network, ordering assumption or test-only seam.

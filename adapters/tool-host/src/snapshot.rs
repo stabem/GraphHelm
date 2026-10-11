@@ -185,14 +185,16 @@ fn copy_dir(
         ));
     }
     let names_remaining = state.limits.max_entries.saturating_sub(state.entries);
-    for file_name in directory_entries(source, &directory, names_remaining)? {
-        state.entries = state
-            .entries
-            .checked_add(1)
-            .ok_or_else(|| bound("snapshot entry count overflowed"))?;
-        if state.entries > state.limits.max_entries {
-            return Err(bound("snapshot entry count exceeds the configured limit"));
-        }
+    let names = directory_entries(source, &directory, names_remaining)?;
+    // Parent name buffers remain alive during recursion, so charge the entire buffer now.
+    state.entries = state
+        .entries
+        .checked_add(names.len())
+        .ok_or_else(|| bound("snapshot entry count overflowed"))?;
+    if state.entries > state.limits.max_entries {
+        return Err(bound("snapshot entry count exceeds the configured limit"));
+    }
+    for file_name in names {
         let path = source.join(&file_name);
         let target = destination.join(&file_name);
         let name = file_name.to_str().ok_or(HostError::Config {
@@ -330,14 +332,16 @@ fn collect_files(
         ));
     }
     let names_remaining = state.limits.max_entries.saturating_sub(state.entries);
-    for file_name in directory_entries(current, &directory, names_remaining)? {
-        state.entries = state
-            .entries
-            .checked_add(1)
-            .ok_or_else(|| bound("snapshot entry count overflowed"))?;
-        if state.entries > state.limits.max_entries {
-            return Err(bound("snapshot entry count exceeds the configured limit"));
-        }
+    let names = directory_entries(current, &directory, names_remaining)?;
+    // Parent name buffers remain alive during recursion, so charge the entire buffer now.
+    state.entries = state
+        .entries
+        .checked_add(names.len())
+        .ok_or_else(|| bound("snapshot entry count overflowed"))?;
+    if state.entries > state.limits.max_entries {
+        return Err(bound("snapshot entry count exceeds the configured limit"));
+    }
+    for file_name in names {
         let path = current.join(&file_name);
         let metadata =
             fs::symlink_metadata(&path).map_err(|source| HostError::Prepare { source })?;
@@ -651,6 +655,59 @@ mod tests {
             max_depth: 2,
             max_total_bytes: 8,
             max_file_bytes: 4,
+        }
+    }
+
+    // Cost: three local directories and two bounded walks; no provider or network.
+    #[test]
+    fn queued_directory_names_are_charged_before_recursion() {
+        let source = tempfile::tempdir().unwrap();
+        for name in ["a", "b", "c"] {
+            fs::create_dir(source.path().join(name)).unwrap();
+        }
+        let destination = tempfile::tempdir().unwrap();
+        for copy in [true, false] {
+            let mut state = WalkState {
+                entries: 0,
+                files: 0,
+                bytes: 0,
+                limits: SnapshotLimits {
+                    max_entries: 3,
+                    max_depth: 0,
+                    ..small()
+                },
+            };
+            let directory = open_directory(source.path()).unwrap();
+            let result = if copy {
+                copy_dir(
+                    source.path(),
+                    source.path(),
+                    destination.path(),
+                    "",
+                    0,
+                    &mut state,
+                    directory,
+                )
+            } else {
+                collect_files(
+                    source.path(),
+                    source.path(),
+                    0,
+                    &mut Vec::new(),
+                    &mut state,
+                    directory,
+                )
+            };
+            assert!(matches!(
+                result,
+                Err(HostError::Config {
+                    rule: "snapshot directory depth exceeds the configured limit"
+                })
+            ));
+            assert_eq!(
+                state.entries, 3,
+                "all queued names consume the global memory budget before recursion"
+            );
         }
     }
 

@@ -70,7 +70,7 @@ For the explicit Codebase Memory integration, use the operator-local atomic code
 methods when the Keel card names them. Build once into the card's private immutable bundle, then
 reuse that bundle for repeated queries only after its source, store, executable, request, and broker
 evidence still validate. A query opens one contained provider call and closes its process tree; it
-does not start a watcher, retain an MCP daemon, modify the global Runtime/MCP configuration, or
+does not retain a background indexing watcher or an MCP daemon, modify the global Runtime/MCP configuration, or
 silently assemble Runtime context ports. A timeout bounds the provider process execution after
 preparation; it does not make unbounded filesystem or snapshot preparation safe. Keep partial coverage as partial; refuse stale, timed-out, cancelled, truncated, or otherwise
 incomplete process evidence.

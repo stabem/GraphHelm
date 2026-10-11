@@ -93,18 +93,16 @@ def main() -> int:
         if bound is not None and lane and ID.fullmatch(lane):
             execution, token_file, url, _origin, _node = bound
             cwd = payload.get("cwd")
-            if not isinstance(cwd, str) or not Path(cwd).is_dir():
-                return 0
-            remote = subprocess.run(["git", "-C", cwd, "remote", "get-url", "origin"],
-                                    capture_output=True, text=True, timeout=1, check=True).stdout.strip()
-            match = re.fullmatch(r"(?:git@github\.com:|https://github\.com/)([^/\s]+/[^/\s]+?)(?:\.git)?", remote)
-            if match is None:
-                return 0
-            cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
-            subprocess.run([cli, "tasks", "reconcile", "--execution", execution,
-                            "--token-file", token_file, "--url", url, "--lane", lane,
-                            "--repo", match.group(1)],
-                           capture_output=True, timeout=5)
+            if isinstance(cwd, str) and Path(cwd).is_dir():
+                remote = subprocess.run(["git", "-C", cwd, "remote", "get-url", "origin"],
+                                        capture_output=True, text=True, timeout=1, check=True).stdout.strip()
+                match = re.fullmatch(r"(?:git@github\.com:|https://github\.com/)([^/\s]+/[^/\s]+?)(?:\.git)?", remote)
+                if match is not None:
+                    cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
+                    subprocess.run([cli, "tasks", "reconcile", "--execution", execution,
+                                    "--token-file", token_file, "--url", url, "--lane", lane,
+                                    "--repo", match.group(1)],
+                                   capture_output=True, timeout=5)
     except (OSError, ValueError, subprocess.SubprocessError):
         pass
     # The host sets this on the continuation caused by a Stop block. One reminder
@@ -114,7 +112,7 @@ def main() -> int:
     try:
         result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--scan"],
                                 input=json.dumps(payload), text=True,
-                                capture_output=True, timeout=8)
+                                capture_output=True, timeout=2)
         status = result.returncode
     except (OSError, subprocess.SubprocessError):
         status = 2

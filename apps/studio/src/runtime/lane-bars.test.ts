@@ -29,6 +29,16 @@ describe("laneBars", () => {
     const bar = lanes.find((lane) => lane.lane === "dev")!.bars[0]!;
     expect(bar.lastActivityAt! + LIVENESS_MS).toBeGreaterThanOrEqual(bar.end);
   });
+
+  it("frees the author when the Stop hook records a merged PR", () => {
+    const lanes = laneBars([
+      ev({ kind: "task.claimed", taskId: "issue-766", lane: "codex-3", issue: 766, at: at(0) }),
+      ev({ kind: "task.pr_opened", taskId: "issue-766", lane: "codex-3", pr: 783, at: at(10) }),
+      ev({ kind: "task.merged", taskId: "issue-766", actorId: "graphhelm", pr: 783,
+        mergeSha: "a".repeat(40), closes: [], merger: "graphhelm", at: at(20) } as never),
+    ], T0 + 30, 1000);
+    expect(agentBoard([{ name: "codex-3" } as never], lanes, [], T0 + 30)[0]!.status).toBe("free");
+  });
   it.each(["task.merged", "task.closed"] as const)("clears every author's awaiting PR when another slice records %s", (end) => {
     const lanes = laneBars([
       ev({ kind: "task.pr_opened", taskId: "issue-814", lane: "first", pr: 811, at: at(0) }),

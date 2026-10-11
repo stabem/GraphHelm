@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from urllib.parse import quote
@@ -84,6 +85,26 @@ def main() -> int:
         payload = hook_input()
     except (ValueError, OSError):
         return 0
+    # Every Stop refreshes this lane's completed PRs. This is best-effort: an offline
+    # Runtime or GitHub must never prevent the host from ending its turn.
+    try:
+        bound = binding(payload)
+        lane = os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload)
+        if bound is not None and lane and ID.fullmatch(lane):
+            execution, token_file, url, _origin, _node = bound
+            cwd = payload.get("cwd")
+            if isinstance(cwd, str) and Path(cwd).is_dir():
+                remote = subprocess.run(["git", "-C", cwd, "remote", "get-url", "origin"],
+                                        capture_output=True, text=True, timeout=1, check=True).stdout.strip()
+                match = re.fullmatch(r"(?:git@github\.com:|https://github\.com/)([^/\s]+/[^/\s]+?)(?:\.git)?", remote)
+                if match is not None:
+                    cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
+                    subprocess.run([cli, "tasks", "reconcile", "--execution", execution,
+                                    "--token-file", token_file, "--url", url, "--lane", lane,
+                                    "--repo", match.group(1)],
+                                   capture_output=True, timeout=5)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
     # The host sets this on the continuation caused by a Stop block. One reminder
     # per stop cycle is enough, even when the lane cannot send its reply.
     if payload.get("stop_hook_active") is True:

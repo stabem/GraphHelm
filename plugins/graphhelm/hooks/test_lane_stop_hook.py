@@ -317,6 +317,19 @@ class LaneStopTests(unittest.TestCase):
                 self.assertIn("read the notes addressed to you", decisions[-1]["reason"])
                 self.assertEqual(self.stop(manifest, active=True), [])
 
+    def test_non_github_origins_still_remind_about_unread_notes(self):
+        self.note("origin-note", to="codex-4")
+        root = Path(self.tmp.name)
+        subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
+        for remote in ("ssh://git@github.com/stabem/GraphHelm.git", "https://gitlab.com/a/b.git"):
+            with self.subTest(remote=remote):
+                subprocess.run(["git", "-C", str(root), "remote", "remove", "origin"], capture_output=True)
+                subprocess.run(["git", "-C", str(root), "remote", "add", "origin", remote], check=True)
+                for manifest in MANIFESTS:
+                    with self.subTest(manifest=manifest):
+                        decisions = self.stop(manifest)
+                        self.assertTrue(any(d.get("decision") == "block" for d in decisions), decisions)
+
     def test_runtime_down_allows_stop(self):
         self.stop_server()
         for manifest in MANIFESTS:
@@ -397,7 +410,7 @@ class LaneStopTests(unittest.TestCase):
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.env["GRAPHHELM_RUNTIME_URL"] = f"http://127.0.0.1:{server.server_port}"
         for mode in ("busy", "recent", "long", "invalid", "stall"):
-            for manifest in (MANIFESTS[0],):
+            for manifest in MANIFESTS:
                 with self.subTest(mode=mode, manifest=manifest):
                     if mode in ("busy", "recent"):
                         calls.clear()
@@ -405,7 +418,7 @@ class LaneStopTests(unittest.TestCase):
                         elapsed = self.reminder_seconds
                         self.assertTrue(any(d.get("decision") == "block" for d in decisions), decisions)
                         if mode == "busy":
-                            self.assertLess(elapsed, 8.0, f"300-note reminder took {elapsed:.3f}s")
+                            self.assertLess(elapsed, 2.0, f"300-note reminder took {elapsed:.3f}s")
                             self.assertFalse(any("/evidence/" in call for call in calls), calls)
                             print(f"300 notes: {manifest.name}: {elapsed:.3f}s, {len(calls)} event GETs", flush=True)
                         self.assertEqual(self.stop(manifest, active=True), [])

@@ -11,6 +11,8 @@
 /* #706: a card keeps its full height in the scrolling column; flex never squashes it. */
 .wk .mg-node { position: static; width: 100%; flex: none; }
 .wk .mg-node-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+/* The graph's dense-card rule is more specific; Lanes still needs two title lines. */
+.wk .mg-node[data-dense="true"] .mg-node-title { -webkit-line-clamp: 2; }
 .wk .mg-node-label, .wk .mg-node-sub, .wk .mg-node .mg-health-text { white-space: normal; overflow: visible; }
 @media (max-width: 700px) {
   .wk { grid-template-columns: 1fr; }

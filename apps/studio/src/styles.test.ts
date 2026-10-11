@@ -345,8 +345,8 @@ describe("Graph tab on a phone (#591)", () => {
 });
 
 describe("Proof progress text stays readable in narrow cards", () => {
-  it("keeps each count and its word together", () => {
+  it("allows the line to wrap between count phrases", () => {
     const rule = (CSS.match(/\.mv-progress-text\s*\{([^}]*)\}/g) ?? []).join(" ");
-    expect(rule).toMatch(/white-space:\s*nowrap/);
+    expect(rule).not.toMatch(/white-space:\s*nowrap/);
   });
 });

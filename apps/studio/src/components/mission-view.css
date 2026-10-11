@@ -173,6 +173,3 @@
 .mv-progress-part[style*="flex-grow: 0"] { display: none; }
 .mv-progress-text { font-family: var(--mono); font-size: 11px; line-height: 1.35; color: #A9AEB8; }
 .mv-pr-chip[data-alert="true"] { box-shadow: inset 0 -2px 0 #FF6B5E; }
-
-/* Keep count labels intact in the narrow Proof rail card. */
-.mv-progress-text { white-space: nowrap; }

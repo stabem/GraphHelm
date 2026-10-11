@@ -278,6 +278,32 @@ describe("foldTaskEvents slices (#460)", () => {
 });
 
 describe("merges recorded by another lane (#765)", () => {
+  it("ends both claims of one PR when its merge closes only the first issue (#807)", () => {
+    const events = [
+      record(1, "task.claimed", "codex-14", { taskId: "issue-691", issue: 691, lane: "codex-14", branch: "issue-691-fix" }),
+      record(2, "task.pr_opened", "codex-14", { taskId: "issue-691", pr: 9, headSha: "aaaaaaaa", journeys: [], lane: "codex-14" }),
+      record(3, "task.claimed", "codex-14", { taskId: "issue-722", issue: 722, lane: "codex-14", branch: "issue-722-followup" }),
+      record(4, "task.pr_opened", "codex-14", { taskId: "issue-722", pr: 9, headSha: "aaaaaaaa", journeys: [], lane: "codex-14" }),
+      record(5, "task.merged", "coordinator", { taskId: "pr-9", pr: 9, mergeSha: "bbbbbbbb", closes: [691], merger: "coordinator" }),
+    ];
+    const tasks = foldTaskEvents(events);
+    expect(tasks.filter((task) => task.pr === 9)).toHaveLength(2);
+    expect(tasks.filter((task) => task.pr === 9).map((task) => [task.issue, task.step, task.mergeSha, task.lastSequence]).sort((a, b) => Number(a[0]) - Number(b[0])))
+      .toEqual([[691, "merged", "bbbbbbbb", 5], [722, "merged", "bbbbbbbb", 5]]);
+  });
+
+  it("removes every claim of a closed PR even when they share one issue (#807)", () => {
+    const events = [
+      record(1, "task.claimed", "codex-4", { taskId: "issue-86", issue: 86, lane: "codex-4", branch: "issue-86-first" }),
+      record(2, "task.pr_opened", "codex-4", { taskId: "issue-86", pr: 9, headSha: "aaaaaaaa", journeys: [], lane: "codex-4" }),
+      record(3, "task.claimed", "codex-4", { taskId: "issue-86", issue: 86, lane: "codex-4", branch: "issue-86-second" }),
+      record(4, "task.pr_opened", "codex-4", { taskId: "issue-86", pr: 9, headSha: "aaaaaaaa", journeys: [], lane: "codex-4" }),
+      record(5, "task.closed", "coordinator", { taskId: "pr-9", pr: 9, reason: "superseded", by: 10 }),
+    ];
+    expect(foldTaskEvents(events.slice(0, 4)).filter((task) => task.pr === 9)).toHaveLength(2);
+    expect(foldTaskEvents(events).filter((task) => task.pr === 9)).toHaveLength(0);
+  });
+
   it("ends a duplicate-PR claim when the existing PR slice ends (#795)", () => {
     const tasks = foldTaskEvents([
       record(1, "task.claimed", "lane-a", { taskId: "issue-1", issue: 1, lane: "lane-a", branch: "issue-1-first" }),

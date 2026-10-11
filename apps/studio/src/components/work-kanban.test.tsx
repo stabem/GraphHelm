@@ -53,6 +53,15 @@ describe("WorkKanban (#668)", () => {
     expect(within(col(/^Waiting for build · 0/)).getByText("none")).toBeInTheDocument();
     expect(board).not.toHaveTextContent("Done already");
   });
+  it("shows a blocked card as not started when its author has no later task record", async () => {
+    const blocked = wt("blocked", { issue: 4, pr: 44, prTitle: "Blocked", step: "review", lane: "codex-13",
+      blockedBy: { reviewer: "codex-review", headSha: "abcdef0123", commentUrl: "" },
+      blockedSequence: 20, authorLastSequence: 10,
+      rounds: [{ reviewer: "codex-review", headSha: "abcdef0123", commentUrl: "", fixHead: null, blockedAt: new Date(NOW - 5 * 60_000).toISOString(), fixedAt: null }] }) as unknown as TaskState;
+    render(<MissionView journeys={[]} tasks={[blocked]} lanes={[]} now={NOW} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Lanes" }));
+    expect(within(col(/^BLOCKED/)).getByRole("button", { name: /Needs fix · not started/ })).toBeInTheDocument();
+  });
   it("renders full names: the title and the author → reviewer line are whole", async () => {
     await renderLanes();
     expect(screen.getByText(LONG).textContent).toBe(LONG);

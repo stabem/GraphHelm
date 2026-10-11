@@ -415,6 +415,10 @@ export interface TaskState {
   /** A BLOCK on the current head that no newer head (#608) or verdict has answered: the red edge
    * into the next step. */
   blockedBy: { reviewer: string; headSha: string; commentUrl: string } | null;
+  /** Sequence of the current unanswered BLOCK. */
+  blockedSequence?: number | null;
+  /** Most recent task record written by this slice's author. */
+  authorLastSequence?: number | null;
   reviewers: string[];
   mergeSha: string | null;
   /** `https://github.com/<owner>/<repo>`, read off a verdict's comment URL; links need it. */
@@ -450,6 +454,7 @@ function applyVerdict(state: TaskState, event: TaskEventRecord): void {
   state.repoUrl ??= /^(https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\//.exec(event.commentUrl ?? "")?.[1] ?? state.repoUrl;
   if (event.verdict === "BLOCK") {
     state.blockedBy = { reviewer: event.reviewer ?? "", headSha: event.headSha ?? "", commentUrl: event.commentUrl ?? "" };
+    state.blockedSequence = event.sequence;
     // A second BLOCK on the same unanswered head (another reviewer) is the same round.
     const last = state.rounds.at(-1);
     if (last === undefined || last.fixHead !== null || last.headSha !== event.headSha) {
@@ -459,6 +464,7 @@ function applyVerdict(state: TaskState, event: TaskEventRecord): void {
     state.step = "review";
   } else {
     state.blockedBy = null;
+    state.blockedSequence = null;
     state.step = "merge";
   }
 }
@@ -489,7 +495,7 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
       key: "", taskId: event.taskId, branch: null, issue: null, pr: event.kind === "task.claimed" ? null : event.pr ?? null,
       lane: null, assignedBy: null, assignedReviewers: [], currentReviewer: null, headSha: null, journeys: [], plan: null,
       step: event.kind === "task.claimed" || event.kind === "task.planned" ? "plan" : "implement", blockedBy: null, reviewers: [], mergeSha: null,
-      repoUrl: null, title: null, summary: null, prTitle: null, prSummary: null, strayVerdicts: [], critic: null, recordedHeads: [], parent: null, rounds: [], clock: emptyClock(), lastSequence: 0,
+      repoUrl: null, title: null, summary: null, prTitle: null, prSummary: null, strayVerdicts: [], critic: null, recordedHeads: [], parent: null, rounds: [], clock: emptyClock(), lastSequence: 0, blockedSequence: null, authorLastSequence: null,
     };
     slices.push(slice);
     return slice;
@@ -547,6 +553,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
     if (ended.has(state)) continue;
     if (state.step === "merged") continue;
     state.lastSequence = event.sequence;
+    if (state.lane === event.actorId) state.authorLastSequence = event.sequence;
     // #480 (gh-claude-2): Plan and Critic hold time only once a plan is recorded. Before that, the
     // claim's time is Implement's, as it was before #480, so old tasks' medians stay comparable.
     // Judged after the record is applied, so the `task.planned` that ends Plan books the claim's
@@ -593,7 +600,10 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
         }
         // #608: the author answered the BLOCK with a newer head, so nothing is blocked now: the
         // task waits on the re-review. The BLOCK itself stays in `rounds`, with its fixHead.
-        if (state.blockedBy !== null && event.headSha !== undefined && event.headSha !== state.blockedBy.headSha) state.blockedBy = null;
+        if (state.blockedBy !== null && event.headSha !== undefined && event.headSha !== state.blockedBy.headSha) {
+          state.blockedBy = null;
+          state.blockedSequence = null;
+        }
         if (event.headSha !== undefined && !state.recordedHeads.includes(event.headSha)) state.recordedHeads.push(event.headSha);
         // A verdict that arrived before this head's pr_opened (a back-fill) now speaks for it.
         for (const stray of state.strayVerdicts.filter((entry) => entry.reason === "unrecorded" && entry.headSha === state.headSha)) {
@@ -628,6 +638,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
         state.pr = event.pr ?? state.pr;
         state.mergeSha = event.mergeSha ?? null;
         state.blockedBy = null;
+        state.blockedSequence = null;
         state.step = "merged";
         break;
       case "task.closed":

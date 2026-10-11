@@ -29,6 +29,12 @@ type Sub = "graph" | "proof" | "test" | "lanes" | "journeys";
 const WINDOW_MS = 14 * 3_600_000;
 const GONE_QUIET_MS = 24 * 3_600_000;
 
+function timerTask(task: TaskState): TaskState {
+  if (!task.blockedBy) return task;
+  const blockedAt = task.rounds.at(-1)?.blockedAt;
+  return blockedAt ? { ...task, clock: { ...task.clock, since: blockedAt } } : task;
+}
+
 interface Props {
   journeys: JourneyView[];
   tasks: TaskState[];
@@ -270,8 +276,8 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
       const raw = rows.find((t) => t.key === r.key);
       return {
         groupKey: g.key, row: r, stage: g.stages[r.key]!, task: withCurrentReviewer(r.task, lanes),
-        health: raw ? stageHealth(raw, lanes, rows, live, false, slots) : null,
-        pace: raw ? { progress: stageProgress(raw, rows, live, lanes), activity: activity(ownerLane(raw), lanes, live, rows, ownerRole(raw), slots) } : null,
+        health: raw ? stageHealth(timerTask(raw), lanes, rows, live, false, slots) : null,
+        pace: raw ? { progress: stageProgress(timerTask(raw), rows, live, lanes), activity: activity(ownerLane(raw), lanes, live, rows, ownerRole(raw), slots) } : null,
       };
     });
   });
@@ -293,10 +299,10 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
   const group: WorkGroup | null = rawGroup ? { ...rawGroup, rows: rawGroup.rows.map((r) => ({ ...r, task: withCurrentReviewer(r.task, lanes) })) } : null;
   // #591: time in stage and the health flag of each PR card, from the same records the lanes read.
   const groupRows = group ? tasks.filter((t) => group.rows.some((r) => r.key === t.key)) : [];
-  const health = Object.fromEntries(groupRows.map((t) => [t.key, stageHealth(t, lanes, groupRows, live, false, slots)]));
+  const health = Object.fromEntries(groupRows.map((t) => [t.key, stageHealth(timerTask(t), lanes, groupRows, live, false, slots)]));
   // #591: progress against the usual time, and the last record of whoever is on the card's stage.
   const pace = Object.fromEntries(groupRows.map((t) => [t.key, {
-    progress: stageProgress(t, groupRows, live, lanes),
+    progress: stageProgress(timerTask(t), groupRows, live, lanes),
     activity: activity(ownerLane(t), lanes, live, groupRows, ownerRole(t), slots),
   }]));
   const knownIds = new Set(journeys.map((j) => j.contractId));

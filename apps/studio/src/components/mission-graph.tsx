@@ -322,7 +322,7 @@ function WhoLine({ who }: { who: string }) {
   return <span className="mg-node-who">{parts.map((p, i) => (p === " → " || p === ", " ? <span key={i}>{p}</span> : <span key={i} className="mg-lane">{p}</span>))}</span>;
 }
 
-/** #591: the current card. A BLOCK opens a Fixing card for the author (amber, red only when the
+/** #591/#834: the current card. A BLOCK opens a fix card for the author (amber, red only when the
  * owner lane is silent past LIVENESS_MS: Stalled); the health flag gets its own line and the time in stage sits right on the who line. */
 export function CurrentCard({ cell: c, stage, task: t, health, pace, selected, left, top, onSelect }: {
   cell: PrRow["cells"][number]; stage: WorkStage; task: MissionTask; health: StageHealth | null; pace: Pace | null; selected: boolean;

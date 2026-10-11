@@ -174,7 +174,10 @@ export function prPath(raw: TaskState, proven: boolean): Omit<PrRow, "task"> {
   else if (fixPushed) add("review", { who: reReviewer, sub: reReviewer ? `waiting on ${reReviewer}` : null, count: reviews, label: counted("Re-review", rounds.length), title: counted("Re-review", rounds.length), time: spent(t, "review") });
   else add("review", { who: lastReviewer, count: Math.max(1, reviews), label: counted("Review", reviews), time: spent(t, "review") });
   if (block) {
-    add("fix", { title: "Fixing", sub: `after BLOCK by ${blocker}`, count: fixes + 1, label: counted("Fix", fixes + 1), who: t.lane });
+    const started = t.authorLastSequence !== null && t.authorLastSequence !== undefined
+      && t.blockedSequence !== null && t.blockedSequence !== undefined && t.authorLastSequence > t.blockedSequence;
+    add("fix", { title: started ? "Fixing" : "Needs fix · not started", sub: `after BLOCK by ${blocker}`, time: lastRound?.blockedAt ?? null,
+      count: fixes + 1, label: counted("Fix", fixes + 1), who: t.lane });
   } else if (fixes > 0) {
     add("fix", { state: "done", mark: fixPushed ? `fix pushed ${lastRound!.fixHead!.slice(0, 8)}` : "✓", count: fixes, label: counted("Fix", fixes), who: t.lane });
   } else if (cur > COL.fix) {

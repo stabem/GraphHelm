@@ -51,6 +51,13 @@ describe("step clock in the fold (#502)", () => {
     expect(foldTaskEvents([claim, plan(5, "design"), opened])[0].clock.spent).toEqual({ plan: 5 * 60_000, critic: 25 * 60_000 });
   });
 
+  it("starts a fresh active run after a silent gap longer than the lane stall threshold", () => {
+    const claim = record(1, 0, "task.claimed", "l1", { issue: 9, lane: "l1", branch: "b" });
+    const resumed = record(2, 13 * 60 * 60, "task.planned", "l1", { lane: "l1", classes: ["code"],
+      reviews: 1, proof: "tests", critic: { mode: "none", passScore: 8, maxRounds: 3 }, summary: "s" });
+    const task = foldTaskEvents([claim, resumed])[0];
+    expect(task.clock).toEqual({ since: at(13 * 60 * 60), spent: {} });
+  });
   it("keeps a BLOCK and a new head inside Review instead of restarting the clock", () => {
     const tasks = foldTaskEvents([
       record(1, 0, "task.pr_opened", "l1", { pr: 19, headSha: head, journeys: [], lane: "l1" }),
@@ -85,6 +92,12 @@ describe("typical step time and pace (#502)", () => {
 
   it("writes a duration short enough for a node", () => {
     expect([duration(45_000), duration(12 * 60_000), duration(185 * 60_000), duration(52 * 3_600_000)]).toEqual(["45 s", "12 min", "3 h 05", "2 d 4 h"]);
+  });
+
+  it("resets a lane clock after a stall-sized gap", () => {
+    const clock = { since: at(0), spent: {} as Record<string, number> };
+    clockStep(clock, "implement", "implement", at(30), true);
+    expect(clock).toEqual({ since: at(30), spent: {} });
   });
 
   it("ignores a clock that goes backwards", () => {

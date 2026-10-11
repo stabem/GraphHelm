@@ -623,7 +623,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         ended.add(state);
         break;
     }
-    clockStep(state.clock, timed(before), timed(state.step), event.occurredAt);
+    clockStep(state.clock, timed(before), timed(state.step), event.occurredAt, (event.kind === "task.claimed" || event.kind === "task.planned") && event.lane === state.lane);
     if (event.kind === "task.merged" && event.closes !== undefined) {
       for (const claim of slices) {
         if (claim !== state && claim.pr === null && claim.step !== "merged" && claim.issue !== null && event.closes.includes(claim.issue)) {

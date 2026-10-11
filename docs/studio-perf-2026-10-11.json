@@ -1,0 +1,68 @@
+{
+  "schema": "graphhelm.studio-perf/1",
+  "measuredAt": "2026-10-11T00:00:00-03:00",
+  "sourceHead": "8b65bdb9",
+  "sourceDirty": false,
+  "platform": "Windows 10.0.26200",
+  "node": "v24.13.1",
+  "chromium": "156.0.8078.4",
+  "cpuCount": 32,
+  "availableParallelism": 32,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "fixture": "tools/studio-journey-fixture/fixture.sh; fresh disposable Runtime and Studio; Runtime port 18815; Studio port 15815",
+  "method": "One headless Chromium browser; five sequential fresh contexts; shared warm dev server; no warmup; click-to-visible DOM timing; no thresholds or build comparison",
+  "interactions": {
+    "loadRunActions": {
+      "count": 5,
+      "medianMs": 404.10009765625,
+      "p90Ms": 903.400146484375,
+      "maxMs": 903.400146484375,
+      "samplesMs": [
+        903.400146484375,
+        404.10009765625,
+        380.60009765625,
+        396.2998046875,
+        492.400146484375
+      ]
+    },
+    "clickDeployNode": {
+      "count": 5,
+      "medianMs": 57.600000001490116,
+      "p90Ms": 76.40000000223517,
+      "maxMs": 76.40000000223517,
+      "samplesMs": [
+        76.40000000223517,
+        52.69999999925494,
+        60.30000000074506,
+        57.600000001490116,
+        55.900000002235174
+      ]
+    },
+    "clickChatMessage": {
+      "count": 5,
+      "medianMs": 23,
+      "p90Ms": 36.20000000298023,
+      "maxMs": 36.20000000298023,
+      "samplesMs": [
+        36.20000000298023,
+        18.5,
+        24.399999998509884,
+        23,
+        20.800000000745058
+      ]
+    }
+  },
+  "outcomes": {
+    "load": { "completed": 5, "timeouts": 0, "skipped": 0 },
+    "node": { "completed": 5, "timeouts": 0, "skipped": 0 },
+    "chat": { "completed": 5, "timeouts": 0, "skipped": 0 }
+  },
+  "fixtureShutdown": "completed; fixture PID file removed; no listeners remained on ports 18815 or 15815",
+  "notes": [
+    "This records one five-run measurement on the current head, not a comparison with the existing baseline or evidence of a performance improvement.",
+    "The full raw observer output is retained outside the repository at D:/gh/cx/codex-14/perf-185.json."
+  ]
+}

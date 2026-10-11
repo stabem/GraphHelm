@@ -8,6 +8,15 @@ let seq = 0;
 const ev = (e: Partial<TimedTaskEvent>): TimedTaskEvent => ({ actorId: "a", sequence: seq++, taskId: "t1", ...e }) as TimedTaskEvent;
 
 describe("laneBars", () => {
+  it.each(["task.merged", "task.closed"] as const)("clears every author's awaiting PR when another slice records %s", (end) => {
+    const lanes = laneBars([
+      ev({ kind: "task.pr_opened", taskId: "issue-814", lane: "first", pr: 811, at: at(0) }),
+      ev({ kind: "task.pr_opened", taskId: "issue-814", lane: "second", pr: 811, at: at(1) }),
+      ev({ kind: end, taskId: "pr-811", pr: 811, at: at(2) }),
+    ], T0 + 3, 1000);
+    expect(lanes.find((lane) => lane.lane === "first")!.awaiting).toEqual([]);
+    expect(lanes.find((lane) => lane.lane === "second")!.awaiting).toEqual([]);
+  });
   it("ends a claimed PR when it merges or closes, including its awaiting review state", () => {
     for (const end of ["task.merged", "task.closed"] as const) {
       const lanes = laneBars([

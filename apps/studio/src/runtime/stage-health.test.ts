@@ -168,4 +168,24 @@ describe("#636 build-slot queue", () => {
     expect(laneLiveness("gh-claude-2", [lane("gh-claude-2", NOW - 9 * H)], [], NOW).live).toBe(false);
     expect(laneLiveness("gh-claude-2", [lane("gh-claude-2", NOW - 9 * H)], [], NOW, slots).live).toBe(true);
   });
+  it("a released slot wait no longer appears on its card", () => {
+    const task = ts("issue-808", { lane: "reviewer", step: "review", pr: 808, headSha: "bbbbbbbb", reviewers: ["reviewer"] });
+    const lanes = [lane("reviewer", NOW, "issue-808")];
+    const waiting = parseSlots({ slots: [{ root: "D:/gh", holder: null, waiting: [{ lane: "reviewer", waitedSeconds: 120 }] }] });
+    const released = parseSlots({ slots: [{ root: "D:/gh", holder: null, waiting: [] }] });
+    expect(stageHealth(task, lanes, [task], NOW, false, waiting)?.flag).toBe("waiting_build");
+    expect(stageHealth(task, lanes, [task], NOW, false, released)?.flag).not.toBe("waiting_build");
+  });
+  it("one reviewer's wait belongs only to the review currently worked", () => {
+    const one = ts("issue-805", { pr: 805, step: "review", lane: "author", reviewers: ["reviewer"], headSha: "aaaaaaaa" });
+    const two = ts("issue-808", { pr: 808, step: "review", lane: "author", reviewers: ["reviewer"], headSha: "bbbbbbbb" });
+    const reviewer = lane("reviewer", NOW);
+    reviewer.bars = [
+      { kind: "review", label: "#805", taskId: "issue-805", headSha: "aaaaaaaa", start: NOW - 10 * M, end: NOW, open: true },
+      { kind: "review", label: "#808", taskId: "issue-808", headSha: "bbbbbbbb", start: NOW - M, end: NOW, open: true },
+    ];
+    const waiting = parseSlots({ slots: [{ root: "D:/gh", holder: null, waiting: [{ lane: "reviewer", waitedSeconds: 120 }] }] });
+    expect(stageHealth(one, [reviewer], [one, two], NOW, false, waiting)?.flag).not.toBe("waiting_build");
+    expect(stageHealth(two, [reviewer], [one, two], NOW, false, waiting)?.flag).toBe("waiting_build");
+  });
 });

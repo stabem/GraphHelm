@@ -153,4 +153,12 @@ describe("withCurrentReviewer (#591)", () => {
     expect(t.reviewers).toEqual(["gh-claude-3"]);
     expect(t.reviewerHistory).toEqual(["gh-claude-7"]);
   });
+  it("a new head names its newly assigned reviewer rather than the old one", () => {
+    const old = { ...base, headSha: "ccc", reviewers: ["gh-claude-3", "gh-claude-7"] };
+    const assigned = [...events,
+      ev({ kind: "task.pr_opened", lane: "gh-claude-1", pr: 609, headSha: "ccc", at: at(6) }),
+      ev({ kind: "task.review_assigned", reviewer: "gh-claude-5", pr: 609, headSha: "ccc", at: at(7) }),
+    ];
+    expect(withCurrentReviewer(old, laneBars(assigned, T0 + 10 * 60_000, 3_600_000)).reviewers).toEqual(["gh-claude-5"]);
+  });
 });

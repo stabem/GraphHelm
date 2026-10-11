@@ -49,6 +49,7 @@ describe("released claims", () => {
     const buckets = bucketKanban(group!.rows.filter((row) => row.open), (row) => kanbanColumn(group!.stages[row.key]!, null));
     expect(Object.values(buckets).flat()).toEqual([]);
     expect(group!.tasks).toHaveLength(1);
-    expect(group!.stages[task.key]).toBe("implement");
+    expect(group!.stages[task.key]).toBe("released");
+    expect(group!.open).toBe(false);
   });
 });

@@ -65,7 +65,8 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
     return { name: b.name, lane };
   });
   for (const l of lanes) if (!used.has(l)) pairs.push({ name: l.lane, lane: l });
-  for (const name of onDemand) if (!blank(name) && !pairs.some((p) => p.name === name || p.lane?.lane === name)) pairs.push({ name, lane: undefined });
+  for (const name of onDemand) if (!blank(name) && !pairs.some((p) => p.name === name || p.lane?.lane === name
+    || bots.some((b) => b.name === p.name && (b.key === name || b.actorId === name)))) pairs.push({ name, lane: undefined });
   const delivered = new Map<string, string>();
   for (const t of tasks) if (t.step === "merged" && t.lane) delivered.set(t.lane, `${t.pr ? `#${t.pr} ` : ""}${t.title}`);
   const rows0 = pairs.map(({ name, lane }): AgentRow => {
@@ -124,7 +125,8 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
   });
   // #636: a lane holding or queued for a build slot shows that, whatever its bars say.
   const rows = rows0.map((r, i): AgentRow => {
-    const ids = [r.name, pairs[i]!.lane?.lane].filter((n): n is string => !!n);
+    const bot = bots.find((b) => b.name === r.name);
+    const ids = [r.name, pairs[i]!.lane?.lane, bot?.key, bot?.actorId].filter((n): n is string => !!n);
     const slot = ids.map((n) => slotStatus(n, slots)).find((x) => x !== null) ?? null;
     if (!slot) {
       if (r.status !== "free" || onDemand.some((name) => ids.includes(name)) || live.some((name) => ids.includes(name))) return r;

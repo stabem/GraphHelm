@@ -149,16 +149,27 @@ class LaneStopTests(unittest.TestCase):
              mock.patch.object(tasks_reconcile, "github", return_value={"state": "CLOSED", "mergedAt": None, "body": ""}), \
              mock.patch.object(tasks_reconcile, "post_end") as post_end:
             result = tasks_reconcile.reconcile(args)
-        self.assertEqual(result["closed"], [9001])
+        self.assertEqual(result["closed"], [])
         post_end.assert_not_called()
     def test_closed_unmerged_pr_is_recorded_once(self):
         args = type("Args", (), {"execution": "lane-test", "url": self.url,
                     "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
                     "repo": "stabem/GraphHelm", "lane": "codex-4"})()
-        opened = ("task.pr_opened", {"taskId": "issue-766", "pr": 9001,
-                  "lane": "codex-4", "repo": "stabem/GraphHelm"}, {})
-        with mock.patch.object(tasks_reconcile, "records", return_value=[opened]), \
-             mock.patch.object(tasks_reconcile, "github", return_value={"state": "CLOSED", "mergedAt": None, "body": "Superseded by #9002"}):
+        now = "2026-10-10T00:00:00Z"
+        document = {"schema": "graphhelm-task-event-v1", "taskId": "issue-766",
+                    "revision": 2, "at": now, "pr": 9001, "headSha": "b" * 40,
+                    "journeys": [], "lane": "codex-4", "repo": "stabem/GraphHelm"}
+        signal = {"id": "pr-9001-opened", "source": {"type": "user", "id": "codex-4"},
+                  "type": "task.pr_opened", "severity": "low", "description": json.dumps(document),
+                  "evidence": ["https://github.com/stabem/GraphHelm/pull/9001"], "emittedAt": now}
+        token = Path(args.token_file).read_text().strip()
+        request = urllib.request.Request(self.url + "/v1/executions/lane-test/signal",
+                  data=json.dumps({"signal": signal}).encode(), headers={"Authorization": "Bearer " + token,
+                  "Content-Type": "application/json", "Idempotency-Key": "pr-9001-opened",
+                  "X-GraphHelm-Actor": "codex-4", "X-GraphHelm-Actor-Type": "agent"})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertTrue(json.load(response)["ok"])
+        with mock.patch.object(tasks_reconcile, "github", return_value={"state": "CLOSED", "mergedAt": None, "body": "Superseded by #9002"}):
             result = tasks_reconcile.reconcile(args)
         self.assertEqual(result["closed"], [9001])
         with mock.patch.object(tasks_reconcile, "github") as github:

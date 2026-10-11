@@ -141,6 +141,15 @@ class HandoffTests(unittest.TestCase):
         later_current = {"asOfSequence": 30, "nextStep": {"kind": "diagnose"},
                          "pending": [{"id": "later-pending"}], "unevaluated": [],
                          "decisions": [], "workDone": []}
+        offered_reference = {"asOfSequence": 10, "nextStep": {"kind": "diagnose"},
+                             "counts": {"pendingCount": 1, "unevaluatedCount": 0,
+                                        "decisionsCount": 0, "workDoneCount": 1}}
+        first_reference = {"asOfSequence": 20, "nextStep": {"kind": "diagnose"},
+                           "counts": {"pendingCount": 0, "unevaluatedCount": 1,
+                                      "decisionsCount": 0, "workDoneCount": 0}}
+        later_reference = {"asOfSequence": 30, "nextStep": {"kind": "diagnose"},
+                           "counts": {"pendingCount": 1, "unevaluatedCount": 0,
+                                      "decisionsCount": 0, "workDoneCount": 0}}
         with patch.dict(os.environ, self.env, clear=False):
             RuntimeHandler.briefing_data = offered_digest
             offered = MODULE.offer("claude", "sender", "codex", "receiver")
@@ -148,10 +157,10 @@ class HandoffTests(unittest.TestCase):
             received = MODULE.receive("codex", "receiver", offered["offerId"])
             RuntimeHandler.briefing_data = later_current
             replay = MODULE.receive("codex", "receiver", offered["offerId"])
-        self.assertEqual(received["offeredBriefing"], offered_digest)
-        self.assertEqual(received["briefing"], first_current)
-        self.assertEqual(replay["offeredBriefing"], offered_digest)
-        self.assertEqual(replay["briefing"], later_current)
+        self.assertEqual(received["offeredBriefing"], offered_reference)
+        self.assertEqual(received["briefing"], first_reference)
+        self.assertEqual(replay["offeredBriefing"], offered_reference)
+        self.assertEqual(replay["briefing"], later_reference)
         self.assertEqual(replay["state"], "already_recorded")
         self.assertEqual(replay["receiptId"], received["receiptId"])
         self.assertEqual(len([row for row in RuntimeHandler.requests if row[0] == "POST"]), 2)

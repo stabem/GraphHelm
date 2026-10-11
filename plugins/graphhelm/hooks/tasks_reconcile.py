@@ -59,6 +59,12 @@ def records(base, token, execution):
         document = json.loads(envelope["description"])
         if document.get("schema") != "graphhelm-task-event-v1":
             raise ValueError("invalid task document")
+        if detail["kind"] == "task.merged":
+            refs = envelope.get("evidence", [])
+            if len(refs) == 1:
+                match = re.fullmatch(r"https://github\.com/([^/]+/[^/]+)/pull/([1-9][0-9]*)", refs[0])
+                if match and int(match.group(2)) == document.get("pr"):
+                    document["repo"] = match.group(1)
         return detail["kind"], document, event
 
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -75,7 +81,7 @@ def github(pr, repo):
 def post(base, token, execution, pr, task_id, repo, sha, closes):
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     doc = {"schema": "graphhelm-task-event-v1", "taskId": task_id,
-           "revision": 5, "at": now, "pr": pr, "repo": repo, "mergeSha": sha,
+           "revision": 5, "at": now, "pr": pr, "mergeSha": sha,
            "closes": closes, "merger": "graphhelm"}
     content = json.dumps({k: v for k, v in doc.items() if k != "at"}, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(("graphhelm\nmerged\n" + content).encode()).hexdigest()[:16]

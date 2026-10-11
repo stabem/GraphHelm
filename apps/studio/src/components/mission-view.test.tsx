@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
-import { MissionView } from "./mission-view";
+import { JourneyProgress, MissionView } from "./mission-view";
 import type { JourneyView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
 
@@ -245,6 +245,12 @@ describe("MissionView", () => {
     expect(within(cards[0]!).getByRole("img", { name: words(cards[0]!)! })).toHaveClass("mv-progress-bar");
     const chip = (pr: number) => Array.from(cards[0]!.querySelectorAll<HTMLElement>(".mv-pr-chip")).find((c) => c.getAttribute("aria-label")!.startsWith(`PR #${pr}`))!;
     expect([chip(50), chip(51), chip(52)].map((c) => c.getAttribute("data-alert"))).toEqual(["false", "true", "false"]);
+  });
+
+  it("#824: each Proof rail count stays with its label while the line can wrap", () => {
+    const { container } = render(<JourneyProgress statuses={["ready", "ready"]} />);
+    const line = container.querySelector(".mv-progress-text")!;
+    expect(line.textContent).toBe("2\u00a0steps · 0\u00a0proven · 0\u00a0in\u00a0work · 2\u00a0not\u00a0proven");
   });
 
   it("#591: agents right now come from the bots; away/shipped from the handover", () => {

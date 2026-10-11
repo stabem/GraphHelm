@@ -2781,3 +2781,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 
 /* #447: a flow's branch path reads as a sub-row of the flow above it. */
 .right-journey-branch { margin-left: 14px; }
+
+.chat-unread { display: inline-block; }
+.chat-tabs [role="tab"] { display: inline-flex; align-items: center; gap: 6px; }

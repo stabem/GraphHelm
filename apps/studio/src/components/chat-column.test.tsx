@@ -57,7 +57,12 @@ describe("ChatColumn", () => {
     const p = props();
     render(<ChatColumn {...p} />);
     expect(screen.getByRole("tab", { name: "Everyone" })).toHaveAttribute("aria-selected", "true");
-    await userEvent.click(screen.getByRole("tab", { name: "Issue #384, 1 unread" }));
+    const tab = screen.getByRole("tab", { name: "Issue #384, 1 unread" });
+    expect(tab.querySelector(".chat-unread")).toHaveTextContent("1");
+    expect(tab.querySelector(".chat-unread")).toHaveAccessibleName("1 unread");
+    expect(tab.querySelector(".chat-unread")!.previousSibling!.textContent).toBe("Issue #384");
+    expect(tab.querySelector(".chat-unread")!.textContent).toBe("1");
+    await userEvent.click(tab);
     expect(p.onSelect).toHaveBeenCalledWith("task:issue-384");
   });
 

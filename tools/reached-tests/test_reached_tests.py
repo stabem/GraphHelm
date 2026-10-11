@@ -68,6 +68,18 @@ class Reach(unittest.TestCase):
         bundle = (repo / "apps/cli/tests/cli.rs").read_text(encoding="utf-8")
         self.assertIn("fn every_top_level_test_file_is_registered()", bundle)
 
+    def test_registration_bundle_change_uses_partitioned_cli_observer(self):
+        repo = Path(__file__).resolve().parents[2]
+        packages = rt.workspace(repo)
+        whole, single, *_ = rt.reach(["apps/cli/tests/cli.rs"], packages, {}, repo)
+        self.assertEqual(whole, set())
+        self.assertEqual(single, {("graphhelm-cli", "cli", None)})
+        commands = rt.commands(whole, single, [], package_metadata=packages)
+        self.assertNotIn("cargo +1.97.1 test --locked -p graphhelm-cli --test cli -- --test-threads=2", commands)
+        self.assertTrue(any("--test cli -- --test-threads=2 " in command and "--skip" not in command
+                            for command in commands))
+        self.assertTrue(any("--skip" in command for command in commands))
+
     def test_a_journey_flow_file_reaches_the_scope_guard_and_journey_validate(self):
         # #504 review: a flows-only diff (#430-style) printed no test, only "unmapped".
         whole, single, studio, tools, validate, other = reach(".graphhelm/journeys/checkout.journey.yaml")
@@ -123,6 +135,7 @@ class Reach(unittest.TestCase):
             {"name": "fixture", "kind": "example", "test": False, "doctest": False},
             {"name": "bench", "kind": "bench", "test": False, "doctest": False},
         ]}]
+        packages[0]["bundles"] = {"alpha": "cli", "beta": "cli"}
         plans, unsupported = rt.expand_whole_packages({"graphhelm-cli"}, packages)
         self.assertEqual(unsupported, [])
         argv = [step["argv"] for step in plans["graphhelm-cli"]]
@@ -136,6 +149,19 @@ class Reach(unittest.TestCase):
                                                "--", "--test-threads=2"] for step in plans["graphhelm-cli"]))
         commands = rt.commands({"graphhelm-cli"}, set(), [], package_plans=plans)
         self.assertNotIn("cargo +1.97.1 test --locked -p graphhelm-cli -- --test-threads=2", commands)
+        cli_steps = [step["argv"] for step in plans["graphhelm-cli"] if "--test" in step["argv"]]
+        self.assertEqual(cli_steps, [
+            ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli", "--test", "cli", "--", "--test-threads=2", "alpha::"],
+            ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli", "--test", "cli", "--", "--test-threads=2", "--skip", "alpha::", "beta::"],
+            ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli", "--test", "cli", "--", "--test-threads=2", "--skip", "alpha::", "--skip", "beta::"],
+        ])
+
+    def test_cli_bundle_metadata_is_required_for_whole_package_partition(self):
+        plans, unsupported = rt.expand_whole_packages({"graphhelm-cli"}, [{"name": "graphhelm-cli", "targets": [
+            {"name": "cli", "kind": "test", "test": True, "doctest": False},
+        ], "bundles": {}}])
+        self.assertEqual(plans["graphhelm-cli"], [])
+        self.assertIn("bundle metadata", unsupported[0]["reason"])
 
     def test_whole_package_required_features_are_explicitly_unsupported(self):
         plans, unsupported = rt.expand_whole_packages({"graphhelm-cli"}, [{"name": "graphhelm-cli", "targets": [
@@ -240,6 +266,29 @@ class Reach(unittest.TestCase):
                         if step["argv"][:3] == ["cargo", "+1.97.1", "test"]
                         and step["argv"][5] == "graphhelm-cli"]
         self.assertEqual([" ".join(argv) for argv in step_targets], [expected])
+
+    def test_cli_unit_and_integration_filters_coalesce_and_union(self):
+        single = {
+            ("graphhelm-cli", "bin:graphhelm", "commands::workspace_slot"),
+            ("graphhelm-cli", "cli", "workspace_cli"),
+        }
+        expected = "cargo +1.97.1 test --locked -p graphhelm-cli --bin graphhelm --test cli -- --test-threads=2 commands::workspace_slot:: workspace_cli::"
+        commands = [command for command in rt.commands(set(), single, [])
+                    if command.startswith("cargo +1.97.1 test --locked -p graphhelm-cli")]
+        self.assertEqual(commands, [expected])
+        steps = [step["argv"] for step in rt.steps(set(), single, [])
+                 if step["argv"][:3] == ["cargo", "+1.97.1", "test"]
+                 and step["argv"][5] == "graphhelm-cli"]
+        self.assertEqual([" ".join(argv) for argv in steps], [expected])
+
+    def test_coalescing_requires_both_filtered_targets(self):
+        single = {
+            ("graphhelm-cli", "bin:graphhelm", None),
+            ("graphhelm-cli", "cli", "workspace_cli"),
+        }
+        commands = [command for command in rt.commands(set(), single, [])
+                    if command.startswith("cargo +1.97.1 test --locked -p graphhelm-cli")]
+        self.assertEqual(len(commands), 2)
 
     def test_a_test_file_of_its_own_reaches_its_target(self):
         _, single, *_ = reach("core/policy/tests/keel.rs")

@@ -237,13 +237,22 @@ fn admit_command(command: &[String]) -> Result<(), String> {
     };
     cursor += 1;
     let mut package_count = 0;
-    let mut target_count = 0;
+    let mut packages = Vec::new();
+    let mut targets = Vec::new();
     let mut filter = false;
+    let mut after_separator = false;
+    let mut tail = Vec::new();
+    let mut no_run = false;
     while let Some(raw) = command.get(cursor) {
         cursor += 1;
         if raw == "--" {
             // Cargo stops parsing here. Remaining arguments belong to libtest or clippy.
-            break;
+            after_separator = true;
+            continue;
+        }
+        if after_separator {
+            tail.push(raw.clone());
+            continue;
         }
         let (flag, inline) = if let Some((flag, value)) = raw.split_once('=') {
             (flag, Some(value))
@@ -261,7 +270,7 @@ fn admit_command(command: &[String]) -> Result<(), String> {
             | "--exclude" | "-j" | "--jobs" | "--tests" | "--bins" | "--examples" | "--benches" => {
                 return Err("workspace-wide commands and target overrides cannot occupy the ordinary slot; name each package and test target".into());
             }
-            "--lib" | "--doc" if inline.is_none() => target_count += 1,
+            "--lib" | "--doc" if inline.is_none() => targets.push((flag.to_owned(), String::new())),
             "--all-targets" if kind == "clippy" && inline.is_none() => {}
             "--locked"
             | "--offline"
@@ -275,9 +284,9 @@ fn admit_command(command: &[String]) -> Result<(), String> {
             | "--verbose"
             | "-v"
             | "-vv"
-            | "--no-run"
             | "--keep-going"
                 if inline.is_none() => {}
+            "--no-run" if inline.is_none() => no_run = true,
             "--timings" => {}
             "-p" | "--package" | "--test" | "--bin" | "--example" | "--bench" | "-F"
             | "--features" | "--target" | "--profile" | "--message-format" | "--color" => {
@@ -302,11 +311,14 @@ fn admit_command(command: &[String]) -> Result<(), String> {
                 }
                 if matches!(flag, "-p" | "--package") {
                     package_count += 1;
+                    packages.push(value.to_owned());
                 } else if matches!(flag, "--test" | "--bin" | "--example" | "--bench") {
-                    target_count += 1;
+                    targets.push((flag.to_owned(), value.to_owned()));
                 }
             }
-            _ if !raw.starts_with('-') && kind == "test" && !filter => filter = true,
+            _ if !raw.starts_with('-') && !raw.is_empty() && kind == "test" && !filter => {
+                filter = true
+            }
             _ => {
                 return Err(format!(
                     "unsupported Cargo slot option {raw}; use direct scoped Cargo commands"
@@ -317,11 +329,75 @@ fn admit_command(command: &[String]) -> Result<(), String> {
     if package_count == 0 {
         return Err("workspace slot requires an explicit package".into());
     }
-    if kind == "test" && target_count == 0 {
+    if kind == "test" && targets.is_empty() {
         return Err("workspace slot test requires an explicit test target".into());
     }
-    if kind == "test" && (package_count != 1 || target_count != 1) {
+    if kind == "test" && package_count != 1 {
         return Err("workspace slot test accepts one package and one explicit target; split different executables before queueing".into());
+    }
+    if kind == "test" && targets.len() > 1 {
+        let supported_pair = packages.len() == 1
+            && packages[0] == "graphhelm-cli"
+            && targets.len() == 2
+            && targets.contains(&("--bin".to_owned(), "graphhelm".to_owned()))
+            && targets.contains(&("--test".to_owned(), "cli".to_owned()));
+        if !supported_pair {
+            return Err("workspace slot test accepts one target, or the graphhelm-cli --bin graphhelm plus --test cli pair".into());
+        }
+    }
+    if kind == "test"
+        && packages.len() == 1
+        && packages[0] == "graphhelm-cli"
+        && targets
+            .iter()
+            .any(|(flag, value)| flag == "--test" && value == "cli")
+        && !no_run
+    {
+        let mut scoped = filter;
+        let mut index = 0;
+        while index < tail.len() {
+            match tail[index].as_str() {
+                "--test-threads" => {
+                    if tail.get(index + 1).is_none() {
+                        return Err("libtest --test-threads requires a value".into());
+                    }
+                    index += 2;
+                    continue;
+                }
+                value if value.starts_with("--test-threads=") => {}
+                "--format" | "--color" | "--logfile" | "--shuffle-seed" | "-Z" => {
+                    if tail.get(index + 1).is_none() {
+                        return Err("libtest option requires a value".into());
+                    }
+                    index += 1;
+                }
+                value
+                    if value.starts_with("--format=")
+                        || value.starts_with("--color=")
+                        || value.starts_with("--logfile=")
+                        || value.starts_with("--shuffle-seed=") => {}
+                "--list" => scoped = true,
+                "--skip" => {
+                    let value = tail.get(index + 1).filter(|value| !value.starts_with('-'));
+                    if value.is_none() || value.is_some_and(String::is_empty) {
+                        return Err("libtest --skip requires a filter value".into());
+                    }
+                    scoped = true;
+                    index += 1;
+                }
+                value if value.starts_with("--skip=") && value.len() > "--skip=".len() => {
+                    scoped = true
+                }
+                "--exact" | "--nocapture" | "--ignored" | "--include-ignored" | "--show-output" => {
+                }
+                value if !value.starts_with('-') && !value.is_empty() => scoped = true,
+                value => return Err(format!("unsupported libtest option {value}")),
+            }
+            index += 1;
+        }
+        if !scoped {
+            return Err("graphhelm-cli --test cli must name a filter or --skip complement".into());
+        }
     }
     Ok(())
 }
@@ -349,6 +425,164 @@ mod admission_tests {
             ]))
             .is_ok()
         );
+    }
+
+    #[test]
+    fn admits_the_bounded_graphhelm_cli_pair() {
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--bin",
+                "graphhelm",
+                "--test",
+                "cli",
+                "--",
+                "commands::workspace_slot::",
+                "workspace_cli::",
+            ]))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn refuses_unfiltered_cli_bundle_but_allows_scoped_and_skip_forms() {
+        let cases: &[(bool, &[&str])] = &[
+            (true, &["root::", "--", "--test-threads=2"]),
+            (true, &["--", "root::", "--test-threads=2"]),
+            (true, &["--no-run"]),
+            (true, &["--", "--list"]),
+            (false, &["--", ""]),
+            (false, &[""]),
+            (false, &["--", "--skip", ""]),
+            (false, &["--", "--no-run"]),
+        ];
+        for (accepted, tail) in cases {
+            let mut command = argv(&["cargo", "test", "-p", "graphhelm-cli", "--test", "cli"]);
+            command.extend(tail.iter().map(|value| (*value).to_owned()));
+            assert_eq!(admit_command(&command).is_ok(), *accepted, "{tail:?}");
+        }
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--test",
+                "cli",
+            ]))
+            .is_err()
+        );
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--test",
+                "cli",
+                "--",
+                "--test-threads=2",
+                "--format",
+                "json",
+            ]))
+            .is_err()
+        );
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--test",
+                "cli",
+                "--",
+                "--test-threads=2",
+                "root::",
+            ]))
+            .is_ok()
+        );
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--test",
+                "cli",
+                "--",
+                "--test-threads=2",
+                "--skip",
+                "registered::",
+            ]))
+            .is_ok()
+        );
+        assert!(
+            admit_command(&argv(&[
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--test",
+                "cli",
+                "--",
+                "--test-threads=2",
+                "--skip",
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn refuses_third_repeated_or_unsafe_targets() {
+        for args in [
+            vec![
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--bin",
+                "graphhelm",
+                "--test",
+                "cli",
+                "--test",
+                "other",
+            ],
+            vec![
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--bin",
+                "graphhelm",
+                "--bin",
+                "graphhelm",
+            ],
+            vec![
+                "cargo",
+                "test",
+                "-p",
+                "other",
+                "--bin",
+                "graphhelm",
+                "--test",
+                "cli",
+            ],
+            vec![
+                "cargo",
+                "test",
+                "-p",
+                "graphhelm-cli",
+                "--test",
+                "cli",
+                "--example",
+                "fixture",
+            ],
+        ] {
+            assert!(admit_command(&argv(&args)).is_err(), "{args:?}");
+        }
     }
 
     #[test]

@@ -89,6 +89,13 @@ consumes that contract. This is a human/agent review check; `keel check` has no 
 `python tools/reached-tests/reached_tests.py [--base origin/main] [--head HEAD]` reads the diff and
 the workspace graph (`cargo metadata --no-deps`, no build) and prints the commands. Its rules:
 - a changed integration-test file reaches only its own target, or its module in a test bundle;
+- filtered `graphhelm-cli` unit and `cli` integration selections may share one Cargo command only
+  for the exact `--bin graphhelm` plus `--test cli` pair; the command carries both filter sets;
+- a whole-package `graphhelm-cli` `cli` target is partitioned by registered bundle modules, with
+  prior-module skips and a final `--skip` complement for inline/root tests; missing bundle metadata
+  remains incomplete;
+- an unfiltered single selection of that same `cli` target uses the same metadata-backed partition;
+  it cannot fall back to one broad command;
 - `tests/support/` or a fixture reaches its package's tests;
 - a crate's source reaches that crate and every crate that depends on it;
 - a file a crate embeds (`include_str!`) reaches that crate, and an extension package reaches the

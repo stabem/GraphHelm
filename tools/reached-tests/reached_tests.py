@@ -395,6 +395,25 @@ def _target_argv(package, target):
     return None
 
 
+def _cli_bundle_steps(package, target):
+    """Partition the CLI integration target without losing inline/root tests."""
+    if package["name"] != CLI or target.get("kind") != "test" or target.get("name") != "cli":
+        return None
+    modules = sorted(module for module, target_name in package.get("bundles", {}).items()
+                     if target_name == "cli")
+    if not modules:
+        return []
+    base = ["cargo", TOOLCHAIN, "test", "--locked", "-p", package["name"], "--test", "cli",
+            "--", "--test-threads=2"]
+    steps = []
+    for index, module in enumerate(modules):
+        prior = sum((["--skip", previous + "::"] for previous in modules[:index]), [])
+        steps.append({"argv": [*base, *prior, module + "::"], "cwd": ".", "slot": True})
+    steps.append({"argv": [*base, *sum((["--skip", module + "::"] for module in modules), [])],
+                  "cwd": ".", "slot": True})
+    return steps
+
+
 def expand_whole_packages(whole, packages):
     """Expand package-wide Cargo test semantics into target steps and explicit unsupported items."""
     by_name = {p["name"]: p for p in packages}
@@ -439,6 +458,15 @@ def expand_whole_packages(whole, packages):
                     unsupported.append({"package": name, "target": target["name"],
                                         "kind": target["kind"], "reason": "unsupported Cargo target kind"})
                 continue
+            if name == CLI and target.get("kind") == "test" and target.get("name") == "cli":
+                bundle_steps = _cli_bundle_steps(package, target)
+                if not bundle_steps:
+                    unsupported.append({"package": name, "target": target["name"],
+                                        "kind": target["kind"],
+                                        "reason": "CLI test bundle metadata is missing or empty"})
+                    continue
+                package_steps.extend(bundle_steps)
+                continue
             if target["kind"] in ("lib", "proc-macro") and target.get("doctest") and target.get("test"):
                 package_steps.append({"argv": argv, "cwd": ".", "slot": True})
             if target["kind"] in ("lib", "proc-macro") and target.get("doctest") and not doc_added:
@@ -469,11 +497,31 @@ def _group_single(single):
             entry["unfiltered"] = True
         else:
             entry["modules"].add(module + "::")
-    return [(package, target, None if entry["unfiltered"] else tuple(sorted(entry["modules"])))
-            for (package, target), entry in sorted(grouped.items())]
+    grouped_items = [(package, target, None if entry["unfiltered"] else tuple(sorted(entry["modules"])))
+                     for (package, target), entry in sorted(grouped.items())]
+    by_key = {(package, target): (package, target, modules)
+              for package, target, modules in grouped_items}
+    pair = ("bin:graphhelm", "cli")
+    if all(("graphhelm-cli", target) in by_key for target in pair):
+        left = by_key[("graphhelm-cli", pair[0])]
+        right = by_key[("graphhelm-cli", pair[1])]
+        if left[2] is not None and right[2] is not None:
+            grouped_items = [item for item in grouped_items
+                             if item[0:2] not in {("graphhelm-cli", pair[0]),
+                                                  ("graphhelm-cli", pair[1])}]
+            grouped_items.append(("graphhelm-cli", pair,
+                                  tuple(sorted(set(left[2]) | set(right[2])))))
+    return sorted(grouped_items, key=lambda item: (item[0], str(item[1])))
 
 
-def commands(whole, single, studio, tools=(), validate=(), lint_packages=None, package_plans=None):
+def _target_flags(target):
+    if isinstance(target, tuple):
+        return ["--bin", target[0][4:], "--test", target[1]]
+    return ["--bin", target[4:]] if target.startswith("bin:") else ["--test", target]
+
+
+def commands(whole, single, studio, tools=(), validate=(), lint_packages=None, package_plans=None,
+             package_metadata=None):
     if whole and package_plans is not None:
         missing = sorted(set(whole) - set(package_plans))
         if missing:
@@ -485,7 +533,16 @@ def commands(whole, single, studio, tools=(), validate=(), lint_packages=None, p
         else:
             cmds.append(f"cargo {TOOLCHAIN} test --locked -p {name} {TEST_THREADS}")
     for package, target, modules in _group_single(single):
-        kind = f"--bin {target[4:]}" if target.startswith("bin:") else f"--test {target}"
+        if package == CLI and target == "cli" and modules is None:
+            metadata = next((item for item in (package_metadata or []) if item["name"] == CLI), None)
+            if metadata is None:
+                raise ValueError("CLI bundle metadata is required for an unfiltered cli target")
+            bundle_steps = _cli_bundle_steps(metadata, {"kind": "test", "name": "cli"})
+            if not bundle_steps:
+                raise ValueError("CLI bundle metadata is missing or empty")
+            cmds.extend(_argv_text(step["argv"]) for step in bundle_steps)
+            continue
+        kind = " ".join(_target_flags(target))
         filters = "" if modules is None else " " + " ".join(modules)
         cmds.append(f"cargo {TOOLCHAIN} test --locked -p {package} {kind} {TEST_THREADS}{filters}")
     rust = sorted(whole | {s[0] for s in single})
@@ -518,7 +575,8 @@ def _node_test_paths(command, repo):
     return paths
 
 
-def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo=None, package_plans=None):
+def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo=None, package_plans=None,
+          package_metadata=None):
     """Return executable argv records without interpreting the legacy shell command strings."""
     if whole and package_plans is None:
         raise ValueError("whole-package steps require Cargo target metadata")
@@ -554,7 +612,16 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
             out.append({"argv": ["cargo", TOOLCHAIN, "test", "--locked", "-p", name, *TEST_THREADS.split()],
                         "cwd": ".", "slot": True})
     for package, target, modules in _group_single(single):
-        kind = ["--bin", target[4:]] if target.startswith("bin:") else ["--test", target]
+        if package == CLI and target == "cli" and modules is None:
+            metadata = next((item for item in (package_metadata or []) if item["name"] == CLI), None)
+            if metadata is None:
+                raise ValueError("CLI bundle metadata is required for an unfiltered cli target")
+            bundle_steps = _cli_bundle_steps(metadata, {"kind": "test", "name": "cli"})
+            if not bundle_steps:
+                raise ValueError("CLI bundle metadata is missing or empty")
+            out.extend(bundle_steps)
+            continue
+        kind = _target_flags(target)
         argv = ["cargo", TOOLCHAIN, "test", "--locked", "-p", package, *kind]
         argv.extend(TEST_THREADS.split())
         if modules is not None:
@@ -623,8 +690,8 @@ def main(argv):
     result = {"changed": changed, "packages": sorted(whole), "broadPackages": sorted(whole),
               "targets": [{"package": p, "test": t, "module": m} for p, t, m in sorted(single, key=lambda s: (s[0], s[1], s[2] or ""))],
               "studio": studio, "tools": tools, "validate": validate, "unmapped": other,
-              "commands": commands(whole, single, studio, tools, validate, lint, package_plans),
-              "steps": steps(whole, single, studio, tools, validate, lint, repo, package_plans),
+              "commands": commands(whole, single, studio, tools, validate, lint, package_plans, packages),
+              "steps": steps(whole, single, studio, tools, validate, lint, repo, package_plans, packages),
               "lintPackages": sorted(lint),
               "unsupported": unsupported,
               "keelPlan": keel_plan(repo, changed)}

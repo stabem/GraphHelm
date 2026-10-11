@@ -11,6 +11,25 @@ const journeys: JourneyView[] = [{
 }];
 
 describe("MissionView", () => {
+  it("#876: Proof rail keeps the same work counts on selection and separates merged from active", async () => {
+    const watch = { ...journeys[0]!, steps: [...journeys[0]!.steps, { stepId: "second", screen: { screenId: "second", title: "Second", scopePaths: [] }, promises: [] }] };
+    const two: JourneyView[] = [watch, { ...journeys[0]!, contractId: "other", title: "Other journey" }];
+    const tasks = [
+      { key: "active", taskId: "active", pr: 10, journeys: ["watch"], step: "review", reviewers: [] },
+      { key: "done", taskId: "done", pr: 11, journeys: ["watch"], step: "merged", reviewers: [] },
+    ] as unknown as TaskState[];
+    render(<MissionView journeys={two} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Proof" }));
+    const rail = screen.getByRole("navigation", { name: "Journeys" });
+    const first = rail.querySelectorAll<HTMLElement>(".mv-jcard")[0]!;
+    expect(first).toHaveTextContent("1 in work");
+    expect(first).toHaveTextContent("1 merged, not proven");
+    const before = first.querySelector(".mv-progress-text")!.textContent;
+    await fastUserEvent().click(within(rail).getByRole("button", { name: /Watch plays/ }));
+    expect(first.querySelector(".mv-progress-text")!.textContent).toBe(before);
+    expect(first.querySelector('[data-progress="proven"]')).toHaveStyle({ flexGrow: "0" });
+    expect(first.querySelector('[data-progress="work"]')).not.toHaveStyle({ background: "#4ADE9B" });
+  });
   it("goes graph → proof → test canvas on the chosen step", async () => {
     const userEvent = fastUserEvent();
     const onMarkSafe = vi.fn();
@@ -137,7 +156,7 @@ describe("MissionView", () => {
       .toEqual(["Watch plays inside the Studio0/1", "Add a model2/2"]);
     // No linked journey: the one with a recorded run is preselected.
     expect(within(rail).getByRole("button", { name: /Add a model/ })).toHaveAttribute("aria-pressed", "true");
-    expect(within(rail).getByText("2 steps · 2 proven · 0 in work · 0 not proven")).toBeInTheDocument();
+    expect(within(rail).getByText("2 steps · 2 proven · 0 in work · 0 merged, not proven · 0 not proven")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Open the test canvas for step 2" }));
     const browser = screen.getByRole("region", { name: "Emulated browser" });
     expect(within(browser).getByRole("img")).toHaveAttribute("src", "/frames/add/save.png");
@@ -250,7 +269,7 @@ describe("MissionView", () => {
   it("#824: each Proof rail count stays with its label while the line can wrap", () => {
     const { container } = render(<JourneyProgress statuses={["ready", "ready"]} />);
     const line = container.querySelector(".mv-progress-text")!;
-    expect(line.textContent).toBe("2\u00a0steps · 0\u00a0proven · 0\u00a0in\u00a0work · 2\u00a0not\u00a0proven");
+    expect(line.textContent).toBe("2\u00a0steps · 0\u00a0proven · 0\u00a0in\u00a0work · 0\u00a0merged,\u00a0not\u00a0proven · 2\u00a0not\u00a0proven");
   });
 
   it("#591: agents right now come from the bots; away/shipped from the handover", () => {

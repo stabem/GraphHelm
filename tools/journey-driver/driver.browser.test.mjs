@@ -20,7 +20,7 @@ const protocol='graphhelm-journey-driver/1';
 async function client(t, env={}) {
   assert.ok(project,'OBSERVER_MISSING: GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT');
   const output=await mkdtemp(join(tmpdir(),'gh-driver-'));
-  const child=spawn(process.execPath,[driver,'--project',project,'--output-dir',output],{env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,TEMP:process.env.TEMP,TMP:process.env.TMP,USERPROFILE:process.env.USERPROFILE,HOME:process.env.HOME,LOCALAPPDATA:process.env.LOCALAPPDATA,...env},stdio:['pipe','pipe','pipe']});
+  const child=spawn(process.execPath,[driver,'--project',project,'--output-dir',output],{env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,TEMP:process.env.TEMP,TMP:process.env.TMP,USERPROFILE:process.env.USERPROFILE,HOME:process.env.HOME,LOCALAPPDATA:process.env.LOCALAPPDATA,PLAYWRIGHT_BROWSERS_PATH:process.env.PLAYWRIGHT_BROWSERS_PATH,...env},stdio:['pipe','pipe','pipe']});
   let sequence=0, stderr='', exit;
   child.stderr.on('data',chunk=>stderr+=chunk);
   const stopped=new Promise(done=>child.on('exit',code=>{exit=code;done();}));
@@ -253,6 +253,29 @@ test('coverage captures called and untouched generated functions without source 
   assert.equal((await c.send('coverage')).code,'driver.protocol_invalid');
 });
 
+// Contract: coverage retains every valid range for a function while the global
+// artifact bound is not exceeded. The old per-function cap silently discarded
+// ranges 65+, making negative evidence incomplete for large generated functions.
+// Cost: one local browser navigation, covered by the existing driver test setup.
+test('coverage preserves more than 64 ranges within the global bound',async t=>{
+  const branches=Array.from({length:80},(_,i)=>`if (window.coverageBranch${i}) return ${i};`).join('');
+  const server=createServer((_req,res)=>{
+    res.setHeader('Content-Type','text/html; charset=utf-8');
+    res.end(`<script>function manyRanges(){${branches}return 80}window.coverageResult=manyRanges()</script>`);
+  });
+  await new Promise(done=>server.listen(0,'127.0.0.1',done));
+  t.after(()=>new Promise(done=>server.close(done)));
+  const c=await client(t);await open(c,`http://127.0.0.1:${server.address().port}/many-ranges`,[],{coverage:true});
+  const result=await c.send('coverage');
+  assert.equal(result.ok,true,JSON.stringify(result));
+  const artifact=JSON.parse(await readFile(join(c.output,'coverage.json'),'utf8'));
+  const fn=artifact.scripts.flatMap(script=>script.functions).find(candidate=>candidate.name==='manyRanges');
+  assert.ok(fn,'generated function with many ranges was retained');
+  assert.ok(fn.ranges.length>64,`expected more than 64 ranges, got ${fn.ranges.length}`);
+  assert.equal(artifact.completeness.complete,true,JSON.stringify(artifact.completeness));
+  assert.equal(artifact.negativeEvidenceEligible,true);
+});
+
 test('coverage keeps inline source hashes, refuses source-map attribution gaps, and marks navigation incomplete',async t=>{
   const original='function originalMapped(){return "original-source-canary"}';
   const encoded=Buffer.from(JSON.stringify({version:3,sources:['src/original.js'],sourcesContent:[original],names:[],mappings:'AAAA'})).toString('base64');
@@ -297,8 +320,8 @@ test('coverage keeps inline source hashes, refuses source-map attribution gaps, 
     assert.ok(!JSON.stringify(artifact).includes('external-map.js'));
   }
   const multiple=await readArtifact('/multi',[createHash('sha256').update('function a(){return 1}').digest('hex'),createHash('sha256').update('function b(){return 2}').digest('hex')]);
-  assert.equal(multiple.negativeEvidenceEligible,false);
-  assert.equal(multiple.complete,false);
+  assert.equal(multiple.negativeEvidenceEligible,true);
+  assert.equal(multiple.complete,true);
   const nullMap=await client(t);await open(nullMap,base+'/null-map',[],{coverage:true});
   const nullReply=await nullMap.send('coverage');assert.equal(nullReply.ok,true);
   const nullArtifact=JSON.parse(await readFile(join(nullMap.output,'coverage.json'),'utf8'));

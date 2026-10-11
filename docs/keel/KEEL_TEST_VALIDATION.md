@@ -42,11 +42,18 @@ supply a single original source hash; external, malformed, multiple-source and s
 unknown. Duplicate identical source files are ambiguous. Source changes during execution invalidate
 current-source attribution.
 
-Coverage collection is bounded. Truncation and navigation beyond the initial document load make
-negative evidence ineligible; valid positive observations can remain useful. Browser coverage does
-not measure native/backend execution or guarantee every dynamic entry point was exercised.
+Coverage collection is bounded by the artifact-wide function and range limits. The driver keeps
+all valid ranges until that global bound is reached; it does not impose a smaller per-function
+range cap. Truncation or navigation beyond the initial document load makes negative evidence
+ineligible, while valid positive observations remain useful. Browser coverage does not measure
+native/backend execution or guarantee every dynamic entry point was exercised.
 Artifacts retain hashes and function ranges, not source text, map text or map paths. External maps
-are never fetched for attribution.
+are never fetched for attribution. Capture completeness and source association are separate
+decisions: a complete artifact can still have an ambiguous source association. If a source hash
+appears in any multi-source script in any artifact or path, a zero-hit candidate with that hash is
+reported as `unknown` with reason `ambiguous_source_mapping`; it is never reported as
+`notObserved`. Positive observations remain in `used`, and the multi-source script itself remains
+unknown when no unique association can be established.
 
 ## Deciding whether to remove code
 

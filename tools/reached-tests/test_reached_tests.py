@@ -370,6 +370,35 @@ class Reach(unittest.TestCase):
         self.assertEqual(tools, ["python -m unittest tools/task-record/test_task_record.py"])
         self.assertEqual(other, [])
 
+    def test_a_hook_change_reaches_its_test_and_hook_tests_map_to_themselves(self):
+        with tempfile.TemporaryDirectory() as repo:
+            hooks = Path(repo, "plugins", "graphhelm", "hooks")
+            hooks.mkdir(parents=True)
+            (hooks / "lane_stop_hook.py").write_text("", encoding="utf-8")
+            (hooks / "test_lane_stop_hook.py").write_text("", encoding="utf-8")
+            (hooks / "test_other_hook.py").write_text("", encoding="utf-8")
+
+            *_, tools, _, other = reach("plugins/graphhelm/hooks/lane_stop_hook.py", repo=repo)
+            self.assertEqual(tools, ["python -m unittest plugins/graphhelm/hooks/test_lane_stop_hook.py"])
+            self.assertEqual(other, [])
+
+            *_, tools, _, other = reach("plugins/graphhelm/hooks/test_lane_stop_hook.py", repo=repo)
+            self.assertEqual(tools, ["python -m unittest plugins/graphhelm/hooks/test_lane_stop_hook.py"])
+            self.assertEqual(other, [])
+
+    def test_a_hook_without_a_matching_test_reaches_all_hook_tests(self):
+        with tempfile.TemporaryDirectory() as repo:
+            hooks = Path(repo, "plugins", "graphhelm", "hooks")
+            hooks.mkdir(parents=True)
+            (hooks / "another_hook.py").write_text("", encoding="utf-8")
+            (hooks / "test_lane_stop_hook.py").write_text("", encoding="utf-8")
+            (hooks / "test_other_hook.py").write_text("", encoding="utf-8")
+
+            *_, tools, _, other = reach("plugins/graphhelm/hooks/another_hook.py", repo=repo)
+        self.assertEqual(tools, ["python -m unittest plugins/graphhelm/hooks/test_lane_stop_hook.py",
+                                 "python -m unittest plugins/graphhelm/hooks/test_other_hook.py"])
+        self.assertEqual(other, [])
+
     def test_pytest_function_module_is_selected_with_pytest_runner(self):
         with tempfile.TemporaryDirectory() as repo:
             tool = Path(repo, "tools", "token-bench")

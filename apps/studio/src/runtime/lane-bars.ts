@@ -48,7 +48,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
   const rekey = (from: string, to: string, label: string) => {
     for (const [k, v] of [...open]) {
       const [kind, slice, ...rest] = k.split("|");
-      if (slice === from) { open.delete(k); v.slice = to; v.bar.label = `#${prOfKey.get(to)}`; v.bar.displayLabel = label; open.set([kind, to, ...rest].join("|"), v); }
+      if (slice === from) { open.delete(k); v.slice = to; v.bar.label = `#${prOfKey.get(to)}`; if (label !== v.bar.label) v.bar.displayLabel = label; open.set([kind, to, ...rest].join("|"), v); }
     }
   };
   const sliceOf = (e: TimedTaskEvent): string => {

@@ -249,7 +249,7 @@ describe("a truncated row says its whole name on hover", () => {
     expect(first).not.toHaveAccessibleName(/run-aaaa1111/);
   });
 
-  it("keeps the hidden address available as its own hover title", () => {
+  it("keeps the visible address available as its own hover title", () => {
     railWithCollidingNames();
     expect(screen.getByText("run-bbbb2222")).toHaveAttribute("title", "run-bbbb2222");
   });

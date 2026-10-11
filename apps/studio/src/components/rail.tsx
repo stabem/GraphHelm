@@ -167,7 +167,7 @@ export function ProjectRail({
   onRemoveRun?: (id: string) => void;
   onRestoreRun?: (id: string) => void;
   /** What each run is ABOUT, by id, read from its briefing (#1077). A generated `run-<uuid>`
-   * wears its objective as its name; the id stays available on hover or keyboard focus. Absent
+   * wears its objective as its name; the id stays visible below it. Absent
    * (older Runtime, not read yet) the row says the id, which is what it always said. */
   briefings?: Record<string, { objective: string | null; name?: string | null } | null>;
   /** Selected-run display only. The Runtime attention value remains unchanged in Details. */
@@ -338,7 +338,7 @@ export function ProjectRail({
                     </span>
                     <span className="run-lines">
                       <span className="run-id" title={fullLabel}>{title}</span>
-                      {/* The id stays available on hover or keyboard focus, after the short title. */}
+                      {/* The id stays visible below the short title. */}
                       {label !== run.executionId && (
                         <span className="run-address" title={run.executionId} aria-hidden="true">{run.executionId}</span>
                       )}

@@ -538,14 +538,14 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   gap: 1px;
 }
 .run-id {
+  font-family: var(--mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .run-when { font-size: 10px; color: var(--faint); }
-/* The address is useful on demand, but it should not take a line from the run's title. */
-.run-address { display: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 10px; color: var(--faint); }
-.run:hover .run-address, .run:focus-visible .run-address { display: block; }
+/* #1083 F7: the id under a run named by its objective - the address, quieter than the name. */
+.run-address { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 10px; color: var(--faint); }
 
 .show-more {
   color: var(--dim);

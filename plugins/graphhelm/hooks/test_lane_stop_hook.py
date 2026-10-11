@@ -139,6 +139,18 @@ class LaneStopTests(unittest.TestCase):
             self.assertEqual(tasks_reconcile.reconcile(args)["inspected"], 1)
         github.assert_called_once_with(9001, "stabem/GraphHelm")
 
+    def test_closed_unmerged_pr_without_lane_does_not_post_or_crash(self):
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": None})()
+        opened = ("task.pr_opened", {"taskId": "issue-766", "pr": 9001,
+                  "lane": "codex-4", "repo": "stabem/GraphHelm"}, {})
+        with mock.patch.object(tasks_reconcile, "records", return_value=[opened]), \
+             mock.patch.object(tasks_reconcile, "github", return_value={"state": "CLOSED", "mergedAt": None, "body": ""}), \
+             mock.patch.object(tasks_reconcile, "post_end") as post_end:
+            result = tasks_reconcile.reconcile(args)
+        self.assertEqual(result["closed"], [9001])
+        post_end.assert_not_called()
     def test_closed_unmerged_pr_is_recorded_once(self):
         args = type("Args", (), {"execution": "lane-test", "url": self.url,
                     "token_file": self.env["GRAPHHELM_TOKEN_FILE"],

@@ -179,8 +179,9 @@ def reconcile(args):
             body = result.get("body") or ""
             match = re.search(r"(?i)\bsuperseded\s+by\s+(?:PR\s+)?(?:https://github\.com/[^\s]+/pull/)?#?([1-9][0-9]*)\b", body)
             by = int(match.group(1)) if match else pr
-            post_end(args.url.rstrip("/"), token, args.execution, "closed", task_id, repo,
-                     args.lane, {"pr": pr, "reason": "superseded" if match else "abandoned", "by": by})
+            if args.lane is not None:
+                post_end(args.url.rstrip("/"), token, args.execution, "closed", task_id, repo,
+                         args.lane, {"pr": pr, "reason": "superseded" if match else "abandoned", "by": by})
             closed.append(pr)
             continue
         if result.get("state") != "MERGED":

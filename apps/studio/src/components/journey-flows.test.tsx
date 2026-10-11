@@ -47,6 +47,17 @@ const watchRow = (extra: Partial<LiveSession>): LiveSession => ({
 const pick = (name: string) => userEvent.click(within(screen.getByRole("list", { name: "Journeys" })).getByRole("button", { name: new RegExp(`^Flow ${name}`) }));
 
 describe("JourneyFlows", () => {
+  it("scrolls the selected journey detail into view when a row is chosen", async () => {
+    const scrollIntoView = vi.fn();
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    render(<JourneyFlows view={view} onApprove={vi.fn()} />);
+
+    await pick("broken");
+
+    expect(screen.getByRole("article", { name: "Journey Flow broken" })).toBeInTheDocument();
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+  });
+
   it("lists every journey compactly and opens the first one waiting for approval", () => {
     render(<JourneyFlows view={view} onApprove={vi.fn()} />);
     const rows = within(screen.getByRole("list", { name: "Journeys" })).getAllByRole("button");
@@ -59,6 +70,19 @@ describe("JourneyFlows", () => {
     expect(rows[1]).toHaveAttribute("aria-pressed", "true");
     expect(screen.getAllByRole("article")).toHaveLength(1);
     expect(screen.getByRole("article", { name: "Journey Flow checkout" })).toBeInTheDocument();
+  });
+
+  it("shows a cached preview result in its flow row", async () => {
+    const run = {
+      start: vi.fn(async (id: string) => id === "checkout"
+        ? { state: "ready" as const, kind: "preview" as const, digest: "d1", result: "drift" as const }
+        : { state: "ready" as const, kind: "preview" as const, digest: "d1", result: "pass" as const }),
+      read: vi.fn(async () => ({ state: "ready" as const, kind: "preview" as const, digest: "d1", result: "drift" as const })),
+      screenFrame: vi.fn(async () => null),
+      liveFrame: vi.fn(async () => null),
+    };
+    render(<JourneyFlows view={view} onApprove={vi.fn()} run={run} />);
+    await waitFor(() => expect(within(screen.getByRole("list", { name: "Journeys" })).getByRole("button", { name: /Flow checkout/ }).textContent).toContain("drift"));
   });
 
   it("shows the selected journey's steps as what it does and what it sees, never codes or paths", async () => {

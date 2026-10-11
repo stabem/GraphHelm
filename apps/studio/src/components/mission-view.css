@@ -140,7 +140,7 @@
 .mv-group { width: 100%; }
 .mv[data-page="full"] > .mv-pad { padding: 18px 24px; }
 .mv-journey-content { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; gap: 12px; padding: 18px 24px; overflow-y: auto; }
-.mv-journey-content > .journey-flows { flex: 0 1 auto; min-height: 0; max-height: 62%; overflow-y: auto; }
+.mv-journey-content > .journey-flows { flex: 0 1 auto; min-height: 0; }
 .mv-journey-content > .journey-flows:last-child { max-height: none; flex: 1 1 auto; }
 .mv-journey-content > .journey-canvas { flex: 1 1 auto; min-height: 0; height: auto; }
 

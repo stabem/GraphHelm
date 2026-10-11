@@ -535,7 +535,7 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
 
 /** Folds records in sequence order into one state per task slice (spec §7): a new head re-arms review
  * but keeps the red edge until a verdict lands on a newer head than the BLOCK's. */
-export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: TaskEventRecord, sliceIndex: number) => void): TaskState[] {
+export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: TaskEventRecord, slice: TaskState) => void): TaskState[] {
   const slices: TaskState[] = [];
   const ended = new Set<TaskState>();
   for (const event of [...records].sort((a, b) => a.sequence - b.sequence)) {
@@ -546,12 +546,12 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
       const latest = open.at(-1);
       if (latest !== undefined && latest.claimSequence === event.claimSequence) {
         latest.releasedBy = event.lane;
-        onRoute?.(event, slices.indexOf(latest));
+        onRoute?.(event, latest);
       }
       continue;
     }
     const state = sliceFor(slices, event);
-    onRoute?.(event, slices.indexOf(state));
+    onRoute?.(event, state);
     if (ended.has(state)) continue;
     if (state.step === "merged") continue;
     state.lastSequence = event.sequence;

@@ -38,6 +38,22 @@ describe("laneBars", () => {
     ], T0 + 10, 1000);
     expect(lanes[0]!.bars[0]).toMatchObject({ label: "#822", displayLabel: "#822 Close false timeline bars" });
   });
+  it.each([false, true])("keeps each PR title with its slice after reorder (ended first: %s)", (endedFirst) => {
+    const records: TimedTaskEvent[] = [];
+    if (endedFirst) records.push(
+      ev({ kind: "task.claimed", lane: "old", taskId: "issue-0", issue: 0, title: "Old", at: at(0) }),
+      ev({ kind: "task.closed", taskId: "issue-0", at: at(1) }),
+    );
+    records.push(
+      ev({ kind: "task.claimed", lane: "a", taskId: "issue-1", issue: 1, title: "Alpha", at: at(2) }),
+      ev({ kind: "task.claimed", lane: "b", taskId: "issue-2", issue: 2, title: "Beta", at: at(3) }),
+      ev({ kind: "task.pr_opened", lane: "b", taskId: "issue-2", pr: 2, title: "Beta", at: at(4) }),
+      ev({ kind: "task.pr_opened", lane: "a", taskId: "issue-1", pr: 1, title: "Alpha", at: at(5) }),
+    );
+    const bars = laneBars(records, T0 + 10, 1000).flatMap((lane) => lane.bars);
+    expect(bars.find((bar) => bar.label === "#1")?.displayLabel).toBe("#1 Alpha");
+    expect(bars.find((bar) => bar.label === "#2")?.displayLabel).toBe("#2 Beta");
+  });
   it("keeps another slice's review open when a verdict routes to the same PR and head", () => {
     const lanes = laneBars([
       ev({ kind: "task.claimed", lane: "a", taskId: "issue-1", branch: "one", at: at(0) }),

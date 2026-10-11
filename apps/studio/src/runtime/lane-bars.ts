@@ -1,4 +1,4 @@
-import { foldTaskEvents, type TaskEventRecord } from "./team-tasks";
+import { foldTaskEvents, type TaskEventRecord, type TaskState } from "./team-tasks";
 
 export type TimedTaskEvent = TaskEventRecord & { at: string };
 export type BarKind = "implement" | "review" | "merge";
@@ -28,10 +28,15 @@ export const LIVENESS_MS = 30 * 60 * 1000;
 export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number): Lane[] {
   const lanes = new Map<string, { bars: LaneBar[]; last: number; record: LaneRecord | null; awaiting: Set<number> }>();
   const open = new Map<string, { lane: string; bar: LaneBar; slice: string }>();
-  // The kanban fold assigns every record to a slice; stable indices also survive PR renames.
+  // The fold's returned slices may be filtered or sorted; keep the routed slice identity.
   const routed = new Map<number, string>();
-  const slices = foldTaskEvents(events.map(({ at, ...event }) => ({ ...event, occurredAt: at })),
-    (event, index) => routed.set(event.sequence, `slice-${index}`));
+  const keys = new Map<TaskState, string>();
+  foldTaskEvents(events.map(({ at, ...event }) => ({ ...event, occurredAt: at })),
+    (event, state) => {
+      let key = keys.get(state);
+      if (key === undefined) { key = `slice-${keys.size}`; keys.set(state, key); }
+      routed.set(event.sequence, key);
+    });
   const prOfKey = new Map<string, number>();
   const prSlices = new Map<number, Set<string>>();
   const titleOf = new Map<string, string>();
@@ -40,8 +45,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
   const issueOf = new Map<string, number>();
   // Read titles from the same completed slices that feed the kanban. Older records may
   // carry a title only on the claim or PR opening, not on later timeline records.
-  slices.forEach((state, index) => {
-    const slice = `slice-${index}`;
+  keys.forEach((slice, state) => {
     if (state.title || state.prTitle) titleOf.set(slice, state.prTitle ?? state.title!);
   });
   const laneOf = (name: string) => {

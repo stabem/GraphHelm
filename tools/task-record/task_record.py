@@ -387,7 +387,7 @@ def main(argv):
     args = parse(argv)
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     doc = document(args, now)
-    if args.kind == "pr_opened" and not args.no_github:
+    if args.kind in ("pr_opened", "review_assigned") and not args.no_github:
         refuse_merged_pr_record(args.pr, args.repo)
     if args.kind == "merged" and not args.dry_run:
         if args.no_github:

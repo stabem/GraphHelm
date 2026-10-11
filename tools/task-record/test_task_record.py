@@ -61,6 +61,17 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
 
 
 class TaskRecordTest(unittest.TestCase):
+    def test_release_records_the_exact_claim_sequence_and_reason(self):
+        code, out = self.run_step("--lane", "lane-a", "released", "--issue", "86",
+                                  "--claim-sequence", "12", "--release-reason", "Work moved elsewhere")
+        self.assertEqual(code, 0, out)
+        signal = FakeRuntime.seen[-1][1]["signal"]
+        self.assertEqual(signal["type"], "task.released")
+        document = json.loads(signal["description"])
+        self.assertEqual(document["claimSequence"], 12)
+        self.assertEqual(document["lane"], "lane-a")
+        self.assertEqual(document["reason"], "Work moved elsewhere")
+
     def test_claim_transports_reported_assigner(self):
         # Wire gap: no existing test carries assignment provenance. Local HTTP only.
         code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "86",

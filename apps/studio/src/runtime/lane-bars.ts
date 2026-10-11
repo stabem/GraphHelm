@@ -5,6 +5,7 @@ export type BarKind = "implement" | "review" | "merge";
 /** `taskId` names the task the bar works on; `since` is the unclipped start (`start` is clipped to the window). */
 export interface LaneBar {
   kind: BarKind; label: string; start: number; end: number; open: boolean; taskId?: string; since?: number;
+  displayLabel?: string;
   /** #591: the issue a claim names; the head a review was assigned on. */
   issue?: number; headSha?: string;
 }
@@ -47,7 +48,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
   const rekey = (from: string, to: string, label: string) => {
     for (const [k, v] of [...open]) {
       const [kind, slice, ...rest] = k.split("|");
-      if (slice === from) { open.delete(k); v.slice = to; v.bar.label = label; open.set([kind, to, ...rest].join("|"), v); }
+      if (slice === from) { open.delete(k); v.slice = to; v.bar.label = `#${prOfKey.get(to)}`; v.bar.displayLabel = label; open.set([kind, to, ...rest].join("|"), v); }
     }
   };
   const sliceOf = (e: TimedTaskEvent): string => {
@@ -95,7 +96,8 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
     const pr = prOfKey.get(slice);
     const issue = issueOf.get(slice);
     const title = titleOf.get(slice);
-    const bar: LaneBar = { kind, label: `${pr !== undefined ? `#${pr}` : issue !== undefined ? `#${issue}` : taskId}${title ? ` ${title}` : ""}`, start: t, end: now, open: true, taskId, since: t };
+    const label = pr !== undefined ? `#${pr}` : taskId;
+    const bar: LaneBar = { kind, label, ...(title ? { displayLabel: `${pr !== undefined ? `#${pr}` : issue !== undefined ? `#${issue}` : taskId} ${title}` } : {}), start: t, end: now, open: true, taskId, since: t };
     if (issue !== undefined) bar.issue = issue;
     if (kind === "review" && headOf.has(slice)) bar.headSha = headOf.get(slice);
     laneOf(lane).bars.push(bar);
@@ -128,7 +130,7 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
     if (e.issue !== undefined) issueOf.set(slice, e.issue);
     if (typeof e.title === "string") {
       titleOf.set(slice, e.title);
-      for (const v of open.values()) if (v.slice === slice) v.bar.label = `${e.pr !== undefined ? `#${e.pr}` : e.issue !== undefined ? `#${e.issue}` : e.taskId} ${e.title}`;
+      for (const v of open.values()) if (v.slice === slice) v.bar.displayLabel = `${e.pr !== undefined ? `#${e.pr}` : e.issue !== undefined ? `#${e.issue}` : e.taskId} ${e.title}`;
     }
     if (e.headSha !== undefined && (e.kind === "task.pr_opened" || e.kind === "task.claimed")) headOf.set(slice, e.headSha);
     if (e.lane && (e.kind === "task.claimed" || e.kind === "task.pr_opened")) authorOf.set(slice, e.lane);

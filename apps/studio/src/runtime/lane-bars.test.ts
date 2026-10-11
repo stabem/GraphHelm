@@ -82,7 +82,7 @@ describe("laneBars", () => {
       ev({ kind: "task.claimed", lane: "dev", taskId: "issue-1", issue: 1, title: "Fix confusing timeline", at: at(0) } as never),
       ev({ kind: "task.pr_opened", lane: "dev", taskId: "issue-1", pr: 10, title: "Show truthful task bars", at: at(10) } as never),
     ], T0 + 20, 1000);
-    expect(lanes[0]!.bars[0]!.label).toBe("#10 Show truthful task bars");
+    expect(lanes[0]!.bars[0]!.displayLabel).toBe("#10 Show truthful task bars");
   });
   it("implement then review then merge", () => {
     const lanes = laneBars([

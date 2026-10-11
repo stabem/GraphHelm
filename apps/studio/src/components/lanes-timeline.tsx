@@ -208,13 +208,13 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
               <div className="lt-track" style={{ height: trackH }} data-subrows={pack.rows}>
                 <span className="lt-nowline" aria-hidden="true" />
                 {l.bars.map((b, i) => {
-                  const text = b.label;
+                  const text = b.displayLabel ?? `${b.label} ${b.kind}`;
                   const frac = (b.end - b.start) / windowMs;
-                  const stallStart = Math.max(b.start, l.lastEventAt + 30 * 60_000);
+                  const stallStart = Math.max(b.start, l.lastEventAt > 0 ? l.lastEventAt + 30 * 60_000 : b.start);
                   const stalled = l.silent && b.open && stallStart < b.end;
                   return (
-                    <div key={i} className="lt-bar" data-kind={b.kind} data-subrow={pack.row[i]}
-                      title={`${text} · ${b.kind} · ${stageDuration(b.end - b.start)}${b.open ? " so far" : ""}`}
+                    <div key={i} className="lt-bar" data-kind={b.kind} data-silent={stalled} data-subrow={pack.row[i]}
+                      title={`${text}${b.displayLabel ? ` · ${b.kind}` : ""} · ${stageDuration(b.end - b.start)}${b.open ? " so far" : ""}`}
                       style={{ left: pct((b.start - from) / windowMs), width: pct(frac), top: TRACK_PAD + pack.row[i]! * (SUB_H + SUB_GAP), height: SUB_H }}>
                       {stalled && <span className="lt-stall" aria-hidden="true" style={{ left: pct((stallStart - b.start) / (b.end - b.start)) }} />}
                       {frac * trackW >= MIN_LABEL_PX && <span className="lt-bar-label">{text}</span>}

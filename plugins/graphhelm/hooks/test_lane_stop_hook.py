@@ -139,17 +139,108 @@ class LaneStopTests(unittest.TestCase):
             self.assertEqual(tasks_reconcile.reconcile(args)["inspected"], 1)
         github.assert_called_once_with(9001, "stabem/GraphHelm")
 
-    def test_closed_unmerged_pr_remains_pending(self):
+    def test_closed_unmerged_pr_without_lane_does_not_post_or_crash(self):
         args = type("Args", (), {"execution": "lane-test", "url": self.url,
                     "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
-                    "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+                    "repo": "stabem/GraphHelm", "lane": None})()
         opened = ("task.pr_opened", {"taskId": "issue-766", "pr": 9001,
                   "lane": "codex-4", "repo": "stabem/GraphHelm"}, {})
         with mock.patch.object(tasks_reconcile, "records", return_value=[opened]), \
-             mock.patch.object(tasks_reconcile, "github", return_value={"state": "CLOSED", "mergedAt": None}):
+             mock.patch.object(tasks_reconcile, "github", return_value={"state": "CLOSED", "mergedAt": None, "body": ""}), \
+             mock.patch.object(tasks_reconcile, "post_end") as post_end:
             result = tasks_reconcile.reconcile(args)
-        self.assertEqual(result["merged"], [])
-        self.assertIn("closed", result["pendingKinds"])
+        self.assertEqual(result["closed"], [])
+        post_end.assert_not_called()
+    def test_closed_unmerged_pr_is_recorded_once(self):
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+        now = "2026-10-10T00:00:00Z"
+        document = {"schema": "graphhelm-task-event-v1", "taskId": "issue-766",
+                    "revision": 2, "at": now, "pr": 9001, "headSha": "b" * 40,
+                    "journeys": [], "lane": "codex-4", "repo": "stabem/GraphHelm"}
+        signal = {"id": "pr-9001-opened", "source": {"type": "user", "id": "codex-4"},
+                  "type": "task.pr_opened", "severity": "low", "description": json.dumps(document),
+                  "evidence": ["https://github.com/stabem/GraphHelm/pull/9001"], "emittedAt": now}
+        token = Path(args.token_file).read_text().strip()
+        request = urllib.request.Request(self.url + "/v1/executions/lane-test/signal",
+                  data=json.dumps({"signal": signal}).encode(), headers={"Authorization": "Bearer " + token,
+                  "Content-Type": "application/json", "Idempotency-Key": "pr-9001-opened",
+                  "X-GraphHelm-Actor": "codex-4", "X-GraphHelm-Actor-Type": "agent"})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertTrue(json.load(response)["ok"])
+        with mock.patch.object(tasks_reconcile, "github", return_value={"state": "CLOSED", "mergedAt": None, "body": "Superseded by #9002"}):
+            result = tasks_reconcile.reconcile(args)
+        self.assertEqual(result["closed"], [9001])
+        with mock.patch.object(tasks_reconcile, "github") as github:
+            self.assertEqual(tasks_reconcile.reconcile(args)["closed"], [])
+        github.assert_not_called()
+        found = tasks_reconcile.records(args.url, Path(args.token_file).read_text().strip(), args.execution)
+        self.assertEqual([(kind, doc["revision"], doc["reason"], doc["by"]) for kind, doc, _ in found if kind == "task.closed"],
+                         [("task.closed", 6, "superseded", 9002)])
+
+    def test_released_claim_is_recorded_once(self):
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+        now = "2026-10-10T00:00:00Z"
+        doc = {"schema": "graphhelm-task-event-v1", "taskId": "issue-766", "revision": 1,
+               "at": now, "lane": "codex-4", "branch": "issue-766-test", "repo": "stabem/GraphHelm"}
+        doc["issue"] = 766
+        token = Path(args.token_file).read_text().strip()
+        signal = {"id": "claim-766", "source": {"type": "user", "id": "codex-4"},
+                  "type": "task.claimed", "severity": "low", "description": json.dumps(doc),
+                  "evidence": ["https://github.com/stabem/GraphHelm/issues/766"], "emittedAt": now}
+        req = urllib.request.Request(self.url + "/v1/executions/lane-test/signal",
+            data=json.dumps({"signal": signal}).encode(), headers={"Authorization": "Bearer " + token,
+            "Content-Type": "application/json", "Idempotency-Key": "claim-766",
+            "X-GraphHelm-Actor": "codex-4", "X-GraphHelm-Actor-Type": "agent"})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            self.assertTrue(json.load(response)["ok"])
+        with mock.patch.object(tasks_reconcile, "github_issue", return_value={"state": "CLOSED", "assignees": []}):
+            self.assertEqual(tasks_reconcile.reconcile(args)["released"], [766])
+            self.assertEqual(tasks_reconcile.reconcile(args)["released"], [])
+
+    def test_reassigned_issue_releases_only_an_open_claim(self):
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+        claim = ("task.claimed", {"taskId": "issue-766", "lane": "codex-4",
+                 "repo": "stabem/GraphHelm"}, {"sequence": 12})
+        with mock.patch.object(tasks_reconcile, "records", return_value=[claim]), \
+             mock.patch.object(tasks_reconcile, "github_issue", return_value={"state": "OPEN", "assignees": [{"login": "other-lane"}]}), \
+             mock.patch.object(tasks_reconcile, "post_end") as post:
+            self.assertEqual(tasks_reconcile.reconcile(args)["released"], [766])
+        self.assertEqual(post.call_args.args[-1], {"lane": "codex-4", "claimSequence": 12,
+                                                   "reason": "Issue reassigned"})
+
+    def test_latest_release_closes_all_earlier_claims_for_same_issue(self):
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+        records = [("task.claimed", {"taskId": "issue-766", "lane": "codex-4",
+                    "repo": "stabem/GraphHelm"}, {"sequence": n}) for n in (12, 14)]
+        records.append(("task.released", {"taskId": "issue-766", "lane": "codex-4",
+                        "repo": "stabem/GraphHelm", "claimSequence": 14}, {"sequence": 15}))
+        with mock.patch.object(tasks_reconcile, "records", return_value=records), \
+             mock.patch.object(tasks_reconcile, "github_issue", return_value={"state": "CLOSED", "assignees": []}), \
+             mock.patch.object(tasks_reconcile, "post_end") as post:
+            self.assertEqual(tasks_reconcile.reconcile(args)["released"], [])
+        post.assert_not_called()
+
+    def test_release_from_another_issue_does_not_hide_claim(self):
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+        records = [("task.claimed", {"taskId": "issue-766", "lane": "codex-4",
+                    "repo": "stabem/GraphHelm"}, {"sequence": 12}),
+                   ("task.released", {"taskId": "issue-999", "lane": "codex-4",
+                    "repo": "stabem/GraphHelm", "claimSequence": 12}, {"sequence": 13})]
+        with mock.patch.object(tasks_reconcile, "records", return_value=records), \
+             mock.patch.object(tasks_reconcile, "github_issue", return_value={"state": "CLOSED", "assignees": []}), \
+             mock.patch.object(tasks_reconcile, "post_end") as post:
+            self.assertEqual(tasks_reconcile.reconcile(args)["released"], [766])
+        self.assertEqual(post.call_args.args[-1]["claimSequence"], 12)
 
     def test_stop_invokes_configured_cli_reconciliation(self):
         root = Path(self.tmp.name)

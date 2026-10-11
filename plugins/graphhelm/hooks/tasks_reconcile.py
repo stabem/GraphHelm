@@ -35,7 +35,8 @@ def records(base, token, execution):
         for event in batch:
             kind = event.get("kind", {})
             detail = kind.get("data", {})
-            if kind.get("type") == "signal_recorded" and detail.get("kind") in ("task.pr_opened", "task.merged"):
+            if kind.get("type") == "signal_recorded" and detail.get("kind") in (
+                    "task.claimed", "task.released", "task.pr_opened", "task.merged", "task.closed"):
                 refs = event.get("evidenceRefs", [])
                 if len(refs) == 1:
                     events.append((event, detail, refs[0]["evidenceId"]))
@@ -59,11 +60,17 @@ def records(base, token, execution):
         document = json.loads(envelope["description"])
         if document.get("schema") != "graphhelm-task-event-v1":
             raise ValueError("invalid task document")
-        if detail["kind"] == "task.merged":
+        if detail["kind"] in ("task.merged", "task.closed"):
             refs = envelope.get("evidence", [])
             if len(refs) == 1:
                 match = re.fullmatch(r"https://github\.com/([^/]+/[^/]+)/pull/([1-9][0-9]*)", refs[0])
                 if match and int(match.group(2)) == document.get("pr"):
+                    document["repo"] = match.group(1)
+        elif detail["kind"] == "task.released":
+            refs = envelope.get("evidence", [])
+            if len(refs) == 1:
+                match = re.fullmatch(r"https://github\.com/([^/]+/[^/]+)/issues/([1-9][0-9]*)", refs[0])
+                if match and f"issue-{match.group(2)}" == document.get("taskId"):
                     document["repo"] = match.group(1)
         return detail["kind"], document, event
 
@@ -73,8 +80,15 @@ def records(base, token, execution):
 
 def github(pr, repo):
     result = subprocess.run(["gh", "pr", "view", str(pr), "--repo", repo,
-                             "--json", "state,mergeCommit,mergedAt,closingIssuesReferences"],
+                             "--json", "state,mergeCommit,mergedAt,closingIssuesReferences,body"],
                             capture_output=True, text=True, encoding="utf-8", timeout=3, check=True)
+    return json.loads(result.stdout)
+
+
+def github_issue(issue, repo):
+    result = subprocess.run(["gh", "issue", "view", str(issue), "--repo", repo,
+                             "--json", "state,assignees"], capture_output=True, text=True,
+                            encoding="utf-8", timeout=3, check=True)
     return json.loads(result.stdout)
 
 
@@ -101,6 +115,34 @@ def post(base, token, execution, pr, task_id, repo, sha, closes):
         raise ValueError("Runtime refused task.merged")
 
 
+def post_end(base, token, execution, kind, task_id, repo, lane, fields):
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    doc = {"schema": "graphhelm-task-event-v1", "taskId": task_id,
+           "revision": 6 if kind == "closed" else 2, "at": now, **fields}
+    content = json.dumps({k: v for k, v in doc.items() if k != "at"}, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256((lane + "\n" + kind + "\n" + content).encode()).hexdigest()[:16]
+    signal_id = f"{lane}-{task_id}-{kind}-{digest}"
+    if len(signal_id) > 64:
+        signal_id = f"{signal_id[:47]}-{digest}"
+    issue = int(task_id.removeprefix("issue-"))
+    evidence = (f"https://github.com/{repo}/pull/{fields['pr']}" if kind == "closed"
+                else f"https://github.com/{repo}/issues/{issue}")
+    signal = {"id": signal_id, "type": "task." + kind,
+              "source": {"type": "user", "id": lane}, "severity": "low",
+              "emittedAt": now, "evidence": [evidence],
+              "description": json.dumps(doc, separators=(",", ":"))}
+    url = f"{base}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal"
+    headers = {"Authorization": "Bearer " + token, "Content-Type": "application/json",
+               "Idempotency-Key": signal_id, "X-GraphHelm-Actor": lane,
+               "X-GraphHelm-Actor-Type": "agent"}
+    request = urllib.request.Request(url, data=json.dumps({"signal": signal}).encode(),
+                                     headers=headers, method="POST")
+    with urllib.request.urlopen(request, timeout=3) as reply:
+        answer = json.load(reply)
+    if answer.get("ok") is not True:
+        raise ValueError("Runtime refused task." + kind)
+
+
 def reconcile(args):
     parsed = urllib.parse.urlsplit(args.url)
     if parsed.scheme != "http" or parsed.hostname not in ("127.0.0.1", "localhost", "::1"):
@@ -108,24 +150,47 @@ def reconcile(args):
     token = Path(args.token_file).read_text(encoding="utf-8").strip()
     if not token or "\n" in token:
         raise ValueError("invalid agent token")
-    # Closed and released reconciliation is tracked by #847.
     opened = {}
     finished = set()
+    claims = {}
+    releases = {}
     for kind, doc, event in records(args.url.rstrip("/"), token, args.execution):
+        task_id = doc.get("taskId")
+        lane = doc.get("lane")
+        if kind == "task.claimed" and lane == args.lane and doc.get("repo") == args.repo and re.fullmatch(r"issue-[1-9][0-9]*", str(task_id)):
+            claims.setdefault(task_id, []).append(event["sequence"])
+        elif kind == "task.released" and lane == args.lane and doc.get("repo") == args.repo and re.fullmatch(r"issue-[1-9][0-9]*", str(task_id)):
+            releases.setdefault(task_id, set()).add(doc.get("claimSequence"))
         pr = doc.get("pr")
         if type(pr) is not int or pr < 1:
             continue
-        if kind == "task.merged":
+        if kind in ("task.merged", "task.closed"):
             finished.add((doc.get("repo"), pr))
-        elif (args.lane is None or doc.get("lane") == args.lane) and doc.get("repo") == args.repo and re.fullmatch(r"issue-[1-9][0-9]*", str(doc.get("taskId"))):
+        elif kind == "task.pr_opened" and (args.lane is None or lane == args.lane) and doc.get("repo") == args.repo and re.fullmatch(r"issue-[1-9][0-9]*", str(task_id)):
             opened[pr] = (doc["taskId"], args.repo)
+            if task_id in claims:
+                for sequence in claims[task_id]:
+                    if sequence not in releases.get(task_id, set()):
+                        releases.setdefault(task_id, set()).add(sequence)
+                        break
     done = []
+    closed = []
     for pr, (task_id, repo) in opened.items():
         if (repo, pr) in finished:
             continue
         result = github(pr, repo)
         commit = result.get("mergeCommit") or {}
         sha = commit.get("oid")
+        if result.get("state") == "CLOSED" and not result.get("mergedAt"):
+            body = result.get("body") or ""
+            match = re.search(r"(?i)\bsuperseded\s+by\s+(?:PR\s+)?(?:https://github\.com/[^\s]+/pull/)?#?([1-9][0-9]*)\b", body)
+            by = int(match.group(1)) if match else pr
+            if args.lane is None:
+                continue
+            post_end(args.url.rstrip("/"), token, args.execution, "closed", task_id, repo,
+                     args.lane, {"pr": pr, "reason": "superseded" if match else "abandoned", "by": by})
+            closed.append(pr)
+            continue
         if result.get("state") != "MERGED":
             continue
         if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
@@ -134,7 +199,24 @@ def reconcile(args):
                   if issue.get("repository", {}).get("nameWithOwner", repo) == repo]
         post(args.url.rstrip("/"), token, args.execution, pr, task_id, repo, sha, closes)
         done.append(pr)
-    return {"merged": done, "inspected": len(opened), "pendingKinds": ["closed", "released"]}
+    released = []
+    for task_id, sequences in claims.items():
+        latest_release = max((sequence for sequence in releases.get(task_id, set())
+                              if type(sequence) is int), default=0)
+        outstanding = [sequence for sequence in sequences if sequence > latest_release]
+        if not outstanding:
+            continue
+        issue = int(task_id.removeprefix("issue-"))
+        result = github_issue(issue, args.repo)
+        assignees = result.get("assignees") or []
+        reassigned = bool(assignees) and args.lane not in [person.get("login") for person in assignees]
+        if result.get("state") != "CLOSED" and not reassigned:
+            continue
+        post_end(args.url.rstrip("/"), token, args.execution, "released", task_id, args.repo,
+                 args.lane, {"lane": args.lane, "claimSequence": outstanding[-1],
+                             "reason": "Issue closed" if result.get("state") == "CLOSED" else "Issue reassigned"})
+        released.append(issue)
+    return {"merged": done, "closed": closed, "released": released, "inspected": len(opened)}
 
 
 def main():

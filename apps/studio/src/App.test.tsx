@@ -5019,7 +5019,7 @@ it.each(["vanished", "panicked", "clean", null])("shows Last stop only for an un
   await screen.findByText("live");
   if (state === "vanished") {
     const line = screen.getByLabelText("Previous Runtime exit");
-    expect(line).toHaveTextContent(`Runtime restarted · last stop ${new Date(2000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })} (killed)`);
+    expect(line).toHaveTextContent(`Runtime restarted · previous run started ${new Date(2000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })} (exit cause unknown)`);
     expect(line).not.toHaveTextContent("pid 1");
     expect(line).not.toHaveTextContent("1970-");
     expect(line.querySelector("time")).toHaveAttribute("title", expect.stringContaining("PID 1"));

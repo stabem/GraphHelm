@@ -573,6 +573,23 @@ fn a_card_written_in_a_pr_body_runs_the_scope_rule() {
 }
 
 #[test]
+fn a_card_written_with_multiline_scope_lists_all_paths() {
+    let repo = repository(&[
+        ("src/lib.rs", "planned edit\n"),
+        ("docs/notes.md", "planned edit\n"),
+    ]);
+    let scratch = tempfile::tempdir().unwrap();
+    let body = scratch.path().join("pr-body.md");
+    fs::write(
+        &body,
+        "Promise: added() exists\nScope:\n- `src/lib.rs`\n- `docs/notes.md`\nProof: `cargo test`\n",
+    )
+    .unwrap();
+    let (code, reply) = run(repo.path(), Some(&body));
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(reply["data"]["surface"]["cardScopePaths"], 2, "{reply}");
+}
+
 fn a_card_naming_journeys_validates_and_a_bad_journey_id_is_refused_at_its_path() {
     let repo = repository(&[]);
     let path = repo.path().join("card.json");

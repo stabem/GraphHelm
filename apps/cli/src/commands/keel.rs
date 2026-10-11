@@ -626,14 +626,30 @@ fn read_card(path: &Path) -> Result<(Card, u64), Box<Outcome>> {
 /// that is missing stays missing, so the schema names it.
 fn card_from_markdown(text: &str) -> serde_json::Value {
     let mut card = serde_json::Map::new();
+    let mut active_list: Option<(&'static str, Vec<String>)> = None;
     for line in text.lines() {
         let line = line
             .trim()
             .trim_start_matches(['-', '*', '+', ' '])
             .replace("**", "");
         let Some((label, rest)) = line.split_once(':') else {
+            if let Some((_, items)) = active_list.as_mut() {
+                let item = line.trim();
+                if let Some(path) = item
+                    .strip_prefix('`')
+                    .and_then(|value| value.strip_suffix('`'))
+                {
+                    if !path.is_empty() {
+                        items.push(path.to_owned());
+                    }
+                }
+            }
             continue;
         };
+        if let Some((key, items)) = active_list.take() {
+            card.entry(key)
+                .or_insert_with(|| serde_json::Value::from(items));
+        }
         let rest = rest.trim();
         let list = || {
             let ticked: Vec<&str> = rest.split('`').skip(1).step_by(2).collect();
@@ -664,7 +680,15 @@ fn card_from_markdown(text: &str) -> serde_json::Value {
             "journeys" => ("journeys", list()),
             _ => continue,
         };
+        if matches!(key, "scopePaths" | "exportedSymbols" | "journeys") && rest.is_empty() {
+            active_list = Some((key, Vec::new()));
+            continue;
+        }
         card.entry(key).or_insert(value);
+    }
+    if let Some((key, items)) = active_list {
+        card.entry(key)
+            .or_insert_with(|| serde_json::Value::from(items));
     }
     serde_json::Value::Object(card)
 }

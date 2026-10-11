@@ -17,7 +17,9 @@ graphhelm --json keel check --diff origin/main..HEAD --card card.json [--repo <d
   reported.
 - A card path ending in `.md` is read as prose, for example a saved PR body: the lines
   `Promise:`, `Scope:`, `Proof:` and optionally `Exported:` (list items and bold are fine; list
-  fields take the backticked items). A missing `Promise`, `Scope` or `Proof` is an input error
+  fields take the backticked items. A list may continue on following lines when the field value is
+  empty, as in `Scope:` followed by one backticked path per bullet). A missing `Promise`, `Scope`
+  or `Proof` is an input error
   naming it, so the scope rule never runs on a half card.
 
 ## The card

@@ -3,6 +3,7 @@
 //! Runs `keel test validation` in a temporary detached worktree of HEAD, applies the patch there,
 //! and runs it again. The user's working tree is never touched and the worktree is always removed.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -138,6 +139,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<(), String> {
 struct Worktree {
     repo: PathBuf,
     path: PathBuf,
+    linked_modules: RefCell<Vec<PathBuf>>,
 }
 
 impl Worktree {
@@ -154,6 +156,7 @@ impl Worktree {
         Ok(Self {
             repo: repo.to_path_buf(),
             path,
+            linked_modules: RefCell::new(Vec::new()),
         })
     }
 
@@ -177,7 +180,14 @@ impl Worktree {
             }
         }
         let mut linked = Vec::new();
-        link_node_modules(repo, &self.path, Path::new(""), 0, &mut linked)?;
+        link_node_modules(
+            repo,
+            &self.path,
+            Path::new(""),
+            0,
+            &mut linked,
+            &mut self.linked_modules.borrow_mut(),
+        )?;
         Ok(linked)
     }
 
@@ -197,6 +207,7 @@ fn link_node_modules(
     relative: &Path,
     depth: usize,
     linked: &mut Vec<String>,
+    created: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
     let here = repo.join(relative);
     let modules = here.join("node_modules");
@@ -205,7 +216,23 @@ fn link_node_modules(
         #[cfg(unix)]
         std::os::unix::fs::symlink(&modules, &link).map_err(|error| error.to_string())?;
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&modules, &link).map_err(|error| error.to_string())?;
+        {
+            use std::os::windows::process::CommandExt;
+            let status = graphhelm_process::command("cmd")
+                .raw_arg(format!(
+                    "/C mklink /J \"{}\" \"{}\"",
+                    link.display(),
+                    modules.display()
+                ))
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .status()
+                .map_err(|error| error.to_string())?;
+            if !status.success() {
+                return Err(format!("mklink /J failed: {status}"));
+            }
+        }
+        created.push(link);
         linked.push(
             relative
                 .join("node_modules")
@@ -230,7 +257,14 @@ fn link_node_modules(
         .collect();
     children.sort();
     for child in children {
-        link_node_modules(repo, worktree, &relative.join(child), depth + 1, linked)?;
+        link_node_modules(
+            repo,
+            worktree,
+            &relative.join(child),
+            depth + 1,
+            linked,
+            created,
+        )?;
     }
     Ok(())
 }
@@ -253,6 +287,16 @@ fn baseline_cause(baseline: &Value) -> Value {
 
 impl Drop for Worktree {
     fn drop(&mut self) {
+        for link in self.linked_modules.get_mut().iter().rev() {
+            #[cfg(windows)]
+            if std::fs::remove_dir(link).is_err() {
+                return;
+            }
+            #[cfg(unix)]
+            if std::fs::remove_file(link).is_err() {
+                return;
+            }
+        }
         let text = self.path.to_string_lossy().to_string();
         let _ = git(&self.repo, &["worktree", "remove", "--force", &text]);
         let _ = std::fs::remove_dir_all(&self.path);
@@ -439,6 +483,7 @@ mod tests {
         git(repo, &["init", "-q"]).unwrap();
         git(repo, &["config", "user.email", "t@example.com"]).unwrap();
         git(repo, &["config", "user.name", "t"]).unwrap();
+        git(repo, &["config", "core.autocrlf", "false"]).unwrap();
         std::fs::write(repo.join("app.js"), "ok\n").unwrap();
         git(repo, &["add", "."]).unwrap();
         git(repo, &["commit", "-qm", "init"]).unwrap();

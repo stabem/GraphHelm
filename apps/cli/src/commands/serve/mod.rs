@@ -3233,6 +3233,35 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// Promise: an authenticated status read identifies its admitted actor without advancing the
+    /// event head, and that observation expires after the 15-minute liveness window. Regression:
+    /// omitting actor tracking or appending a heartbeat would make one of these assertions fail.
+    /// The isolated route fixture owns a temporary event store; no live Runtime is contacted.
+    /// Cost: one in-process HTTP request and one temporary store.
+    #[tokio::test]
+    async fn a_served_actor_reads_as_seen_without_a_journal_write() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (_directory, mut state) = routes::tests::known_execution_state();
+        state.token = Arc::<[u8]>::from(b"test-token".to_vec());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, build_router(state)).await.unwrap();
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        stream.write_all(b"GET /v1/executions/execution-known HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer test-token\r\nX-GraphHelm-Actor: lane-a\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        server.abort();
+
+        let body_start = response.windows(4).position(|window| window == b"\r\n\r\n").unwrap() + 4;
+        let body: serde_json::Value = serde_json::from_slice(&response[body_start..]).unwrap();
+        assert_eq!(body["data"]["seenActors"], serde_json::json!(["lane-a"]));
+        assert_eq!(body["data"]["headSequence"], 1);
+    }
+
     #[test]
     fn a_cancel_retry_does_not_accept_a_successful_completion_with_the_same_execution() {
         let event = EventKind::ExecutionCompleted(graphhelm_protocols::ExecutionCompleted {

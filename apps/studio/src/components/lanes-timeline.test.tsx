@@ -238,7 +238,7 @@ describe("LanesTimeline", () => {
     expect(within(board).getByText("gh-claude-6")).toBeInTheDocument();
     expect(within(board).getByText(/last seen/)).toBeInTheDocument();
   });
-  it("counts idle lanes with wake listeners as Free and shows the source", async () => {
+  it("counts live idle lanes as Free without naming a specific source", async () => {
     const user = fastUserEvent();
     const old = ["gh-claude-6", "coordinator"].map((name) => ({ ...lanes[1]!, lane: name, lastEventAt: now - 10 * 3_600_000 }));
     render(<LanesTimeline lanes={old} now={now} windowMs={1000} liveLanes={["gh-claude-6", "coordinator"]} />);
@@ -246,7 +246,7 @@ describe("LanesTimeline", () => {
     const board = screen.getByRole("list", { name: "Agent board" });
     expect(within(board).getAllByRole("listitem")).toHaveLength(2);
     expect(within(board).getAllByText("live now")).toHaveLength(2);
-    expect(within(board).getAllByText(/wake listener/)).toHaveLength(2);
+    expect(within(board).queryByText(/wake listener/)).not.toBeInTheDocument();
   });
 
   it("timeline rows follow the board order", () => {

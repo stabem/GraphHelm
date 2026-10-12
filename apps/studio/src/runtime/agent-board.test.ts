@@ -27,7 +27,7 @@ describe("agentBoard", () => {
     const old = { ...lane("idle", []), lastEventAt: now - 10 * 3_600_000,
       lastRecord: { kind: "merged", at: now - 10 * 3_600_000 } };
     const live = agentBoard([], [old], [], now, [], [], ["idle"])[0]!;
-    expect(live).toMatchObject({ status: "free", latest: "live now · wake listener" });
+    expect(live).toMatchObject({ status: "free", latest: "live now" });
     const closed = agentBoard([], [old], [], now)[0]!;
     expect(closed.status).toBe("offline");
   });

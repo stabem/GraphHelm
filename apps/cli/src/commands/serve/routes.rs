@@ -6593,7 +6593,7 @@ mod pause_digest_body_tests {
 /// the runs recorded before and after are compared, and the thread the new run happened on must
 /// not be the runtime's own. Serialised through one lock because the witness is process-wide.
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
 
@@ -6645,7 +6645,7 @@ mod tests {
         String::from_utf8(bytes.to_vec()).unwrap()
     }
 
-    fn known_execution_state() -> (tempfile::TempDir, super::ServeState) {
+    pub(super) fn known_execution_state() -> (tempfile::TempDir, super::ServeState) {
         let directory = tempfile::tempdir().unwrap();
         let execution_id = OpaqueId::parse("execution-known").unwrap();
         let scope = RepositoryScope::new(

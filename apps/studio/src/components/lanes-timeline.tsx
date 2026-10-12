@@ -210,7 +210,7 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
         {lanes.map((l) => {
           const open = l.bars.some((b) => b.open);
           const status = boardByLane.get(l.lane)?.status;
-          const presence = status === "offline" ? "offline" : status === "building" || status === "build_wait" ? "busy" : status === "silent" || l.silent ? "silent" : status === "working" ? "busy" : status === "free" ? "idle" : open ? "busy" : "idle";
+          const presence = status === "offline" ? "offline" : status === "building" ? "busy" : status === "build_wait" || status === "waiting" || status === "awaiting" ? "waiting" : status === "silent" || status === "stale" || (!status && l.silent) ? "silent" : status === "working" ? "busy" : status === "free" ? "idle" : open ? "busy" : "idle";
           const pack = packBars(l.bars);
           const trackH = pack.rows * SUB_H + (pack.rows - 1) * SUB_GAP + TRACK_PAD * 2;
           return (
@@ -218,7 +218,7 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
               <span className="lt-who">
                 <span className="lt-dot" data-state={presence} />
                 <span className="lt-name">{botOf(l) ?? l.lane}</span>
-                {presence === "silent" ? <span className="lt-flag" data-flag="silent">silent</span> : presence === "offline" ? <span className="lt-flag" data-flag="offline">offline</span> : presence === "idle" && <span className="lt-flag" data-flag="free">free</span>}
+                {presence === "silent" ? <span className="lt-flag" data-flag="silent">silent</span> : presence === "offline" ? <span className="lt-flag" data-flag="offline">offline</span> : presence === "waiting" ? <span className="lt-flag" data-flag="waiting">waiting</span> : presence === "idle" && <span className="lt-flag" data-flag="free">free</span>}
               </span>
               <div className="lt-track" style={{ height: trackH }} data-subrows={pack.rows}>
                 <span className="lt-nowline" aria-hidden="true" />

@@ -18,6 +18,20 @@ const t = (over: Partial<MissionTask>): MissionTask => ({
 const round = { reviewer: "r", headSha: "h", fixHead: "f" };
 
 describe("LanesTimeline", () => {
+  it("shows an author awaiting review as waiting in every Lanes status view", () => {
+    const at = 10 * 3_600_000;
+    const author = { lane: "codex-12", silent: false, lastEventAt: at, bars: [], awaiting: [923],
+      lastRecord: { kind: "pr_opened" as const, pr: 923, at } };
+    const { container } = render(<LanesTimeline lanes={[author]} now={at} windowMs={3_600_000} />);
+    const board = screen.getByRole("list", { name: "Agent board" });
+    expect(within(board).getByText("codex-12").closest("li")!.querySelector(".ab-pill")).toHaveAttribute("data-status", "awaiting");
+    const timeline = within(screen.getByRole("list", { name: "Agent lanes" })).getByText("codex-12").closest("li")!;
+    expect(timeline.querySelector('.lt-flag[data-flag="waiting"]')).toHaveTextContent("waiting");
+    expect(screen.getByRole("button", { name: "Waiting 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Free 0" })).toBeInTheDocument();
+    expect(container.querySelector('[data-kind="free"]')).toHaveTextContent("FREE HANDSnone right now");
+  });
+
   it("counts every available status in exactly one filter", async () => {
     const H = 3_600_000, at = 10 * H;
     const rows = [

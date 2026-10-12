@@ -354,3 +354,18 @@ describe("the task inspector fits its ladder and preserves lane names (#918, #92
     expect(componentSource()).toMatch(/<span className="mg-who" title=\{r\.who\}>/);
   });
 });
+
+describe("the mission header fits a phone viewport (#948)", () => {
+  it("keeps pinned chrome below 120px and truncates breadcrumb names", () => {
+    const shell = STYLESHEETS["./styles.css"] ?? "";
+    const mission = STYLESHEETS["./components/mission-view.css"] ?? "";
+    const shellPhone = shell.split("@media (max-width: 600px)").at(-1) ?? "";
+    const phone = mission.split("@media (max-width: 600px)").at(-1) ?? "";
+    expect(shellPhone).toMatch(/\.topbar-mission,\s*\.topbar-menu,\s*\.topbar button\[aria-label="Refresh"\]\s*\{\s*display:\s*none/s);
+    expect(phone).toMatch(/\.mv\[data-page="full"\]\s*>\s*\.mv-head\s*\{[^}]*flex-wrap:\s*nowrap/s);
+    expect(phone).toMatch(/\.mv\[data-page="full"\]\s*>\s*\.mv-head\s+\.mv-live-age\s*\{[^}]*display:\s*none/s);
+    expect(phone).toMatch(/\.mv\[data-page="full"\]\s*>\s*\.mv-body\s*\{[^}]*min-height:\s*75vh[^}]*overflow-y:\s*auto/s);
+    expect(phone).toMatch(/\.mv-crumbs\s*\{[^}]*display:\s*none/s);
+    expect(mission).toMatch(/\.mv-crumbs\s*>\s*\.mv-dim,\s*\.mv-crumbs\s*>\s*\.mv-brand:last-child\s*\{[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/s);
+  });
+});

@@ -117,6 +117,12 @@
 .mv[data-page="full"] > .mv-body > .mv-journeys, .mv[data-page="full"] > .mv-body > .mv-content { max-height: calc(100vh - 224px); }
 .mv[data-page="full"]:has(> .mv-run-graph) > .mv-body > .mv-journeys, .mv[data-page="full"]:has(> .mv-run-graph) > .mv-body > .mv-content { max-height: calc(100vh - 286px); }
 .mv-crumbs { display: flex; align-items: center; gap: 10px; }
+.mv-crumbs > .mv-dim, .mv-crumbs > .mv-brand:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .mv-logo { width: 26px; height: 26px; border-radius: 7px; background: #E9E7E2; color: #0B0C0F; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; }
 .mv-brand { font-weight: 600; font-size: 14px; }
 .mv-slash, .mv-dim { color: #8D929C; }
@@ -155,6 +161,45 @@
 .mv-run-part h3 { margin: 0; font-size: 11px; font-weight: 500; opacity: .7; }
 .mv-run-part ol { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .mv-node { font: inherit; padding: 2px 8px; border-radius: 6px; border: 1px solid #24272E; background: transparent; color: inherit; cursor: pointer; }
+
+/* #948: keep the full-page mission views usable at phone height. Hide the breadcrumb
+ * on phones and leave the tabs as the page header. */
+@media (max-width: 600px) {
+  .mv[data-page="full"] > .mv-head {
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    padding: 6px 8px;
+    gap: 6px;
+  }
+  .mv[data-page="full"] > .mv-head .mv-live-age { display: none; }
+  .mv[data-page="full"] > .mv-head .mv-crumbs { display: none; }
+  .mv[data-page="full"] > .mv-body {
+    box-sizing: border-box;
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    min-height: 75vh;
+    max-height: calc(100vh - 190px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 8px 8px 72px;
+  }
+  .mv[data-page="full"] > .mv-body > .mv-summary,
+  .mv[data-page="full"] > .mv-body > .mv-run-graph {
+    flex: 0 0 100%;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0;
+  }
+  /* The body owns phone scrolling; the desktop column height cap would create a
+   * second scroll area below the counters and step strip. */
+  .mv[data-page="full"] > .mv-body > .mv-journeys,
+  .mv[data-page="full"] > .mv-body > .mv-content {
+    max-height: none;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+}
 
 /* #735: one progress bar per work group, counts spelled out under it; no spinners. */
 .mv-progress { display: flex; flex-direction: column; gap: 5px; min-width: 0; }

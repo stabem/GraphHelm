@@ -69,6 +69,8 @@ describe("MissionView", () => {
     expect(first.querySelector(".mv-progress-text")!.textContent).toBe(before);
     expect(first.querySelector('[data-progress="proven"]')).toHaveStyle({ flexGrow: "0" });
     expect(first.querySelector('[data-progress="work"]')).not.toHaveStyle({ background: "#4ADE9B" });
+  });
+
   it("moves draft approval to Proof and removes old navigation", async () => {
     const user = fastUserEvent();
     const onApprove = vi.fn().mockResolvedValue(undefined);

@@ -4961,7 +4961,8 @@ describe("execution reads preserve newer observed state", () => {
 
 // #673: DOM + stubbed I/O; observes wiring from the one health read to Runtime status.
 it.each(["vanished", "panicked", "clean", null])("shows Last stop only for an unclean previous exit: %s", async (state) => {
-  const client = stubClient({ health: vi.fn(async () => state === null ? null : { state, pid: 1, at: 2, ...(state === "panicked" ? { location: "runtime/src/driver.rs:42", lastPanic: { location: "unknown" } } : {}) }) });
+  const prior = "0123456789abcdef0123456789abcdef";
+  const client = stubClient({ health: vi.fn(async () => state === null ? null : { state, pid: 1, at: 2, ...(state === "panicked" ? { location: "runtime/src/driver.rs:42", lastPanic: { location: "unknown" } } : {}), ...(state === "vanished" ? { instance: prior } : {}) }) });
   render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null} session={async () => ({ token: "local-token", project: "GraphHelm" })} />);
   await screen.findByText("live");
   if (state === "vanished") {
@@ -4970,6 +4971,7 @@ it.each(["vanished", "panicked", "clean", null])("shows Last stop only for an un
     expect(line).not.toHaveTextContent("pid 1");
     expect(line).not.toHaveTextContent("1970-");
     expect(line.querySelector("time")).toHaveAttribute("title", expect.stringContaining("PID 1"));
+    expect(line).toHaveTextContent(`instance: ${prior}`);
   }
   else if (state === "panicked") {
     const line = screen.getByLabelText("Previous Runtime exit");
@@ -4977,6 +4979,7 @@ it.each(["vanished", "panicked", "clean", null])("shows Last stop only for an un
     expect(line.querySelector("time")).toHaveAttribute("title", expect.stringContaining("PID 1"));
     expect(line).toHaveTextContent("location: runtime/src/driver.rs:42");
     expect(line).toHaveTextContent("last panic: unknown");
+    expect(line).toHaveTextContent("instance unavailable");
   } else expect(screen.queryByText(/Last stop:/)).not.toBeInTheDocument();
   expect(client.health).toHaveBeenCalledTimes(1);
 });

@@ -15,6 +15,8 @@ import threading
 import unittest
 from unittest.mock import patch
 
+# Keep sibling hook modules importable when unittest is launched from the repo root.
+sys.path.insert(0, str(Path(__file__).parent))
 from test_task_handoff import RuntimeHandler
 import run_team
 import task_handoff

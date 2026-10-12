@@ -190,6 +190,36 @@ class HandoffTests(unittest.TestCase):
                 MODULE.status("codex", "receiver", offered["offerId"])
         self.assertEqual(len([row for row in RuntimeHandler.requests if row[0] == "POST"]), posts_before)
 
+    def test_status_receipt_briefings_remain_readable_without_current_briefing(self):
+        offered_digest = {"asOfSequence": 10, "nextStep": {"kind": "diagnose"},
+                          "pending": [{"id": "offered"}], "unevaluated": [],
+                          "decisions": [], "workDone": []}
+        receipt_digest = {"asOfSequence": 20, "nextStep": {"kind": "diagnose"},
+                          "pending": [], "unevaluated": [{"id": "received"}],
+                          "decisions": [], "workDone": []}
+        offered_reference = {"asOfSequence": 10, "nextStep": {"kind": "diagnose"},
+                             "counts": {"pendingCount": 1, "unevaluatedCount": 0,
+                                        "decisionsCount": 0, "workDoneCount": 0}}
+        receipt_reference = {"asOfSequence": 20, "nextStep": {"kind": "diagnose"},
+                             "counts": {"pendingCount": 0, "unevaluatedCount": 1,
+                                        "decisionsCount": 0, "workDoneCount": 0}}
+        with patch.dict(os.environ, self.env, clear=False):
+            RuntimeHandler.briefing_data = offered_digest
+            offered = MODULE.offer("claude", "sender", "codex", "receiver")
+            empty = MODULE.status("codex", "receiver", offered["offerId"])
+            self.assertEqual(empty["offers"][0]["receiptBriefings"], {})
+            RuntimeHandler.briefing_data = receipt_digest
+            received = MODULE.receive("codex", "receiver", offered["offerId"])
+            RuntimeHandler.requests = []
+            with patch.object(MODULE, "_briefing", side_effect=AssertionError("current briefing unavailable")):
+                report = MODULE.status("codex", "receiver", offered["offerId"])
+        entry = report["offers"][0]
+        self.assertEqual(entry["briefingReference"], offered_reference)
+        self.assertEqual(entry["receipts"], [received["receiptId"]])
+        self.assertEqual(entry["receiptBriefings"], {received["receiptId"]: receipt_reference})
+        self.assertFalse(any("/briefing" in row[1] or row[0] == "POST"
+                             for row in RuntimeHandler.requests))
+
     def test_lost_http_ack_is_reconciled_from_sealed_records_without_post_retry(self):
         RuntimeHandler.post_mode = "drop"
         with patch.dict(os.environ, self.env, clear=False):

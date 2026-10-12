@@ -2056,7 +2056,7 @@ export default function App({
     let active = true;
     setNativeRequests(null);
     const read = () => { void client.listNativeChatRequests(selected).then(
-      (page) => { if (active && clientRef.current === client && selectedRef.current === selected) setNativeRequests(page.requests); },
+      (page) => { if (active && clientRef.current === client && selectedRef.current === selected) setNativeRequests((previous) => previous !== null && sameValue(previous, page.requests) ? previous : page.requests); },
       () => { if (active && clientRef.current === client && selectedRef.current === selected) setNativeRequests(null); },
     ); };
     read();

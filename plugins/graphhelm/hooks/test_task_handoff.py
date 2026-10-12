@@ -259,23 +259,45 @@ class HandoffTests(unittest.TestCase):
             offered = MODULE.offer("claude", "sender", "codex", "receiver")
             received = MODULE.receive("codex", "receiver", offered["offerId"])
             evidence_id = f"evidence-{received['receiptId']}"
-            content, _ = RuntimeHandler.evidence[evidence_id]
-            signal = json.loads(content)
-            details = json.loads(signal["description"])
-            details["briefing"] = {"asOfSequence": "invalid"}
-            signal["description"] = json.dumps(details)
-            content = json.dumps(signal, separators=(",", ":"))
-            digest = hashlib.sha256(content.encode()).hexdigest()
-            RuntimeHandler.evidence[evidence_id] = (content, digest)
             receipt_event = RuntimeHandler.events[-1]
-            receipt_event["evidenceRefs"][0]["contentSha256"] = digest
-            receipt_event["kind"]["data"]["envelopeSha256"] = digest
-            posts_before = len([row for row in RuntimeHandler.requests if row[0] == "POST"])
-            with self.assertRaisesRegex(ValueError, "receipt briefing"):
-                MODULE.receive("codex", "receiver", offered["offerId"])
+            original_content, original_digest = RuntimeHandler.evidence[evidence_id]
+            original_event = json.loads(json.dumps(receipt_event))
+
+            invalid_content = json.loads(original_content)
+            invalid_details = json.loads(invalid_content["description"])
+            invalid_details["briefing"] = {"asOfSequence": "invalid"}
+            invalid_content["description"] = json.dumps(invalid_details)
+            invalid_content = json.dumps(invalid_content, separators=(",", ":"))
+            invalid_digest = hashlib.sha256(invalid_content.encode()).hexdigest()
+
+            for mutation, message in (
+                    ("missing", "evidence"),
+                    ("corrupt", "digest"),
+                    ("invalid", "receipt briefing")):
+                RuntimeHandler.evidence[evidence_id] = (original_content, original_digest)
+                receipt_event.clear()
+                receipt_event.update(json.loads(json.dumps(original_event)))
+                if mutation == "missing":
+                    del RuntimeHandler.evidence[evidence_id]
+                elif mutation == "corrupt":
+                    RuntimeHandler.evidence[evidence_id] = (original_content + "tampered", original_digest)
+                else:
+                    RuntimeHandler.evidence[evidence_id] = (invalid_content, invalid_digest)
+                    receipt_event["evidenceRefs"][0]["contentSha256"] = invalid_digest
+                    receipt_event["kind"]["data"]["envelopeSha256"] = invalid_digest
+                RuntimeHandler.requests = []
+                with self.assertRaisesRegex(ValueError, message):
+                    MODULE.receive("codex", "receiver", offered["offerId"])
+                self.assertFalse(any(row[0] == "POST" or "/briefing" in row[1]
+                                     for row in RuntimeHandler.requests))
+
+            RuntimeHandler.evidence[evidence_id] = (invalid_content, invalid_digest)
+            receipt_event["evidenceRefs"][0]["contentSha256"] = invalid_digest
+            receipt_event["kind"]["data"]["envelopeSha256"] = invalid_digest
+            RuntimeHandler.requests = []
             with self.assertRaisesRegex(ValueError, "receipt briefing"):
                 MODULE.status("codex", "receiver", offered["offerId"])
-        self.assertEqual(len([row for row in RuntimeHandler.requests if row[0] == "POST"]), posts_before)
+        self.assertFalse(any(row[0] == "POST" for row in RuntimeHandler.requests))
 
     def test_status_receipt_briefings_remain_readable_without_current_briefing(self):
         offered_digest = {"asOfSequence": 10, "nextStep": {"kind": "diagnose"},

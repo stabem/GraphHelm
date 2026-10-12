@@ -8242,6 +8242,26 @@ mod limit_tests {
         );
     }
 
+    #[test]
+    fn an_expired_shared_prefix_detects_same_length_in_place_rewrites() {
+        let directory = tempfile::tempdir().unwrap();
+        let build = cache_repository(directory.path());
+        build.append_atomic(&valid_graph_request()).unwrap();
+        drop(build);
+        let cache = PrefixCache::new(std::time::Duration::ZERO);
+        let warmed = shared_repository(directory.path(), &cache);
+        assert_eq!(warmed.next_sequence(&wake_scope(), "stream-1").unwrap(), 2);
+        drop(warmed);
+
+        let journal = directory.path().join("journal.jsonl");
+        let mut bytes = std::fs::read(&journal).unwrap();
+        bytes[10] = bytes[10].wrapping_add(1);
+        std::fs::write(&journal, &bytes).unwrap();
+
+        let checked = shared_repository(directory.path(), &cache);
+        assert!(checked.next_sequence(&wake_scope(), "stream-1").is_err());
+    }
+
     /// #506: a walk from genesis is stamped when it ENDS. Stamped at its start, a walk longer
     /// than the cache's age produced a prefix already expired, so the next read walked from
     /// genesis again, and a store whose walk outgrew the age re-verified on every read (a pinned

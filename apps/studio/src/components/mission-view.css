@@ -182,6 +182,13 @@
     overscroll-behavior: contain;
     padding: 8px 8px 72px;
   }
+  .mv[data-page="full"] > .mv-body > .mv-summary,
+  .mv[data-page="full"] > .mv-body > .mv-run-graph {
+    flex: 0 0 100%;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0;
+  }
 }
 
 /* #735: one progress bar per work group, counts spelled out under it; no spinners. */

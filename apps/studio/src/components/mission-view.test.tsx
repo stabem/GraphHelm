@@ -130,6 +130,20 @@ describe("MissionView", () => {
     expect(screen.getByText("#40 Loose PR")).toBeInTheDocument();
   });
 
+  it("#948: keeps the Graph counters and run graph inside the phone scroll body", () => {
+    const task = { key: "t1", taskId: "t1", branch: null, issue: 1, pr: 1, lane: "codex-17", assignedBy: null,
+      headSha: "abcdef0123456789", journeys: ["watch"], plan: null, step: "implement", blockedBy: null,
+      reviewers: [], mergeSha: null, repoUrl: null, title: "Work", summary: null, prTitle: "Work", prSummary: null,
+      strayVerdicts: [], critic: null, recordedHeads: [], parent: null, rounds: [], clock: { since: null, spent: {} },
+      lastSequence: 1 } as unknown as TaskState;
+    const node = { id: "mark", declaredName: "Mark", state: "ready", touches: 0, lastEventAt: null, history: [], reopened: null };
+    const { container } = render(<MissionView journeys={journeys} tasks={[task]} lanes={[]} now={0} runFor={() => null}
+      frameUrl={() => null} onMarkSafe={vi.fn()} onTeam={vi.fn()} runNodes={[node]} />);
+    const body = container.querySelector(".mv-body")!;
+    expect(body.querySelector(".mv-summary")).not.toBeNull();
+    expect(body.querySelector('[aria-label="Run graph"]')).not.toBeNull();
+  });
+
   it("clicking a step chip selects its column, and a task node opens its custody", async () => {
     const userEvent = fastUserEvent();
     const two: JourneyView[] = [{ ...journeys[0]!, steps: [...journeys[0]!.steps, { stepId: "next", screen: { screenId: "next", title: "Next step", scopePaths: [] }, promises: [] }] }];

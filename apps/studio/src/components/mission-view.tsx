@@ -421,21 +421,23 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
     ready: group.rows.filter((r) => r.task.lane === null).length,
     needYou: group.rows.filter((r) => r.task.blocked).length,
   } : null;
+  const summary = gsum && sub === "graph" ? (
+    <p className="mg-summary mv-summary" aria-label="Summary">
+      <span className="mg-sum" data-tone="proven"><b>{`${gsum.proven}/${group!.tasks.length}`}</b> proven</span>
+      <span className="mg-sum" data-tone="work"><b>{gsum.inFlight}</b> in flight</span>
+      <span className="mg-sum" data-tone="ready"><b>{gsum.ready}</b> ready, unclaimed</span>
+      <span className="mg-sum" data-tone="stalled"><b>{gsum.needYou}</b> need you</span>
+      {away && <><span className="mv-sum-fill" /><span className="mv-away">{awayText(away)}</span></>}
+    </p>
+  ) : null;
   return (
     // data-wide: the Studio layout gives the mission view the whole main area (mission-view.css).
     <div className="mv" data-wide="true" data-page={page}>
       {header}
-      {gsum && sub === "graph" && (
-        <p className="mg-summary mv-summary" aria-label="Summary">
-          <span className="mg-sum" data-tone="proven"><b>{`${gsum.proven}/${group!.tasks.length}`}</b> proven</span>
-          <span className="mg-sum" data-tone="work"><b>{gsum.inFlight}</b> in flight</span>
-          <span className="mg-sum" data-tone="ready"><b>{gsum.ready}</b> ready, unclaimed</span>
-          <span className="mg-sum" data-tone="stalled"><b>{gsum.needYou}</b> need you</span>
-          {away && <><span className="mv-sum-fill" /><span className="mv-away">{awayText(away)}</span></>}
-        </p>
-      )}
-      {sub === "graph" && runGraph}
+      {page !== "full" && summary}
       <div className="mv-body">
+        {page === "full" && summary}
+        {page === "full" && sub === "graph" && runGraph}
         {proofMode && (
           <nav aria-label="Journeys" className="mv-journeys">
             <span className="mv-cap">Journeys</span>
@@ -578,6 +580,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
           </nav>
         )}
         <div className="mv-content">
+          {page !== "full" && sub === "graph" && runGraph}
           {sub === "graph" && group && <IssueGraph group={group} stepFor={stepFor} selectedTaskKey={shownTask} selectedCol={stageCol}
             onSelectTask={(key) => { setTaskKey(key); setStageCol(null); }} onSelectCol={(c) => { setStageCol(c); setTaskKey(null); }} onOpenTest={openTest} health={health} pace={pace}
             {...(inspectorActions ? { inspectorActions } : {})} />}

@@ -568,6 +568,10 @@ pub struct UpdateArgs {
     /// built from.
     #[arg(long)]
     pub source: Option<PathBuf>,
+    /// Build the clone even when it could not be brought up to origin/main (local changes, another
+    /// branch, a diverged main). Without it such an update stops before compiling.
+    #[arg(long)]
+    pub keep_local: bool,
 }
 
 #[derive(Debug, Args)]

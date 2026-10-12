@@ -121,6 +121,7 @@ def _briefing(url: str, token: str, execution: str) -> dict:
 
 def _events(url: str, token: str, execution: str) -> list[dict]:
     after = 0
+    last_head = 0
     found: list[dict] = []
     for _ in range(MAX_PAGES):
         reply = request(
@@ -130,13 +131,18 @@ def _events(url: str, token: str, execution: str) -> list[dict]:
         if not isinstance(data, dict) or not isinstance(data.get("events"), list) or type(data.get("head")) is not int:
             raise ValueError("invalid Runtime event page")
         page = data["events"]
+        head = data["head"]
+        if len(page) > MAX_PAGE_SIZE or head < after or head < last_head:
+            raise ValueError("invalid Runtime event page")
+        last_head = head
         previous = after
         for event in page:
             if not isinstance(event, dict) or type(event.get("sequence")) is not int or event["sequence"] <= after:
                 raise ValueError("event page did not advance")
+            if event["sequence"] > head:
+                raise ValueError("invalid Runtime event page")
             found.append(event)
             after = event["sequence"]
-        head = data["head"]
         if not page:
             if head > after:
                 raise ValueError("Runtime returned an incomplete event page")

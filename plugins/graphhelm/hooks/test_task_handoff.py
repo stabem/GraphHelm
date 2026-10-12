@@ -27,6 +27,7 @@ class RuntimeHandler(BaseHTTPRequestHandler):
     requests = []
     next_sequence = 1
     bad_pages = False
+    scripted_pages = None
     post_mode = "normal"
     briefing_data = None
 
@@ -46,6 +47,10 @@ class RuntimeHandler(BaseHTTPRequestHandler):
                     "contentSha256": digest, "content": content}}
         elif "/events?after=" in self.path:
             after = int(self.path.split("after=", 1)[1].split("&", 1)[0])
+            if self.scripted_pages:
+                body = {"ok": True, "data": self.scripted_pages.pop(0)}
+                self._write(body)
+                return
             page = [event for event in self.events if event["sequence"] > after]
             if self.bad_pages:
                 page = [{"sequence": after}]
@@ -105,6 +110,7 @@ class HandoffTests(unittest.TestCase):
     def setUp(self):
         RuntimeHandler.events = []; RuntimeHandler.evidence = {}; RuntimeHandler.requests = []
         RuntimeHandler.next_sequence = 1; RuntimeHandler.bad_pages = False
+        RuntimeHandler.scripted_pages = None
         RuntimeHandler.post_mode = "normal"
         RuntimeHandler.briefing_data = None
         self.temp = tempfile.TemporaryDirectory()
@@ -359,6 +365,47 @@ class HandoffTests(unittest.TestCase):
             RuntimeHandler.bad_pages = True
             with self.assertRaisesRegex(ValueError, "did not advance"):
                 MODULE.status("codex", "receiver-1", offered["offerId"])
+
+    def test_event_page_bounds_refuse_invalid_history_before_other_io(self):
+        invalid = {
+            "oversized": [{"events": [{"sequence": i} for i in range(1, 258)], "head": 257}],
+            "negative_head": [{"events": [], "head": -1}],
+            "head_behind_cursor": [{"events": [{"sequence": 1}], "head": 2},
+                                   {"events": [], "head": 0}],
+            "sequence_beyond_head": [{"events": [{"sequence": 2}], "head": 1}],
+            "regressing_head": [{"events": [{"sequence": 1}], "head": 3},
+                                {"events": [{"sequence": 2}], "head": 2}],
+        }
+        with patch.dict(os.environ, self.env, clear=False):
+            for name, pages in invalid.items():
+                for operation in ("offer", "receive", "status"):
+                    with self.subTest(case=name, operation=operation):
+                        RuntimeHandler.scripted_pages = list(pages)
+                        RuntimeHandler.requests = []
+                        with self.assertRaisesRegex(ValueError, "event page"):
+                            if operation == "offer":
+                                MODULE.offer("claude", "sender", "codex", "receiver")
+                            elif operation == "receive":
+                                MODULE.receive("codex", "receiver", "offer-1")
+                            else:
+                                MODULE.status("codex", "receiver", None)
+                        self.assertEqual(len(RuntimeHandler.requests), len(pages))
+                        self.assertIn("/events?after=0", RuntimeHandler.requests[0][1])
+                        self.assertTrue(all(request[0] == "GET" and "/events?after=" in request[1]
+                                            for request in RuntimeHandler.requests))
+
+    def test_event_page_bounds_allow_empty_and_advancing_heads(self):
+        valid = [[{"events": [], "head": 0}],
+                 [{"events": [{"sequence": 1}], "head": 2},
+                  {"events": [{"sequence": 2}], "head": 3},
+                  {"events": [{"sequence": 3}], "head": 3}]]
+        with patch.dict(os.environ, self.env, clear=False):
+            for pages in valid:
+                RuntimeHandler.scripted_pages = list(pages)
+                RuntimeHandler.requests = []
+                result = MODULE.status("codex", "receiver", None)
+                self.assertEqual(result["offers"], [])
+                self.assertEqual(len(RuntimeHandler.requests), len(pages))
 
     def test_colliding_host_session_pair_cannot_receive_the_offer(self):
         with patch.dict(os.environ, self.env, clear=False):

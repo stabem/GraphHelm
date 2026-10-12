@@ -1929,7 +1929,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   .projects-backdrop { position: absolute; inset: 0; z-index: 19; border: 0; background: rgb(0 0 0 / 35%); }
   .app.projects-open .projects-backdrop { display: block; }
   .app:not(.projects-open) .projects-backdrop { display: none; }
-  .app.projects-open > .stage { position: relative; z-index: 21; }
   .rail-close { display: inline-flex; }
   .app, .app:not(.projects-open) { grid-template-columns: minmax(0, 1fr); }
   .app > .grip { display: none; }
@@ -2472,7 +2471,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .right-when { color: var(--dim); }
 
 /* Studio layout (spec section 3): Projects, Chat, Canvas, Right panel. */
-.topbar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--edge); }
+.topbar { position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--edge); }
 .topbar-mission { flex: 1; min-width: 0; display: flex; flex-wrap: nowrap; align-items: baseline; column-gap: 4px; }
 .topbar-mission .run-project { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-mission .run-project { font-size: 15px; color: var(--dim); }

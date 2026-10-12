@@ -226,6 +226,11 @@ adapter retrieved the offer and current briefing. It does not prove model compre
 acceptance, node ownership, permission transfer, or completion. Runtime owner credentials authorize
 declared actor labels; they do not cryptographically authenticate the host or model.
 
+Offer, receive, and status refuse event pages with more than 256 entries, negative or regressing
+heads, a head behind the requested cursor, or an event sequence beyond its page head. The reader
+accepts increasing cursors and heads that advance while it reads concurrent appends. Invalid
+history is refused before the adapter fetches evidence or briefing or attempts a write.
+
 An `offer` replay reports `already_recorded` only after validating the sealed offer kind,
 requested identities and handoff ID, protocol metadata, and historical briefing digest. Invalid
 or unavailable evidence is refused without fetching a current briefing or writing another offer.

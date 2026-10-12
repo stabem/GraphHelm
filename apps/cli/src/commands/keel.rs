@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use graphhelm_execution::{
@@ -112,7 +111,7 @@ pub(super) fn check(
     }
     let base = if base.is_empty() { "HEAD" } else { base };
     let head = if head.is_empty() { "HEAD" } else { head };
-    let merge_base = match Command::new("git")
+    let merge_base = match crate::process::command("git")
         .arg("-C")
         .arg(repo)
         .args(["merge-base", base, head])
@@ -133,7 +132,7 @@ pub(super) fn check(
         Err(error) => return input_error(format!("git did not start: {error}"), "/repo"),
     };
     let diff_range = format!("{merge_base}..{head}");
-    let output = match Command::new("git")
+    let output = match crate::process::command("git")
         .arg("-C")
         .arg(repo)
         .args([
@@ -408,7 +407,7 @@ fn journey_findings(
     changed: &[String],
 ) -> Result<Vec<Finding>, Box<Outcome>> {
     let object = format!("{head}^{{commit}}");
-    let head_sha = match Command::new("git")
+    let head_sha = match crate::process::command("git")
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "--verify", "--quiet", &object])
@@ -698,7 +697,7 @@ const PLAN_COMMAND: &str = "keel.plan";
 
 /// The repository's HEAD commit, or an empty revision outside git.
 fn head_of(repo: &Path) -> String {
-    Command::new("git")
+    crate::process::command("git")
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])
@@ -1076,7 +1075,7 @@ mod tests {
             });
             let _ = observed.send(Observed::Ready(closed));
         });
-        let mut command = Command::new(std::env::current_exe().unwrap());
+        let mut command = crate::process::command(std::env::current_exe().unwrap());
         command
             .args(["--exact", HOLDER_TEST, "--nocapture"])
             .env("GRAPHHELM_TEST_HOLDER_ADDRESS", address.to_string())
@@ -1157,7 +1156,7 @@ mod tests {
                 // Keep this descendant and its inherited stdout alive until tree cleanup.
                 let _ = connection.read(&mut [0]);
             } else {
-                let mut command = Command::new(std::env::current_exe().unwrap());
+                let mut command = crate::process::command(std::env::current_exe().unwrap());
                 command
                     .args(["--exact", HOLDER_TEST, "--nocapture"])
                     .env("GRAPHHELM_TEST_PIPE_HOLDER", "1");

@@ -119,6 +119,9 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
 - Every cargo build, test and clippy run goes through the build slot (LANES.md §3). Run clippy
   only on touched crates; name and justify any broader lint scope in the card. Rust tests use
   `-- --test-threads=2`. The fmt and workspace-source-guard checks remain reached by Rust edits.
+- Checks never open a console window: every child the CLI or a tool spawns runs hidden in the
+  calling terminal (`CREATE_NO_WINDOW` on Windows). A new spawn site uses the helper, or the
+  `process.rs` / `test_no_console_window.py` source guards fail.
 - Docs-only changes need only the existing applicable docs guards and `git diff --check`, not
   Rust builds, Studio checks or journey previews.
 

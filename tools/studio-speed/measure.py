@@ -18,6 +18,9 @@ import statistics
 import subprocess
 import sys
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 
 def summarize(samples):
     if len(samples) != 10 or any(not math.isfinite(x) or x < 0 for x in samples):
@@ -77,7 +80,7 @@ def main():
     stage = "fixture startup"
     try:
         subprocess.run(fixture + ["up", fixture_dir.as_posix(), str(args.runtime_port), str(args.studio_port)],
-                       cwd=repo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=180, check=True)
+                       cwd=repo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=180, check=True, creationflags=NO_WINDOW)
         token = (fixture_dir / ".graphhelm/events.token").read_text().splitlines()[0]
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
@@ -157,11 +160,11 @@ def main():
                         context.close()
                 report = {
                     "schema": "graphhelm.studio-speed/1", "measuredAt": datetime.now(timezone.utc).isoformat(),
-                    "sourceHead": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip(),
-                    "sourceDirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=repo, text=True).strip()),
+                    "sourceHead": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True, creationflags=NO_WINDOW).strip(),
+                    "sourceDirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=repo, text=True, creationflags=NO_WINDOW).strip()),
                     "platform": platform.system(), "browser": browser.version,
                     "playwright": importlib.metadata.version("playwright"),
-                    "runtime": subprocess.check_output(["graphhelm", "--version"], text=True).strip(),
+                    "runtime": subprocess.check_output(["graphhelm", "--version"], text=True, creationflags=NO_WINDOW).strip(),
                     "runs": 10, "parallelism": 1, "viewport": {"width": 1440, "height": 1000},
                     "mode": "Vite dev; fresh context per run; shared warm server; no untimed warmup",
                     "fixture": "manual-override-deploy; one run; one question; adds one synthetic chat record per run",
@@ -182,7 +185,7 @@ def main():
         return 1
     finally:
         subprocess.run(fixture + ["down", fixture_dir.as_posix()], cwd=repo,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=True)
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=True, creationflags=NO_WINDOW)
     return 0
 
 

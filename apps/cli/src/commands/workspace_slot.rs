@@ -21,7 +21,6 @@
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use graphhelm_protocols::Diagnostic;
@@ -151,7 +150,7 @@ fn priority_allowed(root: &Path, lane: &str) -> bool {
 /// The workspace's own package names, for `--clean-workspace` (`cargo metadata --no-deps`, run
 /// in the current directory). `None` when the directory is no cargo workspace or cargo fails.
 fn workspace_packages(cargo: &str, cwd: &Path) -> Option<Vec<String>> {
-    let output = Command::new(cargo)
+    let output = crate::process::command(cargo)
         .current_dir(cwd)
         .args(["metadata", "--no-deps", "--format-version", "1"])
         .output()
@@ -180,7 +179,7 @@ fn clean_workspace_packages(
     let packages = workspace_packages(cargo, cwd).ok_or_else(|| {
         format!("--clean-workspace: no cargo workspace at the current directory {directory}; run the slot from the worktree root")
     })?;
-    let mut clean = Command::new(cargo);
+    let mut clean = crate::process::command(cargo);
     clean
         .current_dir(cwd)
         .arg("clean")
@@ -1100,7 +1099,7 @@ fn run_admitted_slot_in_with_batch(
                 code = 1;
                 break;
             };
-            let status = Command::new(program)
+            let status = crate::process::command(program)
                 .current_dir(cwd)
                 .args(arguments)
                 .env("CARGO_TARGET_DIR", &target)
@@ -1125,7 +1124,7 @@ fn run_admitted_slot_in_with_batch(
             "remaining": remaining, "stopReason": stop_reason});
         (code, Some(result))
     } else {
-        let status = Command::new(program)
+        let status = crate::process::command(program)
             .current_dir(cwd)
             .args(arguments)
             .env("CARGO_TARGET_DIR", &target)

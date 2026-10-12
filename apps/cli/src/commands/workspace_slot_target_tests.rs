@@ -2,7 +2,6 @@
 use super::{SlotRequest, run_admitted_slot_in};
 use serde_json::Value;
 use std::path::Path;
-use std::process::Command;
 
 fn run(args: &[&str]) -> (i32, Value) {
     use clap::Parser;
@@ -58,7 +57,7 @@ fn slot_in(root: &Path, lane: &str, worktree: &Path, log: &Path) -> (i32, Value)
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = crate::process::command("git")
         .arg("-C")
         .arg(dir)
         .args([
@@ -89,7 +88,7 @@ fn repo(dir: &Path) -> std::path::PathBuf {
 fn link_dir(link: &Path, target: &Path) {
     #[cfg(windows)]
     {
-        let out = Command::new("cmd")
+        let out = crate::process::command("cmd")
             .args(["/C", "mklink", "/J"])
             .arg(link)
             .arg(target)

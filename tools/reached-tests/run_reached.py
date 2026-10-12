@@ -22,6 +22,9 @@ import re
 from pathlib import Path
 from typing import Any
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 
 SELECTOR = Path(__file__).with_name("reached_tests.py")
 MAX_CAPTURE = 4000
@@ -35,7 +38,7 @@ _BATCH_STOP_REASONS = {"exhausted", "leaseBoundary", "deadline", "childFailure",
 
 
 def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True, creationflags=NO_WINDOW).stdout.strip()
 
 
 def _tail(path: Path) -> str:
@@ -75,7 +78,7 @@ def _selector(repo: Path, base: str, head: str, log: Path, graphhelm: Path | Non
         env["PATH"] = str(graphhelm.parent) + os.pathsep + env.get("PATH", "")
     proc = subprocess.run(
         [sys.executable, str(SELECTOR), "--repo", str(repo), "--base", base, "--head", head, "--json"],
-        cwd=repo, capture_output=True, text=True, env=env,
+        cwd=repo, capture_output=True, text=True, env=env, creationflags=NO_WINDOW
     )
     log.write_text(proc.stdout + ("\n[selector stderr]\n" + proc.stderr if proc.stderr else ""), encoding="utf-8")
     if proc.returncode:
@@ -285,7 +288,7 @@ def _env_fingerprint(env: dict[str, str]) -> str:
 
 def _version(argv: list[str]) -> str:
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW)
     except (OSError, subprocess.SubprocessError) as exc:
         return f"unavailable: {type(exc).__name__}"
     return f"{proc.returncode}:{proc.stdout.strip()}"
@@ -379,7 +382,7 @@ def _preflight(repo: Path, output: Path, steps: list[dict[str, Any]],
         if value and not Path(value).exists():
             problems.append(f"env: {name}={value} does not exist")
     for key in ("user.name", "user.email"):
-        if subprocess.run(["git", "config", key], cwd=repo, capture_output=True, text=True).returncode != 0:
+        if subprocess.run(["git", "config", key], cwd=repo, capture_output=True, text=True, creationflags=NO_WINDOW).returncode != 0:
             warnings.append(f"identity: git {key} is not set; steps that commit will fail")
     return problems, warnings
 
@@ -563,7 +566,7 @@ def run(args: argparse.Namespace) -> int:
                     env["GRAPHHELM_SLOT_BATCH"] = json.dumps(payload, separators=(",", ":"))
                 step_started = time.monotonic()
                 with logfile.open("w", encoding="utf-8") as stream:
-                    proc = subprocess.run(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, text=True, env=env)
+                    proc = subprocess.run(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, text=True, env=env, creationflags=NO_WINDOW)
                 step_seconds = round(time.monotonic() - step_started, 3)
                 elapsed = time.monotonic() - started
                 if entry["slot"]:

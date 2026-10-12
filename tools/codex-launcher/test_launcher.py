@@ -5,6 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 
 @unittest.skipUnless(os.name == "nt", "Windows cmd launcher")
 class LauncherTest(unittest.TestCase):
@@ -20,7 +23,7 @@ class LauncherTest(unittest.TestCase):
             env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"], "GH_TEST_CALL": str(call)}
             wrapper = Path(__file__).with_name("run-codex.cmd")
             result = subprocess.run(["cmd", "/c", str(wrapper), "codex-10", "unique-tag", str(prompt)],
-                                    env=env, capture_output=True, timeout=10, check=False)
+                                    env=env, capture_output=True, timeout=10, check=False, creationflags=NO_WINDOW)
             self.assertEqual(result.returncode, 7)
             args = call.read_text(encoding="ascii")
             self.assertIn("tasks run-ended --lane \"codex-10\" --exit 7", args)

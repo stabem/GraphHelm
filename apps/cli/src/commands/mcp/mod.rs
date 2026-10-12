@@ -46,7 +46,7 @@ fn build_client(args: &McpArgs, session: String) -> Result<client::ApiClient, Ou
         };
         // A linked worktree belongs to the main checkout's Runtime. Keep ordinary
         // directories (including non-Git projects) on their existing path identity.
-        if let Ok(output) = std::process::Command::new("git")
+        if let Ok(output) = crate::process::command("git")
             .arg("-C")
             .arg(&project)
             .args([

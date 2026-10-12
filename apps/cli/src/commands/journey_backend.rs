@@ -7,7 +7,7 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -187,7 +187,7 @@ fn dechunk(mut rest: &str) -> String {
 pub(super) fn command(project: &Path, argv: &str) -> Result<Observation, String> {
     let mut words = argv.split_whitespace();
     let program = words.next().ok_or("empty argv")?;
-    let mut child = Command::new(program)
+    let mut child = crate::process::command(program)
         .args(words)
         .current_dir(project)
         .stdin(Stdio::null())

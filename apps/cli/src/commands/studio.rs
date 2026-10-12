@@ -112,7 +112,7 @@ pub(super) fn freshness(branch: &str, clean: bool, behind: u64, ahead: u64) -> F
 }
 
 fn git(source: &Path, arguments: &[&str]) -> Option<String> {
-    let output = Command::new("git")
+    let output = crate::process::command("git")
         .arg("-C")
         .arg(source)
         .args(arguments)
@@ -170,7 +170,7 @@ fn update(source: &Path) -> serde_json::Value {
             if lock_moved {
                 eprintln!("[studio] the Studio's dependencies changed; running npm ci");
                 let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
-                let installed = Command::new(npm)
+                let installed = crate::process::command(npm)
                     .args(["ci", "--prefix"])
                     .arg(source.join("apps/studio"))
                     .status()
@@ -220,7 +220,7 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
     // one, and on Windows with nothing at all once it was moved aside (2026-10-05).
     let root = install_root(std::env::current_exe().ok().as_deref());
     eprintln!("[update] installing the CLI (cargo install --locked --path apps/cli)");
-    let mut install = Command::new("cargo");
+    let mut install = crate::process::command("cargo");
     install
         .current_dir(&source)
         .args(["install", "--locked", "--path", "apps/cli"]);
@@ -307,7 +307,7 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
     let head = git(&source, &["rev-parse", "--short", "HEAD"]);
 
     let shell = if cfg!(windows) { "powershell" } else { "pwsh" };
-    let mut launch = Command::new(shell);
+    let mut launch = crate::process::command(shell);
     launch
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
         .arg(source.join(LAUNCHER))
@@ -470,7 +470,7 @@ mod tests {
 
     #[test]
     fn the_launcher_gets_the_projects_absolute_path_for_serve() {
-        let mut launch = Command::new("powershell");
+        let mut launch = crate::process::command("powershell");
         add_project(&mut launch, Path::new("/work/my project"));
         let given: Vec<_> = launch
             .get_args()
@@ -513,7 +513,7 @@ mod tests {
         )
         .unwrap();
         let launcher = Path::new(env!("CARGO_MANIFEST_DIR")).join("../studio/tools/studio-up.ps1");
-        let mut launch = Command::new("powershell");
+        let mut launch = crate::process::command("powershell");
         launch
             .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
             .arg(&launcher)
@@ -567,7 +567,7 @@ mod tests {
         .unwrap();
         let launcher = Path::new(env!("CARGO_MANIFEST_DIR")).join("../studio/tools/studio-up.ps1");
         let started = std::time::Instant::now();
-        let output = Command::new("powershell")
+        let output = crate::process::command("powershell")
             .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
             .arg(&launcher)
             .arg("-Events")

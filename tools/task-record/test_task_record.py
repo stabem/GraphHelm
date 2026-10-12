@@ -21,6 +21,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import task_record  # noqa: E402
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 HEAD_A = "a" * 40
 HEAD_B = "b" * 40
 
@@ -464,7 +467,7 @@ class Planned(unittest.TestCase):
         # and mocks only the planner process response. Cost: local Git, seconds, no network.
         repo = tempfile.mkdtemp()
         self.addCleanup(lambda: shutil.rmtree(repo, ignore_errors=True))
-        run = lambda *a: subprocess.run(["git", "-C", repo, *a], capture_output=True, check=True)
+        run = lambda *a: subprocess.run(["git", "-C", repo, *a], capture_output=True, check=True, creationflags=NO_WINDOW)
         run("init", "-q")
         run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base")
         run("update-ref", "refs/remotes/origin/main", "HEAD")

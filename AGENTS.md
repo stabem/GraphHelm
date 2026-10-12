@@ -72,6 +72,8 @@ Its unobserved results are investigation leads; missing coverage never proves co
 
 ## Toolchain and repository commands
 
+**No console windows.** Every child process a tool or the CLI starts runs hidden in the calling terminal: Rust spawns through `crate::process::command` (`CREATE_NO_WINDOW` on Windows), Python passes `creationflags=NO_WINDOW`; source guards in `apps/cli/src/process.rs` and `tools/reached-tests/test_no_console_window.py` enforce it.
+
 The pinned toolchain is Rust `1.97.1` with `rustfmt` and `clippy`. Install it when missing:
 
 ```powershell

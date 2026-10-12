@@ -19,6 +19,9 @@ import tempfile
 import time
 from pathlib import Path
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 
 REPO = Path(__file__).resolve().parents[2]
 PARENT = "e85e41a8eb0b8af6ef6eac95bf39a42cc9277f8c"
@@ -48,7 +51,7 @@ CASES = {
 
 def checked_output(command: list[str], *, cwd: Path) -> bytes:
     return subprocess.run(
-        command, cwd=cwd, check=True, capture_output=True, timeout=60
+        command, cwd=cwd, check=True, capture_output=True, timeout=60, creationflags=NO_WINDOW
     ).stdout
 
 
@@ -63,7 +66,7 @@ def run_test(directory: Path, test: str, utf8_mode: str) -> dict[str, object]:
         capture_output=True,
         text=True,
         errors="replace",
-        timeout=60,
+        timeout=60, creationflags=NO_WINDOW
     )
     output = result.stdout + result.stderr
     if "No module named pytest" in output or "no tests ran" in output:
@@ -128,14 +131,14 @@ def replay(scratch_root: Path) -> dict[str, object]:
                 cwd=green_root,
                 check=True,
                 capture_output=True,
-                timeout=60,
+                timeout=60, creationflags=NO_WINDOW
             )
             subprocess.run(
                 ["git", "apply", str(patch)],
                 cwd=green_root,
                 check=True,
                 capture_output=True,
-                timeout=60,
+                timeout=60, creationflags=NO_WINDOW
             )
             red_dir = red_root / "tools/token-bench"
             green_dir = green_root / "tools/token-bench"

@@ -31,6 +31,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+import os
+
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 KINDS = ("claimed", "planned", "released", "pr_opened", "review_assigned", "review_verdict", "merged", "closed", "critic_verdict")
@@ -52,7 +56,7 @@ def github_words(kind, number, repo):
         command += ["--repo", repo]
     try:
         # gh writes UTF-8; the platform default (cp1252 on Windows) cannot decode every byte of it (#526).
-        reply = json.loads(subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=60, check=True).stdout)
+        reply = json.loads(subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=60, check=True, creationflags=NO_WINDOW).stdout)
     except (OSError, subprocess.SubprocessError, ValueError):
         return None, None
     summary = next((line.split(":", 1)[1].strip() for line in (reply.get("body") or "").splitlines()
@@ -71,7 +75,7 @@ def merged_on_github(pr, sha, repo):
     for attempt in range(3):
         try:
             reply = json.loads(subprocess.run(command, capture_output=True, text=True,
-                                               encoding="utf-8", timeout=60, check=True).stdout)
+                                               encoding="utf-8", timeout=60, check=True, creationflags=NO_WINDOW).stdout)
         except (OSError, subprocess.SubprocessError, ValueError):
             sys.exit(f"task_record: could not confirm the merge for PR {pr}")
         if not isinstance(reply, dict):
@@ -97,7 +101,7 @@ def closed_on_github(pr, repo):
     for attempt in range(3):
         try:
             reply = json.loads(subprocess.run(command, capture_output=True, text=True,
-                                               encoding="utf-8", timeout=60, check=True).stdout)
+                                               encoding="utf-8", timeout=60, check=True, creationflags=NO_WINDOW).stdout)
         except (OSError, subprocess.SubprocessError, ValueError):
             sys.exit(f"task_record: could not confirm the closure for PR {pr}")
         if not isinstance(reply, dict):
@@ -118,7 +122,7 @@ def refuse_merged_pr_record(pr, repo):
         command += ["--repo", repo]
     try:
         reply = json.loads(subprocess.run(command, capture_output=True, text=True,
-                                          encoding="utf-8", timeout=60, check=True).stdout)
+                                          encoding="utf-8", timeout=60, check=True, creationflags=NO_WINDOW).stdout)
     except (OSError, subprocess.SubprocessError, ValueError):
         sys.exit(f"task_record: could not confirm the state of PR {pr}")
     if not isinstance(reply, dict) or not isinstance(reply.get("state"), str):
@@ -238,7 +242,7 @@ def git_paths(repo):
     uncommitted changes, in `repo`. Empty when git cannot answer."""
     def nul_paths(*command):
         try:
-            run = subprocess.run(["git", "-C", repo, *command], capture_output=True, timeout=60)
+            run = subprocess.run(["git", "-C", repo, *command], capture_output=True, timeout=60, creationflags=NO_WINDOW)
         except (OSError, subprocess.TimeoutExpired):
             return []
         if run.returncode != 0:
@@ -249,7 +253,7 @@ def git_paths(repo):
     paths = nul_paths("diff", "--name-only", "-z", "origin/main...HEAD")
     try:
         run = subprocess.run(["git", "-C", repo, "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-                             capture_output=True, timeout=60)
+                             capture_output=True, timeout=60, creationflags=NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired):
         run = None
     if run is not None and run.returncode == 0:
@@ -282,7 +286,7 @@ def keel_plan(args):
         command = [args.graphhelm, "--json", "keel", "plan", "--task", f"issue-{args.issue}",
                    "--repo", args.plan_repo, "--promise", args.promise, "--paths", *paths]
         try:
-            run = subprocess.run(command, capture_output=True, text=True, timeout=120)
+            run = subprocess.run(command, capture_output=True, text=True, timeout=120, creationflags=NO_WINDOW)
             reply = json.loads(run.stdout)
         except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
             print(f"task_record: planned: `keel plan` did not answer ({error}); recording the default plan", file=sys.stderr)

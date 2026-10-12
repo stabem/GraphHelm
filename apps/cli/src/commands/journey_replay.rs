@@ -444,7 +444,7 @@ impl Driver {
         };
         let project = plain(project)?;
         let output = plain(output)?;
-        let mut command = Command::new("node");
+        let mut command = crate::process::command("node");
         command
             .arg(project.join(".graphhelm/observers/journey_driver.mjs"))
             .args(["--project"])
@@ -1048,7 +1048,7 @@ pub(super) fn observe(
 }
 
 fn record_command(args: &JourneyReplayArgs, kind: &str, contract: &str) -> Result<Command> {
-    let mut command = Command::new(
+    let mut command = crate::process::command(
         std::env::current_exe().map_err(|_| failure("replay.record_failed", "/recording", 1))?,
     );
     command
@@ -1777,7 +1777,7 @@ fn supervise(args: &JourneyReplayArgs, deadline: Instant) -> Outcome {
         Ok(path) => path,
         Err(_) => return report(data, Some(failure("replay.worker_invalid", "/worker", 3))),
     };
-    let mut command = Command::new(executable);
+    let mut command = crate::process::command(executable);
     command
         .args(["--json", "journey", "replay", &args.id, "--replay-worker"])
         .arg("--project")
@@ -2175,7 +2175,7 @@ mod tests {
     }
 
     fn fault_command(mode: &str, marker: &Path, lock: Option<&Path>) -> Command {
-        let mut command = Command::new(std::env::current_exe().unwrap());
+        let mut command = crate::process::command(std::env::current_exe().unwrap());
         command
             .args([
                 "--exact",
@@ -2220,7 +2220,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         if mode == "inherited" {
-            let _child = Command::new(std::env::current_exe().unwrap())
+            let _child = crate::process::command(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
                     "commands::journey_replay::tests::fault_process",
@@ -2368,7 +2368,7 @@ mod tests {
         std::fs::write(marker.with_extension("effect"), b"release after cleanup").unwrap();
         std::thread::sleep(Duration::from_millis(100));
         assert!(!marker.with_extension("late").exists());
-        let mut healthy = Command::new("git");
+        let mut healthy = crate::process::command("git");
         healthy
             .arg("--version")
             .stdin(Stdio::piped())
@@ -2383,7 +2383,7 @@ mod tests {
         .unwrap();
         assert_eq!(status, 0);
         assert!(reply.starts_with(b"git version "));
-        let command = Command::new(dir.path().join("missing-executable"));
+        let command = crate::process::command(dir.path().join("missing-executable"));
         assert_eq!(
             spawn_owned(command, Instant::now() + Duration::from_secs(1))
                 .err()

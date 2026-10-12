@@ -6,6 +6,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import os
+
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 SCRIPT = Path(__file__).with_name("e2e_observe.py")
 REPORT = {"schemaVersion": "report-1", "run": {"status": "passed", "results": [
@@ -34,7 +38,7 @@ class E2EObserve(unittest.TestCase):
             + f"sys.stderr.write('runner says {exit_code}\\n'); sys.exit({exit_code})\n")
         result = subprocess.run([sys.executable, str(SCRIPT), "--project", str(self.project),
                                  "--command", f"{sys.executable} {fake}"],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, creationflags=NO_WINDOW)
         return result.returncode, json.loads(result.stdout)
 
     def test_passing_run_is_observed(self):
@@ -76,7 +80,7 @@ class E2EObserve(unittest.TestCase):
     def test_missing_runner_is_observer_missing(self):
         result = subprocess.run([sys.executable, str(SCRIPT), "--project", str(self.project),
                                  "--command", "definitely-not-installed-e2e run"],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 2)
         self.assertIn("OBSERVER_MISSING", json.loads(result.stdout)["evidence"][0])
 

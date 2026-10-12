@@ -61,6 +61,9 @@ import time
 import uuid
 from pathlib import Path
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 HERE = Path(__file__).resolve().parent
 DOLESS = HERE / "doless"
 MANIFEST = DOLESS / "tasks.json"
@@ -166,7 +169,7 @@ def compose_prompt(task: dict, arm: str, surface_dir: Path, style: str = "explic
 
 def git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=cwd, check=True,
-                          text=True, capture_output=True, encoding="utf-8", errors="replace")
+                          text=True, capture_output=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
 
 
 def apply_known_fix(wt: Path, task: dict) -> None:
@@ -174,9 +177,9 @@ def apply_known_fix(wt: Path, task: dict) -> None:
     `fixPaths` limits it to the part of a historical commit the task asks for."""
     paths = ["--", *task["fixPaths"]] if task.get("fixPaths") else []
     patch = subprocess.run(["git", "diff", "--binary", task["parentSha"], task["fixSha"], *paths], cwd=REPO,
-                           check=True, capture_output=True).stdout
+                           check=True, capture_output=True, creationflags=NO_WINDOW).stdout
     subprocess.run(["git", "apply", "--whitespace=nowarn", "-"], cwd=wt, input=patch, check=True,
-                   capture_output=True)
+                   capture_output=True, creationflags=NO_WINDOW)
 
 
 # A red that says the build could not touch its own files, not that the code is wrong: the MSVC
@@ -261,7 +264,7 @@ def keel_check(wt: Path, base: str, head: str, card: Path, prove: bool) -> dict:
     cmd = [exe, "--json", "keel", "check", "--diff", f"{base}..{head}", "--card", str(card), "--repo", str(wt)]
     if prove:
         cmd += ["--prove-new-tests", "--prove-target-dir", str(run_target(wt) / "prove")]
-    proc = subprocess.run(cmd, cwd=wt, text=True, capture_output=True, encoding="utf-8", errors="replace")
+    proc = subprocess.run(cmd, cwd=wt, text=True, capture_output=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     try:
         envelope = json.loads(proc.stdout)
     except json.JSONDecodeError:
@@ -485,7 +488,7 @@ def load_routed_config(path: Path, task: dict) -> dict:
 def observe_effort_flag(claude_cli: dict) -> dict:
     """Observe only local CLI flag support; provider acceptance/effective effort remain unobserved."""
     probe = subprocess.run([claude_cli["path"], "--help"], check=True, text=True, encoding="utf-8",
-                           capture_output=True, timeout=10)
+                           capture_output=True, timeout=10, creationflags=NO_WINDOW)
     if not re.search(r"(?m)^\s*--effort(?:\s|[=,])", probe.stdout):
         raise RuntimeError("pinned Claude CLI does not advertise --effort")
     return {"flag": "--effort", "source": "cli_help",

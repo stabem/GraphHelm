@@ -14,6 +14,9 @@ from pathlib import Path
 
 import pytest
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("doless_under_test", HERE / "doless.py")
 doless = importlib.util.module_from_spec(spec)
@@ -196,7 +199,7 @@ def test_heldout_oracles_reject_false_claims_and_overreaching_diffs(tmp_path, ta
     checkout = tmp_path / "checkout"
     checkout.mkdir()
     def git(*args):
-        return subprocess.run(["git", *args], cwd=checkout, capture_output=True, check=True)
+        return subprocess.run(["git", *args], cwd=checkout, capture_output=True, check=True, creationflags=NO_WINDOW)
     git("init", "-q")
     git("config", "user.name", "Oracle test")
     git("config", "user.email", "oracle@example.invalid")
@@ -208,7 +211,7 @@ def test_heldout_oracles_reject_false_claims_and_overreaching_diffs(tmp_path, ta
         answer_file.write_text(value, encoding="utf-8")
         return subprocess.run([sys.executable, str(doless.DOLESS / task["oracle"]), str(checkout)],
                               env={**os.environ, "DOLESS_ANSWER": str(answer_file)},
-                              capture_output=True, text=True, timeout=10)
+                              capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW)
     reference = json.loads(task["referenceAnswer"])
     assert run(task["referenceAnswer"]).returncode == 0
     # JSON whitespace/key order and claim order cannot determine the grade.
@@ -382,7 +385,7 @@ def test_every_task_cites_public_history_and_a_disjoint_split():
     for task_id, task in tasks.items():
         for sha in filter(None, (task["parentSha"], task.get("fixSha"))):
             probe = subprocess.run(["git", "merge-base", "--is-ancestor", sha, "HEAD"], cwd=doless.REPO,
-                                   capture_output=True)
+                                   capture_output=True, creationflags=NO_WINDOW)
             assert probe.returncode == 0, (task_id, sha)
     assert {t["split"] for t in tasks.values()} == {"train", "test"}
 
@@ -745,7 +748,7 @@ def test_pair_audit_admits_only_frozen_task_pairs(tmp_path):
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         proc = subprocess.run([sys.executable, str(HERE / "doless.py"), "pair-audit",
                                "--manifest", str(manifest_path), "--rows", str(rows_path)],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, creationflags=NO_WINDOW)
         return proc, json.loads(proc.stdout) if proc.stdout else None
 
     good = [row("a1", "one", "a"), row("k1", "one", "k")]
@@ -804,7 +807,7 @@ def test_pair_summary_accounts_for_admitted_attempts_and_partial_cohorts(tmp_pat
         manifest_path.write_text(json.dumps({"version": 1, "rowsSha256": hashlib.sha256(raw).hexdigest(),
             "comparison": "methodology", "weighting": "equal_task", "groups": input_groups}), encoding="utf-8")
         proc = subprocess.run([sys.executable, str(HERE / "doless.py"), "pair-summary",
-            "--manifest", str(manifest_path), "--rows", str(rows_path)], capture_output=True, text=True)
+            "--manifest", str(manifest_path), "--rows", str(rows_path)], capture_output=True, text=True, creationflags=NO_WINDOW)
         assert proc.returncode == 0, proc.stderr
         return json.loads(proc.stdout)
     report = run(rows)
@@ -858,7 +861,7 @@ def test_task_group_sessions_account_for_unequal_arms_and_exclude_whole_task(tmp
                 "manifestSha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
                 "rowsSha256": manifest["rowsSha256"]}), encoding="utf-8")
             args += ["--analysis-plan", str(plan_path)]
-        proc = subprocess.run(args, capture_output=True, text=True)
+        proc = subprocess.run(args, capture_output=True, text=True, creationflags=NO_WINDOW)
         assert proc.returncode == 0, proc.stderr
         return json.loads(proc.stdout)
     report = run()
@@ -931,11 +934,11 @@ def test_pair_analysis_plan_binds_explicit_thresholds_to_frozen_inputs(tmp_path)
         plan_path.write_bytes(raw)
         return subprocess.run([sys.executable, str(HERE / "doless.py"), "pair-summary",
                                "--manifest", str(manifest_path), "--rows", str(rows_path),
-                               "--analysis-plan", str(plan_path)], capture_output=True, text=True)
+                               "--analysis-plan", str(plan_path)], capture_output=True, text=True, creationflags=NO_WINDOW)
 
     no_option = subprocess.run([sys.executable, str(HERE / "doless.py"), "pair-summary",
                                 "--manifest", str(manifest_path), "--rows", str(rows_path)],
-                               capture_output=True, text=True)
+                               capture_output=True, text=True, creationflags=NO_WINDOW)
     assert no_option.returncode == 0 and "analysisPlan" not in json.loads(no_option.stdout)
     good = run(plan)
     assert good.returncode == 0, good.stderr

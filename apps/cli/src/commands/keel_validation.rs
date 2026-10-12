@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -51,7 +51,7 @@ fn inventory_digest(inventory: &BTreeMap<String, String>) -> String {
 }
 
 fn tracked_files(repo: &Path) -> Result<Vec<PathBuf>, String> {
-    let output = Command::new("git")
+    let output = crate::process::command("git")
         .arg("-C")
         .arg(repo)
         .args([
@@ -446,11 +446,12 @@ pub(crate) fn run(repo: &Path) -> Outcome {
         args.push(&project_text);
         let validation_root_text = result_root.to_string_lossy().to_string();
         args.extend(["--validation-dir", &validation_root_text]);
-        let execution =
-            Command::new(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("graphhelm")))
-                .args(args)
-                .stdin(Stdio::null())
-                .output();
+        let execution = crate::process::command(
+            std::env::current_exe().unwrap_or_else(|_| PathBuf::from("graphhelm")),
+        )
+        .args(args)
+        .stdin(Stdio::null())
+        .output();
         let reply = execution
             .as_ref()
             .ok()

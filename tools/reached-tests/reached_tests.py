@@ -40,6 +40,9 @@ import sys
 import tomllib
 from pathlib import Path
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 TOOLCHAIN = "+1.97.1"
 CLI, CLI_BIN = "graphhelm-cli", "graphhelm"
 TEST_THREADS = "-- --test-threads=2"
@@ -85,7 +88,7 @@ PRIVATE_TEST_PATH = (
 
 
 def run(cmd, cwd):
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=True).stdout
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=True, creationflags=NO_WINDOW).stdout
 
 
 def workspace(repo):

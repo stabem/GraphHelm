@@ -6,7 +6,7 @@
 //! Every id from the command line is checked against Ruling 1 before any filesystem, git or
 //! store access, so a path-like id never reaches a path.
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use graphhelm_execution::{ContractInput, valid_journey_id, valid_revision};
 
@@ -108,7 +108,7 @@ fn step_index(contract: &ContractInput, step: &str, pointer: &str) -> Result<usi
 
 /// One git read with a fixed argument list (Ruling 5's invocation rules).
 pub(super) fn git(project: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
+    let output = crate::process::command("git")
         .arg("-C")
         .arg(project)
         .args(args)

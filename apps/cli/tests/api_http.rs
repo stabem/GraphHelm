@@ -2078,7 +2078,7 @@ fn a_bounded_events_tail_stays_fast_at_six_thousand_events() {
                 scope.spawn(move || {
                     barrier.wait();
                     let started = std::time::Instant::now();
-                    let reply = get_json(url, Some(&token));
+                    let reply = get_json(url, Some(token));
                     (url, started.elapsed(), reply)
                 })
             })

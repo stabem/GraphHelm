@@ -171,8 +171,13 @@ fn an_empty_directory_becomes_a_provisioned_project() {
     );
 
     let gitignore = std::fs::read_to_string(project.path().join(".gitignore")).unwrap();
+    // ml-saas trial: `.graphhelm/` excluded the directory, so `!.graphhelm/journeys/` could
+    // never re-include the journeys; the block keeps them trackable.
     assert!(
-        gitignore.lines().any(|line| line == ".graphhelm/"),
+        gitignore.lines().any(|line| line == ".graphhelm/*")
+            && gitignore
+                .lines()
+                .any(|line| line == "!.graphhelm/journeys/"),
         "{gitignore:?}"
     );
     assert_eq!(data["gitignore"]["state"], "created");
@@ -460,6 +465,16 @@ fn init_ignores_mcp_configuration_and_repairs_older_ignore_blocks() {
             assert!(status.status.success(), "{status:?}");
             assert!(status.stdout.is_empty(), "{status:?}");
         }
+        if existing.is_empty() {
+            // A fresh block keeps the journeys trackable (ml-saas trial).
+            let journey = Command::new("git")
+                .args(["check-ignore", "--quiet", "--no-index", "--"])
+                .arg(".graphhelm/journeys/a.journey.yaml")
+                .current_dir(project.path())
+                .status()
+                .unwrap();
+            assert_eq!(journey.code(), Some(1), "journeys are ignored");
+        }
         let text = std::fs::read_to_string(project.path().join(".gitignore")).unwrap();
         let before = text;
         let (data, _, _) = init(project.path());
@@ -532,7 +547,7 @@ fn a_gitignore_without_a_trailing_newline_gets_the_block_on_its_own_line() {
     assert_eq!(data["data"]["gitignore"]["state"], "appended");
     let text = std::fs::read_to_string(project.path().join(".gitignore")).unwrap();
     assert!(text.starts_with("target/\n"), "{text:?}");
-    assert!(text.lines().any(|line| line == ".graphhelm/"), "{text:?}");
+    assert!(text.lines().any(|line| line == ".graphhelm/*"), "{text:?}");
 }
 
 /// Detection is read from the home directory, so the test owns one: `HOME` (Unix) and
@@ -816,13 +831,8 @@ fn a_negated_ignore_line_is_not_taken_as_ignored() {
     assert_eq!(data["data"]["gitignore"]["state"], "appended");
     let text = std::fs::read_to_string(project.path().join(".gitignore")).unwrap();
     assert_eq!(
-        text.lines()
-            .rfind(|line| line.trim_start_matches('!') == ".graphhelm/"),
-        Some(".graphhelm/"),
-        "{text:?}"
-    );
-    assert!(
-        text.lines().filter(|line| *line == ".graphhelm/").count() == 2,
+        text.lines().rfind(|line| line.starts_with(".graphhelm/")),
+        Some(".graphhelm/*"),
         "{text:?}"
     );
 }
@@ -839,7 +849,7 @@ fn a_project_nested_in_an_ancestor_work_tree_gets_its_own_gitignore() {
     assert_eq!(data["data"]["gitignore"]["state"], "created");
     let nested = std::fs::read_to_string(project.join(".gitignore")).unwrap();
     assert!(
-        nested.lines().any(|line| line == ".graphhelm/"),
+        nested.lines().any(|line| line == ".graphhelm/*"),
         "{nested:?}"
     );
     assert_eq!(

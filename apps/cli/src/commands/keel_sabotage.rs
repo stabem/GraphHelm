@@ -158,8 +158,9 @@ impl Worktree {
     }
 
     /// Git-ignored toolchain the journeys need but a fresh checkout lacks: the installed
-    /// observer driver is copied, `node_modules` is linked read-only by convention.
-    fn carry_toolchain(&self, repo: &Path) -> Result<(), String> {
+    /// observer driver is copied, and every `node_modules` (the root and, in a pnpm or npm
+    /// workspace, each package's own) is linked read-only by convention. Returns the linked paths.
+    fn carry_toolchain(&self, repo: &Path) -> Result<Vec<String>, String> {
         let observers = Path::new(".graphhelm").join("observers");
         let source = repo.join(&observers);
         if source.is_dir() {
@@ -175,20 +176,78 @@ impl Worktree {
                 }
             }
         }
-        let modules = repo.join("node_modules");
-        let link = self.path.join("node_modules");
-        if modules.exists() && !link.exists() {
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(&modules, &link).map_err(|error| error.to_string())?;
-            #[cfg(windows)]
-            std::os::windows::fs::symlink_dir(&modules, &link)
-                .map_err(|error| error.to_string())?;
-        }
-        Ok(())
+        let mut linked = Vec::new();
+        link_node_modules(repo, &self.path, Path::new(""), 0, &mut linked)?;
+        Ok(linked)
     }
 
     fn apply(&self, patch: &Path) -> Result<(), String> {
         git(&self.path, &["apply", &patch.to_string_lossy()])
+    }
+}
+
+/// How deep a workspace package's `node_modules` is looked for (`packages/api/node_modules` is 2).
+const MODULES_DEPTH: usize = 4;
+
+/// Links each `node_modules` under `repo` into the same place in `worktree` when that package
+/// directory exists there. Never descends into `node_modules`, `.git` or build output.
+fn link_node_modules(
+    repo: &Path,
+    worktree: &Path,
+    relative: &Path,
+    depth: usize,
+    linked: &mut Vec<String>,
+) -> Result<(), String> {
+    let here = repo.join(relative);
+    let modules = here.join("node_modules");
+    let link = worktree.join(relative).join("node_modules");
+    if modules.is_dir() && worktree.join(relative).is_dir() && !link.exists() {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&modules, &link).map_err(|error| error.to_string())?;
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&modules, &link).map_err(|error| error.to_string())?;
+        linked.push(
+            relative
+                .join("node_modules")
+                .to_string_lossy()
+                .replace('\\', "/"),
+        );
+    }
+    if depth >= MODULES_DEPTH {
+        return Ok(());
+    }
+    let Ok(entries) = std::fs::read_dir(&here) else {
+        return Ok(());
+    };
+    let mut children: Vec<_> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| entry.file_name())
+        .filter(|name| {
+            let name = name.to_string_lossy();
+            !name.starts_with('.') && !matches!(name.as_ref(), "node_modules" | "target" | "dist")
+        })
+        .collect();
+    children.sort();
+    for child in children {
+        link_node_modules(repo, worktree, &relative.join(child), depth + 1, linked)?;
+    }
+    Ok(())
+}
+
+/// Names the likely cause of a red baseline when the launcher's output says a module is
+/// missing: the worktree lacks dependencies the launcher must install or link.
+fn baseline_cause(baseline: &Value) -> Value {
+    let missing = baseline["failures"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|failure| failure["launchLog"]["tail"].as_str())
+        .any(|tail| tail.contains("ERR_MODULE_NOT_FOUND") || tail.contains("Cannot find module"));
+    if missing {
+        "dependencies_missing".into()
+    } else {
+        Value::Null
     }
 }
 
@@ -232,14 +291,16 @@ pub(crate) fn run(repo: &Path, patch: &Path) -> Outcome {
     let mut applied = false;
     let mut after = None;
     let mut after_diagnostics = Value::Null;
+    let mut linked = Vec::new();
     if !observer {
         let worktree = match Worktree::create(&repo) {
             Ok(worktree) => worktree,
             Err(detail) => return error(format!("cannot create worktree: {detail}"), "/repo"),
         };
-        if let Err(detail) = worktree.carry_toolchain(&repo) {
-            return error(format!("cannot prepare worktree: {detail}"), "/repo");
-        }
+        linked = match worktree.carry_toolchain(&repo) {
+            Ok(linked) => linked,
+            Err(detail) => return error(format!("cannot prepare worktree: {detail}"), "/repo"),
+        };
         baseline = report(&super::keel_validation::run(&worktree.path));
         if green(&baseline) {
             applied = worktree.apply(&patch).is_ok();
@@ -265,6 +326,10 @@ pub(crate) fn run(repo: &Path, patch: &Path) -> Outcome {
                 "baselinePaths": baseline["paths"].as_array().map_or(0, Vec::len),
                 "afterPaths": after.as_ref().map(|after| after["paths"].clone()),
                 "afterDiagnostics": after_diagnostics,
+                "linkedDependencies": linked,
+                "baselineBlocking": baseline["blockingReasons"],
+                "baselineFailures": baseline["failures"],
+                "baselineCause": baseline_cause(&baseline),
             })),
             diagnostics: Vec::new(),
         },
@@ -337,6 +402,34 @@ mod tests {
             failed,
             vec![json!({"flow":"f","path":"main","execution":"failed"})]
         );
+    }
+
+    /// The ml-saas trial: a pnpm workspace keeps `node_modules` per package, the worktree got
+    /// only the root one and the API died with `ERR_MODULE_NOT_FOUND`. Fails if a package's own
+    /// dependencies are not linked, or if a link's removal deletes the user's real dependencies.
+    /// Cost: one temporary git repo and worktree.
+    #[test]
+    fn worktree_links_each_workspace_package_node_modules() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path();
+        git(repo, &["init", "-q"]).unwrap();
+        git(repo, &["config", "user.email", "t@example.com"]).unwrap();
+        git(repo, &["config", "user.name", "t"]).unwrap();
+        std::fs::create_dir_all(repo.join("apps/api")).unwrap();
+        std::fs::write(repo.join("apps/api/package.json"), "{}\n").unwrap();
+        std::fs::write(repo.join(".gitignore"), "node_modules\n").unwrap();
+        git(repo, &["add", "."]).unwrap();
+        git(repo, &["commit", "-qm", "init"]).unwrap();
+        std::fs::create_dir_all(repo.join("node_modules/root-dep")).unwrap();
+        std::fs::create_dir_all(repo.join("apps/api/node_modules/api-dep")).unwrap();
+        let worktree = Worktree::create(repo).unwrap();
+        let linked = worktree.carry_toolchain(repo).unwrap();
+        assert_eq!(linked, ["node_modules", "apps/api/node_modules"]);
+        assert!(worktree.path.join("apps/api/node_modules/api-dep").is_dir());
+        drop(worktree);
+        assert!(repo.join("apps/api/node_modules/api-dep").is_dir());
+        let red = json!({"failures":[{"launchLog":{"tail":"Error [ERR_MODULE_NOT_FOUND]: x"}}]});
+        assert_eq!(baseline_cause(&red), "dependencies_missing");
     }
 
     #[test]

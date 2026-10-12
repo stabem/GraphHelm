@@ -467,7 +467,17 @@ pub(crate) fn run(repo: &Path) -> Outcome {
             paths.push(path_entry(id, &path, state, collection));
         }
         if !successful {
-            failures.push(json!({"flow":id,"reason":"execution_failed","result":result["result"],"detail":result["reason"]}));
+            // A draft plays in validation but is never proof: say so instead of a bare exit 2.
+            let reason = if flow["status"] == "approved" {
+                "execution_failed"
+            } else {
+                "flow_not_approved"
+            };
+            let mut failure = json!({"flow":id,"reason":reason,"status":flow["status"],"result":result["result"],"detail":result["reason"]});
+            if !result["launchLog"].is_null() {
+                failure["launchLog"] = result["launchLog"].clone();
+            }
+            failures.push(failure);
         }
         flows_report.push(json!({"id":id,"status":if successful {"completed"} else {"failed"},"resultDir":flow_dir}));
     }
@@ -545,11 +555,11 @@ pub(crate) fn run(repo: &Path) -> Outcome {
         .map(|entry| entry.path())
         .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
         .filter(|path| !generated_contracts.contains(path.file_name().and_then(|name| name.to_str()).unwrap_or_default()))
-        .map(|path| json!({"path":path.strip_prefix(&repo).unwrap_or(&path).display().to_string(),"status":"unsupported"}))
+        .map(|path| json!({"path":path.strip_prefix(&repo).unwrap_or(&path).display().to_string(),"status":"unsupported",
+            "reason":"standalone_contract_not_executed"}))
         .collect::<Vec<_>>();
     let sweep_valid = !paths.is_empty()
         && failures.is_empty()
-        && standalone.is_empty()
         && artifacts.len() == expected_paths.len()
         && artifacts.iter().all(complete_artifact)
         && expected_paths.is_subset(&collected_paths)
@@ -603,6 +613,11 @@ pub(crate) fn run(repo: &Path) -> Outcome {
     if journeys_changed {
         unknown.push(json!({"reason":"journeys_changed_during_run"}));
     }
+    // A hand-written or legacy `*.json` in the journeys directory is never executed, so it can
+    // add no evidence either way: it is reported, by name, and never counted as observed.
+    for contract in &standalone {
+        unknown.push(json!({"reason":"standalone_contract_not_executed","path":contract["path"]}));
+    }
     let coverage_missing = artifacts.is_empty() && !expected_paths.is_empty();
     if coverage_missing {
         unknown.push(json!({"reason":"coverage_missing"}));
@@ -645,7 +660,44 @@ pub(crate) fn run(repo: &Path) -> Outcome {
     } else {
         "review unknown source associations and backend/native coverage separately"
     };
+    let mut blocking = Vec::new();
+    for failure in &failures {
+        blocking.push(format!(
+            "flow {}: {}",
+            failure["flow"].as_str().unwrap_or_default(),
+            failure["reason"].as_str().unwrap_or_default()
+        ));
+    }
+    if paths.is_empty() {
+        blocking.push("no declared journey path to run".to_owned());
+    }
+    if coverage_missing
+        || !expected_paths.is_subset(&collected_paths)
+        || !artifacts.iter().all(complete_artifact)
+    {
+        blocking.push("browser coverage missing or incomplete".to_owned());
+    }
+    if input_changed {
+        blocking.push("source changed during the run".to_owned());
+    }
+    if journeys_changed {
+        blocking.push("journeys changed during the run".to_owned());
+    }
+    if blocking_uncertain && blocking.is_empty() {
+        blocking.push("coverage artifacts do not match the declared paths".to_owned());
+    }
+    let diagnostics = if blocking_uncertain || failure_count > 0 {
+        vec![graphhelm_protocols::Diagnostic::error(
+            crate::error_codes::GHCLI039_KEEL_VALIDATION_BLOCKED,
+            format!("validation sweep blocked: {}", blocking.join("; ")),
+            "/sweepComplete",
+            "keel",
+        )]
+    } else {
+        Vec::new()
+    };
     let mut data = data;
+    data["blockingReasons"] = json!(blocking);
     data["summary"] = summary;
     data["limitations"] = limitations;
     data["nextCheck"] = next_check.into();
@@ -654,7 +706,7 @@ pub(crate) fn run(repo: &Path) -> Outcome {
             ok: failure_count == 0 && !blocking_uncertain,
             command: COMMAND,
             data: Some(data),
-            diagnostics: Vec::new(),
+            diagnostics,
         },
         exit_code: if failure_count == 0 && !blocking_uncertain {
             0

@@ -785,6 +785,9 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         Err((code, pointer, _)) => {
             run.state["state"] = "failed".into();
             run.state["reason"] = failed_reason(code).into();
+            if let Some(log) = super::journey_live::take_launch_log() {
+                run.state["launchLog"] = log;
+            }
             let detail = json!({"code":code,"pointer":pointer});
             run.state["detail"] = detail.clone();
             // The pointer may name a flow array index (preflight) or a stable step id (play).
@@ -818,7 +821,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     }
     drop(app);
     answer(
-        json!({"state":run.state["state"],"result":run.state["result"],"paths":run.state["validationPaths"],"reason":run.state["reason"]}),
+        json!({"state":run.state["state"],"result":run.state["result"],"paths":run.state["validationPaths"],"reason":run.state["reason"],"launchLog":run.state["launchLog"]}),
         None,
     )
 }
@@ -1097,7 +1100,7 @@ fn play_backend_path(
         if backend::needs_app(&json!({"edges": ids.iter().map(|id| edges[id]).collect::<Vec<_>>()}))
         {
             let url = screens[first]["url"].as_str().unwrap();
-            match backend::request(base, "GET", url, None) {
+            match backend::request(base, "GET", url, None, None) {
                 Ok(seen) => match backend::unmet(screens[first], &seen) {
                     None => run.screen(first, "pass", None, None),
                     Some(_) => {

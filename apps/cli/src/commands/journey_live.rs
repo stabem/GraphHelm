@@ -1231,6 +1231,25 @@ fn posix_shell() -> Command {
     Command::new("sh")
 }
 
+/// The most of a failed launcher's output the report keeps.
+const LAUNCH_LOG_TAIL: usize = 4096;
+static LAST_LAUNCH_LOG: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
+
+/// Keeps the tail of a failed launch's output (`{path, tail}`) for [`take_launch_log`].
+fn record_launch_log(path: &Path) {
+    let bytes = std::fs::read(path).unwrap_or_default();
+    let tail =
+        String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(LAUNCH_LOG_TAIL)..]).into_owned();
+    if let Ok(mut slot) = LAST_LAUNCH_LOG.lock() {
+        *slot = Some(serde_json::json!({"path": path, "tail": tail}));
+    }
+}
+
+/// The output of the last failed launch in this process, once.
+pub(super) fn take_launch_log() -> Option<Value> {
+    LAST_LAUNCH_LOG.lock().ok()?.take()
+}
+
 /// Starts the declared app under test and waits until the flow's base answers.
 pub(super) fn launch(
     project: &Path,
@@ -1280,9 +1299,22 @@ pub(super) fn launch_within(
         .arg("up")
         .arg(&dir)
         .current_dir(project)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdin(Stdio::null());
+    // The ml-saas trial: a failed `up` said only `launch_failed`. Its output goes to a log
+    // outside `<dir>` (which `stop` removes); on failure the tail is kept for the report.
+    let log_path = std::env::temp_dir().join(format!(
+        "graphhelm-launch-{}.log",
+        &uuid::Uuid::new_v4().simple().to_string()[..12]
+    ));
+    let log = std::fs::File::create(&log_path).ok();
+    match log
+        .as_ref()
+        .and_then(|file| Some((file.try_clone().ok()?, file.try_clone().ok()?)))
+    {
+        Some((out, err)) => command.stdout(out).stderr(err),
+        None => command.stdout(Stdio::null()).stderr(Stdio::null()),
+    };
+    drop(log);
     // An isolated launcher gets two free ports (`up <dir> <runtime port> <app port>`), and the
     // flow is played on the app port instead of its own base.
     let isolated_base = if fixture["isolated"] == true {
@@ -1322,8 +1354,10 @@ pub(super) fn launch_within(
     }
     if !started || !base_reachable(&answers_on) {
         launched.stop();
+        record_launch_log(&log_path);
         return Err(failure("watch.launch_failed", "/launcher", 1));
     }
+    let _ = std::fs::remove_file(&log_path);
     // The launcher may mint secrets during `up`. Read data, never source shell code or
     // mutate the process environment. Bound the file and reject links before opening it.
     let secret_dir = launched.dir.join(".graphhelm");
@@ -2095,6 +2129,49 @@ mod launch_tests {
         assert!(
             took < Duration::from_secs(40),
             "the launcher held its caller for {took:?}"
+        );
+    }
+
+    /// The ml-saas trial: a launcher that failed (`ERR_MODULE_NOT_FOUND`) left only
+    /// `watch.launch_failed`; its output went to /dev/null. Fails if the tail is dropped again.
+    /// Cost: one short shell run; a POSIX shell, temp files only.
+    #[test]
+    fn a_failed_launch_keeps_the_launcher_output_tail() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join(".graphhelm")).unwrap();
+        std::fs::write(
+            project.path().join(".graphhelm/journey-fixture.json"),
+            r#"{"schema":"graphhelm-journey-fixture/1","script":"fail.sh"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join("fail.sh"),
+            "if [ \"$1\" = up ]; then echo boot; echo ERR_MODULE_NOT_FOUND >&2; exit 1; fi\n",
+        )
+        .unwrap();
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let outcome = super::launch_within(
+            project.path(),
+            &format!("http://127.0.0.1:{port}"),
+            "checkout",
+            std::time::Duration::from_secs(2),
+            |_| Ok(()),
+        );
+        assert_eq!(
+            outcome.err().map(|(code, _, _)| code),
+            Some("watch.launch_failed")
+        );
+        let log = super::take_launch_log().expect("launch log kept");
+        assert!(
+            log["tail"]
+                .as_str()
+                .unwrap()
+                .contains("ERR_MODULE_NOT_FOUND"),
+            "{log}"
         );
     }
 }

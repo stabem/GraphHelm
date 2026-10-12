@@ -65,3 +65,22 @@ it has no required consumer. Record the evidence in the PR's `Retirement:` secti
 This command supplements the [Keel retirement rule](KEEL_SPEC.md); it does not change
 [`keel check`](KEEL_CHECK.md) into a dead-code detector. A clean report proves only the declared
 journeys and the collection limits reported for that run.
+
+## Sabotage proof: `keel test sabotage`
+
+```sh
+graphhelm --json keel test sabotage --repo <project> --patch <break.diff>
+```
+
+Validation shows that journeys run; sabotage shows that they would notice a broken product. In a
+temporary detached `git worktree` of HEAD (the working tree is never touched, and the worktree is
+always removed), the command runs the same journey validation, applies the patch with `git apply`,
+and runs it again. Green means every declared path completed; coverage completeness is not
+required. The `verdict` is:
+
+- `caught`: at least one path failed after the patch; `failing` lists them. Exit 0.
+- `missed`: every path stayed green. The journeys do not observe the patched code. Exit 2.
+- `baseline_not_green`: validation was not green before the patch. Exit 2.
+- `patch_not_applicable`: `git apply` refused the patch at HEAD. Exit 2.
+
+Only committed HEAD is tested; uncommitted edits are not in the worktree.

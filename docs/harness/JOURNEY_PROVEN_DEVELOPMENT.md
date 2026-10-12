@@ -143,6 +143,11 @@ configuration, environment, freshness window, and custody chain. Absence-based e
 the end of its observation window. Static catalog support is never runtime availability: matching
 requires a fresh, environment-bound capability receipt.
 
+A green journey is only evidence if it can go red. `graphhelm keel test sabotage --repo <P>
+--patch <break.diff>` applies a breaking patch in a temporary worktree of HEAD and reports whether
+the journeys `caught` it or `missed` it (they do not observe that code). See
+[`KEEL_TEST_VALIDATION.md`](../keel/KEEL_TEST_VALIDATION.md#sabotage-proof-keel-test-sabotage).
+
 ## 7. Journey and failure contracts
 
 Every step may define:

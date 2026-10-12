@@ -722,6 +722,14 @@ pub enum KeelTestCommand {
         #[arg(long, default_value = ".")]
         repo: PathBuf,
     },
+    /// Prove green journeys turn red under a sabotage patch, in a temporary worktree of HEAD.
+    Sabotage {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        /// A `git apply` patch that breaks product code.
+        #[arg(long)]
+        patch: PathBuf,
+    },
 }
 
 #[derive(Debug, Args)]

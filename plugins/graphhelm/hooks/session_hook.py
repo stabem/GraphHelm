@@ -195,8 +195,6 @@ def binding(payload: dict | None = None) -> tuple[str, str, str, str, str | None
     node_id = os.environ.get("GRAPHHELM_NODE_ID")
     if execution:
         return _binding_values(execution, token_file, url, node_id)
-    if token_file and not payload:
-        raise ValueError("invalid execution binding")
     if payload is None:
         return None
     session = payload.get("session_id")

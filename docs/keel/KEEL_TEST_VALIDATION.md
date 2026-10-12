@@ -21,6 +21,12 @@ cache, approve drafts, confirm held destructive actions, or record Runtime proof
 compiled JSON contracts are inventoried as unsupported; they are not silently counted as executed.
 This command runs journey paths, not every unit test whose name mentions JPD.
 
+A backend flow (`http` and `cli` acts, see
+[Journey flows](../harness/JOURNEY_PROVEN_DEVELOPMENT.md#backend-flows-http-and-cli-acts-927))
+runs without the Playwright driver; it needs the isolated launcher only when it sends requests.
+Its paths report `collection: not_applicable`: they prove execution only, collect no coverage and
+do not hold the sweep open for missing browser coverage. Sabotage reads them like any other path.
+
 ## Reading the report
 
 - `used`: a collected generated JavaScript function had a positive execution count. Its source

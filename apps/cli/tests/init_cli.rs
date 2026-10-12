@@ -469,7 +469,7 @@ fn init_ignores_mcp_configuration_and_repairs_older_ignore_blocks() {
         }
         if existing.is_empty() {
             // A fresh block keeps the journeys trackable (ml-saas trial).
-            let journey = Command::new("git")
+            let journey = graphhelm_process::command("git")
                 .args(["check-ignore", "--quiet", "--no-index", "--"])
                 .arg(".graphhelm/journeys/a.journey.yaml")
                 .current_dir(project.path())

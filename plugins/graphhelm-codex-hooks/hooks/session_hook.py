@@ -11,10 +11,14 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
+import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 import urllib.request
+import uuid
 
 MAX_INPUT = 64 * 1024
 MAX_REPLY = 256 * 1024
@@ -235,6 +239,153 @@ def token_from_file(path: str) -> str:
     return token
 
 
+def arm_lane_wake(payload: dict, bound: tuple[str, str, str, str, str | None], matures_in: int = 60) -> None:
+    """Renew the lane's finite lease from the last observed event head."""
+    execution, token_file, url, _origin, _node = bound
+    actor = os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload)
+    session = _session(payload)
+    if not actor or not ID.fullmatch(actor):
+        return
+    token = token_from_file(token_file)
+    base = f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}"
+    head = request(f"{base}/events?after=0&limit=1", token, "GET")["data"]["head"]
+    if type(head) is not int or head < 0:
+        raise ValueError("invalid event head")
+    reply = request(f"{base}/wake-lease", token, "POST",
+                    {"sessionId": session, "rendezvousId": str(uuid.uuid4()),
+                     "cursor": head, "maturesInSeconds": matures_in},
+                    {"X-GraphHelm-Actor": actor, "X-GraphHelm-Actor-Type": "agent",
+                     "Idempotency-Key": str(uuid.uuid4())})
+    data = reply.get("data")
+    if not isinstance(data, dict) or data.get("sessionId") != session or data.get("armedCursor") != head:
+        raise ValueError("wake lease acknowledgement mismatch")
+
+
+def _waiter_path(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> Path:
+    return state_path(bound[0], _session(payload), host, bound[3]).with_suffix(".waiter.pid")
+
+
+HEARTBEAT_MAX_AGE = 30 * 60
+
+
+def _heartbeat_path(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> Path:
+    return state_path(bound[0], _session(payload), host, bound[3]).with_suffix(".waiter.alive")
+
+
+def touch_lane_heartbeat(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> None:
+    path = _heartbeat_path(payload, bound, host)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch()
+
+
+def _heartbeat_fresh(path: Path) -> bool:
+    try:
+        return time.time() - path.stat().st_mtime < HEARTBEAT_MAX_AGE
+    except OSError:
+        return False
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        handle = kernel.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            return bool(kernel.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259
+        finally:
+            kernel.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> None:
+    """Start one local waiter for a bound session, without replacing a live owner."""
+    configured = os.environ.get("GRAPHHELM_EVENTS_DIR")
+    events = Path(configured) if configured else Path(bound[1]).parent / "events"
+    if not events.is_dir():
+        return
+    touch_lane_heartbeat(payload, bound, host)
+    pid_path = _waiter_path(payload, bound, host)
+    try:
+        pid = int(pid_path.read_text(encoding="ascii"))
+        if _pid_alive(pid):
+            return
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+    arm_lane_wake(payload, bound)
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS if os.name == "nt" else 0
+    child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "wait", "--host", host,
+                              "--session-id", _session(payload), "--events", str(events),
+                              "--heartbeat", str(_heartbeat_path(payload, bound, host))],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags,
+                             start_new_session=os.name != "nt")
+    pid_path.write_text(str(child.pid), encoding="ascii")
+
+
+def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path) -> None:
+    payload = {"session_id": session}
+    bound = binding(payload)
+    if bound is None:
+        return
+    cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
+    pid_path = _waiter_path(payload, bound, host)
+    try:
+      while _heartbeat_fresh(heartbeat):
+        result = subprocess.run([cli, "wake-wait", "--events", str(events),
+                                 "--execution", bound[0], "--session-id", session],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, check=False)
+        # An append can consume the lease before wake-wait parks its pipe.
+        # Exit 2 then means stale, and exit 3 means the short lease matured.
+        if result.returncode not in (0, 2, 3):
+            return
+        if not _heartbeat_fresh(heartbeat):
+            return
+        if result.returncode == 2:
+            time.sleep(1)
+        try:
+            arm_lane_wake(payload, bound)
+        except (OSError, ValueError, KeyError):
+            time.sleep(1)
+    finally:
+        if not _heartbeat_fresh(heartbeat):
+            try:
+                arm_lane_wake(payload, bound, matures_in=1)
+            except (OSError, ValueError, KeyError):
+                pass
+        try:
+            if int(pid_path.read_text(encoding="ascii")) == os.getpid():
+                pid_path.unlink()
+        except (FileNotFoundError, ValueError, OSError):
+            pass
+
+
+def stop_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> None:
+    _heartbeat_path(payload, bound, host).unlink(missing_ok=True)
+    pid_path = _waiter_path(payload, bound, host)
+    try:
+        pid = int(pid_path.read_text(encoding="ascii"))
+        if _pid_alive(pid):
+            os.kill(pid, signal.SIGTERM)
+        pid_path.unlink(missing_ok=True)
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+    try:
+        arm_lane_wake(payload, bound, matures_in=1)
+    except (OSError, ValueError, KeyError):
+        pass
+
+
 def request(url: str, token: str, method: str, body: dict | None = None, headers: dict | None = None, timeout: float = 1.0, max_reply: int = MAX_REPLY) -> dict:
     data = None if body is None else json.dumps(body, separators=(",", ":")).encode("utf-8")
     request_headers = {"Authorization": f"Bearer {token}"}
@@ -403,8 +554,7 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
     if payload.get("hook_event_name") != "SessionStart":
         raise ValueError("wrong hook event")
     session = _session(payload)
-    _remember_lane(payload)
-    bound = binding()
+    bound = binding(payload)
     if bound is None:
         if os.environ.get("GRAPHHELM_KEEL_CONTEXT") != "1":
             if output_format == "portable":
@@ -432,6 +582,7 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
         state = state or {"version": 2, "executionId": execution, "sessionId": session, "host": host, "origin": origin}
         state["briefing"] = digest
         _write_state(path, state)
+    start_lane_waiter(payload, bound, host)
     context = KEEL_CONTEXT + "\n" + _context(digest, freshness, execution, session, node_id)
     if len(context) > MAX_CONTEXT:
         raise ValueError("hook context too large")
@@ -443,7 +594,8 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
 
 def start(payload: dict, host: str, output_format: str = "native") -> None:
     host = _host(host)
-    bound = binding()
+    _remember_lane(payload)
+    bound = binding(payload)
     if bound is None:
         _start_impl(payload, host, output_format)
         return
@@ -524,8 +676,10 @@ def end(payload: dict, host: str, output_format: str = "native") -> bool:
     host = _host(host)
     if payload.get("hook_event_name") != "SessionEnd":
         raise ValueError("wrong hook event")
-    _forget_lane(payload)
     bound = binding()
+    if bound is not None:
+        stop_lane_waiter(payload, bound, host)
+    _forget_lane(payload)
     if bound is None:
         return False
     execution, _, _, origin, _ = bound
@@ -597,15 +751,26 @@ def inspect(host: str, session: str | None, output_format: str = "native") -> No
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("phase", choices=("start", "end", "inspect"))
+    parser.add_argument("phase", choices=("start", "end", "inspect", "wait", "touch"))
     parser.add_argument("--host", type=_host, required=True)
     parser.add_argument("--format", choices=("native", "portable"), default=None)
     parser.add_argument("--session-id")
+    parser.add_argument("--events", type=Path)
+    parser.add_argument("--heartbeat", type=Path)
     args = parser.parse_args()
     host = args.host
     output_format = args.format or ("native" if host in {"claude", "codex"} else "portable")
     try:
-        if args.phase == "inspect":
+        if args.phase == "wait":
+            if not args.session_id or args.events is None or args.heartbeat is None:
+                raise ValueError("waiter binding missing")
+            wait_for_lane(host, args.session_id, args.events, args.heartbeat)
+        elif args.phase == "touch":
+            payload = hook_input()
+            bound = binding(payload)
+            if bound is not None:
+                touch_lane_heartbeat(payload, bound, host)
+        elif args.phase == "inspect":
             inspect(host, args.session_id, output_format)
         else:
             payload = hook_input()

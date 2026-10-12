@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
 import re
+import signal
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,7 @@ from unittest import mock
 import urllib.request
 
 from plugins.graphhelm.hooks import tasks_reconcile
+from plugins.graphhelm.hooks import session_hook
 
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -42,6 +44,9 @@ class LaneStopTests(unittest.TestCase):
         keyring.mkdir()
         self.run_cli("gateway", "keyring", "init", "--keyring", str(keyring), "--key-id", "test")
         events = root / "events"
+        self.env["GRAPHHELM_EVENTS_DIR"] = str(events)
+        self.env["GRAPHHELM_CLI"] = self.cli
+        self.env["GRAPHHELM_HOOK_STATE_DIR"] = str(root / "hook-state")
         self.run_cli("execution", "start", "--file", str(REPO / "examples/graphs/software-feature.yaml"),
                      "--events", str(events), "--execution", "lane-test", "--mode", "manual", "--held")
         self.log = (root / "runtime.log").open("w+")
@@ -271,7 +276,7 @@ class LaneStopTests(unittest.TestCase):
         self.assertIn("--lane codex-4", output.read_text())
         self.assertIn("--repo stabem/GraphHelm", output.read_text())
 
-    def stop(self, manifest, active=False):
+    def stop(self, manifest, active=False, session="test-session"):
         # Drive the registered Stop commands, not an unregistered helper. On the parent
         # the Keel hook allows this repeated stop and the addressed note is lost.
         results = []
@@ -280,8 +285,9 @@ class LaneStopTests(unittest.TestCase):
             for hook in group["hooks"]:
                 name = re.search(r"/hooks/([a-z_]+\.py)", hook["command"]).group(1)
                 started = time.monotonic()
-                result = subprocess.run([sys.executable, str(manifest.parent / name)], env=self.env,
-                    input=json.dumps({"cwd": self.tmp.name, "session_id": "test-session", "stop_hook_active": active}),
+                args = ["--host=codex"] if "--host=codex" in hook["command"] else []
+                result = subprocess.run([sys.executable, str(manifest.parent / name), *args], env=self.env,
+                    input=json.dumps({"cwd": self.tmp.name, "session_id": session, "stop_hook_active": active}),
                     text=True, capture_output=True, timeout=12, creationflags=NO_WINDOW)
                 if name == "lane_stop_hook.py":
                     self.reminder_seconds = time.monotonic() - started
@@ -522,8 +528,103 @@ class LaneStopTests(unittest.TestCase):
     def test_no_addressed_note_allows_stop(self):
         self.note("other-1", to="codex-5")
         self.note("room-1")
-        for manifest in MANIFESTS:
-            self.assertEqual(self.stop(manifest), [])
+        self.assertEqual(self.stop(MANIFESTS[0]), [])
+        request = urllib.request.Request(self.url + "/v1/executions/lane-test",
+                  headers={"Authorization": "Bearer " + self.owner_token})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertIn("codex-4", json.load(response)["data"]["wakeListeners"])
+
+    def test_session_waiter_survives_unrelated_append_and_catches_ask(self):
+        session = "session-wake-test"
+        script = HERE / "session_hook.py"
+        payload = {"hook_event_name": "SessionStart", "session_id": session}
+        result = subprocess.run([sys.executable, str(script), "start", "--host", "codex"],
+                                input=json.dumps(payload), text=True, env=self.env,
+                                capture_output=True, timeout=8)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("UNOBSERVED", result.stdout)
+        pid_files = list(Path(self.env.get("GRAPHHELM_HOOK_STATE_DIR", "")).glob("*.waiter.pid"))
+        self.assertEqual(len(pid_files), 1)
+        pid = int(pid_files[0].read_text())
+        def stop_waiter():
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        self.addCleanup(stop_waiter)
+        self.assertTrue(session_hook._pid_alive(pid), "wake waiter exited before an append")
+        again = subprocess.run([sys.executable, str(script), "start", "--host", "codex"],
+                               input=json.dumps(payload), text=True, env=self.env,
+                               capture_output=True, timeout=8)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertEqual(int(pid_files[0].read_text()), pid)
+        self.note("other-2", to="codex-5")
+        self.assertTrue(session_hook._pid_alive(pid), "wake waiter exited after unrelated append")
+        request = urllib.request.Request(self.url + "/v1/executions/lane-test",
+                  headers={"Authorization": "Bearer " + self.owner_token})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertIn("codex-4", json.load(response)["data"]["wakeListeners"])
+        # Repeated unrelated rings must leave a listener, including after a
+        # waiter exits and Stop has to replace it for this same session.
+        os.kill(pid, signal.SIGTERM)
+        deadline = time.monotonic() + 3
+        while session_hook._pid_alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(session_hook._pid_alive(pid))
+        self.assertEqual(self.stop(MANIFESTS[1], session=session), [])
+        replacement = int(pid_files[0].read_text())
+        self.assertNotEqual(replacement, pid)
+        self.addCleanup(lambda: os.kill(replacement, signal.SIGTERM) if session_hook._pid_alive(replacement) else None)
+        for cycle in range(3):
+            self.note(f"other-cycle-{cycle}", to="codex-5")
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    if "codex-4" in json.load(response)["data"]["wakeListeners"]:
+                        break
+                time.sleep(0.05)
+            else:
+                self.fail(f"lane lost its wake listener after cycle {cycle}")
+        self.note("request-2", to="codex-4")
+        self.assertTrue(any(d.get("decision") == "block" for d in self.stop(MANIFESTS[0])))
+
+    def test_shell_launched_waiter_survives_parent_and_expires_without_heartbeat(self):
+        """A dead launcher cannot end a live session; stale activity must end it."""
+        script = HERE / "session_hook.py"
+        payload = json.dumps({"hook_event_name": "SessionStart", "session_id": "shell-host"})
+        for shell in (["cmd", "/c"] if os.name == "nt" else ["bash", "-c"] for _ in (0,)):
+            command = subprocess.list2cmdline([sys.executable, str(script), "start", "--host", "codex"])
+            host_code = ("import subprocess,sys,time; "
+                         "p=subprocess.run(sys.argv[1:3]+[sys.argv[3]],input=sys.argv[4],text=True,"
+                         "capture_output=True,timeout=8); "
+                         "print(p.returncode, flush=True); time.sleep(30)")
+            host = subprocess.Popen([sys.executable, "-c", host_code, *shell, command, payload],
+                                    env=self.env, stdout=subprocess.PIPE, text=True)
+            self.addCleanup(lambda p=host: p.kill() if p.poll() is None else None)
+            self.addCleanup(host.stdout.close)
+            self.assertEqual(host.stdout.readline().strip(), "0")
+            pid_files = list(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.waiter.pid"))
+            self.assertEqual(len(pid_files), 1)
+            pid = int(pid_files[0].read_text())
+            self.addCleanup(lambda p=pid: os.kill(p, signal.SIGTERM) if session_hook._pid_alive(p) else None)
+            self.assertTrue(session_hook._pid_alive(pid), "waiter died with hook shell")
+            host.kill()
+            host.wait(timeout=5)
+            self.note("host-exit-wake", to="codex-5")
+            time.sleep(1)
+            self.assertTrue(session_hook._pid_alive(pid), "waiter died with launcher")
+            heartbeat = pid_files[0].with_suffix(".alive")
+            os.utime(heartbeat, (time.time() - 1900, time.time() - 1900))
+            self.note("heartbeat-expired", to="codex-5")
+            deadline = time.monotonic() + 65
+            while session_hook._pid_alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertFalse(session_hook._pid_alive(pid), "waiter outlived heartbeat")
+            pid_files[0].unlink(missing_ok=True)
+            self.assertEqual(self.stop(MANIFESTS[1], session="shell-host"), [])
+            replacement = int(pid_files[0].read_text())
+            self.assertNotEqual(replacement, pid)
+            self.addCleanup(lambda p=replacement: os.kill(p, signal.SIGTERM) if session_hook._pid_alive(p) else None)
 
     def test_only_own_reply_clears_pending_note(self):
         self.note("request-1", to="codex-4")

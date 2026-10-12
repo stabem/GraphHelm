@@ -79,7 +79,7 @@ function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: 
   const matches = (r: AgentRow, f: Filter) => f === "all" ? r.status !== "offline"
     : f === "working" ? r.status === "working" || r.status === "building"
     : f === "waiting" ? r.status === "waiting" || r.status === "build_wait"
-    : f === "silent" ? r.status === "silent" || r.status === "stale" : r.status === f;
+    : f === "silent" ? r.status === "silent" : r.status === f;
   const count = (f: Filter) => rows.filter((r) => matches(r, f)).length;
   const shown = rows.filter((r) => matches(r, filter));
   return (

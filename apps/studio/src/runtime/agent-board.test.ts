@@ -39,6 +39,15 @@ describe("agentBoard", () => {
     expect(agentBoard([bot("rev")], [old], [], now, slots)[0]).toMatchObject({ status: "building", pr: null, doing: "building in D:/gh/b" });
   });
 
+  it("adds rows for slot holders and waiters missing from agents and lanes", () => {
+    const slots = [{ root: "D:/gh", ok: true as const,
+      holder: { lane: "holder-only", label: null, pid: 1, worktree: null, heldSeconds: 30 },
+      waiting: [{ lane: "waiter-only", label: null, pid: 2, worktree: null, priority: null, ticket: null, waitedSeconds: 15 }] }];
+    expect(agentBoard([], [], [], now, slots).map(({ name, status }) => ({ name, status }))).toEqual([
+      { name: "holder-only", status: "building" }, { name: "waiter-only", status: "build_wait" },
+    ]);
+  });
+
   it("shows no wait position after the queue stops listing the lane", () => {
     const old = { ...lane("rev", []), lastRecord: { kind: "review_assigned", pr: 720, at: now - M } };
     const slots = [{ root: "D:/gh/b", ok: true as const, holder: null, waiting: [] }];

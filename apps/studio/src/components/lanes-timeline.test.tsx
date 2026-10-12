@@ -48,11 +48,26 @@ describe("LanesTimeline", () => {
     const user = fastUserEvent();
     const board = screen.getByRole("list", { name: "Agent board" });
     const filters = [["Working", ["building", "working"]], ["Waiting", ["awaiting"]], ["Free", ["free"]], ["Silent", ["stale"]]] as const;
-    expect(screen.getByRole("button", { name: "Available 5" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Available 2" })).toBeInTheDocument();
     for (const [name, expected] of filters) {
       await user.click(screen.getByRole("button", { name: `${name} ${expected.length}` }));
       expect(Array.from(board.querySelectorAll(".ab-name")).map((row) => row.textContent)).toEqual(expected);
     }
+  });
+
+  it("counts Silent only for Silent rows and labels the all row count Available", async () => {
+    const user = fastUserEvent();
+    const H = 3_600_000, at = 10 * H;
+    const rows = [
+      { lane: "working", silent: false, lastEventAt: at, bars: [{ kind: "implement" as const, label: "#1", start: at - H, end: at, open: true }] },
+      { lane: "stale", silent: false, lastEventAt: at - 3 * H, bars: [{ kind: "implement" as const, label: "issue 2", start: at - 3 * H, end: at, open: true }] },
+    ];
+    render(<LanesTimeline lanes={rows} now={at} windowMs={4 * H} />);
+    const board = screen.getByRole("list", { name: "Agent board" });
+    expect(screen.getByRole("button", { name: "Available 1" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Silent 0" }));
+    expect(within(board).queryByText("stale")).toBeNull();
+    expect(screen.getByRole("button", { name: "Stale claim 1" })).toBeInTheDocument();
   });
 
   it("shows an old-record slot holder as busy without hatching its open bar after the slot began", () => {

@@ -2215,7 +2215,7 @@ export default function App({
     ?? (canvasTab === "journey" ? journeysView?.journeys[0]?.contractId ?? flowsRead.view?.flows[0]?.id ?? null : null);
   useEffect(() => {
     const client = clientRef.current;
-    if (client === null || (canvasTab !== "graph" && canvasTab !== "journey") || !activeJourney) return undefined;
+    if (client === null || (canvasTab !== "graph" && canvasTab !== "journey") || journeysView === null || !activeJourney) return undefined;
     let cancelled = false;
     client.journeyRun(activeJourney).then(
       (run) => { if (!cancelled) setMissionRuns((before) => ({ ...before, [activeJourney]: run })); },

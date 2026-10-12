@@ -18,6 +18,29 @@ INVOCATION = re.compile(r"Use the ([\w-]+) skill(?: in audit mode)?")
 
 
 class SkillTwinsTest(unittest.TestCase):
+    def test_audit_before_planning_keeps_selection_and_assessment_separate(self):
+        case = ROOT / "evals/graphhelm-development-contracts/audit-before-planning"
+        prompt = (case / "prompt.md").read_text(encoding="utf-8")
+        criteria = (case / "graders/criteria.md").read_text(encoding="utf-8")
+        self.assertTrue(prompt.startswith("---\nmax_turns: 4\nallowed_tools: [Skill]\n---\n\n"))
+        request = prompt.split("---", 2)[2]
+        self.assertIn("planning next week's checkout work", request)
+        self.assertIn("cartTotal([{p:2,q:3}])", request)
+        self.assertIn("another call to itself", request)
+        self.assertIn("independent literal 6", request)
+        self.assertIn("do not edit files or produce an implementation plan", request)
+        self.assertNotIn("test-audit", request)
+        self.assertNotIn("Use the", request)
+        for obligation in (
+            "completed transcript", "`test-audit` skill was invoked",
+            "self-comparison", "literal 6", "incorrect multiplication",
+            "do not claim broad coverage", "assessment", "not an implementation card",
+            "no edits", "automatic deletion", "another relevant skill",
+            "missing transcript", "truncated transcript", "tool failure",
+            "infrastructure failure", "INCOMPLETE",
+        ):
+            self.assertIn(obligation, criteria)
+
     def test_no_skill_audit_grammar_is_a_complete_near_miss(self):
         case = ROOT / "evals/graphhelm-development-contracts/no-skill-audit-grammar"
         prompt = (case / "prompt.md").read_text(encoding="utf-8")

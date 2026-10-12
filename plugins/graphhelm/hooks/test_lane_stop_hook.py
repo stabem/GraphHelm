@@ -47,7 +47,8 @@ class LaneStopTests(unittest.TestCase):
         events = root / "events"
         self.env["GRAPHHELM_EVENTS_DIR"] = str(events)
         self.env["GRAPHHELM_CLI"] = self.cli
-        self.env["GRAPHHELM_HOOK_STATE_DIR"] = str(root / "hook-state")
+        self.hook_state_dir = root / "hook-state"
+        self.env["GRAPHHELM_HOOK_STATE_DIR"] = str(self.hook_state_dir)
         self.run_cli("execution", "start", "--file", str(REPO / "examples/graphs/software-feature.yaml"),
                      "--events", str(events), "--execution", "lane-test", "--mode", "manual", "--held")
         self.log = (root / "runtime.log").open("w+")
@@ -79,18 +80,24 @@ class LaneStopTests(unittest.TestCase):
 
     def stop_waiters(self):
         """Stop only waiter processes recorded in this test's disposable state directory."""
-        state = Path(self.env["GRAPHHELM_HOOK_STATE_DIR"])
-        for pid_file in state.glob("*.waiter.pid"):
+        for pid_file in self.hook_state_dir.glob("*.waiter.pid"):
             try:
                 pid = int(pid_file.read_text())
-                if session_hook._pid_alive(pid):
-                    os.kill(pid, signal.SIGTERM)
-                deadline = time.monotonic() + 2
-                while session_hook._pid_alive(pid) and time.monotonic() < deadline:
-                    time.sleep(0.05)
+                self.stop_waiter_pid(pid)
                 pid_file.unlink(missing_ok=True)
             except (OSError, ValueError):
                 pass
+
+    @staticmethod
+    def stop_waiter_pid(pid):
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
+                           timeout=5, creationflags=NO_WINDOW)
+        elif session_hook._pid_alive(pid):
+            os.kill(pid, signal.SIGTERM)
+        deadline = time.monotonic() + 5
+        while session_hook._pid_alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
 
     def run_cli(self, *args):
         result = subprocess.run([self.cli, *args], env=self.env, capture_output=True, text=True, timeout=15, creationflags=NO_WINDOW)
@@ -571,10 +578,7 @@ class LaneStopTests(unittest.TestCase):
         self.assertEqual(len(pid_files), 1)
         pid = int(pid_files[0].read_text())
         def stop_waiter():
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except OSError:
-                pass
+            self.stop_waiter_pid(pid)
         self.addCleanup(stop_waiter)
         self.assertTrue(session_hook._pid_alive(pid), "wake waiter exited before an append")
         again = subprocess.run([sys.executable, str(script), "start", "--host", "codex"],
@@ -590,7 +594,7 @@ class LaneStopTests(unittest.TestCase):
             self.assertIn("codex-4", json.load(response)["data"]["wakeListeners"])
         # Repeated unrelated rings must leave a listener, including after a
         # waiter exits and Stop has to replace it for this same session.
-        os.kill(pid, signal.SIGTERM)
+        self.stop_waiter_pid(pid)
         deadline = time.monotonic() + 3
         while session_hook._pid_alive(pid) and time.monotonic() < deadline:
             time.sleep(0.05)
@@ -598,7 +602,7 @@ class LaneStopTests(unittest.TestCase):
         self.assertEqual(self.stop(MANIFESTS[1], session=session), [])
         replacement = int(pid_files[0].read_text())
         self.assertNotEqual(replacement, pid)
-        self.addCleanup(lambda: os.kill(replacement, signal.SIGTERM) if session_hook._pid_alive(replacement) else None)
+        self.addCleanup(lambda: self.stop_waiter_pid(replacement))
         for cycle in range(3):
             self.note(f"other-cycle-{cycle}", to="codex-5")
             deadline = time.monotonic() + 5
@@ -631,7 +635,7 @@ class LaneStopTests(unittest.TestCase):
             pid_files = list(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.waiter.pid"))
             self.assertEqual(len(pid_files), 1)
             pid = int(pid_files[0].read_text())
-            self.addCleanup(lambda p=pid: os.kill(p, signal.SIGTERM) if session_hook._pid_alive(p) else None)
+            self.addCleanup(lambda p=pid: self.stop_waiter_pid(p))
             self.assertTrue(session_hook._pid_alive(pid), "waiter died with hook shell")
             host.kill()
             host.wait(timeout=5)
@@ -649,7 +653,7 @@ class LaneStopTests(unittest.TestCase):
             self.assertEqual(self.stop(MANIFESTS[1], session="shell-host"), [])
             replacement = int(pid_files[0].read_text())
             self.assertNotEqual(replacement, pid)
-            self.addCleanup(lambda p=replacement: os.kill(p, signal.SIGTERM) if session_hook._pid_alive(p) else None)
+            self.addCleanup(lambda p=replacement: self.stop_waiter_pid(p))
 
     def test_only_own_reply_clears_pending_note(self):
         self.note("request-1", to="codex-4")

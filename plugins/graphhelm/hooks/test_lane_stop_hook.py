@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
 import re
+import signal
 import shutil
 import subprocess
 import sys
@@ -17,6 +18,7 @@ import threading
 import unittest
 from unittest import mock
 import urllib.request
+import urllib.error
 
 from plugins.graphhelm.hooks import tasks_reconcile
 
@@ -42,6 +44,9 @@ class LaneStopTests(unittest.TestCase):
         keyring.mkdir()
         self.run_cli("gateway", "keyring", "init", "--keyring", str(keyring), "--key-id", "test")
         events = root / "events"
+        self.env["GRAPHHELM_EVENTS_DIR"] = str(events)
+        self.env["GRAPHHELM_CLI"] = self.cli
+        self.env["GRAPHHELM_HOOK_STATE_DIR"] = str(root / "hook-state")
         self.run_cli("execution", "start", "--file", str(REPO / "examples/graphs/software-feature.yaml"),
                      "--events", str(events), "--execution", "lane-test", "--mode", "manual", "--held")
         self.log = (root / "runtime.log").open("w+")
@@ -522,12 +527,39 @@ class LaneStopTests(unittest.TestCase):
     def test_no_addressed_note_allows_stop(self):
         self.note("other-1", to="codex-5")
         self.note("room-1")
-        for manifest in MANIFESTS:
-            self.assertEqual(self.stop(manifest), [])
+        self.assertEqual(self.stop(MANIFESTS[0]), [])
+        self.note("unrelated-after-arm", to="codex-5")
+        self.note("unrelated-after-arm-2", to="codex-5")
         request = urllib.request.Request(self.url + "/v1/executions/lane-test",
                   headers={"Authorization": "Bearer " + self.owner_token})
         with urllib.request.urlopen(request, timeout=5) as response:
             self.assertIn("codex-4", json.load(response)["data"]["wakeListeners"])
+
+    def test_session_waiter_survives_unrelated_append_and_catches_ask(self):
+        session = "session-wake-test"
+        script = HERE / "session_hook.py"
+        payload = {"hook_event_name": "SessionStart", "session_id": session}
+        result = subprocess.run([sys.executable, str(script), "start", "--host", "codex"],
+                                input=json.dumps(payload), text=True, env=self.env,
+                                capture_output=True, timeout=8)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("UNOBSERVED", result.stdout)
+        pid_files = list(Path(self.env.get("GRAPHHELM_HOOK_STATE_DIR", "")).glob("*.waiter.pid"))
+        self.assertEqual(len(pid_files), 1)
+        pid = int(pid_files[0].read_text())
+        self.addCleanup(lambda: os.kill(pid, signal.SIGTERM))
+        self.note("unrelated-waiter-append", to="codex-5")
+        request = urllib.request.Request(self.url + "/v1/executions/lane-test",
+                  headers={"Authorization": "Bearer " + self.owner_token})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertIn("codex-4", json.load(response)["data"]["wakeListeners"])
+        time.sleep(0.2)
+        try:
+            self.note("addressed-waiter-ask", to="codex-4")
+        except urllib.error.HTTPError as error:
+            self.log.seek(0)
+            self.fail(error.read().decode() + "\n" + self.log.read() + "\npid=" + str(pid))
+        self.assertTrue(any(d.get("decision") == "block" for d in self.stop(MANIFESTS[0])))
 
     def test_only_own_reply_clears_pending_note(self):
         self.note("request-1", to="codex-4")

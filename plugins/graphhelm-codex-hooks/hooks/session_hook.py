@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import tempfile
 import urllib.parse
@@ -258,6 +259,58 @@ def arm_lane_wake(payload: dict, bound: tuple[str, str, str, str, str | None]) -
         raise ValueError("wake lease acknowledgement mismatch")
 
 
+def _waiter_path(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> Path:
+    return state_path(bound[0], _session(payload), host, bound[3]).with_suffix(".waiter.pid")
+
+
+def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> None:
+    """Start one local waiter for a bound session, without replacing a live owner."""
+    configured = os.environ.get("GRAPHHELM_EVENTS_DIR")
+    events = Path(configured) if configured else Path(bound[1]).parent / "events"
+    if not events.is_dir():
+        raise ValueError("local event store unavailable for wake waiter")
+    pid_path = _waiter_path(payload, bound, host)
+    try:
+        pid = int(pid_path.read_text(encoding="ascii"))
+        os.kill(pid, 0)
+        return
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+    arm_lane_wake(payload, bound)
+    flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS if os.name == "nt" else 0
+    child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "wait", "--host", host,
+                              "--session-id", _session(payload), "--events", str(events)],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags,
+                             start_new_session=os.name != "nt")
+    pid_path.write_text(str(child.pid), encoding="ascii")
+
+
+def wait_for_lane(host: str, session: str, events: Path) -> None:
+    payload = {"session_id": session}
+    bound = binding(payload)
+    if bound is None:
+        return
+    pid_path = _waiter_path(payload, bound, host)
+    cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
+    try:
+        while True:
+            result = subprocess.run([cli, "wake-wait", "--events", str(events),
+                                     "--execution", bound[0], "--session-id", session],
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL, check=False)
+            if result.returncode != 0:
+                return
+            # A real ring is the only reason to renew. The Stop hook reads pending notes.
+            arm_lane_wake(payload, bound)
+    finally:
+        try:
+            if pid_path.read_text(encoding="ascii") == str(os.getpid()):
+                pid_path.unlink()
+        except OSError:
+            pass
+
+
 def request(url: str, token: str, method: str, body: dict | None = None, headers: dict | None = None, timeout: float = 1.0, max_reply: int = MAX_REPLY) -> dict:
     data = None if body is None else json.dumps(body, separators=(",", ":")).encode("utf-8")
     request_headers = {"Authorization": f"Bearer {token}"}
@@ -454,7 +507,7 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
         state = state or {"version": 2, "executionId": execution, "sessionId": session, "host": host, "origin": origin}
         state["briefing"] = digest
         _write_state(path, state)
-    arm_lane_wake(payload, bound)
+    start_lane_waiter(payload, bound, host)
     context = KEEL_CONTEXT + "\n" + _context(digest, freshness, execution, session, node_id)
     if len(context) > MAX_CONTEXT:
         raise ValueError("hook context too large")
@@ -621,15 +674,20 @@ def inspect(host: str, session: str | None, output_format: str = "native") -> No
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("phase", choices=("start", "end", "inspect"))
+    parser.add_argument("phase", choices=("start", "end", "inspect", "wait"))
     parser.add_argument("--host", type=_host, required=True)
     parser.add_argument("--format", choices=("native", "portable"), default=None)
     parser.add_argument("--session-id")
+    parser.add_argument("--events", type=Path)
     args = parser.parse_args()
     host = args.host
     output_format = args.format or ("native" if host in {"claude", "codex"} else "portable")
     try:
-        if args.phase == "inspect":
+        if args.phase == "wait":
+            if not args.session_id or args.events is None:
+                raise ValueError("waiter binding missing")
+            wait_for_lane(host, args.session_id, args.events)
+        elif args.phase == "inspect":
             inspect(host, args.session_id, output_format)
         else:
             payload = hook_input()

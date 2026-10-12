@@ -306,14 +306,14 @@ class SessionHookTests(unittest.TestCase):
         self.assertEqual(RuntimeHandler.requests[0][1], "/v1/executions/run-test/briefing")
         self.assertEqual(RuntimeHandler.requests[0][2]["Authorization"], "Bearer test-token")
 
-    def test_bound_lane_start_without_local_store_is_unobserved(self):
+    def test_bound_lane_start_without_local_store_keeps_briefing(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         self.env["GRAPHHELM_ACTOR"] = "gh-lane-1"
         result = self.run_hook("start", session_id="session-123")
         self.assertEqual(result.returncode, 0, result.stderr)
         arms = [item for item in RuntimeHandler.requests if item[1] == "/v1/executions/run-test/wake-lease"]
         self.assertEqual(len(arms), 0)
-        self.assertIn("UNOBSERVED", result.stdout)
+        self.assertNotIn("UNOBSERVED", result.stdout)
 
     def test_bound_lane_stop_does_not_arm_unparked_lease(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"

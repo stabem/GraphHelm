@@ -289,7 +289,7 @@ def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None
     configured = os.environ.get("GRAPHHELM_EVENTS_DIR")
     events = Path(configured) if configured else Path(bound[1]).parent / "events"
     if not events.is_dir():
-        raise ValueError("local event store unavailable for wake waiter")
+        return
     pid_path = _waiter_path(payload, bound, host)
     try:
         pid = int(pid_path.read_text(encoding="ascii"))

@@ -1,5 +1,7 @@
 import json
 import os
+import subprocess
+import sys
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -7,6 +9,7 @@ from pathlib import Path
 import tempfile
 from unittest import mock
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import keel_record
 
 # Owner rule: children run hidden in the calling terminal, never in a new console window.

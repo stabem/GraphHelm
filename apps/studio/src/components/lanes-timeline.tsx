@@ -60,7 +60,10 @@ type Filter = "all" | "working" | "waiting" | "free" | "silent" | "offline";
 
 function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: AgentRow[]; agents?: Bot[] } & BotActions) {
   const [filter, setFilter] = useState<Filter>("all");
-  const matches = (r: AgentRow, f: Filter) => f === "all" ? r.status !== "offline" : f === "waiting" ? r.status === "waiting" || r.status === "awaiting" || r.status === "build_wait" : r.status === f;
+  const matches = (r: AgentRow, f: Filter) => f === "all" ? r.status !== "offline"
+    : f === "working" ? r.status === "working" || r.status === "building"
+    : f === "waiting" ? r.status === "waiting" || r.status === "awaiting" || r.status === "build_wait"
+    : f === "silent" ? r.status === "silent" || r.status === "stale" : r.status === f;
   const count = (f: Filter) => rows.filter((r) => matches(r, f)).length;
   const shown = rows.filter((r) => matches(r, filter));
   return (
@@ -175,7 +178,9 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
     if (bot?.key) boardByLane.set(bot.key, row);
   }
   // #591: free hands are the board's Free rows: no open slice, no PR awaiting review, no review owed.
-  const cards = { ...laneCards(lanes, tasks), free: board.filter((r) => r.status === "free").map((r) => r.name) };
+  const cards = { ...laneCards(lanes, tasks),
+    stuck: lanes.filter((l) => l.silent && boardByLane.get(l.lane)?.status !== "building" && boardByLane.get(l.lane)?.status !== "build_wait").map((l) => l.lane),
+    free: board.filter((r) => r.status === "free").map((r) => r.name) };
   const card = (items: string[]) => (items.length ? items.join(", ") : "none right now");
   return (
     <div className="lt-wrap">
@@ -205,7 +210,7 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
         {lanes.map((l) => {
           const open = l.bars.some((b) => b.open);
           const status = boardByLane.get(l.lane)?.status;
-          const presence = status === "offline" ? "offline" : status === "silent" || l.silent ? "silent" : status === "working" || status === "building" ? "busy" : status === "free" ? "idle" : open ? "busy" : "idle";
+          const presence = status === "offline" ? "offline" : status === "building" || status === "build_wait" ? "busy" : status === "silent" || l.silent ? "silent" : status === "working" ? "busy" : status === "free" ? "idle" : open ? "busy" : "idle";
           const pack = packBars(l.bars);
           const trackH = pack.rows * SUB_H + (pack.rows - 1) * SUB_GAP + TRACK_PAD * 2;
           return (
@@ -227,6 +232,13 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
                   if (!b.open && !b.quietSpans && b.lastActivityAt !== undefined && stallStart < b.end) spans.push({ start: stallStart, end: b.end });
                   if (b.open && b.lastActivityAt !== undefined && stallStart < b.end) spans.push({ start: stallStart, end: b.end });
                   if (b.lastActivityAt === undefined && l.silent && b.open && stallStart < b.end) spans.push({ start: stallStart, end: b.end });
+                  if (b.open && (status === "building" || status === "build_wait")) {
+                    const activeSince = now - (boardByLane.get(l.lane)?.stageMs ?? 0);
+                    for (let j = spans.length - 1; j >= 0; j--) {
+                      spans[j]!.end = Math.min(spans[j]!.end, activeSince);
+                      if (spans[j]!.start >= spans[j]!.end) spans.splice(j, 1);
+                    }
+                  }
                   const stalled = spans.length > 0;
                   const quiet = spans.reduce((sum, span) => sum + span.end - span.start, 0);
                   const worked = Math.max(0, b.end - b.start - quiet);

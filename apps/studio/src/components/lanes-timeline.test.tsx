@@ -18,6 +18,39 @@ const t = (over: Partial<MissionTask>): MissionTask => ({
 const round = { reviewer: "r", headSha: "h", fixHead: "f" };
 
 describe("LanesTimeline", () => {
+  it("counts every available status in exactly one filter", async () => {
+    const H = 3_600_000, at = 10 * H;
+    const rows = [
+      { lane: "building", silent: true, lastEventAt: at - 5 * H, bars: [{ kind: "implement" as const, label: "#1", start: at - 5 * H, end: at, open: true }] },
+      { lane: "stale", silent: true, lastEventAt: at - 5 * H, bars: [{ kind: "implement" as const, label: "issue-2", issue: 2, start: at - 5 * H, end: at, open: true }] },
+      { lane: "working", silent: false, lastEventAt: at, bars: [{ kind: "implement" as const, label: "#3", start: at - H, end: at, open: true }] },
+      { lane: "awaiting", silent: false, lastEventAt: at, awaiting: [4], bars: [] },
+      { lane: "free", silent: false, lastEventAt: at, bars: [] },
+    ];
+    render(<LanesTimeline lanes={rows} now={at} windowMs={6 * H} slots={[{ root: "D:/gh", ok: true, holder: { lane: "building", label: "#1", pid: 1, worktree: null, heldSeconds: 60 }, waiting: [] }]} />);
+    const user = fastUserEvent();
+    const board = screen.getByRole("list", { name: "Agent board" });
+    const filters = [["Working", ["building", "working"]], ["Waiting", ["awaiting"]], ["Free", ["free"]], ["Silent", ["stale"]]] as const;
+    expect(screen.getByRole("button", { name: "Available 5" })).toBeInTheDocument();
+    for (const [name, expected] of filters) {
+      await user.click(screen.getByRole("button", { name: `${name} ${expected.length}` }));
+      expect(Array.from(board.querySelectorAll(".ab-name")).map((row) => row.textContent)).toEqual(expected);
+    }
+  });
+
+  it("shows an old-record slot holder as busy without hatching its open bar after the slot began", () => {
+    const H = 3_600_000, at = 10 * H;
+    const { container } = render(<LanesTimeline lanes={[{ lane: "builder", silent: true, lastEventAt: at - 5 * H, bars: [{
+      kind: "implement", label: "#1", start: at - 5 * H, end: at, open: true, lastActivityAt: at - 5 * H,
+    }] }]} now={at} windowMs={6 * H} slots={[{ root: "D:/gh", ok: true, holder: { lane: "builder", label: "#1", pid: 1, worktree: null, heldSeconds: 60 }, waiting: [] }]} />);
+    const row = within(screen.getByRole("list", { name: "Agent lanes" })).getByText("builder").closest("li")!;
+    expect(row.querySelector(".lt-dot")).toHaveAttribute("data-state", "busy");
+    expect(row.querySelector(".lt-flag[data-flag='silent']")).toBeNull();
+    expect(container.querySelector('[data-kind="stuck"]')).not.toHaveTextContent("builder");
+    const hatch = container.querySelector<HTMLElement>(".lt-bar .lt-stall");
+    expect(hatch).not.toBeNull();
+    expect(parseFloat(hatch!.style.left) + parseFloat(hatch!.style.width)).toBeCloseTo(100 - 60_000 / (5 * H) * 100, 1);
+  });
   it("renders the PR number and title in a bar, with the full label in its tooltip", () => {
     const events = [
       { sequence: 1, actorId: "dev", taskId: "issue-809", kind: "task.claimed", lane: "dev", issue: 809, title: "Old issue title", at: "2026-10-09T00:00:00Z" },

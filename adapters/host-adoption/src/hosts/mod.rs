@@ -14,7 +14,7 @@ use std::path::PathBuf;
 #[cfg(windows)]
 use std::{
     io::Read,
-    process::{Command, Stdio},
+    process::Stdio,
     time::{Duration, Instant},
 };
 

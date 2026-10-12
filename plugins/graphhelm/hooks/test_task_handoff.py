@@ -288,6 +288,42 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(len(posts), 2)
         self.assertEqual([post[2]["X-Graphhelm-Actor-Session"] for post in posts], ["sender", "receiver"])
 
+    def test_untargeted_status_bounds_evidence_reads(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            base = MODULE.offer("claude", "sender", "codex", "receiver")
+            received = MODULE.receive("codex", "receiver", base["offerId"])
+            template_event = RuntimeHandler.events[0]
+            template_signal = json.loads(RuntimeHandler.evidence[f"evidence-{base['offerId']}"][0])
+            own_actor = MODULE._actor("codex", "receiver")
+            other_actor = MODULE._actor("codex", "other")
+            for index in range(189):
+                signal = json.loads(json.dumps(template_signal))
+                signal_id = f"handoff-offer-fixture-{index}"
+                signal["id"] = signal_id
+                signal["to"] = other_actor if index % 4 == 0 else own_actor
+                details = json.loads(signal["description"])
+                details["offerId"] = signal_id
+                details["recipient"] = signal["to"]
+                signal["description"] = json.dumps(details)
+                content = json.dumps(signal, separators=(",", ":"))
+                digest = hashlib.sha256(content.encode()).hexdigest()
+                event = json.loads(json.dumps(template_event))
+                event["sequence"] = RuntimeHandler.next_sequence
+                event["evidenceRefs"] = [{"evidenceId": f"evidence-{signal_id}", "contentSha256": digest}]
+                event["kind"]["data"].update(signalId=signal_id, envelopeSha256=digest)
+                RuntimeHandler.events.append(event)
+                RuntimeHandler.evidence[f"evidence-{signal_id}"] = (content, digest)
+                RuntimeHandler.next_sequence += 1
+            RuntimeHandler.requests = []
+            report = MODULE.status("codex", "receiver", None)
+        evidence_reads = [row[1] for row in RuntimeHandler.requests if "/evidence/" in row[1]]
+        self.assertTrue(report["truncated"])
+        self.assertEqual(len(report["offers"]), MODULE.MAX_OFFERS)
+        self.assertEqual(report["offers"][0]["receipts"], [received["receiptId"]])
+        self.assertLessEqual(len(evidence_reads), MODULE.MAX_OFFERS + 2)
+        self.assertFalse(any(row[0] == "POST" or "/briefing" in row[1]
+                             for row in RuntimeHandler.requests))
+
     def test_targeted_status_avoids_unrelated_offer_evidence_and_preserves_receipts(self):
         with patch.dict(os.environ, self.env, clear=False):
             selected = MODULE.offer("claude", "sender", "codex", "receiver", "selected")

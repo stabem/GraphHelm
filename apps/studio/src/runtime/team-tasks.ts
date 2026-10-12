@@ -507,8 +507,8 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
     // A critic round recorded before the claim belongs to this task: the claim adopts it (#562).
     return group.find(isUnclaimedCritic) ?? add();
   }
-  // A PR no slice holds yet joins the oldest open claim of its task (for pr_opened, the same
-  // lane's): PRs open in the order their slices were claimed. The claim's slice becomes that PR's
+  // A PR no slice holds yet joins the latest open claim of its task (for pr_opened, the same
+  // lane's), matching the Runtime's pre-PR claim route. The claim's slice becomes that PR's
   // slice. A merge recorded with no pr_opened (#449's own log) still lands on the issue's claim
   // instead of opening a second graph.
   // #480 (gh-claude-10's BLOCK on 2bba9de4): a plan or a critic round is the recording lane's own
@@ -522,7 +522,8 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
     if (event.kind === "task.planned") return add();
   }
   const claimed = group.filter((slice) => event.kind === "task.pr_opened" ? open(slice)
-    : slice.pr === null && slice.step !== "merged" && slice.releasedBy === undefined).at(0);
+    : slice.pr === null && slice.step !== "merged" && slice.releasedBy === undefined)
+    .at(event.kind === "task.pr_opened" ? -1 : 0);
   if (claimed !== undefined) {
     if (event.pr !== undefined) claimed.pr = event.pr;
     return claimed;
@@ -566,6 +567,16 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
       }
     }
     const state = sliceFor(slices, event);
+    if (event.kind === "task.pr_opened" && !firstPrOpening.has(state) && state.claimSequence !== undefined) {
+      for (let index = slices.length - 1; index >= 0; index--) {
+        const claim = slices[index];
+        if (claim !== state && claim.taskId === event.taskId && claim.lane === event.lane
+          && claim.pr === null && claim.releasedBy === undefined && claim.step !== "merged"
+          && claim.claimSequence !== undefined && claim.claimSequence < state.claimSequence) {
+          slices.splice(index, 1);
+        }
+      }
+    }
     if (event.kind === "task.pr_opened" && !firstPrOpening.has(state)) firstPrOpening.set(state, event.sequence);
     onRoute?.(event, state);
     if (ended.has(state)) continue;

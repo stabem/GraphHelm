@@ -263,22 +263,18 @@ describe("foldTaskEvents slices (#460)", () => {
     expect(tasks[1].headSha).toBe("dddddddd");
   });
 
-  // gh-claude-2's BLOCK on a87a28ad: one lane claims two slices before opening either PR (the
-  // DELIVERY rule asks for exactly that). The second claim must not take over the first.
-  it("keeps two claims of one lane apart, and the first PR joins the first claim", () => {
+  it("joins the latest open claim and absorbs earlier claims of the same lane", () => {
     const claim = (sequence: number, branch: string) =>
       record(sequence, "task.claimed", "gh-claude-4", { ...issue, issue: 356, lane: "gh-claude-4", branch });
     const tasks = foldTaskEvents([
       claim(1, "issue-356-heal"), claim(2, "issue-356-explore"),
       record(3, "task.pr_opened", "gh-claude-4", { ...issue, pr: 456, headSha: "aaaaaaaa", journeys: [], lane: "gh-claude-4" }),
     ]);
-    expect(tasks.map((task) => [task.branch, task.pr, task.step]).sort()).toEqual([
-      ["issue-356-explore", null, "plan"],
-      ["issue-356-heal", 456, "review"],
-    ]);
+    expect(tasks.map((task) => [task.branch, task.pr, task.step]))
+      .toEqual([["issue-356-explore", 456, "review"]]);
   });
 
-  it("keeps a later head of the same PR on its original claim (#859)", () => {
+  it("keeps a later head of the same PR on the latest claim (#859)", () => {
     const claim = (sequence: number) =>
       record(sequence, "task.claimed", "codex-2", { taskId: "issue-830", issue: 830, lane: "codex-2", branch: "issue-830-fix" });
     const opened = (sequence: number, headSha: string) =>
@@ -287,7 +283,7 @@ describe("foldTaskEvents slices (#460)", () => {
 
     expect(tasks.filter((task) => task.pr === 854)).toHaveLength(1);
     expect(tasks.find((task) => task.pr === 854)).toMatchObject({ headSha: "bbbbbbbb", branch: "issue-830-fix" });
-    expect(tasks.filter((task) => task.pr === null)).toHaveLength(1);
+    expect(tasks.filter((task) => task.pr === null)).toHaveLength(0);
   });
 
   it("shows the second claim as its own slice before it has a PR", () => {
@@ -316,6 +312,19 @@ describe("merges recorded by another lane (#765)", () => {
     const tasks = foldTaskEvents(events);
     expect(tasks.filter((task) => task.pr === null)).toHaveLength(0);
     expect(tasks.filter((task) => task.pr === 658)).toMatchObject([{ step: "merged", mergeSha: "cccccccc" }]);
+  });
+
+  it("joins the latest pre-PR claim and absorbs earlier same-lane claims (#871)", () => {
+    const events = [
+      record(5299, "task.claimed", "codex-2", { taskId: "issue-830", issue: 830, lane: "codex-2", branch: "issue-830-proof" }),
+      record(5409, "task.claimed", "codex-2", { taskId: "issue-830", issue: 830, lane: "codex-2", branch: "issue-830-proof" }),
+      record(5430, "task.pr_opened", "codex-2", { taskId: "issue-830", pr: 854, headSha: "aaaaaaaa", journeys: [], lane: "codex-2" }),
+      record(5460, "task.pr_opened", "codex-2", { taskId: "issue-830", pr: 854, headSha: "bbbbbbbb", journeys: [], lane: "codex-2" }),
+      record(5618, "task.merged", "coordinator", { taskId: "pr-854", pr: 854, mergeSha: "cccccccc", closes: [], merger: "coordinator" }),
+    ];
+    const tasks = foldTaskEvents(events);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ claimSequence: 5409, pr: 854, step: "merged", mergeSha: "cccccccc" });
   });
 
   it("ends both claims of one PR when its merge closes only the first issue (#807)", () => {

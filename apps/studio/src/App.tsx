@@ -3172,7 +3172,7 @@ export default function App({
             </div>
             {(canvasTab === "graph" || canvasTab === "journey") && (
               <div id={canvasTab === "journey" ? "studio-panel-journeys" : "studio-panel-graph"} role="tabpanel" aria-label={canvasTab === "journey" ? "Journeys" : "Graph"} aria-labelledby={canvasTab === "journey" ? "studio-tab-journeys" : undefined}>
-                <SlotPoll client={clientRef.current}>{(slots) => <MissionView wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={taskGraphs?.executionId === selected ? taskGraphs.records : []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} runFor={missionRunFor}
+                <SlotPoll client={clientRef.current}>{(slots) => <MissionView wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} flows={flowsRead.view?.flows ?? []} tasks={runTasks ?? []} taskRecords={taskGraphs?.executionId === selected ? taskGraphs.records : []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} runFor={missionRunFor}
                   initialView={canvasTab === "journey" ? "journeys" : "graph"}
                   journeyContent={<>
                     <JourneyFlows view={flowsRead.view} failure={flowsRead.failure} onApprove={approveFlow} focusFlowId={journeyContract}

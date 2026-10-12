@@ -3,6 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
 import { JourneyProgress, MissionView } from "./mission-view";
 import type { JourneyView } from "../runtime/types";
+import type { JourneyFlowView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
 
 const journeys: JourneyView[] = [{
@@ -11,6 +12,30 @@ const journeys: JourneyView[] = [{
 }];
 
 describe("MissionView", () => {
+  it("#830: a preview-only step is not counted in work even with a linked task", async () => {
+    const preview = { ...journeys[0]!, contractId: "preview" };
+    const tasks = [{ key: "active", taskId: "active", pr: 10, journeys: ["preview"], step: "review", reviewers: [] }] as unknown as TaskState[];
+    render(<MissionView journeys={[preview]} tasks={tasks} lanes={[]} now={0}
+      runFor={() => ({ state: "ready", kind: "preview", screens: { mark: { result: "pass" } }, edges: {} }) as never}
+      frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Proof" }));
+    const rail = screen.getByRole("navigation", { name: "Journeys" });
+    expect(within(rail).getByText("1 step · 0 proven · 0 in work · 0 merged, not proven · 1 not proven")).toBeInTheDocument();
+  });
+
+  it("#830: a stale contract keeps the flow title wide and shows its id", async () => {
+    const contract = { ...journeys[0]!, contractId: "names", title: "Old title" };
+    const flow = { id: "names", title: "Give a bot a display name in Lanes", status: "approved", approved: null, drift: [], findings: [], approvable: false,
+      screens: [{ id: "mark", url: "/", state: "ready" }], edges: [], paths: {} } as JourneyFlowView;
+    render(<MissionView journeys={[contract]} flows={[flow]} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Proof" }));
+    const item = screen.getByRole("button", { name: /Give a bot a display name in Lanes/ });
+    expect(item.querySelector(".mv-journey-title")).toHaveTextContent(flow.title!);
+    expect(item.querySelector(".mv-journey-id")).toHaveTextContent("names");
+    expect(item).toHaveTextContent("contract out of date");
+    expect(item).toHaveClass("mv-proof-journey");
+  });
+
   it("#876: Proof rail keeps the same work counts on selection and separates merged from active", async () => {
     const watch = { ...journeys[0]!, steps: [...journeys[0]!.steps, { stepId: "second", screen: { screenId: "second", title: "Second", scopePaths: [] }, promises: [] }] };
     const two: JourneyView[] = [watch, { ...journeys[0]!, contractId: "other", title: "Other journey" }];
@@ -181,7 +206,7 @@ describe("MissionView", () => {
     expect(item).toHaveAttribute("title", expect.stringContaining("test setup has no model gateway"));
     const bar = container.querySelector(".mv-progress-bar")!;
     expect(bar.querySelector('[data-progress="proven"]')).toHaveStyle({ flexGrow: "0" });
-    expect(bar).toHaveAccessibleName(expect.stringContaining("in work"));
+    expect(bar).toHaveAccessibleName(expect.stringContaining("not proven"));
   });
 
   it("full page: breadcrumb, no Team in the nav, live indicator", () => {

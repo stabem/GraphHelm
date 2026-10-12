@@ -1,6 +1,6 @@
 import "./mission-view.css";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { JourneyRunView, JourneyView } from "../runtime/types";
+import type { JourneyFlowView, JourneyRunView, JourneyView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
 import type { TaskEventRecord } from "../runtime/team-tasks";
 import type { Lane } from "../runtime/lane-bars";
@@ -37,6 +37,7 @@ function timerTask(task: TaskState): TaskState {
 
 interface Props {
   journeys: JourneyView[];
+  flows?: JourneyFlowView[];
   tasks: TaskState[];
   taskRecords?: TaskEventRecord[];
   runFor(contractId: string): JourneyRunView | null;
@@ -150,11 +151,15 @@ function splitDraftTitle(title: string): { name: string; note: string | null } {
   const match = title.match(/^(.*?)\s*\(draft:\s*(.*?)\)\s*$/i);
   return match ? { name: match[1]!, note: match[2]! } : { name: title, note: null };
 }
-function JourneyRailButton({ mission, selected, onSelect }: { mission: Mission; selected: boolean; onSelect(): void }) {
+function JourneyRailButton({ mission, flow, duplicateTitle, selected, onSelect }: { mission: Mission; flow?: JourneyFlowView; duplicateTitle: boolean; selected: boolean; onSelect(): void }) {
   const { name, note } = splitDraftTitle(mission.title);
-  return <button type="button" className="mv-journey" aria-pressed={selected} title={note ? `Draft: ${note}` : name} onClick={onSelect}>
-    <span className="mv-journey-title">{name}</span>
+  const stale = flow !== undefined && flow.title !== null && (flow.title !== mission.title || flow.screens.length !== mission.steps.length || flow.screens.some((screen, index) => screen.id !== mission.steps[index]?.stepId));
+  const title = stale && flow.title ? flow.title : name;
+  return <button type="button" className="mv-journey mv-proof-journey" aria-pressed={selected} title={note ? `Draft: ${note}` : title} onClick={onSelect}>
+    <span className="mv-journey-title">{title}</span>
+    {(duplicateTitle || stale) && <span className="mv-journey-id">{mission.contractId}</span>}
     {note && <span className="mv-draft-tag" title={note}>draft</span>}
+    {stale && <span className="mv-draft-tag" title="The compiled contract does not match the current flow">contract out of date</span>}
     <span className="mv-journey-count">{`${mission.summary.proven}/${mission.summary.total}`}</span>
   </button>;
 }
@@ -182,6 +187,7 @@ function journeyStepProgress(mission: Mission): string[] {
   const placed = layoutMission(mission).placed;
   return mission.steps.map((step) => {
     if (step.status === "proven") return "proven";
+    if (step.status === "preview_only") return "remaining";
     const tasks = placed.filter((p) => p.col === step.index).map((p) => p.task);
     if (tasks.some((t) => t.step !== "merged")) return "work";
     if (tasks.some((t) => t.step === "merged")) return "merged";
@@ -210,7 +216,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, run, onRun, runName, lastRecordAt, onTeam, onJourneys, journeyContent, initialView = "graph", draftJourneys = 0, agents = [], historyLoading = false, away = null, onSignal, onReviewAssigned, wakeListeners, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+export function MissionView({ journeys, flows = [], tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, onReplay, run, onRun, runName, lastRecordAt, onTeam, onJourneys, journeyContent, initialView = "graph", draftJourneys = 0, agents = [], historyLoading = false, away = null, onSignal, onReviewAssigned, wakeListeners, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
   const [chosen, setChosen] = useState<Selection | null>(null);
   const [stepId, setStepId] = useState<string | null>(null);
   // undefined: the group's default (the task that most needs the owner); null: none, a column is chosen.
@@ -236,6 +242,10 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
   const [unlinkedOpen, setUnlinkedOpen] = useState(false);
   const missions = useMemo(() => journeys.map((j) => buildMission(j, runFor(j.contractId), tasks, taskRecords)), [journeys, tasks, taskRecords, runFor]);
   const [goneQuietOpen, setGoneQuietOpen] = useState(false);
+  const proofTitles = missions.map((m) => {
+    const flow = flows.find((f) => f.id === m.contractId);
+    return flow?.title && flow.title !== m.title ? flow.title : splitDraftTitle(m.title).name;
+  });
   const groups = useMemo(() => buildWorkGroups(tasks, journeys, runFor), [tasks, journeys, runFor]);
   const orphans = useMemo(() => unlinkedTasks(journeys, tasks), [journeys, tasks]);
   const allTasks = useMemo(() => tasks.map(toMissionTask), [tasks]);
@@ -416,7 +426,7 @@ export function MissionView({ journeys, tasks, taskRecords = [], runFor, lanes, 
               const on = m.contractId === contractId;
               return (
                 <div key={m.contractId} className="mv-jcard" data-selected={on}>
-                  <JourneyRailButton mission={m} selected={on} onSelect={() => pickProof(m.contractId)} />
+                  <JourneyRailButton mission={m} flow={flows.find((flow) => flow.id === m.contractId)} duplicateTitle={proofTitles.filter((title) => title === proofTitles[missions.indexOf(m)]).length > 1} selected={on} onSelect={() => pickProof(m.contractId)} />
                   {historyLoading ? <span className="mv-progress-text" role="status">… loading work</span> : <JourneyProgress statuses={journeyStepProgress(m)} />}
                 </div>
               );

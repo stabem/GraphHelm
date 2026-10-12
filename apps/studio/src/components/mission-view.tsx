@@ -328,6 +328,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
       {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
   </>;
   const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} {...(onOpenNode ? { onOpenNode } : {})} />;
+  const contentRef = useRef<HTMLDivElement>(null);
   if (sel === null) return <div className="mv" data-wide="true" data-page={page}>
     {historyFailedCount > 0 && <div role="alert">History partly loaded · {historyFailedCount} records could not be read · <button type="button" onClick={onRetryHistory}>Retry</button></div>}{header}
     {sub === "lanes" ? <div className="mv-pad">{lanesView}</div>
@@ -359,7 +360,6 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
     return item.approvable && contract !== undefined && approvalBlockReason(item, contract, runFor(contract.contractId)) === null;
   }).length;
   const mission = contractId ? missions.find((m) => m.contractId === contractId)! : null;
-  const contentRef = useRef<HTMLDivElement>(null);
   const openTest = (id: string) => {
     if (!journey) return;
     onSelectJourney?.(journey.contractId);

@@ -56,6 +56,7 @@ class LaneStopTests(unittest.TestCase):
                                         "--keyring", str(keyring), "--key-id", "test"],
                                        env=self.env, stdout=self.log, stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
         self.addCleanup(self.stop_server)
+        self.addCleanup(self.stop_waiters)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             self.log.seek(0)
@@ -75,6 +76,21 @@ class LaneStopTests(unittest.TestCase):
     def stop_server(self):
         self.server.terminate()
         self.server.wait(timeout=10)
+
+    def stop_waiters(self):
+        """Stop only waiter processes recorded in this test's disposable state directory."""
+        state = Path(self.env["GRAPHHELM_HOOK_STATE_DIR"])
+        for pid_file in state.glob("*.waiter.pid"):
+            try:
+                pid = int(pid_file.read_text())
+                if session_hook._pid_alive(pid):
+                    os.kill(pid, signal.SIGTERM)
+                deadline = time.monotonic() + 2
+                while session_hook._pid_alive(pid) and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                pid_file.unlink(missing_ok=True)
+            except (OSError, ValueError):
+                pass
 
     def run_cli(self, *args):
         result = subprocess.run([self.cli, *args], env=self.env, capture_output=True, text=True, timeout=15, creationflags=NO_WINDOW)
@@ -264,7 +280,7 @@ class LaneStopTests(unittest.TestCase):
         output = root / "cli-args.txt"
         script = root / "record_cli.py"
         script.write_text("import sys\nfrom pathlib import Path\n"
-                          f"Path({str(output)!r}).write_text(' '.join(sys.argv[1:]))\n")
+                          f"Path({str(output)!r}).open('a').write(' '.join(sys.argv[1:]) + '\\n')\n")
         if os.name == "nt":
             cli = root / "configured-graphhelm.cmd"
             cli.write_text(f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n')
@@ -278,9 +294,11 @@ class LaneStopTests(unittest.TestCase):
                               "stop_hook_active": True}), text=True, capture_output=True,
             env=self.env, timeout=12, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("tasks reconcile --execution lane-test", output.read_text())
-        self.assertIn("--lane codex-4", output.read_text())
-        self.assertIn("--repo stabem/GraphHelm", output.read_text())
+        calls = output.read_text().splitlines()
+        reconcile = next((call for call in calls if call.startswith("tasks reconcile ")), "")
+        self.assertIn("tasks reconcile --execution lane-test", reconcile)
+        self.assertIn("--lane codex-4", reconcile)
+        self.assertIn("--repo stabem/GraphHelm", reconcile)
 
     def stop(self, manifest, active=False, session="test-session"):
         # Drive the registered Stop commands, not an unregistered helper. On the parent

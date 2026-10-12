@@ -1712,7 +1712,8 @@ export default function App({
   const [historyFailure, setHistoryFailure] = useState<{ executionId: string; count: number } | null>(null);
   const [historyRetry, setHistoryRetry] = useState(0);
   // A recent page gives the Graph useful work while the complete history is still rebuilding.
-  // It is provisional: the full fold below replaces it, and the view keeps its loading label.
+  // It is provisional: the full fold below replaces it. A late verdict or assignment alone
+  // cannot establish an active task when its claim and PR opening are outside this page.
   const [recentTaskGraphs, setRecentTaskGraphs] = useState<{ executionId: string; tasks: TaskState[]; records: TaskEventRecord[] } | null>(null);
   useEffect(() => {
     const client = clientRef.current;
@@ -1724,7 +1725,9 @@ export default function App({
       .then((page) => readTaskEventRecords({ executionId: selected, events: page.events, readEvidence: openEvidence }))
       .then((records) => {
         if (!cancelled && clientRef.current === client && selectedRef.current === selected)
-          setRecentTaskGraphs({ executionId: selected, tasks: foldTaskEvents(records), records });
+          setRecentTaskGraphs({ executionId: selected,
+            tasks: foldTaskEvents(records).filter((task) => task.claimSequence !== undefined || task.recordedHeads.length > 0),
+            records });
       }, () => { /* The complete read remains authoritative. */ });
     return () => { cancelled = true; };
   }, [selected, selectedSummary?.headSequence, openEvidence]);
@@ -3090,7 +3093,7 @@ export default function App({
             </div>
             {(canvasTab === "graph" || canvasTab === "journey") && (
               <div id="studio-panel-graph" role="tabpanel" aria-label={canvasTab === "journey" ? "Proof" : "Graph"}>
-                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} events={eventList} envelopes={envelopes} wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && taskGraphs?.executionId !== selected && currentTaskGraphs === null} historyFailedCount={historyFailure?.executionId === selected ? historyFailure.count : 0} onRetryHistory={() => setHistoryRetry((value) => value + 1)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
+                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} events={eventList} envelopes={envelopes} wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && currentTaskGraphs === null} historyFailedCount={historyFailure?.executionId === selected ? historyFailure.count : 0} onRetryHistory={() => setHistoryRetry((value) => value + 1)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
                   initialView={canvasTab === "journey" ? "proof" : "graph"} focusJourneyId={journeyContract}
                   flows={flowsRead.view} onApprove={approveFlow} onWatch={watchFlow}
 

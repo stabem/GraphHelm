@@ -23,6 +23,7 @@ import { MAX_NODE_TIMEOUT_SECONDS, RuntimeError, RuntimeClient as ReadClient, RU
 import type { GraphTopology, MutationEvidence } from "./runtime/types";
 import type { ModelContextLike, WebMcpToolDescriptor } from "./webmcp/adapter";
 import { digestOf } from "./runtime/customs";
+import { foldTaskEvents, readTaskEventRecords } from "./runtime/team-tasks";
 
 const STATUS = {
   executionId: "demo-deploy",
@@ -4060,6 +4061,84 @@ describe("the board remembers its graph file", () => {
  * a message box that posts nothing still clears itself after you press send.
  */
 describe("the exchange", () => {
+  it("shows recent Lanes work without orphan cards while complete history loads (#961)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-12T18:00:30Z"));
+    try {
+      const specs = [
+        { sequence: 1, kind: "task.claimed", actor: "lane-a", taskId: "issue-947", issue: 947, lane: "lane-a", branch: "issue-947-work" },
+        { sequence: 2, kind: "task.pr_opened", actor: "lane-a", taskId: "issue-947", pr: 955, headSha: "aaaaaaaa", lane: "lane-a", journeys: [] },
+        { sequence: 3, kind: "task.merged", actor: "reviewer-a", taskId: "issue-947", pr: 955, mergeSha: "bbbbbbbb", merger: "reviewer-a", closes: [947] },
+        { sequence: 4, kind: "task.claimed", actor: "lane-b", taskId: "issue-919", issue: 919, lane: "lane-b", branch: "issue-919-work" },
+        { sequence: 5, kind: "task.pr_opened", actor: "lane-b", taskId: "issue-919", pr: 921, headSha: "cccccccc", lane: "lane-b", journeys: [] },
+        { sequence: 6, kind: "task.merged", actor: "reviewer-a", taskId: "issue-919", pr: 921, mergeSha: "dddddddd", merger: "reviewer-a", closes: [] },
+        { sequence: 7, kind: "task.pr_opened", actor: "lane-c", taskId: "issue-919", pr: 922, headSha: "eeeeeeee", lane: "lane-c", journeys: [] },
+        { sequence: 8, kind: "task.merged", actor: "reviewer-a", taskId: "issue-919", pr: 922, mergeSha: "ffffffff", merger: "reviewer-a", closes: [] },
+        { sequence: 9, kind: "task.pr_opened", actor: "lane-d", taskId: "issue-919", pr: 923, headSha: "11111111", lane: "lane-d", journeys: [] },
+        { sequence: 130, kind: "task.claimed", actor: "lane-e", taskId: "issue-960", issue: 960, lane: "lane-e", branch: "issue-960-work" },
+        { sequence: 131, kind: "task.pr_opened", actor: "lane-e", taskId: "issue-960", pr: 960, headSha: "22222222", lane: "lane-e", journeys: [] },
+        { sequence: 133, kind: "task.review_assigned", actor: "lane-d", taskId: "issue-919", pr: 923, headSha: "11111111", lane: "lane-d", reviewer: "reviewer-b" },
+        { sequence: 134, kind: "task.review_verdict", actor: "reviewer-a", taskId: "issue-947", pr: 955, headSha: "aaaaaaaa", reviewer: "reviewer-a", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/955#c1" },
+      ];
+      const entries = await Promise.all(specs.map(async ({ sequence, kind, actor, ...fields }) => {
+        const description = JSON.stringify({ schema: "graphhelm-task-event-v1", revision: sequence, at: "2026-10-12T18:00:00Z", ...fields });
+        const content = JSON.stringify({ id: `task-${sequence}`, source: { type: "user", id: actor }, type: kind, description });
+        const hash = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
+        return { sequence, evidence: { evidenceId: `ev-task-${sequence}`, mediaType: "application/json" as const,
+          sensitivity: "internal" as const, contentSha256: `sha256:${hash}`, content }, event: {
+          sequence, kind: "signal_recorded", payload: { kind, sourceId: actor, sourceKind: "user", signalId: `task-${sequence}`, envelopeSha256: hash },
+          occurredAt: "2026-10-12T18:00:00Z", actorId: actor, actorType: "agent", idempotencyKey: `k-${sequence}`,
+          eventId: `event-${sequence}`, evidenceRefs: [`ev-task-${sequence}`],
+        } };
+      }));
+      const timeline = Array.from({ length: 134 }, (_, index) => entries.find(({ sequence }) => sequence === index + 1)?.event ?? {
+        sequence: index + 1, kind: "signal_recorded", payload: { kind: "noop" }, occurredAt: "2026-10-12T18:00:00Z",
+        actorId: "fixture", actorType: "agent", idempotencyKey: `noop-${index + 1}`,
+        eventId: `noop-event-${index + 1}`, evidenceRefs: [],
+      });
+      let releaseHistory!: () => void;
+      const history = new Promise<void>((resolve) => { releaseHistory = resolve; });
+      const client = stubClient({
+        listExecutions: vi.fn(async () => ({ executions: [{ executionId: "demo-deploy", mode: "supervised", status: "running",
+          attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 134 }], hasMore: false, nextCursor: null })),
+        getStatus: vi.fn(async () => ({ ...STATUS, attention: "can_sleep", attentionReasons: [], headSequence: 134 })),
+        getEvents: vi.fn(async (_run: string, options?: { after?: number }) => ({ head: 134,
+          events: timeline.filter(({ sequence }) => sequence > (options?.after ?? 0)) })),
+        readEvidence: vi.fn(async (_run: string, id: string) => {
+          if (id === "ev-task-1") await history;
+          return entries.find(({ evidence }) => evidence.evidenceId === id)!.evidence;
+        }),
+      });
+      render(<App createClient={() => client as unknown as RuntimeClient}
+        session={async () => ({ token: "local-token", project: "dale-api-base" })} />);
+      await screen.findByLabelText("Projects");
+      await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+      await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
+      const mission = await screen.findByRole("region", { name: "Canvas" });
+      await userEvent.click(within(mission).getByRole("tab", { name: "Lanes" }));
+      await waitFor(() => expect(client.readEvidence).toHaveBeenCalledWith("demo-deploy", "ev-task-134"));
+      const provisional = within(mission).getByRole("region", { name: "Work by stage" });
+      expect(provisional).toHaveTextContent("#960");
+      expect(provisional).not.toHaveTextContent("#955");
+      expect(provisional).not.toHaveTextContent("#923");
+      await act(async () => releaseHistory());
+      const verified = await readTaskEventRecords({ executionId: "demo-deploy", events: timeline,
+        readEvidence: client.readEvidence });
+      expect(verified).toHaveLength(entries.length);
+      expect(foldTaskEvents(verified).find((task) => task.pr === 923)).toMatchObject({ step: "review", currentReviewer: "reviewer-b" });
+      expect(await screen.findByText("#923")).toBeInTheDocument();
+      const kanban = screen.getByRole("region", { name: "Work by stage" });
+      expect(kanban).not.toHaveTextContent("#955");
+      expect(kanban).not.toHaveTextContent("#921");
+      expect(kanban).not.toHaveTextContent("#922");
+      expect(within(kanban).getByText("#923")).toBeInTheDocument();
+      expect(kanban.querySelector('[data-col="review"]')).toHaveTextContent("#923");
+      expect(kanban).toHaveTextContent("reviewer-b");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("settles partial task history and Retry recovers the unreadable record", async () => {
     const description = JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-941", revision: 1,
       at: "2026-10-11T12:00:00Z", issue: 941, lane: "codex-18", branch: "issue-941-history-stream" });

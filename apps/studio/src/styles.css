@@ -2466,9 +2466,10 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .topbar-mission .run-project { font-size: 15px; color: var(--dim); }
 .topbar-mission .run-name { font-size: 15px; font-weight: 600; background: none; border: 0; color: inherit; padding: 0; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 600px) {
-  .topbar-mission { flex-basis: 100%; order: 1; }
+  .topbar-mission { flex-basis: 100%; order: 1; flex-wrap: wrap; }
   .topbar-mission .run-project { flex-shrink: 0; }
   .topbar-mission .run-name { flex: 1; }
+  .topbar-mission .run-selection-identity { flex-basis: 100%; }
 }
 .topbar-menu { position: relative; font-size: 12px; }
 .topbar-menu > summary { cursor: pointer; color: var(--dim); }

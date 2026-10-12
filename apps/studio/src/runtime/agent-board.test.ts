@@ -23,6 +23,14 @@ describe("agentBoard", () => {
     expect(Object.fromEntries(rows.map((r) => [r.name, r.status]))).toEqual({ live: "free", "codex-14": "free", old: "offline" });
     expect(rows.find((r) => r.name === "old")?.label).toContain("last seen");
   });
+  it("uses current wake listeners for idle lanes without recent task records", () => {
+    const old = { ...lane("idle", []), lastEventAt: now - 10 * 3_600_000,
+      lastRecord: { kind: "merged", at: now - 10 * 3_600_000 } };
+    const live = agentBoard([], [old], [], now, [], [], ["idle"])[0]!;
+    expect(live).toMatchObject({ status: "free", latest: "live now · wake listener" });
+    const closed = agentBoard([], [old], [], now)[0]!;
+    expect(closed.status).toBe("offline");
+  });
   it("uses the slot's PR label, never an older review assignment", () => {
     const old = { ...lane("rev", []), lastRecord: { kind: "review_assigned", pr: 720, at: now - M } };
     const slots = [{ root: "D:/gh/b", ok: true as const, holder: { lane: "rev", label: "#806", pid: 1, worktree: "D:/gh/rev/wt", heldSeconds: 10 }, waiting: [] }];

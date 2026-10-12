@@ -190,6 +190,16 @@ describe("LanesTimeline", () => {
     expect(within(board).getByText("gh-claude-6")).toBeInTheDocument();
     expect(within(board).getByText(/last seen/)).toBeInTheDocument();
   });
+  it("counts idle lanes with wake listeners as Free and shows the source", async () => {
+    const user = fastUserEvent();
+    const old = ["gh-claude-6", "coordinator"].map((name) => ({ ...lanes[1]!, lane: name, lastEventAt: now - 10 * 3_600_000 }));
+    render(<LanesTimeline lanes={old} now={now} windowMs={1000} liveLanes={["gh-claude-6", "coordinator"]} />);
+    await user.click(screen.getByRole("button", { name: "Free 2" }));
+    const board = screen.getByRole("list", { name: "Agent board" });
+    expect(within(board).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(board).getAllByText("live now")).toHaveLength(2);
+    expect(within(board).getAllByText(/wake listener/)).toHaveLength(2);
+  });
 
   it("timeline rows follow the board order", () => {
     render(<LanesTimeline lanes={[lanes[1]!, lanes[0]!]} now={now} windowMs={1000} />);

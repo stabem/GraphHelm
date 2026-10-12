@@ -507,7 +507,8 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
     // A critic round recorded before the claim belongs to this task: the claim adopts it (#562).
     // A plan recorded before its claim belongs to that same lane's claim (#880).
     return group.find((slice) => slice.lane === event.lane && slice.plan !== null
-      && slice.claimSequence === undefined && slice.pr === null) ?? group.find(isUnclaimedCritic) ?? add();
+      && slice.claimSequence === undefined && slice.pr === null && slice.lastSequence === event.sequence - 1)
+      ?? group.find(isUnclaimedCritic) ?? add();
   }
   // A PR no slice holds yet joins the latest open claim of its task (for pr_opened, the same
   // lane's), matching the Runtime's pre-PR claim route. The claim's slice becomes that PR's

@@ -257,13 +257,23 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
     // Install over THIS binary, wherever it lives: a graphhelm run from a versioned directory
     // (`~/.graphhelm/versions/<sha>/bin`) updated into `~/.cargo/bin` would leave PATH on the old
     // one, and on Windows with nothing at all once it was moved aside (2026-10-05).
-    eprintln!("[update] installing the CLI (cargo install --locked --path apps/cli)");
+    eprintln!(
+        "[update] installing the CLI (cargo install --locked --profile update --path apps/cli)"
+    );
     let target = target_dir(std::env::var_os("CARGO_TARGET_DIR"), &source);
     eprintln!("[update] reusing build cache {}", target.display());
     let mut install = graphhelm_process::command("cargo");
     install
         .current_dir(&source)
-        .args(["install", "--locked", "--path", "apps/cli", "--target-dir"])
+        .args([
+            "install",
+            "--locked",
+            "--profile",
+            "update",
+            "--path",
+            "apps/cli",
+            "--target-dir",
+        ])
         .arg(&target);
     if let Some(root) = &root {
         eprintln!("[update] into {}", root.join("bin").display());

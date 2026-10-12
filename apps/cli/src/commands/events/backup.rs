@@ -1,10 +1,17 @@
+// Without the `postgres` feature the PostgreSQL arm is a stub, and what only it reads goes unused.
+#![cfg_attr(not(feature = "postgres"), allow(dead_code, unused_imports))]
+
 use std::path::Path;
 
+#[cfg(feature = "postgres")]
 use graphhelm_postgres_event_store::backup::PostgresBackupOperator;
 use serde_json::json;
+#[cfg(feature = "postgres")]
 use sqlx::postgres::PgPoolOptions;
 
-use super::{Failure, config, config_error, finish, require_absent_file};
+#[cfg(feature = "postgres")]
+use super::config;
+use super::{Failure, config_error, finish, require_absent_file};
 use crate::output::Outcome;
 
 const COMMAND: &str = "events.backup";
@@ -40,6 +47,16 @@ fn execute(request: &Request<'_>) -> Result<serde_json::Value, Failure> {
         }
         return execute_local(root, request.output);
     }
+    execute_postgres(request)
+}
+
+#[cfg(not(feature = "postgres"))]
+fn execute_postgres(_request: &Request<'_>) -> Result<serde_json::Value, Failure> {
+    Err(super::postgres_unavailable())
+}
+
+#[cfg(feature = "postgres")]
+fn execute_postgres(request: &Request<'_>) -> Result<serde_json::Value, Failure> {
     let config_path = config::resolve_path(request.config)?;
     let configuration = config::load(&config_path)?;
     require_absent_file(request.output, "/output", "--output")?;

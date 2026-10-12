@@ -79,6 +79,15 @@ ureq = "=3.4.0"
 lto = "thin"
 codegen-units = 1
 
+# What `graphhelm update` builds (#980): release speed without thin LTO and a single codegen unit,
+# the two settings that make a cold release build the slowest step on a laptop. The binary is a
+# little slower at run time; the update stops costing a coffee break.
+[profile.update]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+
 [profile.dev]
 debug = "line-tables-only"
 

@@ -1,4 +1,5 @@
 pub(super) mod backup;
+#[cfg(feature = "postgres")]
 mod config;
 pub(super) mod rebuild;
 pub(super) mod restore;
@@ -150,6 +151,15 @@ pub(super) fn require_existing_file(path: &Path, pointer: &str, flag: &str) -> R
         ));
     }
     Ok(())
+}
+
+/// The answer every `--config` (PostgreSQL) path gives in a build without the `postgres` feature.
+#[cfg(not(feature = "postgres"))]
+pub(super) fn postgres_unavailable() -> Failure {
+    config_error(
+        "this graphhelm was built without PostgreSQL support; reinstall with `cargo install --locked --path apps/cli --features postgres`",
+        "/config",
+    )
 }
 
 /// Builds the bounded current-thread runtime used by the PostgreSQL-backed commands.

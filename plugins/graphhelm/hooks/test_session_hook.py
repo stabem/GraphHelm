@@ -88,6 +88,41 @@ class RuntimeHandler(BaseHTTPRequestHandler):
 
 
 class SessionHookTests(unittest.TestCase):
+    def test_session_end_stops_its_waiter(self):
+        spec = importlib.util.spec_from_file_location("session_hook_test", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        bound = hook._binding_values("run-test", str(self.token_file),
+                                     f"http://127.0.0.1:{self.server.server_port}", None)
+        with patch.dict(os.environ, self.env):
+            marker = hook._waiter_path({"session_id": "session-123"}, bound, "codex")
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            try:
+                marker.write_text(str(child.pid), encoding="ascii")
+                hook.stop_lane_waiter({"session_id": "session-123"}, bound, "codex")
+                child.wait(timeout=3)
+                self.assertFalse(marker.exists())
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait()
+
+    def test_dead_host_cannot_rearm_waiter(self):
+        spec = importlib.util.spec_from_file_location("session_hook_test", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        with patch.object(hook, "binding", return_value=("run-test", str(self.token_file),
+                                                        f"http://127.0.0.1:{self.server.server_port}",
+                                                        f"http://127.0.0.1:{self.server.server_port}", None)), \
+             patch.object(hook, "_pid_alive", return_value=False), \
+             patch.object(hook, "arm_lane_wake") as arm, \
+             patch.object(hook.subprocess, "run") as wait:
+            hook.wait_for_lane("codex", "session-123", Path(self.temp.name), 999999)
+            arm.assert_not_called()
+            wait.assert_not_called()
     @classmethod
     def setUpClass(cls):
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), RuntimeHandler)

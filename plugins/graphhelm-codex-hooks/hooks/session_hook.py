@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -301,21 +302,23 @@ def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None
     arm_lane_wake(payload, bound)
     flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS if os.name == "nt" else 0
     child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "wait", "--host", host,
-                              "--session-id", _session(payload), "--events", str(events)],
+                              "--session-id", _session(payload), "--events", str(events),
+                              "--host-pid", str(os.getppid())],
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags,
                              start_new_session=os.name != "nt")
     pid_path.write_text(str(child.pid), encoding="ascii")
 
 
-def wait_for_lane(host: str, session: str, events: Path) -> None:
+def wait_for_lane(host: str, session: str, events: Path, host_pid: int) -> None:
     payload = {"session_id": session}
     bound = binding(payload)
     if bound is None:
         return
     cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
-    # Keep the PID marker after an unexpected exit so Stop can replace us.
-    while True:
+    pid_path = _waiter_path(payload, bound, host)
+    try:
+      while _pid_alive(host_pid):
         result = subprocess.run([cli, "wake-wait", "--events", str(events),
                                  "--execution", bound[0], "--session-id", session],
                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -324,12 +327,31 @@ def wait_for_lane(host: str, session: str, events: Path) -> None:
         # Exit 2 then means stale, and exit 3 means the short lease matured.
         if result.returncode not in (0, 2, 3):
             return
+        if not _pid_alive(host_pid):
+            return
         if result.returncode == 2:
             time.sleep(1)
         try:
             arm_lane_wake(payload, bound)
         except (OSError, ValueError, KeyError):
             time.sleep(1)
+    finally:
+        try:
+            if int(pid_path.read_text(encoding="ascii")) == os.getpid():
+                pid_path.unlink()
+        except (FileNotFoundError, ValueError, OSError):
+            pass
+
+
+def stop_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> None:
+    pid_path = _waiter_path(payload, bound, host)
+    try:
+        pid = int(pid_path.read_text(encoding="ascii"))
+        if _pid_alive(pid):
+            os.kill(pid, signal.SIGTERM)
+        pid_path.unlink(missing_ok=True)
+    except (FileNotFoundError, ValueError, OSError):
+        pass
 
 
 def request(url: str, token: str, method: str, body: dict | None = None, headers: dict | None = None, timeout: float = 1.0, max_reply: int = MAX_REPLY) -> dict:
@@ -622,8 +644,10 @@ def end(payload: dict, host: str, output_format: str = "native") -> bool:
     host = _host(host)
     if payload.get("hook_event_name") != "SessionEnd":
         raise ValueError("wrong hook event")
-    _forget_lane(payload)
     bound = binding()
+    if bound is not None:
+        stop_lane_waiter(payload, bound, host)
+    _forget_lane(payload)
     if bound is None:
         return False
     execution, _, _, origin, _ = bound
@@ -700,14 +724,15 @@ def main() -> int:
     parser.add_argument("--format", choices=("native", "portable"), default=None)
     parser.add_argument("--session-id")
     parser.add_argument("--events", type=Path)
+    parser.add_argument("--host-pid", type=int)
     args = parser.parse_args()
     host = args.host
     output_format = args.format or ("native" if host in {"claude", "codex"} else "portable")
     try:
         if args.phase == "wait":
-            if not args.session_id or args.events is None:
+            if not args.session_id or args.events is None or args.host_pid is None:
                 raise ValueError("waiter binding missing")
-            wait_for_lane(host, args.session_id, args.events)
+            wait_for_lane(host, args.session_id, args.events, args.host_pid)
         elif args.phase == "inspect":
             inspect(host, args.session_id, output_format)
         else:

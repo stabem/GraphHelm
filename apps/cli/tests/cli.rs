@@ -121,6 +121,8 @@ mod http_helper_inventory;
 mod human_output;
 #[path = "init_cli.rs"]
 mod init_cli;
+#[path = "journey_backend_observer.rs"]
+mod journey_backend_observer;
 #[path = "journey_explore_browser.rs"]
 mod journey_explore_browser;
 #[path = "journey_explore_cli.rs"]

@@ -1174,7 +1174,7 @@ impl Drop for Launched {
 }
 
 /// `host:port` of an `http://` base, the port defaulting to 80.
-fn base_address(base: &str) -> Option<String> {
+pub(super) fn base_address(base: &str) -> Option<String> {
     let rest = base.strip_prefix("http://")?;
     let authority = rest.split(['/', '?', '#']).next()?;
     if authority.is_empty() {

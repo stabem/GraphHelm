@@ -29,6 +29,8 @@ Commands:
                                           Pareto frontier (also: `table --pareto`)
   python tools/token-bench/doless.py pair-audit --manifest FILE --rows FILE
                                           offline identity admission; JSON, no model sessions
+  python tools/token-bench/doless.py pair-summary --manifest FILE --rows FILE
+                                          descriptive task-paired accounting; JSON, no model sessions
 
 `run --arm a --treatment routed --inference-config FILE` selects each task's declared `kind`
 using doless/routed.json. FILE maps small, standard and large to the existing uniform capability
@@ -502,7 +504,7 @@ def observed_cost(row: dict) -> float | None:
     return float(cost) if type(cost) in (int, float) and math.isfinite(cost) and cost >= 0 else None
 
 
-def cmd_pair_audit(a: argparse.Namespace) -> None:
+def cmd_pair_audit(a: argparse.Namespace, *, emit: bool = True) -> tuple[dict, list[dict], dict]:
     """Admit frozen task-level pairs without interpreting their score or cost."""
     limit = 4 * 1024 * 1024
     def bounded(path: str) -> bytes:
@@ -619,9 +621,51 @@ def cmd_pair_audit(a: argparse.Namespace) -> None:
             admitted.append({"task": task, "repeats": [item for item, _ in kept],
                              "costKnown": all(known for _, known in kept)})
     unmatched = sorted(set(by_session) - declared_sessions)
-    print(json.dumps({"version": 1, "comparison": manifest["comparison"],
-                      "weighting": manifest["weighting"], "admitted": admitted,
-                      "excluded": excluded, "unmatched": unmatched}, sort_keys=True))
+    report = {"version": 1, "comparison": manifest["comparison"],
+              "weighting": manifest["weighting"], "admitted": admitted,
+              "excluded": excluded, "unmatched": unmatched}
+    if emit:
+        print(json.dumps(report, sort_keys=True))
+    return report, rows, manifest
+
+
+def cmd_pair_summary(a: argparse.Namespace) -> None:
+    """Describe only admitted task pairs; preserve admission exclusions in the report."""
+    audit, rows, manifest = cmd_pair_audit(a, emit=False)
+    by_session = {row["sessionId"]: row for row in rows}
+    groups = {group["task"]: group for group in manifest["groups"]}
+
+    def arm_summary(attempts: list[dict]) -> dict:
+        if any(row.get("verdict") not in ("PASS", "FAIL", "INCOMPLETE") for row in attempts):
+            raise ValueError("admitted attempts require PASS, FAIL or INCOMPLETE verdicts")
+        counts = {verdict: sum(row.get("verdict") == verdict for row in attempts)
+                  for verdict in ("PASS", "FAIL", "INCOMPLETE")}
+        costs = [observed_cost(row) for row in attempts]
+        known = sum(cost for cost in costs if cost is not None)
+        missing = sum(cost is None for cost in costs)
+        count = len(attempts)
+        reason = "unknown_cost" if missing else "no_pass" if not counts["PASS"] else None
+        return {"attempts": count, **counts, "successFraction": counts["PASS"] / count,
+                "knownExpenditureUsd": known, "unknownCostCount": missing,
+                "meanCostPerAttemptUsd": None if missing else known / count,
+                "costPerProvenDeliveryUsd": None if reason else known / counts["PASS"],
+                "costPerProvenDeliveryReason": reason}
+
+    tasks = []
+    for admitted in sorted(audit["admitted"], key=lambda item: item["task"]):
+        task = admitted["task"]
+        baseline = arm_summary([by_session[repeat["baseline"]] for repeat in admitted["repeats"]])
+        candidate = arm_summary([by_session[repeat["candidate"]] for repeat in admitted["repeats"]])
+        delta = {key: (candidate[key] - baseline[key] if candidate[key] is not None
+                        and baseline[key] is not None else None)
+                 for key in ("successFraction", "meanCostPerAttemptUsd", "costPerProvenDeliveryUsd")}
+        tasks.append({"task": task, "split": groups[task]["split"], "repeats": admitted["repeats"],
+                      "baseline": baseline, "candidate": candidate,
+                      "deltaCandidateMinusBaseline": delta})
+    print(json.dumps({"version": 1, "comparison": audit["comparison"],
+                      "weighting": audit["weighting"], "partial": bool(audit["excluded"] or audit["unmatched"]),
+                      "tasks": tasks, "excluded": audit["excluded"], "unmatched": audit["unmatched"]},
+                     sort_keys=True))
 
 
 def cmd_run(a: argparse.Namespace) -> None:
@@ -955,6 +999,10 @@ def main() -> None:
     audit.add_argument("--manifest", required=True)
     audit.add_argument("--rows", required=True)
     audit.set_defaults(fn=cmd_pair_audit)
+    summary = sub.add_parser("pair-summary")
+    summary.add_argument("--manifest", required=True)
+    summary.add_argument("--rows", required=True)
+    summary.set_defaults(fn=cmd_pair_summary)
     a = p.parse_args(); a.fn(a)
 
 

@@ -504,7 +504,7 @@ def observed_cost(row: dict) -> float | None:
     return float(cost) if type(cost) in (int, float) and math.isfinite(cost) and cost >= 0 else None
 
 
-def cmd_pair_audit(a: argparse.Namespace, *, emit: bool = True) -> tuple[dict, list[dict], dict]:
+def cmd_pair_audit(a: argparse.Namespace, *, emit: bool = True) -> tuple[dict, list[dict], dict, str]:
     """Admit frozen task-level pairs without interpreting their score or cost."""
     limit = 4 * 1024 * 1024
     def bounded(path: str) -> bytes:
@@ -515,7 +515,8 @@ def cmd_pair_audit(a: argparse.Namespace, *, emit: bool = True) -> tuple[dict, l
         return raw
 
     raw_rows = bounded(a.rows)
-    manifest = json.loads(bounded(a.manifest))
+    manifest_raw = bounded(a.manifest)
+    manifest = json.loads(manifest_raw)
     if not isinstance(manifest, dict) or manifest.get("version") != 1:
         raise ValueError("pair-audit requires manifest version 1")
     if manifest.get("rowsSha256") != hashlib.sha256(raw_rows).hexdigest():
@@ -626,12 +627,12 @@ def cmd_pair_audit(a: argparse.Namespace, *, emit: bool = True) -> tuple[dict, l
               "excluded": excluded, "unmatched": unmatched}
     if emit:
         print(json.dumps(report, sort_keys=True))
-    return report, rows, manifest
+    return report, rows, manifest, hashlib.sha256(manifest_raw).hexdigest()
 
 
 def cmd_pair_summary(a: argparse.Namespace) -> None:
     """Describe only admitted task pairs; preserve admission exclusions in the report."""
-    audit, rows, manifest = cmd_pair_audit(a, emit=False)
+    audit, rows, manifest, manifest_digest = cmd_pair_audit(a, emit=False)
     plan_output = {}
     if a.analysis_plan:
         with open(a.analysis_plan, "rb") as source:
@@ -645,10 +646,7 @@ def cmd_pair_summary(a: argparse.Namespace) -> None:
                 "maximumQualityRegression", "assumptionStatement"}
         if not isinstance(plan, dict) or set(plan) != keys or type(plan["version"]) is not int or plan["version"] != 1:
             raise ValueError("analysis plan requires exactly version 1 fields")
-        with open(a.manifest, "rb") as source:
-            manifest_raw = source.read(4 * 1024 * 1024 + 1)
-        if (len(manifest_raw) > 4 * 1024 * 1024
-                or plan["manifestSha256"] != hashlib.sha256(manifest_raw).hexdigest()
+        if (plan["manifestSha256"] != manifest_digest
                 or plan["rowsSha256"] != manifest["rowsSha256"]):
             raise ValueError("analysis plan input digests do not match")
         if (plan["comparison"] != audit["comparison"] or

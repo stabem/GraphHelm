@@ -80,7 +80,10 @@ optional version-1 local JSON plan. The plan is a closed object with exactly the
 }
 ```
 
-Both digests and the comparison must match the supplied frozen inputs. Every declared task
+Both digests and the comparison must match the supplied frozen inputs. The manifest digest
+is calculated from the bounded bytes used for admission, not a later read of the path. This
+binds the report to its admitted snapshot; it does not prevent a file from changing afterward.
+Every declared task
 must have the specified single split; mixed train/test plans are refused. The minimum cost
 reduction must be a finite positive number, and maximum quality regression a finite fraction
 from zero through one. Neither has a default. The assumption statement must contain non-space

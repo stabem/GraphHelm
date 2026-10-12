@@ -890,6 +890,65 @@ def test_pair_analysis_plan_binds_explicit_thresholds_to_frozen_inputs(tmp_path)
     assert run(plan).returncode != 0
 
 
+def test_pair_analysis_plan_uses_admitted_manifest_bytes(tmp_path, monkeypatch, capsys):
+    """Catches a plan bound to a second manifest read; tiny local files, no process or timer."""
+    import argparse
+    import builtins
+    import io
+    import pytest
+
+    controls = {key: key for key in ("parent", "evaluator", "environment", "budget", "timeout")}
+    rows = [{"sessionId": session, "task": "task", "taskSnapshot": "snap", "split": "test",
+             "arm": arm, "configDigest": arm, "controls": controls, "verdict": "PASS", "costUsd": 1}
+            for session, arm in (("a1", "a"), ("k1", "k"), ("a2", "a"), ("k2", "k"))]
+    rows_raw = b"".join((json.dumps(row) + "\n").encode() for row in rows)
+    rows_path = tmp_path / "rows.jsonl"; rows_path.write_bytes(rows_raw)
+    group = {"task": "task", "taskSnapshot": "snap", "split": "test", "controls": controls,
+             "baseline": {"arm": "a", "configDigest": "a"},
+             "candidate": {"arm": "k", "configDigest": "k"},
+             "treatmentDifferences": ["arm", "configDigest"]}
+    manifest = {"version": 1, "rowsSha256": hashlib.sha256(rows_raw).hexdigest(),
+                "comparison": "methodology", "weighting": "equal_task"}
+    first = json.dumps(manifest | {"groups": [group | {"repeats": [
+        {"baseline": "a1", "candidate": "k1"}]}]}).encode()
+    second = json.dumps(manifest | {"groups": [group | {"repeats": [
+        {"baseline": "a1", "candidate": "k1"}, {"baseline": "a2", "candidate": "k2"}]}]}).encode()
+    manifest_path = tmp_path / "manifest.json"; manifest_path.write_bytes(first)
+    plan = {"version": 1, "manifestSha256": hashlib.sha256(second).hexdigest(),
+            "rowsSha256": manifest["rowsSha256"], "comparison": "methodology", "split": "test",
+            "independentUnit": "task", "weighting": "equal_task",
+            "costMetric": "all_attempt_cost_per_proven_delivery_usd",
+            "minimumCostReductionUsd": 0.2, "maximumQualityRegression": 0.05,
+            "assumptionStatement": "Task is independent."}
+    plan_path = tmp_path / "plan.json"; plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    args = argparse.Namespace(manifest=str(manifest_path), rows=str(rows_path),
+                              analysis_plan=str(plan_path))
+    original_open = builtins.open
+    reads = []
+
+    def changing_open(path, mode="r", *other, **kwargs):
+        if str(path) == str(manifest_path) and mode == "rb":
+            reads.append(len(reads))
+            return io.BytesIO(first if len(reads) == 1 else second)
+        return original_open(path, mode, *other, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", changing_open)
+    with pytest.raises(ValueError, match="analysis plan input digests do not match"):
+        doless.cmd_pair_summary(args)
+    assert reads == [0] and capsys.readouterr().out == ""
+
+    plan["manifestSha256"] = hashlib.sha256(first).hexdigest()
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    reads.clear()
+    doless.cmd_pair_summary(args)
+    report = json.loads(capsys.readouterr().out)
+    assert reads == [0]
+    assert report["analysisPlan"] == plan
+    assert report["tasks"][0]["baseline"]["attempts"] == 1
+    assert report["tasks"][0]["candidate"]["PASS"] == 1
+    assert report["partial"] is True and report["unmatched"] == ["a2", "k2"]
+
+
 def test_configured_run_records_requested_effort_and_incomplete_usage(tmp_path, monkeypatch):
     """Catches unobserved usage/model being published as a configured PASS; mocked process/file I/O, <1s."""
     import argparse

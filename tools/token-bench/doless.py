@@ -754,7 +754,9 @@ def cmd_pair_summary(a: argparse.Namespace) -> None:
                       "deltaCandidateMinusBaseline": delta})
     if a.analysis_plan:
         reason = None
-        if len(tasks) < 2:
+        if audit["excluded"] or audit["unmatched"]:
+            reason = "partial_cohort"
+        elif len(tasks) < 2:
             reason = "fewer_than_two_tasks"
         else:
             for task in tasks:

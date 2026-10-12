@@ -10,8 +10,9 @@
 
 /** Validated diagnostic metadata from the unauthenticated health probe. */
 export interface RuntimePreviousExit {
-  state: "clean" | "vanished" | "serve_error" | "panicked";
-  pid: number;
+    state: "clean" | "vanished" | "serve_error" | "panicked";
+    pid: number;
+    instance?: string;
   /** Unix seconds, restricted to the JavaScript date range. */
   at: number;
   location?: string;

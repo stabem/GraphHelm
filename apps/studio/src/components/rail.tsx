@@ -215,6 +215,7 @@ export function ProjectRail({
           Runtime restarted · {previousExit.state === "vanished" ? "previous run started" : "last stop"} <time dateTime={new Date(previousExit.at * 1000).toISOString()} title={`PID ${previousExit.pid} · ${new Date(previousExit.at * 1000).toISOString()}`}>
             {new Date(previousExit.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}
           </time> ({({ vanished: "exit cause unknown", serve_error: "failed", panicked: "crashed" })[previousExit.state] ?? "stopped"})
+          <> · {previousExit.instance ? `instance: ${previousExit.instance}` : "instance unavailable"}</>
           {previousExit.location !== undefined && <> · location: {previousExit.location}</>}
           {previousExit.lastPanic && <> · last panic: {previousExit.lastPanic.location}</>}
         </p>

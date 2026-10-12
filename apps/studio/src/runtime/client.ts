@@ -636,6 +636,7 @@ export class RuntimeClient {
     const location = (input: unknown): string => typeof input === "string" && input.length <= 256 &&
       /^[a-zA-Z0-9_-]+\/src\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+\.rs:[0-9]{1,10}$/.test(input) ? input : "unknown";
     const result: RuntimePreviousExit = { state, pid: value.pid, at: value.at };
+    if (typeof value.instance === "string" && /^[0-9a-f]{32}$/.test(value.instance)) result.instance = value.instance;
     if (value.location !== undefined) result.location = location(value.location);
     if (value.lastPanic !== undefined) {
       const panic = value.lastPanic;

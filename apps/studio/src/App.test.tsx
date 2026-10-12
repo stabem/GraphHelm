@@ -676,6 +676,21 @@ async function open(client: ReturnType<typeof stubClient>, modelContext: ModelCo
 }
 
 describe("opening", () => {
+  it("does not read journey runs or frames before the owner selects a journey", async () => {
+    const journeyRun = vi.fn(async () => ({ state: "none", screens: {} }));
+    const journeyScreenFrame = vi.fn(async () => null);
+    const journeys = vi.fn(async () => ({ journeys: ["first", "second"].map((contractId) => ({
+      contractId, title: contractId, arrows: [], steps: [{ stepId: "screen", screen: { screenId: "screen", title: "Screen", scopePaths: [] }, promises: [] }],
+    })) }));
+    await open(stubClient({ journeys, journeyRun, journeyScreenFrame }));
+    await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
+    await screen.findByRole("button", { name: /^first/ });
+    expect(journeyRun).not.toHaveBeenCalled();
+    expect(journeyScreenFrame).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: /^second/ }));
+    await waitFor(() => expect(journeyRun).toHaveBeenCalledWith("second"));
+    expect(journeyRun).toHaveBeenCalledTimes(1);
+  });
   // Runtime I/O only; protects the Lanes -> Details alias handoff missed by control-only tests.
   it("shows the saved bot name in Details after renaming in Lanes", async () => {
     sessionStorage.clear();

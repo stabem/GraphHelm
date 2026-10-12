@@ -66,6 +66,9 @@ interface Props {
   agents?: Bot[];
   /** The selected run's initial task history read has not settled yet. */
   historyLoading?: boolean;
+  /** Recent task history is ready for Lanes while the complete history is still loading. */
+  lanesHistoryLoading?: boolean;
+  onSelectJourney?: (contractId: string) => void;
   /** #591: the "While you were away" gap, for the summary's `N h away · N shipped`; absent, omitted. */
   away?: { minutes: number; shipped: number } | null;
   /** #591: posts an owner note on the run (App: client.signal). Absent: no Nudge / Reassign. */
@@ -223,7 +226,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, away = null, onSignal, onReviewAssigned, wakeListeners, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, lanesHistoryLoading = historyLoading, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
   const journeys = useMemo(() => {
     const known = new Set(compiledJourneys.map((journey) => journey.contractId));
     return [...compiledJourneys, ...(flows?.flows ?? []).filter((flow) => !known.has(flow.id)).map((flow): JourneyView => ({
@@ -312,14 +315,14 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
     setChosen({ kind: "group", key: groupKey }); setStepId(null); setStageCol(null); setTaskKey(key); setSub("graph");
   };
   const lanesView = <>
-    <WorkKanban items={kanbanItems} onOpen={openOnGraph} historyLoading={historyLoading} />
-    <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} onDemandLanes={onDemandLanes} liveLanes={wakeListeners} historyLoading={historyLoading}
+    <WorkKanban items={kanbanItems} onOpen={openOnGraph} historyLoading={lanesHistoryLoading} />
+    <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} onDemandLanes={onDemandLanes} liveLanes={wakeListeners} historyLoading={lanesHistoryLoading}
       {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
   </>;
   const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} {...(onOpenNode ? { onOpenNode } : {})} />;
   if (sel === null) return <div className="mv" data-wide="true" data-page={page}>{header}
     {sub === "lanes" ? <div className="mv-pad">{lanesView}</div>
-      : <>{sub === "graph" && runGraph}<p className="mv-none mv-pad">No journeys in this project yet</p></>}</div>;
+      : <>{sub === "graph" && runGraph}<p className="mv-none mv-pad" role={historyLoading ? "status" : undefined}>{historyLoading ? "Loading work…" : "No journeys in this project yet"}</p></>}</div>;
   const rawGroup: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
   // #591: the live Review row names only the current reviewer (latest assignment on the current head).
   const group: WorkGroup | null = rawGroup ? { ...rawGroup, rows: rawGroup.graphRows.map((r) => ({ ...r, task: withCurrentReviewer(r.task, lanes) })) } : null;
@@ -345,18 +348,20 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
   const mission = contractId ? missions.find((m) => m.contractId === contractId)! : null;
   const openTest = (id: string) => {
     if (!journey) return;
+    onSelectJourney?.(journey.contractId);
     setStepId(id);
     setFrame(Math.max(0, journey.steps.findIndex((s) => s.stepId === id)));
     setSub("test");
   };
   const reset = () => { setProofJid(null); setStepId(null); setTaskKey(undefined); setStageCol(null); if (sub === "test") setSub("graph"); };
-  const pickJourney = (id: string) => { setChosen({ kind: "journey", id }); reset(); };
-  const pickProof = (id: string) => { setProofJid(id); setStepId(null); setFlowError(null); setSub("proof"); };
+  const pickJourney = (id: string) => { onSelectJourney?.(id); setChosen({ kind: "journey", id }); reset(); };
+  const pickProof = (id: string) => { onSelectJourney?.(id); setProofJid(id); setStepId(null); setFlowError(null); setSub("proof"); };
   const pickGroup = (key: string, task: string | null = null) => {
     setChosen({ kind: "group", key }); reset(); setTaskKey(task ?? undefined);
     if (sub === "test") setSub("graph");
   };
   const pickStep = (jid: string, sid: string) => {
+    onSelectJourney?.(jid);
     if (sel.kind !== "journey" || jid !== contractId) pickJourney(jid);
     setStepId(sid); setTaskKey(null);
     if (sub !== "graph" && sub !== "proof") setSub("graph");
@@ -438,6 +443,7 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
         )}
         {sub === "graph" && (
           <nav aria-label="Journeys" className="mv-journeys">
+            {historyLoading && <p className="mv-none" role="status">Loading work…</p>}
             {groups.length > 0 && (
               <section aria-label="Work by issue" className="mv-groups">
                 <span className="mv-cap">Work</span>
@@ -564,7 +570,8 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
           {sub === "graph" && group && <IssueGraph group={group} stepFor={stepFor} selectedTaskKey={shownTask} selectedCol={stageCol}
             onSelectTask={(key) => { setTaskKey(key); setStageCol(null); }} onSelectCol={(c) => { setStageCol(c); setTaskKey(null); }} onOpenTest={openTest} health={health} pace={pace}
             {...(inspectorActions ? { inspectorActions } : {})} />}
-          {sub === "graph" && !group && mission && <MissionGraph mission={mission} selectedStepId={stepId} selectedTaskKey={taskKey ?? null}
+          {sub === "graph" && !group && mission && historyLoading && <p className="mv-none">Loading work…</p>}
+          {sub === "graph" && !group && mission && !historyLoading && <MissionGraph mission={mission} selectedStepId={stepId} selectedTaskKey={taskKey ?? null}
             onSelectStep={(id) => { setStepId(id); setTaskKey(null); }} onSelectTask={pickTask} onOpenTest={openTest} />}
           {sub === "proof" && (mission && contractId ? <ProofTable key={contractId} mission={mission} flow={flow} onOpenTest={openTest} frameUrl={(id) => frameUrl(id, contractId)}
             run={run} onApprove={onApprove} onWatch={onWatch} busy={flowBusy} onBusy={setFlowBusy} error={flowError} onActionError={setFlowError}

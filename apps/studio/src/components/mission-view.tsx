@@ -151,9 +151,21 @@ function splitDraftTitle(title: string): { name: string; note: string | null } {
   const match = title.match(/^(.*?)\s*\(draft:\s*(.*?)\)\s*$/i);
   return match ? { name: match[1]!, note: match[2]! } : { name: title, note: null };
 }
+function flowForContract(flows: JourneyFlowView[], contractId: string): JourneyFlowView | undefined {
+  return flows.find((flow) => flow.id === contractId)
+    ?? flows.filter((flow) => contractId.startsWith(`${flow.id}.`)).sort((a, b) => b.id.length - a.id.length)[0];
+}
 function JourneyRailButton({ mission, flow, duplicateTitle, selected, onSelect }: { mission: Mission; flow?: JourneyFlowView; duplicateTitle: boolean; selected: boolean; onSelect(): void }) {
   const { name, note } = splitDraftTitle(mission.title);
-  const stale = flow !== undefined && flow.title !== null && (flow.title !== mission.title || flow.screens.length !== mission.steps.length || flow.screens.some((screen, index) => screen.id !== mission.steps[index]?.stepId));
+  const pathName = flow === undefined ? undefined : mission.contractId === flow.id ? "main" : mission.contractId.slice(flow.id.length + 1);
+  const path = pathName === undefined ? undefined : flow?.paths[pathName];
+  const edges = path?.map((id) => flow?.edges.find((edge) => edge.id === id));
+  const stepIds = edges?.length && edges.every((edge) => edge !== undefined)
+    ? [edges[0]!.from, ...edges.map((edge) => edge!.to)] : flow?.screens.map((screen) => screen.id);
+  const stale = flow !== undefined && flow.title !== null && (flow.title !== mission.title
+    || path === undefined
+    || stepIds?.length !== mission.steps.length || stepIds.some((id, index) => id !== mission.steps[index]?.stepId)
+    || flow.findings.some((finding) => finding.code === "flow.contract_stale" && finding.pointer === `/journeys/${mission.contractId}.json`));
   const title = stale && flow.title ? flow.title : name;
   return <button type="button" className="mv-journey mv-proof-journey" aria-pressed={selected} title={note ? `Draft: ${note}` : title} onClick={onSelect}>
     <span className="mv-journey-title">{title}</span>
@@ -243,7 +255,7 @@ export function MissionView({ journeys, flows = [], tasks, taskRecords = [], run
   const missions = useMemo(() => journeys.map((j) => buildMission(j, runFor(j.contractId), tasks, taskRecords)), [journeys, tasks, taskRecords, runFor]);
   const [goneQuietOpen, setGoneQuietOpen] = useState(false);
   const proofTitles = missions.map((m) => {
-    const flow = flows.find((f) => f.id === m.contractId);
+    const flow = flowForContract(flows, m.contractId);
     return flow?.title && flow.title !== m.title ? flow.title : splitDraftTitle(m.title).name;
   });
   const groups = useMemo(() => buildWorkGroups(tasks, journeys, runFor), [tasks, journeys, runFor]);
@@ -426,7 +438,7 @@ export function MissionView({ journeys, flows = [], tasks, taskRecords = [], run
               const on = m.contractId === contractId;
               return (
                 <div key={m.contractId} className="mv-jcard" data-selected={on}>
-                  <JourneyRailButton mission={m} flow={flows.find((flow) => flow.id === m.contractId)} duplicateTitle={proofTitles.filter((title) => title === proofTitles[missions.indexOf(m)]).length > 1} selected={on} onSelect={() => pickProof(m.contractId)} />
+                  <JourneyRailButton mission={m} flow={flowForContract(flows, m.contractId)} duplicateTitle={proofTitles.filter((title) => title === proofTitles[missions.indexOf(m)]).length > 1} selected={on} onSelect={() => pickProof(m.contractId)} />
                   {historyLoading ? <span className="mv-progress-text" role="status">… loading work</span> : <JourneyProgress statuses={journeyStepProgress(m)} />}
                 </div>
               );

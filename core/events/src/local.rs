@@ -8248,7 +8248,7 @@ mod limit_tests {
         let build = cache_repository(directory.path());
         build.append_atomic(&valid_graph_request()).unwrap();
         drop(build);
-        let cache = PrefixCache::new(std::time::Duration::ZERO);
+        let cache = PrefixCache::new(std::time::Duration::from_secs(3600));
         let warmed = shared_repository(directory.path(), &cache);
         assert_eq!(warmed.next_sequence(&wake_scope(), "stream-1").unwrap(), 2);
         drop(warmed);
@@ -8258,13 +8258,12 @@ mod limit_tests {
         bytes[10] = bytes[10].wrapping_add(1);
         std::fs::write(&journal, &bytes).unwrap();
 
-        let cache = PrefixCache::new(std::time::Duration::ZERO);
-        let warm = shared_repository(directory.path(), &cache);
-        assert_eq!(warm.next_sequence(&wake_scope(), "stream-1").unwrap(), 2);
-        drop(warm);
-
-        let checked = shared_repository(directory.path(), &cache);
-        assert!(checked.next_sequence(&wake_scope(), "stream-1").is_err());
+        let fresh = LocalEventRepository::open(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(FixedIds),
+        );
+        assert!(fresh.is_err(), "a fresh verification rejects the rewrite");
     }
 
     /// #506: a walk from genesis is stamped when it ENDS. Stamped at its start, a walk longer

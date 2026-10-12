@@ -54,7 +54,11 @@ export function needsYou(input: NeedsYouInput): { state: BeaconState; items: Nee
   const graphWaitOnly = input.status?.status === "running" && input.status.executor === "fixture"
     && input.agentWorkRecorded === true
     && items.length > 0 && items.every((item) => item.kind === "waiting_step");
-  if (graphWaitOnly) items.length = 0;
+  if (graphWaitOnly) {
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      if (items[index].kind === "waiting_step") items.splice(index, 1);
+    }
+  }
   const state: BeaconState = input.status === null || input.stale || input.nativeRequests === null
     ? { kind: "unknown", reason: RUNTIME_SILENT }
     : items.length > 0 ? { kind: "lit", count: items.length } : { kind: "dark" };

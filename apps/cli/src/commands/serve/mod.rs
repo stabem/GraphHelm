@@ -3314,9 +3314,11 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&response[body_start..]).unwrap();
         assert_eq!(body["data"]["seenActors"], serde_json::json!(["lane-a"]));
         assert_eq!(body["data"]["headSequence"], 1);
-        assert!(state_for_expiry
-            .seen_actors_at(Instant::now() + Duration::from_secs(16 * 60))
-            .is_empty());
+        assert!(
+            state_for_expiry
+                .seen_actors_at(Instant::now() + Duration::from_secs(16 * 60))
+                .is_empty()
+        );
     }
 
     #[test]

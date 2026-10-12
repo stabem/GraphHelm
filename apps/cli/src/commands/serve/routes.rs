@@ -6648,10 +6648,8 @@ pub(super) mod tests {
         String::from_utf8(bytes.to_vec()).unwrap()
     }
 
-    pub(in crate::commands::serve) fn known_execution_state() -> (
-        tempfile::TempDir,
-        super::ServeState,
-    ) {
+    pub(in crate::commands::serve) fn known_execution_state()
+    -> (tempfile::TempDir, super::ServeState) {
         let directory = tempfile::tempdir().unwrap();
         let execution_id = OpaqueId::parse("execution-known").unwrap();
         let scope = RepositoryScope::new(

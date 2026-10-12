@@ -4774,9 +4774,9 @@ fn issue369_reply_suggestions_name_the_failing_chat_route() {
     );
 }
 
-// #343: the first operations race at the public HTTP boundary, with no warm-up storage call.
-// Existing pause coverage can miss this bootstrap race or hide its refusal while polling.
-// Cost: 64 cold fixture Runtime processes per case, loopback requests and fresh CLI reopens.
+// #343: the first operations race at the public HTTP boundary after startup has verified and
+// initialized the journal. Existing pause coverage can miss this race or hide its refusal while
+// polling. Cost: 64 fresh fixture Runtime processes per case, loopback requests and CLI reopens.
 fn concurrent_cold_requests(two_starts: bool) {
     for round in 0..64 {
         let directory = tempfile::tempdir().unwrap();
@@ -4790,10 +4790,16 @@ fn concurrent_cold_requests(two_starts: bool) {
         }
         let (_guard, base, token) = serve(&events);
         assert!(
-            !events.join("format.json").exists(),
-            "round {round} was warmed before its requests"
+            events.join("format.json").exists(),
+            "round {round} was not initialized before readiness"
         );
-        assert!(!events.join("journal.jsonl").exists());
+        assert_eq!(
+            std::fs::metadata(events.join("journal.jsonl"))
+                .unwrap()
+                .len(),
+            0,
+            "round {round} must start with a verified empty journal"
+        );
         let first =
             serde_json::json!({"file":graphs[0],"fixtures":fixtures,"mode":"manual","held":true});
         let second =
@@ -4888,7 +4894,7 @@ fn concurrent_cold_requests(two_starts: bool) {
 }
 
 #[test]
-fn simultaneous_first_requests_preserve_a_cold_store() {
+fn simultaneous_first_requests_preserve_a_ready_store() {
     concurrent_cold_requests(false);
     concurrent_cold_requests(true);
 }

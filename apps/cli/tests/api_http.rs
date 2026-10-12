@@ -2006,8 +2006,8 @@ fn status_over_http_matches_the_cli_and_the_events_tail_pages() {
 }
 
 /// A page at the tail must stay responsive when the verified journal is large. The fixture
-/// uses one append, so setup does not repeatedly scan the growing journal. Cost: one local
-/// 6,000-event append and three loopback HTTP requests, no external service.
+/// uses bounded appends, then races three clients after readiness. Cost: one local 6,000-event
+/// journal and three loopback HTTP requests, no external service.
 #[test]
 fn a_bounded_events_tail_stays_fast_at_six_thousand_events() {
     let directory = tempfile::tempdir().unwrap();
@@ -2063,15 +2063,38 @@ fn a_bounded_events_tail_stays_fast_at_six_thousand_events() {
     drop(store);
 
     let (_guard, base, token) = serve(&events);
-    for url in [
+    let urls = [
         format!("{base}/v1/executions/{execution}/events?after=5999&limit=1"),
         format!("{base}/v1/executions/{execution}/events?after=0&limit=1"),
         format!("{base}/health"),
-    ] {
-        let started = std::time::Instant::now();
-        let reply = get_json(&url, Some(&token));
-        let elapsed = started.elapsed();
+    ];
+    let barrier = std::sync::Barrier::new(urls.len() + 1);
+    let replies = std::thread::scope(|scope| {
+        let workers: Vec<_> = urls
+            .iter()
+            .map(|url| {
+                let barrier = &barrier;
+                let token = &token;
+                scope.spawn(move || {
+                    barrier.wait();
+                    let started = std::time::Instant::now();
+                    let reply = get_json(url, Some(&token));
+                    (url, started.elapsed(), reply)
+                })
+            })
+            .collect();
+        barrier.wait();
+        workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    for (url, elapsed, reply) in replies {
         assert_eq!(reply["ok"], true, "{reply}");
+        if url.ends_with("limit=1") {
+            assert_eq!(reply["data"]["head"], 6_000, "{reply}");
+            assert_eq!(reply["data"]["events"].as_array().unwrap().len(), 1);
+        }
         assert!(
             elapsed < std::time::Duration::from_millis(200),
             "{url} took {elapsed:?}"

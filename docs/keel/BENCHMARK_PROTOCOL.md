@@ -44,6 +44,21 @@ not that exchangeability, quality, or savings have been established. Statistical
 minimum meaningful gain are later work under #183.
 Rows whose sessions are not named by any repeat appear in `unmatched` and never join a group.
 
+### Descriptive paired summary (offline next slice)
+
+`python tools/token-bench/doless.py pair-summary --manifest cohort.json --rows rows.jsonl`
+uses the same version-1 admission and input bounds as `pair-audit`. It reports each admitted
+task separately, with its split and admitted session identities. For each arm it reports
+`attempts`, `PASS`, `FAIL`, `INCOMPLETE`, `successFraction` (PASS divided by all admitted
+attempts), `knownExpenditureUsd`, `unknownCostCount`, and `meanCostPerAttemptUsd`.
+`costPerProvenDeliveryUsd` divides all attempt expenditure by PASS count only when every cost
+is known and at least one attempt passed; otherwise it is null with
+`costPerProvenDeliveryReason: unknown_cost` or `no_pass`. The candidate-minus-baseline fields
+are descriptive task-level differences, null whenever either side's measure is unknown.
+`partial: true` marks any report with exclusions or unmatched rows, which remain visible in
+the output. No train/test pooling, repeat-independence claim, confidence interval,
+recommendation, or savings claim is made. Admitted subsets do not establish improvement.
+
 The claim is **equal or better delivered-code quality at lower total cost per proven delivery**.
 Input-token reduction alone is a diagnostic, not a win. A unit is one independently started
 agent session on one frozen task and one arm. A paired task uses the same parent commit, issue

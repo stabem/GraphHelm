@@ -315,7 +315,7 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
     setChosen({ kind: "group", key: groupKey }); setStepId(null); setStageCol(null); setTaskKey(key); setSub("graph");
   };
   const lanesView = <>
-    <WorkKanban items={kanbanItems} onOpen={openOnGraph} historyLoading={historyLoading} />
+    <WorkKanban items={kanbanItems} onOpen={openOnGraph} historyLoading={lanesHistoryLoading} />
     <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} onDemandLanes={onDemandLanes} liveLanes={wakeListeners} historyLoading={lanesHistoryLoading}
       {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
   </>;

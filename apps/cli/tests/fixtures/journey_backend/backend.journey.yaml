@@ -1,0 +1,39 @@
+schema: graphhelm.journey-flow/1
+id: backend
+title: Backend journey
+status: draft
+approved: null
+base: http://127.0.0.1:8765
+actors: [client]
+secrets: []
+risks: []
+screens:
+  - id: fetched
+    url: /
+    state: success
+    expect: [{role: status, name: "200"}, {role: json, name: items.0.name=apple}]
+    scope: unknown
+  - id: greeted
+    url: /
+    state: success
+    expect: [{role: exit, name: "0"}, {role: stdout, name: hello}]
+    scope: unknown
+  - id: start
+    url: /status.json
+    state: stable
+    expect: [{role: status, name: "200"}, {role: json, name: status=ok}]
+    scope: unknown
+edges:
+  - id: fetch
+    from: greeted
+    to: fetched
+    acts:
+      - {kind: http, role: GET, name: /items.json}
+  - id: greet
+    from: start
+    to: greeted
+    acts:
+      - {kind: cli, role: exec, name: sh greet.sh}
+paths:
+  main: [greet, fetch]
+drift: []

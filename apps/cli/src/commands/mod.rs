@@ -11,6 +11,7 @@ mod gateway;
 mod hash;
 mod init;
 mod journey;
+mod journey_backend;
 mod journey_explore;
 mod journey_flow;
 mod journey_live;

@@ -1,5 +1,13 @@
 # Schema Changelog
 
+## journey-flow 1.3.0 - backend acts `http` and `cli` (#927)
+
+An act's `kind` gains `http` (method in `role`, path on `base` in `name`, optional body in
+`text`) and `cli` (`role: exec`, argv in `name`), so a backend-only project can declare a journey
+the preview runner plays without a browser. Additive: every 1.2.0 flow stays valid. `text` is now
+also allowed on `http`; `secret` stays `enter_text` only. The catalog digest is updated from
+canonical JSON.
+
 ## event-envelope 1.1.0 - operator-note routing hints (Refs #687)
 
 `signal_recorded` gains optional opaque `to` and `replyTo` fields. The Governor copies them

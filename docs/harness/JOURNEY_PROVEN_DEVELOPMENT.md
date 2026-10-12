@@ -322,6 +322,34 @@ recompilation. No browser, model or operational graph mutation is performed.
 Stable finding codes are listed in the
 [design specification](../specs/2026-10-06-journey-explore-design.md#7-diagnostic-codes-stable-new-codes-may-be-added-none-renamed).
 
+### Backend flows: `http` and `cli` acts (#927)
+
+A backend-only project proves a journey without a browser. A flow whose acts are `http` or `cli`
+is a backend flow; it may not mix in browser acts (`flow.observer_mixed`).
+
+- `{kind: http, role: POST, name: /items, text: '{"name":"apple"}'}` sends the method in `role` to
+  the path `name` on `base`, with the optional body `text` (sent as JSON).
+- `{kind: cli, role: exec, name: sh greet.sh}` runs the argv in `name`, split on whitespace with
+  no shell, in the project directory. Each act is bounded at 30 seconds.
+
+Each screen's `expect` is checked against what the act that reached it observed: `status` (the
+HTTP status, exactly), `json` (`a.b.0=value` compares a field, `a.b` asserts it is present),
+`text` (the body contains), `exit` (the exit code, exactly) and `stdout` (stdout contains). Other
+roles are refused (`flow.backend_expect_invalid`). When the flow sends requests, its start screen
+is observed by a GET of its `url`; a `cli`-only flow's start screen is its precondition and is
+not observed, and no launcher is needed. An act that cannot run is `fail`; an unmet expectation
+is `drift`. **Safety.** Backend acts go through the destructive-act guard. Any `http` method other than
+`GET`, `HEAD` or `OPTIONS` (an unknown method included) is a mutation, whatever its path says:
+a draft never sends it (`guard_refused`, even on a launched app), and an approved flow holds it
+at `confirm_needed` until the owner's click (`--confirm`). Validation and sabotage never confirm.
+A `cli` act never runs in a draft (`cli_needs_approval`): the owner's approval of the exact argv
+is what lets it play. In an approved flow, an argv that holds a deny-list word, or `rm`, `push`
+or `drop` as a whole word, still holds at `confirm_needed`.
+`journey preview` plays these flows and records the same result shape as a browser
+run, so `keel test validation` and `keel test sabotage` work unchanged. Replay and live sessions
+remain browser-only. The compiled contract submits a request or activates a command and asks for
+`http_acceptance` or `process_exit` evidence.
+
 ### Deterministic replay and optional sealed recording
 
 Install the observer explicitly in the project being observed:

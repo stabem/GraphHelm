@@ -830,8 +830,13 @@ fn play(
     deadline: Instant,
     stopper: &std::sync::Arc<std::sync::Mutex<Option<LaunchedStop>>>,
 ) -> Result<Option<Launched>> {
-    observer_ready(project)?;
-    if run.validation && !launcher_isolated(project) {
+    // #927: a backend flow needs no browser, and an app only when it sends requests.
+    let backend = super::journey_backend::is_backend(flow);
+    let needs_app = !backend || super::journey_backend::needs_app(flow);
+    if !backend {
+        observer_ready(project)?;
+    }
+    if needs_app && run.validation && !launcher_isolated(project) {
         return Err(failure(
             "preview.launcher_not_isolated",
             "/launcher/isolated",
@@ -841,38 +846,43 @@ fn play(
     let mut base = flow["base"].as_str().unwrap().to_owned();
     // The app under test is started when it is down, and stopped when the preview ends. An
     // isolated launcher always starts its own on free ports (#585), and the preview plays there.
-    let launched: Option<Launched> = if !launcher_isolated(project) && base_reachable(&base) {
-        None
-    } else {
-        Some(launch(
-            project,
-            &base,
-            flow["id"].as_str().unwrap_or_default(),
-            |stop| {
-                // A dead runner cannot clean up itself, even if it dies before up returns.
-                run.state["launched"] = stop.record();
-                super::journey_flow::atomic_write(
-                    &run.dir.join(STATE),
-                    &serde_json::to_vec_pretty(&run.state).unwrap(),
-                )
-                .map_err(|_| failure("watch.launch_failed", "/launcher", 1))?;
-                if let Ok(mut slot) = stopper.lock() {
-                    *slot = Some(stop.clone());
-                }
-                Ok(())
-            },
-        )?)
-    };
+    let launched: Option<Launched> =
+        if !needs_app || (!launcher_isolated(project) && base_reachable(&base)) {
+            None
+        } else {
+            Some(launch(
+                project,
+                &base,
+                flow["id"].as_str().unwrap_or_default(),
+                |stop| {
+                    // A dead runner cannot clean up itself, even if it dies before up returns.
+                    run.state["launched"] = stop.record();
+                    super::journey_flow::atomic_write(
+                        &run.dir.join(STATE),
+                        &serde_json::to_vec_pretty(&run.state).unwrap(),
+                    )
+                    .map_err(|_| failure("watch.launch_failed", "/launcher", 1))?;
+                    if let Ok(mut slot) = stopper.lock() {
+                        *slot = Some(stop.clone());
+                    }
+                    Ok(())
+                },
+            )?)
+        };
     if let Some(own) = launched.as_ref().and_then(|app| app.base.clone()) {
         base = own;
     }
-    let secrets = preflight(
-        flow,
-        &launched
-            .as_ref()
-            .map(|app| app.secrets.clone())
-            .unwrap_or_default(),
-    )?;
+    let secrets = if backend {
+        Default::default()
+    } else {
+        preflight(
+            flow,
+            &launched
+                .as_ref()
+                .map(|app| app.secrets.clone())
+                .unwrap_or_default(),
+        )?
+    };
     let guard = Guard {
         approved: flow["status"] == "approved",
         launched: launched.is_some(),
@@ -910,9 +920,13 @@ fn play(
             .iter()
             .map(|id| id.as_str().unwrap())
             .collect();
-        play_path(
-            project, &base, &secrets, &screens, &edges, &ids, name, guard, run,
-        )?;
+        if backend {
+            play_backend_path(project, &base, &screens, &edges, &ids, name, guard, run);
+        } else {
+            play_path(
+                project, &base, &secrets, &screens, &edges, &ids, name, guard, run,
+            )?;
+        }
         if !run.state["held"].is_null() {
             // Waiting for the owner's click: nothing after the held act is played.
             break;
@@ -935,12 +949,21 @@ struct Guard {
 
 impl Guard {
     /// The step reason an act is not sent with, or `None` when it is played.
+    ///
+    /// #927 backend acts: a `cli` act in a draft is never run (`cli_needs_approval`): there is no
+    /// isolated target for a command, so only the owner's approval of the exact argv lets it
+    /// play. A mutating `http` act (any method but GET, HEAD, OPTIONS) in a draft is refused even
+    /// on a launched app, and an approved flow holds it for the owner's click.
     fn stops_before(self, act: &Value) -> Option<&'static str> {
+        let backend = matches!(act["kind"].as_str(), Some("http" | "cli"));
+        if act["kind"] == "cli" && !self.approved {
+            return Some("cli_needs_approval");
+        }
         would_destroy(act)?;
         if self.approved {
             (!self.confirmed).then_some("confirm_needed")
         } else {
-            (!self.launched).then_some("guard_refused")
+            (backend || !self.launched).then_some("guard_refused")
         }
     }
 }
@@ -1051,6 +1074,83 @@ fn play_path(
     }
     let _ = driver.close();
     result.map(|_| ())
+}
+
+/// #927: one path of a backend flow, recorded exactly as a browser path is. The start screen is
+/// observed by a GET of its URL when the flow sends requests; a `cli`-only flow's start screen is
+/// its precondition and is not observed. Each act's observation is checked against the screen it
+/// reaches: an act that cannot run fails, an unmet expectation is drift. No coverage is collected.
+#[allow(clippy::too_many_arguments)]
+fn play_backend_path(
+    project: &Path,
+    base: &str,
+    screens: &std::collections::BTreeMap<&str, &Value>,
+    edges: &std::collections::BTreeMap<&str, &Value>,
+    ids: &[&str],
+    path_name: &str,
+    guard: Guard,
+    run: &mut Run,
+) {
+    use super::journey_backend as backend;
+    let mut walk = || -> &'static str {
+        let first = edges[ids[0]]["from"].as_str().unwrap();
+        if backend::needs_app(&json!({"edges": ids.iter().map(|id| edges[id]).collect::<Vec<_>>()}))
+        {
+            let url = screens[first]["url"].as_str().unwrap();
+            match backend::request(base, "GET", url, None) {
+                Ok(seen) => match backend::unmet(screens[first], &seen) {
+                    None => run.screen(first, "pass", None, None),
+                    Some(_) => {
+                        run.screen(first, "drift", Some("expect_missing"), None);
+                        return "drift";
+                    }
+                },
+                Err(_) => {
+                    run.screen(first, "fail", Some("act_failed"), None);
+                    return "failed";
+                }
+            }
+        }
+        for id in ids {
+            let edge = edges[id];
+            let to = edge["to"].as_str().unwrap();
+            let mut last = None;
+            for act in edge["acts"].as_array().unwrap() {
+                if let Some(reason) = guard.stops_before(act) {
+                    run.edge(id, "skipped", Some(reason));
+                    if reason == "confirm_needed" {
+                        run.state["held"] = json!({"edge":id,"act":act["name"],"base":base});
+                        run.save();
+                        return "held";
+                    }
+                    return "skipped";
+                }
+                match backend::play(project, base, act) {
+                    Ok(seen) => last = Some(seen),
+                    Err(_) => {
+                        run.edge(id, "fail", Some("act_failed"));
+                        run.screen(to, "fail", Some("act_failed"), None);
+                        return "failed";
+                    }
+                }
+            }
+            if last.is_some_and(|seen| backend::unmet(screens[to], &seen).is_none()) {
+                run.screen(to, "pass", None, None);
+                run.edge(id, "pass", None);
+            } else {
+                run.screen(to, "drift", Some("expect_missing"), None);
+                run.edge(id, "drift", Some("expect_missing"));
+                return "drift";
+            }
+        }
+        "completed"
+    };
+    let execution = walk();
+    if run.validation {
+        run.state["validationPaths"][path_name] =
+            json!({"execution":execution,"collection":"not_applicable"});
+    }
+    run.save();
 }
 
 fn finalize_coverage(
@@ -1473,6 +1573,49 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         };
         assert_eq!(draft(false).stops_before(&pay), Some("guard_refused"));
         assert_eq!(draft(true).stops_before(&pay), None);
+    }
+
+    /// #927 review: backend acts must not bypass the guard. Defects named: a DELETE or POST read
+    /// as harmless because its path holds no deny-list word, and a draft running a command.
+    #[test]
+    fn backend_mutations_and_draft_commands_are_guarded() {
+        let http = |method: &str| json!({"kind":"http","role":method,"name":"/items/3"});
+        let cli = json!({"kind":"cli","role":"exec","name":"sh greet.sh"});
+        let wipe = json!({"kind":"cli","role":"exec","name":"git push --force"});
+        for launched in [false, true] {
+            let draft = Guard {
+                approved: false,
+                launched,
+                confirmed: false,
+            };
+            for method in ["DELETE", "POST", "put", "BREW"] {
+                assert_eq!(
+                    draft.stops_before(&http(method)),
+                    Some("guard_refused"),
+                    "{method}"
+                );
+            }
+            for method in ["GET", "HEAD", "options"] {
+                assert_eq!(draft.stops_before(&http(method)), None, "{method}");
+            }
+            assert_eq!(draft.stops_before(&cli), Some("cli_needs_approval"));
+        }
+        let approved = Guard {
+            approved: true,
+            launched: true,
+            confirmed: false,
+        };
+        for method in ["DELETE", "POST"] {
+            assert_eq!(approved.stops_before(&http(method)), Some("confirm_needed"));
+        }
+        assert_eq!(approved.stops_before(&http("GET")), None);
+        assert_eq!(approved.stops_before(&cli), None);
+        assert_eq!(approved.stops_before(&wipe), Some("confirm_needed"));
+        let clicked = Guard {
+            confirmed: true,
+            ..approved
+        };
+        assert_eq!(clicked.stops_before(&http("DELETE")), None);
     }
 
     /// #519 slice 3: only an approved flow with all four recording arguments records proof; a

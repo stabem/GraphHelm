@@ -362,6 +362,9 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
             }
         }
     }
+    for (code, pointer, message) in super::journey_backend::findings(value) {
+        findings.push(Finding::new(code, pointer, message));
+    }
     if value["status"] == "approved" && !value["drift"].as_array().unwrap().is_empty() {
         findings.push(Finding::new(
             "flow.approved_with_drift",
@@ -637,6 +640,8 @@ fn compile(flow: &Value) -> Result<Vec<(String, Value)>, Finding> {
         .iter()
         .map(|e| (e["id"].as_str().unwrap(), e))
         .collect();
+    let backend = super::journey_backend::is_backend(flow);
+    let http = super::journey_backend::needs_app(flow);
     let mut contracts = Vec::new();
     for (name, path) in flow["paths"].as_object().unwrap() {
         let edges: Vec<_> = path
@@ -654,7 +659,16 @@ fn compile(flow: &Value) -> Result<Vec<(String, Value)>, Finding> {
                 json!({"kind":"navigate","target":{"strategy":"label","value":screen["url"],"geometryClaim":false}})
             } else {
                 let act = edges[index - 1]["acts"].as_array().unwrap().last().unwrap();
-                json!({"kind":act["kind"],"target":{"strategy":"accessible_name","value":act["name"],"role":act["role"],"geometryClaim":false}})
+                match act["kind"].as_str() {
+                    // #927: the frozen contract has no backend kinds; a request is submitted and
+                    // a command activated, each named by its own label.
+                    Some(kind @ ("http" | "cli")) => {
+                        json!({"kind":if kind == "http" {"submit"} else {"activate"},"target":{"strategy":"label","value":act["name"],"role":act["role"],"geometryClaim":false}})
+                    }
+                    _ => {
+                        json!({"kind":act["kind"],"target":{"strategy":"accessible_name","value":act["name"],"role":act["role"],"geometryClaim":false}})
+                    }
+                }
             };
             let mut step = json!({"stepId":sid,"actorId":actors[0],"semanticAction":action,"expectedStates":[screen["state"]],"failureContract":{"timeoutSeconds":30,"visibleError":format!("screen {sid} not reached"),"safeStop":"stop replay","recoveryAction":null,"prohibitedSideEffects":[]}});
             if screen["scope"].is_array() {
@@ -688,7 +702,14 @@ fn compile(flow: &Value) -> Result<Vec<(String, Value)>, Finding> {
                     "all expectations must fit the contract's 1024-character promise limit",
                 ));
             }
-            promises.push(json!({"promiseId":format!("{sid}.visible"),"stepId":sid,"statement":statement,"requiredFact":"content_rendered","requiredEvidenceKinds":["visual_capture"],"requiredObserverCapability":"browser","statesToObserve":[screen["state"]],"maxEvidenceAgeSeconds":604800}));
+            let (fact, evidence, observer) = if !backend {
+                ("content_rendered", "visual_capture", "browser")
+            } else if http {
+                ("request_accepted", "http_acceptance", "http")
+            } else {
+                ("command_completed", "process_exit", "process")
+            };
+            promises.push(json!({"promiseId":format!("{sid}.visible"),"stepId":sid,"statement":statement,"requiredFact":fact,"requiredEvidenceKinds":[evidence],"requiredObserverCapability":observer,"statesToObserve":[screen["state"]],"maxEvidenceAgeSeconds":604800}));
             steps.push(step);
         }
         let contract_id = if name == "main" {

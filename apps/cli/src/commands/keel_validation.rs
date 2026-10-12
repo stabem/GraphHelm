@@ -483,8 +483,10 @@ pub(crate) fn run(repo: &Path) -> Outcome {
         .iter()
         .filter_map(|path| read_coverage(path))
         .collect();
+    // #927: a backend path (http, cli) collects no browser coverage, so none is expected of it.
     let expected_paths: BTreeSet<String> = paths
         .iter()
+        .filter(|path| path["collection"] != "not_applicable")
         .filter_map(|path| {
             Some(format!(
                 "{}\u{0}{}",
@@ -545,7 +547,7 @@ pub(crate) fn run(repo: &Path) -> Outcome {
         .filter(|path| !generated_contracts.contains(path.file_name().and_then(|name| name.to_str()).unwrap_or_default()))
         .map(|path| json!({"path":path.strip_prefix(&repo).unwrap_or(&path).display().to_string(),"status":"unsupported"}))
         .collect::<Vec<_>>();
-    let sweep_valid = !expected_paths.is_empty()
+    let sweep_valid = !paths.is_empty()
         && failures.is_empty()
         && standalone.is_empty()
         && artifacts.len() == expected_paths.len()
@@ -601,7 +603,8 @@ pub(crate) fn run(repo: &Path) -> Outcome {
     if journeys_changed {
         unknown.push(json!({"reason":"journeys_changed_during_run"}));
     }
-    if artifacts.is_empty() {
+    let coverage_missing = artifacts.is_empty() && !expected_paths.is_empty();
+    if coverage_missing {
         unknown.push(json!({"reason":"coverage_missing"}));
     }
     let used_count = used.len();
@@ -626,13 +629,14 @@ pub(crate) fn run(repo: &Path) -> Outcome {
         "deadConfirmed": [],
     });
     let unknown_count = data["unknown"].as_array().map_or(0, Vec::len);
-    let blocking_uncertain = !sweep_valid || artifacts.is_empty() || input_changed;
+    let blocking_uncertain = !sweep_valid || coverage_missing || input_changed;
     let summary = json!({"flows":data["flows"].as_array().map_or(0, Vec::len),
         "paths":data["paths"].as_array().map_or(0, Vec::len),
         "used":used_count,"notObserved":not_observed_count,"unknown":unknown_count,
         "failures":failure_count});
     let limitations = json!([
         "coverage is limited to captured browser JavaScript scripts",
+        "http and cli paths prove execution only; their collection is not_applicable",
         "backend, native, CSS, workers, missing maps and ambiguous source hashes remain unknown",
         "scope declarations are associations only and never execution evidence"
     ]);

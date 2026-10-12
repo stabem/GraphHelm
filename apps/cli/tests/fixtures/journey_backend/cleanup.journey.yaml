@@ -1,0 +1,29 @@
+schema: graphhelm.journey-flow/1
+id: cleanup
+title: Client deletes the items
+status: draft
+approved: null
+base: http://127.0.0.1:8765
+actors: [client]
+secrets: []
+risks: [irreversible_effect]
+screens:
+  - id: deleted
+    url: /
+    state: success
+    expect: [{role: status, name: "204"}]
+    scope: unknown
+  - id: start
+    url: /status.json
+    state: stable
+    expect: [{role: status, name: "200"}]
+    scope: unknown
+edges:
+  - id: wipe
+    from: start
+    to: deleted
+    acts:
+      - {kind: http, role: DELETE, name: /items.json}
+paths:
+  main: [wipe]
+drift: []

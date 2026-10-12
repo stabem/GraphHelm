@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/journey-flow.schema.json",
-  "x-graphhelm-schema-version": "1.2.0",
+  "x-graphhelm-schema-version": "1.3.0",
   "title": "GraphHelm Journey Flow",
   "type": "object",
   "properties": {
@@ -227,7 +227,9 @@
             "inspect",
             "submit",
             "recover",
-            "approve"
+            "approve",
+            "http",
+            "cli"
           ]
         },
         "role": {
@@ -266,7 +268,10 @@
             "not": {
               "properties": {
                 "kind": {
-                  "const": "enter_text"
+                  "enum": [
+                    "enter_text",
+                    "http"
+                  ]
                 }
               }
             }
@@ -287,8 +292,25 @@
               ]
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "http"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "secret"
+              ]
+            }
+          }
         }
-      ]
+      ],
+      "description": "Browser acts address an accessible role and name. Backend acts (#927): `http` sends method `role` to path `name` on `base` with optional body `text`; `cli` (`role: exec`) runs argv `name` in the project."
     },
     "screen": {
       "type": "object",

@@ -194,6 +194,10 @@ alongside `briefing`, the current Runtime digest. On receipt replay, both histor
 stay tied to their sealed records while `briefing` may advance. A missing or malformed receipt
 digest is refused. These historical digests do not assign current duties or imply task acceptance.
 
+Read-only `status` retains the `receipts` ID list and exposes `receiptBriefings`, keyed by
+those IDs, from each validated sealed receipt. An offer without receipts has an empty map.
+This historical receipt context needs no current briefing fetch and does not imply acceptance.
+
 When `status` names an offer ID, it opens only that offer's sealed content. It still validates the
 current recipient's receipt records to determine which reference that offer; receipt matching and
 integrity checks are unchanged. Unfiltered status continues opening all offer records. An unavailable

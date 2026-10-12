@@ -414,6 +414,7 @@ def status(host: str, session: str, offer_id: str | None) -> dict:
         except (TypeError, ValueError, KeyError) as error:
             raise ValueError("handoff offer briefing reference is invalid") from error
         receipt_ids = []
+        receipt_briefings = {}
         for candidate in events:
             candidate_record = _signal_record(candidate)
             if candidate_record.get("kind") != RECEIPT_KIND or candidate_record.get("sourceId") != current_actor:
@@ -427,12 +428,14 @@ def status(host: str, session: str, offer_id: str | None) -> dict:
                 raise ValueError("handoff receipt metadata is invalid") from error
             if not isinstance(candidate_details, dict) or candidate_details.get("offerId") != sid:
                 continue
-            _validate_receipt(candidate_signal, execution, sid, current_actor, signal["source"]["id"])
+            receipt_briefing = _validate_receipt(candidate_signal, execution, sid, current_actor, signal["source"]["id"])
             if candidate_signal.get("replyTo") == sid:
-                receipt_ids.append(candidate_record.get("signalId"))
+                receipt_id = candidate_record.get("signalId")
+                receipt_ids.append(receipt_id)
+                receipt_briefings[receipt_id] = receipt_briefing
         offers.append({"offerId": sid, "sender": signal.get("source", {}).get("id"),
                        "recipient": signal.get("to"), "offeredAt": signal.get("emittedAt"),
-                       "sealed": True, "receipts": receipt_ids,
+                       "sealed": True, "receipts": receipt_ids, "receiptBriefings": receipt_briefings,
                        "briefingReference": briefing_reference})
     return {"format": "graphhelm-portable-v1", "phase": "status", "executionId": execution,
             "offers": offers, "truncated": truncated, "activation": "unobserved"}

@@ -397,14 +397,8 @@ def status(host: str, session: str, offer_id: str | None) -> dict:
     execution, token_file, url, origin, _ = _binding()
     token = token_from_file(token_file)
     events = _events(url, token, execution)
-    sealed_by_id = {}
     current_actor = _actor(host, session)
-    for event in events:
-        record = _signal_record(event)
-        signal_id = record.get("signalId")
-        if record.get("kind") == RECEIPT_KIND and record.get("sourceId") == current_actor and isinstance(signal_id, str):
-            sealed_by_id[signal_id] = _sealed_signal(url, token, execution, event)
-    offers = []
+    selected_offers = []
     truncated = False
     for event in events:
         record = _signal_record(event)
@@ -416,7 +410,7 @@ def status(host: str, session: str, offer_id: str | None) -> dict:
         signal = _sealed_signal(url, token, execution, event)
         if signal.get("to") != current_actor:
             continue
-        if len(offers) >= MAX_OFFERS:
+        if len(selected_offers) >= MAX_OFFERS:
             truncated = True
             break
         details = json.loads(signal.get("description", "{}"))
@@ -429,6 +423,21 @@ def status(host: str, session: str, offer_id: str | None) -> dict:
             briefing_reference = _validate_digest(details.get("briefing"))
         except (TypeError, ValueError, KeyError) as error:
             raise ValueError("handoff offer briefing reference is invalid") from error
+        selected_offers.append((sid, signal, briefing_reference))
+
+    if not selected_offers:
+        return {"format": "graphhelm-portable-v1", "phase": "status", "executionId": execution,
+                "offers": [], "truncated": False, "activation": "unobserved"}
+
+    sealed_by_id = {}
+    for event in events:
+        record = _signal_record(event)
+        signal_id = record.get("signalId")
+        if record.get("kind") == RECEIPT_KIND and record.get("sourceId") == current_actor and isinstance(signal_id, str):
+            sealed_by_id[signal_id] = _sealed_signal(url, token, execution, event)
+
+    offers = []
+    for sid, signal, briefing_reference in selected_offers:
         receipt_ids = []
         receipt_briefings = {}
         for candidate in events:

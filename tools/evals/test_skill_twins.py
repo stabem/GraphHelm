@@ -18,6 +18,22 @@ INVOCATION = re.compile(r"Use the ([\w-]+) skill(?: in audit mode)?")
 
 
 class SkillTwinsTest(unittest.TestCase):
+    def test_no_skill_arithmetic_is_a_complete_negative_control(self):
+        case = ROOT / "evals/graphhelm-development-contracts/no-skill-arithmetic"
+        prompt = (case / "prompt.md").read_text(encoding="utf-8")
+        criteria = (case / "graders/criteria.md").read_text(encoding="utf-8")
+        self.assertEqual(
+            prompt,
+            "---\nmax_turns: 4\nallowed_tools: [Skill]\n---\n\n"
+            "What is 17 plus 25? Reply with only the number.\n",
+        )
+        self.assertIn("completed transcript", criteria)
+        self.assertIn("final answer is 42", criteria)
+        self.assertIn("no Skill invocation", criteria)
+        for incomplete in ("missing transcript", "truncated transcript", "tool failure", "infrastructure failure"):
+            self.assertIn(incomplete, criteria)
+        self.assertIn("INCOMPLETE", criteria)
+
     def test_unprompted_twins_preserve_scenarios_without_skill_hints(self):
         skill_names = set()
         skill_paths = list(ROOT.glob("plugins/*/skills/*/SKILL.md"))

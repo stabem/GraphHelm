@@ -4046,6 +4046,9 @@ describe("the board remembers its graph file", () => {
  */
 describe("the exchange", () => {
   it("keeps Lanes loading until complete PR history replaces a misleading recent tail (#961)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-12T18:00:30Z"));
+    try {
     const specs = [
       { sequence: 1, kind: "task.claimed", actor: "lane-a", taskId: "issue-947", issue: 947, lane: "lane-a", branch: "issue-947-work" },
       { sequence: 2, kind: "task.pr_opened", actor: "lane-a", taskId: "issue-947", pr: 955, headSha: "aaaaaaaa", lane: "lane-a", journeys: [] },
@@ -4111,6 +4114,9 @@ describe("the exchange", () => {
     expect(within(kanban).getByText("#923")).toBeInTheDocument();
     expect(kanban.querySelector('[data-col="review"]')).toHaveTextContent("#923");
     expect(kanban).toHaveTextContent("reviewer-b");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("settles partial task history and Retry recovers the unreadable record", async () => {

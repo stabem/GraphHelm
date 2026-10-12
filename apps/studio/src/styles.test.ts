@@ -31,6 +31,14 @@ const CSS = Object.values(STYLESHEETS).join("\n");
  * sentence about `{` must not read as a rule. */
 const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
 
+it("keeps the top bar above the opening overlay", () => {
+  const topbar = [...CODE.matchAll(/\.topbar\s*\{([^}]*)\}/g)].map((rule) => rule[1]).join(" ");
+  const loading = CODE.match(/^\.loading\s*\{([^}]*)\}/m)?.[1] ?? "";
+  expect(topbar).toMatch(/position:\s*relative/);
+  expect(topbar).toMatch(/z-index:\s*1\b/);
+  expect(loading).toMatch(/position:\s*absolute/);
+});
+
 /**
  * Custom properties this stylesheet READS but deliberately does not DEFINE, each with the reason.
  * A bare allowlist would let a typo in a token name pass as intentional.

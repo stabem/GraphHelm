@@ -257,6 +257,10 @@ describe("Studio organization and responsive navigation", () => {
       expect(toggle).toHaveAttribute("aria-expanded", "false");
       await userEvent.click(toggle);
       expect(toggle).toHaveAttribute("aria-expanded", "true");
+      const conversation = screen.getByRole("button", { name: "Toggle conversation" });
+      expect(conversation).toHaveAttribute("aria-expanded", "false");
+      await userEvent.click(conversation);
+      expect(conversation).toHaveAttribute("aria-expanded", "true");
       await userEvent.click(toggle);
       expect(toggle).toHaveAttribute("aria-expanded", "false");
     } finally {

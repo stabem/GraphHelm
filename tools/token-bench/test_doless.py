@@ -888,6 +888,17 @@ def test_task_group_sessions_account_for_unequal_arms_and_exclude_whole_task(tmp
     duplicate = run(rows, group | {"sessions": {"baseline": ["a1", "a1"],
         "candidate": ["k1", "k2"]}}, command="pair-audit")
     assert duplicate["admitted"] == [] and duplicate["excluded"][0]["reason"] == "duplicate_session"
+    mismatched = run([rows[0] | {"controls": controls | {"budget": "changed"}}, *rows[1:]],
+                     command="pair-audit")
+    assert mismatched["admitted"] == [] and mismatched["excluded"][0]["reason"] == "control_mismatch"
+    plan = {"version": 1, "comparison": "methodology", "split": "test",
+            "independentUnit": "task", "weighting": "equal_task",
+            "costMetric": "all_attempt_cost_per_proven_delivery_usd",
+            "minimumCostReductionUsd": 0.2, "maximumQualityRegression": 0.05,
+            "assumptionStatement": "Operator declaration for independent tasks."}
+    planned = run(plan=plan)
+    assert planned["analysisPlan"]["minimumCostReductionUsd"] == 0.2
+    assert planned["inferenceStatus"] == "not_implemented"
 
 
 def test_pair_analysis_plan_binds_explicit_thresholds_to_frozen_inputs(tmp_path):

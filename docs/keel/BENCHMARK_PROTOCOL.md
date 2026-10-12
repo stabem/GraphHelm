@@ -44,6 +44,25 @@ not that exchangeability, quality, or savings have been established. Statistical
 minimum meaningful gain are later work under #183.
 Rows whose sessions are not named by any repeat appear in `unmatched` and never join a group.
 
+Version 2 is an opt-in task-level cohort format for unequal arm counts. Keep the same frozen
+task, snapshot, split, controls, arm identities and treatment declaration shown above; set
+`version: 2`, `weighting: equal_task`, and replace each group's `repeats` with independent
+session lists:
+
+```json
+"sessions": {"baseline": ["a1", "a2", "a3"], "candidate": ["k1", "k2"]}
+```
+
+Each arm list contains 1..1,000 nonempty unique session IDs. Neither command zips or truncates
+these lists, and only the task is paired. Duplicate declared IDs anywhere, missing referenced
+rows, or mismatched frozen controls exclude the entire affected task with its original declared
+IDs and a reason. Unnamed rows remain unmatched. The version-2 audit and summary identify
+themselves as version 2 and report `sessions` instead of fabricated `repeats`. Every admitted
+PASS, FAIL and INCOMPLETE attempt enters the existing arm-summary formulas. Version-1 reports
+and manifests keep their existing format and behavior. An analysis plan still binds exact input
+bytes, one split, equal-task weighting and explicit thresholds; acceptance still gives no
+inference or recommendation.
+
 ### Descriptive paired summary (offline next slice)
 
 `python tools/token-bench/doless.py pair-summary --manifest cohort.json --rows rows.jsonl`

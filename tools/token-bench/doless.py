@@ -517,14 +517,16 @@ def cmd_pair_audit(a: argparse.Namespace, *, emit: bool = True) -> tuple[dict, l
     raw_rows = bounded(a.rows)
     manifest_raw = bounded(a.manifest)
     manifest = json.loads(manifest_raw)
-    if not isinstance(manifest, dict) or manifest.get("version") != 1:
-        raise ValueError("pair-audit requires manifest version 1")
+    if not isinstance(manifest, dict) or type(manifest.get("version")) is not int or manifest["version"] not in (1, 2):
+        raise ValueError("pair-audit requires manifest version 1 or 2")
     if manifest.get("rowsSha256") != hashlib.sha256(raw_rows).hexdigest():
         raise ValueError("rowsSha256 does not match the frozen rows file")
     if not isinstance(manifest.get("comparison"), str) or not manifest["comparison"]:
         raise ValueError("comparison is required")
     if manifest.get("weighting") not in ("equal_task", "equal_repeat"):
         raise ValueError("weighting must be equal_task or equal_repeat")
+    if manifest["version"] == 2 and manifest["weighting"] != "equal_task":
+        raise ValueError("version 2 requires equal_task weighting")
     groups = manifest.get("groups")
     if not isinstance(groups, list) or not groups or len(groups) > 1000:
         raise ValueError("groups must contain 1..1000 task groups")
@@ -549,6 +551,12 @@ def cmd_pair_audit(a: argparse.Namespace, *, emit: bool = True) -> tuple[dict, l
                         session = repeat.get(side)
                         if isinstance(session, str) and session:
                             declared_counts[session] = declared_counts.get(session, 0) + 1
+        if manifest["version"] == 2 and isinstance(group, dict) and isinstance(group.get("sessions"), dict):
+            for side in ("baseline", "candidate"):
+                declared = group["sessions"].get(side)
+                for session in declared if isinstance(declared, list) else []:
+                    if isinstance(session, str) and session:
+                        declared_counts[session] = declared_counts.get(session, 0) + 1
     duplicated_sessions = {session for session, count in declared_counts.items() if count > 1}
     admitted, excluded = [], []
     seen_tasks, seen_repeats, declared_sessions = set(), set(), set()
@@ -580,6 +588,47 @@ def cmd_pair_audit(a: argparse.Namespace, *, emit: bool = True) -> tuple[dict, l
                   if group["baseline"][key] != group["candidate"][key]]
         if sorted(differences) != sorted(actual):
             raise ValueError("treatmentDifferences conflict with frozen arms")
+        if manifest["version"] == 2:
+            sessions = group.get("sessions")
+            if ("repeats" in group or not isinstance(sessions, dict) or
+                    set(sessions) != {"baseline", "candidate"} or
+                    any(not isinstance(sessions[side], list) or not 1 <= len(sessions[side]) <= 1000 or
+                        any(not isinstance(s, str) or not s for s in sessions[side])
+                        for side in ("baseline", "candidate"))):
+                raise ValueError("version 2 needs bounded baseline and candidate session lists")
+            ids = sessions["baseline"] + sessions["candidate"]
+            declared_sessions.update(ids)
+            if any(s in duplicated_sessions for s in ids):
+                reason = "duplicate_session"
+            else:
+                reason = None
+                for side in ("baseline", "candidate"):
+                    for session in sessions[side]:
+                        found = by_session.get(session, [])
+                        if len(found) > 1:
+                            reason = "duplicate_session"
+                        elif not found:
+                            reason = "missing_control" if side == "baseline" else "unmatched_candidate"
+                        else:
+                            row = found[0]
+                            if row.get("task") != task:
+                                reason = "task_mismatch"
+                            elif row.get("taskSnapshot") != group["taskSnapshot"] or row.get("split") != group["split"]:
+                                reason = "snapshot_mismatch"
+                            elif row.get("arm") != group[side]["arm"] or row.get("configDigest") != group[side]["configDigest"]:
+                                reason = "configuration_mismatch"
+                            elif row.get("controls") != controls:
+                                reason = "control_mismatch"
+                        if reason:
+                            break
+                    if reason:
+                        break
+            if reason:
+                excluded.append({"task": task, "sessions": sessions, "reason": reason})
+            else:
+                admitted.append({"task": task, "sessions": sessions,
+                                 "costKnown": all(observed_cost(by_session[s][0]) is not None for s in ids)})
+            continue
         repeats = group.get("repeats")
         if not isinstance(repeats, list) or not repeats or len(repeats) > 1000:
             raise ValueError("each group needs 1..1000 repeats")
@@ -622,7 +671,7 @@ def cmd_pair_audit(a: argparse.Namespace, *, emit: bool = True) -> tuple[dict, l
             admitted.append({"task": task, "repeats": [item for item, _ in kept],
                              "costKnown": all(known for _, known in kept)})
     unmatched = sorted(set(by_session) - declared_sessions)
-    report = {"version": 1, "comparison": manifest["comparison"],
+    report = {"version": manifest["version"], "comparison": manifest["comparison"],
               "weighting": manifest["weighting"], "admitted": admitted,
               "excluded": excluded, "unmatched": unmatched}
     if emit:
@@ -687,15 +736,20 @@ def cmd_pair_summary(a: argparse.Namespace) -> None:
     tasks = []
     for admitted in sorted(audit["admitted"], key=lambda item: item["task"]):
         task = admitted["task"]
-        baseline = arm_summary([by_session[repeat["baseline"]] for repeat in admitted["repeats"]])
-        candidate = arm_summary([by_session[repeat["candidate"]] for repeat in admitted["repeats"]])
+        identities = (admitted["sessions"] if audit["version"] == 2 else
+                      {side: [repeat[side] for repeat in admitted["repeats"]]
+                       for side in ("baseline", "candidate")})
+        baseline = arm_summary([by_session[s] for s in identities["baseline"]])
+        candidate = arm_summary([by_session[s] for s in identities["candidate"]])
         delta = {key: (candidate[key] - baseline[key] if candidate[key] is not None
                         and baseline[key] is not None else None)
                  for key in ("successFraction", "meanCostPerAttemptUsd", "costPerProvenDeliveryUsd")}
-        tasks.append({"task": task, "split": groups[task]["split"], "repeats": admitted["repeats"],
+        tasks.append({"task": task, "split": groups[task]["split"],
+                      ("sessions" if audit["version"] == 2 else "repeats"):
+                      admitted["sessions"] if audit["version"] == 2 else admitted["repeats"],
                       "baseline": baseline, "candidate": candidate,
                       "deltaCandidateMinusBaseline": delta})
-    print(json.dumps({"version": 1, "comparison": audit["comparison"],
+    print(json.dumps({"version": audit["version"], "comparison": audit["comparison"],
                       "weighting": audit["weighting"], "partial": bool(audit["excluded"] or audit["unmatched"]),
                       "tasks": tasks, "excluded": audit["excluded"], "unmatched": audit["unmatched"],
                       **plan_output},

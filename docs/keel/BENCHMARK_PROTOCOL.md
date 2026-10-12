@@ -59,6 +59,39 @@ are descriptive task-level differences, null whenever either side's measure is u
 the output. No train/test pooling, repeat-independence claim, confidence interval,
 recommendation, or savings claim is made. Admitted subsets do not establish improvement.
 
+### Frozen analysis plan (offline prerequisite)
+
+`pair-summary --manifest cohort.json --rows rows.jsonl --analysis-plan plan.json` accepts an
+optional version-1 local JSON plan. The plan is a closed object with exactly these fields:
+
+```json
+{
+  "version": 1,
+  "manifestSha256": "<SHA-256 of exact manifest bytes>",
+  "rowsSha256": "<SHA-256 of exact rows bytes>",
+  "comparison": "methodology",
+  "split": "test",
+  "independentUnit": "task",
+  "weighting": "equal_task",
+  "costMetric": "all_attempt_cost_per_proven_delivery_usd",
+  "minimumCostReductionUsd": 0.2,
+  "maximumQualityRegression": 0.05,
+  "assumptionStatement": "Operator-declared reason that task outcomes may be treated as independent."
+}
+```
+
+Both digests and the comparison must match the supplied frozen inputs. Every declared task
+must have the specified single split; mixed train/test plans are refused. The minimum cost
+reduction must be a finite positive number, and maximum quality regression a finite fraction
+from zero through one. Neither has a default. The assumption statement must contain non-space
+text and be at most 2,048 characters; the whole plan is limited to 4 MiB. Unknown keys,
+unsupported versions, booleans used as numbers, and nonfinite values are refused. The report
+adds the validated `analysisPlan`, its exact-byte `analysisPlanSha256`, and
+`inferenceStatus: not_implemented`. Without the option, `pair-summary` keeps its existing
+report shape. Exclusions, incomplete attempts, and unknown costs remain visible. Acceptance
+does not validate exchangeability, prove that the plan preceded outcome inspection, or provide
+an uncertainty estimate or improvement advice.
+
 The claim is **equal or better delivered-code quality at lower total cost per proven delivery**.
 Input-token reduction alone is a diagnostic, not a win. A unit is one independently started
 agent session on one frozen task and one arm. A paired task uses the same parent commit, issue

@@ -97,13 +97,15 @@ it("reads owner actor aliases, newest wins, and the bot carries the name", async
 // #673: DOM-only; catches dropping crash sites and echoing unknown provider text.
 it("shows fixed crash site labels in the node history", () => {
   cleanup();
-  const events: RuntimeEvent[] = ["stream_malformed", "future_site", "secret text"].map((crashSite, i) => ({
-    sequence: i + 1, kind: "node_outcome_recorded", payload: { nodeId: "work", outcome: "retryable_failure", nextState: "blocked", reason: "runtime_crashed", crashSite }, occurredAt: null, actorId: "system-runtime", actorType: "system", idempotencyKey: `crash-${i}`, eventId: `crash-${i}`, evidenceRefs: [],
+  const events: RuntimeEvent[] = ["stream_malformed", "future_site", "secret text", undefined].map((crashSite, i) => ({
+    sequence: i + 1, kind: "node_outcome_recorded", payload: { nodeId: "work", outcome: "retryable_failure", nextState: "blocked", reason: "runtime_crashed", ...(crashSite === undefined ? {} : { crashSite }) }, occurredAt: null, actorId: "system-runtime", actorType: "system", idempotencyKey: `crash-${i}`, eventId: `crash-${i}`, evidenceRefs: [],
   }));
   render(<NodePanel node={buildGraphModel(events).nodes[0]} events={events} onClose={vi.fn()} />);
-  const history = screen.getByRole("region", { name: "Runtime crash history" });
+  const history = screen.getByRole("region", { name: "Native route failure history" });
+  expect(history).toHaveTextContent("Recorded failure sites do not show that the GraphHelm server stopped or identify a root cause.");
   expect(history).toHaveTextContent("#1: stream malformed");
   expect(history).toHaveTextContent("#2: unknown");
   expect(history).toHaveTextContent("#3: unknown");
+  expect(history).toHaveTextContent("#4: unknown");
   expect(history).not.toHaveTextContent("secret text");
 });

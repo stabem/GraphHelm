@@ -88,6 +88,42 @@ class RuntimeHandler(BaseHTTPRequestHandler):
 
 
 class SessionHookTests(unittest.TestCase):
+    def test_partial_environment_binding_uses_team_file_values(self):
+        spec = importlib.util.spec_from_file_location("session_hook_test", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        repo = Path(self.temp.name) / "repo"
+        (repo / ".graphhelm").mkdir(parents=True)
+        (repo / ".graphhelm" / "team.json").write_text(json.dumps({
+            "executionId": "gh-team", "tokenFile": str(self.token_file),
+            "runtimeUrl": "http://127.0.0.1:8793",
+        }), encoding="utf-8")
+        lane_root = Path(self.temp.name) / "lane-sessions"
+        with patch.object(hook, "_lane_sessions_root", return_value=lane_root), \
+             patch.dict(os.environ, {**self.env, "GRAPHHELM_RUNTIME_URL": "", "GRAPHHELM_TOKEN_FILE": str(self.token_file)}, clear=True):
+            hook._remember_lane({"session_id": "session-123", "session_title": "codex-7"})
+            bound = hook.binding({"session_id": "session-123", "cwd": str(repo)})
+        self.assertEqual(bound, ("gh-team", str(self.token_file), "http://127.0.0.1:8793",
+                                 "http://127.0.0.1:8793", None))
+
+    def test_environment_execution_id_wins_over_team_file(self):
+        spec = importlib.util.spec_from_file_location("session_hook_test", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        repo = Path(self.temp.name) / "repo"
+        (repo / ".graphhelm").mkdir(parents=True)
+        (repo / ".graphhelm" / "team.json").write_text(json.dumps({
+            "executionId": "team-run", "tokenFile": str(self.token_file),
+            "runtimeUrl": "http://127.0.0.1:8793",
+        }), encoding="utf-8")
+        lane_root = Path(self.temp.name) / "lane-sessions"
+        env = {**self.env, "GRAPHHELM_EXECUTION_ID": "env-run"}
+        with patch.object(hook, "_lane_sessions_root", return_value=lane_root), \
+             patch.dict(os.environ, env, clear=True):
+            hook._remember_lane({"session_id": "session-123", "session_title": "codex-7"})
+            bound = hook.binding({"session_id": "session-123", "cwd": str(repo)})
+        self.assertEqual(bound[0], "env-run")
+
     def test_session_end_stops_its_waiter(self):
         spec = importlib.util.spec_from_file_location("session_hook_test", SCRIPT)
         hook = importlib.util.module_from_spec(spec)
@@ -169,11 +205,13 @@ class SessionHookTests(unittest.TestCase):
         )
         self.assertEqual(companion_manifest["hooks"], "./hooks/codex-hooks.json")
         main_manifest = json.loads((repository / "plugins" / "graphhelm" / "plugin.json").read_text())
-        self.assertEqual(main_manifest["version"], "0.1.27")
+        self.assertEqual(main_manifest["version"], "0.1.28")
         self.assertEqual(companion_manifest["version"], main_manifest["version"])
         for host in (".claude-plugin", ".codex-plugin"):
             legacy = json.loads((repository / "plugins" / "graphhelm" / host / "plugin.json").read_text())
             self.assertEqual(legacy["version"], main_manifest["version"])
+        package_manifest = json.loads((repository / "plugins" / "graphhelm" / "plugin.json").read_text())
+        self.assertEqual(package_manifest["version"], main_manifest["version"])
         self.assertEqual(
             SCRIPT.read_bytes(),
             (companion / "hooks" / "session_hook.py").read_bytes(),

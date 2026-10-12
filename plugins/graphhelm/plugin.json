@@ -1,9 +1,11 @@
 {
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "graphhelm",
-  "version": "0.1.27",
-  "description": "GraphHelm methodology, host setup guidance, and evidence-based next-step selection.",
-  "author": { "name": "GraphHelm" },
-  "repository": "https://github.com/stabem/GraphHelm",
-  "license": "MIT"
+    "$schema":  "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+    "name":  "graphhelm",
+    "version":  "0.1.28",
+    "description":  "GraphHelm methodology, host setup guidance, and evidence-based next-step selection.",
+    "author":  {
+                   "name":  "GraphHelm"
+               },
+    "repository":  "https://github.com/stabem/GraphHelm",
+    "license":  "MIT"
 }

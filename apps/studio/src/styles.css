@@ -1929,7 +1929,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   .projects-backdrop { position: absolute; inset: 0; z-index: 19; border: 0; background: rgb(0 0 0 / 35%); }
   .app.projects-open .projects-backdrop { display: block; }
   .app:not(.projects-open) .projects-backdrop { display: none; }
-  .app.projects-open > .stage { position: relative; z-index: 21; }
   .rail-close { display: inline-flex; }
   .app, .app:not(.projects-open) { grid-template-columns: minmax(0, 1fr); }
   .app > .grip { display: none; }

@@ -39,6 +39,18 @@ it("keeps the top bar above the opening overlay", () => {
   expect(loading).toMatch(/position:\s*absolute/);
 });
 
+it("keeps the open mobile projects drawer above the stage", () => {
+  const mobile = (STYLESHEETS["./styles.css"] ?? "").split("@media (max-width: 900px)")[1]?.split("@media (max-width: 600px)")[0] ?? "";
+  const stage = mobile.match(/\.app\.projects-open\s*>\s*\.stage\s*\{([^}]*)\}/)?.[1] ?? "";
+  const rail = mobile.match(/\.app\s*>\s*\.rail\s*\{([^}]*)\}/)?.[1] ?? "";
+  const backdrop = mobile.match(/\.projects-backdrop\s*\{([^}]*)\}/)?.[1] ?? "";
+  const railLayer = Number(rail.match(/z-index:\s*(\d+)/)?.[1]);
+  const backdropLayer = Number(backdrop.match(/z-index:\s*(\d+)/)?.[1]);
+  const stageLayer = Number(stage.match(/z-index:\s*(\d+)/)?.[1] ?? 0);
+  expect(railLayer).toBeGreaterThan(stageLayer);
+  expect(backdropLayer).toBeGreaterThan(stageLayer);
+});
+
 /**
  * Custom properties this stylesheet READS but deliberately does not DEFINE, each with the reason.
  * A bare allowlist would let a typo in a token name pass as intentional.

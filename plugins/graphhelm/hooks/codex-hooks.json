@@ -49,8 +49,6 @@
         ]
       }
     ],
-    "PreToolUse": [{ "hooks": [{ "type": "command", "command": "python \"${PLUGIN_ROOT}/hooks/session_hook.py\" touch --host codex", "timeout": 5 }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "python \"${PLUGIN_ROOT}/hooks/session_hook.py\" touch --host codex", "timeout": 5 }] }],
     "Stop": [
       {
         "hooks": [

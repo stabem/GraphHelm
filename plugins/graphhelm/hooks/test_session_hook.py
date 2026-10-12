@@ -121,7 +121,8 @@ class SessionHookTests(unittest.TestCase):
              patch.object(hook, "arm_lane_wake") as arm, \
              patch.object(hook.subprocess, "run") as wait:
             hook.wait_for_lane("codex", "session-123", Path(self.temp.name), Path(self.temp.name) / "alive")
-            arm.assert_not_called()
+            arm.assert_called_once()
+            self.assertEqual(arm.call_args.kwargs["matures_in"], 1)
             wait.assert_not_called()
     @classmethod
     def setUpClass(cls):

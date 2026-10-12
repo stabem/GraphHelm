@@ -265,6 +265,26 @@ def _waiter_path(payload: dict, bound: tuple[str, str, str, str, str | None], ho
     return state_path(bound[0], _session(payload), host, bound[3]).with_suffix(".waiter.pid")
 
 
+HEARTBEAT_MAX_AGE = 30 * 60
+
+
+def _heartbeat_path(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> Path:
+    return state_path(bound[0], _session(payload), host, bound[3]).with_suffix(".waiter.alive")
+
+
+def touch_lane_heartbeat(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> None:
+    path = _heartbeat_path(payload, bound, host)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch()
+
+
+def _heartbeat_fresh(path: Path) -> bool:
+    try:
+        return time.time() - path.stat().st_mtime < HEARTBEAT_MAX_AGE
+    except OSError:
+        return False
+
+
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -286,95 +306,13 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
-def _parent_pid(pid: int) -> int | None:
-    if os.name == "nt":
-        import ctypes
-        from ctypes import wintypes
-        class Entry(ctypes.Structure):
-            _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
-                        ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_void_p),
-                        ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
-                        ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", wintypes.LONG),
-                        ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_char * 260)]
-        kernel = ctypes.windll.kernel32
-        kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-        snapshot = kernel.CreateToolhelp32Snapshot(2, 0)
-        if snapshot == ctypes.c_void_p(-1).value:
-            return None
-        try:
-            entry = Entry()
-            entry.dwSize = ctypes.sizeof(Entry)
-            if kernel.Process32First(snapshot, ctypes.byref(entry)):
-                while True:
-                    if entry.th32ProcessID == pid:
-                        return int(entry.th32ParentProcessID)
-                    if not kernel.Process32Next(snapshot, ctypes.byref(entry)):
-                        break
-        finally:
-            kernel.CloseHandle(snapshot)
-        return None
-    try:
-        stat = Path(f"/proc/{pid}/stat").read_text()
-        return int(stat[stat.rfind(")") + 2:].split()[1])
-    except (OSError, ValueError, IndexError):
-        return None
-
-
-def _host_pid() -> int:
-    # Hook commands run below a short-lived shell. Follow launcher processes
-    # until the first durable host (or the test harness running that shell).
-    pid = os.getppid()
-    seen = set()
-    launchers = ("bash", "sh", "cmd.exe", "powershell", "pwsh", "python")
-    crossed_shell = False
-    while pid > 1 and pid not in seen:
-        seen.add(pid)
-        name = _process_name(pid)
-        if name and ("codex" in name or "claude" in name):
-            break
-        if crossed_shell and "python" in name:
-            break
-        if name and not any(part in name for part in launchers):
-            break
-        if any(part in name for part in ("bash", "sh", "cmd.exe", "powershell", "pwsh")):
-            crossed_shell = True
-        parent = _parent_pid(pid)
-        if not parent or parent <= 1 or not _pid_alive(parent):
-            break
-        parent_name = _process_name(parent)
-        if "python" in name and pid != os.getppid() and parent_name and any(part in parent_name for part in ("bash", "sh", "cmd.exe", "powershell", "pwsh")):
-            break
-        if "python" in name and parent_name and not any(part in parent_name for part in launchers) and not ("codex" in parent_name or "claude" in parent_name):
-            break
-        pid = parent
-    return pid
-
-
-def _process_name(pid: int) -> str:
-    if os.name == "nt":
-        import ctypes
-        kernel = ctypes.windll.kernel32
-        handle = kernel.OpenProcess(0x1000, False, pid)
-        if not handle:
-            return ""
-        try:
-            size = ctypes.c_ulong(32768)
-            name = ctypes.create_unicode_buffer(size.value)
-            return name.value.lower() if kernel.QueryFullProcessImageNameW(handle, 0, name, ctypes.byref(size)) else ""
-        finally:
-            kernel.CloseHandle(handle)
-    try:
-        return Path(f"/proc/{pid}/comm").read_text().strip().lower()
-    except OSError:
-        return ""
-
-
 def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> None:
     """Start one local waiter for a bound session, without replacing a live owner."""
     configured = os.environ.get("GRAPHHELM_EVENTS_DIR")
     events = Path(configured) if configured else Path(bound[1]).parent / "events"
     if not events.is_dir():
         return
+    touch_lane_heartbeat(payload, bound, host)
     pid_path = _waiter_path(payload, bound, host)
     try:
         pid = int(pid_path.read_text(encoding="ascii"))
@@ -387,14 +325,14 @@ def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None
     flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS if os.name == "nt" else 0
     child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "wait", "--host", host,
                               "--session-id", _session(payload), "--events", str(events),
-                              "--host-pid", str(_host_pid())],
+                              "--heartbeat", str(_heartbeat_path(payload, bound, host))],
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags,
                              start_new_session=os.name != "nt")
     pid_path.write_text(str(child.pid), encoding="ascii")
 
 
-def wait_for_lane(host: str, session: str, events: Path, host_pid: int) -> None:
+def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path) -> None:
     payload = {"session_id": session}
     bound = binding(payload)
     if bound is None:
@@ -402,7 +340,7 @@ def wait_for_lane(host: str, session: str, events: Path, host_pid: int) -> None:
     cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
     pid_path = _waiter_path(payload, bound, host)
     try:
-      while _pid_alive(host_pid):
+      while _heartbeat_fresh(heartbeat):
         result = subprocess.run([cli, "wake-wait", "--events", str(events),
                                  "--execution", bound[0], "--session-id", session],
                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -411,7 +349,7 @@ def wait_for_lane(host: str, session: str, events: Path, host_pid: int) -> None:
         # Exit 2 then means stale, and exit 3 means the short lease matured.
         if result.returncode not in (0, 2, 3):
             return
-        if not _pid_alive(host_pid):
+        if not _heartbeat_fresh(heartbeat):
             return
         if result.returncode == 2:
             time.sleep(1)
@@ -428,6 +366,7 @@ def wait_for_lane(host: str, session: str, events: Path, host_pid: int) -> None:
 
 
 def stop_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> None:
+    _heartbeat_path(payload, bound, host).unlink(missing_ok=True)
     pid_path = _waiter_path(payload, bound, host)
     try:
         pid = int(pid_path.read_text(encoding="ascii"))
@@ -803,20 +742,25 @@ def inspect(host: str, session: str | None, output_format: str = "native") -> No
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("phase", choices=("start", "end", "inspect", "wait"))
+    parser.add_argument("phase", choices=("start", "end", "inspect", "wait", "touch"))
     parser.add_argument("--host", type=_host, required=True)
     parser.add_argument("--format", choices=("native", "portable"), default=None)
     parser.add_argument("--session-id")
     parser.add_argument("--events", type=Path)
-    parser.add_argument("--host-pid", type=int)
+    parser.add_argument("--heartbeat", type=Path)
     args = parser.parse_args()
     host = args.host
     output_format = args.format or ("native" if host in {"claude", "codex"} else "portable")
     try:
         if args.phase == "wait":
-            if not args.session_id or args.events is None or args.host_pid is None:
+            if not args.session_id or args.events is None or args.heartbeat is None:
                 raise ValueError("waiter binding missing")
-            wait_for_lane(host, args.session_id, args.events, args.host_pid)
+            wait_for_lane(host, args.session_id, args.events, args.heartbeat)
+        elif args.phase == "touch":
+            payload = hook_input()
+            bound = binding(payload)
+            if bound is not None:
+                touch_lane_heartbeat(payload, bound, host)
         elif args.phase == "inspect":
             inspect(host, args.session_id, output_format)
         else:

@@ -110,17 +110,17 @@ class SessionHookTests(unittest.TestCase):
                     child.kill()
                     child.wait()
 
-    def test_dead_host_cannot_rearm_waiter(self):
+    def test_stale_heartbeat_cannot_rearm_waiter(self):
         spec = importlib.util.spec_from_file_location("session_hook_test", SCRIPT)
         hook = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(hook)
         with patch.object(hook, "binding", return_value=("run-test", str(self.token_file),
                                                         f"http://127.0.0.1:{self.server.server_port}",
                                                         f"http://127.0.0.1:{self.server.server_port}", None)), \
-             patch.object(hook, "_pid_alive", return_value=False), \
+             patch.object(hook, "_heartbeat_fresh", return_value=False), \
              patch.object(hook, "arm_lane_wake") as arm, \
              patch.object(hook.subprocess, "run") as wait:
-            hook.wait_for_lane("codex", "session-123", Path(self.temp.name), 999999)
+            hook.wait_for_lane("codex", "session-123", Path(self.temp.name), Path(self.temp.name) / "alive")
             arm.assert_not_called()
             wait.assert_not_called()
     @classmethod

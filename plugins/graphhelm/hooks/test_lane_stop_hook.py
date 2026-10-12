@@ -588,8 +588,8 @@ class LaneStopTests(unittest.TestCase):
         self.note("request-2", to="codex-4")
         self.assertTrue(any(d.get("decision") == "block" for d in self.stop(MANIFESTS[0])))
 
-    def test_shell_launched_waiter_tracks_host_and_stop_restores_missing_pid(self):
-        """A hook shell exits before its host; the waiter must follow the host."""
+    def test_shell_launched_waiter_survives_parent_and_expires_without_heartbeat(self):
+        """A dead launcher cannot end a live session; stale activity must end it."""
         script = HERE / "session_hook.py"
         payload = json.dumps({"hook_event_name": "SessionStart", "session_id": "shell-host"})
         for shell in (["cmd", "/c"] if os.name == "nt" else ["bash", "-c"] for _ in (0,)):
@@ -608,18 +608,22 @@ class LaneStopTests(unittest.TestCase):
             pid = int(pid_files[0].read_text())
             self.addCleanup(lambda p=pid: os.kill(p, signal.SIGTERM) if session_hook._pid_alive(p) else None)
             self.assertTrue(session_hook._pid_alive(pid), "waiter died with hook shell")
-            if os.name == "nt":
-                detail = subprocess.run(["powershell", "-NoProfile", "-Command",
-                    f"(Get-CimInstance Win32_Process -Filter \"ProcessId = {pid}\").CommandLine"],
-                    capture_output=True, text=True, timeout=5).stdout
-                self.assertIn(f"--host-pid {host.pid}", detail)
             host.kill()
             host.wait(timeout=5)
             self.note("host-exit-wake", to="codex-5")
+            time.sleep(1)
+            self.assertTrue(session_hook._pid_alive(pid), "waiter died with launcher")
+            heartbeat = pid_files[0].with_suffix(".alive")
+            os.utime(heartbeat, (time.time() - 1900, time.time() - 1900))
+            self.note("heartbeat-expired", to="codex-5")
             deadline = time.monotonic() + 65
             while session_hook._pid_alive(pid) and time.monotonic() < deadline:
                 time.sleep(0.05)
-            self.assertFalse(session_hook._pid_alive(pid), "waiter outlived host")
+            self.assertFalse(session_hook._pid_alive(pid), "waiter outlived heartbeat")
+            request = urllib.request.Request(self.url + "/v1/executions/lane-test",
+                      headers={"Authorization": "Bearer " + self.owner_token})
+            with urllib.request.urlopen(request, timeout=5) as response:
+                self.assertNotIn("codex-4", json.load(response)["data"]["wakeListeners"])
             pid_files[0].unlink(missing_ok=True)
             self.assertEqual(self.stop(MANIFESTS[1], session="shell-host"), [])
             replacement = int(pid_files[0].read_text())

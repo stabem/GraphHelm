@@ -1073,6 +1073,67 @@ def test_pair_bootstrap_task_interval_statuses(tmp_path):
     assert missing["inferenceReason"] == "unknown_cost"
 
 
+def test_pair_summary_nonfinite_aggregate(tmp_path):
+    """Finite costs must not overflow report arithmetic; CLI refuses before stdout, <1s."""
+    controls = {key: key for key in ("parent", "evaluator", "environment", "budget", "timeout")}
+
+    def fixture(costs, repeats=1):
+        rows, groups = [], []
+        for index, (baseline_cost, candidate_cost) in enumerate(costs):
+            task = f"task-{index}"
+            sessions = {side: [f"{arm}-{index}-{repeat}" for repeat in range(repeats)]
+                        for side, arm in (("baseline", "a"), ("candidate", "k"))}
+            for side, arm, cost in (("baseline", "a", baseline_cost),
+                                    ("candidate", "k", candidate_cost)):
+                for session in sessions[side]:
+                    rows.append({"sessionId": session, "task": task, "taskSnapshot": "snap",
+                                 "split": "test", "arm": arm, "configDigest": arm, "controls": controls,
+                                 "verdict": "PASS", "costUsd": cost})
+            groups.append({"task": task, "taskSnapshot": "snap", "split": "test", "controls": controls,
+                           "baseline": {"arm": "a", "configDigest": "a"},
+                           "candidate": {"arm": "k", "configDigest": "k"},
+                           "treatmentDifferences": ["arm", "configDigest"], "sessions": sessions})
+        rows_raw = b"".join((json.dumps(item) + "\n").encode() for item in rows)
+        rows_path = tmp_path / "rows.jsonl"; rows_path.write_bytes(rows_raw)
+        manifest = {"version": 2, "rowsSha256": hashlib.sha256(rows_raw).hexdigest(),
+                    "comparison": "methodology", "weighting": "equal_task", "groups": groups}
+        manifest_path = tmp_path / "manifest.json"; manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        plan = {"version": 1, "manifestSha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                "rowsSha256": manifest["rowsSha256"], "comparison": "methodology", "split": "test",
+                "independentUnit": "task", "weighting": "equal_task",
+                "costMetric": "all_attempt_cost_per_proven_delivery_usd",
+                "minimumCostReductionUsd": 0.2, "maximumQualityRegression": 0.05,
+                "assumptionStatement": "Frozen tasks are independent."}
+        plan_path = tmp_path / "plan.json"; plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        command = [sys.executable, str(HERE / "doless.py"), "pair-summary", "--manifest",
+                   str(manifest_path), "--rows", str(rows_path)]
+        return command, plan_path
+
+    def run(command, plan_path=None):
+        args = command + (["--analysis-plan", str(plan_path)] if plan_path else [])
+        return subprocess.run(args, capture_output=True, text=True, creationflags=NO_WINDOW)
+
+    arm_overflow, plan = fixture([(1.7e308, 1)], repeats=2)
+    for plan_path in (None, plan):
+        refused = run(arm_overflow, plan_path)
+        assert refused.returncode != 0
+        assert refused.stdout == ""
+        assert "non-finite" in refused.stderr
+
+    bootstrap_overflow, plan = fixture([(1.7e308, 0), (1.7e308, 0)])
+    refused = run(bootstrap_overflow, plan)
+    assert refused.returncode != 0
+    assert refused.stdout == ""
+    assert "non-finite" in refused.stderr
+
+    finite, _ = fixture([(10, 8), (12, 9)])
+    control = run(finite)
+    assert control.returncode == 0, control.stderr
+    assert json.loads(control.stdout, parse_constant=lambda value:
+                       (_ for _ in ()).throw(ValueError(value)))["tasks"][0]["baseline"][
+                           "knownExpenditureUsd"] == 10
+
+
 def test_pair_inference_partial_cohort_withholds_intervals(tmp_path):
     """Excluded frozen members cannot gain inference from admitted survivors; tiny offline CLI files."""
     controls = {key: key for key in ("parent", "evaluator", "environment", "budget", "timeout")}

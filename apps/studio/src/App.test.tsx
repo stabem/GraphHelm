@@ -522,6 +522,22 @@ describe("live team layout", () => {
     expect(await screen.findByRole("button", { name: "Nothing needs you" })).toHaveClass("beacon-dark");
   });
 
+  it("keeps the top bar dark for a fixture-scripted input with no owner question", async () => {
+    const status = { ...STATUS, executor: "fixture" as const,
+      attentionReasons: [{ kind: "waiting_input_node", node: "implementation" }] };
+    const work = { sequence: 12, kind: "signal_recorded", payload: { kind: "operator_note", signalId: "work" }, occurredAt: "2026-10-05T11:00:00Z",
+      actorId: "kit-1", actorType: "agent", idempotencyKey: null, eventId: "work", evidenceRefs: ["e12"] };
+    let releaseEvidence!: () => void;
+    const evidenceReady = new Promise<void>((resolve) => { releaseEvidence = resolve; });
+    await open(stubClient({ getStatus: vi.fn(async () => status), getEvents: vi.fn(async () => ({ head: 13, events: [work] })),
+      readEvidence: vi.fn(async () => { await evidenceReady; return { evidenceId: "e12", mediaType: "application/json", sensitivity: "confidential",
+        contentSha256: "sha256:fixture", content: JSON.stringify({ to: null, replyTo: null, text: "Implementation finished" }) }; }) }));
+    expect(await screen.findByRole("button", { name: "Checking recorded agent work" })).toHaveClass("beacon-unknown");
+    expect(screen.queryByRole("button", { name: "1 decision needs you" })).not.toBeInTheDocument();
+    releaseEvidence();
+    expect(await screen.findByRole("button", { name: "Nothing needs you" })).toHaveClass("beacon-dark");
+  });
+
   it("#947: a replayed journey awaiting approval lights the top bar", async () => {
     const calm = { ...STATUS, attention: "can_sleep", attentionReasons: [], nodeStateCounts: { ready: 1 } };
     const flow = { id: "watch", title: "Watch", status: "draft", approved: null, drift: [], findings: [], approvable: true,

@@ -1756,7 +1756,6 @@ export default function App({
       },
     })
       .then((records) => { if (!cancelled && clientRef.current === client) {
-        console.warn("GH961 task records", records.length, records.map((record) => [record.kind, record.pr]));
         setTaskGraphs({ executionId: run, tasks: foldTaskEvents(records), records });
         setHistoryFailure(unreadable > 0 ? { executionId: run, count: unreadable } : null);
       } })

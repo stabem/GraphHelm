@@ -162,8 +162,8 @@
 .mv-run-part ol { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .mv-node { font: inherit; padding: 2px 8px; border-radius: 6px; border: 1px solid #24272E; background: transparent; color: inherit; cursor: pointer; }
 
-/* #948: keep the full-page mission views usable at phone height. The breadcrumb duplicates the
- * run title in the Studio top bar, so hide it on phones and leave the tabs as the page header. */
+/* #948: keep the full-page mission views usable at phone height. Hide the breadcrumb
+ * on phones and leave the tabs as the page header. */
 @media (max-width: 600px) {
   .mv[data-page="full"] > .mv-head {
     box-sizing: border-box;
@@ -176,6 +176,7 @@
   .mv[data-page="full"] > .mv-body {
     box-sizing: border-box;
     flex: 1 1 auto;
+    flex-wrap: nowrap;
     min-height: 75vh;
     max-height: calc(100vh - 190px);
     overflow-y: auto;

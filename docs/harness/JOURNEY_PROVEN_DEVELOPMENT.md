@@ -16,6 +16,9 @@ JPD does not remove unit, property, integration, concurrency, or browser tests. 
 assumption that one of those methods is always the right starting point. The proof method follows
 the promise and risk.
 
+To adopt JPD in any project, start with the portable [JPD guide](../jpd/README.md) and its
+runnable [quickstart example](../../examples/jpd-quickstart/README.md).
+
 ## 2. Constitutional rules
 
 1. A promise is not complete until every required observation obligation has adequate evidence.

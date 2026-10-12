@@ -161,6 +161,8 @@ mod jpd_observer_trust;
 mod jpd_plugin;
 #[path = "jpd_promotion_policy.rs"]
 mod jpd_promotion_policy;
+#[path = "jpd_quickstart_example.rs"]
+mod jpd_quickstart_example;
 #[path = "jpd_retry_semantics.rs"]
 mod jpd_retry_semantics;
 #[path = "keel_check.rs"]

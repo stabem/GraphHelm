@@ -1,0 +1,5 @@
+--- a/site/items.json
++++ b/site/items.json
+@@ -1 +1 @@
+-{"items":[{"name":"apple"}]}
++{"items":[{"name":"pear"}]}

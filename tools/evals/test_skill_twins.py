@@ -23,6 +23,7 @@ class SkillTwinsTest(unittest.TestCase):
     def test_judge_qualification_packet_is_bound_and_pending(self):
         root = ROOT / "evals/graphhelm-development-contracts"
         packet = json.loads((root / "judge-qualification.json").read_text(encoding="utf-8"))
+        self.assertTrue(self._content_digest_matches(packet))
         self.assertEqual(packet["version"], 2)
         self.assertTrue(packet["synthetic"])
         self.assertEqual(packet["purpose"], "judge_qualification")
@@ -66,6 +67,33 @@ class SkillTwinsTest(unittest.TestCase):
         self.assertIn("mock implements the behavior", audit[0]["transcript"])
         self.assertIn("protects", audit[1]["transcript"])
         self.assertIn("self-comparison", audit[2]["transcript"])
+
+    def test_judge_qualification_digest_binds_content_but_not_formatting(self):
+        root = ROOT / "evals/graphhelm-development-contracts"
+        packet = json.loads((root / "judge-qualification.json").read_text(encoding="utf-8"))
+        self.assertTrue(self._content_digest_matches(packet))
+
+        changed_transcript = json.loads(json.dumps(packet))
+        changed_transcript["packets"][1]["examples"][0]["transcript"] += " Extra content."
+        self.assertFalse(self._content_digest_matches(changed_transcript))
+
+        changed_rationale = json.loads(json.dumps(packet))
+        changed_rationale["packets"][1]["examples"][0]["rationale"] += " Extra rationale."
+        self.assertFalse(self._content_digest_matches(changed_rationale))
+
+        reformatted = json.loads(json.dumps(packet, indent=4, ensure_ascii=False))
+        self.assertTrue(self._content_digest_matches(reformatted))
+
+    @staticmethod
+    def _content_digest_matches(packet):
+        digest = packet.get("contentSha256")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            return False
+        payload = {key: value for key, value in packet.items() if key != "contentSha256"}
+        canonical = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest() == digest
 
     def test_observer_rubric_scopes_failure_to_the_ios_promise(self):
         criteria = (

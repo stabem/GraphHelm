@@ -117,10 +117,13 @@ INCOMPLETE attempts remain in its success denominator and expenditure. The statu
 `supported` only when the whole cost interval is below the negative minimum reduction and
 the quality lower bound meets the negative regression margin; `quality_regression` means
 the quality upper bound is below that margin; otherwise it is `inconclusive`.
-Unknown cost, no PASS in either arm of an admitted task, or fewer than two admitted tasks
-produces `not_computable` with a reason and no interval. Exclusions remain visible and a
-subset is still marked partial. Without the option, `pair-summary` keeps its existing report
-shape. This small-corpus interval does not validate task independence or exchangeability,
+Any exclusion or unmatched row produces `not_computable` with reason `partial_cohort` and no
+interval, even when the remaining admitted tasks satisfy the inference requirements. This reason
+takes precedence over other inference-ineligibility reasons; the validated plan, digest, task
+accounting, exclusions, and unmatched identities remain in the report. Otherwise, unknown cost,
+no PASS in either arm of an admitted task, or fewer than two admitted tasks produces
+`not_computable` with its corresponding reason and no interval. Without the option,
+`pair-summary` keeps its existing report shape. This small-corpus interval does not validate task independence or exchangeability,
 prove that the plan preceded outcome inspection, or establish a real improvement. It does
 not recommend a treatment or claim realized savings.
 

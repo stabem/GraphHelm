@@ -1127,6 +1127,51 @@ def test_pair_inference_partial_cohort_withholds_intervals(tmp_path):
     no_plan = subprocess.run(command[:-2], capture_output=True, text=True, creationflags=NO_WINDOW)
     assert no_plan.returncode == 0 and "inferenceStatus" not in json.loads(no_plan.stdout)
 
+    # Legacy v1 keeps valid repeats but reports a missing candidate repeat as excluded.
+    rows.append(row("a-one-extra", "one", "a"))
+    rows_raw = b"".join((json.dumps(item) + "\n").encode() for item in rows)
+    rows_path.write_bytes(rows_raw)
+    legacy_groups = []
+    for group in groups[:2]:
+        repeats = [{"baseline": group["sessions"]["baseline"][0],
+                    "candidate": group["sessions"]["candidate"][0]}]
+        if group["task"] == "one":
+            repeats.append({"baseline": "a-one-extra", "candidate": "missing-candidate"})
+        legacy_groups.append({key: value for key, value in group.items() if key != "sessions"} |
+                             {"repeats": repeats})
+    legacy = {"version": 1, "rowsSha256": hashlib.sha256(rows_raw).hexdigest(),
+              "comparison": "methodology", "weighting": "equal_task", "groups": legacy_groups}
+    manifest_path.write_text(json.dumps(legacy), encoding="utf-8")
+    plan.update({"manifestSha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                 "rowsSha256": legacy["rowsSha256"]})
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    legacy_run = subprocess.run(command, capture_output=True, text=True, creationflags=NO_WINDOW)
+    assert legacy_run.returncode == 0, legacy_run.stderr
+    legacy_report = json.loads(legacy_run.stdout)
+    assert legacy_report["partial"] is True
+    assert legacy_report["excluded"] == [{"task": "one",
+        "repeat": {"baseline": "a-one-extra", "candidate": "missing-candidate"},
+        "reason": "unmatched_candidate"}]
+    assert legacy_report["inferenceStatus"] == "not_computable"
+    assert legacy_report["inferenceReason"] == "partial_cohort" and "inference" not in legacy_report
+
+    # A complete v2 cohort retains the existing inference behavior and interval output.
+    complete_rows = rows[:4]
+    complete_raw = b"".join((json.dumps(item) + "\n").encode() for item in complete_rows)
+    rows_path.write_bytes(complete_raw)
+    complete = {"version": 2, "rowsSha256": hashlib.sha256(complete_raw).hexdigest(),
+                "comparison": "methodology", "weighting": "equal_task", "groups": groups[:2]}
+    manifest_path.write_text(json.dumps(complete), encoding="utf-8")
+    plan.update({"manifestSha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                 "rowsSha256": complete["rowsSha256"]})
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    complete_run = subprocess.run(command, capture_output=True, text=True, creationflags=NO_WINDOW)
+    assert complete_run.returncode == 0, complete_run.stderr
+    complete_report = json.loads(complete_run.stdout)
+    assert complete_report["partial"] is False
+    assert complete_report["inferenceStatus"] == "inconclusive"
+    assert "inference" in complete_report
+
 
 def test_configured_run_records_requested_effort_and_incomplete_usage(tmp_path, monkeypatch):
     """Catches unobserved usage/model being published as a configured PASS; mocked process/file I/O, <1s."""

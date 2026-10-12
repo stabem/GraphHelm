@@ -70,7 +70,7 @@ export function NameBot({ bot, onSave }: { bot: Bot; onSave: (actorId: string, d
 /** The Team canvas showed the rename only for an unnamed, unshared, non-native actor. */
 const nameable = (b: Bot) => b.actorId !== null && b.role === null && !b.native && !b.shared;
 
-const PILL: Record<AgentStatus, string> = { silent: "Silent", stale: "Stale claim", building: "Building", build_wait: "Waiting for build", working: "Working", awaiting: "Awaiting review", waiting: "Waiting", free: "Free", offline: "Offline" };
+const PILL: Record<AgentStatus, string> = { silent: "Silent", stale: "Stale claim", building: "Building", build_wait: "Waiting for build", working: "Working", waiting: "Waiting", free: "Free", offline: "Offline" };
 const STAGE: Record<string, string> = { implement: "implementing", review: "reviewing", merge: "merging" };
 type Filter = "all" | "working" | "waiting" | "free" | "silent" | "offline";
 
@@ -78,7 +78,7 @@ function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: 
   const [filter, setFilter] = useState<Filter>("all");
   const matches = (r: AgentRow, f: Filter) => f === "all" ? r.status !== "offline"
     : f === "working" ? r.status === "working" || r.status === "building"
-    : f === "waiting" ? r.status === "waiting" || r.status === "awaiting" || r.status === "build_wait"
+    : f === "waiting" ? r.status === "waiting" || r.status === "build_wait"
     : f === "silent" ? r.status === "silent" || r.status === "stale" : r.status === f;
   const count = (f: Filter) => rows.filter((r) => matches(r, f)).length;
   const shown = rows.filter((r) => matches(r, filter));
@@ -224,17 +224,15 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
       </div>
       <ul className="lt-lanes" aria-label="Agent lanes" ref={listRef}>
         {lanes.map((l) => {
-          const open = l.bars.some((b) => b.open);
           const status = boardByLane.get(l.lane)?.status;
-          const presence = status === "offline" ? "offline" : status === "building" || status === "build_wait" ? "busy" : status === "silent" || l.silent ? "silent" : status === "working" ? "busy" : status === "free" ? "idle" : open ? "busy" : "idle";
           const pack = packBars(l.bars);
           const trackH = pack.rows * SUB_H + (pack.rows - 1) * SUB_GAP + TRACK_PAD * 2;
           return (
             <li key={l.lane} className="lt-row lt-lane" style={{ height: Math.max(44, trackH + 14) }}>
               <span className="lt-who">
-                <span className="lt-dot" data-state={presence} />
+                <span className="lt-dot" data-state={status} />
                 <span className="lt-name">{botOf(l) ?? l.lane}</span>
-                {presence === "silent" ? <span className="lt-flag" data-flag="silent">silent</span> : presence === "offline" ? <span className="lt-flag" data-flag="offline">offline</span> : presence === "idle" && <span className="lt-flag" data-flag="free">free</span>}
+                {status && <span className="lt-flag" data-flag={status}>{status === "free" || status === "waiting" || status === "silent" || status === "offline" ? status : PILL[status]}</span>}
               </span>
               <div className="lt-track" style={{ height: trackH }} data-subrows={pack.rows}>
                 <span className="lt-nowline" aria-hidden="true" />

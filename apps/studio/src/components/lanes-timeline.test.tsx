@@ -18,6 +18,23 @@ const t = (over: Partial<MissionTask>): MissionTask => ({
 const round = { reviewer: "r", headSha: "h", fixHead: "f", blockedAt: null };
 
 describe("LanesTimeline", () => {
+  it("shows an author awaiting review as waiting in every Lanes status view", () => {
+    const at = 10 * 3_600_000;
+    const events = [
+      { sequence: 1, actorId: "codex-12", taskId: "issue-945", kind: "task.claimed", lane: "codex-12", issue: 945, at: new Date(at - 1000).toISOString() },
+      { sequence: 2, actorId: "codex-12", taskId: "issue-945", kind: "task.pr_opened", lane: "codex-12", pr: 923, headSha: "head1", at: new Date(at).toISOString() },
+    ] as TimedTaskEvent[];
+    const { container } = render(<LanesTimeline lanes={laneBars(events, at, 3_600_000)} now={at} windowMs={3_600_000} />);
+    const board = screen.getByRole("list", { name: "Agent board" });
+    expect(within(board).getByText("codex-12").closest("li")!.querySelector(".ab-pill")).toHaveAttribute("data-status", "waiting");
+    const timeline = within(screen.getByRole("list", { name: "Agent lanes" })).getByText("codex-12").closest("li")!;
+    expect(timeline.querySelector('.lt-flag[data-flag="waiting"]')).toHaveTextContent("waiting");
+    expect(timeline.querySelector('.lt-dot')).toHaveAttribute("data-state", "waiting");
+    expect(screen.getByRole("button", { name: "Waiting 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Free 0" })).toBeInTheDocument();
+    expect(container.querySelector('[data-kind="free"]')).toHaveTextContent("FREE HANDSnone right now");
+  });
+
   it("counts every available status in exactly one filter", async () => {
     const H = 3_600_000, at = 10 * H;
     const rows = [
@@ -44,7 +61,7 @@ describe("LanesTimeline", () => {
       kind: "implement", label: "#1", start: at - 5 * H, end: at, open: true, lastActivityAt: at - 5 * H,
     }] }]} now={at} windowMs={6 * H} slots={[{ root: "D:/gh", ok: true, holder: { lane: "builder", label: "#1", pid: 1, worktree: null, heldSeconds: 60 }, waiting: [] }]} />);
     const row = within(screen.getByRole("list", { name: "Agent lanes" })).getByText("builder").closest("li")!;
-    expect(row.querySelector(".lt-dot")).toHaveAttribute("data-state", "busy");
+    expect(row.querySelector(".lt-dot")).toHaveAttribute("data-state", "building");
     expect(row.querySelector(".lt-flag[data-flag='silent']")).toBeNull();
     expect(container.querySelector('[data-kind="stuck"]')).not.toHaveTextContent("builder");
     const hatch = container.querySelector<HTMLElement>(".lt-bar .lt-stall");
@@ -250,8 +267,8 @@ describe("LanesTimeline", () => {
     render(<LanesTimeline lanes={[author]} now={T} windowMs={3_600_000} />);
     const row = within(screen.getByRole("list", { name: "Agent board" })).getByText("gh-claude-3").closest("li")!;
     expect(row.querySelector(".ab-for")).toHaveTextContent("pr_opened #613 · 12m ago");
-    expect(row.querySelector(".ab-pill")).toHaveAttribute("data-status", "awaiting");
-    expect(row.querySelector(".ab-pill")).toHaveTextContent("Awaiting review");
+    expect(row.querySelector(".ab-pill")).toHaveAttribute("data-status", "waiting");
+    expect(row.querySelector(".ab-pill")).toHaveTextContent("Waiting");
     expect(row.querySelector(".ab-tag")).toHaveTextContent("awaiting review #613");
     expect(document.querySelector('[data-kind="free"]')).toHaveTextContent("none right now");
   });

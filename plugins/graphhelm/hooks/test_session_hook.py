@@ -33,6 +33,12 @@ class RuntimeHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.requests.append(("GET", self.path, dict(self.headers), None))
+        if "/events?" in self.path:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True, "data": {"head": 19, "events": []}}).encode())
+            return
         if self.get_started:
             self.get_started.set()
             self.get_release.wait(timeout=6)
@@ -58,6 +64,12 @@ class RuntimeHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = self.rfile.read(int(self.headers["Content-Length"]))
         self.requests.append(("POST", self.path, dict(self.headers), json.loads(body)))
+        if self.path.endswith("/wake-lease"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True, "data": {"sessionId": json.loads(body)["sessionId"], "armedCursor": 19}}).encode())
+            return
         if self.post_started:
             self.post_started.set()
             self.post_release.wait(timeout=6)
@@ -109,7 +121,7 @@ class SessionHookTests(unittest.TestCase):
             "GRAPHHELM_HOOK_STATE_DIR": str(Path(self.temp.name) / "state"),
         }
         self.env.pop("GRAPHHELM_EXECUTION_ID", None)
-        for key in ("GRAPHHELM_SESSION_ID", "GRAPHHELM_NODE_ID", "GRAPHHELM_KEEL_CONTEXT"):
+        for key in ("GRAPHHELM_SESSION_ID", "GRAPHHELM_NODE_ID", "GRAPHHELM_KEEL_CONTEXT", "GRAPHHELM_ACTOR"):
             self.env.pop(key, None)
 
     def test_codex_compatibility_package_keeps_one_hook_source(self):
@@ -293,6 +305,34 @@ class SessionHookTests(unittest.TestCase):
         self.assertNotIn("test-token", context)
         self.assertEqual(RuntimeHandler.requests[0][1], "/v1/executions/run-test/briefing")
         self.assertEqual(RuntimeHandler.requests[0][2]["Authorization"], "Bearer test-token")
+
+    def test_bound_lane_start_arms_wake_lease(self):
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        self.env["GRAPHHELM_ACTOR"] = "gh-lane-1"
+        result = self.run_hook("start", session_id="session-123")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        arms = [item for item in RuntimeHandler.requests if item[1] == "/v1/executions/run-test/wake-lease"]
+        self.assertEqual(len(arms), 1)
+        method, _, headers, body = arms[0]
+        self.assertEqual(method, "POST")
+        request_headers = {key.lower(): value for key, value in headers.items()}
+        self.assertEqual(request_headers["x-graphhelm-actor"], "gh-lane-1")
+        self.assertEqual(request_headers["x-graphhelm-actor-type"], "agent")
+        self.assertEqual(body["cursor"], 19)
+        self.assertEqual(body["sessionId"], "session-123")
+        self.assertGreater(body["maturesInSeconds"], 0)
+
+    def test_bound_lane_stop_renews_wake_lease(self):
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        self.env["GRAPHHELM_ACTOR"] = "gh-lane-1"
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT.with_name("lane_stop_hook.py"))],
+            input=json.dumps({"hook_event_name": "Stop", "session_id": "session-123"}),
+            text=True, capture_output=True, env=self.env, timeout=6,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        arms = [item for item in RuntimeHandler.requests if item[1] == "/v1/executions/run-test/wake-lease"]
+        self.assertEqual(len(arms), 1)
 
     def test_start_accepts_slow_fresh_briefing_with_one_get(self):
         # The old 2.5-second socket budget discarded a valid Runtime briefing.

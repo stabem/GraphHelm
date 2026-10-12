@@ -15,6 +15,7 @@ import sys
 import tempfile
 import urllib.parse
 import urllib.request
+import uuid
 
 MAX_INPUT = 64 * 1024
 MAX_REPLY = 256 * 1024
@@ -235,6 +236,28 @@ def token_from_file(path: str) -> str:
     return token
 
 
+def arm_lane_wake(payload: dict, bound: tuple[str, str, str, str, str | None]) -> None:
+    """Renew the lane's finite lease from the last observed event head."""
+    execution, token_file, url, _origin, _node = bound
+    actor = os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload)
+    session = _session(payload)
+    if not actor or not ID.fullmatch(actor):
+        return
+    token = token_from_file(token_file)
+    base = f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}"
+    head = request(f"{base}/events?after=0&limit=1", token, "GET")["data"]["head"]
+    if type(head) is not int or head < 0:
+        raise ValueError("invalid event head")
+    reply = request(f"{base}/wake-lease", token, "POST",
+                    {"sessionId": session, "rendezvousId": str(uuid.uuid4()),
+                     "cursor": head, "maturesInSeconds": 86400},
+                    {"X-GraphHelm-Actor": actor, "X-GraphHelm-Actor-Type": "agent",
+                     "Idempotency-Key": str(uuid.uuid4())})
+    data = reply.get("data")
+    if not isinstance(data, dict) or data.get("sessionId") != session or data.get("armedCursor") != head:
+        raise ValueError("wake lease acknowledgement mismatch")
+
+
 def request(url: str, token: str, method: str, body: dict | None = None, headers: dict | None = None, timeout: float = 1.0, max_reply: int = MAX_REPLY) -> dict:
     data = None if body is None else json.dumps(body, separators=(",", ":")).encode("utf-8")
     request_headers = {"Authorization": f"Bearer {token}"}
@@ -403,8 +426,7 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
     if payload.get("hook_event_name") != "SessionStart":
         raise ValueError("wrong hook event")
     session = _session(payload)
-    _remember_lane(payload)
-    bound = binding()
+    bound = binding(payload)
     if bound is None:
         if os.environ.get("GRAPHHELM_KEEL_CONTEXT") != "1":
             if output_format == "portable":
@@ -432,6 +454,7 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
         state = state or {"version": 2, "executionId": execution, "sessionId": session, "host": host, "origin": origin}
         state["briefing"] = digest
         _write_state(path, state)
+    arm_lane_wake(payload, bound)
     context = KEEL_CONTEXT + "\n" + _context(digest, freshness, execution, session, node_id)
     if len(context) > MAX_CONTEXT:
         raise ValueError("hook context too large")
@@ -443,7 +466,8 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
 
 def start(payload: dict, host: str, output_format: str = "native") -> None:
     host = _host(host)
-    bound = binding()
+    _remember_lane(payload)
+    bound = binding(payload)
     if bound is None:
         _start_impl(payload, host, output_format)
         return

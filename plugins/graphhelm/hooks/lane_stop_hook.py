@@ -13,7 +13,7 @@ import subprocess
 import sys
 from urllib.parse import quote
 
-from session_hook import _lane_actor, binding, hook_input, request, token_from_file, ID
+from session_hook import _lane_actor, arm_lane_wake, binding, hook_input, request, token_from_file, ID
 
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -94,6 +94,7 @@ def main() -> int:
         bound = binding(payload)
         lane = os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload)
         if bound is not None and lane and ID.fullmatch(lane):
+            arm_lane_wake(payload, bound)
             execution, token_file, url, _origin, _node = bound
             cwd = payload.get("cwd")
             if isinstance(cwd, str) and Path(cwd).is_dir():

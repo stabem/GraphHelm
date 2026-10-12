@@ -524,6 +524,10 @@ class LaneStopTests(unittest.TestCase):
         self.note("room-1")
         for manifest in MANIFESTS:
             self.assertEqual(self.stop(manifest), [])
+        request = urllib.request.Request(self.url + "/v1/executions/lane-test",
+                  headers={"Authorization": "Bearer " + self.owner_token})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertIn("codex-4", json.load(response)["data"]["wakeListeners"])
 
     def test_only_own_reply_clears_pending_note(self):
         self.note("request-1", to="codex-4")

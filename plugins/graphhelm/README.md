@@ -184,15 +184,19 @@ proof that the inbox is empty. Host background wake notification remains a separ
 `hooks/task_handoff.py` is a provider-neutral command adapter for any host that can run Python.
 It is explicit and is never called automatically by SessionStart or SessionEnd. `offer` records a
 sealed `task_handoff_offer` signal for one exact recipient host and session. `receive` reads the
-original journal event, opens its sealed envelope, reads a fresh bounded briefing, and records a
-sealed `task_handoff_received` signal with `replyTo` pointing to the offer. `status` reconstructs
-offers and matching receipts from the Runtime journal.
+original journal event and opens its sealed envelope. Before requesting a fresh bounded briefing,
+it checks the journal for an existing receipt and validates its sealed envelope and relation to the
+offer. A valid replay then reads the current briefing; a new receive reads the briefing before
+recording a sealed `task_handoff_received` signal with `replyTo` pointing to the offer. `status`
+reconstructs offers and matching receipts from the Runtime journal.
 
 The `receive` response returns `offeredBriefing`, the bounded digest sealed when the sender
 offered the handoff, and `receiptBriefing`, the digest sealed in the first recipient receipt,
 alongside `briefing`, the current Runtime digest. On receipt replay, both historical digests
 stay tied to their sealed records while `briefing` may advance. A missing or malformed receipt
-digest is refused. These historical digests do not assign current duties or imply task acceptance.
+digest is refused before a current briefing request. A valid replay still requires a fresh briefing;
+if that read fails, no historical digest is returned as current and no receipt is posted. These
+historical digests do not assign current duties or imply task acceptance.
 
 Read-only `status` retains the `receipts` ID list and exposes `receiptBriefings`, keyed by
 those IDs, from each validated sealed receipt. An offer without receipts has an empty map.

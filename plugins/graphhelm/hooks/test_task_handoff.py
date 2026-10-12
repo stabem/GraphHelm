@@ -243,6 +243,7 @@ class HandoffTests(unittest.TestCase):
             RuntimeHandler.briefing_data = first_current
             received = MODULE.receive("codex", "receiver", offered["offerId"])
             RuntimeHandler.briefing_data = later_current
+            RuntimeHandler.requests = []
             replay = MODULE.receive("codex", "receiver", offered["offerId"])
         self.assertEqual(received["offeredBriefing"], offered_reference)
         self.assertEqual(received["receiptBriefing"], first_reference)
@@ -252,7 +253,15 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(replay["briefing"], later_reference)
         self.assertEqual(replay["state"], "already_recorded")
         self.assertEqual(replay["receiptId"], received["receiptId"])
-        self.assertEqual(len([row for row in RuntimeHandler.requests if row[0] == "POST"]), 2)
+        self.assertEqual(len([row for row in RuntimeHandler.requests if row[0] == "GET" and row[1].endswith("/briefing")]), 1)
+        self.assertFalse(any(row[0] == "POST" for row in RuntimeHandler.requests))
+        RuntimeHandler.briefing_data = {"invalid": True}
+        RuntimeHandler.requests = []
+        with patch.dict(os.environ, self.env, clear=False):
+            with self.assertRaisesRegex(ValueError, "invalid Runtime briefing"):
+                MODULE.receive("codex", "receiver", offered["offerId"])
+        self.assertEqual(len([row for row in RuntimeHandler.requests if row[0] == "GET" and row[1].endswith("/briefing")]), 1)
+        self.assertFalse(any(row[0] == "POST" for row in RuntimeHandler.requests))
 
     def test_receipt_briefing_rejects_invalid_sealed_digest_without_write(self):
         with patch.dict(os.environ, self.env, clear=False):

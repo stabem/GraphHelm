@@ -1192,7 +1192,13 @@ describe("the gateway writes (#1171)", () => {
 
 // #673: scripted HTTP only; health previously discarded these diagnostic records.
 it("returns only validated previous exit records from the existing health request", async () => {
+  const prior = "0123456789abcdef0123456789abcdef";
   for (const [previousExit, expected] of [
+    [{ state: "vanished", pid: 1, at: 2, instance: prior }, { state: "vanished", pid: 1, at: 2, instance: prior }],
+    [{ state: "vanished", pid: 1, at: 2, instance: null }, { state: "vanished", pid: 1, at: 2 }],
+    ...["a".repeat(33), "../private", "a\n"].map(instance => [
+      { state: "vanished", pid: 1, at: 2, instance }, { state: "vanished", pid: 1, at: 2 },
+    ]),
     [{ state: "vanished", pid: 1, at: 2 }, { state: "vanished", pid: 1, at: 2 }],
     [{ state: "<script>", pid: 1, at: 2 }, null],
     [{ state: "clean", pid: 1, at: 2 }, { state: "clean", pid: 1, at: 2 }],

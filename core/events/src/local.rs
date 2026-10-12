@@ -8232,7 +8232,7 @@ mod limit_tests {
         let build = cache_repository(directory.path());
         build.append_atomic(&valid_graph_request()).unwrap();
         drop(build);
-        let cache = PrefixCache::new(std::time::Duration::ZERO);
+        let cache = PrefixCache::new(std::time::Duration::from_secs(3600));
         drop(shared_repository(directory.path(), &cache));
         let again = shared_repository(directory.path(), &cache);
         assert_eq!(
@@ -8257,6 +8257,11 @@ mod limit_tests {
         let mut bytes = std::fs::read(&journal).unwrap();
         bytes[10] = bytes[10].wrapping_add(1);
         std::fs::write(&journal, &bytes).unwrap();
+
+        let cache = PrefixCache::new(std::time::Duration::ZERO);
+        let warm = shared_repository(directory.path(), &cache);
+        assert_eq!(warm.next_sequence(&wake_scope(), "stream-1").unwrap(), 2);
+        drop(warm);
 
         let checked = shared_repository(directory.path(), &cache);
         assert!(checked.next_sequence(&wake_scope(), "stream-1").is_err());

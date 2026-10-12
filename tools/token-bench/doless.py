@@ -52,6 +52,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import random
 import os
 import re
 import shutil
@@ -715,8 +716,7 @@ def cmd_pair_summary(a: argparse.Namespace) -> None:
                 type(margin) not in (int, float) or not math.isfinite(margin) or not 0 <= margin <= 1 or
                 not isinstance(statement, str) or not statement.strip() or len(statement) > 2048):
             raise ValueError("analysis plan requires finite explicit thresholds and a bounded assumption")
-        plan_output = {"analysisPlan": plan, "analysisPlanSha256": hashlib.sha256(plan_raw).hexdigest(),
-                       "inferenceStatus": "not_implemented"}
+        plan_output = {"analysisPlan": plan, "analysisPlanSha256": hashlib.sha256(plan_raw).hexdigest()}
     by_session = {row["sessionId"]: row for row in rows}
     groups = {group["task"]: group for group in manifest["groups"]}
 
@@ -752,6 +752,48 @@ def cmd_pair_summary(a: argparse.Namespace) -> None:
                       admitted["sessions"] if audit["version"] == 2 else admitted["repeats"],
                       "baseline": baseline, "candidate": candidate,
                       "deltaCandidateMinusBaseline": delta})
+    if a.analysis_plan:
+        reason = None
+        if len(tasks) < 2:
+            reason = "fewer_than_two_tasks"
+        else:
+            for task in tasks:
+                for side in ("baseline", "candidate"):
+                    arm = task[side]
+                    if arm["unknownCostCount"]:
+                        reason = "unknown_cost"
+                        break
+                    if not arm["PASS"]:
+                        reason = "no_pass"
+                        break
+                if reason:
+                    break
+        if reason:
+            plan_output.update({"inferenceStatus": "not_computable", "inferenceReason": reason})
+        else:
+            seed, samples = 183, 5000
+            rng = random.Random(seed)
+            differences = [task["deltaCandidateMinusBaseline"] for task in tasks]
+            quality, cost = [], []
+            for _ in range(samples):
+                selected = [differences[rng.randrange(len(differences))] for _ in differences]
+                quality.append(sum(item["successFraction"] for item in selected) / len(selected))
+                cost.append(sum(item["costPerProvenDeliveryUsd"] for item in selected) / len(selected))
+            def interval(values: list[float]) -> dict:
+                values.sort()
+                return {"lower": values[int((samples - 1) * 0.025)],
+                        "upper": values[int((samples - 1) * 0.975)]}
+            quality_interval, cost_interval = interval(quality), interval(cost)
+            if quality_interval["upper"] < -plan["maximumQualityRegression"]:
+                status = "quality_regression"
+            elif (cost_interval["upper"] < -plan["minimumCostReductionUsd"] and
+                  quality_interval["lower"] >= -plan["maximumQualityRegression"]):
+                status = "supported"
+            else:
+                status = "inconclusive"
+            plan_output.update({"inferenceStatus": status, "inference": {
+                "method": "paired_task_bootstrap_percentile_95", "seed": seed, "resamples": samples,
+                "qualityDifference": quality_interval, "costDifferenceUsd": cost_interval}})
     print(json.dumps({"version": audit["version"], "comparison": audit["comparison"],
                       "weighting": audit["weighting"], "partial": bool(audit["excluded"] or audit["unmatched"]),
                       "tasks": tasks, "excluded": audit["excluded"], "unmatched": audit["unmatched"],

@@ -901,7 +901,8 @@ def test_task_group_sessions_account_for_unequal_arms_and_exclude_whole_task(tmp
             "assumptionStatement": "Operator declaration for independent tasks."}
     planned = run(plan=plan)
     assert planned["analysisPlan"]["minimumCostReductionUsd"] == 0.2
-    assert planned["inferenceStatus"] == "not_implemented"
+    assert planned["inferenceStatus"] == "not_computable"
+    assert planned["inferenceReason"] == "fewer_than_two_tasks"
 
 
 def test_pair_analysis_plan_binds_explicit_thresholds_to_frozen_inputs(tmp_path):
@@ -945,7 +946,8 @@ def test_pair_analysis_plan_binds_explicit_thresholds_to_frozen_inputs(tmp_path)
     report = json.loads(good.stdout)
     assert report["analysisPlan"] == plan
     assert report["analysisPlanSha256"] == hashlib.sha256(plan_path.read_bytes()).hexdigest()
-    assert report["inferenceStatus"] == "not_implemented"
+    assert report["inferenceStatus"] == "not_computable"
+    assert report["inferenceReason"] == "fewer_than_two_tasks"
     assert report["tasks"][0]["baseline"]["PASS"] == 1
     assert all(key not in report for key in ("recommendation", "confidenceInterval", "savings"))
 

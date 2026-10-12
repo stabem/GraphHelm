@@ -108,11 +108,21 @@ reduction must be a finite positive number, and maximum quality regression a fin
 from zero through one. Neither has a default. The assumption statement must contain non-space
 text and be at most 2,048 characters; the whole plan is limited to 4 MiB. Unknown keys,
 unsupported versions, booleans used as numbers, and nonfinite values are refused. The report
-adds the validated `analysisPlan`, its exact-byte `analysisPlanSha256`, and
-`inferenceStatus: not_implemented`. Without the option, `pair-summary` keeps its existing
-report shape. Exclusions, incomplete attempts, and unknown costs remain visible. Acceptance
-does not validate exchangeability, prove that the plan preceded outcome inspection, or provide
-an uncertainty estimate or improvement advice.
+adds the validated `analysisPlan` and its exact-byte `analysisPlanSha256`. With at least two
+admitted tasks and known costs plus a PASS in each arm of every task, it uses a paired
+task-level percentile bootstrap: 5,000 equal-task resamples with replacement, seed 183,
+and the sorted 2.5% and 97.5% order statistics. The output gives candidate-minus-baseline
+95% intervals for task success fraction and all-attempt cost per proven delivery. A task's
+INCOMPLETE attempts remain in its success denominator and expenditure. The status is
+`supported` only when the whole cost interval is below the negative minimum reduction and
+the quality lower bound meets the negative regression margin; `quality_regression` means
+the quality upper bound is below that margin; otherwise it is `inconclusive`.
+Unknown cost, no PASS in either arm of an admitted task, or fewer than two admitted tasks
+produces `not_computable` with a reason and no interval. Exclusions remain visible and a
+subset is still marked partial. Without the option, `pair-summary` keeps its existing report
+shape. This small-corpus interval does not validate task independence or exchangeability,
+prove that the plan preceded outcome inspection, or establish a real improvement. It does
+not recommend a treatment or claim realized savings.
 
 The claim is **equal or better delivered-code quality at lower total cost per proven delivery**.
 Input-token reduction alone is a diagnostic, not a win. A unit is one independently started

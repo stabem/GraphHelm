@@ -1,5 +1,5 @@
 import "./mission-view.css";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { JourneyFlowView, JourneyFlowsView, JourneyRunView, JourneyView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
 import type { TaskEventRecord } from "../runtime/team-tasks";
@@ -359,11 +359,13 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
     return item.approvable && contract !== undefined && approvalBlockReason(item, contract, runFor(contract.contractId)) === null;
   }).length;
   const mission = contractId ? missions.find((m) => m.contractId === contractId)! : null;
+  const contentRef = useRef<HTMLDivElement>(null);
   const openTest = (id: string) => {
     if (!journey) return;
     onSelectJourney?.(journey.contractId);
     setStepId(id);
     setFrame(Math.max(0, journey.steps.findIndex((s) => s.stepId === id)));
+    if (contentRef.current) contentRef.current.scrollTop = 0;
     setSub("test");
   };
   const reset = () => { setProofJid(null); setStepId(null); setTaskKey(undefined); setStageCol(null); if (sub === "test") setSub("graph"); };
@@ -583,7 +585,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
             )}
           </nav>
         )}
-        <div className="mv-content">
+        <div className="mv-content" ref={contentRef}>
           {page !== "full" && sub === "graph" && runGraph}
           {sub === "graph" && group && <IssueGraph group={group} stepFor={stepFor} selectedTaskKey={shownTask} selectedCol={stageCol}
             onSelectTask={(key) => { setTaskKey(key); setStageCol(null); }} onSelectCol={(c) => { setStageCol(c); setTaskKey(null); }} onOpenTest={openTest} health={health} pace={pace}

@@ -240,6 +240,22 @@ describe("MissionView", () => {
     expect(screen.getByRole("region", { name: "Work by issue" })).toBeInTheDocument();
   });
 
+  it("#988: opens the test at its header with the frame bar before the canvas", async () => {
+    const user = fastUserEvent();
+    const { container } = render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0}
+      runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await user.click(screen.getByRole("tab", { name: "Proof" }));
+    const content = container.querySelector<HTMLElement>(".mv-content")!;
+    content.scrollTop = 66;
+    await user.click(screen.getByRole("button", { name: "Open test for step 1" }));
+    expect(content.scrollTop).toBe(0);
+    const canvas = container.querySelector(".tc")!;
+    expect(canvas.querySelector(".tc-head")).toBeInTheDocument();
+    const frames = canvas.querySelector(".tc-scrub")!;
+    expect(frames).toBeInTheDocument();
+    expect(frames.compareDocumentPosition(canvas.querySelector(".tc-main")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("#813: draft note is separate from the journey name and 0/2 has no proven fill", async () => {
     const two: JourneyView[] = [{ ...journeys[0]!, contractId: "add", title: "Add a model (draft: the test setup has no model gateway, so the Add model button is off)",
       steps: ["open", "save"].map((id) => ({ stepId: id, screen: { screenId: id, title: id, scopePaths: [] }, promises: [] })) }];

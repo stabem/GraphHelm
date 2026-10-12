@@ -533,7 +533,7 @@ describe("live team layout", () => {
     await open(stubClient({ getStatus: vi.fn(async () => status), getEvents: vi.fn(async () => ({ head: 13, events: [work] })),
       readEvidence: vi.fn(async () => { await evidenceReady; return { evidenceId: "e12", mediaType: "application/json", sensitivity: "confidential",
         contentSha256: "sha256:fixture", content: JSON.stringify({ to: null, replyTo: null, text: "Implementation finished" }) }; }) }));
-    expect(await screen.findByRole("button", { name: "Checking recorded agent work" })).toHaveClass("beacon-unknown");
+    expect(await screen.findByRole("button", { name: "Nothing needs you" })).toHaveClass("beacon-dark");
     expect(screen.queryByRole("button", { name: "1 decision needs you" })).not.toBeInTheDocument();
     releaseEvidence();
     expect(await screen.findByRole("button", { name: "Nothing needs you" })).toHaveClass("beacon-dark");
@@ -2365,6 +2365,10 @@ describe("the attention verdict explains itself", () => {
 
     expect(screen.getByText("graph waiting; no request recorded")).toBeInTheDocument();
     expect(screen.queryByRole("article", { name: /asks$/ })).not.toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "1 decision needs you" }));
+    const needsYou = screen.getByRole("region", { name: "Needs you" });
+    expect(within(needsYou).getByRole("button", { name: "Open run conversation" })).toBeInTheDocument();
+    expect(within(needsYou).queryByRole("button", { name: "Answer in chat" })).not.toBeInTheDocument();
     expect(client.getReplySuggestions).not.toHaveBeenCalled();
   });
 
@@ -2487,6 +2491,7 @@ describe("the answer path", () => {
     const why = await screen.findByLabelText("Needs you");
     // The debt itself, on screen - not just "waiting for input".
     expect(await within(why).findByText(/Qual porta devo usar para o deploy\?/)).toBeInTheDocument();
+    expect(within(why).queryByRole("button", { name: "Answer in chat" })).not.toBeInTheDocument();
 
     // Answering from here delivers to the creditor.
     await userEvent.click(within(why).getByRole("button", { name: "Answer" }));

@@ -2063,13 +2063,6 @@ fn a_bounded_events_tail_stays_fast_at_six_thousand_events() {
     drop(store);
 
     let (_guard, base, token) = serve(&events);
-    // The first request verifies the persisted journal from genesis. Measure later reads,
-    // which must reuse that verified prefix until the journal changes.
-    let warm = get_json(
-        &format!("{base}/v1/executions/{execution}/events?limit=1"),
-        Some(&token),
-    );
-    assert_eq!(warm["data"]["head"], 6_000);
     for url in [
         format!("{base}/v1/executions/{execution}/events?after=5999&limit=1"),
         format!("{base}/v1/executions/{execution}/events?after=0&limit=1"),

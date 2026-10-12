@@ -559,6 +559,11 @@ async fn serve_forever(
     let bound = listener
         .local_addr()
         .map_err(|_| serve_invalid("the bound address could not be read back", "/bind"))?;
+    // Finish the initial journal verification before announcing readiness. The first HTTP
+    // request must not inherit a full walk of the existing journal; later opens use this
+    // verified prefix and verify only appended bytes.
+    event_store(&state.events)
+        .map_err(|_| serve_invalid("the events repository could not be opened", "/events"))?;
     let (lifecycle, previous_exit) = lifecycle::Lifecycle::start(&state.events)?;
     state.previous_exit = previous_exit;
     #[cfg(debug_assertions)]

@@ -768,8 +768,10 @@ pub(super) fn event_store(
     }
 }
 
-/// How long `serve` reuses one journal verification before re-verifying from genesis.
-const SHARED_PREFIX_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(30);
+/// A serve process verifies the journal at startup. Subsequent opens verify appended bytes;
+/// replacement or truncation invalidates the prefix. A timed expiry made one request every
+/// 30 seconds pay a full journal walk and blocked other reads behind the shared cache mutex.
+const SHARED_PREFIX_MAX_AGE: std::time::Duration = std::time::Duration::MAX;
 
 /// Set once by `serve`: a long-running process opens a store per request, and without a
 /// shared verified prefix every request re-verifies the whole journal (a large journal then

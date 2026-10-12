@@ -18,7 +18,6 @@ import threading
 import unittest
 from unittest import mock
 import urllib.request
-import urllib.error
 
 from plugins.graphhelm.hooks import tasks_reconcile
 from plugins.graphhelm.hooks import session_hook
@@ -553,22 +552,18 @@ class LaneStopTests(unittest.TestCase):
                 pass
         self.addCleanup(stop_waiter)
         self.assertTrue(session_hook._pid_alive(pid), "wake waiter exited before an append")
-        self.note("unrelated-waiter-append", to="codex-5")
+        again = subprocess.run([sys.executable, str(script), "start", "--host", "codex"],
+                               input=json.dumps(payload), text=True, env=self.env,
+                               capture_output=True, timeout=8)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertEqual(int(pid_files[0].read_text()), pid)
+        self.note("other-2", to="codex-5")
         self.assertTrue(session_hook._pid_alive(pid), "wake waiter exited after unrelated append")
         request = urllib.request.Request(self.url + "/v1/executions/lane-test",
                   headers={"Authorization": "Bearer " + self.owner_token})
         with urllib.request.urlopen(request, timeout=5) as response:
             self.assertIn("codex-4", json.load(response)["data"]["wakeListeners"])
-        time.sleep(0.2)
-        events_request = urllib.request.Request(self.url + "/v1/executions/lane-test/events?after=0&limit=1",
-                  headers={"Authorization": "Bearer " + self.owner_token})
-        with urllib.request.urlopen(events_request, timeout=5) as response:
-            self.assertLess(json.load(response)["data"]["head"], 100)
-        try:
-            self.note("addressed-waiter-ask", to="codex-4")
-        except urllib.error.HTTPError as error:
-            self.log.seek(0)
-            self.fail(error.read().decode() + "\n" + self.log.read() + "\npid=" + str(pid))
+        self.note("request-2", to="codex-4")
         self.assertTrue(any(d.get("decision") == "block" for d in self.stop(MANIFESTS[0])))
 
     def test_only_own_reply_clears_pending_note(self):

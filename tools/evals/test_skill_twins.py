@@ -23,27 +23,49 @@ class SkillTwinsTest(unittest.TestCase):
     def test_judge_qualification_packet_is_bound_and_pending(self):
         root = ROOT / "evals/graphhelm-development-contracts"
         packet = json.loads((root / "judge-qualification.json").read_text(encoding="utf-8"))
-        self.assertEqual(packet["version"], 1)
+        self.assertEqual(packet["version"], 2)
         self.assertTrue(packet["synthetic"])
         self.assertEqual(packet["purpose"], "judge_qualification")
-        case = root / "keel-observer-missing"
-        for key, path in (("prompt", case / "prompt.md"), ("rubric", case / "graders/criteria.md")):
-            self.assertEqual(packet[key]["path"], path.relative_to(ROOT).as_posix())
-            self.assertEqual(packet[key]["sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
-        examples = packet["examples"]
-        self.assertEqual([e["id"] for e in examples], ["chrome-proxy-missing", "chrome-false-pass", "truncated-incomplete"])
-        self.assertEqual([e["completionStatus"] for e in examples], ["completed", "completed", "incomplete"])
-        self.assertEqual([e["proposedLabel"] for e in examples], ["PASS", "FAIL", "INCOMPLETE"])
-        for example in examples:
-            self.assertEqual(example["reviewStatus"], "pending")
-            self.assertNotIn("reviewer", example)
-            self.assertTrue(example["transcript"].strip())
-            self.assertTrue(example["rationale"].strip())
-            if example["completionStatus"] != "completed":
-                self.assertEqual(example["proposedLabel"], "INCOMPLETE")
-        self.assertIn("OBSERVER_MISSING: iOS Safari device or simulator", examples[0]["transcript"])
-        self.assertIn("verified", examples[1]["transcript"].lower())
-        self.assertNotIn("OBSERVER_MISSING", examples[2]["transcript"])
+        self.assertEqual([p["case"] for p in packet["packets"]], ["keel-observer-missing", "test-audit-junk"])
+        expected = {
+            "keel-observer-missing": (
+                ["chrome-proxy-missing", "chrome-false-pass", "truncated-incomplete"],
+                ["PASS", "FAIL", "INCOMPLETE"],
+                ["completed", "completed", "incomplete"],
+            ),
+            "test-audit-junk": (
+                ["junk-correct", "junk-plausible-wrong", "junk-boundary"],
+                ["PASS", "FAIL", "BOUNDARY"],
+                ["completed", "completed", "completed"],
+            ),
+        }
+        for item in packet["packets"]:
+            with self.subTest(case=item["case"]):
+                case = root / item["case"]
+                for key, path in (("prompt", case / "prompt.md"), ("rubric", case / "graders/criteria.md")):
+                    self.assertEqual(item[key]["path"], path.relative_to(ROOT).as_posix())
+                    self.assertEqual(item[key]["sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
+                examples = item["examples"]
+                ids, labels, statuses = expected[item["case"]]
+                self.assertEqual([e["id"] for e in examples], ids)
+                self.assertEqual([e["proposedLabel"] for e in examples], labels)
+                self.assertEqual([e["completionStatus"] for e in examples], statuses)
+                for example in examples:
+                    self.assertEqual(example["reviewStatus"], "pending")
+                    self.assertNotIn("reviewer", example)
+                    self.assertTrue(example["transcript"].strip())
+                    self.assertTrue(example["rationale"].strip())
+                    if example["completionStatus"] != "completed":
+                        self.assertEqual(example["proposedLabel"], "INCOMPLETE")
+        observer = packet["packets"][0]["examples"]
+        self.assertIn("OBSERVER_MISSING: iOS Safari device or simulator", observer[0]["transcript"])
+        self.assertIn("verified", observer[1]["transcript"].lower())
+        self.assertNotIn("OBSERVER_MISSING", observer[2]["transcript"])
+        audit = packet["packets"][1]["examples"]
+        self.assertIn("self-comparison", audit[0]["transcript"])
+        self.assertIn("mock implements the behavior", audit[0]["transcript"])
+        self.assertIn("protects", audit[1]["transcript"])
+        self.assertIn("self-comparison", audit[2]["transcript"])
 
     def test_observer_rubric_scopes_failure_to_the_ios_promise(self):
         criteria = (

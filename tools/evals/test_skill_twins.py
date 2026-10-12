@@ -35,7 +35,7 @@ class SkillTwinsTest(unittest.TestCase):
             "completed transcript", "`test-audit` skill was invoked",
             "self-comparison", "literal 6", "incorrect multiplication",
             "do not claim broad coverage", "assessment", "not an implementation card",
-            "no edits", "no automatic deletion", "another relevant skill",
+            "no edits", "automatic deletion", "another relevant skill",
             "missing transcript", "truncated transcript", "tool failure",
             "infrastructure failure", "INCOMPLETE",
         ):

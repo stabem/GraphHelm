@@ -4061,7 +4061,7 @@ describe("the board remembers its graph file", () => {
  * a message box that posts nothing still clears itself after you press send.
  */
 describe("the exchange", () => {
-  it("keeps Lanes loading until complete PR history replaces a misleading recent tail (#961)", async () => {
+  it("shows recent Lanes work without orphan cards while complete history loads (#961)", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-12T18:00:30Z"));
     try {
@@ -4075,6 +4075,8 @@ describe("the exchange", () => {
         { sequence: 7, kind: "task.pr_opened", actor: "lane-c", taskId: "issue-919", pr: 922, headSha: "eeeeeeee", lane: "lane-c", journeys: [] },
         { sequence: 8, kind: "task.merged", actor: "reviewer-a", taskId: "issue-919", pr: 922, mergeSha: "ffffffff", merger: "reviewer-a", closes: [] },
         { sequence: 9, kind: "task.pr_opened", actor: "lane-d", taskId: "issue-919", pr: 923, headSha: "11111111", lane: "lane-d", journeys: [] },
+        { sequence: 130, kind: "task.claimed", actor: "lane-e", taskId: "issue-960", issue: 960, lane: "lane-e", branch: "issue-960-work" },
+        { sequence: 131, kind: "task.pr_opened", actor: "lane-e", taskId: "issue-960", pr: 960, headSha: "22222222", lane: "lane-e", journeys: [] },
         { sequence: 133, kind: "task.review_assigned", actor: "lane-d", taskId: "issue-919", pr: 923, headSha: "11111111", lane: "lane-d", reviewer: "reviewer-b" },
         { sequence: 134, kind: "task.review_verdict", actor: "reviewer-a", taskId: "issue-947", pr: 955, headSha: "aaaaaaaa", reviewer: "reviewer-a", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/955#c1" },
       ];
@@ -4115,8 +4117,10 @@ describe("the exchange", () => {
       const mission = await screen.findByRole("region", { name: "Canvas" });
       await userEvent.click(within(mission).getByRole("tab", { name: "Lanes" }));
       await waitFor(() => expect(client.readEvidence).toHaveBeenCalledWith("demo-deploy", "ev-task-134"));
-      expect(within(mission).getAllByRole("status").some((item) => item.textContent?.includes("Loading the team's history"))).toBe(true);
-      expect(within(mission).queryByRole("region", { name: "Work by stage" })).not.toBeInTheDocument();
+      const provisional = within(mission).getByRole("region", { name: "Work by stage" });
+      expect(provisional).toHaveTextContent("#960");
+      expect(provisional).not.toHaveTextContent("#955");
+      expect(provisional).not.toHaveTextContent("#923");
       await act(async () => releaseHistory());
       const verified = await readTaskEventRecords({ executionId: "demo-deploy", events: timeline,
         readEvidence: client.readEvidence });

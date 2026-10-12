@@ -529,7 +529,7 @@ describe("live team layout", () => {
       actorId: "kit-1", actorType: "agent", idempotencyKey: null, eventId: "work", evidenceRefs: ["e12"] };
     await open(stubClient({ getStatus: vi.fn(async () => status), getEvents: vi.fn(async () => ({ head: 13, events: [work] })),
       readEvidence: vi.fn(async () => ({ evidenceId: "e12", mediaType: "application/json", sensitivity: "confidential",
-        contentSha256: "sha256:fixture", content: JSON.stringify({ to: "studio-operator", text: "Implementation finished" }) })) }));
+        contentSha256: "sha256:fixture", content: JSON.stringify({ to: null, replyTo: null, text: "Implementation finished" }) })) }));
     expect(await screen.findByRole("button", { name: "Nothing needs you" })).toHaveClass("beacon-dark");
   });
 

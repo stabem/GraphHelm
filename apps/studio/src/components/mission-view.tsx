@@ -157,7 +157,7 @@ function JourneyRailButton({ mission, flow, duplicateTitle, selected, onSelect }
   const title = stale && flow.title ? flow.title : name;
   return <button type="button" className="mv-journey mv-proof-journey" aria-pressed={selected} title={note ? `Draft: ${note}` : title} onClick={onSelect}>
     <span className="mv-journey-title">{title}</span>
-    {duplicateTitle && <span className="mv-journey-id">{mission.contractId}</span>}
+    {(duplicateTitle || stale) && <span className="mv-journey-id">{mission.contractId}</span>}
     {note && <span className="mv-draft-tag" title={note}>draft</span>}
     {stale && <span className="mv-draft-tag" title="The compiled contract does not match the current flow">contract out of date</span>}
     <span className="mv-journey-count">{`${mission.summary.proven}/${mission.summary.total}`}</span>
@@ -187,6 +187,7 @@ function journeyStepProgress(mission: Mission): string[] {
   const placed = layoutMission(mission).placed;
   return mission.steps.map((step) => {
     if (step.status === "proven") return "proven";
+    if (step.status === "preview_only") return "remaining";
     const tasks = placed.filter((p) => p.col === step.index).map((p) => p.task);
     if (tasks.some((t) => t.step !== "merged")) return "work";
     if (tasks.some((t) => t.step === "merged")) return "merged";
@@ -425,7 +426,7 @@ export function MissionView({ journeys, flows = [], tasks, taskRecords = [], run
               const on = m.contractId === contractId;
               return (
                 <div key={m.contractId} className="mv-jcard" data-selected={on}>
-                  <JourneyRailButton mission={m} selected={on} onSelect={() => pickProof(m.contractId)} />
+                  <JourneyRailButton mission={m} flow={flows.find((flow) => flow.id === m.contractId)} duplicateTitle={proofTitles.filter((title) => title === proofTitles[missions.indexOf(m)]).length > 1} selected={on} onSelect={() => pickProof(m.contractId)} />
                   {historyLoading ? <span className="mv-progress-text" role="status">… loading work</span> : <JourneyProgress statuses={journeyStepProgress(m)} />}
                 </div>
               );

@@ -277,3 +277,29 @@ describe("Proof progress text stays readable in narrow cards", () => {
     expect(rule).not.toMatch(/white-space:\s*nowrap/);
   });
 });
+
+describe("the Graph WORK rail fits a narrow viewport (#884)", () => {
+  it("lets the rail and its group cards shrink to the available width", () => {
+    const mission = STYLESHEETS["./components/mission-view.css"];
+    expect(mission).toMatch(/\.mv-journeys\s*\{[^}]*max-width:\s*100%/s);
+    expect(mission).toMatch(/\.mv-groups\s*\{[^}]*max-width:\s*100%/s);
+  });
+
+  it("keeps the mobile graph inside the viewport and scrollable within its box", () => {
+    const mission = STYLESHEETS["./components/mission-view.css"];
+    const graph = STYLESHEETS["./components/mission-graph.css"];
+    expect(mission).toMatch(/\.mv-body\s*\{[^}]*min-width:\s*0/s);
+    expect(mission).toMatch(/\.mv\s+\.mg-graph\s*\{[^}]*width:\s*100%[^}]*max-width:\s*100%/s);
+    expect(graph).toMatch(/\.mg-scroll\s*\{[^}]*overflow-x:\s*auto/s);
+  });
+
+  it("lets the mobile project title yield to the attention pill", () => {
+    expect(CSS).toMatch(/\.topbar-mission\s+\.run-project\s*\{[^}]*min-width:\s*0[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/s);
+  });
+
+  it("gives the mobile run title its own readable row", () => {
+    expect(CSS).toMatch(/@media\s*\(max-width:\s*600px\)\s*\{[^}]*\.topbar-mission\s*\{[^}]*flex-basis:\s*100%/s);
+    expect(CSS).toMatch(/@media\s*\(max-width:\s*600px\)\s*\{\s*\.topbar-mission\s*\{[^}]*flex-basis:\s*100%[^}]*\}\s*\.topbar-mission\s+\.run-project\s*\{[^}]*flex-shrink:\s*0/s);
+    expect(CSS).toMatch(/\.topbar-mission\s+\.run-selection-identity\s*\{[^}]*flex-basis:\s*100%/s);
+  });
+});

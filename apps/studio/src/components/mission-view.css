@@ -100,11 +100,11 @@
 
 /* Phone width (design: Glance): the rail stacks on top, the graph scrolls, the inspector goes below. */
 @media (max-width: 700px) {
-  .mv-body { flex-direction: column; align-items: stretch; }
-  .mv-journeys { max-width: none; flex: none; max-height: none; overflow: visible; padding-bottom: 0; }
+  .mv-body { flex-direction: column; align-items: stretch; min-width: 0; }
+  .mv-journeys { max-width: 100%; flex: none; max-height: none; overflow: visible; padding-bottom: 0; }
   .mv-content { flex: none; width: 100%; max-height: none; overflow: visible; padding-bottom: 0; }
   .mv .mg-body { flex-direction: column; align-items: stretch; }
-  .mv .mg-graph { flex: none; }
+  .mv .mg-graph { flex: none; width: 100%; max-width: 100%; min-width: 0; }
   .mv .mg-inspector { max-width: none; flex: none; }
 }
 
@@ -126,7 +126,7 @@
 @media (prefers-reduced-motion: reduce) { .mv-live-dot { animation: none; } }
 .mv-summary { gap: 6px 22px; margin: 0; padding: 10px 24px; }
 .mv:not([data-page="full"]) .mv-summary { padding: 0 0 10px; }
-.mv-groups { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.mv-groups { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; max-width: 100%; min-width: 0; }
 .mv-pr-chip { flex: 1 1 0; min-width: 0; padding: 0; opacity: .6; }
 .mv-pr-chip[aria-pressed="true"] { opacity: 1; }
 .mv-pr-chip[data-state="ready"] { background: transparent; border: 1px dashed var(--mv-tone); color: var(--mv-tone); opacity: 1; }

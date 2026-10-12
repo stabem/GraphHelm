@@ -2,15 +2,9 @@ import { recordReviewAssigned } from "./runtime/review-assign";
 /**
  * GraphHelm Local Studio.
  *
- * FOUR COLUMNS. The rail on the left is PROJECTS - folders, with their runs inside. A selected run
- * opens three more: CHAT (question cards, threads, composer), the CANVAS (the live Team tab and a
- * Journey tab) and a RIGHT PANEL with the run's recent activity. The top bar carries the run name,
- * the needs-you beacon and the run's details; below 768 px one tab at a time shows a column. A
- * node's window and a bot's details open beside them, never over the canvas.
- *
- * ONE SCROLL REGION. The thread scrolls, because a log is unbounded. The stage pans. Nothing else
- * scrolls inside anything else — the previous shape nested three scroll containers and every
- * gesture landed in the wrong one.
+ * The rail lists projects and runs. The canvas holds Team, Graph, and Proof; the right panel
+ * shows recent activity when space allows. The top bar carries the run name and needs-you
+ * beacon. A node's window and a bot's details open beside the canvas.
  *
  * IT OPENS CONNECTED. The dev server hands the page the token the Runtime already wrote to disk
  * (`runtime/session.ts`), so nobody copies a hex string out of a terminal. Where that endpoint
@@ -35,6 +29,7 @@ import {
   newIdempotencyKey,
 } from "./runtime/client";
 import { devSession, type DevSession } from "./runtime/session";
+import type { NativeChatRequest } from "./runtime/types";
 import { workConversation } from "./runtime/work-conversation";
 import { isSubagentLifecycleSignal } from "./runtime/subagents";
 import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
@@ -56,7 +51,6 @@ import type {
   ReplySuggestions,
   MutationEvidence,
   NativeChatSummary,
-  NativeChatRequest,
 } from "./runtime/types";
 import { claimVerdict, clearVerdict, digestOf, openWaitSequence } from "./runtime/customs";
 import type { AnswerOutcome } from "./components/answer";
@@ -83,23 +77,20 @@ import { AgentPanel, NodePanel, RunPanel, Thread, resetPanelCaches, useActorAlia
 import type { DocumentReference } from "./components/deliveries";
 import { DocumentEditor, type DocumentSaveRequest } from "./components/document-editor";
 import { NativeChats } from "./components/native-chats";
-import { MainChat } from "./components/main-chat";
 import { TeamCanvas } from "./components/team-canvas";
 import { DelegationTree } from "./components/delegation-tree";
 import { GraphFileRow } from "./components/graph-file-row";
 import { Beacon, NEEDS_YOU_ID, QuestionCards } from "./components/beacon";
 import { HandoverCard } from "./components/handover-card";
 import { RightPanel } from "./components/right-panel";
-import { JourneyCanvas } from "./components/journey-canvas";
 import { beforeAfterPairs, captureDocuments, type BeforeAfterPair } from "./runtime/journeys";
-import type { JourneyFlowsView, JourneyRunView, JourneysView, LiveSession } from "./runtime/types";
-import { JourneyFlows, type JourneyRunSource } from "./components/journey-flows";
+import type { JourneyFlowsView, JourneyRunView, JourneysView } from "./runtime/types";
+import type { JourneyRunSource } from "./components/journey-flows";
 import { SaidLinks, type SaidLinkContext } from "./components/said";
-import { ChatColumn, NEEDS_YOU } from "./components/chat-column";
-import { botKeyOf, teamLinks, teamModel } from "./runtime/team";
+import { teamLinks, teamModel } from "./runtime/team";
 import { needsYou, type DraftItem, type QuestionItem, type StepItem } from "./runtime/needs-you";
 import { buildHandover, hiddenThisSession, hideThisSession, readLastSeen, shouldShowHandover, writeLastSeen } from "./runtime/handover";
-import { EVERYONE, autoThread, chatThreads, describeActivity, namesOf, sealedNotesPending, unreadCounts } from "./runtime/threads";
+import { EVERYONE, describeActivity, namesOf } from "./runtime/threads";
 import { ProjectRail } from "./components/rail";
 import { Composer, type RouteChoice } from "./components/compose";
 import { Models, type KeyDraft, type ProbeState, type RouteDraft, type SaveOutcome } from "./components/models";
@@ -200,7 +191,6 @@ export default function App({
 
   const [runActionsOpen, setRunActionsOpen] = useState(false);
   /** #585: the step whose chat picker Main chat's "Connect existing chat" opened. */
-  const [connectingNode, setConnectingNode] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [previousExit, setPreviousExit] = useState<RuntimePreviousExit | null>(null);
   /** What the rail calls this folder. Named by the operator; absent, the rail says what it can. */
@@ -279,7 +269,6 @@ export default function App({
   const [replySuggestions, setReplySuggestions] = useState<{ key: string; reply: ReplySuggestions } | null>(null);
   const [replyLoading, setReplyLoading] = useState(false);
   const [replyIssue, setReplyIssue] = useState<{ key: string; text: string } | null>(null);
-  const [replyRetry, setReplyRetry] = useState(0);
   const [judgeRoute, setJudgeRoute] = useState("");
   const [events, setEvents] = useState<EventPage | null>(null);
   const [evidence, setEvidence] = useState<MutationEvidence | null>(null);
@@ -1864,7 +1853,6 @@ export default function App({
   const personas = usePersonas(eventList, selected === "" ? undefined : selected, openEvidence);
   const nativePersonaLinks = useNativePersonaLinks(eventList, selected === "" ? undefined : selected, openEvidence);
   const actorAliases = useActorAliases(eventList, selected === "" ? undefined : selected, openEvidence);
-  const mainChatPersonas = useMemo(() => Object.values(nativePersonaLinks), [nativePersonaLinks]);
   // THE CONVERSATIONS, SORTED BY WHO IS TALKING TO WHOM. Three kinds, kept apart because reading
   // them mixed is what made the room illegible: the ROOM (said to nobody in particular - you are
   // in it), each PAIR of agents (their addressed exchange - you can read it, you are not in it),
@@ -1973,7 +1961,7 @@ export default function App({
     });
     return () => { superseded = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the head is read through a ref on purpose (#327)
-  }, [connected, selected, replyKey, status?.attention, routes, activeJudgeRoute, replyRetry]);
+  }, [connected, selected, replyKey, status?.attention, routes, activeJudgeRoute]);
 
   // The armed cancel confirmation follows the RECOMPUTED legality: a poll tick or a WebMCP write
   // can finish the run while the question stands, and a "yes" that would only bounce off the
@@ -2060,9 +2048,21 @@ export default function App({
   const [clock, setClock] = useState(() => Date.now());
   useEffect(() => { const timer = window.setInterval(() => setClock(Date.now()), 30_000); return () => window.clearInterval(timer); }, []);
   useEffect(() => { setClock(Date.now()); }, [eventList]);
-  const [nativeRequests, setNativeRequests] = useState<NativeChatRequest[] | null>(null);
-  useEffect(() => { setNativeRequests(null); }, [selected]);
   const nodeNames = useMemo(() => Object.fromEntries(model.nodes.flatMap((node) => node.declaredName ? [[node.id, node.declaredName] as const] : [])), [model]);
+  const [nativeRequests, setNativeRequests] = useState<NativeChatRequest[] | null>(null);
+  useEffect(() => {
+    const client = clientRef.current;
+    if (!connected || !client || selected === "") { setNativeRequests(null); return; }
+    let active = true;
+    setNativeRequests(null);
+    const read = () => { void client.listNativeChatRequests(selected).then(
+      (page) => { if (active && clientRef.current === client && selectedRef.current === selected) setNativeRequests((previous) => previous !== null && sameValue(previous, page.requests) ? previous : page.requests); },
+      () => { if (active && clientRef.current === client && selectedRef.current === selected) setNativeRequests(null); },
+    ); };
+    read();
+    const timer = window.setInterval(read, pollIntervalMs);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [connected, selected, pollIntervalMs]);
   const needs = useMemo(() => needsYou({ status, stale, events: eventList, envelopes, nativeRequests,
     pendingDraftIds: durableProposals.map((proposal) => proposal.draftId), nodeNames, operatorId: OPERATOR_ACTOR.id,
     agentWorkRecorded: hasRecordedAgentWork }),
@@ -2126,7 +2126,6 @@ export default function App({
     return () => { cancelled = true; };
   }, [selected, lastJpdSequence, flowsRevision]);
   const journeysView = journeysRead?.view ?? null;
-  const journeysFailure = journeysRead?.failure ?? null;
   const journeysFailed = journeysRead?.failed ?? false;
   const beforeAfter = useMemo(() => beforeAfterPairs(captureDocuments(eventList, envelopes)), [eventList, envelopes]);
   // #446: captures whose envelopes are not opened yet; the before/after list is not empty, it is opening.
@@ -2134,7 +2133,6 @@ export default function App({
     && (event.payload as { kind?: unknown } | null)?.kind === "jpd.screen_captured" && envelopes[event.sequence] === undefined).length,
   [eventList, envelopes]);
   const [journeyContract, setJourneyContract] = useState<string | null>(null);
-  const [journeyDetail, setJourneyDetail] = useState<string | null>(null);
   const botNameOf = useCallback((id: string) => botNames[id] ?? id, [botNames]);
   // #393: one thread per task, opened by the run's task.* records.
   const runTasks = taskGraphs?.executionId === selected ? taskGraphs.tasks : null;
@@ -2143,33 +2141,10 @@ export default function App({
   const saidLinks = useMemo<SaidLinkContext>(() => ({
     repoUrl: runTasks?.find((task) => task.repoUrl !== null)?.repoUrl ?? null,
     journeyIds: new Set([...(flowsRead.view?.flows.map((flow) => flow.id) ?? []), ...(journeysView?.journeys.map((journey) => journey.contractId) ?? [])]),
-    onOpenJourney: (journeyId: string) => { setJourneyContract(journeyId); setJourneyDetail(null); setCanvasTab("journey"); },
+    onOpenJourney: (journeyId: string) => { setJourneyContract(journeyId); setCanvasTab("journey"); },
   }), [runTasks, flowsRead.view, journeysView]);
-  const threads = useMemo(() => chatThreads(workMessages, team.bots, OPERATOR_ACTOR.id, runTasks ?? [], clock),
-    [workMessages, team, runTasks, clock]);
   const [thread, setThread] = useState(EVERYONE);
-  const [threadOpened, setThreadOpened] = useState<Record<string, number>>({});
-  // #402: until the owner picks a thread, a run that needs them opens on the Needs you thread,
-  // where the cards now live (spec §8); otherwise on Everyone.
-  const [threadChosen, setThreadChosen] = useState(false);
-  useEffect(() => { setThread(EVERYONE); setThreadOpened({}); setThreadChosen(false); }, [selected]);
-  // #410: the landing is real thread state, so unread tracking marks the thread actually shown.
-  const needsCount = needs.items.length;
-  // #414: land once per run (a card arriving mid-read does not pull the owner away again), and
-  // leave Needs you for Everyone when the last card settles.
-  const landedRef = useRef(false);
-  useEffect(() => { landedRef.current = false; }, [selected]);
-  useEffect(() => {
-    const next = autoThread({ thread, chosen: threadChosen, landed: landedRef.current, cards: needsCount });
-    if (next === NEEDS_YOU) landedRef.current = true;
-    if (next !== null) setThread(next);
-  }, [threadChosen, thread, needsCount]);
-  useEffect(() => {
-    const newest = threads.find((candidate) => candidate.key === thread)?.messages.at(-1)?.sequence ?? 0;
-    setThreadOpened((current) => current[thread] === newest ? current : { ...current, [thread]: newest });
-  }, [thread, threads]);
-  const unread = useMemo(() => unreadCounts(threads, threadOpened), [threads, threadOpened]);
-  const openingCount = useMemo(() => sealedNotesPending(eventList, envelopes), [eventList, envelopes]);
+  useEffect(() => setThread(EVERYONE), [selected]);
   const activityLines = useMemo(() => {
     const stepTitle = (contractId: string, stepId: string) => journeysView?.journeys.find((journey) => journey.contractId === contractId)
       ?.steps.find((step) => step.stepId === stepId)?.screen?.title ?? stepId;
@@ -2177,40 +2152,11 @@ export default function App({
   }, [recentActivity, botNames, envelopes, journeysView]);
   const assignedNodeIds = useMemo(() => new Set(team.bots.flatMap((bot) => bot.tasks.flatMap((task) => task.nodeId === null ? [] : [task.nodeId]))), [team]);
   const unassignedSteps = useMemo(() => model.nodes.filter((node) => !assignedNodeIds.has(node.id)), [model, assignedNodeIds]);
-  const nativeKeys = useMemo(() => new Set(Object.keys(nativePersonaLinks)), [nativePersonaLinks]);
 
   // #583: Graph is the default canvas tab; a tab the owner chose this browser session is kept.
   const [canvasTab, setCanvasTab] = useState<CanvasTab>(savedCanvasTab);
-  // #409: the live sessions the Runtime holds, read on every tick while the Journey tab is open;
-  // the chip on a card is read from this list, never from the Open live click. `null` until the
-  // Runtime answered once (an older Runtime without the route keeps the controls hidden).
-  const [liveSessions, setLiveSessions] = useState<LiveSession[] | null>(null);
-  const [liveOpening, setLiveOpening] = useState<Array<{ contractId: string; stepId: string }>>([]);
-  useEffect(() => {
-    const client = clientRef.current;
-    if (client === null || !connected || canvasTab !== "journey") return undefined;
-    let cancelled = false;
-    Promise.resolve().then(() => client.liveSessions()).then((view) => {
-      if (!cancelled) setLiveSessions(view.sessions);
-    }, () => { /* no live route, or a refused read: the controls stay as they were */ });
-    return () => { cancelled = true; };
-  }, [connected, canvasTab, clock, lastJpdSequence, liveOpening]);
-  const openLive = useCallback(async (contractId: string, stepId: string) => {
-    const client = clientRef.current;
-    if (client === null) throw new Error("Not connected.");
-    const key = { contractId, stepId };
-    setLiveOpening((current) => [...current, key]);
-    try {
-      await client.openLive(contractId, { stepId, ...(selected === "" ? {} : { executionId: selected }) });
-    } finally {
-      setLiveOpening((current) => current.filter((entry) => entry.contractId !== contractId || entry.stepId !== stepId));
-    }
-  }, [selected]);
   // #465: Watch plays a flow in a headed browser (#462); the call answers when the play ends, and
   // the sessions read above lights the current step meanwhile.
-  const [watchingFlow, setWatchingFlow] = useState<string | null>(null);
-  const [chosenFlow, setChosenFlow] = useState<{ id: string; status: string } | null>(null);
-  const selectFlow = useCallback((id: string, status: string) => setChosenFlow({ id, status }), []);
   // #519: opening a journey runs its test; the flowchart reads the run and its frames from here.
   const journeyRun = useMemo<JourneyRunSource>(() => {
     const client = () => {
@@ -2227,8 +2173,6 @@ export default function App({
       read: async (flowId) => client().journeyRun(flowId),
       screenFrame: async (flowId, screenId) => client().journeyScreenFrame(flowId, screenId),
       liveFrame: async (sessionId, etag) => client().liveFrame(sessionId, etag),
-      setupPlayer: async () => client().setupJourneyObserver(),
-      readPlayerSetup: async () => client().journeyObserverSetup(),
     };
   }, []);
   // #518: the owner marks a draft's skipped step safe; the flows are read again to show the mark.
@@ -2248,7 +2192,7 @@ export default function App({
   const [missionFrames, setMissionFrames] = useState<Record<string, string>>({});
   useEffect(() => {
     const client = clientRef.current;
-    if (client === null || canvasTab !== "graph" || journeysView === null) return undefined;
+    if (client === null || (canvasTab !== "graph" && canvasTab !== "journey") || journeysView === null) return undefined;
     let cancelled = false;
     for (const journey of journeysView.journeys) {
       client.journeyRun(journey.contractId).then(
@@ -2262,7 +2206,7 @@ export default function App({
   const missionFrameKeys = useRef(new Map<string, { key: string; url: string | null }>());
   useEffect(() => {
     const client = clientRef.current;
-    if (client === null || canvasTab !== "graph") return;
+    if (client === null || (canvasTab !== "graph" && canvasTab !== "journey")) return;
     for (const [contractId, run] of Object.entries(missionRuns)) {
       for (const [screenId, screen] of Object.entries(run?.screens ?? {})) {
         if (!screen.frame) continue;
@@ -2322,44 +2266,18 @@ export default function App({
   const watchFlow = useCallback(async (flowId: string, path?: string) => {
     const client = clientRef.current;
     if (client === null) throw new Error("Not connected.");
-    setWatchingFlow(flowId);
     try {
       await client.watchFlow(flowId, path);
     } finally {
-      setWatchingFlow(null);
       setFlowsRevision((revision) => revision + 1);
     }
   }, []);
-  // While a play runs, read the sessions often enough for the lit step to follow the browser.
-  useEffect(() => {
-    const client = clientRef.current;
-    if (client === null || watchingFlow === null) return undefined;
-    let cancelled = false;
-    const read = () => {
-      client.liveSessions().then((view) => { if (!cancelled) setLiveSessions(view.sessions); }, () => { /* the next tick retries */ });
-    };
-    const timer = window.setInterval(read, 700);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [watchingFlow]);
-  const closeLive = useCallback(async (sessionId: string) => {
-    const client = clientRef.current;
-    if (client === null) throw new Error("Not connected.");
-    await client.closeLive(sessionId);
-    setLiveSessions((current) => current === null ? current : current.filter((session) => session.sessionId !== sessionId));
-  }, []);
-  const [mobileTab, setMobileTab] = useState<"chat" | "team" | "journeys">("team");
   const [graphFileOpen, setGraphFileOpen] = useState(false);
-  const [answering, setAnswering] = useState<{ asker: string; signalId: string | null; task?: string | null } | null>(null);
-  const [composerFocus, setComposerFocus] = useState(0);
-  const [highlight, setHighlight] = useState<number | null>(null);
-  const [mainChatSeed, setMainChatSeed] = useState<{ text: string; nonce: number } | null>(null);
-  const [nativeRefresh, setNativeRefresh] = useState(0);
-  useEffect(() => { setAnswering(null); setHighlight(null); setMainChatSeed(null); setCanvasTab(savedCanvasTab()); }, [selected]);
+  useEffect(() => { setCanvasTab(savedCanvasTab()); }, [selected]);
   const graphFileInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (fileFocusNonce > 0) {
       setCanvasTab("team");
-      setMobileTab("team");
       setGraphFileOpen(true);
       window.setTimeout(() => graphFileInput.current?.focus(), 0);
     }
@@ -2404,21 +2322,16 @@ export default function App({
   const openRecords = (sequences: number[]) => {
     const first = sequences[0];
     if (first === undefined) return;
-    const owner = threads.find((candidate) => candidate.messages.some((message) => message.sequence === first));
-    if (owner !== undefined && sequences.length === 1) { setThread(owner.key); setHighlight(first); setMobileTab("chat"); return; }
     citationOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setMobileTab(canvasTab === "team" ? "team" : "journeys");
     setCitedRecords({ executionId: selected, sequences });
   };
-  const answerQuestion = (asker: string, signalId: string | null, task: string | null = null) => {
-    const key = botKeyOf(team.bots, asker) ?? asker;
-    setThread(`direct:${key}`);
-    setAnswering({ asker, signalId, ...(task ? { task } : {}) });
-    setComposerFocus((nonce) => nonce + 1);
-    setMobileTab("chat");
+  const answerQuestion = (asker: string, signalId: string | null) => {
+    setTalkOpen(true);
+    setSayTo(asker);
+    setSayAnswer({ asker, signalId });
+    setFocus({ kind: "run" });
+    setSayFocusNonce((nonce) => nonce + 1);
   };
-  const onRequestsChange = useCallback((requests: NativeChatRequest[]) => setNativeRequests(requests), []);
-
   if (!connected) {
     return <Connect onConnect={(token) => void connect(token)} busy={connecting} error={error} />;
   }
@@ -2437,7 +2350,6 @@ export default function App({
   const pendingOwnerReview = durableProposals.length > 0;
   const currentReplyIssue = replyIssue !== null && replyIssue.key === replyKey ? replyIssue.text : null;
   const currentReplySuggestions = replySuggestions !== null && replySuggestions.key === replyKey ? replySuggestions.reply : null;
-  const replyIsOlder = currentReplySuggestions !== null && status !== null && currentReplySuggestions.headSequence < status.headSequence;
   const blockedAttentionNode = status?.attentionReasons.find((reason) =>
     (reason.kind === "blocked_node" || reason.kind === "untriaged_interruption") && typeof reason.node === "string")?.node ?? null;
   const effectiveAttention = pendingOwnerReview && status !== null ? "needs_you" : status?.attention;
@@ -2670,11 +2582,6 @@ export default function App({
     }
   };
 
-  const threadsWithAnswer = answering !== null && !threads.some((candidate) => candidate.key === thread)
-    ? [...threads, { key: thread, kind: "direct" as const, label: botNames[answering.asker] ?? answering.asker,
-      participants: [botKeyOf(team.bots, answering.asker) ?? answering.asker], messages: [] }]
-    : threads;
-
   const conversationVisible = talkOpen && (draft !== null || !["node", "agent", "talk"].includes(focus.kind));
 
   const onGraphFileChange = (value: string) => {
@@ -2691,7 +2598,6 @@ export default function App({
   const chooseCanvas = (tab: CanvasTab) => {
     setCanvasTab(tab);
     try { sessionStorage.setItem(CANVAS_TAB_KEY, tab); } catch { /* storage refused: the choice lasts this page only */ }
-    setMobileTab(tab === "team" ? "team" : "journeys");
   };
   /** The one legal action for a blocked or waiting step, or for a pending proposal. */
   const stepActions = (item: StepItem | DraftItem): ReactNode => {
@@ -2836,9 +2742,8 @@ export default function App({
               state={needs.state}
               onOpen={() => {
                 // #402: the cards live in the Needs you thread; the beacon opens it.
-                setThread(NEEDS_YOU);
-                setAnswering(null);
-                setMobileTab("chat");
+                setTalkOpen(true);
+                setFocus({ kind: "run" });
                 window.setTimeout(() => {
                   const target = document.getElementById(NEEDS_YOU_ID);
                   target?.scrollIntoView?.({ block: "start" });
@@ -2993,66 +2898,15 @@ export default function App({
             )}
           </section>
         ) : (
-          <div className="studio-columns" data-mobile-tab={mobileTab}>
-            <div className="mobile-tabs" role="tablist" aria-label="Studio columns">
-              {(["chat", "team", "journeys"] as const).map((tab) => (
-                <button key={tab} id={`studio-tab-${tab}`} type="button" role="tab" aria-selected={mobileTab === tab}
-                  aria-controls={`studio-panel-${tab}`} tabIndex={mobileTab === tab ? 0 : -1}
-                  onKeyDown={(event) => {
-                    const tabs = ["chat", "team", "journeys"] as const;
-                    const index = tabs.indexOf(tab);
-                    const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length]
-                      : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length]
-                      : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[2] : null;
-                    if (next === null) return;
-                    event.preventDefault();
-                    setMobileTab(next);
-                    if (next !== "chat") setCanvasTab(next === "team" ? "team" : "journey");
-                    document.getElementById(`studio-tab-${next}`)?.focus();
-                  }}
-                  onClick={() => { setMobileTab(tab); if (tab !== "chat") setCanvasTab(tab === "team" ? "team" : "journey"); }}>
-                  {tab === "chat" ? "Chat" : tab === "team" ? "Team" : "Journeys"}
-                </button>
-              ))}
-            </div>
-            <ChatColumn
-              threads={threadsWithAnswer} selected={thread} onSelect={(key) => { setThread(key); setThreadChosen(true); setAnswering(null); setHighlight(null); }} unread={unread}
-              bots={team.bots} names={botNames} openingCount={openingCount}
-              cardCount={needs.items.length}
-              cards={<QuestionCards items={needs.items} names={botNames} busy={busy || saying === "chat"}
-                onChoose={(item, choice) => void say(choice, item.asker, "chat", item.signalId, "operator_note", item.kind === "question" ? item.task ?? null : null)}
-                onAnswer={(item) => answerQuestion(item.asker, item.signalId, item.kind === "question" ? item.task ?? null : null)}
-                onRefuse={(item) => void refuse(item)}
-                onCheck={() => setNativeRefresh((nonce) => nonce + 1)}
-                stepActions={stepActions} />}
-              jev={{ suggestions: currentReplySuggestions?.state === "ready" ? currentReplySuggestions.suggestions : [], loading: replyLoading, issue: currentReplyIssue, older: replyIsOlder, onRetry: () => setReplyRetry((nonce) => nonce + 1) }}
-              nativeKeys={nativeKeys}
-              principal={<aside className="main-chat-rail" aria-label="Principal conversation">
-                <MainChat key={`main-${selected}`} client={clientRef.current} executionId={selected} personas={mainChatPersonas}
-                  refreshSequence={status.headSequence ?? 0} recipientId={thread.startsWith("direct:") ? thread.slice("direct:".length) : null}
-                  seed={mainChatSeed} refreshNonce={nativeRefresh} onRequestsChange={onRequestsChange}
-                  onConnect={() => {
-                    const first = model.nodes[0];
-                    if (first) {
-                      // #585: the step's window opens with its chat picker open, not one more
-                      // "Connect existing chat" to press.
-                      setConnectingNode(first.id);
-                      setFocus({ kind: "node", id: first.id });
-                    }
-                  }} />
-              </aside>}
-              onSend={async (text, to, replyTo, task) => {
-                // The Answering chip stays until the answer is confirmed, so a refused one can be retried.
-                const ok = await say(text, to, "chat", replyTo, "operator_note", task ?? null);
-                if (ok) setAnswering(null);
-                return ok;
-              }}
-              sending={saying === "chat"} sendError={sayError?.via === "chat" ? sayError.text : ""}
-              answering={answering} onClearAnswer={() => setAnswering(null)} composerFocus={composerFocus} highlight={highlight}
-              onUseSuggestion={(text) => setMainChatSeed((current) => ({ text, nonce: (current?.nonce ?? 0) + 1 }))}
-            />
+          <div className="studio-columns">
             {talkOpen && (
             <aside id="conversation-panel" className="talk" hidden={!conversationVisible}>
+              <QuestionCards items={needs.items} names={botNames} busy={busy || saying === "run"}
+                onChoose={(item, choice) => void say(choice, item.asker, "run", item.signalId, "operator_note", item.task ?? null)}
+                onAnswer={(item) => answerQuestion(item.asker, item.signalId)}
+                onRefuse={(item) => void refuse(item)}
+                onCheck={(item) => setFocus({ kind: "node", id: item.nodeId })}
+                stepActions={stepActions} />
               {status.attention === "needs_you" && judgeRoutes.length > 1 && (
                 <label className="judge-route-choice">
                   Jev route
@@ -3141,25 +2995,25 @@ export default function App({
             {/* #583: the Graph tab is the whole page: its own top bar replaces the banner and this strip. */}
             {canvasTab === "team" && <div className="canvas-tabs" role="tablist" aria-label="Canvas views">
               <button type="button" role="tab" aria-selected={canvasTab === "team"} onClick={() => chooseCanvas("team")}>Team (live)</button>
-              <button type="button" role="tab" aria-selected={false} onClick={() => chooseCanvas("journey")}>Journey</button>
+              <button type="button" role="tab" aria-selected={false} onClick={() => chooseCanvas("journey")}>Proof</button>
               <button type="button" role="tab" aria-selected={false} onClick={() => chooseCanvas("graph")}>Graph</button>
             </div>}
             <div
               className="scene"
               style={dockReservePx === null ? undefined : ({ "--dock-reserve": `${dockReservePx}px` } as CSSProperties)}
             >
-            <div id="studio-panel-team" role="tabpanel" aria-labelledby="studio-tab-team" hidden={canvasTab !== "team"}>
+            <div id="studio-panel-team" role="tabpanel" aria-label="Team" hidden={canvasTab !== "team"}>
             {canvasTab === "team" && taskGraphs?.executionId === selected && (
               <DelegationTree tasks={taskGraphs.tasks} />
             )}
             {canvasTab === "team" && taskGraphs?.executionId === selected && (
               <TaskGraphs tasks={taskGraphs.tasks}
-                onOpenJourney={(contractId) => { setJourneyContract(contractId); setJourneyDetail(null); chooseCanvas("journey"); }} />
+                  onOpenJourney={(contractId) => { setJourneyContract(contractId); chooseCanvas("journey"); }} />
             )}
             {canvasTab === "team" && (
               <TeamCanvas storageKey={`graphhelm.team-positions:${projectKey}:${selected}`} bots={team.bots} otherRecorders={team.otherRecorders}
                 links={links} unassignedSteps={unassignedSteps} selectedBot={thread.startsWith("direct:") ? thread.slice(7) : null}
-                onSelectBot={(key) => { setThread(`direct:${key}`); setAnswering(null); }}
+                onSelectBot={(key) => { setThread(`direct:${key}`); }}
                 onOpenBotDetails={(key) => setFocus({ kind: "agent", id: key })}
                 onNameBot={nameBot}
                 onOpenNode={(id) => { nodeFocusOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setFocus({ kind: "node", id }); }}
@@ -3171,24 +3025,14 @@ export default function App({
             )}
             </div>
             {(canvasTab === "graph" || canvasTab === "journey") && (
-              <div id={canvasTab === "journey" ? "studio-panel-journeys" : "studio-panel-graph"} role="tabpanel" aria-label={canvasTab === "journey" ? "Journeys" : "Graph"} aria-labelledby={canvasTab === "journey" ? "studio-tab-journeys" : undefined}>
-                <SlotPoll client={clientRef.current}>{(slots) => <MissionView wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} flows={flowsRead.view?.flows ?? []} tasks={runTasks ?? []} taskRecords={taskGraphs?.executionId === selected ? taskGraphs.records : []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} runFor={missionRunFor}
-                  initialView={canvasTab === "journey" ? "journeys" : "graph"}
-                  journeyContent={<>
-                    <JourneyFlows view={flowsRead.view} failure={flowsRead.failure} onApprove={approveFlow} focusFlowId={journeyContract}
-                      sessions={liveSessions} onSelect={selectFlow} run={journeyRun} onMarkSafe={markFlowEdgeSafe} {...(liveSessions === null ? {} : { onWatch: watchFlow })} />
-                    {(chosenFlow === null || chosenFlow.status !== "draft") &&
-                      <JourneyCanvas view={journeysView} failed={journeysFailed} failure={journeysFailure} contractId={chosenFlow?.id ?? journeyContract} onSelectContract={setJourneyContract}
-                        pickerHidden={chosenFlow !== null}
-                        loadImage={(id, run) => (clientRef.current === null ? Promise.reject(new Error("no client")) : clientRef.current.readImage(run ?? selected, id))}
-                        executionId={selected} events={eventList} botName={botNameOf} beforeAfter={beforeAfter} onOpenRecords={openRecords}
-                        detailStepId={journeyDetail} onDetailStepChange={setJourneyDetail}
-                        {...(liveSessions === null ? {} : { liveSessions, opening: liveOpening, onOpenLive: openLive, onCloseLive: closeLive })} />}
-                  </>}
+              <div id="studio-panel-graph" role="tabpanel" aria-label={canvasTab === "journey" ? "Proof" : "Graph"}>
+                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={taskGraphs?.executionId === selected ? taskGraphs.records : []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} runFor={missionRunFor}
+                  initialView={canvasTab === "journey" ? "proof" : "graph"} focusJourneyId={journeyContract}
+                  flows={flowsRead.view} onApprove={approveFlow} onWatch={watchFlow}
+
                   run={journeyRun} onRun={recordMissionRun}
                   lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe}
-                  runName={selected} lastRecordAt={Date.parse(eventList[eventList.length - 1]?.occurredAt ?? "")} onTeam={() => chooseCanvas("team")} onJourneys={() => chooseCanvas("journey")}
-                  draftJourneys={flowsRead.view?.flows.filter((flow) => flow.status === "draft").length ?? 0}
+                  runName={selected} lastRecordAt={Date.parse(eventList[eventList.length - 1]?.occurredAt ?? "")} onTeam={() => chooseCanvas("team")}
                   agents={team.bots} away={handover ? { minutes: handover.gapMinutes, shipped: handover.shipped.length } : null}
                   runNodes={model.nodes} unassignedNodeIds={unassignedSteps.map((node) => node.id)}
                   onOpenNode={(id) => { nodeFocusOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setFocus({ kind: "node", id }); }}
@@ -3369,7 +3213,6 @@ export default function App({
                     // with its excuse in a tooltip a disabled button never shows.
                     if (graphFile.trim().length === 0 && resumeGraph === null && !snapshotResumeAvailable) {
                       setCanvasTab("team");
-                      setMobileTab("team");
                       setGraphFileOpen(true);
                       setFileFocusNonce((nonce) => nonce + 1);
                       return;
@@ -3615,11 +3458,10 @@ export default function App({
                   }
                   nativeChats={
                     <NativeChats
-                      key={`native-${selected}-${node.id}-${connectingNode === node.id}`}
+                      key={`native-${selected}-${node.id}`}
                       client={clientRef.current}
                       executionId={selected}
                       nodeId={node.id}
-                      startOpen={connectingNode === node.id}
                       refreshSequence={status?.headSequence ?? 0}
                       onLinkPersona={(chat, charter) => linkNativePersona(node.id, chat, charter)}
                     />
@@ -3633,11 +3475,11 @@ export default function App({
               journeys={journeysView?.journeys ?? []} beforeAfter={beforeAfter} botName={botNameOf}
               journeysLoading={journeysView === null && !journeysFailed && selected !== null}
               pairsLoading={capturesOpening > 0}
-              onOpenJourney={(contractId) => { setJourneyContract(contractId); setJourneyDetail(null); chooseCanvas("journey"); }}
+              onOpenJourney={(contractId) => { setJourneyContract(contractId); chooseCanvas("journey"); }}
               onOpenPair={(pair: BeforeAfterPair) => {
                 const known = journeysView?.journeys.some((j) => j.contractId === pair.contractId && j.steps.some((step) => step.stepId === pair.stepId)) ?? false;
                 if (!known) { openRecords([pair.before.sequence, pair.after.sequence]); return; }
-                setJourneyContract(pair.contractId); setJourneyDetail(pair.stepId); chooseCanvas("journey");
+                setJourneyContract(pair.contractId); chooseCanvas("journey");
               }} />
             {openDocument && <DocumentEditor document={openDocument.reference}
               readDocument={readProjectDocument} saveDocument={saveProjectDocument}

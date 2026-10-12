@@ -39,17 +39,8 @@
   --mv-tone: var(--mv-ready); --mv-tint: rgba(154, 167, 255, 0.08); --mv-ring: rgba(154, 167, 255, 0.4);
 }
 
-/* The Graph tab takes the whole main area: the chat column and right panel step aside.
-   #591: only above the phone breakpoint. On a phone the Chat tab already hides the canvas column,
-   so hiding the chat column there too left an empty page; the phone tabs pick one column instead. */
-.studio-columns:has(.mv[data-wide="true"]) > .right-panel {
-  display: none;
-}
-@media (min-width: 769px) {
-  .studio-columns:has(.mv[data-wide="true"]:not([data-chat="open"])) > :is(.chat-column) {
-    display: none;
-  }
-}
+/* The mission view uses the full canvas width. */
+.studio-columns:has(.mv[data-wide="true"]) > .right-panel { display: none; }
 
 /* Header: the sub-tabs as the design's segmented nav. */
 .mv-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
@@ -143,11 +134,6 @@
 .mv-empty { padding: 18px; background: #111216; border: 1px solid #1E2026; border-radius: 14px; }
 .mv-group { width: 100%; }
 .mv[data-page="full"] > .mv-pad { padding: 18px 24px; }
-.mv-journey-content { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; gap: 12px; padding: 18px 24px; overflow-y: auto; }
-.mv-journey-content > .journey-flows { flex: 0 1 auto; min-height: 0; }
-.mv-journey-content > .journey-flows:last-child { max-height: none; flex: 1 1 auto; }
-.mv-journey-content > .journey-canvas { flex: 1 1 auto; min-height: 0; height: auto; }
-
 /* #591: the other cards are a plain row and a 4px segment bar; then the agents right now. */
 .mv-segs { display: flex; gap: 3px; }
 .mv-seg { flex: 1 1 0; height: 4px; border-radius: 2px; }

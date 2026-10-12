@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-refuse-question
-title: Refuse a question an agent asked
+title: Refuse an agent question from the run panel
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -9,34 +9,23 @@ secrets: []
 risks: [critical_ux, ambiguous_behavior]
 screens:
   - id: asked
-    title: "A question is waiting under Needs you (demo: asked by planner)"
+    title: The run panel offers Refuse on the question
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: complementary, name: Chat}, {role: tablist, name: Threads}, {role: region, name: Needs you}, {role: heading, name: planner asks}, {role: button, name: Answer}, {role: button, name: Refuse}]
-    scope: [apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/client.ts]
-  - id: mission
-    title: Open the chat from the mission
+    expect: [{role: region, name: Needs you}, {role: heading, name: planner asks}, {role: button, name: Refuse}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts]
+  - id: run
+    title: A question needs an owner decision
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: group, name: Go to}, {role: button, name: Chat}]
-    scope: [apps/studio/src/components/mission-view.tsx]
-  - id: refused
-    title: The refusal is saved and the card leaves Needs you
-    url: /?session=studio-fixture
-    state: success
-    expect: [{role: complementary, name: Chat}, {role: tablist, name: Threads}, {role: region, name: Needs you}, {role: article, name: Implementação concluída is blocked.}]
-    scope: [apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/components/chat-column.tsx]
+    expect: [{role: button, name: 1 decision needs you}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx]
 edges:
-  - id: asked.refuse
-    from: asked
-    to: refused
-    acts:
-      - {kind: activate, role: button, name: Refuse}
-  - id: mission.chat
-    from: mission
+  - id: run.asked
+    from: run
     to: asked
     acts:
-      - {kind: activate, role: button, name: Chat}
+      - {kind: activate, role: button, name: 1 decision needs you}
 paths:
-  main: [mission.chat, asked.refuse]
+  main: [run.asked]
 drift: []

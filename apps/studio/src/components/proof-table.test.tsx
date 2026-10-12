@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
 import { ProofTable } from "./proof-table";
 import type { Mission } from "../runtime/mission";
+import type { JourneyRunSource } from "./journey-flows";
 
 const userEvent = fastUserEvent();
 
@@ -18,6 +19,18 @@ const mission: Mission = {
 };
 
 describe("ProofTable", () => {
+  it("reports a Proof rerun so its step evidence can refresh", async () => {
+    const onRun = vi.fn();
+    const run: JourneyRunSource = {
+      start: vi.fn(async () => ({ state: "ready" as const, kind: "preview" as const, result: "pass" as const, screens: { mark: { result: "pass" as const, frame: false } } })),
+      read: vi.fn(async () => ({ state: "none" as const, screens: {} })),
+      screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null),
+    };
+    render(<ProofTable mission={mission} onOpenTest={vi.fn()} run={run} onRun={onRun}
+      flow={{ id: "j", title: "J", status: "draft", approved: null, drift: [], findings: [], approvable: true, screens: [], edges: [], paths: {} }} />);
+    await userEvent.click(screen.getByRole("button", { name: "Run again" }));
+    await waitFor(() => expect(onRun).toHaveBeenCalledWith(expect.objectContaining({ state: "ready", result: "pass" })));
+  });
   it("#813: draft note is a muted line below the clean question", () => {
     render(<ProofTable mission={{ ...mission, title: "Add a model (draft: the test setup has no model gateway)" }} onOpenTest={vi.fn()} />);
     expect(screen.getByRole("heading", { name: 'Can I trust “Add a model”?' })).toBeInTheDocument();
@@ -50,14 +63,5 @@ describe("ProofTable", () => {
     expect(onOpenTest).toHaveBeenCalledWith("next");
   });
 
-  it("without a replay handler the disabled replay button has helper text", async () => {
-    const { unmount } = render(<ProofTable mission={mission} onOpenTest={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "Replay whole journey" })).toBeDisabled();
-    expect(screen.getByText("Start it from the journey panel.")).toBeInTheDocument();
-    unmount();
-    const onReplay = vi.fn();
-    render(<ProofTable mission={mission} onOpenTest={vi.fn()} onReplay={onReplay} />);
-    await userEvent.click(screen.getByRole("button", { name: "Replay whole journey" }));
-    expect(onReplay).toHaveBeenCalled();
-  });
+
 });

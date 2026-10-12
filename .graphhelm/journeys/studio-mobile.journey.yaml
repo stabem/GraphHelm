@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-mobile
-title: "On a phone, switch between Chat, Team and Journeys"
+title: Open Proof on a phone without a chat column
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -9,35 +9,24 @@ secrets: []
 risks: [accessibility, critical_ux]
 viewport: {width: 390, height: 844}
 screens:
-  - id: chat
-    title: "On a phone: the Chat tab"
+  - id: graph
+    title: The mission graph fits the phone canvas
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: tablist, name: Studio columns}, {role: complementary, name: Chat}, {role: textbox, name: Message}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/styles.css, apps/studio/src/dock-reserve.ts, apps/studio/src/components/chat-column.tsx]
-  - id: journeys
-    title: "On a phone: the Journeys tab"
-    url: /?session=studio-fixture
-    state: empty
-    expect: [{role: tablist, name: Studio columns}, {role: heading, name: Journeys to approve}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/styles.css, apps/studio/src/dock-reserve.ts, apps/studio/src/components/journey-flows.tsx]
-  - id: team
-    title: "On a phone: the Team tab (shown first)"
+    expect: [{role: region, name: Canvas}, {role: tablist, name: Mission views}, {role: tab, name: Proof}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/styles.css, apps/studio/src/components/mission-view.tsx]
+  - id: proof
+    title: Proof remains visible on the phone
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: tablist, name: Studio columns}, {role: tab, name: Chat}, {role: tab, name: Journeys}, {role: region, name: Canvas}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/styles.css, apps/studio/src/dock-reserve.ts, apps/studio/src/components/team-canvas.tsx]
+    expect: [{role: tabpanel, name: Proof}, {role: region, name: Proof}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/styles.css, apps/studio/src/components/proof-table.tsx]
 edges:
-  - id: chat.journeys
-    from: chat
-    to: journeys
+  - id: graph.proof
+    from: graph
+    to: proof
     acts:
-      - {kind: activate, role: tab, name: Journeys}
-  - id: team.chat
-    from: team
-    to: chat
-    acts:
-      - {kind: activate, role: tab, name: Chat}
+      - {kind: activate, role: tab, name: Proof}
 paths:
-  main: [team.chat, chat.journeys]
+  main: [graph.proof]
 drift: []

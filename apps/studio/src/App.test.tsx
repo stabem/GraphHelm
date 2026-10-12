@@ -56,6 +56,7 @@ const PAUSED_EVIDENCE: MutationEvidence = {
 function stubClient(overrides: Record<string, unknown> = {}) {
   return {
     connected: true,
+    listNativeChatRequests: vi.fn(async () => ({ requests: [] })),
     dispose: vi.fn(),
     health: vi.fn(async () => undefined),
     listExecutions: vi.fn(async () => ({
@@ -206,18 +207,6 @@ beforeEach(() => sessionStorage.setItem("graphhelm.studio.canvas-tab", "team"));
 describe("Studio organization and responsive navigation", () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => localStorage.clear());
-
-  // DOM-only, no native calls: protects the entry point missing from the owner journey.
-  it("opens the principal conversation inside the chat column beside the team canvas", async () => {
-    render(<App createClient={() => stubClient() as unknown as RuntimeClient} modelContext={null} session={async () => ({ token: "local-token", project: "GraphHelm", projectPath: "fixtures/project" })} />);
-    const team = await screen.findByRole("region", { name: "Team" });
-    const principal = screen.getByRole("complementary", { name: "Principal conversation" });
-    expect(principal).toBeVisible();
-    expect(screen.getByRole("complementary", { name: "Chat" })).toContainElement(principal);
-    expect(principal.compareDocumentPosition(team) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Free canvas" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Overview" })).toBeNull();
-  });
 
   it("keeps the selected project and run address visible outside the mobile rail without guessing membership", async () => {
     await open(stubClient());
@@ -466,6 +455,18 @@ describe("live team layout", () => {
     await waitFor(() => expect(cards).toHaveFocus());
   });
 
+  it("reports a waiting native chat request without MainChat", async () => {
+    const calm = { ...STATUS, attention: "can_sleep", attentionReasons: [], nodeStateCounts: { ready: 1 } };
+    const runtime = stubClient({
+      getStatus: vi.fn(async () => calm),
+      listNativeChatRequests: vi.fn(async () => ({ requests: [{ requestId: "request-1", nodeId: "implementation", threadId: "chat-1", title: "Owner reply", sourceDirectory: "C:/work", state: "blocked" }] })),
+    });
+    await open(runtime);
+    const beacon = await screen.findByRole("button", { name: "1 decision needs you" });
+    await userEvent.click(beacon);
+    expect(within(screen.getByRole("region", { name: "Needs you" })).getByText(/Owner reply/)).toBeInTheDocument();
+  });
+
   it("goes dark when the Runtime answers and nothing is open", async () => {
     const calm = { ...STATUS, attention: "can_sleep", attentionReasons: [], nodeStateCounts: { ready: 1 } };
     await open(stubClient({ getStatus: vi.fn(async () => calm) }));
@@ -530,17 +531,15 @@ describe("live team layout", () => {
     expect(within(nav).getAllByRole("tab").map((t) => t.textContent)).toEqual(["Graph", "Lanes", "Proof"]);
   });
 
-  it("keeps the Studio navigation when Journeys opens, then returns to the mission graph", async () => {
-    sessionStorage.clear();
+  it("restores the retired journey tab as Proof and chat as Graph", async () => {
+    sessionStorage.setItem("graphhelm.studio.canvas-tab", "journey");
     await open(stubClient());
-    await userEvent.click(await screen.findByRole("button", { name: "Journeys" }));
-    const nav = screen.getByRole("tablist", { name: "Mission views" });
-    expect(within(nav).getByRole("tab", { name: "Graph" })).toBeInTheDocument();
-    expect(within(nav).getByRole("tab", { name: "Lanes" })).toBeInTheDocument();
-    expect(within(nav).getByRole("tab", { name: "Proof" })).toBeInTheDocument();
-    expect(screen.queryByRole("tablist", { name: "Canvas views" })).toBeNull();
-    await userEvent.click(within(nav).getByRole("tab", { name: "Graph" }));
-    expect(screen.getByText("Mission graph")).toBeInTheDocument();
+    expect(await screen.findByRole("tabpanel", { name: "Proof" })).toBeInTheDocument();
+    cleanup();
+    sessionStorage.setItem("graphhelm.studio.canvas-tab", "chat");
+    await open(stubClient());
+    expect(await screen.findByRole("tabpanel", { name: "Graph" })).toBeInTheDocument();
+    expect(screen.queryByRole("tablist", { name: "Studio columns" })).toBeNull();
   });
 
   it("does not show run A's handover after switching to run B", async () => {
@@ -560,37 +559,12 @@ describe("live team layout", () => {
   it("resume without a graph file selects the Team tab and focuses the graph field by state", async () => {
     const paused = { ...STATUS, status: "paused", attentionReasons: [] };
     await open(stubClient({ getStatus: vi.fn(async () => paused) }));
-    await userEvent.click(screen.getByRole("tab", { name: "Journey" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
     await userEvent.click(screen.getByRole("button", { name: "resume" }));
     expect(screen.getByRole("tab", { name: "Team (live)" })).toHaveAttribute("aria-selected", "true");
     await waitFor(() => expect(screen.getByLabelText("Graph file path on the Runtime host")).toHaveFocus());
   });
 
-
-  it("links mobile tabs to panels and moves selection and focus with arrows, Home and End", async () => {
-    await open(stubClient());
-    const tabs = within(screen.getByRole("tablist", { name: "Studio columns" }));
-    const team = tabs.getByRole("tab", { name: "Team" });
-    const chat = tabs.getByRole("tab", { name: "Chat" });
-    const journeys = tabs.getByRole("tab", { name: "Journeys" });
-    expect(chat).toHaveAttribute("tabindex", "-1");
-    team.focus();
-    await userEvent.keyboard("{ArrowRight}");
-    expect(journeys).toHaveFocus();
-    expect(journeys).toHaveAttribute("aria-selected", "true");
-    const panel = document.getElementById(journeys.getAttribute("aria-controls")!);
-    expect(panel).toHaveAttribute("role", "tabpanel");
-    expect(panel).toHaveAttribute("aria-labelledby", journeys.id);
-    await userEvent.keyboard("{ArrowRight}");
-    expect(chat).toHaveFocus();
-    expect(document.getElementById(chat.getAttribute("aria-controls")!)).toHaveAttribute("role", "tabpanel");
-    await userEvent.keyboard("{End}");
-    expect(journeys).toHaveFocus();
-    await userEvent.keyboard("{Home}");
-    expect(chat).toHaveFocus();
-    await userEvent.keyboard("{ArrowLeft}");
-    expect(journeys).toHaveFocus();
-  });
 
   it("opens the exact lifecycle record cited by a handover line instead of the whole run", async () => {
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
@@ -614,65 +588,6 @@ describe("live team layout", () => {
     expect(screen.queryByRole("dialog", { name: "Cited records" })).toBeNull();
   });
 
-  it("below 768 px the Chat / Team / Journeys tabs choose the one visible column", async () => {
-    await open(stubClient());
-    const layout = document.querySelector(".studio-columns") as HTMLElement;
-    const tabs = within(screen.getByRole("tablist", { name: "Studio columns" }));
-    await userEvent.click(tabs.getByRole("tab", { name: "Chat" }));
-    expect(layout).toHaveAttribute("data-mobile-tab", "chat");
-    await userEvent.click(tabs.getByRole("tab", { name: "Journeys" }));
-    expect(layout).toHaveAttribute("data-mobile-tab", "journeys");
-    expect(screen.getByRole("button", { name: "Journeys" })).toHaveAttribute("aria-pressed", "true");
-    await userEvent.click(tabs.getByRole("tab", { name: "Team" }));
-    expect(layout).toHaveAttribute("data-mobile-tab", "team");
-  });
-
-  it("shows a capture recorded in one run while another run is selected (#332)", async () => {
-    const capture = { signalId: "cap-cart", executionId: "demo-deploy", sequence: 9, recordedAt: "2026-08-27T12:00:00Z", imageEvidenceId: "img-cart",
-      revision: "abcdef1234567", dirty: false, viewport: { width: 800, height: 600 }, observer: "kit-1", freshness: "fresh", changedFiles: [] };
-    const view = { head: "abc", journeys: [{ contractId: "checkout", title: "Checkout", arrows: [],
-      steps: [{ stepId: "cart", screen: { screenId: "cart", title: "Cart", scopePaths: ["src/cart"] }, capture, promises: [] }] }] };
-    const journeys = vi.fn(async (executionId?: string) => (executionId === undefined ? view : { head: "abc", journeys: [] }));
-    const readImage = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
-    Object.assign(URL, { createObjectURL: vi.fn(() => "blob:cart"), revokeObjectURL: vi.fn() });
-    await open(stubClient({ journeys, readImage }));
-    await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByText("demo-calm", { exact: true }).closest("button")!);
-    await userEvent.click(screen.getByRole("tab", { name: "Journey" }));
-    const card = await screen.findByRole("button", { name: "Cart, open detail" });
-    expect(card).not.toHaveTextContent("Not captured yet");
-    expect(journeys).toHaveBeenCalledWith();
-    expect(journeys.mock.calls.every((call: unknown[]) => call.length === 0)).toBe(true);
-    await waitFor(() => expect(readImage).toHaveBeenCalledWith("demo-deploy", "img-cart"));
-    await userEvent.click(card);
-    expect(screen.getByRole("dialog", { name: "Cart detail" })).toHaveTextContent("Captured in run demo-deploy (not the selected run)");
-  });
-
-  // #465: one source of truth for which journey is on screen. The map below followed its own
-  // picker while the list above had another journey selected, and a draft showed proof labels
-  // ("Not captured yet", Open live) where the owner's only actions are Watch and Approve.
-  it("the journey map follows the list, has no picker of its own, and is not shown for a draft", async () => {
-    const step = (stepId: string) => ({ stepId, screen: { screenId: stepId, title: stepId, scopePaths: ["src"] }, capture: null, promises: [] });
-    const view = { head: "abc", journeys: [
-      { contractId: "checkout", title: "Checkout", arrows: [], steps: [step("cart")] },
-      { contractId: "paid", title: "Paid order", arrows: [], steps: [step("receipt")] },
-    ] };
-    const flowOf = (id: string, status: string, approvable: boolean) => ({ id, title: `${id} flow`, status, approvable, drift: [], findings: [],
-      approved: status === "approved" ? { revision: "a".repeat(40), digest: "sha256:b" } : null,
-      screens: [{ id: "s", url: "/", state: "stable" }], edges: [], paths: {} });
-    const journeyFlows = vi.fn(async () => ({ flows: [flowOf("checkout", "draft", true), flowOf("paid", "approved", false)] }));
-    await open(stubClient({ journeys: vi.fn(async () => view), journeyFlows }));
-    await userEvent.click(screen.getByRole("tab", { name: "Journey" }));
-    expect(await screen.findByRole("article", { name: "Journey checkout flow" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Journey" })).toBeNull();
-    expect(screen.queryByText("Not captured yet")).toBeNull();
-
-    await userEvent.click(within(screen.getByRole("list", { name: "Journeys" })).getByRole("button", { name: /^paid flow/ }));
-    const map = await screen.findByRole("region", { name: "Journey" });
-    expect(within(map).queryByRole("combobox")).toBeNull();
-    expect(within(map).getByRole("button", { name: "receipt, open detail" })).toBeInTheDocument();
-    expect(within(map).queryByRole("button", { name: "cart, open detail" })).toBeNull();
-  });
-
   // #855: browsing does not run a journey. An explicit Run still names the selected execution
   // so the replay proof has a run to land in.
   it("runs an approved journey only on click and names the selected run", async () => {
@@ -680,10 +595,10 @@ describe("live team layout", () => {
       approved: { revision: "a".repeat(40), digest: "sha256:b" }, screens: [{ id: "s", url: "/", state: "stable" }], edges: [], paths: {} }] };
     const startJourneyRun = vi.fn(async () => ({ state: "none" }));
     await open(stubClient({ journeyFlows: vi.fn(async () => flows), startJourneyRun }));
-    await userEvent.click(screen.getByRole("tab", { name: "Journey" }));
-    await screen.findByRole("article", { name: "Journey paid flow" });
+    await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
+    await screen.findByRole("group", { name: "Journey actions" });
     expect(startJourneyRun).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    await userEvent.click(screen.getByRole("button", { name: "Run again" }));
     await waitFor(() => expect(startJourneyRun).toHaveBeenCalledWith("paid", true, "demo-deploy"));
   });
 });
@@ -780,6 +695,7 @@ describe("opening", () => {
     expect(await screen.findByRole("heading", { name: "This run needs you" })).toBeVisible();
     expect(screen.getByText(/waiting for owner review/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
+    await userEvent.click(screen.getByRole("button", { name: /decision needs you/ }));
     const proposalCards = await screen.findByRole("region", { name: "Needs you" });
     expect(proposalCards).toHaveTextContent("A proposal is waiting for your review.");
     expect(within(proposalCards).getByRole("button", { name: "Review proposal" })).toBeInTheDocument();
@@ -2438,32 +2354,6 @@ describe("the answer path", () => {
     expect(firstCall(client.signal)[2]).not.toHaveProperty("to");
   });
 
-  /** #410: landing on Needs you is the thread the owner is shown, so it is the one marked read.
-   * The derived landing left the state on Everyone and silently marked the room's messages read. */
-  it("lands on Needs you without marking the room's messages read", async () => {
-    const room = { description: "Room: deploy window opens at 18:00" };
-    const base = askedClient();
-    const client = askedClient({
-      getEvents: vi.fn(async () => ({
-        head: 14,
-        events: [
-          { sequence: 12, kind: "signal_recorded", payload: { kind: "operator_note", signalId: "n-0", sourceKind: "agent" },
-            occurredAt: "2026-08-27T12:00:00Z", actorId: "codex", actorType: "agent", idempotencyKey: "k12", eventId: "event-12",
-            evidenceRefs: ["ev-room"] },
-          ...(await (base.getEvents as () => Promise<{ events: unknown[] }>)()).events,
-        ],
-      })),
-      readEvidence: vi.fn(async (executionId: string, evidenceId: string) => evidenceId === "ev-room"
-        ? { evidenceId, mediaType: "application/json", sensitivity: "confidential", contentSha256: "sha256:whatever", content: JSON.stringify(room) }
-        : (base.readEvidence as (a: string, b: string) => Promise<unknown>)(executionId, evidenceId)),
-    });
-    await open(client);
-    await screen.findByLabelText("Needs you");
-    const chat = screen.getByRole("complementary", { name: "Chat" });
-    expect(await within(chat).findByRole("tab", { name: /^Needs you/ })).toHaveAttribute("aria-selected", "true");
-    expect(await within(chat).findByRole("tab", { name: "Everyone, 1 unread" })).toBeInTheDocument();
-  });
-
   it("quotes the unanswered question and addresses its asker", async () => {
     const client = askedClient();
     await open(client);
@@ -2474,9 +2364,9 @@ describe("the answer path", () => {
 
     // Answering from here delivers to the creditor.
     await userEvent.click(within(why).getByRole("button", { name: "Answer" }));
-    const chat = screen.getByRole("complementary", { name: "Chat" });
-    await userEvent.type(within(chat).getByLabelText("Message"), "usa a 8080");
-    await userEvent.click(within(chat).getByRole("button", { name: "Send" }));
+    const panel = screen.getByLabelText(/^Run (?!side panel)/);
+    await userEvent.type(within(panel).getByLabelText(/say something into this run/i), "usa a 8080");
+    await userEvent.click(runSend());
     await waitFor(() => expect(client.signal).toHaveBeenCalled());
     expect(firstCall(client.signal)[2]).toMatchObject({ to: "codex" });
   });
@@ -2494,13 +2384,12 @@ describe("the answer path", () => {
     const why = await screen.findByLabelText("Needs you");
     await within(why).findByText(/Qual porta devo usar para o deploy\?/);
     await userEvent.click(within(why).getByRole("button", { name: "Answer" }));
-    const chat = screen.getByRole("complementary", { name: "Chat" });
-    await userEvent.type(within(chat).getByLabelText("Message"), "usa a 8080");
-    await userEvent.click(within(chat).getByRole("button", { name: "Send" }));
+    const panel = screen.getByLabelText(/^Run (?!side panel)/);
+    await userEvent.type(within(panel).getByLabelText(/say something into this run/i), "usa a 8080");
+    await userEvent.click(runSend());
     await waitFor(() => expect(client.signal).toHaveBeenCalled());
-    expect(await within(chat).findByRole("alert")).toHaveTextContent("not now");
-    expect(within(chat).getByLabelText("Message")).toHaveValue("usa a 8080");
-    expect(within(chat).getByText(/^Answering/)).toBeInTheDocument();
+    expect(await within(panel).findByRole("alert")).toHaveTextContent("not now");
+    expect(within(panel).getByLabelText(/say something into this run/i)).toHaveValue("usa a 8080");
   });
 
   it("an answered question is no longer owed", async () => {
@@ -2989,31 +2878,6 @@ describe("round-2: the ledger settles debts honestly", () => {
     await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
   });
 
-  /** #327: on a busy run the head moves every few seconds while Jev takes ~30s. Advice written for
-   * an older head still answers the SAME pending question, so it is shown (labelled in the chat
-   * column), and the head moving must not restart the request. */
-  it("shows recommendations prepared for an older head while the question is unchanged, without re-asking", async () => {
-    const client = stubClient({
-      listRoutes: vi.fn(async () => ({ configured: true, routes: [{
-        id: "judge", provider: "typesafe", transport: "direct_api", billingMode: "per_token",
-        model: "jev-latest", profiles: [], enabled: true,
-      }] })),
-      getReplySuggestions: vi.fn(async () => ({
-        executionId: "demo-deploy", headSequence: 12, state: "ready", suggestions: [
-          { to: null, draft: "Old answer one", reason: "old", sourceSequences: [12] },
-          { to: null, draft: "Old answer two", reason: "old", sourceSequences: [12] },
-        ],
-      })),
-    });
-    await open(client);
-    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const choices = await screen.findByRole("group", { name: "Recommended replies" });
-    expect(within(choices).getByRole("button", { name: /Old answer one/ })).toBeInTheDocument();
-    expect(await screen.findByText("Based on the run as of a moment ago")).toBeInTheDocument();
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(client.getReplySuggestions).toHaveBeenCalledTimes(1);
-  });
-
   /** #396 (spec §8): a Runtime with no Jev model is a state, not an error. The chat shows no Jev
    * card and no Retry (nothing can be retried), and run details says so in one line. */
   it("shows no Jev card when the Runtime has no Jev model, only a line in run details", async () => {
@@ -3030,32 +2894,6 @@ describe("round-2: the ledger settles debts honestly", () => {
 
   /** #327: an unavailable answer is a visible state with a Retry button, never "preparing"
    * forever, and nothing asks again until the owner presses Retry. */
-  it("shows why Jev could not prepare a suggestion and retries only when asked", async () => {
-    const client = stubClient({
-      listRoutes: vi.fn(async () => ({ configured: true, routes: [{
-        id: "judge", provider: "typesafe", transport: "direct_api", billingMode: "per_token",
-        model: "jev-latest", profiles: [], enabled: true,
-      }] })),
-      getReplySuggestions: vi.fn(async () => ({
-        executionId: "demo-deploy", headSequence: 13, state: "unavailable", reason: "model or Jev could not produce valid suggestions", suggestions: [],
-      })),
-    });
-    await open(client);
-    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const jev = await screen.findByRole("region", { name: "Jev suggests" });
-    expect(await within(jev).findByText(/Jev could not prepare a suggestion: model or Jev/)).toBeInTheDocument();
-    expect(within(jev).queryByText(/preparing a suggestion/)).toBeNull();
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(client.getReplySuggestions).toHaveBeenCalledTimes(1);
-    await userEvent.click(within(jev).getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(client.getReplySuggestions).toHaveBeenCalledTimes(2));
-  });
-});
-
-describe("round-2: the live tail neither starves nor freezes", () => {
-  /** The 4s poll replaced the events array every tick even when nothing changed, re-running
-   * the envelope fetches forever — and past 200 events the page silently stopped seeing new
-   * ones while still looking live. */
   it("does not re-open envelopes when a poll tick brings nothing new", async () => {
     const client = askedClient();
     render(
@@ -3393,9 +3231,9 @@ describe("round-4: the debt can actually be settled", () => {
     const why = await screen.findByLabelText("Needs you");
     await within(why).findByText(/Qual porta devo usar/);
     await userEvent.click(within(why).getByRole("button", { name: "Answer" }));
-    const chat = screen.getByRole("complementary", { name: "Chat" });
-    await userEvent.type(within(chat).getByLabelText("Message"), "usa a 8080");
-    await userEvent.click(within(chat).getByRole("button", { name: "Send" }));
+    const panel = screen.getByLabelText(/^Run (?!side panel)/);
+    await userEvent.type(within(panel).getByLabelText(/say something into this run/i), "usa a 8080");
+    await userEvent.click(runSend());
 
     await waitFor(() => expect(client.signal).toHaveBeenCalled());
     expect(firstCall(client.signal)[2]).toMatchObject({ to: "codex", replyTo: "q-1" });

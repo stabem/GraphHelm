@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-answer-question
-title: Answer a question an agent asked
+title: Answer an agent from the run panel
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -8,47 +8,35 @@ actors: [owner]
 secrets: []
 risks: [critical_ux, ambiguous_behavior]
 screens:
-  - id: answered
-    title: Your answer is saved and the question is settled
-    url: /?session=studio-fixture
-    state: success
-    expect: [{role: tabpanel, name: planner}, {role: textbox, name: Message}]
-    scope: [apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/client.ts]
   - id: answering
-    title: "A private chat with the agent who asked, ready for your answer"
+    title: The run panel addresses the asking agent
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: button, name: Clear}, {role: textbox, name: Message}, {role: button, name: Send}]
-    scope: [apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/threads.ts]
+    expect: [{role: textbox, name: Say something into this run}, {role: button, name: Send}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/panel.tsx]
   - id: asked
-    title: "A question is waiting under Needs you (demo: asked by planner)"
+    title: The pending question is shown in the run panel
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: complementary, name: Chat}, {role: tablist, name: Threads}, {role: region, name: Needs you}, {role: heading, name: planner asks}, {role: button, name: Answer}, {role: button, name: Refuse}]
-    scope: [apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx]
-  - id: mission
-    title: Open the chat from the mission
+    expect: [{role: region, name: Needs you}, {role: heading, name: planner asks}, {role: button, name: Answer}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts]
+  - id: run
+    title: A run has a question for the owner
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: group, name: Go to}, {role: button, name: Chat}]
-    scope: [apps/studio/src/components/mission-view.tsx]
+    expect: [{role: button, name: 1 decision needs you}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx]
 edges:
-  - id: answering.send
-    from: answering
-    to: answered
-    acts:
-      - {kind: enter_text, role: textbox, name: Message, text: "Staging first, then production."}
-      - {kind: activate, role: button, name: Send}
-  - id: asked.answer
+  - id: asked.answering
     from: asked
     to: answering
     acts:
       - {kind: activate, role: button, name: Answer}
-  - id: mission.chat
-    from: mission
+  - id: run.asked
+    from: run
     to: asked
     acts:
-      - {kind: activate, role: button, name: Chat}
+      - {kind: activate, role: button, name: 1 decision needs you}
 paths:
-  main: [mission.chat, asked.answer, answering.send]
+  main: [run.asked, asked.answering]
 drift: []

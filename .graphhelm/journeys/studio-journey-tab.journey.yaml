@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-journey-tab
-title: Open Journeys from a run's Mission graph
+title: Review a journey in Proof
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -8,24 +8,24 @@ actors: [owner]
 secrets: []
 risks: [critical_ux]
 screens:
-  - id: journey
-    title: Journeys inside the Studio shell
+  - id: proof
+    title: Proof shows the journey and its review actions
     url: /?session=studio-fixture
-    state: empty
-    expect: [{role: tablist, name: Mission views}, {role: tab, name: Graph}, {role: button, name: Journeys}, {role: tabpanel, name: Journeys}, {role: region, name: Journey flows}, {role: heading, name: Journeys to approve}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/mission-view.tsx, apps/studio/src/components/journey-canvas.tsx, apps/studio/src/components/journey-flows.tsx, apps/studio/src/components/right-panel.tsx, apps/studio/src/runtime/journeys.ts]
+    state: stable
+    expect: [{role: tabpanel, name: Proof}, {role: region, name: Proof}, {role: navigation, name: Journeys}, {role: group, name: Journey actions}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/mission-view.tsx, apps/studio/src/components/proof-table.tsx]
   - id: run
     title: A run is open on its Mission graph
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: Canvas}, {role: tablist, name: Mission views}, {role: button, name: Journeys}]
+    expect: [{role: region, name: Canvas}, {role: tablist, name: Mission views}, {role: tab, name: Proof}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/mission-view.tsx]
 edges:
-  - id: run.journey
+  - id: run.proof
     from: run
-    to: journey
+    to: proof
     acts:
-      - {kind: activate, role: button, name: Journeys}
+      - {kind: activate, role: tab, name: Proof}
 paths:
-  main: [run.journey]
+  main: [run.proof]
 drift: []

@@ -50,7 +50,6 @@
 .proof-ev-mark[data-mark="warn"] { color: #F5A524; }
 .proof-ev-txt { min-width: 0; color: #C7CBD3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .proof-call { display: flex; flex-direction: column; gap: 8px; align-items: stretch; min-width: 0; }
-.proof-replay { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .proof-hint { color: #A9AEB8; font-size: 12px; line-height: 1.4; overflow-wrap: break-word; }
 .proof-primary, .proof-secondary { box-sizing: border-box; min-height: 40px; padding: 0 14px; border-radius: 8px; font: 600 13px var(--sans); cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; text-align: center; text-decoration: none; }
@@ -74,3 +73,7 @@
   .proof-n { grid-row: 1 / span 4; align-self: start; }
   .proof-frame { max-width: 280px; }
 }
+.proof-flow-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; border: 1px solid #2A2D34; border-radius: 10px; }
+.proof-flow-actions button { min-height: 36px; padding: 6px 12px; border: 1px solid #575D6B; border-radius: 7px; background: #22252D; color: inherit; cursor: pointer; }
+.proof-flow-actions button:disabled { opacity: .55; cursor: default; }
+.proof-flow-actions p { flex-basis: 100%; margin: 0; color: #FF6B5E; }

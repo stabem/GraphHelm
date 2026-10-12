@@ -1,75 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { Bot } from "./team";
-import type { TaskState } from "./team-tasks";
-import type { RuntimeEvent } from "./types";
-import type { WorkMessage } from "./work-conversation";
-import { autoThread, chatThreads, describeActivity, namesOf, parseMention, sealedNotesPending, unreadCounts } from "./threads";
+import { describeActivity, namesOf, parseMention } from "./threads";
 
 const bot = (key: string, name: string): Bot => ({ key, actorId: key, name, hue: 0, role: null, doingNow: "", lastRecordAt: null,
   lastSequence: 0, state: "working", quietMinutes: null, shared: false, native: false, tasks: [] });
 const BOTS = [bot("coordinator", "Coordinator"), bot("kit-1", "loja kit 1"), bot("kit-2", "loja kit 2")];
-const msg = (sequence: number, sender: string, to: string | null): WorkMessage => ({ id: `event-${sequence}`, sequence, sender, to,
-  replyTo: null, text: `m${sequence}`, at: null, provenance: "stored", acknowledged: false });
-
-describe("chatThreads", () => {
-  const threads = chatThreads([msg(1, "coordinator", null), msg(2, "kit-1", "kit-2"), msg(3, "kit-2", "kit-1"),
-    msg(4, "studio-operator", "kit-1"), msg(5, "kit-1", "studio-operator")], BOTS, "studio-operator");
-
-  // #393 (spec §8): agent-to-agent pair tabs are gone; a message between two agents with no task is
-  // said to the room, and only the owner's own line with one agent keeps a direct thread.
-  it("splits Everyone and direct lines with the owner, with no pair thread between two agents", () => {
-    expect(threads.map((thread) => [thread.key, thread.kind, thread.label, thread.messages.map((m) => m.sequence)])).toEqual([
-      ["everyone", "everyone", "Everyone", [1, 2, 3]],
-      ["direct:kit-1", "direct", "loja kit 1", [4, 5]],
-    ]);
-  });
-
-  it("always offers Everyone, even with no messages", () => {
-    expect(chatThreads([], BOTS, "studio-operator").map((thread) => thread.key)).toEqual(["everyone"]);
-  });
-
-  it("counts unread messages since a tab was last opened", () => {
-    expect(unreadCounts(threads, { everyone: 1 })).toEqual({ everyone: 2, "direct:kit-1": 2 });
-  });
-});
-
-/* #393 (spec §8): threads follow the tasks of the Team tab. These cells catch a fold that keeps
- * threading by actor pair, loses a tagged message to Everyone, or never retires a finished task.
- * Cost: pure functions, milliseconds. */
-describe("task threads", () => {
-  const tagged = (sequence: number, sender: string, to: string | null, task: string, at: string | null = null): WorkMessage =>
-    ({ ...msg(sequence, sender, to), task, at });
-  const task = (taskId: string, fields: Partial<TaskState>): TaskState => ({ key: taskId, taskId, branch: null, issue: null, pr: null, lane: null, headSha: null,
-    journeys: [], step: "implement", blockedBy: null, reviewers: [], mergeSha: null, repoUrl: null, title: null, summary: null, prTitle: null, prSummary: null, strayVerdicts: [], critic: null, recordedHeads: [], parent: null, rounds: [], clock: { since: null, spent: {} }, lastSequence: 0, ...fields });
-  const now = Date.parse("2026-10-08T12:00:00Z");
-
-  it("folds messages tagged with one task into one thread labelled by its PR, and untagged ones into Everyone", () => {
-    const result = chatThreads(
-      [tagged(1, "kit-1", "kit-2", "issue-384", "2026-10-08T11:00:00Z"), msg(2, "kit-2", "kit-1"), tagged(3, "kit-2", null, "issue-384", "2026-10-08T11:30:00Z")],
-      BOTS, "studio-operator", [task("issue-384", { issue: 384, pr: 388, lastSequence: 3 })], now);
-    expect(result.map((thread) => [thread.key, thread.kind, thread.label, thread.messages.map((m) => m.sequence), thread.older ?? false])).toEqual([
-      ["everyone", "everyone", "Everyone", [2], false],
-      ["task:issue-384", "task", "PR #388 · issue #384", [1, 3], false],
-    ]);
-  });
-
-  it("opens a task's thread from its records before its first message, titled by the issue", () => {
-    const result = chatThreads([], BOTS, "studio-operator", [task("issue-390", { issue: 390 })], now);
-    expect(result.map((thread) => [thread.key, thread.label])).toEqual([["everyone", "Everyone"], ["task:issue-390", "Issue #390"]]);
-  });
-
-  it("marks a merged task, or one quiet for the threshold, as older", () => {
-    const result = chatThreads(
-      [tagged(1, "kit-1", null, "issue-1", "2026-10-08T01:00:00Z"), tagged(2, "kit-1", null, "issue-2", "2026-10-08T11:00:00Z")],
-      BOTS, "studio-operator",
-      [task("issue-1", { issue: 1 }), task("issue-2", { issue: 2 }), task("issue-3", { issue: 3, step: "merged" })], now);
-    expect(Object.fromEntries(result.filter((thread) => thread.kind === "task").map((thread) => [thread.key, thread.older]))).toEqual({
-      "task:issue-1": true, "task:issue-2": false, "task:issue-3": true,
-    });
-  });
-});
-
 describe("parseMention", () => {
   it("targets one bot by its display name, longest name first", () => {
     expect(parseMention("@loja kit 2 please rebase", BOTS)).toEqual({ to: "kit-2", text: "please rebase" });
@@ -77,14 +13,6 @@ describe("parseMention", () => {
   });
   it("leaves an unknown mention as plain text to everyone", () => {
     expect(parseMention("@nobody hi", BOTS)).toEqual({ to: null, text: "@nobody hi" });
-  });
-});
-
-describe("sealedNotesPending", () => {
-  it("counts operator notes whose envelope is not opened yet", () => {
-    const note = (sequence: number): RuntimeEvent => ({ sequence, kind: "signal_recorded", payload: { kind: "operator_note" }, occurredAt: null,
-      actorId: "kit-1", actorType: "agent", idempotencyKey: null, eventId: null, evidenceRefs: ["ev"] });
-    expect(sealedNotesPending([note(1), note(2)], { 1: { to: null, replyTo: null, text: "x" } })).toBe(1);
   });
 });
 
@@ -126,23 +54,5 @@ describe("describeActivity", () => {
     const cut = JSON.stringify({ protocol: "graphhelm-screen-capture-v1", contractId: "kit", stepId: "cart", observer: "x".repeat(300) }).slice(0, 220);
     expect(describeActivity({ sequence: 4, actorId: "kit-1", occurredAt: null, text: cut }, names, {}, "studio-operator").text)
       .toBe("loja kit 1 recorded a record");
-  });
-});
-
-/* #414: which thread the chat should move to on its own. The cells catch the two defects named on
- * #413: a card arriving mid-read pulling the owner away a second time, and the thread state
- * staying on Needs you after the last card settled. Cost: a pure function, microseconds. */
-describe("autoThread", () => {
-  it("lands on Needs you once, only while the owner has not chosen a thread", () => {
-    expect(autoThread({ thread: "everyone", chosen: false, landed: false, cards: 1 })).toBe("needs-you");
-    expect(autoThread({ thread: "everyone", chosen: false, landed: true, cards: 2 })).toBeNull();
-    expect(autoThread({ thread: "everyone", chosen: true, landed: false, cards: 1 })).toBeNull();
-    expect(autoThread({ thread: "everyone", chosen: false, landed: false, cards: 0 })).toBeNull();
-  });
-
-  it("leaves Needs you for Everyone when the last card settles", () => {
-    expect(autoThread({ thread: "needs-you", chosen: false, landed: true, cards: 0 })).toBe("everyone");
-    expect(autoThread({ thread: "needs-you", chosen: true, landed: true, cards: 0 })).toBe("everyone");
-    expect(autoThread({ thread: "needs-you", chosen: false, landed: true, cards: 1 })).toBeNull();
   });
 });

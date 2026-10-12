@@ -1709,6 +1709,7 @@ export default function App({
   const [claudeTaskRead, setClaudeTaskRead] = useState<ClaudeTaskReadModel | null>(null);
   // #391: the per-task graphs, folded from the run's `task.*` records.
   const [taskGraphs, setTaskGraphs] = useState<{ executionId: string; tasks: TaskState[]; records: TaskEventRecord[] } | null>(null);
+  const [partialTaskGraphs, setPartialTaskGraphs] = useState<{ executionId: string; records: TaskEventRecord[] } | null>(null);
   // A recent page gives the Graph useful work while the complete history is still rebuilding.
   // It is provisional: the full fold below replaces it, and the view keeps its loading label.
   const [recentTaskGraphs, setRecentTaskGraphs] = useState<{ executionId: string; tasks: TaskState[]; records: TaskEventRecord[] } | null>(null);
@@ -1734,15 +1735,26 @@ export default function App({
     }
     let cancelled = false;
     const run = selected;
+    const client = clientRef.current;
+    setPartialTaskGraphs(null);
     void readRunTeam(run, eventList, openEvidence)
       .then((result) => { if (!cancelled) setRunTeamRead(result); })
       .catch(() => { if (!cancelled) setRunTeamRead({ executionId: run, members: [], messages: [], rejected: 0, unavailable: true }); });
     void readClaudeTasks({ executionId: run, events: eventList, readEvidence: openEvidence })
       .then((result) => { if (!cancelled) setClaudeTaskRead(result); })
       .catch(() => { if (!cancelled) setClaudeTaskRead({ executionId: run, tasks: [], rejected: 1 }); });
-    void readTaskEventRecords({ executionId: run, events: eventList, readEvidence: openEvidence })
-      .then((records) => { if (!cancelled) setTaskGraphs({ executionId: run, tasks: foldTaskEvents(records), records }); })
-      .catch(() => { if (!cancelled) setTaskGraphs({ executionId: run, tasks: [], records: [] }); });
+    void readTaskEventRecords({ executionId: run, events: eventList, readEvidence: openEvidence,
+      shouldContinue: () => !cancelled && clientRef.current === client && selectedRef.current === run,
+      onProgress: (records) => {
+        if (!cancelled && clientRef.current === client && selectedRef.current === run)
+          setPartialTaskGraphs({ executionId: run, records });
+      },
+    })
+      .then((records) => { if (!cancelled && clientRef.current === client) {
+        setTaskGraphs({ executionId: run, tasks: foldTaskEvents(records), records });
+        setPartialTaskGraphs(null);
+      } })
+      .catch(() => { /* Keep the last valid provisional view and unresolved loading state. */ });
     return () => { cancelled = true; };
   }, [selected, events, eventList, openEvidence]);
 
@@ -2154,8 +2166,17 @@ export default function App({
   const [journeyContract, setJourneyContract] = useState<string | null>(null);
   const botNameOf = useCallback((id: string) => botNames[id] ?? id, [botNames]);
   // #393: one thread per task, opened by the run's task.* records.
-  const currentTaskGraphs = taskGraphs?.executionId === selected ? taskGraphs
-    : recentTaskGraphs?.executionId === selected ? recentTaskGraphs : null;
+  const currentTaskGraphs = useMemo(() => {
+    if (taskGraphs?.executionId === selected) return taskGraphs;
+    const recent = recentTaskGraphs?.executionId === selected ? recentTaskGraphs.records : [];
+    const partial = partialTaskGraphs?.executionId === selected ? partialTaskGraphs.records : [];
+    if (recent.length === 0 && partial.length === 0) return null;
+    const bySequence = new Map<number, TaskEventRecord>();
+    for (const record of partial) bySequence.set(record.sequence, record);
+    for (const record of recent) bySequence.set(record.sequence, record);
+    const records = [...bySequence.values()].sort((a, b) => a.sequence - b.sequence);
+    return { executionId: selected!, tasks: foldTaskEvents(records), records };
+  }, [taskGraphs, recentTaskGraphs, partialTaskGraphs, selected]);
   const runTasks = currentTaskGraphs?.tasks ?? null;
   // #479: a message's issue/PR numbers link to the run's GitHub repository (read off its task
   // records) and a journey id it names opens the Journey tab on that journey.
@@ -3052,7 +3073,7 @@ export default function App({
             </div>
             {(canvasTab === "graph" || canvasTab === "journey") && (
               <div id="studio-panel-graph" role="tabpanel" aria-label={canvasTab === "journey" ? "Proof" : "Graph"}>
-                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} events={eventList} envelopes={envelopes} wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && taskGraphs?.executionId !== selected && (recentTaskGraphs?.executionId !== selected || recentTaskGraphs.records.length === 0)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
+                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} events={eventList} envelopes={envelopes} wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && taskGraphs?.executionId !== selected && currentTaskGraphs === null} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
                   initialView={canvasTab === "journey" ? "proof" : "graph"} focusJourneyId={journeyContract}
                   flows={flowsRead.view} onApprove={approveFlow} onWatch={watchFlow}
 

@@ -15,7 +15,7 @@ const t = (over: Partial<MissionTask>): MissionTask => ({
   key: "k", pr: 1, issue: null, title: "t", lane: "gh-claude-6", reviewers: [], step: "implement", blocked: false, trust: 1,
   blockedBy: null, rounds: [], headSha: null, mergeSha: null, repoUrl: null, ...over,
 });
-const round = { reviewer: "r", headSha: "h", fixHead: "f" };
+const round = { reviewer: "r", headSha: "h", fixHead: "f", blockedAt: null };
 
 describe("LanesTimeline", () => {
   it("counts every available status in exactly one filter", async () => {
@@ -134,6 +134,19 @@ describe("LanesTimeline", () => {
     expect(container.querySelector('[data-kind="stuck"]')).toHaveTextContent("STUCKgh-claude-5");
     expect(container.querySelector('[data-kind="pingpong"]')).toHaveTextContent("PING-PONG#560 · 2 BLOCKs");
     expect(container.querySelector('[data-kind="free"]')).toHaveTextContent("FREE HANDSgh-claude-6");
+  });
+
+  it("shows current ping-pong first and keeps merged PRs only for recent BLOCKs", () => {
+    const H = 3_600_000, at = Date.parse("2026-10-12T12:00:00Z");
+    const roundAt = (hoursAgo: number) => ({ ...round, blockedAt: new Date(at - hoursAgo * H).toISOString() });
+    const { container } = render(<LanesTimeline lanes={lanes} now={at} windowMs={14 * H} tasks={[
+      t({ pr: 554, step: "merged", rounds: [roundAt(90), roundAt(80), roundAt(72)] }),
+      t({ pr: 923, step: "review", rounds: [roundAt(3), roundAt(1)] }),
+      t({ pr: 924, step: "merged", rounds: [roundAt(2), roundAt(1)] }),
+    ]} />);
+    const pingPong = container.querySelector('[data-kind="pingpong"]')!;
+    expect(pingPong).toHaveTextContent("#923 · 2 BLOCKs, #924 · 2 BLOCKs");
+    expect(pingPong).not.toHaveTextContent("#554");
   });
 
   it("a card with nothing reads none right now", () => {

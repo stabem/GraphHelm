@@ -14,7 +14,7 @@ const merged: MissionTask = {
 const blocked: MissionTask = {
   ...merged, key: "k560", pr: 560, title: "Opening a journey runs it", lane: "gh-claude-6", reviewers: ["gh-claude-7"], step: "review", trust: 1,
   blocked: true, blockedBy: { reviewer: "gh-claude-7", headSha: "bf76a762ff" }, mergeSha: null, repoUrl: null,
-  rounds: [{ reviewer: "gh-claude-7", headSha: "bf76a762ff", fixHead: null }],
+  rounds: [{ reviewer: "gh-claude-7", headSha: "bf76a762ff", fixHead: null, blockedAt: null }],
 };
 
 const mission: Mission = {

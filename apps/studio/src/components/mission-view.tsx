@@ -137,7 +137,7 @@ export function agentActivity(b: Bot): string {
 export const awayText = (a: { minutes: number; shipped: number }) => `${Math.max(1, Math.round(a.minutes / 60))} h away · ${a.shipped} shipped`;
 /** #735: one stacked bar per work group, plus the same counts in words, instead of a spinner per item. */
 const PROGRESS_ORDER = ["proven", "merged", "work", "stalled", "ready"] as const;
-const PROGRESS_WORD: Record<(typeof PROGRESS_ORDER)[number], string> = { proven: "proven", merged: "merged", work: "in work", stalled: "blocked", ready: "waiting" };
+const PROGRESS_WORD: Record<(typeof PROGRESS_ORDER)[number], string> = { proven: "proven", merged: "merged", work: "in work", stalled: "blocked", ready: "Ready · unclaimed" };
 export function GroupProgress({ states }: { states: string[] }) {
   const counts = PROGRESS_ORDER.map((k) => [k, states.filter((s) => s === k).length] as const).filter(([, n]) => n > 0);
   const total = states.length;
@@ -205,7 +205,7 @@ function journeyStepProgress(mission: Mission): string[] {
   const placed = layoutMission(mission).placed;
   return mission.steps.map((step) => {
     if (step.status === "proven") return "proven";
-    if (step.status === "preview_only") return "remaining";
+    if (step.status === "preview_only" || step.status === "stale") return "remaining";
     const tasks = placed.filter((p) => p.col === step.index).map((p) => p.task);
     if (tasks.some((t) => t.step !== "merged")) return "work";
     if (tasks.some((t) => t.step === "merged")) return "merged";
@@ -267,7 +267,11 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   }, [now]);
   const live = now + tick;
   const [unlinkedOpen, setUnlinkedOpen] = useState(false);
-  const missions = useMemo(() => journeys.map((j) => buildMission(j, runFor(j.contractId), tasks, taskRecords)), [journeys, tasks, taskRecords, runFor]);
+  const missions = useMemo(() => journeys.map((j) => {
+    const flow = flowForContract(flows?.flows ?? [], j.contractId);
+    const digest = flow === undefined ? undefined : flow.status === "approved" ? flow.approved?.digest ?? null : null;
+    return buildMission(j, runFor(j.contractId), tasks, taskRecords, digest);
+  }), [journeys, tasks, taskRecords, runFor, flows]);
   const [goneQuietOpen, setGoneQuietOpen] = useState(false);
   const proofTitles = missions.map((m) => {
     const flow = flowForContract(flows?.flows ?? [], m.contractId);
@@ -428,7 +432,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
     <p className="mg-summary mv-summary" aria-label="Summary">
       <span className="mg-sum" data-tone="proven"><b>{`${gsum.proven}/${group!.tasks.length}`}</b> proven</span>
       <span className="mg-sum" data-tone="work"><b>{gsum.inFlight}</b> in flight</span>
-      <span className="mg-sum" data-tone="ready"><b>{gsum.ready}</b> ready, unclaimed</span>
+      <span className="mg-sum" data-tone="ready"><b>{gsum.ready}</b> Ready · unclaimed</span>
       <span className="mg-sum" data-tone="stalled"><b>{gsum.needYou}</b> need you</span>
       {away && <><span className="mv-sum-fill" /><span className="mv-away">{awayText(away)}</span></>}
     </p>

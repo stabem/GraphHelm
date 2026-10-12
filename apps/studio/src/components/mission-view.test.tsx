@@ -88,13 +88,25 @@ describe("MissionView", () => {
     await user.click(screen.getByRole("button", { name: "Watch" }));
     expect(onWatch).toHaveBeenCalledWith("watch");
   });
+
+  it("shows a pass from a previous approved flow as stale evidence", async () => {
+    const flow: JourneyFlowView = { id: "watch", title: "Watch plays inside the Studio", status: "approved",
+      approved: { revision: "new", digest: "current" }, drift: [], findings: [], approvable: false, screens: [], edges: [], paths: {} };
+    render(<MissionView journeys={journeys} flows={{ flows: [flow] }} tasks={[]} lanes={[]} now={0}
+      runFor={() => ({ state: "ready", kind: "replay", digest: "old", screens: { mark: { frame: true, result: "pass" } } })}
+      frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Proof" }));
+    expect(screen.getByText(/STALE/)).toBeInTheDocument();
+    expect(screen.getByText("This replay belongs to an older flow. Run it again to prove the current flow.")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Journeys" }).querySelector(".mv-journey-count")).toHaveTextContent("0/1");
+  });
   it("goes graph → proof → test canvas on the chosen step", async () => {
     const userEvent = fastUserEvent();
     const onMarkSafe = vi.fn();
     render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0}
       runFor={() => ({ state: "ready", kind: "replay", screens: {}, edges: { mark: { result: "skipped", reason: "data-changing" } } })}
       frameUrl={() => null} onMarkSafe={onMarkSafe} onSendBack={vi.fn()} />);
-    expect(document.querySelector(".mg-summary")).toHaveTextContent("0/1 proven · 0 in flight · 0 ready, unclaimed · 1 need you");
+    expect(document.querySelector(".mg-summary")).toHaveTextContent("0/1 proven · 0 in flight · 0 Ready · unclaimed · 1 need you");
     await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
     await userEvent.click(screen.getByRole("button", { name: "Open test for step 1" }));
     expect(screen.getByRole("region", { name: "Emulated browser" })).toBeInTheDocument();

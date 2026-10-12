@@ -6,7 +6,7 @@ import { liveDuration, stageDuration, type Activity, type StageHealth, type Stag
 import { GRAPH_STAGES, graphCol, graphRow, type PrRow, type WorkGroup, type WorkStage } from "../runtime/work-groups";
 
 export const STATUS_LABEL: Record<StepStatus, string> = {
-  proven: "Proven", failed: "Failed", needs_you: "Needs you", preview_only: "Preview only", not_run: "Not run",
+  proven: "Proven", stale: "Stale", failed: "Failed", needs_you: "Needs you", preview_only: "Preview only", not_run: "Not run",
 };
 
 /** The colour family a node is drawn in (mission-view.css defines the tokens). */
@@ -83,7 +83,7 @@ export function MissionGraph({ mission, selectedStepId, selectedTaskKey, onSelec
         <span className="mg-sep"> · </span>
         <span className="mg-sum" data-tone="work"><b>{summary.inFlight}</b> in flight</span>
         <span className="mg-sep"> · </span>
-        <span className="mg-sum" data-tone="ready"><b>{summary.readyUnclaimed}</b> ready, unclaimed</span>
+        <span className="mg-sum" data-tone="ready"><b>{summary.readyUnclaimed}</b> Ready · unclaimed</span>
         <span className="mg-sep"> · </span>
         <span className="mg-sum" data-tone="stalled"><b>{summary.needYou}</b> need you</span>
       </p>

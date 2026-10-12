@@ -10,6 +10,7 @@ import { useJourneyRun, type JourneyRunSource } from "./journey-flows";
 
 const HINT: Record<StepStatus, string> = {
   proven: "Proven by a machine. Seen by you closes the ladder.",
+  stale: "This replay belongs to an older flow. Run it again to prove the current flow.",
   needs_you: "Only you can close this. Watch it, then mark it safe or send it back.",
   failed: "The replay failed here. Open the test to see what it saw.",
   preview_only: "A draft preview is not proof. Approve the flow to replay it.",
@@ -17,9 +18,9 @@ const HINT: Record<StepStatus, string> = {
 };
 
 const EV: Record<StepStatus, [string, string, string]> = {
-  proven: ["ok", "✓", "PASS"], failed: ["no", "✕", "FAIL"], needs_you: ["warn", "!", "SKIPPED"], preview_only: ["warn", "!", "preview only"], not_run: ["wait", "○", "not replayed yet"],
+  proven: ["ok", "✓", "PASS"], stale: ["warn", "!", "STALE"], failed: ["no", "✕", "FAIL"], needs_you: ["warn", "!", "SKIPPED"], preview_only: ["warn", "!", "preview only"], not_run: ["wait", "○", "not replayed yet"],
 };
-const TONE: Record<StepStatus, string> = { proven: "proven", failed: "stalled", needs_you: "stalled", preview_only: "work", not_run: "ready" };
+const TONE: Record<StepStatus, string> = { proven: "proven", stale: "stalled", failed: "stalled", needs_you: "stalled", preview_only: "work", not_run: "ready" };
 
 interface Props {
   mission: Mission;

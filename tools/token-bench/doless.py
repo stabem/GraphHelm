@@ -632,6 +632,41 @@ def cmd_pair_audit(a: argparse.Namespace, *, emit: bool = True) -> tuple[dict, l
 def cmd_pair_summary(a: argparse.Namespace) -> None:
     """Describe only admitted task pairs; preserve admission exclusions in the report."""
     audit, rows, manifest = cmd_pair_audit(a, emit=False)
+    plan_output = {}
+    if a.analysis_plan:
+        with open(a.analysis_plan, "rb") as source:
+            plan_raw = source.read(4 * 1024 * 1024 + 1)
+        if len(plan_raw) > 4 * 1024 * 1024:
+            raise ValueError("analysis plan exceeds 4 MiB")
+        plan = json.loads(plan_raw, parse_constant=lambda value: (_ for _ in ()).throw(
+            ValueError(f"nonfinite analysis plan number: {value}")))
+        keys = {"version", "manifestSha256", "rowsSha256", "comparison", "split",
+                "independentUnit", "weighting", "costMetric", "minimumCostReductionUsd",
+                "maximumQualityRegression", "assumptionStatement"}
+        if not isinstance(plan, dict) or set(plan) != keys or type(plan["version"]) is not int or plan["version"] != 1:
+            raise ValueError("analysis plan requires exactly version 1 fields")
+        with open(a.manifest, "rb") as source:
+            manifest_raw = source.read(4 * 1024 * 1024 + 1)
+        if (len(manifest_raw) > 4 * 1024 * 1024
+                or plan["manifestSha256"] != hashlib.sha256(manifest_raw).hexdigest()
+                or plan["rowsSha256"] != manifest["rowsSha256"]):
+            raise ValueError("analysis plan input digests do not match")
+        if (plan["comparison"] != audit["comparison"] or
+                plan["weighting"] != "equal_task" or audit["weighting"] != "equal_task" or
+                plan["independentUnit"] != "task" or
+                plan["costMetric"] != "all_attempt_cost_per_proven_delivery_usd" or
+                plan["split"] not in ("train", "test") or
+                any(group["split"] != plan["split"] for group in manifest["groups"])):
+            raise ValueError("analysis plan conflicts with frozen comparison or task split")
+        gain = plan["minimumCostReductionUsd"]
+        margin = plan["maximumQualityRegression"]
+        statement = plan["assumptionStatement"]
+        if (type(gain) not in (int, float) or not math.isfinite(gain) or gain <= 0 or
+                type(margin) not in (int, float) or not math.isfinite(margin) or not 0 <= margin <= 1 or
+                not isinstance(statement, str) or not statement.strip() or len(statement) > 2048):
+            raise ValueError("analysis plan requires finite explicit thresholds and a bounded assumption")
+        plan_output = {"analysisPlan": plan, "analysisPlanSha256": hashlib.sha256(plan_raw).hexdigest(),
+                       "inferenceStatus": "not_implemented"}
     by_session = {row["sessionId"]: row for row in rows}
     groups = {group["task"]: group for group in manifest["groups"]}
 
@@ -664,7 +699,8 @@ def cmd_pair_summary(a: argparse.Namespace) -> None:
                       "deltaCandidateMinusBaseline": delta})
     print(json.dumps({"version": 1, "comparison": audit["comparison"],
                       "weighting": audit["weighting"], "partial": bool(audit["excluded"] or audit["unmatched"]),
-                      "tasks": tasks, "excluded": audit["excluded"], "unmatched": audit["unmatched"]},
+                      "tasks": tasks, "excluded": audit["excluded"], "unmatched": audit["unmatched"],
+                      **plan_output},
                      sort_keys=True))
 
 
@@ -1002,6 +1038,7 @@ def main() -> None:
     summary = sub.add_parser("pair-summary")
     summary.add_argument("--manifest", required=True)
     summary.add_argument("--rows", required=True)
+    summary.add_argument("--analysis-plan")
     summary.set_defaults(fn=cmd_pair_summary)
     a = p.parse_args(); a.fn(a)
 

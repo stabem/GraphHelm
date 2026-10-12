@@ -296,4 +296,9 @@ describe("the Graph WORK rail fits a narrow viewport (#884)", () => {
   it("lets the mobile project title yield to the attention pill", () => {
     expect(CSS).toMatch(/\.topbar-mission\s+\.run-project\s*\{[^}]*min-width:\s*0[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/s);
   });
+
+  it("gives the mobile run title its own readable row", () => {
+    expect(CSS).toMatch(/@media\s*\(max-width:\s*600px\)\s*\{[^}]*\.topbar-mission\s*\{[^}]*flex-basis:\s*100%/s);
+    expect(CSS).toMatch(/@media\s*\(max-width:\s*600px\)\s*\{\s*\.topbar-mission\s*\{[^}]*flex-basis:\s*100%[^}]*\}\s*\.topbar-mission\s+\.run-project\s*\{[^}]*flex-shrink:\s*0/s);
+  });
 });

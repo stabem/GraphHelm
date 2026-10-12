@@ -38,7 +38,9 @@ class LaneStopTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name)
         self.env = {**os.environ, "GRAPHHELM_EVENTS_KEY": "12" * 32,
-                    "GRAPHHELM_EXECUTION_ID": "lane-test", "GRAPHHELM_ACTOR": "codex-4"}
+                    "GRAPHHELM_EXECUTION_ID": "lane-test", "GRAPHHELM_ACTOR": "codex-4",
+                    "LOCALAPPDATA": str(root / "local"),
+                    "XDG_STATE_HOME": str(root / "xdg-state")}
         self.cli = os.environ.get("GRAPHHELM_CLI") or shutil.which("graphhelm")
         self.assertIsNotNone(self.cli, "installed graphhelm is required")
         keyring = root / "keyring"
@@ -343,7 +345,6 @@ class LaneStopTests(unittest.TestCase):
         self.env["HOME"] = str(home)
         self.env["USERPROFILE"] = str(home)
         self.env["GRAPHHELM_EVENTS_KEY"] = "12" * 32
-        self.env.pop("GRAPHHELM_HOOK_STATE_DIR", None)
         self.note("request-desktop", to="codex-4")
         start = {"hook_event_name": "SessionStart", "session_id": "session-desktop",
                  "session_title": "codex-4 - journeys", "cwd": str(repo)}

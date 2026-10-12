@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
 import re
+import signal
 import shutil
 import subprocess
 import sys
@@ -33,7 +34,12 @@ class LaneStopTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name)
         self.env = {**os.environ, "GRAPHHELM_EVENTS_KEY": "12" * 32,
-                    "GRAPHHELM_EXECUTION_ID": "lane-test", "GRAPHHELM_ACTOR": "codex-4"}
+                    "GRAPHHELM_EXECUTION_ID": "lane-test", "GRAPHHELM_ACTOR": "codex-4",
+                    "LOCALAPPDATA": str(root / "local"),
+                    "XDG_STATE_HOME": str(root / "xdg-state")}
+        self.hook_state_dir = root / "hook-state"
+        self.env["GRAPHHELM_HOOK_STATE_DIR"] = str(self.hook_state_dir)
+        self.addCleanup(self.stop_waiters)
         self.cli = os.environ.get("GRAPHHELM_CLI") or shutil.which("graphhelm")
         self.assertIsNotNone(self.cli, "installed graphhelm is required")
         keyring = root / "keyring"
@@ -67,6 +73,19 @@ class LaneStopTests(unittest.TestCase):
     def stop_server(self):
         self.server.terminate()
         self.server.wait(timeout=10)
+
+    def stop_waiters(self):
+        for pid_file in self.hook_state_dir.glob("*.waiter.pid"):
+            try:
+                pid = int(pid_file.read_text())
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                                   capture_output=True, timeout=5, creationflags=NO_WINDOW)
+                else:
+                    os.kill(pid, signal.SIGTERM)
+                pid_file.unlink(missing_ok=True)
+            except (OSError, ValueError):
+                pass
 
     def run_cli(self, *args):
         result = subprocess.run([self.cli, *args], env=self.env, capture_output=True, text=True, timeout=15, creationflags=NO_WINDOW)
@@ -128,7 +147,6 @@ class LaneStopTests(unittest.TestCase):
         self.env["HOME"] = str(home)
         self.env["USERPROFILE"] = str(home)
         self.env["GRAPHHELM_EVENTS_KEY"] = "12" * 32
-        self.env.pop("GRAPHHELM_HOOK_STATE_DIR", None)
         self.note("request-desktop", to="codex-4")
         start = {"hook_event_name": "SessionStart", "session_id": "session-desktop",
                  "session_title": "codex-4 - journeys", "cwd": str(repo)}

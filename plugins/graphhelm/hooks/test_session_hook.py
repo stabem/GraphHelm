@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -152,6 +153,8 @@ class SessionHookTests(unittest.TestCase):
         self.token_file.write_text("test-token", encoding="utf-8")
         self.env = {
             **os.environ,
+            "LOCALAPPDATA": str(Path(self.temp.name) / "local"),
+            "XDG_STATE_HOME": str(Path(self.temp.name) / "xdg-state"),
             "GRAPHHELM_RUNTIME_URL": f"http://127.0.0.1:{self.server.server_port}",
             "GRAPHHELM_TOKEN_FILE": str(self.token_file),
             "GRAPHHELM_HOOK_STATE_DIR": str(Path(self.temp.name) / "state"),
@@ -206,7 +209,23 @@ class SessionHookTests(unittest.TestCase):
         self.assertNotIn("extensions", main_manifest)
 
     def tearDown(self):
+        roots = (Path(self.temp.name) / "state",
+                 Path(self.temp.name) / "local" / "GraphHelm" / "session-hooks")
+        live = []
+        for root in roots:
+            for marker in root.glob("*.waiter.pid"):
+                try:
+                    pid = int(marker.read_text(encoding="ascii"))
+                    if os.name == "nt":
+                        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                                       capture_output=True, timeout=5, creationflags=NO_WINDOW)
+                    else:
+                        os.kill(pid, signal.SIGTERM)
+                    live.append(pid)
+                except (OSError, ValueError):
+                    pass
         self.temp.cleanup()
+        self.assertFalse(live, f"hook test left live waiter markers: {live}")
 
     def test_descriptive_title_binds_leading_lane_id(self):
         spec = importlib.util.spec_from_file_location("session_hook_title", SCRIPT)

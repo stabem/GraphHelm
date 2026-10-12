@@ -1,15 +1,26 @@
+// Without the `postgres` feature the PostgreSQL arm is a stub, and what only it reads goes unused.
+#![cfg_attr(not(feature = "postgres"), allow(dead_code, unused_imports))]
+
 use std::path::Path;
+#[cfg(feature = "postgres")]
 use std::sync::Arc;
 
+#[cfg(feature = "postgres")]
 use graphhelm_events::{ProjectionRebuildRequest, ProjectionRebuilder};
+#[cfg(feature = "postgres")]
 use serde_json::json;
 
-use super::{Failure, argument, config, finish, repository_failure};
+use super::{Failure, finish};
+#[cfg(feature = "postgres")]
+use super::{argument, config, repository_failure};
 use crate::output::Outcome;
 
 const COMMAND: &str = "events.rebuild";
+#[cfg(feature = "postgres")]
 const DEFAULT_PROJECTION: &str = "execution";
+#[cfg(feature = "postgres")]
 const DEFAULT_PROJECTION_VERSION: u32 = 1;
+#[cfg(feature = "postgres")]
 const DEFAULT_PAGE_SIZE: u32 = 1_000;
 
 pub(in crate::commands) struct Request<'a> {
@@ -28,6 +39,12 @@ pub(in crate::commands) fn run(request: Request<'_>) -> Outcome {
 
 /// Projections are durable only in the PostgreSQL adapter, so rebuild is a PostgreSQL-only
 /// operation. The local repository has no projection generation storage to swap.
+#[cfg(not(feature = "postgres"))]
+fn execute(_request: &Request<'_>) -> Result<serde_json::Value, Failure> {
+    Err(super::postgres_unavailable())
+}
+
+#[cfg(feature = "postgres")]
 fn execute(request: &Request<'_>) -> Result<serde_json::Value, Failure> {
     let config_path = config::resolve_path(request.config)?;
     let Some(stream) = request.stream else {

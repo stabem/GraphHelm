@@ -1,3 +1,6 @@
+// Without the `postgres` feature the PostgreSQL arm is a stub, and what only it reads goes unused.
+#![cfg_attr(not(feature = "postgres"), allow(dead_code, unused_imports))]
+
 use std::path::Path;
 
 use graphhelm_events::{
@@ -7,7 +10,9 @@ use graphhelm_events::{
 use graphhelm_protocols::RepositoryScope;
 use serde_json::json;
 
-use super::{Failure, Selector, argument, config, finish, repository_failure};
+#[cfg(feature = "postgres")]
+use super::config;
+use super::{Failure, Selector, argument, finish, repository_failure};
 use crate::output::Outcome;
 
 const COMMAND: &str = "events.verify";
@@ -113,6 +118,15 @@ fn inspection_result(
     }
 }
 
+#[cfg(not(feature = "postgres"))]
+fn verify_postgres(
+    _config_path: &Path,
+    _range: Option<Range>,
+) -> Result<serde_json::Value, Failure> {
+    Err(super::postgres_unavailable())
+}
+
+#[cfg(feature = "postgres")]
 fn verify_postgres(config_path: &Path, range: Option<Range>) -> Result<serde_json::Value, Failure> {
     let configuration = config::load(config_path)?;
     let Some(range) = range else {

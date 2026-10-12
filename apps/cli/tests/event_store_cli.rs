@@ -235,6 +235,7 @@ fn verify_requires_exactly_one_repository_selector() {
 /// Uses `--config`, not `--repository`. Against a local repository `verify_local` refuses any range
 /// with the same code the bounds check produces, so a `--repository` variant of this test stays
 /// green even with the bounds checks deleted and cannot fail on the property it names.
+#[cfg(feature = "postgres")]
 #[test]
 fn verify_rejects_out_of_range_sequence_windows() {
     let directory = TempDir::new().unwrap();
@@ -284,6 +285,7 @@ fn verify_range_requires_a_complete_scope() {
 
 /// Projection generations are durable only in the PostgreSQL adapter, so rebuild is configured
 /// rather than pointed at a local repository directory.
+#[cfg(feature = "postgres")]
 #[test]
 fn rebuild_rejects_a_zero_generation() {
     let directory = TempDir::new().unwrap();
@@ -306,6 +308,7 @@ fn rebuild_rejects_a_zero_generation() {
     assert!(diagnostic_codes(&value).contains(&"GHCLI001_ARGUMENT_INVALID".to_owned()));
 }
 
+#[cfg(feature = "postgres")]
 #[test]
 fn rebuild_requires_a_repository_configuration() {
     let (code, value) = json_output(&[
@@ -326,6 +329,7 @@ fn rebuild_requires_a_repository_configuration() {
 // Backup and restore target validation
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "postgres")]
 #[test]
 fn backup_refuses_an_existing_output_target() {
     let directory = TempDir::new().unwrap();
@@ -345,6 +349,7 @@ fn backup_refuses_an_existing_output_target() {
     assert_eq!(fs::read(&output).unwrap(), b"occupied");
 }
 
+#[cfg(feature = "postgres")]
 #[test]
 fn restore_refuses_a_missing_archive() {
     let directory = TempDir::new().unwrap();
@@ -361,6 +366,7 @@ fn restore_refuses_a_missing_archive() {
     assert!(diagnostic_codes(&value).contains(&"GHCLI001_ARGUMENT_INVALID".to_owned()));
 }
 
+#[cfg(feature = "postgres")]
 #[test]
 fn restore_refuses_an_archive_that_is_not_a_regular_file() {
     let directory = TempDir::new().unwrap();
@@ -381,6 +387,7 @@ fn restore_refuses_an_archive_that_is_not_a_regular_file() {
 
 /// The destination is the database named by the configuration, and the operator refuses to proceed
 /// unless it is already empty. There is deliberately no `--target` flag to validate and discard.
+#[cfg(feature = "postgres")]
 #[test]
 fn restore_exposes_no_target_database_flag() {
     let directory = TempDir::new().unwrap();
@@ -408,6 +415,7 @@ fn restore_exposes_no_target_database_flag() {
 // Config loading: bounded, structured, and safe
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "postgres")]
 #[test]
 fn config_rejects_an_oversized_document() {
     let directory = TempDir::new().unwrap();
@@ -426,6 +434,7 @@ fn config_rejects_an_oversized_document() {
     assert!(diagnostic_codes(&value).contains(&"GHCLI002_CONFIG_INVALID".to_owned()));
 }
 
+#[cfg(feature = "postgres")]
 #[test]
 fn config_rejects_a_malformed_document() {
     let directory = TempDir::new().unwrap();
@@ -443,6 +452,7 @@ fn config_rejects_a_malformed_document() {
     assert!(diagnostic_codes(&value).contains(&"GHCLI002_CONFIG_INVALID".to_owned()));
 }
 
+#[cfg(feature = "postgres")]
 #[test]
 fn config_rejects_an_out_of_range_process_timeout() {
     let directory = TempDir::new().unwrap();
@@ -463,6 +473,7 @@ fn config_rejects_an_out_of_range_process_timeout() {
     }
 }
 
+#[cfg(feature = "postgres")]
 #[test]
 fn config_rejects_a_relative_tool_path() {
     let directory = TempDir::new().unwrap();
@@ -481,6 +492,7 @@ fn config_rejects_a_relative_tool_path() {
     assert!(diagnostic_codes(&rendered).contains(&"GHCLI002_CONFIG_INVALID".to_owned()));
 }
 
+#[cfg(feature = "postgres")]
 #[test]
 fn config_rejects_a_non_sha256_tool_digest() {
     let directory = TempDir::new().unwrap();
@@ -499,6 +511,7 @@ fn config_rejects_a_non_sha256_tool_digest() {
     assert!(diagnostic_codes(&rendered).contains(&"GHCLI002_CONFIG_INVALID".to_owned()));
 }
 
+#[cfg(feature = "postgres")]
 #[test]
 fn config_is_accepted_from_the_environment_variable() {
     let directory = TempDir::new().unwrap();
@@ -521,6 +534,7 @@ fn config_is_accepted_from_the_environment_variable() {
 }
 
 #[cfg(unix)]
+#[cfg(feature = "postgres")]
 #[test]
 fn config_rejects_group_or_world_readable_permissions() {
     use std::os::unix::fs::PermissionsExt;
@@ -540,6 +554,7 @@ fn config_rejects_group_or_world_readable_permissions() {
     assert!(diagnostic_codes(&value).contains(&"GHCLI002_CONFIG_INVALID".to_owned()));
 }
 
+#[cfg(feature = "postgres")]
 #[test]
 fn config_rejects_a_symlinked_path() {
     let directory = TempDir::new().unwrap();
@@ -569,6 +584,7 @@ fn config_rejects_a_symlinked_path() {
 // Redaction: no secrets, paths, or backtraces reach public output
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "postgres")]
 #[test]
 fn failures_never_leak_secrets_paths_or_backtraces() {
     let directory = TempDir::new().unwrap();
@@ -617,5 +633,28 @@ fn every_events_invocation_emits_exactly_one_bounded_envelope() {
     let value: Value = serde_json::from_str(&text).unwrap();
     for key in ["ok", "command", "data", "diagnostics"] {
         assert!(value.get(key).is_some(), "missing {key}");
+    }
+}
+
+/// A default build carries no PostgreSQL store (#980): every `--config` path says so, by name, and
+/// never reaches a config parser that is not compiled in.
+#[cfg(not(feature = "postgres"))]
+#[test]
+fn a_build_without_postgres_names_the_missing_feature() {
+    let directory = TempDir::new().unwrap();
+    let missing = directory.path().join("absent.json");
+    let config = missing.to_str().unwrap();
+    for arguments in [
+        vec!["events", "verify", "--config", config],
+        vec!["events", "rebuild", "--config", config, "--stream", "s"],
+        vec!["events", "backup", "--config", config, "--output", config],
+        vec!["events", "restore", "--config", config, "--archive", config],
+    ] {
+        let (code, value) = json_output(&arguments);
+        assert_ne!(code, 0, "{arguments:?}");
+        assert!(
+            value.to_string().contains("--features postgres"),
+            "{arguments:?}: {value}"
+        );
     }
 }

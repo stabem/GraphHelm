@@ -6,6 +6,12 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+# The PostgreSQL event store (`events --config ...`): ~45 crates (sqlx, rustls, ring) that the
+# default file journal never uses. Off by default so `graphhelm update` compiles less (#980);
+# `cargo install --path apps/cli --features postgres` brings it back. The gate builds --all-features.
+postgres = ["dep:graphhelm-postgres-event-store", "dep:sqlx"]
+
 [[test]]
 name = "cli"
 path = "tests/cli.rs"
@@ -31,7 +37,7 @@ graphhelm-graph = { path = "../../core/graph" }
 graphhelm-model-gateway = { path = "../../adapters/model-gateway" }
 graphhelm-process-tree = { path = "../../adapters/process-tree" }
 graphhelm-policy = { path = "../../core/policy" }
-graphhelm-postgres-event-store = { path = "../../adapters/postgres-event-store" }
+graphhelm-postgres-event-store = { path = "../../adapters/postgres-event-store", optional = true }
 graphhelm-protocols = { path = "../../core/protocols" }
 graphhelm-runtime = { path = "../../core/runtime" }
 graphhelm-schema = { path = "../../core/schema" }
@@ -52,7 +58,7 @@ regex = "=1.13.1"
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
-sqlx.workspace = true
+sqlx = { workspace = true, optional = true }
 # net/io-util are the serve wake sweep's own (serve/wake.rs rings over tokio::net):
 # declared here rather than inherited through axum's feature set (Task 2 review note).
 tokio = { workspace = true, features = ["net", "io-util"] }

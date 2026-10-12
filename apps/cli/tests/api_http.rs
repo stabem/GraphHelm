@@ -2014,8 +2014,8 @@ fn a_bounded_events_tail_stays_fast_at_six_thousand_events() {
     let events = directory.path().join("events");
     let execution = "exec-latency";
     let scope = graphhelm_protocols::RepositoryScope::new(
-        graphhelm_protocols::WorkspaceId::parse("workspace-latency").unwrap(),
-        graphhelm_protocols::ProjectId::parse("project-latency").unwrap(),
+        graphhelm_protocols::WorkspaceId::parse("workspace-local").unwrap(),
+        graphhelm_protocols::ProjectId::parse("project-local").unwrap(),
         Some(graphhelm_protocols::ExecutionId::parse(execution).unwrap()),
     );
     let store = graphhelm_events::LocalEventRepository::open(

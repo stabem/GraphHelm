@@ -2548,6 +2548,14 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 #studio-panel-team > .team-canvas { flex: 1 1 auto; height: auto; min-height: 0; }
 .cited-records { z-index: 20; }
 
+/* #948: the run title and details are repeated in the mission view. On phones keep the primary
+ * navigation, needs-you status and disconnect action in the pinned shell; the tabs stay below. */
+@media (max-width: 600px) {
+  .topbar-mission,
+  .topbar-menu,
+  .topbar button[aria-label="Refresh"] { display: none; }
+}
+
 
 /* #391: one small graph per task in the Team tab, folded from task.* records. */
 .task-graphs { display: grid; gap: 8px; padding: 8px 12px; }

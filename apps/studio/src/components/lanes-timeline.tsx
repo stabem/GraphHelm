@@ -10,11 +10,27 @@ import { slotDuration, type SlotView } from "../runtime/slots";
 const pct = (n: number) => `${Math.round(n * 10000) / 100}%`;
 
 /** The three cards under the lanes, read only from real data: stuck = a lane flagged silent;
- * ping-pong = a task with two or more BLOCK rounds; free hands = a lane with no open bar. */
-export function laneCards(lanes: Lane[], tasks: MissionTask[]) {
+ * ping-pong = an open PR with two or more BLOCK rounds, or a recently blocked merged PR;
+ * free hands = a lane with no open bar. */
+export function laneCards(lanes: Lane[], tasks: MissionTask[], now: number) {
+  const pingPong = tasks
+    .filter((task) => task.rounds.length >= 2)
+    .map((task) => ({
+      task,
+      latestBlockAt: task.rounds.reduce<number | null>((latest, round) => {
+        const blockedAt = round.blockedAt ? Date.parse(round.blockedAt) : NaN;
+        return Number.isFinite(blockedAt) && (latest === null || blockedAt > latest) ? blockedAt : latest;
+      }, null),
+    }))
+    .filter(({ task, latestBlockAt }) => task.step !== "merged" || (latestBlockAt !== null && now - latestBlockAt <= 14 * 60 * 60_000))
+    .sort((a, b) => {
+      const aOpen = a.task.step !== "merged", bOpen = b.task.step !== "merged";
+      return Number(bOpen) - Number(aOpen) || (b.latestBlockAt ?? -Infinity) - (a.latestBlockAt ?? -Infinity);
+    })
+    .map(({ task }) => `${task.pr ? `#${task.pr}` : task.title} · ${task.rounds.length} BLOCKs`);
   return {
     stuck: lanes.filter((l) => l.silent).map((l) => l.lane),
-    pingPong: tasks.filter((t) => t.rounds.length >= 2).map((t) => `${t.pr ? `#${t.pr}` : t.title} · ${t.rounds.length} BLOCKs`),
+    pingPong,
     free: lanes.filter((l) => !l.bars.some((b) => b.open)).map((l) => l.lane),
   };
 }
@@ -178,7 +194,7 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
     if (bot?.key) boardByLane.set(bot.key, row);
   }
   // #591: free hands are the board's Free rows: no open slice, no PR awaiting review, no review owed.
-  const cards = { ...laneCards(lanes, tasks),
+  const cards = { ...laneCards(lanes, tasks, now),
     stuck: lanes.filter((l) => l.silent && boardByLane.get(l.lane)?.status !== "building" && boardByLane.get(l.lane)?.status !== "build_wait").map((l) => l.lane),
     free: board.filter((r) => r.status === "free").map((r) => r.name) };
   const card = (items: string[]) => (items.length ? items.join(", ") : "none right now");

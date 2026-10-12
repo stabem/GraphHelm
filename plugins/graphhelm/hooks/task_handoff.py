@@ -284,8 +284,24 @@ def offer(host: str, session: str, recipient_host: str, recipient_session: str,
     acknowledgement = None
     if existing:
         signal = _sealed_signal(url, token, execution, existing)
-        if signal.get("source", {}).get("id") != _actor(host, session) or signal.get("to") != _actor(recipient_host, recipient_session):
+        sender = _actor(host, session)
+        recipient = _actor(recipient_host, recipient_session)
+        if (signal.get("type") != OFFER_KIND or signal.get("source", {}).get("id") != sender
+                or signal.get("to") != recipient):
             raise ValueError("recorded handoff offer identity does not match this request")
+        try:
+            details = json.loads(signal.get("description", "{}"))
+        except (TypeError, json.JSONDecodeError) as error:
+            raise ValueError("recorded handoff offer metadata is invalid") from error
+        if (not isinstance(details, dict) or details.get("protocol") != PROTOCOL
+                or details.get("executionId") != execution or details.get("offerId") != offer_id
+                or details.get("handoffId") != handoff_id or details.get("sender") != sender
+                or details.get("recipient") != recipient):
+            raise ValueError("recorded handoff offer metadata is invalid")
+        try:
+            _validate_digest(details.get("briefing"))
+        except (TypeError, ValueError, KeyError) as error:
+            raise ValueError("recorded handoff offer briefing reference is invalid") from error
         state = "already_recorded"
     else:
         briefing = _briefing(url, token, execution)

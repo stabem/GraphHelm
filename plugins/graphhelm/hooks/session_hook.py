@@ -263,6 +263,27 @@ def _waiter_path(payload: dict, bound: tuple[str, str, str, str, str | None], ho
     return state_path(bound[0], _session(payload), host, bound[3]).with_suffix(".waiter.pid")
 
 
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        handle = kernel.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            return bool(kernel.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259
+        finally:
+            kernel.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> None:
     """Start one local waiter for a bound session, without replacing a live owner."""
     configured = os.environ.get("GRAPHHELM_EVENTS_DIR")
@@ -272,8 +293,8 @@ def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None
     pid_path = _waiter_path(payload, bound, host)
     try:
         pid = int(pid_path.read_text(encoding="ascii"))
-        os.kill(pid, 0)
-        return
+        if _pid_alive(pid):
+            return
     except (FileNotFoundError, ValueError, OSError):
         pass
     arm_lane_wake(payload, bound)

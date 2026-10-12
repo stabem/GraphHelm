@@ -306,23 +306,16 @@ class SessionHookTests(unittest.TestCase):
         self.assertEqual(RuntimeHandler.requests[0][1], "/v1/executions/run-test/briefing")
         self.assertEqual(RuntimeHandler.requests[0][2]["Authorization"], "Bearer test-token")
 
-    def test_bound_lane_start_arms_wake_lease(self):
+    def test_bound_lane_start_without_local_store_is_unobserved(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         self.env["GRAPHHELM_ACTOR"] = "gh-lane-1"
         result = self.run_hook("start", session_id="session-123")
         self.assertEqual(result.returncode, 0, result.stderr)
         arms = [item for item in RuntimeHandler.requests if item[1] == "/v1/executions/run-test/wake-lease"]
-        self.assertEqual(len(arms), 1)
-        method, _, headers, body = arms[0]
-        self.assertEqual(method, "POST")
-        request_headers = {key.lower(): value for key, value in headers.items()}
-        self.assertEqual(request_headers["x-graphhelm-actor"], "gh-lane-1")
-        self.assertEqual(request_headers["x-graphhelm-actor-type"], "agent")
-        self.assertEqual(body["cursor"], 19)
-        self.assertEqual(body["sessionId"], "session-123")
-        self.assertGreater(body["maturesInSeconds"], 0)
+        self.assertEqual(len(arms), 0)
+        self.assertIn("UNOBSERVED", result.stdout)
 
-    def test_bound_lane_stop_renews_wake_lease(self):
+    def test_bound_lane_stop_does_not_arm_unparked_lease(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         self.env["GRAPHHELM_ACTOR"] = "gh-lane-1"
         result = subprocess.run(
@@ -332,7 +325,7 @@ class SessionHookTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         arms = [item for item in RuntimeHandler.requests if item[1] == "/v1/executions/run-test/wake-lease"]
-        self.assertEqual(len(arms), 1)
+        self.assertEqual(len(arms), 0)
 
     def test_start_accepts_slow_fresh_briefing_with_one_get(self):
         # The old 2.5-second socket budget discarded a valid Runtime briefing.

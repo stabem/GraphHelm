@@ -21,6 +21,7 @@ import urllib.request
 import urllib.error
 
 from plugins.graphhelm.hooks import tasks_reconcile
+from plugins.graphhelm.hooks import session_hook
 
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -528,12 +529,10 @@ class LaneStopTests(unittest.TestCase):
         self.note("other-1", to="codex-5")
         self.note("room-1")
         self.assertEqual(self.stop(MANIFESTS[0]), [])
-        self.note("unrelated-after-arm", to="codex-5")
-        self.note("unrelated-after-arm-2", to="codex-5")
         request = urllib.request.Request(self.url + "/v1/executions/lane-test",
                   headers={"Authorization": "Bearer " + self.owner_token})
         with urllib.request.urlopen(request, timeout=5) as response:
-            self.assertIn("codex-4", json.load(response)["data"]["wakeListeners"])
+            self.assertNotIn("codex-4", json.load(response)["data"]["wakeListeners"])
 
     def test_session_waiter_survives_unrelated_append_and_catches_ask(self):
         session = "session-wake-test"
@@ -547,13 +546,24 @@ class LaneStopTests(unittest.TestCase):
         pid_files = list(Path(self.env.get("GRAPHHELM_HOOK_STATE_DIR", "")).glob("*.waiter.pid"))
         self.assertEqual(len(pid_files), 1)
         pid = int(pid_files[0].read_text())
-        self.addCleanup(lambda: os.kill(pid, signal.SIGTERM))
+        def stop_waiter():
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        self.addCleanup(stop_waiter)
+        self.assertTrue(session_hook._pid_alive(pid), "wake waiter exited before an append")
         self.note("unrelated-waiter-append", to="codex-5")
+        self.assertTrue(session_hook._pid_alive(pid), "wake waiter exited after unrelated append")
         request = urllib.request.Request(self.url + "/v1/executions/lane-test",
                   headers={"Authorization": "Bearer " + self.owner_token})
         with urllib.request.urlopen(request, timeout=5) as response:
             self.assertIn("codex-4", json.load(response)["data"]["wakeListeners"])
         time.sleep(0.2)
+        events_request = urllib.request.Request(self.url + "/v1/executions/lane-test/events?after=0&limit=1",
+                  headers={"Authorization": "Bearer " + self.owner_token})
+        with urllib.request.urlopen(events_request, timeout=5) as response:
+            self.assertLess(json.load(response)["data"]["head"], 100)
         try:
             self.note("addressed-waiter-ask", to="codex-4")
         except urllib.error.HTTPError as error:

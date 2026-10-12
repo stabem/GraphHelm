@@ -5,6 +5,8 @@ Run with pytest or unittest. No models, tools, network, or Runtime stores are in
 """
 
 from pathlib import Path
+import hashlib
+import json
 import re
 import unittest
 
@@ -18,6 +20,31 @@ INVOCATION = re.compile(r"Use the ([\w-]+) skill(?: in audit mode)?")
 
 
 class SkillTwinsTest(unittest.TestCase):
+    def test_judge_qualification_packet_is_bound_and_pending(self):
+        root = ROOT / "evals/graphhelm-development-contracts"
+        packet = json.loads((root / "judge-qualification.json").read_text(encoding="utf-8"))
+        self.assertEqual(packet["version"], 1)
+        self.assertTrue(packet["synthetic"])
+        self.assertEqual(packet["purpose"], "judge_qualification")
+        case = root / "keel-observer-missing"
+        for key, path in (("prompt", case / "prompt.md"), ("rubric", case / "graders/criteria.md")):
+            self.assertEqual(packet[key]["path"], path.relative_to(ROOT).as_posix())
+            self.assertEqual(packet[key]["sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
+        examples = packet["examples"]
+        self.assertEqual([e["id"] for e in examples], ["chrome-proxy-missing", "chrome-false-pass", "truncated-incomplete"])
+        self.assertEqual([e["completionStatus"] for e in examples], ["completed", "completed", "incomplete"])
+        self.assertEqual([e["proposedLabel"] for e in examples], ["PASS", "FAIL", "INCOMPLETE"])
+        for example in examples:
+            self.assertEqual(example["reviewStatus"], "pending")
+            self.assertNotIn("reviewer", example)
+            self.assertTrue(example["transcript"].strip())
+            self.assertTrue(example["rationale"].strip())
+            if example["completionStatus"] != "completed":
+                self.assertEqual(example["proposedLabel"], "INCOMPLETE")
+        self.assertIn("OBSERVER_MISSING: iOS Safari device or simulator", examples[0]["transcript"])
+        self.assertIn("verified", examples[1]["transcript"].lower())
+        self.assertNotIn("OBSERVER_MISSING", examples[2]["transcript"])
+
     def test_audit_before_planning_keeps_selection_and_assessment_separate(self):
         case = ROOT / "evals/graphhelm-development-contracts/audit-before-planning"
         prompt = (case / "prompt.md").read_text(encoding="utf-8")

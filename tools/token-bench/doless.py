@@ -683,6 +683,61 @@ def cmd_pair_audit(a: argparse.Namespace, *, emit: bool = True) -> tuple[dict, l
     return report, rows, manifest, hashlib.sha256(manifest_raw).hexdigest()
 
 
+def paired_task_inference(tasks: list[dict], minimum_cost_reduction_usd: float,
+                          maximum_quality_regression: float, *, partial_cohort: bool = False) -> dict:
+    """Apply pair-summary's eligibility and bootstrap verdict to admitted task summaries."""
+    reason = "partial_cohort" if partial_cohort else None
+    if reason is None and len(tasks) < 2:
+        reason = "fewer_than_two_tasks"
+    if reason is None:
+        for task in tasks:
+            for side in ("baseline", "candidate"):
+                arm = task[side]
+                if arm["unknownCostCount"]:
+                    reason = "unknown_cost"
+                    break
+                if not arm["PASS"]:
+                    reason = "no_pass"
+                    break
+            if reason:
+                break
+    if reason:
+        return {"inferenceStatus": "not_computable", "inferenceReason": reason}
+
+    seed, samples = 183, 5000
+    rng = random.Random(seed)
+    differences = [task["deltaCandidateMinusBaseline"] for task in tasks]
+    quality, cost = [], []
+    for _ in range(samples):
+        selected = [differences[rng.randrange(len(differences))] for _ in differences]
+        try:
+            quality_mean = math.fsum(item["successFraction"] for item in selected) / len(selected)
+            cost_mean = math.fsum(item["costPerProvenDeliveryUsd"] for item in selected) / len(selected)
+        except OverflowError as exc:
+            raise ValueError("non-finite paired summary resampled statistic") from exc
+        if not math.isfinite(quality_mean) or not math.isfinite(cost_mean):
+            raise ValueError("non-finite paired summary resampled statistic")
+        quality.append(quality_mean)
+        cost.append(cost_mean)
+
+    def interval(values: list[float]) -> dict:
+        values.sort()
+        return {"lower": values[int((samples - 1) * 0.025)],
+                "upper": values[int((samples - 1) * 0.975)]}
+
+    quality_interval, cost_interval = interval(quality), interval(cost)
+    if quality_interval["upper"] < -maximum_quality_regression:
+        status = "quality_regression"
+    elif (cost_interval["upper"] < -minimum_cost_reduction_usd and
+          quality_interval["lower"] >= -maximum_quality_regression):
+        status = "supported"
+    else:
+        status = "inconclusive"
+    return {"inferenceStatus": status, "inference": {
+        "method": "paired_task_bootstrap_percentile_95", "seed": seed, "resamples": samples,
+        "qualityDifference": quality_interval, "costDifferenceUsd": cost_interval}}
+
+
 def cmd_pair_summary(a: argparse.Namespace) -> None:
     """Describe only admitted task pairs; preserve admission exclusions in the report."""
     audit, rows, manifest, manifest_digest = cmd_pair_audit(a, emit=False)
@@ -760,56 +815,9 @@ def cmd_pair_summary(a: argparse.Namespace) -> None:
                       "baseline": baseline, "candidate": candidate,
                       "deltaCandidateMinusBaseline": delta})
     if a.analysis_plan:
-        reason = None
-        if audit["excluded"] or audit["unmatched"]:
-            reason = "partial_cohort"
-        elif len(tasks) < 2:
-            reason = "fewer_than_two_tasks"
-        else:
-            for task in tasks:
-                for side in ("baseline", "candidate"):
-                    arm = task[side]
-                    if arm["unknownCostCount"]:
-                        reason = "unknown_cost"
-                        break
-                    if not arm["PASS"]:
-                        reason = "no_pass"
-                        break
-                if reason:
-                    break
-        if reason:
-            plan_output.update({"inferenceStatus": "not_computable", "inferenceReason": reason})
-        else:
-            seed, samples = 183, 5000
-            rng = random.Random(seed)
-            differences = [task["deltaCandidateMinusBaseline"] for task in tasks]
-            quality, cost = [], []
-            for _ in range(samples):
-                selected = [differences[rng.randrange(len(differences))] for _ in differences]
-                try:
-                    quality_mean = math.fsum(item["successFraction"] for item in selected) / len(selected)
-                    cost_mean = math.fsum(item["costPerProvenDeliveryUsd"] for item in selected) / len(selected)
-                except OverflowError as exc:
-                    raise ValueError("non-finite paired summary resampled statistic") from exc
-                if not math.isfinite(quality_mean) or not math.isfinite(cost_mean):
-                    raise ValueError("non-finite paired summary resampled statistic")
-                quality.append(quality_mean)
-                cost.append(cost_mean)
-            def interval(values: list[float]) -> dict:
-                values.sort()
-                return {"lower": values[int((samples - 1) * 0.025)],
-                        "upper": values[int((samples - 1) * 0.975)]}
-            quality_interval, cost_interval = interval(quality), interval(cost)
-            if quality_interval["upper"] < -plan["maximumQualityRegression"]:
-                status = "quality_regression"
-            elif (cost_interval["upper"] < -plan["minimumCostReductionUsd"] and
-                  quality_interval["lower"] >= -plan["maximumQualityRegression"]):
-                status = "supported"
-            else:
-                status = "inconclusive"
-            plan_output.update({"inferenceStatus": status, "inference": {
-                "method": "paired_task_bootstrap_percentile_95", "seed": seed, "resamples": samples,
-                "qualityDifference": quality_interval, "costDifferenceUsd": cost_interval}})
+        plan_output.update(paired_task_inference(
+            tasks, plan["minimumCostReductionUsd"], plan["maximumQualityRegression"],
+            partial_cohort=bool(audit["excluded"] or audit["unmatched"])))
     try:
         report = {"version": audit["version"], "comparison": audit["comparison"],
                   "weighting": audit["weighting"], "partial": bool(audit["excluded"] or audit["unmatched"]),

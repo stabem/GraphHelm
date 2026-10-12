@@ -768,7 +768,9 @@ pub(super) fn event_store(
     }
 }
 
-/// How long `serve` reuses one journal verification before re-verifying from genesis.
+/// A serve process verifies the journal at startup. Subsequent opens verify appended bytes;
+/// replacement or truncation invalidates the prefix. Re-verify it periodically to detect
+/// same-length in-place rewrites while keeping routine request reads incremental.
 const SHARED_PREFIX_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Set once by `serve`: a long-running process opens a store per request, and without a

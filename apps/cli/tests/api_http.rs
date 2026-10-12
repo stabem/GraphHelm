@@ -2005,6 +2005,103 @@ fn status_over_http_matches_the_cli_and_the_events_tail_pages() {
     );
 }
 
+/// A page at the tail must stay responsive when the verified journal is large. The fixture
+/// uses bounded appends, then races three clients after readiness. Cost: one local 6,000-event
+/// journal and three loopback HTTP requests, no external service.
+#[test]
+fn a_bounded_events_tail_stays_fast_at_six_thousand_events() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-latency";
+    let scope = graphhelm_protocols::RepositoryScope::new(
+        graphhelm_protocols::WorkspaceId::parse("workspace-local").unwrap(),
+        graphhelm_protocols::ProjectId::parse("project-local").unwrap(),
+        Some(graphhelm_protocols::ExecutionId::parse(execution).unwrap()),
+    );
+    let store = graphhelm_events::LocalEventRepository::open(
+        &events,
+        std::sync::Arc::new(WallClock),
+        std::sync::Arc::new(Ids::default()),
+    )
+    .unwrap();
+    let actor = graphhelm_protocols::PersistedActor::new(
+        graphhelm_protocols::PersistedActorType::System,
+        graphhelm_protocols::ActorId::parse("system-latency").unwrap(),
+    );
+    let new_events: Vec<_> = (1..=6_000)
+        .map(|sequence| {
+            graphhelm_protocols::NewEvent::new(
+                graphhelm_protocols::OpaqueId::parse(format!("latency-{sequence}")).unwrap(),
+                actor.clone(),
+                graphhelm_protocols::Sensitivity::Internal,
+                graphhelm_protocols::EventKind::WakeLease(graphhelm_protocols::WakeLease {
+                    execution_id: graphhelm_protocols::OpaqueId::parse(execution).unwrap(),
+                    session_id: graphhelm_protocols::OpaqueId::parse(format!("session-{sequence}"))
+                        .unwrap(),
+                    cursor: 1,
+                    rendezvous_id: graphhelm_protocols::OpaqueId::parse(format!("rdv-{sequence}"))
+                        .unwrap(),
+                    matures_in_seconds: None,
+                }),
+                vec![],
+                vec![],
+            )
+        })
+        .collect();
+    for (batch, chunk) in new_events.chunks(100).enumerate() {
+        let request = graphhelm_events::PreparedAppend::new(
+            scope.clone(),
+            graphhelm_protocols::OpaqueId::parse(execution).unwrap(),
+            (batch * 100 + 1) as u64,
+            chunk.to_vec(),
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(store.append_atomic(&request).unwrap().len(), chunk.len());
+    }
+    drop(store);
+
+    let (_guard, base, token) = serve(&events);
+    let urls = [
+        format!("{base}/v1/executions/{execution}/events?after=5999&limit=1"),
+        format!("{base}/v1/executions/{execution}/events?after=0&limit=1"),
+        format!("{base}/health"),
+    ];
+    let barrier = std::sync::Barrier::new(urls.len() + 1);
+    let replies = std::thread::scope(|scope| {
+        let workers: Vec<_> = urls
+            .iter()
+            .map(|url| {
+                let barrier = &barrier;
+                let token = &token;
+                scope.spawn(move || {
+                    barrier.wait();
+                    let started = std::time::Instant::now();
+                    let reply = get_json(url, Some(token));
+                    (url, started.elapsed(), reply)
+                })
+            })
+            .collect();
+        barrier.wait();
+        workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    for (url, elapsed, reply) in replies {
+        assert_eq!(reply["ok"], true, "{reply}");
+        if url.ends_with("limit=1") {
+            assert_eq!(reply["data"]["head"], 6_000, "{reply}");
+            assert_eq!(reply["data"]["events"].as_array().unwrap().len(), 1);
+        }
+        assert!(
+            elapsed < std::time::Duration::from_millis(200),
+            "{url} took {elapsed:?}"
+        );
+    }
+}
+
 /// #1063: `GET /v1/executions/{id}/briefing` is `execution briefing`'s own read - same store,
 /// same bytes. The CLI reads the store directly; the API reads it through the server; a
 /// harness on either side gets the same briefing.

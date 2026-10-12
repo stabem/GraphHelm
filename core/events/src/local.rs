@@ -8232,14 +8232,52 @@ mod limit_tests {
         let build = cache_repository(directory.path());
         build.append_atomic(&valid_graph_request()).unwrap();
         drop(build);
-        let cache = PrefixCache::new(std::time::Duration::ZERO);
+        let cache = PrefixCache::new(std::time::Duration::from_secs(3600));
         drop(shared_repository(directory.path(), &cache));
+        {
+            let mut slot = cache.slot.lock().unwrap();
+            slot.as_mut().unwrap().full_verified_at -= std::time::Duration::from_secs(3601);
+        }
         let again = shared_repository(directory.path(), &cache);
         assert_eq!(
             counters(&again),
             (1, 0),
             "an expired prefix is never reused"
         );
+    }
+
+    #[test]
+    fn an_expired_shared_prefix_detects_same_length_in_place_rewrites() {
+        let directory = tempfile::tempdir().unwrap();
+        let build = cache_repository(directory.path());
+        build.append_atomic(&valid_graph_request()).unwrap();
+        drop(build);
+        let cache = PrefixCache::new(std::time::Duration::from_secs(3600));
+        let warmed = shared_repository(directory.path(), &cache);
+        assert_eq!(warmed.next_sequence(&wake_scope(), "stream-1").unwrap(), 2);
+        drop(warmed);
+        assert_eq!(
+            counters(&shared_repository(directory.path(), &cache)),
+            (0, 0)
+        );
+
+        let journal = directory.path().join("journal.jsonl");
+        let mut bytes = std::fs::read(&journal).unwrap();
+        bytes[10] = bytes[10].wrapping_add(1);
+        std::fs::write(&journal, &bytes).unwrap();
+
+        {
+            let mut slot = cache.slot.lock().unwrap();
+            slot.as_mut().unwrap().full_verified_at -= std::time::Duration::from_secs(3601);
+        }
+        let checked = LocalEventRepository::open_with_prefix_cache(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(FixedIds),
+            crate::ReadBudget::unbounded(),
+            &cache,
+        );
+        assert!(checked.is_err(), "expired cache must re-verify the prefix");
     }
 
     /// #506: a walk from genesis is stamped when it ENDS. Stamped at its start, a walk longer

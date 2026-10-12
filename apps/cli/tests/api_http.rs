@@ -2070,7 +2070,10 @@ fn a_bounded_events_tail_stays_fast_at_six_thousand_events() {
         let reply = get_json(&url, Some(&token));
         let elapsed = started.elapsed();
         assert_eq!(reply["ok"], true, "{reply}");
-        assert!(elapsed < std::time::Duration::from_millis(200), "{url} took {elapsed:?}");
+        assert!(
+            elapsed < std::time::Duration::from_millis(200),
+            "{url} took {elapsed:?}"
+        );
     }
 }
 

@@ -1073,6 +1073,61 @@ def test_pair_bootstrap_task_interval_statuses(tmp_path):
     assert missing["inferenceReason"] == "unknown_cost"
 
 
+def test_pair_inference_partial_cohort_withholds_intervals(tmp_path):
+    """Excluded frozen members cannot gain inference from admitted survivors; tiny offline CLI files."""
+    controls = {key: key for key in ("parent", "evaluator", "environment", "budget", "timeout")}
+
+    def row(session, task, arm, verdict="PASS", cost=2):
+        return {"sessionId": session, "task": task, "taskSnapshot": "snap", "split": "test",
+                "arm": arm, "configDigest": arm, "controls": controls,
+                "verdict": verdict, "costUsd": cost}
+
+    rows = []
+    groups = []
+    for task in ("one", "two"):
+        rows.extend([row(f"a-{task}", task, "a"), row(f"k-{task}", task, "k")])
+        groups.append({"task": task, "taskSnapshot": "snap", "split": "test", "controls": controls,
+                       "baseline": {"arm": "a", "configDigest": "a"},
+                       "candidate": {"arm": "k", "configDigest": "k"},
+                       "treatmentDifferences": ["arm", "configDigest"],
+                       "sessions": {"baseline": [f"a-{task}"], "candidate": [f"k-{task}"]}})
+    # This declared task cannot be admitted because its candidate session is absent.
+    rows.append(row("a-excluded", "excluded", "a"))
+    groups.append(groups[0] | {"task": "excluded", "sessions": {
+        "baseline": ["a-excluded"], "candidate": ["missing-candidate"]}})
+    rows.append(row("orphan", "orphan", "a", verdict="INCOMPLETE", cost=None))
+    rows_raw = b"".join((json.dumps(item) + "\n").encode() for item in rows)
+    rows_path = tmp_path / "rows.jsonl"; rows_path.write_bytes(rows_raw)
+    manifest = {"version": 2, "rowsSha256": hashlib.sha256(rows_raw).hexdigest(),
+                "comparison": "methodology", "weighting": "equal_task", "groups": groups}
+    manifest_path = tmp_path / "manifest.json"; manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    plan = {"version": 1, "manifestSha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+            "rowsSha256": manifest["rowsSha256"], "comparison": "methodology", "split": "test",
+            "independentUnit": "task", "weighting": "equal_task",
+            "costMetric": "all_attempt_cost_per_proven_delivery_usd",
+            "minimumCostReductionUsd": 0.2, "maximumQualityRegression": 0.05,
+            "assumptionStatement": "Frozen tasks are independent."}
+    plan_path = tmp_path / "plan.json"; plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    command = [sys.executable, str(HERE / "doless.py"), "pair-summary", "--manifest",
+               str(manifest_path), "--rows", str(rows_path), "--analysis-plan", str(plan_path)]
+    planned = subprocess.run(command, capture_output=True, text=True, creationflags=NO_WINDOW)
+    assert planned.returncode == 0, planned.stderr
+    report = json.loads(planned.stdout)
+    assert report["partial"] is True
+    assert report["unmatched"] == ["orphan"]
+    assert report["excluded"] == [{"task": "excluded", "reason": "unmatched_candidate",
+                                    "sessions": {"baseline": ["a-excluded"],
+                                                 "candidate": ["missing-candidate"]}}]
+    assert report["inferenceStatus"] == "not_computable"
+    assert report["inferenceReason"] == "partial_cohort"
+    assert "inference" not in report
+    assert sum(task["baseline"]["knownExpenditureUsd"] for task in report["tasks"]) == 4
+    assert "recommendation" not in report and "savings" not in report
+
+    no_plan = subprocess.run(command[:-2], capture_output=True, text=True, creationflags=NO_WINDOW)
+    assert no_plan.returncode == 0 and "inferenceStatus" not in json.loads(no_plan.stdout)
+
+
 def test_configured_run_records_requested_effort_and_incomplete_usage(tmp_path, monkeypatch):
     """Catches unobserved usage/model being published as a configured PASS; mocked process/file I/O, <1s."""
     import argparse

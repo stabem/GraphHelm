@@ -322,7 +322,7 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
       : <>{sub === "graph" && runGraph}<p className="mv-none mv-pad">No journeys in this project yet</p></>}</div>;
   const rawGroup: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
   // #591: the live Review row names only the current reviewer (latest assignment on the current head).
-  const group: WorkGroup | null = rawGroup ? { ...rawGroup, rows: rawGroup.rows.map((r) => ({ ...r, task: withCurrentReviewer(r.task, lanes) })) } : null;
+  const group: WorkGroup | null = rawGroup ? { ...rawGroup, rows: rawGroup.graphRows.map((r) => ({ ...r, task: withCurrentReviewer(r.task, lanes) })) } : null;
   // #591: time in stage and the health flag of each PR card, from the same records the lanes read.
   const groupRows = group ? tasks.filter((t) => group.rows.some((r) => r.key === t.key)) : [];
   const health = Object.fromEntries(groupRows.map((t) => [t.key, stageHealth(timerTask(t), lanes, groupRows, live, false, slots)]));
@@ -400,10 +400,10 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
   const shownTask = taskKey === undefined ? group?.focus ?? null : taskKey;
   const ids = mission ? stepIds(mission) : [];
   const gsum = group ? {
-    proven: group.tasks.filter((t) => group.stages[t.key] === "proven").length,
-    inFlight: group.tasks.filter((t) => t.step !== "merged").length,
-    ready: group.tasks.filter((t) => t.lane === null).length,
-    needYou: group.tasks.filter((t) => t.blocked).length,
+    proven: group.rows.filter((r) => group.stages[r.key] === "proven").length,
+    inFlight: group.rows.filter((r) => r.task.step !== "merged").length,
+    ready: group.rows.filter((r) => r.task.lane === null).length,
+    needYou: group.rows.filter((r) => r.task.blocked).length,
   } : null;
   return (
     // data-wide: the Studio layout gives the mission view the whole main area (mission-view.css).
@@ -443,13 +443,15 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
                 <span className="mv-cap">Work</span>
                 {groups.map((g) => {
                   const on = group?.key === g.key;
-                  const prs = g.tasks.filter((t) => t.pr !== null).length;
+                  const visibleTasks = g.graphRows.map((r) => r.task);
+                  const prs = visibleTasks.filter((t) => t.pr !== null).length;
                   if (!on) return (
                     <div key={g.key} className="mv-jcard" data-selected={false}>
                       <button type="button" className="mv-journey mv-group" aria-pressed={false} title={g.label} onClick={() => pickGroup(g.key)}>
                         <span className="mv-journey-title">{g.label}</span>
                       </button>
-                      <GroupProgress states={g.tasks.map((t) => stageState(g.stages[t.key]!, t))} />
+                      <GroupProgress states={visibleTasks.map((t) => stageState(g.stages[t.key]!, t))} />
+                      {visibleTasks.length === 0 && g.releasedKeys.length > 0 && <span className="mv-journey-meta">released</span>}
                     </div>
                   );
                   return (
@@ -457,10 +459,11 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
                       <button type="button" className="mv-journey mv-group" aria-pressed={true} title={g.label} onClick={() => pickGroup(g.key)}>
                         <span className="mv-journey-title">{g.label}</span>
                       </button>
-                      <GroupProgress states={g.tasks.map((t) => stageState(g.stages[t.key]!, t))} />
+                      <GroupProgress states={visibleTasks.map((t) => stageState(g.stages[t.key]!, t))} />
+                      {visibleTasks.length === 0 && g.releasedKeys.length > 0 && <span className="mv-journey-meta">released</span>}
                       <span className="mv-journey-meta">{`${g.issue !== null ? `issue #${g.issue}` : "no issue"} · ${prs} ${prs === 1 ? "PR" : "PRs"}`}</span>
                       <div className="mv-chips">
-                        {g.tasks.map((t, i) => {
+                        {visibleTasks.map((t, i) => {
                           const stage = g.stages[t.key]!;
                           const busy = t.step !== "merged", alert = t.blocked || health[t.key]?.flag === "stalled";
                           return (
@@ -471,7 +474,7 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
                         })}
                       </div>
                       <div className="mv-steps">
-                        {g.tasks.map((t, i) => (
+                        {visibleTasks.map((t, i) => (
                           <button key={t.key} type="button" className="mv-step" data-state={stageState(g.stages[t.key]!, t)} aria-pressed={t.key === shownTask}
                             onClick={() => pickGroup(g.key, t.key)}>
                             <span className="mv-tick" />

@@ -29,6 +29,7 @@ import {
   newIdempotencyKey,
 } from "./runtime/client";
 import { devSession, type DevSession } from "./runtime/session";
+import type { NativeChatRequest } from "./runtime/types";
 import { workConversation } from "./runtime/work-conversation";
 import { isSubagentLifecycleSignal } from "./runtime/subagents";
 import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
@@ -2048,10 +2049,24 @@ export default function App({
   useEffect(() => { const timer = window.setInterval(() => setClock(Date.now()), 30_000); return () => window.clearInterval(timer); }, []);
   useEffect(() => { setClock(Date.now()); }, [eventList]);
   const nodeNames = useMemo(() => Object.fromEntries(model.nodes.flatMap((node) => node.declaredName ? [[node.id, node.declaredName] as const] : [])), [model]);
-  const needs = useMemo(() => needsYou({ status, stale, events: eventList, envelopes, nativeRequests: [],
+  const [nativeRequests, setNativeRequests] = useState<NativeChatRequest[] | null>(null);
+  useEffect(() => {
+    const client = clientRef.current;
+    if (!connected || !client || selected === "") { setNativeRequests(null); return; }
+    let active = true;
+    setNativeRequests(null);
+    const read = () => { void client.listNativeChatRequests(selected).then(
+      (page) => { if (active && clientRef.current === client && selectedRef.current === selected) setNativeRequests(page.requests); },
+      () => { if (active && clientRef.current === client && selectedRef.current === selected) setNativeRequests(null); },
+    ); };
+    read();
+    const timer = window.setInterval(read, pollIntervalMs);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [connected, selected, pollIntervalMs]);
+  const needs = useMemo(() => needsYou({ status, stale, events: eventList, envelopes, nativeRequests,
     pendingDraftIds: durableProposals.map((proposal) => proposal.draftId), nodeNames, operatorId: OPERATOR_ACTOR.id,
     agentWorkRecorded: hasRecordedAgentWork }),
-    [status, stale, eventList, envelopes, durableProposals, nodeNames, hasRecordedAgentWork]);
+    [status, stale, eventList, envelopes, nativeRequests, durableProposals, nodeNames, hasRecordedAgentWork]);
   const waitingAskers = useMemo(() => new Set(needs.items.flatMap((item) => item.kind === "question" ? [item.asker] : [])), [needs]);
   const team = useMemo(() => teamModel({ events: eventList, envelopes, personas, nativeLinks: nativePersonaLinks, aliases: actorAliases, model,
     claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null, waitingAskers, now: clock,
@@ -3443,11 +3458,10 @@ export default function App({
                   }
                   nativeChats={
                     <NativeChats
-                      key={`native-${selected}-${node.id}-${false}`}
+                      key={`native-${selected}-${node.id}`}
                       client={clientRef.current}
                       executionId={selected}
                       nodeId={node.id}
-                      startOpen={false}
                       refreshSequence={status?.headSequence ?? 0}
                       onLinkPersona={(chat, charter) => linkNativePersona(node.id, chat, charter)}
                     />

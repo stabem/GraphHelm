@@ -56,6 +56,7 @@ const PAUSED_EVIDENCE: MutationEvidence = {
 function stubClient(overrides: Record<string, unknown> = {}) {
   return {
     connected: true,
+    listNativeChatRequests: vi.fn(async () => ({ requests: [] })),
     dispose: vi.fn(),
     health: vi.fn(async () => undefined),
     listExecutions: vi.fn(async () => ({
@@ -452,6 +453,18 @@ describe("live team layout", () => {
     expect(within(cards).getByText("implementation is blocked.")).toBeInTheDocument();
     expect(within(cards).getByRole("button", { name: /(approv|allow.*retry).*implementation/i })).toBeInTheDocument();
     await waitFor(() => expect(cards).toHaveFocus());
+  });
+
+  it("reports a waiting native chat request without MainChat", async () => {
+    const calm = { ...STATUS, attention: "can_sleep", attentionReasons: [], nodeStateCounts: { ready: 1 } };
+    const runtime = stubClient({
+      getStatus: vi.fn(async () => calm),
+      listNativeChatRequests: vi.fn(async () => ({ requests: [{ requestId: "request-1", nodeId: "implementation", threadId: "chat-1", title: "Owner reply", sourceDirectory: "C:/work", state: "blocked" }] })),
+    });
+    await open(runtime);
+    const beacon = await screen.findByRole("button", { name: "1 decision needs you" });
+    await userEvent.click(beacon);
+    expect(within(screen.getByRole("region", { name: "Needs you" })).getByText(/Owner reply/)).toBeInTheDocument();
   });
 
   it("goes dark when the Runtime answers and nothing is open", async () => {

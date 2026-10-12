@@ -34,8 +34,6 @@ import type {
   JourneyFlowsView,
   JourneyFrame,
   JourneyRunView,
-  ObserverSetupView,
-  ObserverSetupRecord,
   ModelRouteSummary,
   NativeChatPage,
   NativeChatRequest,
@@ -46,7 +44,6 @@ import type {
   RuntimeEvent,
   WireActorType,
   LiveAct,
-  LiveSessionsView,
 } from "./types";
 
 /** The actor id the human interface records. */
@@ -92,7 +89,6 @@ export const RUNTIME_READ_TIMEOUT_MS = 60_000;
  * health. A Rust test reads this number and fails when it is not above the probe's bound. */
 export const GATEWAY_PROBE_WAIT_MS = 45_000;
 /** The Runtime stops the observer setup at 15 minutes; the Studio waits a little past that. */
-export const OBSERVER_SETUP_TIMEOUT_MS = 16 * 60_000;
 /** A live open replays cached acts in a real browser before it answers (#409): the Runtime bounds
  * it at its own run budget (180 s), so the request waits longer than a read. */
 const RUNTIME_LIVE_TIMEOUT_MS = 200_000;
@@ -1916,39 +1912,15 @@ export class RuntimeClient {
     });
   }
 
-  /** The live journey sessions the Runtime holds (#409, phase C #398): `GET /v1/journeys/sessions`.
-   * The Journey tab's chip is read from this list, never from an open reply. */
-  async liveSessions(): Promise<LiveSessionsView> {
-    return this.#request<LiveSessionsView>({ method: "GET", path: "/v1/journeys/sessions", timeoutMs: RUNTIME_READ_TIMEOUT_MS });
-  }
-
-  /** Open a journey live at a step (#409): `POST /v1/journeys/{contractId}/open`, the same path as
-   * `graphhelm journey open`. Synchronous on the Runtime: a drift or a failed expectation comes
-   * back as a refusal with the Runtime's own message while the browser stays open. */
-  async openLive(contractId: string, options: { stepId: string; path?: string; executionId?: string }): Promise<Record<string, unknown>> {
-    const id = checkedJourneyId(contractId, "contractId");
-    const stepId = checkedJourneyId(options.stepId, "stepId");
-    return this.#request<Record<string, unknown>>({
-      method: "POST", path: `/v1/journeys/${encodeURIComponent(id)}/open`, timeoutMs: RUNTIME_LIVE_TIMEOUT_MS,
-      body: { stepId, ...(options.path ? { path: options.path } : {}), ...(options.executionId ? { executionId: checkedId(options.executionId, "executionId") } : {}) },
-    });
-  }
-
   /** One act into a live session (#409): `POST /v1/journeys/sessions/{id}/act`. */
   async actLive(sessionId: string, act: LiveAct): Promise<Record<string, unknown>> {
     const id = checkedId(sessionId, "sessionId");
     return this.#request<Record<string, unknown>>({ method: "POST", path: `/v1/journeys/sessions/${encodeURIComponent(id)}/act`, body: act, timeoutMs: RUNTIME_LIVE_TIMEOUT_MS });
   }
 
-  /** Close a live session (#409): `DELETE /v1/journeys/sessions/{id}`. */
-  async closeLive(sessionId: string): Promise<{ sessionId: string; closed: boolean }> {
-    const id = checkedId(sessionId, "sessionId");
-    return this.#request<{ sessionId: string; closed: boolean }>({ method: "DELETE", path: `/v1/journeys/sessions/${encodeURIComponent(id)}` });
-  }
-
   /** Watch a flow (#462): `POST /v1/journey-flows/{id}/watch`. A headed browser plays it on the
    * owner's screen; the Runtime answers when the play ends, and the `mode: "watch"` row in
-   * `liveSessions()` carries the step being played meanwhile. Never proof; never approval. */
+   * The sessions feed carries the step being played meanwhile. Never proof; never approval. */
   async watchFlow(flowId: string, path?: string): Promise<Record<string, unknown>> {
     const id = checkedId(flowId, "flowId");
     return this.#request<Record<string, unknown>>({
@@ -2021,18 +1993,6 @@ export class RuntimeClient {
     const id = checkedId(flowId, "flowId");
     const body = { ...(confirm ? { confirm: true } : force ? { force: true } : {}), ...(executionId ? { executionId: checkedId(executionId, "executionId") } : {}) };
     return this.#request<JourneyRunView>({ method: "POST", path: `/v1/journey-flows/${encodeURIComponent(id)}/preview`, body, timeoutMs: RUNTIME_READ_TIMEOUT_MS });
-  }
-
-  /** Install the browser player in the Runtime's project (#519): `POST /v1/journey-observer/setup`,
-   * exactly `graphhelm setup --install-observer playwright`. No body: nothing the Studio sends
-   * reaches npm. It edits package.json and downloads Chromium, so it may take minutes. */
-  async setupJourneyObserver(): Promise<ObserverSetupView> {
-    return this.#request<ObserverSetupView>({ method: "POST", path: "/v1/journey-observer/setup", timeoutMs: OBSERVER_SETUP_TIMEOUT_MS });
-  }
-
-  /** Owner-only status of the last install, including work whose HTTP caller left (#627). */
-  async journeyObserverSetup(): Promise<ObserverSetupRecord> {
-    return this.#request<ObserverSetupRecord>({ method: "GET", path: "/v1/journey-observer/setup" });
   }
 
   /** One screen as the run rendered it (#519): `GET /v1/journey-flows/{id}/screens/{screen}/frame`.

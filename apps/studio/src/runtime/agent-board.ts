@@ -151,23 +151,20 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
         label: `Waiting for build · ${ordinal(slot.position)} · ${d}`, doing: `waiting for a build slot in ${slot.root}${slotPr ? ` · #${slotPr}` : ""}`, stageMs: slot.seconds * 1000 };
   });
   const represented = new Set(rows.map((r) => r.name));
-  for (const slot of slots) {
-    const names = [
-      ...(slot.ok && slot.holder ? [slot.holder.lane] : []),
-      ...(slot.ok ? slot.waiting.map((waiting) => waiting.lane) : []),
-    ];
-    for (const name of names) {
-      if (!name || represented.has(name)) continue;
-      const row = rows0.find((candidate) => candidate.name === name) ?? {
-        name, status: "free" as const, stage: null, pr: null, title: null, href: null,
-        lastDelivered: delivered.get(name) ?? null, ...latestOf(undefined, now),
-      };
-      const status = slot.holder?.lane === name ? "building" as const : "build_wait" as const;
-      rows.push({ ...row, status,
-        label: status === "building" ? `Building · ${slotDuration(slot.holder!.heldSeconds)}` : `Waiting for build · ${ordinal(slot.waiting.findIndex((w) => w.lane === name) + 1)} · ${slotDuration(slot.waiting.find((w) => w.lane === name)!.waitedSeconds)}`,
-        doing: status === "building" ? `building in ${slot.root}` : `waiting for a build slot in ${slot.root}` });
-      represented.add(name);
-    }
+  const slotLanes = new Set(slots.flatMap((slot) => slot.ok
+    ? [...(slot.holder ? [slot.holder.lane] : []), ...slot.waiting.map((waiting) => waiting.lane)] : []));
+  for (const name of slotLanes) {
+    if (represented.has(name)) continue;
+    const slot = slotStatus(name, slots)!;
+    const base = rows0.find((candidate) => candidate.name === name) ?? {
+      name, status: "free" as const, stage: null, pr: null, title: null, href: null,
+      lastDelivered: delivered.get(name) ?? null, ...latestOf(undefined, now),
+    };
+    const label = slot.kind === "building" ? `Building · ${slotDuration(slot.seconds)}`
+      : `Waiting for build · ${ordinal(slot.position)} · ${slotDuration(slot.seconds)}`;
+    rows.push({ ...base, status: slot.kind === "building" ? "building" : "build_wait", label,
+      doing: `${slot.kind === "building" ? "building" : "waiting for a build slot"} in ${slot.root}` });
+    represented.add(name);
   }
   return rows.sort((a, b) => ORDER[a.status] - ORDER[b.status]
     || (a.status === "working" ? (b.stageMs ?? 0) - (a.stageMs ?? 0) : 0)

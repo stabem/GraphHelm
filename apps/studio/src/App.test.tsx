@@ -238,6 +238,37 @@ describe("Studio organization and responsive navigation", () => {
       vi.unstubAllGlobals();
     }
   });
+  it("keeps the projects drawer hamburger usable while the selected run is opening", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: false, media: query }));
+    let release!: () => void;
+    const pendingStatus = new Promise<void>((resolve) => { release = resolve; });
+    let hold = false;
+    const client = stubClient({ getStatus: vi.fn(async (executionId: string) => {
+      if (hold) await pendingStatus;
+      return { ...STATUS, executionId };
+    }) });
+    try {
+      await open(client, null, false);
+      const toggle = screen.getByRole("button", { name: "Toggle projects" });
+      await userEvent.click(toggle);
+      hold = true;
+      await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByText("demo-calm", { exact: true }));
+      expect(await screen.findByText("Opening this run…")).toBeInTheDocument();
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      await userEvent.click(toggle);
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      await userEvent.click(toggle);
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+    } finally {
+      release();
+      cleanup();
+      vi.unstubAllGlobals();
+    }
+  });
+  it("keeps the mobile stage above the projects backdrop while the drawer is open", async () => {
+    const styles = await import("./styles.css?inline");
+    expect(styles.default).toMatch(/\.app\.projects-open\s*>\s*\.stage\s*\{[^}]*z-index:\s*21/s);
+  });
   it.each([
     [false, "demo-deploy"],
     [false, "demo-calm"],

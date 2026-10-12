@@ -34,6 +34,36 @@ def reach(*changed, repo=None):
 
 
 class Reach(unittest.TestCase):
+    def test_qualification_packet_selects_only_its_integrity_observer(self):
+        """Keep the judge packet on its offline integrity path, not as unmapped JSON.
+
+        Cost: tiny temporary files; milliseconds, no Cargo, network, model or Runtime.
+        """
+        packet = "evals/graphhelm-development-contracts/judge-qualification.json"
+        observer = "tools/evals/test_skill_twins.py"
+        expected = "python -m unittest tools/evals/test_skill_twins.py"
+        with tempfile.TemporaryDirectory() as repo:
+            observer_path = Path(repo, observer)
+            observer_path.parent.mkdir(parents=True)
+            observer_path.write_text("import unittest\n", encoding="utf-8")
+            *_, tools, _, other = reach(packet, repo=repo)
+            self.assertEqual(tools, [expected])
+            self.assertEqual(other, [])
+
+            *_, combined_tools, _, combined_other = reach(packet, observer, repo=repo)
+            self.assertEqual(combined_tools, [expected])
+            self.assertEqual(combined_other, [])
+
+            observer_path.unlink()
+            *_, missing_tools, _, missing_other = reach(packet, repo=repo)
+            self.assertEqual(missing_tools, [])
+            self.assertEqual(missing_other, [packet])
+
+            unrelated = "evals/graphhelm-development-contracts/other.json"
+            *_, unrelated_tools, _, unrelated_other = reach(unrelated, repo=repo)
+            self.assertEqual(unrelated_tools, [])
+            self.assertEqual(unrelated_other, [unrelated])
+
     def test_keel_plan_uses_configured_cli_without_path_fallback(self):
         with tempfile.TemporaryDirectory() as temp:
             exe = Path(temp) / "selected-graphhelm"

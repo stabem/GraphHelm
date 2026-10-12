@@ -345,6 +345,12 @@ def reach(changed, packages, embedded, repo=None):
         # standalone offline test, so keep it mapped without claiming a proxy pass.
         if path.startswith("tools/studio-journey-fixture/"):
             hit = True
+        qualification_packet = "evals/graphhelm-development-contracts/judge-qualification.json"
+        if path == qualification_packet:
+            observer = "tools/evals/test_skill_twins.py"
+            if root is not None and (root / observer).is_file():
+                tools.add(python_test_tool(root, observer))
+                hit = True
         if path.startswith("tools/") and path.count("/") >= 2 and root is not None:
             tool = root / "/".join(path.split("/")[:2])
             py = sorted(f.relative_to(root).as_posix() for f in tool.glob("test_*.py"))

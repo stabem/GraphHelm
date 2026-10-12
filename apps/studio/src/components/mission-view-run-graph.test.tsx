@@ -5,6 +5,7 @@ import { MissionView } from "./mission-view";
 import type { GraphNode } from "../graph/model";
 import type { Bot } from "../runtime/team";
 import type { Lane } from "../runtime/lane-bars";
+import type { TaskState } from "../runtime/team-tasks";
 
 const node = (id: string, declaredName: string, state: GraphNode["state"]): GraphNode =>
   ({ id, declaredName, state, touches: 0, lastEventAt: null, history: [], reopened: null });
@@ -16,12 +17,21 @@ const base = { journeys: [], tasks: [], now: 0, runFor: () => null, frameUrl: ()
 
 describe("#647 MissionView: the Team canvas controls on the Graph page", () => {
   it("shows loading rather than an empty journey before task history settles", () => {
-    render(<MissionView {...base} lanes={[]} historyLoading journeys={[{
+    const { rerender } = render(<MissionView {...base} lanes={[]} historyLoading journeys={[{
       contractId: "watch", title: "Watch", arrows: [], steps: [{ stepId: "open", screen: { screenId: "open", title: "Open", scopePaths: [] }, promises: [] }],
     }]} />);
     expect(screen.getByRole("status")).toHaveTextContent("Loading work");
     expect(screen.queryByText("No work linked to this journey yet")).toBeNull();
     expect(screen.queryByText("0 in flight")).toBeNull();
+
+    const task: TaskState = {
+      key: "work", taskId: "work", branch: null, issue: 913, pr: 100, lane: "codex-18", headSha: null,
+      journeys: [], step: "implement", blockedBy: null, reviewers: [], mergeSha: null, repoUrl: null,
+      strayVerdicts: [], title: "Graph work", summary: null, prTitle: "Graph work", prSummary: null,
+      critic: null, recordedHeads: [], parent: null, rounds: [], clock: { since: null, spent: {} }, lastSequence: 1,
+    };
+    rerender(<MissionView {...base} lanes={[]} journeys={[]} tasks={[task]} />);
+    expect(screen.getByRole("region", { name: "Work by issue" })).toHaveTextContent("Graph work");
   });
   it("keeps the reopened name field and draft when the saved alias arrives", async () => {
     const userEvent = fastUserEvent();

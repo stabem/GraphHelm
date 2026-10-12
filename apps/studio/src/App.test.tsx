@@ -4041,6 +4041,42 @@ describe("the exchange", () => {
     await waitFor(() => expect(client.getEvents).toHaveBeenCalledWith("demo-deploy", { after: 1936, limit: 64 }));
   });
 
+  it("progressive task history renders verified records before the final chunk", async () => {
+    const envelopes = await Promise.all(Array.from({ length: 65 }, async (_, index) => {
+      const description = JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: `issue-${index + 1}`, revision: 1,
+        at: "2026-10-11T12:00:00Z", issue: index + 1, lane: "codex-18", branch: `issue-${index + 1}-work` });
+      const content = JSON.stringify({ id: `task-${index + 1}`, source: { type: "user", id: "codex-18" }, type: "task.claimed", description });
+      const hash = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
+      return { evidenceId: `ev-task-${index + 1}`, mediaType: "application/json" as const, sensitivity: "internal" as const,
+        contentSha256: `sha256:${hash}`, content, hash };
+    }));
+    let releaseLast!: (value: typeof envelopes[number]) => void;
+    const last = new Promise<typeof envelopes[number]>((resolve) => { releaseLast = resolve; });
+    const readEvidence = vi.fn(async (_run: string, id: string) => id === "ev-task-65" ? last : envelopes[Number(id.slice(8)) - 1]);
+    const client = stubClient({
+      listExecutions: vi.fn(async () => ({ executions: [{ executionId: "demo-deploy", mode: "supervised", status: "running",
+        attention: "needs_you", startedAt: null, lastEventAt: null, headSequence: 65 },
+        { executionId: "demo-calm", mode: "supervised", status: "running", attention: "can_sleep",
+          startedAt: null, lastEventAt: null, headSequence: 0 }], hasMore: false, nextCursor: null })),
+      getEvents: vi.fn(async (run: string, options?: { after?: number }) => ({ head: run === "demo-calm" ? 0 : 65, events: run === "demo-calm" || options?.after ? []
+        : envelopes.map((item, index) => ({ sequence: index + 1, kind: "signal_recorded",
+          payload: { kind: "task.claimed", sourceId: "codex-18", sourceKind: "user", signalId: `task-${index + 1}`, envelopeSha256: item.hash },
+          occurredAt: "2026-10-11T12:00:00Z", actorId: "codex-18", actorType: "agent", idempotencyKey: `k-${index}`,
+          eventId: `event-task-${index}`, evidenceRefs: [item.evidenceId] })) })),
+      readEvidence,
+    });
+    await open(client, null, false);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
+    const mission = await screen.findByRole("region", { name: "Canvas" });
+    expect(await within(mission).findByRole("button", { name: /Row No PR/ })).toBeInTheDocument();
+    expect(readEvidence).toHaveBeenCalledWith("demo-deploy", "ev-task-65");
+    expect(readEvidence.mock.calls.filter((call) => call[1] === "ev-task-1")).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: /^demo-calm;/ }));
+    releaseLast(envelopes[64]);
+    await waitFor(() => expect(within(mission).queryByRole("button", { name: /Row No PR/ })).not.toBeInTheDocument());
+  });
+
   /** A run whose log carries one sealed message from the agent. */
   function talkingClient(overrides: Record<string, unknown> = {}) {
     return stubClient({

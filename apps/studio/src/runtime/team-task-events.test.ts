@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { digestOf } from "./customs";
 import { laneBars } from "./lane-bars";
 import { foldTaskEvents, parseTaskEvent, readTaskEventRecords, type TaskEventRecord } from "./team-tasks";
@@ -214,6 +214,29 @@ describe("readTaskEventRecords composed with foldTaskEvents", () => {
   function event(sequence: number, actorId: string, kind: string, evidence: { evidenceId: string; contentSha256: string }): RuntimeEvent {
     return { sequence, kind: "signal_recorded", payload: { kind, sourceId: actorId, sourceKind: "user", signalId: `signal-${evidence.evidenceId}`, envelopeSha256: evidence.contentSha256 }, occurredAt: null, actorId, actorType: "agent", idempotencyKey: null, eventId: `event-${sequence}`, evidenceRefs: [evidence.evidenceId] };
   }
+
+  it("progressive task history publishes verified ordered chunks before the final read", async () => {
+    const envelopes = await Promise.all(Array.from({ length: 65 }, (_, index) =>
+      sealed(`progress-${index}`, "task.claimed", "lane-a", { taskId: `issue-${index}`, issue: index + 1, lane: "lane-a", branch: `issue-${index}` })));
+    const pending = new Map<string, (value: typeof envelopes[number]) => void>();
+    const published: number[][] = [];
+    const read = readTaskEventRecords({
+      executionId: "run", events: envelopes.map((item, index) => event(index + 1, index === 1 ? "forged-actor" : "lane-a", "task.claimed", item)),
+      readEvidence: async (_, id) => new Promise((resolve) => { pending.set(id, resolve); }),
+      onProgress: (records) => published.push(records.map((record) => record.sequence)),
+    });
+    await vi.waitFor(() => expect(pending.size).toBe(8));
+    for (let start = 0; start < 64; start += 8) {
+      for (let index = start + 7; index >= start; index--) pending.get(`progress-${index}`)!(envelopes[index]);
+      if (start < 56) await vi.waitFor(() => expect(pending.has(`progress-${start + 8}`)).toBe(true));
+    }
+    const verifiedPrefix = Array.from({ length: 64 }, (_, i) => i + 1).filter((sequence) => sequence !== 2);
+    await vi.waitFor(() => expect(published).toEqual([verifiedPrefix]));
+    expect(pending.has("progress-64")).toBe(true);
+    pending.get("progress-64")!(envelopes[64]);
+    expect((await read).map((record) => record.sequence)).toEqual([...verifiedPrefix, 65]);
+    expect(published.map((batch) => batch.length)).toEqual([63, 64]);
+  });
 
   it("folds sealed task records and skips one whose envelope was signed by another actor", async () => {
     const claimed = await sealed("e1", "task.claimed", "gh-claude-4", { issue: 9, lane: "gh-claude-4", branch: "issue-9-x" });

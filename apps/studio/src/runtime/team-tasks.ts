@@ -743,7 +743,10 @@ function contentDigest(evidence: EvidenceContent): Promise<string> {
  * that recorded it is skipped: the Runtime refuses those, and an old log must not draw them. */
 /** The verified `task.*` records themselves, in sequence order, each with its `occurredAt`: the
  * Graph tab's lanes timeline needs when each one happened, which the fold does not keep. */
-export async function readTaskEventRecords({ executionId, events, readEvidence }: ReadClaudeTasksOptions): Promise<TaskEventRecord[]> {
+export async function readTaskEventRecords({ executionId, events, readEvidence, onProgress, shouldContinue }: ReadClaudeTasksOptions & {
+  onProgress?: (records: TaskEventRecord[]) => void;
+  shouldContinue?: () => boolean;
+}): Promise<TaskEventRecord[]> {
   const ordered = [...events].sort((a, b) => a.sequence - b.sequence).filter(isTaskEventSignal);
   const read = async (event: RuntimeEvent): Promise<TaskEventRecord | null> => {
     const payload = record(event.payload);
@@ -765,14 +768,21 @@ export async function readTaskEventRecords({ executionId, events, readEvidence }
   // #185: a gh-team-sized run has ~1,250 envelopes, and reading them one round trip at a time
   // kept the Team tab empty for minutes. A few reads stay in flight at once; each result keeps
   // its position, so the fold still sees the records in sequence order.
-  const results: (TaskEventRecord | null)[] = new Array(ordered.length).fill(null);
-  let next = 0;
-  const worker = async () => {
-    while (next < ordered.length) {
-      const index = next++;
-      results[index] = await read(ordered[index]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(EVIDENCE_READS_IN_FLIGHT, ordered.length) }, worker));
-  return results.filter((entry): entry is TaskEventRecord => entry !== null);
+  const records: TaskEventRecord[] = [];
+  for (let start = 0; start < ordered.length && (shouldContinue?.() ?? true); start += 64) {
+    const chunk = ordered.slice(start, start + 64);
+    const results: (TaskEventRecord | null)[] = new Array(chunk.length).fill(null);
+    let next = 0;
+    const worker = async () => {
+      while (next < chunk.length && (shouldContinue?.() ?? true)) {
+        const index = next++;
+        results[index] = await read(chunk[index]);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(EVIDENCE_READS_IN_FLIGHT, chunk.length) }, worker));
+    if (!(shouldContinue?.() ?? true)) break;
+    records.push(...results.filter((entry): entry is TaskEventRecord => entry !== null));
+    onProgress?.([...records]);
+  }
+  return records;
 }

@@ -796,10 +796,13 @@ pub(super) async fn status(
         );
     };
     match result {
-        Ok(value) => respond(
-            StatusCode::OK,
-            Outcome::success(STATUS_COMMAND, value).output,
-        ),
+        Ok(mut value) => {
+            value["seenActors"] = serde_json::json!(state.seen_actors());
+            respond(
+                StatusCode::OK,
+                Outcome::success(STATUS_COMMAND, value).output,
+            )
+        }
         Err(failure) => respond_failure(STATUS_COMMAND, failure),
     }
 }
@@ -6645,7 +6648,10 @@ pub(super) mod tests {
         String::from_utf8(bytes.to_vec()).unwrap()
     }
 
-    pub(super) fn known_execution_state() -> (tempfile::TempDir, super::ServeState) {
+    pub(in crate::commands::serve) fn known_execution_state() -> (
+        tempfile::TempDir,
+        super::ServeState,
+    ) {
         let directory = tempfile::tempdir().unwrap();
         let execution_id = OpaqueId::parse("execution-known").unwrap();
         let scope = RepositoryScope::new(
@@ -6698,6 +6704,7 @@ pub(super) mod tests {
             read_audit: None,
             gateway_manifest: None,
             native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            seen_actors: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
         };
         (directory, state)
     }

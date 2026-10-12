@@ -103,6 +103,8 @@ export interface ExecutionStatus {
   headSequence: number;
   /** Actors with armed, unconsumed wake leases. Missing on older Runtimes. */
   wakeListeners?: string[];
+  /** Actors authenticated by this Runtime in the last 15 minutes. Missing on older Runtimes. */
+  seenActors?: string[];
   /** Who produced this run's outcomes, as declared at start (#1064). `"fixture"` means every
    * outcome came from a fixture file and no model or tool was consulted - a demonstration, and
    * the panel says so in words. `"gateway"` means a real executor was wired. Absent or `null`

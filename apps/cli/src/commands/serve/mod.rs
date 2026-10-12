@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -89,6 +90,8 @@ const STARTED_COMMAND: &str = "serve.started";
 const HEALTH_COMMAND: &str = "serve.health";
 const UNAUTHORIZED_COMMAND: &str = "serve.unauthorized";
 const NOT_FOUND_COMMAND: &str = "serve.not_found";
+const SEEN_ACTOR_TTL: Duration = Duration::from_secs(15 * 60);
+const SEEN_ACTOR_LIMIT: usize = 256;
 
 fn argument(message: &str, pointer: &str) -> Failure {
     Failure {
@@ -181,6 +184,48 @@ struct ServeState {
     /// half is wired (#585). Never read by an executor.
     gateway_manifest: Option<Arc<Path>>,
     native_chat_busy: Arc<tokio::sync::Mutex<std::collections::HashMap<String, String>>>,
+    /// In-memory liveness only: an authenticated actor has contacted this Runtime recently.
+    /// Never persisted; it is display evidence and grants no authority.
+    seen_actors: Arc<std::sync::Mutex<BTreeMap<String, Instant>>>,
+}
+
+impl ServeState {
+    fn record_seen_actor(&self, headers: &HeaderMap, now: Instant) {
+        let Some(actor) = headers
+            .get("x-graphhelm-actor")
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| ActorId::parse(value).is_ok())
+        else {
+            return;
+        };
+        let mut seen = self
+            .seen_actors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        seen.retain(|_, at| now.saturating_duration_since(*at) <= SEEN_ACTOR_TTL);
+        seen.insert(actor.to_owned(), now);
+        while seen.len() > SEEN_ACTOR_LIMIT {
+            let oldest = seen
+                .iter()
+                .min_by_key(|(actor, at)| (**at, actor.as_str()))
+                .map(|(actor, _)| actor.clone());
+            let Some(oldest) = oldest else { break };
+            seen.remove(&oldest);
+        }
+    }
+
+    fn seen_actors_at(&self, now: Instant) -> Vec<String> {
+        let mut seen = self
+            .seen_actors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        seen.retain(|_, at| now.saturating_duration_since(*at) <= SEEN_ACTOR_TTL);
+        seen.keys().cloned().collect()
+    }
+
+    fn seen_actors(&self) -> Vec<String> {
+        self.seen_actors_at(Instant::now())
+    }
 }
 
 /// `graphhelm serve --events <dir> --bind <addr>`: creates or loads the bearer token, binds
@@ -258,6 +303,7 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         gateway_manifest: args.gateway_manifest.as_deref().map(Arc::from),
         sweep_interval: args.sweep_interval,
         native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+        seen_actors: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
     };
 
     let rt =
@@ -952,6 +998,7 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
         return refused(request, unauthorized_response()).await;
     };
     if constant_time_eq(presented.as_bytes(), &state.token) {
+        state.record_seen_actor(request.headers(), Instant::now());
         return next.run(request).await;
     }
     // #380: the agent session token. The declared actor type is a claim, not a credential, so
@@ -966,6 +1013,7 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
             .headers_mut()
             .insert("x-graphhelm-actor-type", HeaderValue::from_static("agent"));
         request.headers_mut().remove("x-graphhelm-agent-credential");
+        state.record_seen_actor(request.headers(), Instant::now());
         return next.run(request).await;
     }
     // Agent credentials are bearer principals in their own right. They are never accepted as
@@ -991,6 +1039,7 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
         "x-graphhelm-agent-credential",
         HeaderValue::from_str(&presented).unwrap_or_else(|_| HeaderValue::from_static("invalid")),
     );
+    state.record_seen_actor(request.headers(), Instant::now());
     next.run(request).await
 }
 
@@ -3244,6 +3293,7 @@ mod tests {
 
         let (_directory, mut state) = routes::tests::known_execution_state();
         state.token = Arc::<[u8]>::from(b"test-token".to_vec());
+        let state_for_expiry = state.clone();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -3264,6 +3314,9 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&response[body_start..]).unwrap();
         assert_eq!(body["data"]["seenActors"], serde_json::json!(["lane-a"]));
         assert_eq!(body["data"]["headSequence"], 1);
+        assert!(state_for_expiry
+            .seen_actors_at(Instant::now() + Duration::from_secs(16 * 60))
+            .is_empty());
     }
 
     #[test]

@@ -320,7 +320,10 @@ class HandoffTests(unittest.TestCase):
         self.assertTrue(report["truncated"])
         self.assertEqual(len(report["offers"]), MODULE.MAX_OFFERS)
         self.assertEqual(report["offers"][0]["receipts"], [received["receiptId"]])
-        self.assertLessEqual(len(evidence_reads), MODULE.MAX_OFFERS + 2)
+        # Recipient is sealed, not journal metadata: inspect only the prefix needed
+        # to discover the 129th matching offer, plus the caller's one receipt.
+        self.assertEqual(len(evidence_reads), 173)
+        self.assertFalse(any("evidence-handoff-offer-fixture-171" in path for path in evidence_reads))
         self.assertFalse(any(row[0] == "POST" or "/briefing" in row[1]
                              for row in RuntimeHandler.requests))
 

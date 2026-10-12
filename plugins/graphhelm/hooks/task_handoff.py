@@ -402,11 +402,7 @@ def status(host: str, session: str, offer_id: str | None) -> dict:
     for event in events:
         record = _signal_record(event)
         signal_id = record.get("signalId")
-        if offer_id and record.get("kind") == OFFER_KIND and signal_id != offer_id:
-            continue
-        if record.get("kind") in {OFFER_KIND, RECEIPT_KIND} and isinstance(signal_id, str):
-            if record.get("kind") == RECEIPT_KIND and record.get("sourceId") != current_actor:
-                continue
+        if record.get("kind") == RECEIPT_KIND and record.get("sourceId") == current_actor and isinstance(signal_id, str):
             sealed_by_id[signal_id] = _sealed_signal(url, token, execution, event)
     offers = []
     truncated = False
@@ -417,9 +413,7 @@ def status(host: str, session: str, offer_id: str | None) -> dict:
         sid = record.get("signalId")
         if not isinstance(sid, str) or (offer_id and sid != offer_id):
             continue
-        signal = sealed_by_id.get(sid)
-        if signal is None:
-            raise ValueError("handoff offer evidence is unavailable")
+        signal = _sealed_signal(url, token, execution, event)
         if signal.get("to") != current_actor:
             continue
         if len(offers) >= MAX_OFFERS:

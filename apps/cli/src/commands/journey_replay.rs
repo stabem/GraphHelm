@@ -129,6 +129,9 @@ pub(super) fn safe_environment(command: &mut Command, recording: bool) {
 struct OwnedChild {
     child: Option<Child>,
     group: Option<graphhelm_process_tree::ProcessGroup>,
+    /// Keeps the spawning thread alive while the child lives: on Linux the child's
+    /// `PR_SET_PDEATHSIG` fires when the thread that forked it exits, not the process.
+    spawner: Option<mpsc::Sender<()>>,
 }
 
 impl OwnedChild {
@@ -139,8 +142,10 @@ impl OwnedChild {
     fn cleanup(mut self) -> Receiver<(std::result::Result<i32, ()>, Value)> {
         let child = self.child.take().unwrap();
         let group = self.group.take().unwrap();
+        let spawner = self.spawner.take();
         let (tx, rx) = mpsc::sync_channel(1);
         std::thread::spawn(move || {
+            let _spawner = spawner;
             let mut child = child;
             let mut group = group;
             let started = Instant::now();
@@ -183,7 +188,9 @@ impl OwnedChild {
 impl Drop for OwnedChild {
     fn drop(&mut self) {
         if let (Some(mut child), Some(mut group)) = (self.child.take(), self.group.take()) {
+            let spawner = self.spawner.take();
             std::thread::spawn(move || {
+                let _spawner = spawner;
                 let _ = graphhelm_process_tree::terminate(child.id(), group);
                 graphhelm_process_tree::close(&mut group);
                 let _ = child.wait();
@@ -240,6 +247,7 @@ fn observe_cleanup(
 
 fn spawn_owned(mut command: Command, deadline: Instant) -> Result<OwnedChild> {
     let (tx, rx) = mpsc::sync_channel(1);
+    let (alive, parked) = mpsc::channel::<()>();
     // A delayed spawn owns its eventual child too. Neither worker nor driver performs
     // effects before the caller sends its start/request frame after containment.
     std::thread::spawn(move || {
@@ -257,6 +265,7 @@ fn spawn_owned(mut command: Command, deadline: Instant) -> Result<OwnedChild> {
                     Ok(group) => Ok(OwnedChild {
                         child: Some(child),
                         group: Some(group),
+                        spawner: Some(alive),
                     }),
                     Err(_) => {
                         let _ = child.kill();
@@ -266,6 +275,8 @@ fn spawn_owned(mut command: Command, deadline: Instant) -> Result<OwnedChild> {
                 }
             });
         let _ = tx.send(answer);
+        // Returns once the owner drops `spawner` (or the spawn failed and it was dropped).
+        let _ = parked.recv();
     });
     rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))
         .map_err(|_| failure("replay.timeout", "/startup", 1))?

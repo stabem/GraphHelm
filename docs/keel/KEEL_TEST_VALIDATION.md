@@ -78,9 +78,18 @@ always removed), the command runs the same journey validation, applies the patch
 and runs it again. Green means every declared path completed; coverage completeness is not
 required. The `verdict` is:
 
-- `caught`: at least one path failed after the patch; `failing` lists them. Exit 0.
-- `missed`: every path stayed green. The journeys do not observe the patched code. Exit 2.
-- `baseline_not_green`: validation was not green before the patch. Exit 2.
-- `patch_not_applicable`: `git apply` refused the patch at HEAD. Exit 2.
+- `caught` (exit 0): the same declared paths ran after the patch and at least one executed and
+  failed (`failed`, or `drift` when an expected screen was missing); `failing` lists them.
+- `missed`: every path stayed green. The journeys do not observe the patched code.
+- `no_journey_ran`: after the patch there was no well-formed validation report, or its paths were
+  only `not_run` or `held`. Nothing observed the break.
+- `journey_set_changed`: the patch changed which journey paths are declared.
+- `patch_touches_observer`: the patch edits `.graphhelm/` (journeys or observers). Sabotage must
+  break the product, not the test. Checked with `git apply --numstat` before anything runs.
+- `baseline_not_green`: validation was not green before the patch.
+- `patch_not_applicable`: `git apply` refused the patch at HEAD.
+
+Every verdict except `caught` exits 2. The worktree gets copies of the ignored
+`.graphhelm/observers/` files and a link to the project's `node_modules`, so the journeys can run.
 
 Only committed HEAD is tested; uncommitted edits are not in the worktree.

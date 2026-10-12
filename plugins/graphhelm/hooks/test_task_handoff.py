@@ -131,7 +131,7 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(post[0][2]["X-Graphhelm-Actor".title()], MODULE._actor("claude", "sender-1"))
         self.assertNotIn("objective", json.dumps(post))
 
-    def test_receive_preserves_offered_digest_when_current_briefing_advances(self):
+    def test_receipt_briefing_preserves_first_digest_when_current_briefing_advances(self):
         offered_digest = {"asOfSequence": 10, "nextStep": {"kind": "diagnose"},
                           "pending": [{"id": "offer-pending"}], "unevaluated": [],
                           "decisions": [], "workDone": [{"id": "offer-done"}]}
@@ -158,12 +158,37 @@ class HandoffTests(unittest.TestCase):
             RuntimeHandler.briefing_data = later_current
             replay = MODULE.receive("codex", "receiver", offered["offerId"])
         self.assertEqual(received["offeredBriefing"], offered_reference)
+        self.assertEqual(received["receiptBriefing"], first_reference)
         self.assertEqual(received["briefing"], first_reference)
         self.assertEqual(replay["offeredBriefing"], offered_reference)
+        self.assertEqual(replay["receiptBriefing"], first_reference)
         self.assertEqual(replay["briefing"], later_reference)
         self.assertEqual(replay["state"], "already_recorded")
         self.assertEqual(replay["receiptId"], received["receiptId"])
         self.assertEqual(len([row for row in RuntimeHandler.requests if row[0] == "POST"]), 2)
+
+    def test_receipt_briefing_rejects_invalid_sealed_digest_without_write(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            offered = MODULE.offer("claude", "sender", "codex", "receiver")
+            received = MODULE.receive("codex", "receiver", offered["offerId"])
+            evidence_id = f"evidence-{received['receiptId']}"
+            content, _ = RuntimeHandler.evidence[evidence_id]
+            signal = json.loads(content)
+            details = json.loads(signal["description"])
+            details["briefing"] = {"asOfSequence": "invalid"}
+            signal["description"] = json.dumps(details)
+            content = json.dumps(signal, separators=(",", ":"))
+            digest = hashlib.sha256(content.encode()).hexdigest()
+            RuntimeHandler.evidence[evidence_id] = (content, digest)
+            receipt_event = RuntimeHandler.events[-1]
+            receipt_event["evidenceRefs"][0]["contentSha256"] = digest
+            receipt_event["kind"]["data"]["envelopeSha256"] = digest
+            posts_before = len([row for row in RuntimeHandler.requests if row[0] == "POST"])
+            with self.assertRaisesRegex(ValueError, "receipt briefing"):
+                MODULE.receive("codex", "receiver", offered["offerId"])
+            with self.assertRaisesRegex(ValueError, "receipt briefing"):
+                MODULE.status("codex", "receiver", offered["offerId"])
+        self.assertEqual(len([row for row in RuntimeHandler.requests if row[0] == "POST"]), posts_before)
 
     def test_lost_http_ack_is_reconciled_from_sealed_records_without_post_retry(self):
         RuntimeHandler.post_mode = "drop"

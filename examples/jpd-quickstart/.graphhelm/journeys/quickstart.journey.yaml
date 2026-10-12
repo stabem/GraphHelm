@@ -1,0 +1,39 @@
+schema: graphhelm.journey-flow/1
+id: quickstart
+title: Client greets and lists items
+status: draft
+approved: null
+base: http://127.0.0.1:8765
+actors: [client]
+secrets: []
+risks: []
+screens:
+  - id: greeted
+    url: /
+    state: success
+    expect: [{role: exit, name: "0"}, {role: stdout, name: hello}]
+    scope: unknown
+  - id: listed
+    url: /
+    state: success
+    expect: [{role: status, name: "200"}, {role: json, name: items.0.name=apple}]
+    scope: unknown
+  - id: start
+    url: /health.json
+    state: stable
+    expect: [{role: status, name: "200"}, {role: json, name: status=ok}]
+    scope: unknown
+edges:
+  - id: greet
+    from: start
+    to: greeted
+    acts:
+      - {kind: cli, role: exec, name: sh hello.sh}
+  - id: list
+    from: greeted
+    to: listed
+    acts:
+      - {kind: http, role: GET, name: /items.json}
+paths:
+  main: [greet, list]
+drift: []

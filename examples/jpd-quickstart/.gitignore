@@ -1,0 +1,6 @@
+# Keep the journeys and the launcher declaration tracked; owner and runtime material stays private.
+.graphhelm/*
+!.graphhelm/journeys/
+!.graphhelm/journeys/**
+!.graphhelm/journey-fixture.json
+/.mcp.json

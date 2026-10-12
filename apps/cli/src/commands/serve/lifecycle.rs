@@ -26,6 +26,8 @@ struct Panic {
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Record {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    instance: Option<String>,
     pid: u32,
     started_at: u64,
     version: String,
@@ -116,7 +118,10 @@ fn write(path: &Path, record: &Record) -> std::io::Result<()> {
 }
 
 impl Lifecycle {
-    pub(super) fn start(events: &Path) -> Result<(Self, serde_json::Value), super::Failure> {
+    pub(super) fn start(
+        events: &Path,
+        instance: &str,
+    ) -> Result<(Self, serde_json::Value, serde_json::Value), super::Failure> {
         let mut name = events.file_name().ok_or_else(invalid)?.to_os_string();
         name.push(".runtime-lifecycle.json");
         let path = events.with_file_name(name);
@@ -162,6 +167,9 @@ impl Lifecycle {
                 };
                 let mut result = serde_json::json!({"state": state, "pid": record.pid,
                     "at": at});
+                result["instance"] = record
+                    .instance
+                    .map_or(serde_json::Value::Null, serde_json::Value::String);
                 if let Some(location) = record.location {
                     if state == "vanished" {
                         result["lastPanic"] = serde_json::json!({"location": sanitize(&location)});
@@ -175,6 +183,7 @@ impl Lifecycle {
             Err(_) => return Err(invalid()),
         };
         let record = Record {
+            instance: Some(instance.to_owned()),
             pid: std::process::id(),
             started_at: now(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -185,6 +194,11 @@ impl Lifecycle {
             fatal: None,
             last_panic: None,
         };
+        let current_run = serde_json::json!({
+            "instance": record.instance.as_deref(),
+            "pid": record.pid,
+            "startedAt": record.started_at,
+        });
         write(&path, &record).map_err(|_| invalid())?;
         let writer = Arc::new(Mutex::new((path, record)));
         let hook_writer = Arc::clone(&writer);
@@ -214,6 +228,7 @@ impl Lifecycle {
                 writer,
             },
             previous,
+            current_run,
         ))
     }
 

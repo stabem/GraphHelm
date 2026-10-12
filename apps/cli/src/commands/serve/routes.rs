@@ -6512,6 +6512,7 @@ mod tests {
         let events: Arc<Path> = Arc::from(directory.path().to_owned());
         let state = super::ServeState {
             previous_exit: serde_json::Value::Null,
+            current_run: serde_json::Value::Null,
             token: Arc::<[u8]>::from(Vec::<u8>::new()),
             agent_session_token: Arc::<[u8]>::from(Vec::<u8>::new()),
             agent_credentials: Arc::new(std::collections::BTreeMap::new()),

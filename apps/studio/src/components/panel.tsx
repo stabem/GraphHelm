@@ -1199,8 +1199,9 @@ export function NodePanel({
       )}
 
       {node.history.some((entry) => entry.reason === "runtime_crashed") && (
-        <section className="node-result-summary" aria-label="Runtime crash history">
-          <strong>Runtime crash history</strong>
+        <section className="node-result-summary" aria-label="Native route failure history">
+          <strong>Native route failure history</strong>
+          <span>Recorded failure sites do not show that the GraphHelm server stopped or identify a root cause.</span>
           {node.history.filter((entry) => entry.reason === "runtime_crashed").map((entry) => (
             <span key={entry.sequence}>#{entry.sequence}: {new Map([
               ["wait_failed", "wait failed"], ["exit_status_unreadable", "exit status unreadable"],

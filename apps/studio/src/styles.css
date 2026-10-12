@@ -1923,8 +1923,11 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   .topbar .run-name { max-width: 250px; }
 }
 
+.projects-backdrop { display: none; }
+
 @media (max-width: 900px) {
   .projects-backdrop { position: absolute; inset: 0; z-index: 19; border: 0; background: rgb(0 0 0 / 35%); }
+  .app.projects-open .projects-backdrop { display: block; }
   .app:not(.projects-open) .projects-backdrop { display: none; }
   .rail-close { display: inline-flex; }
   .app, .app:not(.projects-open) { grid-template-columns: minmax(0, 1fr); }

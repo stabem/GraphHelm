@@ -824,6 +824,10 @@ def test_pair_summary_accounts_for_admitted_attempts_and_partial_cohorts(tmp_pat
     assert two["baseline"]["costPerProvenDeliveryReason"] == "unknown_cost"
     assert two["candidate"]["costPerProvenDeliveryReason"] == "no_pass"
     assert two["deltaCandidateMinusBaseline"]["costPerProvenDeliveryUsd"] is None
+    assert "recommendation" not in report and "savings" not in report
+    duplicate = run(rows, groups + [groups[0] | {"task": "three", "repeats": [
+        {"baseline": "a1", "candidate": "k1"}]}])
+    assert duplicate["partial"] and duplicate["excluded"][0]["reason"] == "duplicate_session"
 
 
 def test_pair_analysis_plan_binds_explicit_thresholds_to_frozen_inputs(tmp_path):
@@ -884,10 +888,6 @@ def test_pair_analysis_plan_binds_explicit_thresholds_to_frozen_inputs(tmp_path)
     manifest["groups"].append(manifest["groups"][0] | {"task": "second", "split": "train"})
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     assert run(plan).returncode != 0
-    assert "recommendation" not in report and "savings" not in report
-    duplicate = run(rows, groups + [groups[0] | {"task": "three", "repeats": [
-        {"baseline": "a1", "candidate": "k1"}]}])
-    assert duplicate["partial"] and duplicate["excluded"][0]["reason"] == "duplicate_session"
 
 
 def test_configured_run_records_requested_effort_and_incomplete_usage(tmp_path, monkeypatch):

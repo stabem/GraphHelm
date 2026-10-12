@@ -901,7 +901,8 @@ def test_task_group_sessions_account_for_unequal_arms_and_exclude_whole_task(tmp
             "assumptionStatement": "Operator declaration for independent tasks."}
     planned = run(plan=plan)
     assert planned["analysisPlan"]["minimumCostReductionUsd"] == 0.2
-    assert planned["inferenceStatus"] == "not_implemented"
+    assert planned["inferenceStatus"] == "not_computable"
+    assert planned["inferenceReason"] == "fewer_than_two_tasks"
 
 
 def test_pair_analysis_plan_binds_explicit_thresholds_to_frozen_inputs(tmp_path):
@@ -945,7 +946,8 @@ def test_pair_analysis_plan_binds_explicit_thresholds_to_frozen_inputs(tmp_path)
     report = json.loads(good.stdout)
     assert report["analysisPlan"] == plan
     assert report["analysisPlanSha256"] == hashlib.sha256(plan_path.read_bytes()).hexdigest()
-    assert report["inferenceStatus"] == "not_implemented"
+    assert report["inferenceStatus"] == "not_computable"
+    assert report["inferenceReason"] == "fewer_than_two_tasks"
     assert report["tasks"][0]["baseline"]["PASS"] == 1
     assert all(key not in report for key in ("recommendation", "confidenceInterval", "savings"))
 
@@ -1021,6 +1023,54 @@ def test_pair_analysis_plan_uses_admitted_manifest_bytes(tmp_path, monkeypatch, 
     assert report["tasks"][0]["baseline"]["attempts"] == 1
     assert report["tasks"][0]["candidate"]["PASS"] == 1
     assert report["partial"] is True and report["unmatched"] == ["a2", "k2"]
+
+
+def test_pair_bootstrap_task_interval_statuses(tmp_path):
+    """Task resampling distinguishes noise, clear gain and missing cost; tiny offline CLI calls."""
+    controls = {key: key for key in ("parent", "evaluator", "environment", "budget", "timeout")}
+    def run(candidate_costs, unknown=False):
+        rows, groups = [], []
+        for index, candidate_cost in enumerate(candidate_costs):
+            task = f"task-{index}"
+            for side, arm, cost in (("baseline", "a", 10), ("candidate", "k", candidate_cost)):
+                rows.append({"sessionId": f"{arm}-{index}", "task": task, "taskSnapshot": "snap",
+                             "split": "test", "arm": arm, "configDigest": arm, "controls": controls,
+                             "verdict": "PASS", "costUsd": None if unknown and index == 0 and arm == "k" else cost})
+            groups.append({"task": task, "taskSnapshot": "snap", "split": "test", "controls": controls,
+                           "baseline": {"arm": "a", "configDigest": "a"},
+                           "candidate": {"arm": "k", "configDigest": "k"},
+                           "treatmentDifferences": ["arm", "configDigest"],
+                           "sessions": {"baseline": [f"a-{index}"], "candidate": [f"k-{index}"]}})
+        rows_raw = b"".join((json.dumps(item) + "\n").encode() for item in rows)
+        rows_path = tmp_path / "rows.jsonl"; rows_path.write_bytes(rows_raw)
+        manifest = {"version": 2, "rowsSha256": hashlib.sha256(rows_raw).hexdigest(),
+                    "comparison": "methodology", "weighting": "equal_task", "groups": groups}
+        manifest_path = tmp_path / "manifest.json"; manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        plan = {"version": 1, "manifestSha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                "rowsSha256": manifest["rowsSha256"], "comparison": "methodology", "split": "test",
+                "independentUnit": "task", "weighting": "equal_task",
+                "costMetric": "all_attempt_cost_per_proven_delivery_usd",
+                "minimumCostReductionUsd": 2, "maximumQualityRegression": 0.05,
+                "assumptionStatement": "Frozen tasks are independent."}
+        plan_path = tmp_path / "plan.json"; plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        command = [sys.executable, str(HERE / "doless.py"), "pair-summary", "--manifest",
+                   str(manifest_path), "--rows", str(rows_path), "--analysis-plan", str(plan_path)]
+        first = subprocess.run(command, capture_output=True, text=True, creationflags=NO_WINDOW)
+        second = subprocess.run(command, capture_output=True, text=True, creationflags=NO_WINDOW)
+        assert first.returncode == second.returncode == 0, first.stderr
+        assert first.stdout == second.stdout
+        return json.loads(first.stdout)
+
+    noise = run([8, 12, 8, 12])
+    assert noise["inferenceStatus"] == "inconclusive"
+    assert noise["inference"]["costDifferenceUsd"]["lower"] <= 0 <= noise["inference"]["costDifferenceUsd"]["upper"]
+    assert noise["inference"]["qualityDifference"]["lower"] == 0
+    gain = run([1, 1, 1, 1])
+    assert gain["inferenceStatus"] == "supported"
+    assert gain["inference"]["costDifferenceUsd"] == {"lower": -9, "upper": -9}
+    missing = run([1, 1, 1, 1], unknown=True)
+    assert missing["inferenceStatus"] == "not_computable"
+    assert missing["inferenceReason"] == "unknown_cost"
 
 
 def test_configured_run_records_requested_effort_and_incomplete_usage(tmp_path, monkeypatch):

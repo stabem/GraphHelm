@@ -8,7 +8,7 @@ export const TRUST_LABELS = ["Written", "Reviewed", "Merged", "Proven", "Seen by
 
 export interface MissionStep { stepId: string; index: number; title: string; status: StepStatus; reason: string | null; promise: string | null }
 /** One BLOCK round of the review loop: who blocked which head, and the head the author pushed back. */
-export interface MissionRound { reviewer: string; headSha: string; fixHead: string | null }
+export interface MissionRound { reviewer: string; headSha: string; fixHead: string | null; blockedAt: string | null }
 export interface MissionTask {
   key: string; pr: number | null; issue: number | null; title: string; lane: string | null; reviewers: string[];
   step: TaskState["step"]; blocked: boolean; trust: TrustLevel;
@@ -76,7 +76,7 @@ export function toMissionTask(raw: TaskState): MissionTask {
     key: t.key, pr: t.pr, issue: t.issue, title: t.prTitle || t.title || t.taskId, lane: t.lane,
     reviewers: t.reviewers, currentReviewer: t.currentReviewer, step: t.step, blocked: block !== null, trust,
     blockedBy: block ? { reviewer: block.reviewer, headSha: block.headSha } : null,
-    rounds: (t.rounds ?? []).map((r) => ({ reviewer: r.reviewer, headSha: r.headSha, fixHead: r.fixHead })),
+    rounds: (t.rounds ?? []).map((r) => ({ reviewer: r.reviewer, headSha: r.headSha, fixHead: r.fixHead, blockedAt: r.blockedAt })),
     headSha: t.headSha ?? null, mergeSha: t.mergeSha ?? null, repoUrl: t.repoUrl ?? null,
   };
 }

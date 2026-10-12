@@ -15,7 +15,7 @@ const t = (over: Partial<MissionTask>): MissionTask => ({
   key: "k", pr: 1, issue: null, title: "t", lane: "gh-claude-6", reviewers: [], step: "implement", blocked: false, trust: 1,
   blockedBy: null, rounds: [], headSha: null, mergeSha: null, repoUrl: null, ...over,
 });
-const round = { reviewer: "r", headSha: "h", fixHead: "f" };
+const round = { reviewer: "r", headSha: "h", fixHead: "f", blockedAt: null };
 
 describe("LanesTimeline", () => {
   it("counts every available status in exactly one filter", async () => {

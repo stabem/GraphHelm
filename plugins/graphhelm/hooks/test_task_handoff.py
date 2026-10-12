@@ -345,6 +345,52 @@ class HandoffTests(unittest.TestCase):
             with self.assertRaises(MODULE.urllib.error.HTTPError):
                 MODULE.status("codex", "receiver", None)
 
+    def test_status_empty_selection_does_not_read_unrelated_receipt(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            selected = MODULE.offer("claude", "sender", "codex", "receiver")
+            received = MODULE.receive("codex", "receiver", selected["offerId"])
+            del RuntimeHandler.evidence[f"evidence-{received['receiptId']}"]
+            RuntimeHandler.requests = []
+
+            report = MODULE.status("codex", "receiver", "missing-offer")
+
+        self.assertEqual(report, {"format": "graphhelm-portable-v1", "phase": "status",
+                                  "executionId": "run-1", "offers": [], "truncated": False,
+                                  "activation": "unobserved"})
+        self.assertTrue(RuntimeHandler.requests)
+        self.assertTrue(all(row[0] == "GET" and "/events?after=" in row[1]
+                            for row in RuntimeHandler.requests))
+
+    def test_status_empty_untargeted_selection_skips_own_receipt_after_foreign_offer(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            selected = MODULE.offer("claude", "sender", "codex", "receiver")
+            received = MODULE.receive("codex", "receiver", selected["offerId"])
+            offer_event = next(event for event in RuntimeHandler.events
+                               if event["kind"]["data"]["signalId"] == selected["offerId"])
+            evidence_id = f"evidence-{selected['offerId']}"
+            signal = json.loads(RuntimeHandler.evidence[evidence_id][0])
+            signal["to"] = MODULE._actor("codex", "other")
+            details = json.loads(signal["description"])
+            details["recipient"] = signal["to"]
+            signal["description"] = json.dumps(details)
+            content = json.dumps(signal, separators=(",", ":"))
+            digest = hashlib.sha256(content.encode()).hexdigest()
+            RuntimeHandler.evidence[evidence_id] = (content, digest)
+            offer_event["evidenceRefs"][0]["contentSha256"] = digest
+            offer_event["kind"]["data"]["envelopeSha256"] = digest
+            RuntimeHandler.requests = []
+
+            report = MODULE.status("codex", "receiver", None)
+
+        self.assertEqual(report["offers"], [])
+        self.assertFalse(report["truncated"])
+        evidence_reads = [row[1].rsplit("/", 1)[-1] for row in RuntimeHandler.requests
+                          if "/evidence/" in row[1]]
+        self.assertEqual(evidence_reads, [evidence_id])
+        self.assertNotIn(f"evidence-{received['receiptId']}", evidence_reads)
+        self.assertFalse(any(row[0] == "POST" or "/briefing" in row[1]
+                             for row in RuntimeHandler.requests))
+
     def test_targeted_status_still_refuses_missing_or_corrupt_selected_evidence(self):
         with patch.dict(os.environ, self.env, clear=False):
             selected = MODULE.offer("claude", "sender", "codex", "receiver")

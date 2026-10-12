@@ -206,6 +206,24 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
     };
     eprintln!("[update] GraphHelm source: {}", source.display());
     let clone = update(&source);
+    // A clone that could not be fast-forwarded would only rebuild the old code: a long compile
+    // that installs nothing new (owner run, 2026-10-12: 18 minutes, 28 commits behind).
+    if clone["state"] == "stale" && !args.keep_local {
+        let reason = clone["reason"]
+            .as_str()
+            .unwrap_or("the clone could not be updated");
+        return refused_as(
+            UPDATE,
+            format!(
+                "nothing was built: {reason}, so the clone is still {} commit(s) behind origin/main. \
+                 To set the local changes aside and update: git -C \"{dir}\" stash, then git -C \"{dir}\" switch main, \
+                 then graphhelm update again. To build the clone as it is: graphhelm update --keep-local",
+                clone["behind"],
+                dir = source.display()
+            ),
+            "/source",
+        );
+    }
     let head = git(&source, &["rev-parse", "HEAD"]);
     let root = install_root(std::env::current_exe().ok().as_deref());
     let stamp = root.as_ref().map(|root| root.join(STAMP));

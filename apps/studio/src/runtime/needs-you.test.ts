@@ -98,7 +98,8 @@ describe("needsYou", () => {
     const status = { ...STATUS, executor: "fixture" as const, attention: "needs_you" as const,
       attentionReasons: [{ kind: "waiting_input_node", node: "implementation" }] };
     expect(needsYou(base({ status, agentWorkRecorded: true })).state).toEqual({ kind: "dark" });
-    const result = needsYou(base({ status, events: question, envelopes: asked, agentWorkRecorded: true }));
+    const ownerQuestion = [{ ...question[0], actorId: "kit-3", actorType: "agent" as const }];
+    const result = needsYou(base({ status, events: ownerQuestion, envelopes: asked, agentWorkRecorded: true }));
     expect(result.state).toEqual({ kind: "lit", count: 1 });
     expect(result.items.map((item) => item.kind)).toEqual(["question"]);
   });

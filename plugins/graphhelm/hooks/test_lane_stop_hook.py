@@ -546,7 +546,7 @@ class LaneStopTests(unittest.TestCase):
         payload = {"hook_event_name": "SessionStart", "session_id": session}
         result = subprocess.run([sys.executable, str(script), "start", "--host", "codex"],
                                 input=json.dumps(payload), text=True, env=self.env,
-                                capture_output=True, timeout=8)
+                                capture_output=True, timeout=8, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("UNOBSERVED", result.stdout)
         pid_files = list(Path(self.env.get("GRAPHHELM_HOOK_STATE_DIR", "")).glob("*.waiter.pid"))
@@ -561,7 +561,7 @@ class LaneStopTests(unittest.TestCase):
         self.assertTrue(session_hook._pid_alive(pid), "wake waiter exited before an append")
         again = subprocess.run([sys.executable, str(script), "start", "--host", "codex"],
                                input=json.dumps(payload), text=True, env=self.env,
-                               capture_output=True, timeout=8)
+                               capture_output=True, timeout=8, creationflags=NO_WINDOW)
         self.assertEqual(again.returncode, 0, again.stderr)
         self.assertEqual(int(pid_files[0].read_text()), pid)
         self.note("other-2", to="codex-5")
@@ -605,7 +605,8 @@ class LaneStopTests(unittest.TestCase):
                          "capture_output=True,timeout=8); "
                          "print(p.returncode, flush=True); time.sleep(30)")
             host = subprocess.Popen([sys.executable, "-c", host_code, *shell, command, payload],
-                                    env=self.env, stdout=subprocess.PIPE, text=True)
+                                    env=self.env, stdout=subprocess.PIPE, text=True,
+                                    creationflags=NO_WINDOW)
             self.addCleanup(lambda p=host: p.kill() if p.poll() is None else None)
             self.addCleanup(host.stdout.close)
             self.assertEqual(host.stdout.readline().strip(), "0")

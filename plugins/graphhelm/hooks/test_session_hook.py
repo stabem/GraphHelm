@@ -358,7 +358,7 @@ class SessionHookTests(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(SCRIPT.with_name("lane_stop_hook.py"))],
             input=json.dumps({"hook_event_name": "Stop", "session_id": "session-123"}),
-            text=True, capture_output=True, env=self.env, timeout=6,
+            text=True, capture_output=True, env=self.env, timeout=6, creationflags=NO_WINDOW,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         arms = [item for item in RuntimeHandler.requests if item[1] == "/v1/executions/run-test/wake-lease"]

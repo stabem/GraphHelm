@@ -34,6 +34,14 @@ case's premise. The external runner must keep INCOMPLETE separate from non-selec
 prepared labels need human review before a judge can be qualified; no selection result is
 claimed here.
 
+`audit-before-planning` is a competing-intent selection case. The request starts with planning
+but asks for an assessment of two existing tests. Run it with the isolated development-contracts
+skill set, including planning and auditing skills. Its grader checks invocation and completed
+assessment separately; another relevant skill invocation alone is not a failure. Missing or broken
+execution is INCOMPLETE. This is a prepared label, not a measured selection result. Human review
+of responses is still needed before judge qualification; false passes, false failures, repeat
+disagreement, and actual selection rates remain unmeasured.
+
 First run (2026-10-05, 3 runs per arm). This is one noisy sample: a review re-run of
 `keel-scope` scored 0.67 with the skill and 1.00 without it, so treat any single-run number as
 +/- one run. Use `--runs` to raise runs per arm before reading a delta as real.

@@ -34,7 +34,7 @@ class SkillTwinsTest(unittest.TestCase):
         for obligation in (
             "completed transcript", "`test-audit` skill was invoked",
             "self-comparison", "literal 6", "incorrect multiplication",
-            "no broad coverage", "assessment", "not an implementation card",
+            "do not claim broad coverage", "assessment", "not an implementation card",
             "no edits", "no automatic deletion", "another relevant skill",
             "missing transcript", "truncated transcript", "tool failure",
             "infrastructure failure", "INCOMPLETE",

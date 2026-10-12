@@ -66,7 +66,7 @@ interface Props {
   agents?: Bot[];
   /** The selected run's initial task history read has not settled yet. */
   historyLoading?: boolean;
-  /** #591: the "While you were away" gap, for the summary's `N h away · N shipped`; absent, omitted. */
+  /** #591: the "While you were away" gap, for the summary's `N h away Â· N shipped`; absent, omitted. */
   away?: { minutes: number; shipped: number } | null;
   /** #591: posts an owner note on the run (App: client.signal). Absent: no Nudge / Reassign. */
   onSignal?: (note: LaneNote) => Promise<unknown>;
@@ -98,12 +98,12 @@ export function RunGraphStrip({ nodes, unassigned, onOpenNode }: { nodes: GraphN
     { title: "Steps with a bot", nodes: nodes.filter((n) => !free.has(n.id)) },
   ].filter((p) => p.nodes.length > 0);
   const item = (n: GraphNode) => {
-    const text = `${n.declaredName ?? n.id} · ${readable(n.state)}`;
+    const text = `${n.declaredName ?? n.id} Â· ${readable(n.state)}`;
     return <li key={n.id}>{onOpenNode ? <button type="button" className="mv-node" data-state={n.state} onClick={() => onOpenNode(n.id)}>{text}</button> : <span className="mv-node" data-state={n.state}>{text}</span>}</li>;
   };
   return (
     <section className="mv-run-graph mv-pad" aria-label="Run graph">
-      <button type="button" className="mv-fold" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{`Run graph · ${nodes.length} ${nodes.length === 1 ? "step" : "steps"}`}</button>
+      <button type="button" className="mv-fold" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{`Run graph Â· ${nodes.length} ${nodes.length === 1 ? "step" : "steps"}`}</button>
       {open && parts.map((p) => (
         <div key={p.title} className="mv-run-part">
           <h3>{p.title}</h3>
@@ -119,18 +119,18 @@ export function agentTone(b: Bot): "work" | "stalled" | "idle" {
 }
 export function agentActivity(b: Bot): string {
   if (b.state === "done") return b.quietMinutes !== null ? `idle ${b.quietMinutes} min` : "idle";
-  if (b.state === "quiet") return `${b.doingNow || "quiet"}${b.quietMinutes !== null ? ` · silent ${b.quietMinutes} min` : ""}`;
-  if (b.state === "waiting_for_you") return b.doingNow ? `${b.doingNow} · waits for you` : "waits for you";
+  if (b.state === "quiet") return `${b.doingNow || "quiet"}${b.quietMinutes !== null ? ` Â· silent ${b.quietMinutes} min` : ""}`;
+  if (b.state === "waiting_for_you") return b.doingNow ? `${b.doingNow} Â· waits for you` : "waits for you";
   return b.doingNow || "working";
 }
-export const awayText = (a: { minutes: number; shipped: number }) => `${Math.max(1, Math.round(a.minutes / 60))} h away · ${a.shipped} shipped`;
+export const awayText = (a: { minutes: number; shipped: number }) => `${Math.max(1, Math.round(a.minutes / 60))} h away Â· ${a.shipped} shipped`;
 /** #735: one stacked bar per work group, plus the same counts in words, instead of a spinner per item. */
 const PROGRESS_ORDER = ["proven", "merged", "work", "stalled", "ready"] as const;
 const PROGRESS_WORD: Record<(typeof PROGRESS_ORDER)[number], string> = { proven: "proven", merged: "merged", work: "in work", stalled: "blocked", ready: "waiting" };
 export function GroupProgress({ states }: { states: string[] }) {
   const counts = PROGRESS_ORDER.map((k) => [k, states.filter((s) => s === k).length] as const).filter(([, n]) => n > 0);
   const total = states.length;
-  const words = [`${total} ${total === 1 ? "PR" : "PRs"}`, ...counts.map(([k, n]) => `${n} ${PROGRESS_WORD[k]}`)].join(" · ");
+  const words = [`${total} ${total === 1 ? "PR" : "PRs"}`, ...counts.map(([k, n]) => `${n} ${PROGRESS_WORD[k]}`)].join(" Â· ");
   return (
     <span className="mv-progress">
       <span className="mv-progress-bar" role="img" aria-label={words}>
@@ -175,8 +175,8 @@ export function JourneyProgress({ statuses }: { statuses: string[] }) {
   const work = statuses.filter((s) => s === "work").length;
   const merged = statuses.filter((s) => s === "merged").length;
   const remaining = total - proven - work - merged;
-  const words = `${total}\u00a0${total === 1 ? "step" : "steps"} · ${proven}\u00a0proven · ${work}\u00a0in\u00a0work · ${merged}\u00a0merged,\u00a0not\u00a0proven · ${remaining}\u00a0not\u00a0proven`;
-  const accessibleWords = `${total} ${total === 1 ? "step" : "steps"} · ${proven} proven · ${work} in work · ${merged} merged, not proven · ${remaining} not proven`;
+  const words = `${total}\u00a0${total === 1 ? "step" : "steps"} Â· ${proven}\u00a0proven Â· ${work}\u00a0in\u00a0work Â· ${merged}\u00a0merged,\u00a0not\u00a0proven Â· ${remaining}\u00a0not\u00a0proven`;
+  const accessibleWords = `${total} ${total === 1 ? "step" : "steps"} Â· ${proven} proven Â· ${work} in work Â· ${merged} merged, not proven Â· ${remaining} not proven`;
   return (
     <span className="mv-progress">
       <span className="mv-progress-bar" role="img" aria-label={accessibleWords}>
@@ -289,9 +289,9 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
               onClick={() => (t.id === "team" ? onTeam?.() : setSub(t.id))}>{t.label}</button>
           ))}
         </div>
-        {sub === "test" && <button type="button" className="mv-back" onClick={() => setSub("proof")}>‹ Back to proof</button>}
+        {sub === "test" && <button type="button" className="mv-back" onClick={() => setSub("proof")}>â€¹ Back to proof</button>}
         {lastRecordAt != null && Number.isFinite(lastRecordAt) && (
-          <span className="mv-live"><span className="mv-live-dot" aria-hidden="true" />{`live · last record ${ago(now - lastRecordAt)}`}</span>
+          <span className="mv-live"><span className="mv-live-dot" aria-hidden="true" />{`live Â· last record ${ago(now - lastRecordAt)}`}</span>
         )}
       </header>
   );
@@ -458,7 +458,7 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
                         <span className="mv-journey-title">{g.label}</span>
                       </button>
                       <GroupProgress states={g.tasks.map((t) => stageState(g.stages[t.key]!, t))} />
-                      <span className="mv-journey-meta">{`${g.issue !== null ? `issue #${g.issue}` : "no issue"} · ${prs} ${prs === 1 ? "PR" : "PRs"}`}</span>
+                      <span className="mv-journey-meta">{`${g.issue !== null ? `issue #${g.issue}` : "no issue"} Â· ${prs} ${prs === 1 ? "PR" : "PRs"}`}</span>
                       <div className="mv-chips">
                         {g.tasks.map((t, i) => {
                           const stage = g.stages[t.key]!;
@@ -497,7 +497,7 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
                     <span className="mv-journey-title">{m.title}</span>
                     <span className="mv-journey-count">{`${m.summary.proven}/${m.summary.total}`}</span>
                   </button>
-                  {issue !== null && <span className="mv-journey-meta">{`issue #${issue} · ${m.tasks.length} ${m.tasks.length === 1 ? "task" : "tasks"}`}</span>}
+                  {issue !== null && <span className="mv-journey-meta">{`issue #${issue} Â· ${m.tasks.length} ${m.tasks.length === 1 ? "task" : "tasks"}`}</span>}
                   <div className="mv-chips">
                     {m.steps.map((s) => (
                       <button key={s.stepId} type="button" className="mv-chip" data-status={s.status}
@@ -513,7 +513,7 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
                           <span className="mv-tick" data-status={s.status} />
                           <span className="mv-step-n">{s.index + 1}</span>
                           <span className="mv-step-title" title={s.title}>{s.title}</span>
-                          <span className="mv-step-ids">{ids[s.index] || "—"}</span>
+                          <span className="mv-step-ids">{ids[s.index] || "â€”"}</span>
                         </button>
                       ))}
                     </div>
@@ -524,7 +524,7 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
             {orphans.length > 0 && (
               <section aria-label="Unlinked work" className="mv-unlinked">
                 <button type="button" className="mv-fold" aria-expanded={unlinkedOpen} onClick={() => setUnlinkedOpen((o) => !o)}>
-                  {`Unlinked work · ${orphans.length}`}
+                  {`Unlinked work Â· ${orphans.length}`}
                 </button>
                 {unlinkedOpen && <ul>{orphans.map((t) => <li key={t.key}>{`${t.pr ? `#${t.pr}` : "no PR"} ${t.title}`}</li>)}</ul>}
               </section>
@@ -542,7 +542,7 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
                 {goneQuiet.length > 0 && (
                   <div className="mv-gone-quiet">
                     <button type="button" className="mv-fold" aria-expanded={goneQuietOpen} onClick={() => setGoneQuietOpen((open) => !open)}>
-                      {`Gone quiet · ${goneQuiet.length}`}
+                      {`Gone quiet Â· ${goneQuiet.length}`}
                     </button>
                     {goneQuietOpen && goneQuiet.map((b) => (
                       <div key={b.key} className="mv-agent">

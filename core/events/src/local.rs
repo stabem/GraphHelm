@@ -8256,7 +8256,10 @@ mod limit_tests {
         let warmed = shared_repository(directory.path(), &cache);
         assert_eq!(warmed.next_sequence(&wake_scope(), "stream-1").unwrap(), 2);
         drop(warmed);
-        assert_eq!(counters(&shared_repository(directory.path(), &cache)), (0, 0));
+        assert_eq!(
+            counters(&shared_repository(directory.path(), &cache)),
+            (0, 0)
+        );
 
         let journal = directory.path().join("journal.jsonl");
         let mut bytes = std::fs::read(&journal).unwrap();

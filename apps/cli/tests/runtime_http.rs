@@ -160,7 +160,7 @@ fn lifecycle_killed_runtime_is_reported_as_vanished() {
         if let Some((previous_instance, previous_pid)) = &prior {
             assert_eq!(data["previousExit"]["state"], "vanished");
             assert_eq!(data["previousExit"]["pid"], *previous_pid);
-            assert_eq!(data["previousExit"]["instance"], previous_instance);
+            assert_eq!(&data["previousExit"]["instance"], previous_instance);
         } else {
             assert_eq!(data.get("previousExit"), Some(&Value::Null));
         }

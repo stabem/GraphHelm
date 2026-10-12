@@ -79,6 +79,7 @@
 .mg-rung { height: 5px; border-radius: 3px; background: #22252C; }
 .mg-ladder li[data-lit="true"] { color: #E9E7E2; }
 .mg-ladder li[data-lit="true"] .mg-rung { background: var(--mv-tone); }
+.mg-ladder li[data-pending="true"] .mg-rung { background: #737986; }
 .mg-note { background: #141518; border: 1px solid #2A2D34; border-radius: 10px; padding: 10px 12px; color: #D9D6D0; line-height: 1.45; }
 .mg-custody { list-style: none; margin: 0; padding: 0; }
 .mg-custody-row { display: grid; grid-template-columns: 74px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid #1B1D22; }

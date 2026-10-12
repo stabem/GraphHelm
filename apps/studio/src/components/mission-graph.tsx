@@ -162,6 +162,14 @@ export function TaskInspector({ task: t, step, onOpenTest, health = null, pace =
   const note = t.blockedBy ? `BLOCK by ${t.blockedBy.reviewer || "a reviewer"} at ${sha8(t.blockedBy.headSha) ?? "an unrecorded head"}`
     : t.step === "merged" && step?.status !== "proven" ? "Merged, not proven yet" : null;
   const open = () => { if (step) onOpenTest(step.stepId); };
+  const rungs: { lit: boolean; pending?: boolean; title: string }[] = [
+    { lit: t.pr !== null, title: t.pr !== null ? `PR #${t.pr} recorded` : "No PR recorded" },
+    { lit: t.step === "merge" || t.step === "merged", pending: t.step === "review" && !t.blocked,
+      title: t.step === "merge" || t.step === "merged" ? `Review approved on head ${sha8(t.headSha) ?? "unrecorded"}` : t.step === "review" && !t.blocked ? "Review assigned; verdict pending" : "No approving review recorded on this head" },
+    { lit: t.step === "merged", title: t.step === "merged" ? `Task merged at ${sha8(t.mergeSha) ?? "unrecorded commit"}` : "No task merge recorded" },
+    { lit: step?.status === "proven", title: step?.status === "proven" ? `Journey replay proved step ${step.index + 1}` : "No proven replay for this step" },
+    { lit: false, title: "not recorded yet: the owner's approval of this step is not in the records" },
+  ];
   return (
     <aside className="mg-inspector" aria-label="Selected work">
       <div className="mg-ins-head">
@@ -175,7 +183,7 @@ export function TaskInspector({ task: t, step, onOpenTest, health = null, pace =
         <span className="mg-cap">How far it got</span>
         <ul className="mg-ladder" aria-label="How far it got" data-state={st}>
           {TRUST_LABELS.map((label, i) => (
-            <li key={label} data-lit={i < t.trust}><span className="mg-rung" />{label}</li>
+            <li key={label} data-lit={rungs[i].lit} data-pending={rungs[i].pending ?? false} title={rungs[i].title}><span className="mg-rung" />{label}</li>
           ))}
         </ul>
       </div>

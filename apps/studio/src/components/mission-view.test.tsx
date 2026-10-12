@@ -36,6 +36,21 @@ describe("MissionView", () => {
     expect(item).toHaveClass("mv-proof-journey");
   });
 
+  it("#830: a real secondary path uses its source flow to mark an old contract", async () => {
+    const contract = { ...journeys[0]!, contractId: "studio-answer-question.refuse", title: "Owner answers, or refuses, a question an agent asked",
+      steps: ["asked", "refused"].map((id) => ({ stepId: id, screen: { screenId: id, title: id, scopePaths: [] }, promises: [] })) };
+    const flow = { id: "studio-answer-question", title: "Answer a question an agent asked", status: "draft", approved: null, drift: [], findings: [], approvable: false,
+      screens: [{ id: "mission", url: "/", state: "stable" }, { id: "asked", url: "/", state: "stable" }, { id: "answering", url: "/", state: "stable" }, { id: "answered", url: "/", state: "success" }],
+      edges: [{ id: "mission.chat", from: "mission", to: "asked" }, { id: "asked.answer", from: "asked", to: "answering" }, { id: "answering.send", from: "answering", to: "answered" }],
+      paths: { main: ["mission.chat", "asked.answer", "answering.send"] } } as JourneyFlowView;
+    render(<MissionView journeys={[contract]} flows={[flow]} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Proof" }));
+    const item = screen.getByRole("navigation", { name: "Journeys" }).querySelector(".mv-proof-journey")!;
+    expect(item.querySelector(".mv-journey-title")).toHaveTextContent(flow.title!);
+    expect(item).toHaveTextContent("contract out of date");
+    expect(item).toHaveTextContent("studio-answer-question.refuse");
+  });
+
   it("#876: Proof rail keeps the same work counts on selection and separates merged from active", async () => {
     const watch = { ...journeys[0]!, steps: [...journeys[0]!.steps, { stepId: "second", screen: { screenId: "second", title: "Second", scopePaths: [] }, promises: [] }] };
     const two: JourneyView[] = [watch, { ...journeys[0]!, contractId: "other", title: "Other journey" }];

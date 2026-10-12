@@ -253,9 +253,12 @@ describe("LanesTimeline", () => {
   it("keeps agent actions in a bounded mobile grid and full lane names readable", () => {
     const mobile = css.split("@media (max-width: 700px)").at(-1) ?? "";
     const rows = mobile.match(/\.ab-rows\s*\{([^}]*)\}/)?.[1] ?? "";
+    const row = mobile.match(/\.ab-row\s*\{([^}]*)\}/)?.[1] ?? "";
     const name = mobile.match(/\.lt-name\s*\{([^}]*)\}/)?.[1] ?? "";
-    expect(rows).not.toMatch(/(?:^|,)\s*max-content\s*(?=,|$)/);
-    expect(rows).toMatch(/minmax\(0,\s*1fr\)/);
+    expect(rows).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+    expect(row).toMatch(/grid-template-columns:\s*max-content\s+minmax\(0,\s*1fr\)/);
+    expect(mobile).toMatch(/\.ab-name\s*\{[^}]*grid-row:\s*1[^}]*grid-column:\s*1\s*\/\s*-1/);
+    expect(mobile).toMatch(/\.ab-acts\s*\{[^}]*grid-row:\s*3[^}]*grid-column:\s*1\s*\/\s*-1/);
     expect(name).not.toMatch(/(?:overflow:\s*hidden|text-overflow:\s*ellipsis|white-space:\s*nowrap)/);
   });
 

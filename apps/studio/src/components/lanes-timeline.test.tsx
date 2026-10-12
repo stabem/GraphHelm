@@ -20,11 +20,13 @@ const round = { reviewer: "r", headSha: "h", fixHead: "f" };
 describe("LanesTimeline", () => {
   it("shows an author awaiting review as waiting in every Lanes status view", () => {
     const at = 10 * 3_600_000;
-    const author = { lane: "codex-12", silent: false, lastEventAt: at, bars: [], awaiting: [923],
-      lastRecord: { kind: "pr_opened" as const, pr: 923, at } };
-    const { container } = render(<LanesTimeline lanes={[author]} now={at} windowMs={3_600_000} />);
+    const events = [
+      { sequence: 1, actorId: "codex-12", taskId: "issue-945", kind: "task.claimed", lane: "codex-12", issue: 945, at: new Date(at - 1000).toISOString() },
+      { sequence: 2, actorId: "codex-12", taskId: "issue-945", kind: "task.pr_opened", lane: "codex-12", pr: 923, headSha: "head1", at: new Date(at).toISOString() },
+    ] as TimedTaskEvent[];
+    const { container } = render(<LanesTimeline lanes={laneBars(events, at, 3_600_000)} now={at} windowMs={3_600_000} />);
     const board = screen.getByRole("list", { name: "Agent board" });
-    expect(within(board).getByText("codex-12").closest("li")!.querySelector(".ab-pill")).toHaveAttribute("data-status", "awaiting");
+    expect(within(board).getByText("codex-12").closest("li")!.querySelector(".ab-pill")).toHaveAttribute("data-status", "waiting");
     const timeline = within(screen.getByRole("list", { name: "Agent lanes" })).getByText("codex-12").closest("li")!;
     expect(timeline.querySelector('.lt-flag[data-flag="waiting"]')).toHaveTextContent("waiting");
     expect(screen.getByRole("button", { name: "Waiting 1" })).toBeInTheDocument();
@@ -251,8 +253,8 @@ describe("LanesTimeline", () => {
     render(<LanesTimeline lanes={[author]} now={T} windowMs={3_600_000} />);
     const row = within(screen.getByRole("list", { name: "Agent board" })).getByText("gh-claude-3").closest("li")!;
     expect(row.querySelector(".ab-for")).toHaveTextContent("pr_opened #613 · 12m ago");
-    expect(row.querySelector(".ab-pill")).toHaveAttribute("data-status", "awaiting");
-    expect(row.querySelector(".ab-pill")).toHaveTextContent("Awaiting review");
+    expect(row.querySelector(".ab-pill")).toHaveAttribute("data-status", "waiting");
+    expect(row.querySelector(".ab-pill")).toHaveTextContent("Waiting");
     expect(row.querySelector(".ab-tag")).toHaveTextContent("awaiting review #613");
     expect(document.querySelector('[data-kind="free"]')).toHaveTextContent("none right now");
   });

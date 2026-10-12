@@ -48,7 +48,7 @@ describe("agentBoard", () => {
     const claim = { ...bar("implement", now - 3 * M, true, now, "issue-782"), issue: 782 };
     const ended = { ...lane("a", [claim]), endedAt: now - M };
     expect(agentBoard([bot("a")], [ended], [], now)[0]).toMatchObject({ status: "free", label: "ended without a PR" });
-    expect(agentBoard([bot("a")], [{ ...ended, awaiting: [7] }], [], now)[0]!.status).toBe("awaiting");
+    expect(agentBoard([bot("a")], [{ ...ended, awaiting: [7] }], [], now)[0]!.status).toBe("waiting");
     expect(agentBoard([bot("a")], [{ ...ended, bars: [claim, bar("implement", now)] }], [], now)[0]!.status).toBe("working");
   });
   it("status rules: implement working, review/merge waiting, stall silent, no open bar free", () => {
@@ -237,9 +237,9 @@ describe("#591 board times the latest activity (record shapes)", () => {
       ev({ kind: "task.claimed", lane: "gh-claude-3", issue: 600, at: iso(0) }),
       ev({ kind: "task.pr_opened", lane: "gh-claude-3", issue: 600, pr: 613, headSha: "aaa", at: iso(1 * H) }),
     ];
-    expect(board(open, 1 * H + M, ["gh-claude-3"])["gh-claude-3"]).toMatchObject({ status: "awaiting", label: "awaiting review #613", pr: 613 });
+    expect(board(open, 1 * H + M, ["gh-claude-3"])["gh-claude-3"]).toMatchObject({ status: "waiting", label: "awaiting review #613", pr: 613 });
     const assigned = [...open, ev({ kind: "task.review_assigned", reviewer: "gh-claude-5", pr: 613, at: iso(1 * H + 2 * M) })];
-    expect(board(assigned, 1 * H + 5 * M, ["gh-claude-3"])["gh-claude-3"]!.status).toBe("awaiting");
+    expect(board(assigned, 1 * H + 5 * M, ["gh-claude-3"])["gh-claude-3"]!.status).toBe("waiting");
     const merged = [...assigned, ev({ kind: "task.merged", pr: 613, at: iso(2 * H) })];
     expect(board(merged, 2 * H + M, ["gh-claude-3"])["gh-claude-3"]!.status).toBe("offline");
   });

@@ -4,7 +4,7 @@ import type { MissionTask } from "./mission";
 import { ordinal, slotDuration, slotStatus, type SlotView } from "./slots";
 
 /** #591 Lanes board: who is free, who does what, and for how long. */
-export type AgentStatus = "silent" | "stale" | "building" | "build_wait" | "working" | "awaiting" | "waiting" | "free" | "offline";
+export type AgentStatus = "silent" | "stale" | "building" | "build_wait" | "working" | "waiting" | "free" | "offline";
 export const FREE_LIVENESS_MS = 15 * 60_000;
 /** #591: a claim with no PR and no record of its lane for this long is a stale claim, not work. */
 export const STALE_CLAIM_MS = 2 * 3_600_000;
@@ -30,7 +30,7 @@ export interface AgentRow {
   doing?: string | null;
 }
 
-const ORDER: Record<AgentStatus, number> = { silent: 0, stale: 1, building: 2, build_wait: 3, working: 4, awaiting: 5, waiting: 6, free: 7, offline: 8 };
+const ORDER: Record<AgentStatus, number> = { silent: 0, stale: 1, building: 2, build_wait: 3, working: 4, waiting: 5, free: 7, offline: 8 };
 
 function latestOf(lane: Lane | undefined, now: number): { latest: string | null; forMs: number | null } {
   const rec = lane?.lastRecord;
@@ -100,7 +100,7 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
       if (awaiting.length > 0) {
         const p = awaiting[awaiting.length - 1]!;
         const task = tasks.find((t) => t.pr === p) ?? null;
-        return { name, status: "awaiting", stage: null, pr: p, title: task?.title ?? null, label: `awaiting review #${p}`, doing: `awaiting review #${p}${task ? ` ${task.title}` : ""}`,
+        return { name, status: "waiting", stage: null, pr: p, title: task?.title ?? null, label: `awaiting review #${p}`, doing: `awaiting review #${p}${task ? ` ${task.title}` : ""}`,
           href: task?.repoUrl ? `${task.repoUrl}/pull/${p}` : null, lastDelivered: last, ...when };
       }
       const ended = allOpen.find(endedClaim);

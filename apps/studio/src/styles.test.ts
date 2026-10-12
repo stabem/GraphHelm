@@ -331,13 +331,12 @@ describe("the Graph WORK rail fits a narrow viewport (#884)", () => {
 });
 
 describe("the task inspector fits its ladder and preserves lane names (#918, #926)", () => {
-  it("keeps the ladder bar full width and places readable labels in an intrinsic-width row", () => {
+  it("keeps five equal bars and readable short labels", () => {
     const stylesheet = STYLESHEETS["./styles.css"] ?? "";
     const listRule = stylesheet.match(/\.mg-inspector\s+\.mg-ladder\s*\{([^}]*)\}/)?.[1] ?? "";
     const itemRule = stylesheet.match(/\.mg-inspector\s+\.mg-ladder\s+li\s*\{([^}]*)\}/)?.[1] ?? "";
     const rungRule = stylesheet.match(/\.mg-inspector\s+\.mg-ladder\s+\.mg-rung\s*\{([^}]*)\}/)?.[1] ?? "";
-    expect(listRule).toMatch(/grid-template-columns:\s*repeat\(5,\s*max-content\)/);
-    expect(listRule).toMatch(/justify-content:\s*space-between/);
+    expect(listRule).toMatch(/grid-template-columns:\s*repeat\(5,\s*minmax\(0,\s*1fr\)\)/);
     expect(itemRule).toMatch(/white-space:\s*nowrap/);
     expect(itemRule).not.toMatch(/overflow:\s*hidden/);
     expect(itemRule).not.toMatch(/text-overflow:\s*ellipsis/);

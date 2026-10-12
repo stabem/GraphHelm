@@ -3999,6 +3999,16 @@ describe("the board remembers its graph file", () => {
  * a message box that posts nothing still clears itself after you press send.
  */
 describe("the exchange", () => {
+  it("bounds the first work-page read to a small tail while full history loads", async () => {
+    const client = stubClient({
+      listExecutions: vi.fn(async () => ({ executions: [{ executionId: "demo-deploy", mode: "supervised", status: "running",
+        attention: "needs_you", startedAt: null, lastEventAt: null, headSequence: 2000 }], hasMore: false, nextCursor: null })),
+    });
+    await open(client, null, false);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await waitFor(() => expect(client.getEvents).toHaveBeenCalledWith("demo-deploy", { after: 1936, limit: 64 }));
+  });
+
   /** A run whose log carries one sealed message from the agent. */
   function talkingClient(overrides: Record<string, unknown> = {}) {
     return stubClient({

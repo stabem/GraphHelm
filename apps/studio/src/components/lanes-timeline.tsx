@@ -216,7 +216,7 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
               <span className="lt-who">
                 <span className="lt-dot" data-state={status} />
                 <span className="lt-name">{botOf(l) ?? l.lane}</span>
-                {status && <span className="lt-flag" data-flag={status}>{PILL[status]}</span>}
+                {status && <span className="lt-flag" data-flag={status}>{status === "free" || status === "waiting" || status === "silent" || status === "offline" ? status : PILL[status]}</span>}
               </span>
               <div className="lt-track" style={{ height: trackH }} data-subrows={pack.rows}>
                 <span className="lt-nowline" aria-hidden="true" />

@@ -28,7 +28,7 @@ describe("LanesTimeline", () => {
     const board = screen.getByRole("list", { name: "Agent board" });
     expect(within(board).getByText("codex-12").closest("li")!.querySelector(".ab-pill")).toHaveAttribute("data-status", "waiting");
     const timeline = within(screen.getByRole("list", { name: "Agent lanes" })).getByText("codex-12").closest("li")!;
-    expect(timeline.querySelector('.lt-flag[data-flag="waiting"]')).toHaveTextContent("Waiting");
+    expect(timeline.querySelector('.lt-flag[data-flag="waiting"]')).toHaveTextContent("waiting");
     expect(timeline.querySelector('.lt-dot')).toHaveAttribute("data-state", "waiting");
     expect(screen.getByRole("button", { name: "Waiting 1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Free 0" })).toBeInTheDocument();
@@ -61,7 +61,7 @@ describe("LanesTimeline", () => {
       kind: "implement", label: "#1", start: at - 5 * H, end: at, open: true, lastActivityAt: at - 5 * H,
     }] }]} now={at} windowMs={6 * H} slots={[{ root: "D:/gh", ok: true, holder: { lane: "builder", label: "#1", pid: 1, worktree: null, heldSeconds: 60 }, waiting: [] }]} />);
     const row = within(screen.getByRole("list", { name: "Agent lanes" })).getByText("builder").closest("li")!;
-    expect(row.querySelector(".lt-dot")).toHaveAttribute("data-state", "busy");
+    expect(row.querySelector(".lt-dot")).toHaveAttribute("data-state", "building");
     expect(row.querySelector(".lt-flag[data-flag='silent']")).toBeNull();
     expect(container.querySelector('[data-kind="stuck"]')).not.toHaveTextContent("builder");
     const hatch = container.querySelector<HTMLElement>(".lt-bar .lt-stall");

@@ -46,8 +46,11 @@
 .lt-card[data-kind="pingpong"] .lt-card-cap { color: var(--mv-work); }
 .lt-empty { padding: 2rem; text-align: center; color: #A9AEB8; font-style: italic; }
 @media (max-width: 700px) {
-  .lt-row { grid-template-columns: 110px minmax(0, 1fr); }
+  .lt-row { grid-template-columns: minmax(0, 1fr); }
   .lt-row > :last-child { display: none; }
+  .lt-lane { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .lt-name { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+  .lt-who { flex-wrap: wrap; }
 }
 
 .lt-nowline { position: absolute; top: 0; bottom: 0; right: 0; width: 2px; background: #E9E7E2; opacity: .7; z-index: 1; }
@@ -88,7 +91,9 @@
 .ab-for > span, .ab-tag > span { white-space: nowrap; }
 .ab-last { color: #8D929C; font-size: 12px; }
 @media (max-width: 700px) {
-  .ab-rows { grid-template-columns: max-content minmax(13ch, 1fr) max-content auto; }
+  .ab-rows { grid-template-columns: minmax(64px, max-content) minmax(0, 1fr) minmax(0, 1fr) minmax(0, max-content); }
+  .ab-row { grid-template-columns: subgrid; align-items: start; }
+  .ab-acts { flex-wrap: wrap; white-space: normal; }
   .ab-what, .ab-last { display: none; }
 }
 

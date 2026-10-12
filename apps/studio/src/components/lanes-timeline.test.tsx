@@ -250,6 +250,15 @@ describe("LanesTimeline", () => {
     expect(css).not.toMatch(/\.ab-[a-z-]+[^{]*\{[^}]*border-radius: 50%/);
   });
 
+  it("keeps agent actions in a bounded mobile grid and full lane names readable", () => {
+    const mobile = css.split("@media (max-width: 700px)").at(-1) ?? "";
+    const rows = mobile.match(/\.ab-rows\s*\{([^}]*)\}/)?.[1] ?? "";
+    const name = mobile.match(/\.lt-name\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(rows).not.toMatch(/(?:^|,)\s*max-content\s*(?=,|$)/);
+    expect(rows).toMatch(/minmax\(0,\s*1fr\)/);
+    expect(name).not.toMatch(/(?:overflow:\s*hidden|text-overflow:\s*ellipsis|white-space:\s*nowrap)/);
+  });
+
   it("shows the build duration in the pill and the build location once", () => {
     render(<LanesTimeline lanes={[lanes[1]!]} now={now} windowMs={1000} slots={[
       { root: "D:/gh", ok: true, holder: { lane: "gh-claude-6", label: null, pid: 1, worktree: null, heldSeconds: 240 }, waiting: [] },

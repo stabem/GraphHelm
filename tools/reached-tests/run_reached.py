@@ -10,6 +10,7 @@ reported as unsupported and remain incomplete rather than being silently skipped
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -266,6 +267,146 @@ def _batch_envelope(path: Path, cli_returncode: int | None = None) -> tuple[dict
     return data.get("batch"), float(waited), float(held)
 
 
+# Environment names whose values can change a test verdict. A changed value, an added or a removed
+# name changes the fingerprint and every reused result reruns. GRAPHHELM_SLOT_BATCH is the runner's
+# own per-call channel, never an input.
+_ENV_PREFIXES = ("CARGO", "RUST", "GRAPHHELM_", "NODE", "NPM_CONFIG", "PYTHON", "VITEST", "PG", "DATABASE_URL")
+_ENV_IGNORED = {"GRAPHHELM_SLOT_BATCH"}
+
+
+def _sha(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _env_fingerprint(env: dict[str, str]) -> str:
+    return _sha(sorted((k, v) for k, v in env.items()
+                       if k.startswith(_ENV_PREFIXES) and k not in _ENV_IGNORED))
+
+
+def _version(argv: list[str]) -> str:
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"unavailable: {type(exc).__name__}"
+    return f"{proc.returncode}:{proc.stdout.strip()}"
+
+
+def _file_digest(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _tool_fingerprint(steps: list[dict[str, Any]], graphhelm: Path | None) -> dict[str, Any]:
+    """Versions of every tool a step reaches; an unreadable version is recorded, never guessed."""
+    tools: dict[str, Any] = {"python": sys.version, "platform": sys.platform, "graphhelm": _file_digest(graphhelm)}
+    for step in steps:
+        head = Path(step["argv"][0]).name.lower()
+        if head in ("cargo", "cargo.exe"):
+            toolchain = [step["argv"][1]] if len(step["argv"]) > 1 and step["argv"][1].startswith("+") else []
+            key = "rustc" + (toolchain[0] if toolchain else "")
+            if key not in tools:
+                tools[key] = _version(["rustc", *toolchain, "-Vv"])
+        elif head in ("npx", "npx.cmd", "npm", "npm.cmd", "node", "node.exe") and "node" not in tools:
+            tools["node"] = _version(["node", "--version"])
+    return tools
+
+
+def _fingerprint(repo: Path, steps: list[dict[str, Any]], graphhelm: Path | None, env: dict[str, str]) -> dict[str, Any]:
+    """What a proof was taken against: committed code, tool versions and the environment."""
+    tools = _tool_fingerprint(steps, graphhelm)
+    return {"tree": _git(repo, "rev-parse", "HEAD^{tree}"), "tools": tools,
+            "toolsSha256": _sha(tools), "envSha256": _env_fingerprint(env)}
+
+
+def _proof_key(fingerprint: dict[str, Any], step: dict[str, Any]) -> str:
+    return _sha({"tree": fingerprint["tree"], "tools": fingerprint["toolsSha256"], "env": fingerprint["envSha256"],
+                 "argv": step["argv"], "cwd": step["cwd"], "slot": step["slot"]})
+
+
+def _reusable_results(output: Path) -> tuple[dict[str, dict[str, Any]], str | None]:
+    """Passed results the previous run vouched for, keyed by proof key.
+
+    Only entries the previous run marked `reusable` qualify: that mark is written after the run
+    proved HEAD unchanged and the worktree clean. Anything unreadable reuses nothing.
+    """
+    if not output.is_file():
+        return {}, None
+    try:
+        prior = json.loads(output.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {}, f"previous report unreadable, rerunning everything: {exc}"
+    if not isinstance(prior, dict) or prior.get("schema") != "graphhelm-reached-run/1":
+        return {}, "previous report has another schema, rerunning everything"
+    found: dict[str, dict[str, Any]] = {}
+    for entry in prior.get("completed") or []:
+        if (isinstance(entry, dict) and entry.get("reusable") is True and entry.get("returncode") == 0
+                and isinstance(entry.get("proofKey"), str) and not entry.get("error") and not entry.get("zeroTests")):
+            found[entry["proofKey"]] = entry
+    return found, None
+
+
+def _preflight(repo: Path, output: Path, steps: list[dict[str, Any]],
+               min_free_gb: float | None) -> tuple[list[str], list[str]]:
+    """Problems that would stop the proof midway, found before any step runs, and warnings."""
+    problems: list[str] = []
+    warnings: list[str] = []
+    cargo = any(Path(step["argv"][0]).name.lower() in ("cargo", "cargo.exe") for step in steps)
+    floor = min_free_gb if min_free_gb is not None else (10.0 if cargo else 1.0)
+    places = {"repository": repo, "report": output.parent}
+    target = os.environ.get("CARGO_TARGET_DIR")
+    if cargo and target:
+        places["CARGO_TARGET_DIR"] = Path(target)
+    for label, place in places.items():
+        probe = place
+        while not probe.exists() and probe.parent != probe:
+            probe = probe.parent
+        try:
+            free = shutil.disk_usage(probe).free / 1e9
+        except OSError as exc:
+            problems.append(f"disk: cannot read free space for {label} ({place}): {exc}")
+            continue
+        if free < floor:
+            problems.append(f"disk: {label} ({place}) has {free:.1f} GB free, needs {floor:.1f} GB")
+    if target and not Path(target).is_absolute():
+        problems.append(f"env: CARGO_TARGET_DIR={target} is relative; each step's cwd would get its own target")
+    for name in ("GRAPHHELM_CLI", "GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT"):
+        value = os.environ.get(name)
+        if value and not Path(value).exists():
+            problems.append(f"env: {name}={value} does not exist")
+    for key in ("user.name", "user.email"):
+        if subprocess.run(["git", "config", key], cwd=repo, capture_output=True, text=True).returncode != 0:
+            warnings.append(f"identity: git {key} is not set; steps that commit will fail")
+    return problems, warnings
+
+
+def _summary(report: dict[str, Any], output: Path) -> str:
+    """The short agent-facing answer: what passed, what failed, what is missing, where to look."""
+    completed = report.get("completed", [])
+    passed = [e for e in completed if e.get("returncode") == 0 and not e.get("error") and not e.get("zeroTests")]
+    reused = [e for e in passed if e.get("reused")]
+    failed = [e for e in completed if e not in passed]
+    lines = [f"reached-tests: {report.get('status')} | passed {len(passed)} (reused {len(reused)})"
+             f" | failed {len(failed)} | pending {len(report.get('pending', []))}"
+             f" | {report.get('elapsedSeconds')}s"]
+    for problem in report.get("preflight", {}).get("problems", []):
+        lines.append(f"  BLOCKED {problem}")
+    for entry in failed:
+        lines.append(f"  FAILED step {entry['index']}: {' '.join(entry['argv'])} (exit {entry.get('returncode')}) -> {entry.get('log')}")
+    for index in report.get("pending", []):
+        steps = report.get("plan", {}).get("steps", [])
+        argv = ' '.join(steps[index]["argv"]) if index < len(steps) else "?"
+        lines.append(f"  PENDING step {index}: {argv}")
+    if report.get("error"):
+        lines.append(f"  error: {report['error']}")
+    lines.append(f"  report: {output}")
+    return "\n".join(lines)
+
+
 def run(args: argparse.Namespace) -> int:
     started = time.monotonic()
     deadline_unix_ms = time.time() * 1000.0 + args.budget_seconds * 1000.0
@@ -341,13 +482,41 @@ def run(args: argparse.Namespace) -> int:
                     raise RuntimeError("--include-browser requires GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT with local @playwright/test")
             for index in skip_browser:
                 report["pending"].remove(index)
+            child_env = os.environ.copy()
+            child_env.update({"CARGO_BUILD_JOBS": "6", "RUST_TEST_THREADS": "2"})
+            report["fingerprint"] = _fingerprint(repo, steps, selected_graphhelm, child_env)
+            keys = [_proof_key(report["fingerprint"], step) for step in steps]
+            problems, warnings = _preflight(repo, output, steps, getattr(args, "min_free_gb", None))
+            report["preflight"] = {"problems": problems, "warnings": warnings}
+            reused_seconds = 0.0
+            reuse: dict[str, dict[str, Any]] = {}
+            if getattr(args, "resume", True):
+                reuse, note = _reusable_results(output)
+                if note:
+                    report["resumeNote"] = note
+            for index in list(report["pending"]):
+                prior = reuse.get(keys[index])
+                if prior is None:
+                    continue
+                # Same tree, argv, cwd, tool versions and environment as a vouched pass: reuse it.
+                report["pending"].remove(index)
+                report["completed"].append({"index": index, "argv": steps[index]["argv"], "cwd": steps[index]["cwd"],
+                                            "slot": steps[index]["slot"], "returncode": 0, "reused": True,
+                                            "proofKey": keys[index], "log": prior.get("log"),
+                                            "stepSeconds": prior.get("stepSeconds")})
+                reused_seconds += float(prior.get("stepSeconds") or 0.0)
+            report["measure"] = {"plannedSteps": len(steps), "reusedSteps": len(steps) - len(report["pending"]),
+                                 "reusedSecondsSaved": round(reused_seconds, 3)}
             queue: float | None = 0.0
             held: float | None = 0.0
             # Batch is the safe default for the official runner. Keep the fallback for
             # tests and embedders that construct an Args object directly.
             batch_mode = bool(getattr(args, "batch_slot", True))
             order = _execution_order(steps, batch_mode)
-            work = [entry for entry in order if entry["index"] not in skip_browser]
+            work = [entry for entry in order if entry["index"] in report["pending"]]
+            if problems and not getattr(args, "skip_preflight", False):
+                report["status"] = "blocked"
+                work = []
             while work:
                 remaining_budget = args.budget_seconds - (time.monotonic() - started)
                 if remaining_budget <= 0:
@@ -388,13 +557,14 @@ def run(args: argparse.Namespace) -> int:
                 else:
                     command = commands[0]
                     payload = None
-                env = os.environ.copy()
-                env.update({"CARGO_BUILD_JOBS": "6", "RUST_TEST_THREADS": "2"})
+                env = dict(child_env)
                 env.pop("GRAPHHELM_SLOT_BATCH", None)
                 if payload is not None:
                     env["GRAPHHELM_SLOT_BATCH"] = json.dumps(payload, separators=(",", ":"))
+                step_started = time.monotonic()
                 with logfile.open("w", encoding="utf-8") as stream:
                     proc = subprocess.run(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, text=True, env=env)
+                step_seconds = round(time.monotonic() - step_started, 3)
                 elapsed = time.monotonic() - started
                 if entry["slot"]:
                     if is_batch:
@@ -419,6 +589,7 @@ def run(args: argparse.Namespace) -> int:
                             report["completed"].append({"index": index, "batchLocalIndex": local,
                                                          "argv": steps[index]["argv"], "cwd": steps[index]["cwd"], "slot": True,
                                                          "returncode": child["exitCode"], "elapsedSeconds": child["elapsedSeconds"],
+                                                         "stepSeconds": child["elapsedSeconds"], "proofKey": keys[index],
                                                          "late": elapsed > args.budget_seconds,
                                                          "log": str(logfile), "tail": _tail(logfile)})
                         if parsed["stopReason"] in {"childFailure", "spawnFailure"}:
@@ -447,7 +618,7 @@ def run(args: argparse.Namespace) -> int:
                 report["pending"].remove(index)
                 result = {"index": index, "argv": entry["argv"], "cwd": entry["cwd"], "slot": entry["slot"],
                           "returncode": proc.returncode, "late": elapsed > args.budget_seconds,
-                          "log": str(logfile), "tail": tail}
+                          "stepSeconds": step_seconds, "proofKey": keys[index], "log": str(logfile), "tail": tail}
                 if no_pytest_tests:
                     result["returncode"] = proc.returncode or 1
                     result["error"] = "pytest collected no tests"
@@ -466,7 +637,8 @@ def run(args: argparse.Namespace) -> int:
                     report["status"] = "budgetExceeded"
                     break
             else:
-                report["status"] = "passed" if not report["pending"] else "incomplete"
+                if report["status"] != "blocked":
+                    report["status"] = "passed" if not report["pending"] else "incomplete"
             report["queueSeconds"] = queue
             report["heldSeconds"] = held
         after = _git(repo, "rev-parse", "HEAD")
@@ -480,12 +652,20 @@ def run(args: argparse.Namespace) -> int:
             report["error"] = "worktree became dirty while running"
         elif time.monotonic() - started > args.budget_seconds and report["status"] in ("passed", "planned"):
             report["status"] = "budgetExceeded"
+        if before == after and not final_status:
+            # Only now, with HEAD unchanged and the worktree clean, may a pass be reused later.
+            for entry in report["completed"]:
+                if entry.get("returncode") == 0 and not entry.get("error") and not entry.get("zeroTests") and entry.get("proofKey"):
+                    entry["reusable"] = True
     except Exception as exc:
         report["error"] = str(exc)
         report["status"] = "incomplete"
     report["elapsedSeconds"] = round(time.monotonic() - started, 3)
     output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(report, indent=2))
+    if getattr(args, "json", False):
+        print(json.dumps(report, indent=2))
+    else:
+        print(_summary(report, output))
     return 0 if report["status"] in ("passed", "planned") else 1
 
 
@@ -509,6 +689,13 @@ def main(argv: list[str] | None = None) -> int:
                        help="run each Cargo command in its own slot invocation")
     ap.set_defaults(batch_slot=True)
     ap.add_argument("--plan", action="store_true")
+    ap.add_argument("--no-resume", dest="resume", action="store_false",
+                    help="ignore passes recorded in --output and run every step")
+    ap.add_argument("--min-free-gb", type=float,
+                    help="free space required before any step runs (default 10 with Cargo steps, else 1)")
+    ap.add_argument("--skip-preflight", action="store_true",
+                    help="run even when preflight finds a problem; the problems stay in the report")
+    ap.add_argument("--json", action="store_true", help="print the full report instead of the short summary")
     return run(ap.parse_args(argv))
 
 

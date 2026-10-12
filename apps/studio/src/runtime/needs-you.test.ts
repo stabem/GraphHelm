@@ -96,9 +96,11 @@ describe("needsYou", () => {
 
   it("does not count a fixture-scripted wait, but still counts a real owner question", () => {
     const status = { ...STATUS, executor: "fixture" as const, attention: "needs_you" as const,
-      attentionReasons: [{ kind: "waiting_input_node", node: "implementation", reason: "fixture_scripted" }] };
-    expect(needsYou(base({ status })).state).toEqual({ kind: "dark" });
-    const result = needsYou(base({ status, events: question, envelopes: asked }));
+      attentionReasons: [{ kind: "waiting_input_node", node: "implementation" }] };
+    const agentWork = [signal(4, "kit-1", "sig-work")];
+    const workEnvelope = { 4: { to: "studio-operator", replyTo: null, text: "Implementation finished" } };
+    expect(needsYou(base({ status, events: agentWork, envelopes: workEnvelope, agentWorkRecorded: true })).state).toEqual({ kind: "dark" });
+    const result = needsYou(base({ status, events: [...agentWork, ...question], envelopes: { ...workEnvelope, ...asked }, agentWorkRecorded: true }));
     expect(result.state).toEqual({ kind: "lit", count: 1 });
     expect(result.items.map((item) => item.kind)).toEqual(["question"]);
   });

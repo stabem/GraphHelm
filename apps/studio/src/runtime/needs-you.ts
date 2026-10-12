@@ -22,6 +22,7 @@ export interface NeedsYouInput {
   pendingDraftIds: string[];
   nodeNames: Record<string, string>;
   operatorId: string;
+  agentWorkRecorded?: boolean;
 }
 
 export function needsYou(input: NeedsYouInput): { state: BeaconState; items: NeedsYouItem[] } {
@@ -48,6 +49,12 @@ export function needsYou(input: NeedsYouInput): { state: BeaconState; items: Nee
     if (step === null) continue;
     items.push({ kind: step, key: `${kind}:${node}`, nodeId: node, name: input.nodeNames[node] ?? node, reason: kind });
   }
+  // A fixture run can park on its entry graph while recorded agent work carries on elsewhere.
+  // That wait is technical only when it is the sole owner-facing item (#511, #959).
+  const graphWaitOnly = input.status?.status === "running" && input.status.executor === "fixture"
+    && input.agentWorkRecorded === true
+    && items.length > 0 && items.every((item) => item.kind === "waiting_step");
+  if (graphWaitOnly) items.length = 0;
   const state: BeaconState = input.status === null || input.stale || input.nativeRequests === null
     ? { kind: "unknown", reason: RUNTIME_SILENT }
     : items.length > 0 ? { kind: "lit", count: items.length } : { kind: "dark" };

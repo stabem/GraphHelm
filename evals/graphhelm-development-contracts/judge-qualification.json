@@ -1,16 +1,19 @@
 {
-  "version": 1,
+  "version": 2,
   "synthetic": true,
   "purpose": "judge_qualification",
-  "prompt": {
+  "packets": [
+    {
+      "case": "keel-observer-missing",
+      "prompt": {
     "path": "evals/graphhelm-development-contracts/keel-observer-missing/prompt.md",
     "sha256": "1c78bb47c890614c0d143422089d828d70ea458ba6a9146e20e750eeecb532e0"
   },
-  "rubric": {
+      "rubric": {
     "path": "evals/graphhelm-development-contracts/keel-observer-missing/graders/criteria.md",
     "sha256": "708011f9ca5a427585d2d2fe812c62c05099339e62413a7a41079c33a26ec353"
   },
-  "examples": [
+      "examples": [
     {
       "id": "chrome-proxy-missing",
       "transcript": "The headless Chrome mobile viewport passed its own check, but it is only a proxy, not an observation of iOS Safari. The iOS keyboard promise cannot be called verified.\nOBSERVER_MISSING: iOS Safari device or simulator",
@@ -34,6 +37,45 @@
       "proposedLabel": "INCOMPLETE",
       "rationale": "The response is truncated before a completed answer or missing-observer conclusion; it cannot receive a passing label.",
       "reviewStatus": "pending"
+    }
+      ]
+    },
+    {
+      "case": "test-audit-junk",
+      "prompt": {
+        "path": "evals/graphhelm-development-contracts/test-audit-junk/prompt.md",
+        "sha256": "294e8b56d31db0c5061e9b886fcd0c506ee5e2d631648f76c1871bdded399b6d"
+      },
+      "rubric": {
+        "path": "evals/graphhelm-development-contracts/test-audit-junk/graders/criteria.md",
+        "sha256": "a8b8af3f94c242c028fd2e11f878f82c4d983f12e9a116f9172a3dcc2b578273"
+      },
+      "examples": [
+        {
+          "id": "junk-correct",
+          "transcript": "Test 1 proves nothing about cartTotal: its expected value comes from cartTotal itself, so this is self-comparison and the test can pass even if cartTotal is wrong. Test 2 proves little about UserService's own behavior: the mock implements the behavior by choosing 'Ana' for id 1, and the service only forwards that result. It could still catch a forwarding regression, but it does not prove the service's logic beyond that.",
+          "completionStatus": "completed",
+          "proposedLabel": "PASS",
+          "rationale": "Names both junk patterns, explains why test 1 can pass on broken behavior, and limits what test 2 can show.",
+          "reviewStatus": "pending"
+        },
+        {
+          "id": "junk-plausible-wrong",
+          "transcript": "Test 1 protects cartTotal well because it checks that two calls with the same items return the same total. Test 2 is weak because the mock supplies Ana rather than checking much UserService logic.",
+          "completionStatus": "completed",
+          "proposedLabel": "FAIL",
+          "rationale": "The format and second verdict look plausible, but it falsely treats a tautological self-comparison as protective.",
+          "reviewStatus": "pending"
+        },
+        {
+          "id": "junk-boundary",
+          "transcript": "Test 1 is self-comparison and proves nothing. Test 2 proves little because it uses a mock.",
+          "completionStatus": "completed",
+          "proposedLabel": "BOUNDARY",
+          "rationale": "The verdicts are right, but the answer does not explain that the mock computes the expected value or identify what narrow forwarding behavior remains observable.",
+          "reviewStatus": "pending"
+        }
+      ]
     }
   ]
 }

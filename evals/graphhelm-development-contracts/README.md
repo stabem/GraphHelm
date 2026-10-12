@@ -15,11 +15,13 @@ claude plugin eval "$tmp/plugin" --trust-plugin
 Each case is `prompt.md` plus `graders/criteria.md` (an LLM judge). The runner adds a no-plugin
 baseline arm, so the delta column shows what the skill itself changes.
 
-`judge-qualification.json` is a public, synthetic review packet for the current
-`keel-observer-missing` prompt and rubric. Its three proposed labels are pending human review;
-they are not judge results or secret holdout data. Reviewers must approve the labels before
-using them to qualify any judge. Keep skill invocation, answer correctness, and
-completion/infrastructure status separate; an incomplete response cannot count as a pass.
+`judge-qualification.json` version 2 is a public, synthetic review packet for the current
+`keel-observer-missing` and `test-audit-junk` prompts and rubrics. Each rubric has a proposed
+correct, plausible-wrong, and boundary response. The original observer examples and their
+proposed labels are unchanged. All labels are pending human review; they are not judge results
+or secret holdout data. Reviewers must approve the labels before using them to qualify any
+judge. Keep skill invocation, answer correctness, and completion/infrastructure status
+separate; an incomplete response cannot count as a pass.
 
 Each `-unprompted` case keeps its prompted case's scenario and settings but removes the skill
 instruction, then requires transcript evidence that the expected skill was invoked. It measures

@@ -226,6 +226,10 @@ adapter retrieved the offer and current briefing. It does not prove model compre
 acceptance, node ownership, permission transfer, or completion. Runtime owner credentials authorize
 declared actor labels; they do not cryptographically authenticate the host or model.
 
+An `offer` replay reports `already_recorded` only after validating the sealed offer kind,
+requested identities and handoff ID, protocol metadata, and historical briefing digest. Invalid
+or unavailable evidence is refused without fetching a current briefing or writing another offer.
+
 Each explicit handoff request allows up to five seconds of socket inactivity per Runtime request;
 the caller must still impose its own whole-process deadline. A timeout remains unobserved and is
 not retried automatically. `--handoff-id` distinguishes multiple offers between the same two

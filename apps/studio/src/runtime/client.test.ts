@@ -9,6 +9,9 @@ import {
   RUNTIME_READ_TIMEOUT_MS,
   WEBMCP_ACTOR,
 } from "./client";
+import { digestOf } from "./customs";
+import { foldTaskEvents, readTaskEventRecords } from "./team-tasks";
+import type { RuntimeEvent } from "./types";
 
 /** One recorded request, so a test can assert on the exact headers a mutation sent. */
 interface Call {
@@ -247,6 +250,85 @@ describe("RuntimeClient reads", () => {
       await expect(client.readEvidence("demo", id)).rejects.toBeInstanceOf(RuntimeError);
     }
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("coalesces two waves of eight evidence reads and keeps each result bound to its ID", async () => {
+    const calls: Call[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit = {}) => {
+      const call: Call = {
+        url,
+        method: init.method ?? "GET",
+        headers: (init.headers ?? {}) as Record<string, string>,
+        body: init.body,
+      };
+      calls.push(call);
+      const parsed = new URL(url, "http://runtime");
+      const ids = JSON.parse(parsed.searchParams.get("ids") ?? "[]") as string[];
+      const results = Object.fromEntries(ids.map((id) => [id, {
+        status: "available",
+        evidenceId: id,
+        mediaType: "text/plain",
+        sensitivity: "internal",
+        contentSha256: `hash-${id}`,
+        content: `content-${id}`,
+      }]));
+      return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: { results }, diagnostics: [] }), { status: 200 });
+    }) as typeof fetch;
+    const client = new RuntimeClient("token", { fetch: fetchImpl });
+
+    for (const wave of [0, 1]) {
+      const ids = Array.from({ length: 8 }, (_, index) => `wave-${wave}-${index}`);
+      const values = await Promise.all(ids.map((id) => client.readEvidence("demo", id)));
+      expect(values.map((value) => [value.evidenceId, value.content])).toEqual(ids.map((id) => [id, `content-${id}`]));
+    }
+
+    expect(calls).toHaveLength(2);
+    expect(calls.map((call) => new URL(call.url, "http://runtime").pathname)).toEqual([
+      "/v1/executions/demo/evidence",
+      "/v1/executions/demo/evidence",
+    ]);
+  });
+
+  it("folds only task envelopes whose sealed content hash and actor match the event", async () => {
+    async function sealed(evidenceId: string, actorId: string, kind: string, issue: number) {
+      const content = JSON.stringify({
+        id: `signal-${evidenceId}`,
+        source: { type: "user", id: actorId },
+        type: kind,
+        description: JSON.stringify({
+          schema: "graphhelm-task-event-v1", taskId: `issue-${issue}`, revision: 1,
+          at: "2026-10-07T20:00:00Z", issue, lane: actorId, branch: `issue-${issue}-x`,
+        }),
+      });
+      const contentSha256 = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
+      return { evidenceId, mediaType: "application/json", sensitivity: "internal", contentSha256, content };
+    }
+    function event(sequence: number, actorId: string, evidence: Awaited<ReturnType<typeof sealed>>): RuntimeEvent {
+      return {
+        sequence, kind: "signal_recorded",
+        payload: { kind: "task.claimed", sourceId: actorId, sourceKind: "user", signalId: `signal-${evidence.evidenceId}`, envelopeSha256: evidence.contentSha256 },
+        occurredAt: null, actorId, actorType: "agent", idempotencyKey: null, eventId: `event-${sequence}`,
+        evidenceRefs: [evidence.evidenceId],
+      };
+    }
+    const valid = await sealed("valid-task", "lane-a", "task.claimed", 41);
+    const forgedActor = await sealed("forged-task", "lane-a", "task.claimed", 42);
+    const forgedHash = await sealed("bad-hash-task", "lane-a", "task.claimed", 43);
+    const fixtures = new Map([[valid.evidenceId, valid], [forgedActor.evidenceId, forgedActor], [forgedHash.evidenceId, { ...forgedHash, contentSha256: "0".repeat(64) }]]);
+    const client = new RuntimeClient("token", {
+      fetch: (async (url: string) => {
+        const id = decodeURIComponent(new URL(url, "http://runtime").pathname.split("/").at(-1)!);
+        const item = fixtures.get(id)!;
+        return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: item, diagnostics: [] }), { status: 200 });
+      }) as typeof fetch,
+    });
+    const tasks = foldTaskEvents(await readTaskEventRecords({
+      executionId: "demo",
+      events: [event(1, "lane-a", valid), event(2, "other-actor", forgedActor), event(3, "lane-a", forgedHash)],
+      readEvidence: (executionId, evidenceId) => client.readEvidence(executionId, evidenceId),
+    }));
+
+    expect(tasks.map(({ issue, step }) => ({ issue, step }))).toEqual([{ issue: 41, step: "plan" }]);
   });
 
   it("reports a refused token without echoing the token", async () => {

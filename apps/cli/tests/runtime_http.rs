@@ -3351,6 +3351,117 @@ fn a_signal_needs_no_path_when_the_runtime_can_seal_it_and_reads_back() {
     );
 }
 
+#[test]
+fn eight_sealed_evidence_items_share_one_authenticated_collection_read() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let broker = directory.path().join("broker");
+    let key_id = "runtime-http-evidence-collection-key";
+    credential_set(&broker, &keyring, key_id, "cred_collection", "unused_route");
+    let audit = directory.path().join("read-audit.jsonl");
+    let extra = ServeExtra {
+        args: vec![
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+            "--read-audit".into(),
+            audit.to_str().unwrap().into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+    let execution = "exec-evidence-collection";
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = all_success_fixtures(directory.path());
+    let (started, start_reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "collection-start"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({ "file": graph.to_str().unwrap(), "fixtures": fixtures.to_str().unwrap(), "mode": "supervised" }),
+    );
+    assert_eq!(started, 200, "{start_reply}");
+
+    let mut expected = std::collections::BTreeMap::new();
+    for index in 0..8 {
+        let marker = format!("collection-plaintext-marker-{index}");
+        let (status, reply) = post_json(
+            &format!("{base}/v1/executions/{execution}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", &format!("collection-signal-{index}")),
+                ("X-GraphHelm-Actor", "owner-local"),
+                ("X-GraphHelm-Actor-Type", "owner"),
+            ],
+            &serde_json::json!({ "signal": {
+                "id": format!("collection-signal-{index}"),
+                "source": { "type": "node", "id": "implementation" },
+                "type": "risk_identified", "severity": "high", "description": marker,
+                "evidence": [execution], "emittedAt": "2026-08-28T00:00:00Z"
+            }}),
+        );
+        assert_eq!(status, 200, "{reply}");
+        expected.insert(format!("collection-signal-{index}"), marker);
+    }
+
+    let events_url = format!("{base}/v1/executions/{execution}/events?limit=1000");
+    let event_reply = get_json(&events_url, Some(&token));
+    let refs: Vec<String> = envelope_array(&event_reply, "events", &events_url)
+        .iter()
+        .filter(|event| event["kind"]["type"] == "signal_recorded")
+        .filter_map(|event| event["evidenceRefs"].as_array())
+        .flatten()
+        .filter_map(|reference| reference["evidenceId"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(
+        refs.len(),
+        8,
+        "every sealed signal must be referenced exactly once"
+    );
+    let ids = serde_json::to_string(&refs).unwrap();
+    let encoded_ids = ids
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') {
+                (byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect::<String>();
+    let url = format!("{base}/v1/executions/{execution}/evidence?ids={encoded_ids}");
+    let response = get_json(&url, Some(&token));
+    assert_eq!(
+        response["ok"], true,
+        "collection read must be authenticated and succeed: {response}"
+    );
+    for evidence_id in refs {
+        let item = &response["data"]["results"][&evidence_id];
+        assert_eq!(item["status"], "available", "{evidence_id}: {item}");
+        let content = item["content"].as_str().unwrap_or_default();
+        assert!(
+            expected.values().any(|marker| content.contains(marker)),
+            "known sealed marker missing: {item}"
+        );
+    }
+    let audit_text = std::fs::read_to_string(audit).unwrap();
+    for marker in expected.values() {
+        assert!(
+            !audit_text.contains(marker),
+            "opened batch plaintext reached the read audit"
+        );
+    }
+}
+
 /// No new bespoke `["data"][k].as_x().unwrap()` can be added to this file silently (#760).
 ///
 /// **Two exclusions, and each of them is a false positive somebody already hit.**

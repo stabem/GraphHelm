@@ -327,6 +327,13 @@ pub(crate) fn run(repo: &Path, patch: &Path) -> Outcome {
     let Ok(patch) = patch.canonicalize() else {
         return error("--patch must name a readable file", "/patch");
     };
+    // Git for Windows cannot open the verbatim drive path returned by canonicalize.
+    #[cfg(windows)]
+    let patch = patch
+        .to_str()
+        .and_then(|path| path.strip_prefix(r"\\?\"))
+        .filter(|path| path.as_bytes().get(1) == Some(&b':'))
+        .map_or_else(|| patch.clone(), PathBuf::from);
     let observer = match touches_observer(&repo, &patch) {
         Ok(touches) => touches,
         Err(detail) => return error(format!("cannot read patch: {detail}"), "/patch"),

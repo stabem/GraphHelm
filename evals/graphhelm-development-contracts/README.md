@@ -26,6 +26,14 @@ result is accepted, the external runner must preserve the grader distinction bet
 answer with no Skill invocation and an INCOMPLETE run caused by a missing or truncated transcript,
 tool failure, or infrastructure failure.
 
+`no-skill-audit-grammar` is a lexical near-miss negative: the request contains "test audit"
+but asks only for a grammar correction. Skill stays available, and the grader requires a
+completed, meaning-preserving correction without a Skill invocation. The isolated eval must
+expose only the intended development-contracts skills; a host editing skill would change the
+case's premise. The external runner must keep INCOMPLETE separate from non-selection. These
+prepared labels need human review before a judge can be qualified; no selection result is
+claimed here.
+
 First run (2026-10-05, 3 runs per arm). This is one noisy sample: a review re-run of
 `keel-scope` scored 0.67 with the skill and 1.00 without it, so treat any single-run number as
 +/- one run. Use `--runs` to raise runs per arm before reading a delta as real.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { digestOf } from "./customs";
+import { laneBars } from "./lane-bars";
 import { foldTaskEvents, parseTaskEvent, readTaskEventRecords, type TaskEventRecord } from "./team-tasks";
 import type { RuntimeEvent } from "./types";
 
@@ -16,6 +17,47 @@ function record(sequence: number, kind: string, actorId: string, document: Recor
 }
 
 describe("foldTaskEvents", () => {
+  it("attaches a plan recorded before its claim to the PR that later merges (#880)", () => {
+    const taskId = "issue-758";
+    const events = [
+      record(4864, "task.planned", "codex-13", { taskId, lane: "codex-13", classes: ["code"], reviews: 1, proof: "both", critic: { mode: "none", passScore: 8, maxRounds: 3 }, summary: "Plan" }),
+      record(4865, "task.claimed", "codex-13", { taskId, issue: 758, lane: "codex-13", branch: "issue-758-evidence-cache" }),
+      record(4877, "task.pr_opened", "codex-13", { taskId, pr: 760, headSha: "aaaaaaaa", journeys: [], lane: "codex-13" }),
+      record(4905, "task.merged", "codexrev-1", { taskId, pr: 760, mergeSha: "bbbbbbbb", closes: [758], merger: "codexrev-1" }),
+    ];
+    const tasks = foldTaskEvents(events);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ taskId, issue: 758, pr: 760, step: "merged" });
+    expect(tasks.filter((task) => task.pr === null)).toHaveLength(0);
+    const now = Date.parse("2026-10-07T20:31:00Z");
+    const lanes = laneBars(events.map((event, index) => ({ ...event, at: new Date(now - 31 * 60_000 + index * 1_000).toISOString() })), now, 60 * 60_000);
+    expect(lanes.find((lane) => lane.lane === "codex-13")?.bars.filter((bar) => bar.open)).toEqual([]);
+  });
+  it("does not reopen gh-claude-9's merged PR #516 (#881)", () => {
+    const taskId = "issue-509";
+    const events = [
+      record(3460, "task.claimed", "gh-claude-9", { taskId, issue: 509, lane: "gh-claude-9", branch: "issue-509-journeys-plain-words" }),
+      record(3475, "task.pr_opened", "gh-claude-9", { taskId, pr: 516, headSha: "aaaaaaaa", journeys: [], lane: "gh-claude-9" }),
+      record(3486, "task.review_verdict", "gh-claude-6", { taskId, pr: 516, headSha: "aaaaaaaa", reviewer: "gh-claude-6", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/516#c1" }),
+      record(3487, "task.merged", "gh-claude-6", { taskId, pr: 516, mergeSha: "bbbbbbbb", closes: [509], merger: "gh-claude-6" }),
+      record(3528, "task.claimed", "gh-claude-9", { taskId: "issue-518", issue: 518, lane: "gh-claude-9", branch: "issue-518-mark-act-safe" }),
+    ];
+    const tasks = foldTaskEvents(events);
+    expect(tasks.filter((task) => task.pr === 516)).toMatchObject([{ step: "merged", issue: 509 }]);
+    expect(tasks.filter((task) => task.taskId === taskId && task.pr === null)).toEqual([]);
+    const now = Date.parse("2026-10-09T12:00:00Z");
+    expect(laneBars(events.map((event, index) => ({ ...event, at: new Date(now - 30_000 + index * 1_000).toISOString() })), now, 60 * 60_000)
+      .find((lane) => lane.lane === "gh-claude-9")?.bars.filter((bar) => bar.open && bar.label === "#516") ?? []).toEqual([]);
+  });
+  it("keeps an interrupted pre-claim plan out of a later claim (#881)", () => {
+    const taskId = "issue-100";
+    const tasks = foldTaskEvents([
+      record(1, "task.planned", "lane-a", { taskId, lane: "lane-a", classes: ["code"], reviews: 1, proof: "tests", critic: { mode: "none", passScore: 8, maxRounds: 3 }, summary: "Old plan" }),
+      record(2, "task.claimed", "lane-b", { taskId, issue: 100, lane: "lane-b", branch: "issue-100-other" }),
+      record(3, "task.claimed", "lane-a", { taskId, issue: 100, lane: "lane-a", branch: "issue-100-new" }),
+    ]);
+    expect(tasks.find((task) => task.branch === "issue-100-new")?.plan).toBeNull();
+  });
   it("drops self-assigned or malformed claimed assigners (#86)", () => {
     for (const assignedBy of ["lane", "x".repeat(129), "", null, "bad\nname"]) {
       expect(parseTaskEvent("task.claimed", "lane", JSON.stringify({ schema: "graphhelm-task-event-v1",

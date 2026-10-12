@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 import uuid
@@ -251,7 +252,7 @@ def arm_lane_wake(payload: dict, bound: tuple[str, str, str, str, str | None]) -
         raise ValueError("invalid event head")
     reply = request(f"{base}/wake-lease", token, "POST",
                     {"sessionId": session, "rendezvousId": str(uuid.uuid4()),
-                     "cursor": head, "maturesInSeconds": 86400},
+                     "cursor": head, "maturesInSeconds": 60},
                     {"X-GraphHelm-Actor": actor, "X-GraphHelm-Actor-Type": "agent",
                      "Idempotency-Key": str(uuid.uuid4())})
     data = reply.get("data")
@@ -312,24 +313,23 @@ def wait_for_lane(host: str, session: str, events: Path) -> None:
     bound = binding(payload)
     if bound is None:
         return
-    pid_path = _waiter_path(payload, bound, host)
     cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
-    try:
-        while True:
-            result = subprocess.run([cli, "wake-wait", "--events", str(events),
-                                     "--execution", bound[0], "--session-id", session],
-                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL, check=False)
-            if result.returncode != 0:
-                return
-            # A real ring is the only reason to renew. The Stop hook reads pending notes.
-            arm_lane_wake(payload, bound)
-    finally:
+    # Keep the PID marker after an unexpected exit so Stop can replace us.
+    while True:
+        result = subprocess.run([cli, "wake-wait", "--events", str(events),
+                                 "--execution", bound[0], "--session-id", session],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, check=False)
+        # An append can consume the lease before wake-wait parks its pipe.
+        # Exit 2 then means stale, and exit 3 means the short lease matured.
+        if result.returncode not in (0, 2, 3):
+            return
+        if result.returncode == 2:
+            time.sleep(1)
         try:
-            if pid_path.read_text(encoding="ascii") == str(os.getpid()):
-                pid_path.unlink()
-        except OSError:
-            pass
+            arm_lane_wake(payload, bound)
+        except (OSError, ValueError, KeyError):
+            time.sleep(1)
 
 
 def request(url: str, token: str, method: str, body: dict | None = None, headers: dict | None = None, timeout: float = 1.0, max_reply: int = MAX_REPLY) -> dict:

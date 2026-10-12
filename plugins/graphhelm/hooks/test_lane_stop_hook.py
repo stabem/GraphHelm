@@ -276,7 +276,7 @@ class LaneStopTests(unittest.TestCase):
         self.assertIn("--lane codex-4", output.read_text())
         self.assertIn("--repo stabem/GraphHelm", output.read_text())
 
-    def stop(self, manifest, active=False):
+    def stop(self, manifest, active=False, session="test-session"):
         # Drive the registered Stop commands, not an unregistered helper. On the parent
         # the Keel hook allows this repeated stop and the addressed note is lost.
         results = []
@@ -285,8 +285,9 @@ class LaneStopTests(unittest.TestCase):
             for hook in group["hooks"]:
                 name = re.search(r"/hooks/([a-z_]+\.py)", hook["command"]).group(1)
                 started = time.monotonic()
-                result = subprocess.run([sys.executable, str(manifest.parent / name)], env=self.env,
-                    input=json.dumps({"cwd": self.tmp.name, "session_id": "test-session", "stop_hook_active": active}),
+                args = ["--host=codex"] if "--host=codex" in hook["command"] else []
+                result = subprocess.run([sys.executable, str(manifest.parent / name), *args], env=self.env,
+                    input=json.dumps({"cwd": self.tmp.name, "session_id": session, "stop_hook_active": active}),
                     text=True, capture_output=True, timeout=12, creationflags=NO_WINDOW)
                 if name == "lane_stop_hook.py":
                     self.reminder_seconds = time.monotonic() - started
@@ -563,6 +564,27 @@ class LaneStopTests(unittest.TestCase):
                   headers={"Authorization": "Bearer " + self.owner_token})
         with urllib.request.urlopen(request, timeout=5) as response:
             self.assertIn("codex-4", json.load(response)["data"]["wakeListeners"])
+        # Repeated unrelated rings must leave a listener, including after a
+        # waiter exits and Stop has to replace it for this same session.
+        os.kill(pid, signal.SIGTERM)
+        deadline = time.monotonic() + 3
+        while session_hook._pid_alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(session_hook._pid_alive(pid))
+        self.assertEqual(self.stop(MANIFESTS[1], session=session), [])
+        replacement = int(pid_files[0].read_text())
+        self.assertNotEqual(replacement, pid)
+        self.addCleanup(lambda: os.kill(replacement, signal.SIGTERM) if session_hook._pid_alive(replacement) else None)
+        for cycle in range(3):
+            self.note(f"other-cycle-{cycle}", to="codex-5")
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    if "codex-4" in json.load(response)["data"]["wakeListeners"]:
+                        break
+                time.sleep(0.05)
+            else:
+                self.fail(f"lane lost its wake listener after cycle {cycle}")
         self.note("request-2", to="codex-4")
         self.assertTrue(any(d.get("decision") == "block" for d in self.stop(MANIFESTS[0])))
 

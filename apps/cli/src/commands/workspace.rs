@@ -108,7 +108,7 @@ fn now() -> u64 {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let output = crate::process::command("git")
+    let output = graphhelm_process::command("git")
         .arg("-C")
         .arg(dir)
         .args(args)
@@ -737,7 +737,7 @@ fn merged_target(
         }
     }
     let strict_git = |args: &[&str]| -> Result<String, (String, String)> {
-        let output = crate::process::command("git")
+        let output = graphhelm_process::command("git")
             .arg("-C")
             .arg(worktree)
             .args(args)
@@ -1212,7 +1212,7 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
             &["rev-parse", "--path-format=absolute", "--git-common-dir"],
         );
         let removal = common.and_then(|common| {
-            crate::process::command("git")
+            graphhelm_process::command("git")
                 .arg("--git-dir")
                 .arg(&common)
                 .args(["worktree", "remove"])

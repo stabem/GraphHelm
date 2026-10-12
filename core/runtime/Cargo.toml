@@ -21,6 +21,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 
 [dev-dependencies]
+graphhelm-process = { path = "../process" }
 chrono.workspace = true
 # #668: the runtime dispatches gates through `GateRegistryPort` and no longer names any
 # particular gate's evaluator. Geometry is still the evaluator the gate cells wire in, so the

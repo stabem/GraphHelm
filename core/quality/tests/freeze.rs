@@ -363,7 +363,7 @@ fn tracked_file_count(prefix: &str) -> usize {
         .parent()
         .and_then(std::path::Path::parent)
         .expect("core/quality sits two levels below the repository root");
-    let output = std::process::Command::new("git")
+    let output = graphhelm_process::command("git")
         .args(["ls-files", "--", prefix])
         .current_dir(root)
         .output()

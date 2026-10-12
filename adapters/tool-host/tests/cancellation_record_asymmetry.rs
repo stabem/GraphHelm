@@ -1556,7 +1556,7 @@ fn the_source_walk_refuses_directory_symlinks() {
     // is what makes this cell observe the fix on this host instead of declining on every run.
     #[cfg(windows)]
     let linked = std::os::windows::fs::symlink_dir(&outside, real.join("link")).is_ok()
-        || std::process::Command::new("cmd")
+        || graphhelm_process::command("cmd")
             .args(["/C", "mklink", "/J"])
             .arg(real.join("link"))
             .arg(&outside)

@@ -3,7 +3,6 @@
 //! consume a replay cache. Real CLI/tempdir/Git boundary, no test-only production seam;
 //! cost: seconds after build, offline, no Node/browser/provider required.
 use std::path::Path;
-use std::process::Command;
 
 #[path = "support/time_scale.rs"]
 mod time_scale;
@@ -14,7 +13,7 @@ use serde_json::Value;
 const FLOW: &str = include_str!("fixtures/journey_flow/checkout.journey.yaml");
 
 fn cli(project: &Path, args: &[&str]) -> (i32, Value) {
-    let out = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["--json", "journey"])
         .args(args)
         .arg("--project")
@@ -59,7 +58,7 @@ fn project(approved: bool) -> tempfile::TempDir {
             vec!["commit", "--quiet", "--no-verify", "-m", "fixture"],
         ] {
             assert!(
-                Command::new("git")
+                graphhelm_process::command("git")
                     .arg("-C")
                     .arg(dir.path())
                     .args(args)
@@ -112,7 +111,7 @@ fn invalid_id_and_partial_recording_bundle_are_input_errors() {
         "replay.recording_incomplete",
     );
     // An unauthenticated hidden worker refuses even while the caller keeps stdin open.
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "--json",
             "journey",
@@ -288,7 +287,7 @@ fn malformed_oversized_and_directory_cache_are_preserved_and_refused() {
     escaped_cache["screens"]["cart"]["controls"][0]["name"] = escaped_secret.into();
     let bytes = serde_json::to_vec(&escaped_cache).unwrap();
     std::fs::write(&cache, &bytes).unwrap();
-    let out = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["--json", "journey", "replay", "checkout", "--project"])
         .arg(dir.path())
         .env("GRAPHHELM_SECRET_shopper_password", escaped_secret)
@@ -325,7 +324,7 @@ fn owner_token(project: &Path) -> String {
     // store (events, token, keys, owner records) out of git, so the test ignores exactly that.
     let gitignore = project.join(".gitignore");
     let kept = std::fs::read(&gitignore).ok();
-    let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["--json", "init", "--project"])
         .arg(project)
         .args(["--harness", "claude-code"])

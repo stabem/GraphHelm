@@ -5,12 +5,11 @@
 //! workspace command. Cost: a temp git repository and a handful of CLI subprocesses, a few seconds
 //! after the build; no network.
 use std::path::Path;
-use std::process::Command;
 
 use serde_json::Value;
 
 fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = graphhelm_process::command("git")
         .arg("-C")
         .arg(dir)
         .args([
@@ -39,7 +38,7 @@ fn repo(dir: &Path) -> std::path::PathBuf {
 }
 
 fn run(args: &[&str]) -> (i32, Value) {
-    let out = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["--json", "workspace"])
         .args(args)
         .output()
@@ -78,7 +77,7 @@ fn release(root: &str, lane: &str, task: &str) {
 fn link_dir(link: &Path, target: &Path) {
     #[cfg(windows)]
     {
-        let out = Command::new("cmd")
+        let out = graphhelm_process::command("cmd")
             .args(["/C", "mklink", "/J"])
             .arg(link)
             .arg(target)
@@ -276,7 +275,7 @@ impl Unreadable {
         #[cfg(windows)]
         {
             let user = std::env::var("USERNAME").unwrap();
-            let out = Command::new("icacls")
+            let out = graphhelm_process::command("icacls")
                 .arg(dir)
                 .args(["/deny", &format!("{user}:(RD)")])
                 .output()
@@ -297,7 +296,7 @@ impl Drop for Unreadable {
         #[cfg(windows)]
         {
             let user = std::env::var("USERNAME").unwrap_or_default();
-            let _ = Command::new("icacls")
+            let _ = graphhelm_process::command("icacls")
                 .arg(&self.0)
                 .args(["/remove:d", &user])
                 .output();
@@ -375,7 +374,7 @@ fn the_public_slot_refuses_script_commands_before_any_effect() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("root");
     let marker = dir.path().join("marker.txt");
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .current_dir(dir.path())
         .args(["--json", "workspace", "slot", "--root"])
         .arg(&root)
@@ -407,7 +406,7 @@ fn the_public_slot_refuses_script_commands_before_any_effect() {
         vec!["cargo", "test", "-pfoo", "--test=one", "--test=two"],
         vec!["cargo", "test", "-pfoo", "-pbar", "--lib"],
     ] {
-        let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .current_dir(dir.path())
             .args(["--json", "workspace", "slot", "--root"])
             .arg(&root)
@@ -445,7 +444,7 @@ impl Drop for Server {
 fn serve(dir: &Path, extra: &[&str]) -> (Server, String, std::path::PathBuf) {
     use std::io::BufRead;
     let events = dir.join("events");
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "serve",
             "--events",
@@ -480,7 +479,7 @@ fn serve(dir: &Path, extra: &[&str]) -> (Server, String, std::path::PathBuf) {
 /// One MCP stdio session against `base`: initialize, then one `tools/call`; returns its reply.
 fn mcp_call(base: &str, token: &Path, actor_type: &str, tool: &str) -> Value {
     use std::io::Write;
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "mcp",
             "--url",
@@ -655,7 +654,7 @@ fn runtime_workspace_sweep_runs_without_a_request_and_zero_disables_it() {
 fn runtime_workspace_sweep_refuses_periods_outside_the_safe_range() {
     let dir = tempfile::tempdir().unwrap();
     for seconds in ["1", "59", "86401", "18446744073709551615"] {
-        let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .args(["serve", "--events"])
             .arg(dir.path().join("events"))
             .args([
@@ -765,7 +764,7 @@ fn clean_workspace_that_cannot_clean_refuses_and_never_runs_the_command() {
     let root = dir.path().join("root");
     let not_a_workspace = dir.path().join("plain");
     std::fs::create_dir_all(&not_a_workspace).unwrap();
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .current_dir(&not_a_workspace)
         .args([
             "--json",
@@ -814,7 +813,7 @@ fn a_huge_max_wait_is_refused_not_a_panic() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("root");
     let log = dir.path().join("log.txt");
-    let out = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["--json", "workspace", "slot", "--root"])
         .arg(&root)
         .args([

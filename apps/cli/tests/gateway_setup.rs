@@ -27,7 +27,9 @@ const SECOND_SENTINEL: &str = "sk-SENTINEL-1139-SECOND-fedcba9876543210";
 const GATEWAY_INVALID: &str = "GHCLI009_GATEWAY_INVALID";
 
 fn command() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )))
 }
 
 fn json(output: &[u8]) -> Value {
@@ -119,7 +121,7 @@ fn setup_and_route_set_serialize_the_same_manifest_transaction() {
     init(project.path());
     let provider = fake_provider();
     let binary = assert_cmd::cargo::cargo_bin!("graphhelm");
-    let mut setup = std::process::Command::new(binary)
+    let mut setup = graphhelm_process::command(binary)
         .args(["gateway", "setup", "--provider", "typesafe", "--project"])
         .arg(project.path())
         .args(["--base-url", &provider.base_url])
@@ -137,7 +139,7 @@ fn setup_and_route_set_serialize_the_same_manifest_transaction() {
     assert!(keyring.exists(), "setup never reached its stdin wait");
 
     let manifest = manifest_path(project.path());
-    let route = std::process::Command::new(binary)
+    let route = graphhelm_process::command(binary)
         .args(["gateway", "route", "set", "--manifest"])
         .arg(&manifest)
         .args([

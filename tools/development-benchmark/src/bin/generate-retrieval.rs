@@ -147,7 +147,7 @@ fn run() -> Result<(), String> {
         &["add", "-A"][..],
         &["commit", "--quiet", "-m", "scratch", "--allow-empty"][..],
     ] {
-        let status = std::process::Command::new("git")
+        let status = graphhelm_process::command("git")
             .args(git_arguments)
             .current_dir(&scratch_project)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -347,7 +347,7 @@ fn run() -> Result<(), String> {
     // wrong checkout (K on #675). The derivation must read the object database as the store did:
     // unreplaced. Same family as the store/exe pins -- the instrument must answer for THIS
     // subject, not a redirected one.
-    let derived = std::process::Command::new("git")
+    let derived = graphhelm_process::command("git")
         .env("GIT_NO_REPLACE_OBJECTS", "1")
         .arg("--no-replace-objects")
         .arg("-C")

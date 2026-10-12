@@ -22,7 +22,9 @@ const ARGUMENT_INVALID: &str = "GHCLI001_ARGUMENT_INVALID";
 const GATEWAY_CREDENTIAL: &str = "GHCLI010_GATEWAY_CREDENTIAL";
 
 fn command() -> assert_cmd::Command {
-    assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    assert_cmd::Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )))
 }
 
 fn json(bytes: &[u8]) -> Value {
@@ -37,7 +39,7 @@ fn json(bytes: &[u8]) -> Value {
 /// A real, offline Git work tree, so ignore protection is observed by Git itself.
 fn git_project() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    let git = Command::new("git")
+    let git = graphhelm_process::command("git")
         .args(["init", "--quiet"])
         .current_dir(dir.path())
         .output()
@@ -387,7 +389,7 @@ fn outside_a_git_work_tree_protection_is_ready_for_later_git_init() {
         before
     );
     assert!(
-        Command::new("git")
+        graphhelm_process::command("git")
             .args(["init", "--quiet"])
             .current_dir(project.path())
             .status()
@@ -400,7 +402,7 @@ fn outside_a_git_work_tree_protection_is_ready_for_later_git_init() {
         ".graphhelm/events.token",
     ] {
         assert!(
-            Command::new("git")
+            graphhelm_process::command("git")
                 .args(["check-ignore", "-q", "--no-index", "--", generated])
                 .current_dir(project.path())
                 .status()
@@ -443,7 +445,7 @@ fn init_ignores_mcp_configuration_and_repairs_older_ignore_blocks() {
             ".graphhelm/keyring/revocations.v1.jsonl",
             ".graphhelm/keyring/.sealed-key-provider.lock",
         ] {
-            let ignored = Command::new("git")
+            let ignored = graphhelm_process::command("git")
                 .args(["check-ignore", "--quiet", "--no-index", "--", generated])
                 .current_dir(project.path())
                 .output()
@@ -452,7 +454,7 @@ fn init_ignores_mcp_configuration_and_repairs_older_ignore_blocks() {
                 ignored.status.success(),
                 "{existing:?}: {generated} is stageable"
             );
-            let status = Command::new("git")
+            let status = graphhelm_process::command("git")
                 .args(["status", "--short", "--", generated])
                 .current_dir(project.path())
                 .output()
@@ -498,7 +500,7 @@ fn init_ignores_mcp_configuration_and_repairs_older_ignore_blocks() {
         ".graphhelm/events.token",
     ] {
         assert!(
-            Command::new("git")
+            graphhelm_process::command("git")
                 .args(["check-ignore", "-q", "--no-index", "--", generated])
                 .current_dir(project.path())
                 .status()
@@ -668,7 +670,7 @@ fn serve_runs_from_the_paths_init_wrote() {
     let token = std::fs::read_to_string(&paths.token).unwrap();
     let key = std::fs::read_to_string(&paths.key).unwrap();
 
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["serve", "--events"])
         .arg(&paths.events)
         .args(["--bind", "127.0.0.1:0", "--keyring"])
@@ -719,7 +721,7 @@ fn serve_starts_with_a_warning_when_the_key_does_not_open_the_keyring() {
     init(project.path());
     let paths = layout(project.path());
     let started_with = |configure: &dyn Fn(&mut Command)| -> Value {
-        let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+        let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
         command
             .args(["serve", "--events"])
             .arg(&paths.events)

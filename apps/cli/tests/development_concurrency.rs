@@ -12,7 +12,7 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 #[path = "support/time_scale.rs"]
@@ -38,7 +38,7 @@ impl Drop for ServerHandle {
 fn spawn_server() -> ServerHandle {
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "serve",
             "--events",

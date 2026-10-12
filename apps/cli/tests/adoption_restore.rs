@@ -28,12 +28,14 @@ fn cli_previews_then_restores_only_the_exact_accepted_offline_plan() {
     )
     .unwrap();
     let before = std::fs::read_dir(s.path()).unwrap().count();
-    let preview = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .arg("restore")
-        .arg("--state-root")
-        .arg(s.path())
-        .output()
-        .unwrap();
+    let preview = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ))
+    .arg("restore")
+    .arg("--state-root")
+    .arg(s.path())
+    .output()
+    .unwrap();
     assert!(
         preview.status.success(),
         "stdout: {}
@@ -47,7 +49,9 @@ stderr: {}",
     assert_eq!(plan["kind"], "RestorePlan");
     let planfile = s.path().join("reviewed.json");
     std::fs::write(&planfile, serde_json::to_vec(plan).unwrap()).unwrap();
-    let mut run = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut run = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ));
     run.arg("restore")
         .arg("--state-root")
         .arg(s.path())
@@ -60,16 +64,18 @@ stderr: {}",
         std::fs::read(p.path().join("AGENTS.md")).unwrap(),
         b"installed\n"
     );
-    let applied = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .arg("restore")
-        .arg("--state-root")
-        .arg(s.path())
-        .arg("--apply")
-        .arg(&planfile)
-        .arg("--accept")
-        .arg(plan["digest"].as_str().unwrap())
-        .output()
-        .unwrap();
+    let applied = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ))
+    .arg("restore")
+    .arg("--state-root")
+    .arg(s.path())
+    .arg("--apply")
+    .arg(&planfile)
+    .arg("--accept")
+    .arg(plan["digest"].as_str().unwrap())
+    .output()
+    .unwrap();
     assert!(
         applied.status.success(),
         "{}",
@@ -96,15 +102,17 @@ fn cli_restores_a_direct_manual_checkpoint_without_an_adoption_journal() {
     let path = project.path().join("AGENTS.md");
     std::fs::write(&path, b"manual baseline\n").unwrap();
 
-    let backup = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args(["backup", "--project"])
-        .arg(project.path())
-        .args(["--home"])
-        .arg(home.path())
-        .args(["--state-root"])
-        .arg(state.path())
-        .output()
-        .unwrap();
+    let backup = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ))
+    .args(["backup", "--project"])
+    .arg(project.path())
+    .args(["--home"])
+    .arg(home.path())
+    .args(["--state-root"])
+    .arg(state.path())
+    .output()
+    .unwrap();
     assert!(
         backup.status.success(),
         "stdout: {}
@@ -117,12 +125,14 @@ stderr: {}",
     assert_eq!(backup["data"]["receipt"]["spec"]["verified"], true);
 
     std::fs::write(&path, b"manual later bytes\n").unwrap();
-    let preview = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args(["restore", "--state-root"])
-        .arg(state.path())
-        .args(["--backup", backup_id])
-        .output()
-        .unwrap();
+    let preview = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ))
+    .args(["restore", "--state-root"])
+    .arg(state.path())
+    .args(["--backup", backup_id])
+    .output()
+    .unwrap();
     assert!(
         preview.status.success(),
         "stdout: {}
@@ -144,15 +154,17 @@ stderr: {}",
 
     let planfile = state.path().join("manual-restore-plan.json");
     std::fs::write(&planfile, serde_json::to_vec(plan).unwrap()).unwrap();
-    let applied = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args(["restore", "--state-root"])
-        .arg(state.path())
-        .args(["--apply"])
-        .arg(&planfile)
-        .args(["--accept"])
-        .arg(plan["digest"].as_str().unwrap())
-        .output()
-        .unwrap();
+    let applied = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ))
+    .args(["restore", "--state-root"])
+    .arg(state.path())
+    .args(["--apply"])
+    .arg(&planfile)
+    .args(["--accept"])
+    .arg(plan["digest"].as_str().unwrap())
+    .output()
+    .unwrap();
     assert!(
         applied.status.success(),
         "stdout: {}

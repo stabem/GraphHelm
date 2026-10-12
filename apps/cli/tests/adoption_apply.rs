@@ -19,20 +19,22 @@ fn cli_applies_only_the_accepted_plan_and_reports_unverified() {
     let accepted = format!("sha256:{}", digest(&serde_json::to_vec(&plan).unwrap()));
     plan["digest"] = json!(accepted);
     std::fs::write(&planfile, serde_json::to_vec(&plan).unwrap()).unwrap();
-    let output = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .arg("setup")
-        .arg("--project")
-        .arg(p.path())
-        .arg("--home")
-        .arg(h.path())
-        .arg("--state-root")
-        .arg(s.path())
-        .arg("--apply")
-        .arg(&planfile)
-        .arg("--accept")
-        .arg(&accepted)
-        .output()
-        .unwrap();
+    let output = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ))
+    .arg("setup")
+    .arg("--project")
+    .arg(p.path())
+    .arg("--home")
+    .arg(h.path())
+    .arg("--state-root")
+    .arg(s.path())
+    .arg("--apply")
+    .arg(&planfile)
+    .arg("--accept")
+    .arg(&accepted)
+    .output()
+    .unwrap();
     assert!(
         output.status.success(),
         "{}",
@@ -48,36 +50,40 @@ fn cli_applies_only_the_accepted_plan_and_reports_unverified() {
         b"new method\n"
     );
     assert!(!p.path().join(".graphhelm").exists());
-    let recovered = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .arg("setup")
-        .arg("--project")
-        .arg(p.path())
-        .arg("--home")
-        .arg(h.path())
-        .arg("--state-root")
-        .arg(s.path())
-        .arg("--recover")
-        .arg(
-            value["data"]["receipt"]["spec"]["transactionId"]
-                .as_str()
-                .unwrap(),
-        )
-        .output()
-        .unwrap();
+    let recovered = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ))
+    .arg("setup")
+    .arg("--project")
+    .arg(p.path())
+    .arg("--home")
+    .arg(h.path())
+    .arg("--state-root")
+    .arg(s.path())
+    .arg("--recover")
+    .arg(
+        value["data"]["receipt"]["spec"]["transactionId"]
+            .as_str()
+            .unwrap(),
+    )
+    .output()
+    .unwrap();
     assert!(recovered.status.success());
 }
 #[test]
 fn setup_preview_describes_provisioning_without_creating_it() {
     let p = tempfile::tempdir().unwrap();
     let h = tempfile::tempdir().unwrap();
-    let output = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .arg("setup")
-        .arg("--project")
-        .arg(p.path())
-        .arg("--home")
-        .arg(h.path())
-        .output()
-        .unwrap();
+    let output = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ))
+    .arg("setup")
+    .arg("--project")
+    .arg(p.path())
+    .arg("--home")
+    .arg(h.path())
+    .output()
+    .unwrap();
     assert!(output.status.success());
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["data"]["provisioning"]["root"], ".graphhelm");

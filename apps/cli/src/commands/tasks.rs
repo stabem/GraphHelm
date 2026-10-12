@@ -127,7 +127,7 @@ pub(super) fn run(args: &TasksArgs) -> Outcome {
         return failure("unsupported tasks command");
     };
     let python = if cfg!(windows) { "python" } else { "python3" };
-    let mut child = crate::process::command(python);
+    let mut child = graphhelm_process::command(python);
     child
         .arg("-c")
         .arg(SCRIPT)

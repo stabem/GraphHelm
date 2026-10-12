@@ -920,7 +920,7 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
 }
 
 fn worker_command(args: &JourneyExploreArgs) -> Result<(Command, Vec<String>)> {
-    let mut command = crate::process::command(
+    let mut command = graphhelm_process::command(
         std::env::current_exe().map_err(|_| refused("explore.worker_invalid", "/worker", 3))?,
     );
     command

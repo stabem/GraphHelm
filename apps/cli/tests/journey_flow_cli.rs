@@ -10,7 +10,7 @@ use serde_json::Value;
 const EXAMPLE: &str = include_str!("fixtures/journey_flow/checkout.journey.yaml");
 
 fn graphhelm() -> Command {
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command.env(
         "GRAPHHELM_EVENTS_KEY",
         "0101010101010101010101010101010101010101010101010101010101010101",
@@ -61,7 +61,7 @@ fn owner_token(project: &Path) -> String {
     // store (events, token, keys, owner records) out of git, so the test ignores exactly that.
     let gitignore = project.join(".gitignore");
     let kept = std::fs::read(&gitignore).ok();
-    let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["--json", "init", "--project"])
         .arg(project)
         .args(["--harness", "claude-code"])
@@ -317,7 +317,7 @@ fn approve_binds_the_projection_and_refuses_invalid_input_without_writes() {
             "fixture",
         ],
     ] {
-        let out = Command::new("git")
+        let out = graphhelm_process::command("git")
             .current_dir(dir.path())
             .args(args)
             .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
@@ -354,7 +354,7 @@ fn approve_binds_the_projection_and_refuses_invalid_input_without_writes() {
             hex::encode(Sha256::digest(projection.as_bytes()))
         )
     );
-    let head = Command::new("git")
+    let head = graphhelm_process::command("git")
         .current_dir(dir.path())
         .args(["rev-parse", "HEAD"])
         .output()
@@ -468,7 +468,7 @@ fn approve_binds_the_projection_and_refuses_invalid_input_without_writes() {
             "fixture",
         ],
     ] {
-        let out = Command::new("git")
+        let out = graphhelm_process::command("git")
             .current_dir(non_git.path())
             .args(args)
             .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
@@ -806,7 +806,7 @@ fn the_owner_marks_a_draft_edge_safe_and_editing_its_acts_voids_the_mark() {
             "fixture",
         ],
     ] {
-        let out = Command::new("git")
+        let out = graphhelm_process::command("git")
             .current_dir(dir.path())
             .args(args)
             .output()
@@ -868,7 +868,7 @@ fn committed(flow: &str) -> tempfile::TempDir {
             "fixture",
         ],
     ] {
-        let out = Command::new("git")
+        let out = graphhelm_process::command("git")
             .current_dir(dir.path())
             .args(args)
             .output()
@@ -974,7 +974,7 @@ fn legacy() -> (tempfile::TempDir, String) {
             "approve checkout",
         ],
     ] {
-        let out = Command::new("git")
+        let out = graphhelm_process::command("git")
             .current_dir(dir.path())
             .args(args)
             .output()

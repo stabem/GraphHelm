@@ -63,7 +63,7 @@ fn an_unlisted_preview_refusal_keeps_its_code_and_stopped_step() {
         // Keep every fixture under the test temp root; only link the declared toolchain.
         let project = tempfile::tempdir().unwrap();
         let node_modules_link = project.path().join("node_modules");
-        let linked = Command::new("node")
+        let linked = graphhelm_process::command("node")
             .args(["-e", "require('node:fs').symlinkSync(process.argv[1],process.argv[2],process.platform==='win32'?'junction':'dir')"])
             .arg(toolchain.join("node_modules"))
             .arg(&node_modules_link)
@@ -71,7 +71,7 @@ fn an_unlisted_preview_refusal_keeps_its_code_and_stopped_step() {
             .unwrap();
         assert!(linked.success(), "OBSERVER_MISSING: toolchain link");
         let _owned_node_modules_link = OwnedNodeModulesLink(node_modules_link);
-        let mut command = Command::new("node");
+        let mut command = graphhelm_process::command("node");
         command.env("PREVIEW_OVERSIZED", if oversized { "1" } else { "0" });
         command.args(["--input-type=module", "-e", r#"
         import http from 'node:http';
@@ -198,7 +198,7 @@ impl Drop for Server {
 }
 
 fn cli(project: &Path, args: &[&str]) -> (i32, Value) {
-    let out = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .arg("--json")
         .args(args)
         .arg("--project")
@@ -210,7 +210,7 @@ fn cli(project: &Path, args: &[&str]) -> (i32, Value) {
 }
 
 fn git(project: &Path, args: &[&str]) {
-    let ok = Command::new("git")
+    let ok = graphhelm_process::command("git")
         .arg("-C")
         .arg(project)
         .args([
@@ -270,7 +270,7 @@ fn an_approved_journey_holds_before_its_destructive_act_and_plays_it_only_when_c
     .unwrap();
     std::fs::write(project.join("fixture-server.mjs"), FIXTURE).unwrap();
     // Only this test-owned project links the explicitly declared installed toolchain.
-    let linked = Command::new("node")
+    let linked = graphhelm_process::command("node")
         .args(["-e", "require('node:fs').symlinkSync(process.argv[1],process.argv[2],process.platform==='win32'?'junction':'dir')"])
         .arg(toolchain.join("node_modules"))
         .arg(&node_modules_link)
@@ -278,7 +278,7 @@ fn an_approved_journey_holds_before_its_destructive_act_and_plays_it_only_when_c
         .unwrap();
     assert!(linked.success(), "OBSERVER_MISSING: toolchain link");
     let _owned_node_modules_link = OwnedNodeModulesLink(node_modules_link);
-    let mut command = Command::new("node");
+    let mut command = graphhelm_process::command("node");
     command.arg(project.join("fixture-server.mjs"));
     let mut app = Server::start(command);
     let base = app.started["base"].as_str().unwrap().to_owned();
@@ -418,7 +418,7 @@ fn an_approved_journey_holds_before_its_destructive_act_and_plays_it_only_when_c
 fn keel_validation_reports_called_and_untouched_fixture_functions_with_current_source_hash() {
     let (_scratch, project, _owned_node_modules_link, preview_sentinel) = coverage_fixture();
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["--json", "keel", "test", "validation", "--repo"])
         .arg(&project)
         .output()
@@ -478,7 +478,7 @@ fn keel_validation_reports_called_and_untouched_fixture_functions_with_current_s
         r#"{"schema":"graphhelm-journey-fixture/1","script":"fixture.sh","isolated":false}"#,
     )
     .unwrap();
-    let refused = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let refused = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["--json", "keel", "test", "validation", "--repo"])
         .arg(&project)
         .output()
@@ -533,7 +533,7 @@ fn coverage_fixture() -> (tempfile::TempDir, PathBuf, OwnedNodeModulesLink, Path
     )
     .unwrap();
     let node_modules_link = project.join("node_modules");
-    let linked = Command::new("node")
+    let linked = graphhelm_process::command("node")
         .args(["-e", "require('node:fs').symlinkSync(process.argv[1],process.argv[2],process.platform==='win32'?'junction':'dir')"])
         .arg(toolchain.join("node_modules"))
         .arg(&node_modules_link)
@@ -682,7 +682,7 @@ fn keel_sabotage_catches_a_patch_the_journey_observes_and_misses_one_it_does_not
         let original = std::fs::read_to_string(&target).unwrap();
         assert!(original.contains(from), "{name}: fixture text moved");
         std::fs::write(&target, original.replacen(from, to, 1)).unwrap();
-        let diff = Command::new("git")
+        let diff = graphhelm_process::command("git")
             .arg("-C")
             .arg(&project)
             .args(["diff", "--", file])
@@ -691,7 +691,7 @@ fn keel_sabotage_catches_a_patch_the_journey_observes_and_misses_one_it_does_not
         std::fs::write(&target, &original).unwrap();
         let patch_path = scratch.path().join(format!("{name}.diff"));
         std::fs::write(&patch_path, &diff.stdout).unwrap();
-        let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .args(["--json", "keel", "test", "sabotage", "--repo"])
             .arg(&project)
             .arg("--patch")

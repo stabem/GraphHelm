@@ -13,6 +13,9 @@ import threading
 import unittest
 from unittest.mock import patch
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 SCRIPT = Path(__file__).with_name("task_handoff.py")
 sys.path.insert(0, str(SCRIPT.parent))
 SPEC = importlib.util.spec_from_file_location("task_handoff_under_test", SCRIPT)
@@ -456,12 +459,12 @@ class HandoffTests(unittest.TestCase):
         env = os.environ.copy(); env.update(self.env); env["GRAPHHELM_SESSION_ID"] = "configured-session"
         before = len(RuntimeHandler.requests)
         result = subprocess.run([sys.executable, str(SCRIPT), "status", "--host", "codex",
-                                 "--session-id", "other-session"], env=env, capture_output=True, text=True)
+                                 "--session-id", "other-session"], env=env, capture_output=True, text=True, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 1)
         self.assertIn("unobserved", result.stderr)
         self.assertEqual(len(RuntimeHandler.requests), before)
         env["GRAPHHELM_SESSION_ID"] = "configured-session"
-        result = subprocess.run([sys.executable, str(SCRIPT), "status", "--host", "codex"], env=env, capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(SCRIPT), "status", "--host", "codex"], env=env, capture_output=True, text=True, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_mcp_stdio_lists_closed_tools_and_reaches_real_status_adapter(self):
@@ -476,7 +479,7 @@ class HandoffTests(unittest.TestCase):
                                     "_meta": {"progressToken": "native-client-token"}}}),
         ]) + "\n"
         result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
-                                input=payload, capture_output=True, text=True)
+                                input=payload, capture_output=True, text=True, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stderr)
         replies = [json.loads(line) for line in result.stdout.splitlines()]
         manifest = json.loads(SCRIPT.parent.parent.joinpath("plugin.json").read_text(encoding="utf-8"))
@@ -497,7 +500,7 @@ class HandoffTests(unittest.TestCase):
         oversized = b'{"jsonrpc":"2.0","id":2,"method":"ping","params":{}}' + b" " * (MODULE.MAX_MCP_MESSAGE + 1) + b"\n"
         result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
                                 input=json.dumps(override) + "\n" + oversized.decode(),
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 1, result.stderr)
         replies = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertTrue(replies[0]["result"]["isError"])
@@ -513,7 +516,7 @@ class HandoffTests(unittest.TestCase):
                    "params": {"name": "status", "arguments": {}}}
         missing_result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
                                         input=json.dumps(missing) + "\n",
-                                        capture_output=True, text=True)
+                                        capture_output=True, text=True, creationflags=NO_WINDOW)
         self.assertEqual(missing_result.returncode, 0, missing_result.stderr)
         self.assertTrue(json.loads(missing_result.stdout)["result"]["isError"])
         self.assertEqual(RuntimeHandler.requests, [])
@@ -535,7 +538,7 @@ class HandoffTests(unittest.TestCase):
         ]
         result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
                                 input="\n".join(json.dumps(call) for call in calls) + "\n",
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stderr)
         replies = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertTrue(replies[2]["result"]["isError"])
@@ -560,7 +563,7 @@ class HandoffTests(unittest.TestCase):
         ]
         result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
                                 input="\n".join(json.dumps(call) for call in calls) + "\n",
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stderr)
         replies = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertTrue(all(reply.get("result", {}).get("isError") or "error" in reply
@@ -577,7 +580,7 @@ class HandoffTests(unittest.TestCase):
             json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
         ]) + "\n"
         result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
-                                input=payload, capture_output=True, text=True)
+                                input=payload, capture_output=True, text=True, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stderr)
         replies = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertIn("tools", replies[1]["result"])
@@ -598,7 +601,7 @@ class HandoffTests(unittest.TestCase):
             for index, (session, offered) in enumerate(pairs, 1)]
         result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
                                 input="\n".join(json.dumps(call) for call in calls) + "\n",
-                                capture_output=True, text=True, timeout=10)
+                                capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stderr)
         replies = [json.loads(line)["result"] for line in result.stdout.splitlines()]
         self.assertTrue(replies[1]["isError"])
@@ -630,7 +633,7 @@ class HandoffTests(unittest.TestCase):
                 "_meta": {"threadId": "a", "sessionId": "a"}}})
         result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
                                 input="\n".join(json.dumps(call) for call in calls) + "\n",
-                                capture_output=True, text=True, timeout=10)
+                                capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stderr)
         replies = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertEqual(len(replies), len(calls))
@@ -649,7 +652,7 @@ class HandoffTests(unittest.TestCase):
                     env.pop("GRAPHHELM_EXECUTION_ID", None)
                 result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
                                         input='{"jsonrpc":"2.0","id":1,"method":"initialize"}\n',
-                                        capture_output=True, text=True, timeout=10)
+                                        capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW)
                 self.assertEqual(result.returncode, 1)
                 self.assertEqual(result.stdout, "")
                 self.assertEqual(RuntimeHandler.requests, [])
@@ -663,7 +666,7 @@ class HandoffTests(unittest.TestCase):
         before = len(RuntimeHandler.requests)
         result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
                                 input="x" * (MODULE.MAX_MCP_MESSAGE + 1) + suffix + "\n",
-                                capture_output=True, text=True, timeout=10)
+                                capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW)
         self.assertEqual(len(RuntimeHandler.requests), before)
         self.assertNotEqual(result.returncode, 0)
         replies = [json.loads(line) for line in result.stdout.splitlines()]

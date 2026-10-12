@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+graphhelm-process = { path = "../../core/process" }
 # A REAL dependency, not dev-only, and that is a change from this PR's first shape. The cancellation
 # seam must bind each spawn to an identity the reap cannot invalidate, and the binding happens at
 # spawn time -- in production code. #618 will need this crate here anyway, to kill the tree through

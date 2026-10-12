@@ -8,7 +8,9 @@ use tempfile::TempDir;
 const SECRET_PASSWORD: &str = "super-secret-operator-password";
 
 fn command() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )))
 }
 
 fn json_output(arguments: &[&str]) -> (i32, Value) {

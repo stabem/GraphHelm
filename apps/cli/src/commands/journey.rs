@@ -108,7 +108,7 @@ fn step_index(contract: &ContractInput, step: &str, pointer: &str) -> Result<usi
 
 /// One git read with a fixed argument list (Ruling 5's invocation rules).
 pub(super) fn git(project: &Path, args: &[&str]) -> Option<String> {
-    let output = crate::process::command("git")
+    let output = graphhelm_process::command("git")
         .arg("-C")
         .arg(project)
         .args(args)

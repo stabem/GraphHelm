@@ -17,7 +17,6 @@
 //! from provision to removal.
 
 use std::path::PathBuf;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use graphhelm_tool_host::process::{CancelSignal, HostError};
@@ -31,7 +30,7 @@ fn scratch_repo() -> (tempfile::TempDir, PathBuf) {
     std::fs::create_dir_all(project.join("src")).unwrap();
     std::fs::write(project.join("src/lib.rs"), "// scratch\n").unwrap();
     let git = |args: &[&str]| {
-        let status = Command::new("git")
+        let status = graphhelm_process::command("git")
             .args(args)
             .current_dir(&project)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -168,7 +167,7 @@ fn without_a_signal_the_lifecycle_is_unchanged() {
     workspace.remove().expect("the workspace is removed");
     assert!(!root.exists());
 
-    let listed = Command::new("git")
+    let listed = graphhelm_process::command("git")
         .args(["worktree", "list"])
         .current_dir(&project)
         .output()

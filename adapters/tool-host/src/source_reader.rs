@@ -620,7 +620,7 @@ mod tests {
     fn swap_directory_for_link(at: &std::path::Path, target: &std::path::Path) {
         std::fs::rename(at, at.with_file_name("moved-aside")).unwrap();
         #[cfg(windows)]
-        let made = std::process::Command::new("cmd")
+        let made = graphhelm_process::command("cmd")
             .args(["/C", "mklink", "/J"])
             .arg(at)
             .arg(target)

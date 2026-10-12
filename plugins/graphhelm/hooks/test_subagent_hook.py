@@ -11,6 +11,9 @@ import tempfile
 import threading
 import unittest
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 SCRIPT = Path(__file__).with_name("subagent_hook.py")
 
 
@@ -99,7 +102,7 @@ class SubagentHookTests(unittest.TestCase):
         value = payload or {"hook_event_name": f"Subagent{'Start' if phase == 'start' else 'Stop'}",
                             "session_id": "parent-1", "agent_id": "child-1", "agent_type": "worker"}
         return subprocess.run([sys.executable, str(SCRIPT), phase, "--host", host], input=json.dumps(value),
-                              text=True, capture_output=True, env=self.env, timeout=8)
+                              text=True, capture_output=True, env=self.env, timeout=8, creationflags=NO_WINDOW)
 
     def test_request_contains_protocol_identity_and_phase(self):
         result = self.run_hook("start")
@@ -157,7 +160,7 @@ class SubagentHookTests(unittest.TestCase):
         first = subprocess.Popen(
             [sys.executable, str(SCRIPT), "start", "--host", "codex"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, env=self.env,
+            text=True, env=self.env, creationflags=NO_WINDOW
         )
         payload = json.dumps({"hook_event_name": "SubagentStart", "session_id": "parent-1",
                               "agent_id": "child-1", "agent_type": "worker"})
@@ -167,7 +170,7 @@ class SubagentHookTests(unittest.TestCase):
         second = subprocess.Popen(
             [sys.executable, str(SCRIPT), "start", "--host", "codex"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, env=self.env,
+            text=True, env=self.env, creationflags=NO_WINDOW
         )
         second.stdin.write(payload)
         second.stdin.close()

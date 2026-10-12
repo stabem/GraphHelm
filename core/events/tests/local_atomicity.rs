@@ -1640,7 +1640,7 @@ fn create_directory_link(target: &std::path::Path, link: &std::path::Path) -> st
     match std::os::windows::fs::symlink_dir(target, link) {
         Ok(()) => Ok(()),
         Err(error) if is_windows_symlink_privilege_error(&error) && target.exists() => {
-            let status = std::process::Command::new("cmd")
+            let status = graphhelm_process::command("cmd")
                 .args(["/d", "/c", "mklink", "/J"])
                 .arg(link)
                 .arg(target)
@@ -1658,7 +1658,7 @@ fn create_directory_junction(
     target: &std::path::Path,
     link: &std::path::Path,
 ) -> std::io::Result<()> {
-    let status = std::process::Command::new("cmd")
+    let status = graphhelm_process::command("cmd")
         .args(["/d", "/c", "mklink", "/J"])
         .arg(link)
         .arg(target)

@@ -67,26 +67,9 @@ fn run_ended_posts_once_per_logical_run_and_fails_open() {
         assert_eq!(ids[0], ids[1]);
     });
     for _ in 0..2 {
-        Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-            .args([
-                "tasks",
-                "run-ended",
-                "--lane",
-                "codex-x",
-                "--exit",
-                "0",
-                "--run-id",
-                "test-run",
-                "--url",
-                &url,
-                "--token-file",
-                token.to_str().unwrap(),
-            ])
-            .assert()
-            .success();
-    }
-    server.join().unwrap();
-    Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+            "graphhelm"
+        )))
         .args([
             "tasks",
             "run-ended",
@@ -95,7 +78,7 @@ fn run_ended_posts_once_per_logical_run_and_fails_open() {
             "--exit",
             "0",
             "--run-id",
-            "other-run",
+            "test-run",
             "--url",
             &url,
             "--token-file",
@@ -103,6 +86,27 @@ fn run_ended_posts_once_per_logical_run_and_fails_open() {
         ])
         .assert()
         .success();
+    }
+    server.join().unwrap();
+    Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )))
+    .args([
+        "tasks",
+        "run-ended",
+        "--lane",
+        "codex-x",
+        "--exit",
+        "0",
+        "--run-id",
+        "other-run",
+        "--url",
+        &url,
+        "--token-file",
+        token.to_str().unwrap(),
+    ])
+    .assert()
+    .success();
 }
 
 use assert_cmd::Command;
@@ -148,7 +152,9 @@ fn history(events: &Path) -> Vec<EventEnvelope> {
 }
 
 fn command() -> Command {
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )));
     command.env("GRAPHHELM_EVENTS_KEY", "01".repeat(32));
     command
 }

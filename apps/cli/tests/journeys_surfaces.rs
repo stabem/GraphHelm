@@ -23,13 +23,13 @@ const AGENT_CREDENTIAL: &str = "0123456789abcdef0123456789abcdef0123456789abcdef
 const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3];
 
 fn graphhelm() -> Command {
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command.env("GRAPHHELM_EVENTS_KEY", EVENTS_KEY);
     command
 }
 
 fn git(project: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
+    let output = graphhelm_process::command("git")
         .arg("-C")
         .arg(project)
         .args(["-c", "user.name=t", "-c", "user.email=t@t"])
@@ -344,14 +344,16 @@ fn mcp_with(harness: &Harness, base: &str, token: &str, arguments: &Value) -> Va
         input.push_str(&line.to_string());
         input.push('\n');
     }
-    let output = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args(["mcp", "--url", base, "--token-file"])
-        .arg(&token_file)
-        .args(["--actor", "agent-chat", "--actor-type", "agent"])
-        .write_stdin(input)
-        .timeout(scaled(Duration::from_secs(60)))
-        .output()
-        .unwrap();
+    let output = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ))
+    .args(["mcp", "--url", base, "--token-file"])
+    .arg(&token_file)
+    .args(["--actor", "agent-chat", "--actor-type", "agent"])
+    .write_stdin(input)
+    .timeout(scaled(Duration::from_secs(60)))
+    .output()
+    .unwrap();
     let reply = String::from_utf8(output.stdout)
         .unwrap()
         .lines()

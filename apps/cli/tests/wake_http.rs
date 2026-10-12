@@ -10,7 +10,7 @@ use time_scale::scaled;
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -57,7 +57,7 @@ fn fixture_keyring(events: &Path) -> PathBuf {
         return keyring;
     }
     std::fs::create_dir_all(&keyring).unwrap();
-    let init = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let init = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "gateway",
             "keyring",
@@ -81,7 +81,7 @@ fn fixture_keyring(events: &Path) -> PathBuf {
 
 fn serve_with_env(events: &Path, env: &[(&str, &str)]) -> (ServerGuard, String, String) {
     let keyring = fixture_keyring(events);
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command
         .args([
             "serve",
@@ -1077,7 +1077,7 @@ fn start_execution(events: &Path, directory: &Path, execution: &str) {
         &serde_json::json!({"nodeOutcomes": {"implementation": "failure", "deploy": "success"}}),
     );
     let graph = root().join("examples/graphs/manual-override-deploy.yaml");
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "execution",
             "start",
@@ -2084,7 +2084,7 @@ fn spawn_wake_wait_with_env(
     );
     drop(store);
 
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command
         .args([
             "wake-wait",
@@ -2180,7 +2180,7 @@ impl Drop for WakeWaitChildGuard {
 #[cfg(windows)]
 #[test]
 fn wake_wait_child_guard_kills_and_reaps_on_early_exit() {
-    let child = Command::new("powershell.exe")
+    let child = graphhelm_process::command("powershell.exe")
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -2314,7 +2314,7 @@ fn wake_wait_exits_three_on_timeout_and_two_on_a_bad_id() {
     // The unusable case is no longer a malformed id from the caller — the id comes from the
     // lease. It is a session with no lease of its own, which refuses rather than waiting on
     // whatever it found.
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "wake-wait",
             "--events",
@@ -2396,7 +2396,7 @@ fn mcp_via(
         input.push_str(&line.to_string());
         input.push('\n');
     }
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "mcp",
             "--url",
@@ -2706,7 +2706,7 @@ fn a_dead_serve_degrades_to_timeout_and_a_plain_read_never_to_wrong() {
     );
 
     // The plain read still tells the truth from the store itself.
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "execution",
             "status",
@@ -2951,7 +2951,7 @@ fn concurrent_sweeps_never_double_consume_a_lease() {
 
         // The oracle: the stream still replays, and this round's lease was consumed
         // exactly once. A double-consume poisons every future replay — the live failure.
-        let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .args([
                 "execution",
                 "status",
@@ -3332,7 +3332,7 @@ fn a_bound_nobody_will_live_to_see_is_refused_rather_than_promised() {
 // -------------------------------------------------------------------------------------------
 
 fn wake_wait(events: &Path, execution: &str, session: &str) -> (i32, serde_json::Value) {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "wake-wait",
             "--events",

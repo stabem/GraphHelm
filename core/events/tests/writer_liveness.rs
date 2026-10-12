@@ -15,7 +15,7 @@
 //! `APPEND_DEADLINE`, it does not hang the suite.
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -151,7 +151,7 @@ fn reader_process_entry() {
 }
 
 fn spawn_reader(root: &Path, stop: &Path, ready: &Path) -> Child {
-    Command::new(std::env::current_exe().unwrap())
+    graphhelm_process::command(std::env::current_exe().unwrap())
         .args([
             "reader_process_entry",
             "--exact",

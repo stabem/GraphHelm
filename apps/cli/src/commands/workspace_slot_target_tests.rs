@@ -57,7 +57,7 @@ fn slot_in(root: &Path, lane: &str, worktree: &Path, log: &Path) -> (i32, Value)
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let status = crate::process::command("git")
+    let status = graphhelm_process::command("git")
         .arg("-C")
         .arg(dir)
         .args([
@@ -88,7 +88,7 @@ fn repo(dir: &Path) -> std::path::PathBuf {
 fn link_dir(link: &Path, target: &Path) {
     #[cfg(windows)]
     {
-        let out = crate::process::command("cmd")
+        let out = graphhelm_process::command("cmd")
             .args(["/C", "mklink", "/J"])
             .arg(link)
             .arg(target)

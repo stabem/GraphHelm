@@ -15,6 +15,7 @@ sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+graphhelm-process = { path = "../process" }
 graphhelm-schema = { path = "../schema" }
 proptest.workspace = true
 tempfile.workspace = true

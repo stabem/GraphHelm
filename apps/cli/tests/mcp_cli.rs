@@ -46,7 +46,9 @@ fn mcp_cmd(args: &[&str]) -> CliOutput {
 /// ever opened or by `run`'s success path after EOF. Reading "the line without `jsonrpc`" rather
 /// than "the last line" is what lets one helper serve both kinds of cell.
 fn mcp_cmd_env(args: &[&str], env: &[(&str, Option<&str>)]) -> CliOutput {
-    let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ));
     command.arg("mcp").args(args);
     // Never let a real token or actor from the ambient environment participate in a test that
     // is specifically about which door supplied the actor -- only GRAPHHELM_API_TOKEN is

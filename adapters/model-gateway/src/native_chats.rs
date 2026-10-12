@@ -291,7 +291,7 @@ where
     if !source.is_dir() {
         return Err("blocked: selected source directory is not a directory".into());
     }
-    let mut cmd = Command::new(node);
+    let mut cmd = graphhelm_process::command(node);
     cmd.args([
         "--input-type=module",
         "-e",
@@ -409,7 +409,7 @@ impl Rpc {
         if !program.is_file() {
             return Err("configured Codex program is not a file".into());
         }
-        let mut cmd = Command::new(program);
+        let mut cmd = graphhelm_process::command(program);
         if let Some(home) = &config.sqlite_home {
             let home = home
                 .canonicalize()

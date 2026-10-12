@@ -17,6 +17,9 @@ import shutil
 import subprocess
 import sys
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 CARD = Path(".graphhelm") / "keel-card.json"
 TRIVIAL_LINES = 5
 DOC_SUFFIXES = (".md", ".txt", ".rst")
@@ -25,7 +28,7 @@ BASES = ("origin/main", "main")
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True,
-                          check=True, timeout=10).stdout
+                          check=True, timeout=10, creationflags=NO_WINDOW).stdout
 
 
 def _merge_base(repo: Path) -> str | None:
@@ -76,7 +79,7 @@ def decide(repo: Path) -> str | None:
         return None
     result = subprocess.run([cli, "--json", "keel", "check", "--diff", f"{base}..HEAD",
                              "--card", str(card), "--repo", str(repo)],
-                            capture_output=True, text=True, timeout=60)
+                            capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW)
     if result.returncode != 2:
         return None
     codes = []

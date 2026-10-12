@@ -9,6 +9,9 @@ from unittest import mock
 
 import keel_record
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 
 class Handler(BaseHTTPRequestHandler):
     seen: list = []
@@ -69,7 +72,7 @@ class LockFailsClosedTest(unittest.TestCase):
         import subprocess, sys
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            git = lambda *a: subprocess.run(["git", "-C", tmp, "-c", "user.email=a@b", "-c", "user.name=a", *a], check=True, capture_output=True)
+            git = lambda *a: subprocess.run(["git", "-C", tmp, "-c", "user.email=a@b", "-c", "user.name=a", *a], check=True, capture_output=True, creationflags=NO_WINDOW)
             git("init", "-q", "-b", "main"); git("commit", "-q", "--allow-empty", "-m", "base"); git("checkout", "-q", "-b", "feat")
             (repo / "src").mkdir(); (repo / "src" / "a.py").write_text("\n".join(f"x={i}" for i in range(40)))
             shadow = repo / "shadow"; shadow.mkdir()
@@ -81,7 +84,7 @@ class LockFailsClosedTest(unittest.TestCase):
                 (shadow / name).write_text((here / name).read_text())
             payload = {**payload, "cwd": tmp}
             return subprocess.run([sys.executable, str(shadow / hook)], input=json.dumps(payload),
-                                  capture_output=True, text=True, env=env, cwd=tmp)
+                                  capture_output=True, text=True, env=env, cwd=tmp, creationflags=NO_WINDOW)
 
     def test_stop_still_blocks_when_the_recorder_cannot_import(self):
         result = self._run("keel_stop_hook.py", {"stop_hook_active": False})

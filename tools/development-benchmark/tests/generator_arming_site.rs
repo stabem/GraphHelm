@@ -13,7 +13,7 @@ use std::path::Path;
 use std::process::Command;
 
 fn generator() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_generate-retrieval"))
+    graphhelm_process::command(env!("CARGO_BIN_EXE_generate-retrieval"))
 }
 
 fn fake_provider() -> String {
@@ -160,7 +160,7 @@ fn fixture_repository(root: &std::path::Path) -> (String, String) {
     let repo = root.join("subject-repo");
     std::fs::create_dir_all(&repo).unwrap();
     let git = |arguments: &[&str]| {
-        let ran = std::process::Command::new("git")
+        let ran = graphhelm_process::command("git")
             .arg("-C")
             .arg(&repo)
             .args(arguments)
@@ -300,7 +300,7 @@ fn fixture_with_replacement(root: &std::path::Path) -> (String, String, String) 
     let repo = root.join("subject-repo");
     std::fs::create_dir_all(&repo).unwrap();
     let git = |arguments: &[&str]| {
-        let ran = std::process::Command::new("git")
+        let ran = graphhelm_process::command("git")
             .arg("-C")
             .arg(&repo)
             .args(arguments)

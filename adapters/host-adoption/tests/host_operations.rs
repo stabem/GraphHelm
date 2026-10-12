@@ -161,7 +161,7 @@ fn inert_host() {
         std::thread::sleep(std::time::Duration::from_secs(30));
     }
     if value["descendant"] == true {
-        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        let mut command = graphhelm_process::command(std::env::current_exe().unwrap());
         command.args([
             "--exact",
             "inert_host",
@@ -173,7 +173,10 @@ fn inert_host() {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP);
+            command.creation_flags(
+                windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP
+                    | graphhelm_process::CREATE_NO_WINDOW,
+            );
         }
         let child = command.spawn().unwrap();
         std::mem::forget(child);
@@ -449,7 +452,7 @@ fn fake_host(dir: &Path, version: &str, help: &str) -> std::path::PathBuf {
     static BINARY: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
     let fixture = BINARY.get_or_init(|| {
         let temp = tempfile::tempdir().unwrap();
-        let result = std::process::Command::new("rustc")
+        let result = graphhelm_process::command("rustc")
             .args(["--edition=2024", "tests/fixtures/inert-host.rs", "-o"])
             .arg(temp.path().join("host.exe"))
             .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -629,7 +632,7 @@ fn package_host_preflight_requires_containment_before_any_probe_or_mutation() {
         .unwrap();
         // Positive fixture control: any actual probe writes its marker before parsing argv.
         assert!(
-            std::process::Command::new(&program)
+            graphhelm_process::command(&program)
                 .arg("--version")
                 .output()
                 .unwrap()

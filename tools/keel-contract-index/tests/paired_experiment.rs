@@ -8,9 +8,7 @@
 
 use assert_cmd::Command;
 use serde_json::Value;
-use std::{
-    collections::BTreeSet, fs, path::Path, process::Command as ProcessCommand, time::Instant,
-};
+use std::{collections::BTreeSet, fs, path::Path, time::Instant};
 
 const QUERIES: &[&str] = &["alpha_contract", "BetaContract", "gamma_contract"];
 
@@ -164,7 +162,7 @@ fn source_bytes_per_query(root: &Path) -> u64 {
 }
 
 fn tracked_paths(root: &Path) -> Vec<String> {
-    let output = ProcessCommand::new("git")
+    let output = graphhelm_process::command("git")
         .args(["-C", &path(root), "ls-files"])
         .output()
         .unwrap();
@@ -177,7 +175,7 @@ fn tracked_paths(root: &Path) -> Vec<String> {
 }
 
 fn git(root: &Path, args: &[&str]) {
-    let output = ProcessCommand::new("git")
+    let output = graphhelm_process::command("git")
         .args(["-C", &path(root)])
         .args(args)
         .output()

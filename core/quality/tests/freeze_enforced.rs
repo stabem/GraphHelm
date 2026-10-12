@@ -15,8 +15,6 @@
 //! `main`'s merge base. On `main` itself there is no diff and the check is vacuously clean —
 //! that is correct (nothing is being proposed), not a hole.
 
-use std::process::Command;
-
 use graphhelm_quality::{GateManifestChange, freeze_violation, freeze_violation_with_lockfile};
 
 /// Paths this branch changes relative to where it left `main`, or `None` when git cannot
@@ -24,7 +22,7 @@ use graphhelm_quality::{GateManifestChange, freeze_violation, freeze_violation_w
 /// reported as unanswerable — never as a clean bill of health.
 /// The merge base against one ref, or `None` when git cannot answer for it.
 fn merge_base(root: &std::path::Path, head: &str, reference: &str) -> Option<String> {
-    let output = Command::new("git")
+    let output = graphhelm_process::command("git")
         .args(["merge-base", head, reference])
         .current_dir(root)
         .output()
@@ -65,7 +63,7 @@ fn changed_paths() -> Option<(String, String, Vec<String>)> {
     // ACCUSED a clean branch, naming two of them. A confident false positive erodes a rule
     // faster than a silent false negative, because it teaches the reader to ignore the
     // alarm. The remote ref is what `main` MEANS; the local one is a cache of it.
-    let head_output = Command::new("git")
+    let head_output = graphhelm_process::command("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(&root)
         .output()
@@ -79,7 +77,7 @@ fn changed_paths() -> Option<(String, String, Vec<String>)> {
         .to_owned();
     let base =
         merge_base(&root, &head, "origin/main").or_else(|| merge_base(&root, &head, "main"))?;
-    let diff = Command::new("git")
+    let diff = graphhelm_process::command("git")
         .args(["diff", "--name-only", &base, &head])
         .current_dir(&root)
         .output()
@@ -98,7 +96,7 @@ fn changed_paths() -> Option<(String, String, Vec<String>)> {
 
 fn git_show(root: &std::path::Path, revision: &str, path: &str) -> Option<String> {
     let spec = format!("{revision}:{path}");
-    let output = Command::new("git")
+    let output = graphhelm_process::command("git")
         .args(["show", &spec])
         .current_dir(root)
         .output()
@@ -176,7 +174,7 @@ fn a_benign_working_tree_copy_cannot_hide_the_committed_lock_delta() {
     }
     let _remove = Remove(root.clone());
     let git = |args: &[&str]| {
-        let output = Command::new("git")
+        let output = graphhelm_process::command("git")
             .args(args)
             .current_dir(&root)
             .output()

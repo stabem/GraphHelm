@@ -21,6 +21,9 @@ from test_task_handoff import RuntimeHandler
 import run_team
 import task_handoff
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 
 class RunTeamTests(unittest.TestCase):
     @classmethod
@@ -151,12 +154,12 @@ class RunTeamTests(unittest.TestCase):
         env = dict(os.environ, **self.env, GRAPHHELM_SESSION_ID="claude-native")
         script = Path(__file__).with_name("run_team.py")
         good = subprocess.run([sys.executable, str(script), "join", "--host", "claude"],
-                              env=env, capture_output=True, text=True, timeout=10)
+                              env=env, capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW)
         self.assertEqual(good.returncode, 0, good.stderr)
         self.assertEqual(json.loads(good.stdout)["actorId"], "claude-session-claude-native")
         before = len(RuntimeHandler.requests)
         wrong = subprocess.run([sys.executable, str(script), "join", "--host", "claude",
                                 "--session-id", "impostor"],
-                               env=env, capture_output=True, text=True, timeout=10)
+                               env=env, capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW)
         self.assertEqual(wrong.returncode, 1)
         self.assertEqual(len(RuntimeHandler.requests), before)

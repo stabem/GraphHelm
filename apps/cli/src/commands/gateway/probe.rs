@@ -222,7 +222,7 @@ fn probe_native_runtime(route: &ModelRoute) -> Check {
     let program = graphhelm_model_gateway::runtime::resolve_program(std::path::Path::new(
         &command_spec.program,
     ));
-    let mut command = crate::process::command(&program);
+    let mut command = graphhelm_process::command(&program);
     command
         .arg("--version")
         .env_clear()

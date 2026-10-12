@@ -20,7 +20,6 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use graphhelm_schema_evolution::{
     CatalogResources, CatalogVersionCollision, CompatibilityChange, CompatibilityClass,
@@ -64,7 +63,7 @@ fn checked_in_catalog(catalog_path: &str) -> CatalogResources {
 }
 
 fn git(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
-    let output = Command::new("git")
+    let output = graphhelm_process::command("git")
         .args(args)
         .current_dir(root)
         .output()
@@ -157,7 +156,7 @@ fn observed_catalog_snapshot(
 }
 
 fn fixture_git(root: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = graphhelm_process::command("git")
         .args(args)
         .current_dir(root)
         .status()

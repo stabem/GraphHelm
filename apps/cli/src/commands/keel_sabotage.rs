@@ -100,7 +100,7 @@ fn decide(
 /// Whether the patch touches `.graphhelm/` (journeys, observers): sabotage must break the product,
 /// not the test. Read with `git apply --numstat` before anything runs.
 fn touches_observer(repo: &Path, patch: &Path) -> Result<bool, String> {
-    let output = crate::process::command("git")
+    let output = graphhelm_process::command("git")
         .arg("-C")
         .arg(repo)
         .args(["apply", "--numstat", "-z"])
@@ -120,7 +120,7 @@ fn touches_observer(repo: &Path, patch: &Path) -> Result<bool, String> {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Result<(), String> {
-    let output = crate::process::command("git")
+    let output = graphhelm_process::command("git")
         .arg("-C")
         .arg(dir)
         .args(args)

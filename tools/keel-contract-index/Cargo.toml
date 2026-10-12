@@ -6,6 +6,7 @@ rust-version = "1.97.1"
 publish = false
 
 [dependencies]
+graphhelm-process = { path = "../../core/process" }
 clap = { version = "=4.6.4", features = ["derive"] }
 hex = "=0.4.3"
 serde = { version = "=1.0.229", features = ["derive"] }

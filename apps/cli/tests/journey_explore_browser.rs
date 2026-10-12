@@ -43,7 +43,7 @@ struct App {
 }
 impl App {
     fn start(script: &Path) -> Self {
-        let mut command = Command::new("node");
+        let mut command = graphhelm_process::command("node");
         command
             .arg(script)
             .stdin(Stdio::piped())
@@ -83,7 +83,7 @@ fn reply(command: &mut Command) -> (i32, Value) {
     (output.status.code().unwrap(), value)
 }
 fn cli() -> Command {
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command.arg("--json");
     command
 }
@@ -114,7 +114,7 @@ fn actual_exploration_redacts_model_input_and_repeats_the_same_draft() {
         let project = root.path().join(format!("project-{index}"));
         std::fs::create_dir(&project).unwrap();
         std::fs::write(project.join("package.json"), "{\"private\":true}").unwrap();
-        let linked=Command::new("node").args(["-e","require('node:fs').symlinkSync(process.argv[1],process.argv[2],process.platform==='win32'?'junction':'dir')"])
+        let linked=graphhelm_process::command("node").args(["-e","require('node:fs').symlinkSync(process.argv[1],process.argv[2],process.platform==='win32'?'junction':'dir')"])
             .arg(Path::new(&toolchain).join("node_modules")).arg(project.join("node_modules")).status().unwrap();
         assert!(linked.success());
         let observer = project.join(".graphhelm/observers");
@@ -257,7 +257,7 @@ process.stdin.on('end',async()=>{await fixture.close();process.exit(0);});
     assert_eq!(caches[0], caches[1]);
     let project = &projects[0];
     let git = |args: &[&str]| {
-        let output = Command::new("git")
+        let output = graphhelm_process::command("git")
             .arg("-C")
             .arg(project)
             .args([
@@ -371,7 +371,7 @@ struct Fixture {
 }
 impl Fixture {
     fn start(script: &Path) -> Self {
-        let mut command = Command::new("node");
+        let mut command = graphhelm_process::command("node");
         command
             .arg(script)
             .stdin(Stdio::piped())
@@ -415,7 +415,7 @@ fn observed_project(root: &Path, name: &str, toolchain: &std::ffi::OsStr) -> std
     let project = root.join(name);
     std::fs::create_dir(&project).unwrap();
     std::fs::write(project.join("package.json"), "{\"private\":true}").unwrap();
-    let linked = Command::new("node")
+    let linked = graphhelm_process::command("node")
         .args(["-e", "require('node:fs').symlinkSync(process.argv[1],process.argv[2],process.platform==='win32'?'junction':'dir')"])
         .arg(Path::new(toolchain).join("node_modules"))
         .arg(project.join("node_modules"))

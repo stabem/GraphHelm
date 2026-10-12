@@ -577,7 +577,7 @@ mod keel_context_port_tests {
         // would ship changed bytes after the search had selected an older snapshot generation.
         let repo = tempfile::tempdir().unwrap();
         assert!(
-            crate::process::command("git")
+            graphhelm_process::command("git")
                 .args(["-C", repo.path().to_str().unwrap(), "init", "-q"])
                 .status()
                 .unwrap()
@@ -585,7 +585,7 @@ mod keel_context_port_tests {
         );
         std::fs::write(repo.path().join("README.md"), "old_keel_generation\n").unwrap();
         assert!(
-            crate::process::command("git")
+            graphhelm_process::command("git")
                 .args(["-C", repo.path().to_str().unwrap(), "add", "README.md"])
                 .status()
                 .unwrap()
@@ -610,7 +610,7 @@ mod keel_context_port_tests {
     fn production_context_ports_default_to_live_without_keel_opt_in() {
         let repo = tempfile::tempdir().unwrap();
         assert!(
-            crate::process::command("git")
+            graphhelm_process::command("git")
                 .args(["-C", repo.path().to_str().unwrap(), "init", "-q"])
                 .status()
                 .unwrap()
@@ -631,7 +631,7 @@ mod keel_context_port_tests {
     fn production_context_ports_skip_project_snapshot_when_tier_one_exists() {
         let repo = tempfile::tempdir().unwrap();
         assert!(
-            crate::process::command("git")
+            graphhelm_process::command("git")
                 .args(["-C", repo.path().to_str().unwrap(), "init", "-q"])
                 .status()
                 .unwrap()

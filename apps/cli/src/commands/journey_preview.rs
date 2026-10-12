@@ -92,7 +92,7 @@ fn flow_and_key(project: &Path, id: &str) -> Result<(Value, String, String)> {
 
 /// The project's commit, part of the key: the same flow on new code is a new preview.
 fn commit_of(project: &Path) -> String {
-    crate::process::command("git")
+    graphhelm_process::command("git")
         .arg("-C")
         .arg(project)
         .args(["rev-parse", "HEAD"])
@@ -176,7 +176,7 @@ fn alive(pid: u64) -> Liveness {
         if pid == 0 || pid >= u32::MAX as u64 {
             return Liveness::Dead;
         }
-        let Ok(output) = crate::process::command("tasklist")
+        let Ok(output) = graphhelm_process::command("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
@@ -368,7 +368,7 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
     let Ok(executable) = std::env::current_exe() else {
         return answer(current, Some(failure("preview.unwritable", "/runner", 1)));
     };
-    let mut command = crate::process::command(executable);
+    let mut command = graphhelm_process::command(executable);
     command
         .args([
             "--json",
@@ -1863,7 +1863,7 @@ fi
 "#,
         )
         .unwrap();
-        let mut runner = crate::process::command(std::env::current_exe().unwrap())
+        let mut runner = graphhelm_process::command(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "commands::journey_preview::tests::a_preview_records_its_fixture_before_up_returns",

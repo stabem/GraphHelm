@@ -727,7 +727,7 @@ fn the_source_walk_does_not_follow_directory_symlinks() {
         // but it does not require the administrator privilege needed by `symlink_dir`. Keep the
         // script fixed and pass paths through the environment so `%`, `&`, and spaces cannot be
         // interpreted by a command shell.
-        let status = std::process::Command::new("powershell.exe")
+        let status = graphhelm_process::command("powershell.exe")
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -764,7 +764,7 @@ fn the_source_walk_does_not_follow_a_root_directory_link() {
         .expect("ARRANGEMENT: the Unix root directory link must be creatable");
     #[cfg(windows)]
     {
-        let status = std::process::Command::new("powershell.exe")
+        let status = graphhelm_process::command("powershell.exe")
             .args([
                 "-NoProfile",
                 "-NonInteractive",

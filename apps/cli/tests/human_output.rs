@@ -38,7 +38,9 @@ const SECOND_SENTINEL: &str = "sk-SENTINEL-1150-SECOND-fedcba9876";
 const CONTROL_ROUTE: &str = "control_1150_judge";
 
 fn command() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )))
 }
 
 fn combined(output: &std::process::Output) -> String {

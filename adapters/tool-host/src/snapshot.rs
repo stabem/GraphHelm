@@ -746,7 +746,7 @@ mod tests {
         let source = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         std::fs::write(outside.path().join("secret"), b"secret").unwrap();
-        let made = std::process::Command::new("cmd")
+        let made = graphhelm_process::command("cmd")
             .args(["/C", "mklink", "/J"])
             .arg(source.path().join("escape"))
             .arg(outside.path())

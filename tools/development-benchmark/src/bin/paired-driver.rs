@@ -344,7 +344,7 @@ fn drive(arguments: &Arguments, provider: &Provider) -> Result<(), BenchmarkRefu
     // Derived, not declared: the tree hash comes from the repository itself, so the operator
     // cannot assert agreement into existence. The artifacts carry a git tree id (that is what the
     // generator was given), so `HEAD^{tree}` is the identity to compare.
-    let observed_tree = std::process::Command::new("git")
+    let observed_tree = graphhelm_process::command("git")
         .args(["rev-parse", "HEAD^{tree}"])
         .current_dir(repo_root)
         .env("GIT_OPTIONAL_LOCKS", "0")
@@ -364,7 +364,7 @@ fn drive(arguments: &Arguments, provider: &Provider) -> Result<(), BenchmarkRefu
     // passing while `naive_context` and `capsule_for_case` slice different bytes (Codex P1). The
     // tree id cannot see that by construction, so the working tree has to be clean for it to mean
     // anything.
-    let dirty = std::process::Command::new("git")
+    let dirty = graphhelm_process::command("git")
         // `--ignored` as well: an IGNORED file at a path an artifact names is read by the arms
         // exactly like any other, and `--untracked-files=all` does not list it (Codex P1, after
         // my clean-tree fix). The question is "does the working tree hold bytes the committed

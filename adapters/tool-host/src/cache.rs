@@ -10,7 +10,6 @@
 //! event.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use graphhelm_tool_broker::record::{ToolCallRecord, digest_hex};
 
@@ -58,7 +57,7 @@ impl ReadCache {
     /// per lookup is the price of "provably exact" being true.
     #[must_use]
     pub fn clean_head(project: &Path) -> Option<String> {
-        let status = Command::new("git")
+        let status = graphhelm_process::command("git")
             .arg("-C")
             .arg(git_safe(project))
             .args(["status", "--porcelain"])
@@ -68,7 +67,7 @@ impl ReadCache {
         if !status.status.success() || !status.stdout.is_empty() {
             return None;
         }
-        let head = Command::new("git")
+        let head = graphhelm_process::command("git")
             .arg("-C")
             .arg(git_safe(project))
             .args(["rev-parse", "HEAD"])

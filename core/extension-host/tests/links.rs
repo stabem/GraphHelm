@@ -125,7 +125,7 @@ fn synthetic_package(marker: &str, extra_declared: Option<(&str, &[u8])>) -> (Te
 
 #[cfg(windows)]
 fn junction(link: &Path, target: &Path) {
-    let status = std::process::Command::new("cmd")
+    let status = graphhelm_process::command("cmd")
         .args([
             "/c",
             "mklink",

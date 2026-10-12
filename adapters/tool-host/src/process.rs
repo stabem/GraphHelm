@@ -1449,7 +1449,7 @@ pub fn run_in_workspace(
         source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "unjoinable PATH entry"),
     })?;
 
-    let mut command = std::process::Command::new(program);
+    let mut command = graphhelm_process::command(program);
     command
         .args(arguments)
         .current_dir(root)

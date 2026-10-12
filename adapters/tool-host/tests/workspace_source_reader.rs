@@ -8,7 +8,6 @@
 //! apart, and it is the exact silent slice G2b was written to describe.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use graphhelm_runtime::ports::SourceReader;
 use graphhelm_tool_host::process::HostError;
@@ -20,7 +19,7 @@ fn scratch_repo() -> (tempfile::TempDir, PathBuf) {
     std::fs::create_dir_all(project.join("src")).unwrap();
     std::fs::write(project.join("src/lib.rs"), "// scratch v1\n").unwrap();
     let git = |args: &[&str]| {
-        let status = Command::new("git")
+        let status = graphhelm_process::command("git")
             .args(args)
             .current_dir(&project)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -188,7 +187,7 @@ fn the_real_reader_drives_the_staleness_refusal_end_to_end() {
 }
 
 fn git_head(project: &Path) -> String {
-    let output = Command::new("git")
+    let output = graphhelm_process::command("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(project)
         .output()

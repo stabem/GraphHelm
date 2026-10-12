@@ -11,6 +11,9 @@ import threading
 import time
 import unittest
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 SCRIPT = Path(__file__).with_name("task_hook.py")
 
 
@@ -107,7 +110,7 @@ class ClaudeTaskHookTests(unittest.TestCase):
                             "task_description": "Must not be persisted", "teammate_name": "researcher",
                             "team_name": "legacy-name-must-not-be-persisted"}
         return subprocess.run([sys.executable, str(SCRIPT), phase], input=json.dumps(value),
-                              text=True, capture_output=True, env=self.env, timeout=10)
+                              text=True, capture_output=True, env=self.env, timeout=10, creationflags=NO_WINDOW)
 
     def test_records_only_bounded_title_teammate_and_phase(self):
         result = self.run_hook("created")

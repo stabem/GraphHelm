@@ -184,7 +184,9 @@ fn mcp_session_with(args: &[&str], env: &[(&str, &str)], lines: &[Value]) -> Mcp
         input.push_str(&line.to_string());
         input.push('\n');
     }
-    let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ));
     command.arg("mcp").args(args);
     for (name, value) in env {
         command.env(name, value);
@@ -712,7 +714,9 @@ fn every_real_tool_is_gated_by_capability_not_just_the_two_already_covered() {
 // -------------------------------------------------------------------------------------------
 
 fn cli() -> assert_cmd::Command {
-    assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    assert_cmd::Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )))
 }
 
 #[test]

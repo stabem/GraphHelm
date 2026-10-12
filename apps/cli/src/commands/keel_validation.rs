@@ -51,7 +51,7 @@ fn inventory_digest(inventory: &BTreeMap<String, String>) -> String {
 }
 
 fn tracked_files(repo: &Path) -> Result<Vec<PathBuf>, String> {
-    let output = crate::process::command("git")
+    let output = graphhelm_process::command("git")
         .arg("-C")
         .arg(repo)
         .args([
@@ -446,7 +446,7 @@ pub(crate) fn run(repo: &Path) -> Outcome {
         args.push(&project_text);
         let validation_root_text = result_root.to_string_lossy().to_string();
         args.extend(["--validation-dir", &validation_root_text]);
-        let execution = crate::process::command(
+        let execution = graphhelm_process::command(
             std::env::current_exe().unwrap_or_else(|_| PathBuf::from("graphhelm")),
         )
         .args(args)

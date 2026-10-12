@@ -17,6 +17,9 @@ import threading
 import unittest
 import urllib.request
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 MANIFESTS = (HERE / "codex-hooks.json",
@@ -42,7 +45,7 @@ class LaneStopTests(unittest.TestCase):
         self.addCleanup(self.log.close)
         self.server = subprocess.Popen([self.cli, "serve", "--events", str(events), "--bind", "127.0.0.1:0",
                                         "--keyring", str(keyring), "--key-id", "test"],
-                                       env=self.env, stdout=self.log, stderr=subprocess.STDOUT)
+                                       env=self.env, stdout=self.log, stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
         self.addCleanup(self.stop_server)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
@@ -65,7 +68,7 @@ class LaneStopTests(unittest.TestCase):
         self.server.wait(timeout=10)
 
     def run_cli(self, *args):
-        result = subprocess.run([self.cli, *args], env=self.env, capture_output=True, text=True, timeout=15)
+        result = subprocess.run([self.cli, *args], env=self.env, capture_output=True, text=True, timeout=15, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def note(self, signal_id, to=None, reply=None, actor="owner"):
@@ -95,7 +98,7 @@ class LaneStopTests(unittest.TestCase):
                 started = time.monotonic()
                 result = subprocess.run([sys.executable, str(manifest.parent / name)], env=self.env,
                     input=json.dumps({"cwd": self.tmp.name, "session_id": "test-session", "stop_hook_active": active}),
-                    text=True, capture_output=True, timeout=12)
+                    text=True, capture_output=True, timeout=12, creationflags=NO_WINDOW)
                 if name == "lane_stop_hook.py":
                     self.reminder_seconds = time.monotonic() - started
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -125,14 +128,14 @@ class LaneStopTests(unittest.TestCase):
                  "session_title": "codex-4 - journeys", "cwd": str(repo)}
         start_result = subprocess.run([sys.executable, str(HERE / "session_hook.py"),
             "start", "--host", "claude"], input=json.dumps(start), text=True,
-            capture_output=True, env=self.env, timeout=12)
+            capture_output=True, env=self.env, timeout=12, creationflags=NO_WINDOW)
         self.assertEqual(start_result.returncode, 0, start_result.stderr)
         lane_file = home / ".graphhelm/lane-sessions/session-desktop.json"
         self.assertTrue(lane_file.exists())
         self.assertEqual(json.loads(lane_file.read_text())["actor"], "codex-4")
         stop_result = subprocess.run([sys.executable, str(HERE / "lane_stop_hook.py")],
             input=json.dumps({"session_id": "session-desktop", "cwd": str(repo)}),
-            text=True, capture_output=True, env=self.env, timeout=12)
+            text=True, capture_output=True, env=self.env, timeout=12, creationflags=NO_WINDOW)
         self.assertEqual(stop_result.returncode, 0, stop_result.stderr)
         self.assertEqual(json.loads(stop_result.stdout)["decision"], "block")
 
@@ -141,33 +144,33 @@ class LaneStopTests(unittest.TestCase):
         other_start = {**start, "session_id": "session-other", "session_title": "codex-5"}
         subprocess.run([sys.executable, str(HERE / "session_hook.py"), "start", "--host", "claude"],
             input=json.dumps(other_start), text=True, capture_output=True, env=self.env,
-            timeout=12, check=True)
+            timeout=12, check=True, creationflags=NO_WINDOW)
         other_stop = subprocess.run([sys.executable, str(HERE / "lane_stop_hook.py")],
             input=json.dumps({"session_id": "session-other", "cwd": str(repo)}),
-            text=True, capture_output=True, env=self.env, timeout=12, check=True)
+            text=True, capture_output=True, env=self.env, timeout=12, check=True, creationflags=NO_WINDOW)
         self.assertEqual(other_stop.stdout, "")
 
         # Invalid titles write no lane identity; absent or incomplete team binding allows.
         invalid_start = {**start, "session_id": "invalid-title", "session_title": "free text title"}
         subprocess.run([sys.executable, str(HERE / "session_hook.py"), "start", "--host", "claude"],
             input=json.dumps(invalid_start), text=True, capture_output=True, env=self.env,
-            timeout=12, check=True)
+            timeout=12, check=True, creationflags=NO_WINDOW)
         self.assertFalse((home / ".graphhelm/lane-sessions/invalid-title.json").exists())
         no_identity = subprocess.run([sys.executable, str(HERE / "lane_stop_hook.py")],
             input=json.dumps({"session_id": "invalid-title", "cwd": str(repo)}),
-            text=True, capture_output=True, env=self.env, timeout=12, check=True)
+            text=True, capture_output=True, env=self.env, timeout=12, check=True, creationflags=NO_WINDOW)
         self.assertEqual(no_identity.stdout, "")
         (home / ".graphhelm/lane-sessions/old-session.json").write_text(json.dumps({"actor": "codex-4"}))
         old_time = time.time() - 8 * 24 * 60 * 60
         os.utime(home / ".graphhelm/lane-sessions/old-session.json", (old_time, old_time))
         subprocess.run([sys.executable, str(HERE / "session_hook.py"), "start", "--host", "claude"],
             input=json.dumps({**start, "session_id": "prune-trigger", "session_title": "codex-4"}),
-            text=True, capture_output=True, env=self.env, timeout=12, check=True)
+            text=True, capture_output=True, env=self.env, timeout=12, check=True, creationflags=NO_WINDOW)
         self.assertFalse((home / ".graphhelm/lane-sessions/old-session.json").exists())
         (repo / ".graphhelm/team.json").unlink()
         missing_team = subprocess.run([sys.executable, str(HERE / "lane_stop_hook.py")],
             input=json.dumps({"session_id": "session-desktop", "cwd": str(repo)}),
-            text=True, capture_output=True, env=self.env, timeout=12, check=True)
+            text=True, capture_output=True, env=self.env, timeout=12, check=True, creationflags=NO_WINDOW)
         self.assertEqual(missing_team.stdout, "")
 
     def test_session_end_removes_desktop_lane_identity(self):
@@ -183,13 +186,13 @@ class LaneStopTests(unittest.TestCase):
         payload = {"hook_event_name": "SessionStart", "session_id": "ended-session",
                    "session_title": "codex-4", "cwd": str(root)}
         start = subprocess.run([sys.executable, str(HERE / "session_hook.py"), "start", "--host", "claude"],
-            input=json.dumps(payload), text=True, capture_output=True, env=self.env, timeout=12)
+            input=json.dumps(payload), text=True, capture_output=True, env=self.env, timeout=12, creationflags=NO_WINDOW)
         self.assertEqual(start.returncode, 0, start.stderr)
         lane_file = home / ".graphhelm/lane-sessions/ended-session.json"
         self.assertTrue(lane_file.exists())
         end = subprocess.run([sys.executable, str(HERE / "session_hook.py"), "end", "--host", "claude"],
             input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "ended-session"}),
-            text=True, capture_output=True, env=self.env, timeout=12)
+            text=True, capture_output=True, env=self.env, timeout=12, creationflags=NO_WINDOW)
         self.assertEqual(end.returncode, 0, end.stderr)
         self.assertFalse(lane_file.exists())
 
@@ -211,7 +214,7 @@ class LaneStopTests(unittest.TestCase):
         self.note("env-wins-note", to="codex-5")
         result = subprocess.run([sys.executable, str(HERE / "lane_stop_hook.py")],
             input=json.dumps({"session_id": "env-wins", "cwd": str(root)}), text=True,
-            capture_output=True, env=self.env, timeout=12)
+            capture_output=True, env=self.env, timeout=12, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["decision"], "block")
 

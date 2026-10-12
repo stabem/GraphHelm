@@ -8,6 +8,7 @@ version = "0.1.1"
 dependencies = [
  "chrono",
  "graphhelm-events",
+ "graphhelm-process",
  "graphhelm-protocols",
  "hex",
  "serde",
@@ -953,6 +954,7 @@ dependencies = [
  "graphhelm-model-gateway",
  "graphhelm-policy",
  "graphhelm-postgres-event-store",
+ "graphhelm-process",
  "graphhelm-process-tree",
  "graphhelm-protocols",
  "graphhelm-quality",
@@ -987,6 +989,7 @@ dependencies = [
 name = "graphhelm-codebase-memory-mcp"
 version = "0.1.1"
 dependencies = [
+ "graphhelm-process",
  "graphhelm-protocols",
  "graphhelm-runtime",
  "graphhelm-tool-broker",
@@ -1004,6 +1007,7 @@ dependencies = [
  "graphhelm-events",
  "graphhelm-gateway",
  "graphhelm-model-gateway",
+ "graphhelm-process",
  "graphhelm-protocols",
  "graphhelm-runtime",
  "graphhelm-tool-broker",
@@ -1028,6 +1032,7 @@ dependencies = [
  "getrandom 0.4.3",
  "graphhelm-execution",
  "graphhelm-graph",
+ "graphhelm-process",
  "graphhelm-protocols",
  "graphhelm-schema",
  "hex",
@@ -1050,6 +1055,7 @@ dependencies = [
  "chrono",
  "graphhelm-events",
  "graphhelm-policy",
+ "graphhelm-process",
  "graphhelm-protocols",
  "graphhelm-simulation",
  "proptest",
@@ -1063,6 +1069,7 @@ name = "graphhelm-extension-host"
 version = "0.1.1"
 dependencies = [
  "fs2",
+ "graphhelm-process",
  "graphhelm-schema",
  "hex",
  "libc",
@@ -1125,6 +1132,7 @@ dependencies = [
  "graphhelm-extension-host",
  "graphhelm-graph",
  "graphhelm-policy",
+ "graphhelm-process",
  "graphhelm-protocols",
  "graphhelm-schema",
  "graphhelm-sealed-key-provider",
@@ -1146,6 +1154,7 @@ dependencies = [
  "fs2",
  "graphhelm-events",
  "graphhelm-gateway",
+ "graphhelm-process",
  "graphhelm-process-tree",
  "graphhelm-protocols",
  "graphhelm-sealed-key-provider",
@@ -1164,6 +1173,7 @@ dependencies = [
  "assert_cmd",
  "chrono",
  "graphhelm-graph",
+ "graphhelm-process",
  "graphhelm-protocols",
  "graphhelm-schema",
  "serde",
@@ -1180,6 +1190,7 @@ dependencies = [
  "getrandom 0.4.3",
  "graphhelm-events",
  "graphhelm-graph",
+ "graphhelm-process",
  "graphhelm-process-tree",
  "graphhelm-protocols",
  "hex",
@@ -1195,9 +1206,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphhelm-process"
+version = "0.1.1"
+
+[[package]]
 name = "graphhelm-process-tree"
 version = "0.1.0"
 dependencies = [
+ "graphhelm-process",
  "libc",
  "windows-sys 0.61.2",
 ]
@@ -1207,6 +1223,7 @@ name = "graphhelm-protocols"
 version = "0.1.1"
 dependencies = [
  "chrono",
+ "graphhelm-process",
  "jsonschema",
  "serde",
  "serde_json",
@@ -1220,6 +1237,7 @@ dependencies = [
 name = "graphhelm-quality"
 version = "0.1.1"
 dependencies = [
+ "graphhelm-process",
  "graphhelm-protocols",
  "pathogens",
  "serde",
@@ -1234,6 +1252,7 @@ dependencies = [
  "graphhelm-execution",
  "graphhelm-gateway",
  "graphhelm-policy",
+ "graphhelm-process",
  "graphhelm-protocols",
  "graphhelm-quality",
  "graphhelm-schema",
@@ -1269,6 +1288,7 @@ dependencies = [
 name = "graphhelm-schema-evolution"
 version = "0.1.1"
 dependencies = [
+ "graphhelm-process",
  "graphhelm-protocols",
  "graphhelm-schema",
  "hex",
@@ -1336,6 +1356,7 @@ dependencies = [
 name = "graphhelm-tool-host"
 version = "0.1.1"
 dependencies = [
+ "graphhelm-process",
  "graphhelm-process-tree",
  "graphhelm-protocols",
  "graphhelm-runtime",
@@ -1730,6 +1751,7 @@ version = "0.1.0"
 dependencies = [
  "assert_cmd",
  "clap",
+ "graphhelm-process",
  "hex",
  "libc",
  "oxc_allocator",
@@ -2194,6 +2216,7 @@ version = "0.1.1"
 dependencies = [
  "filetime",
  "graphhelm-policy",
+ "graphhelm-process",
  "graphhelm-process-tree",
  "hex",
  "serde",

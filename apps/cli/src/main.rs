@@ -4,7 +4,6 @@ mod error_codes;
 mod human;
 mod output;
 mod palette;
-mod process;
 /// The one knob that scales the wall-clock ceilings of tests that wait on a child process
 /// (#549), shared with the integration tests so there is one definition.
 #[cfg(test)]

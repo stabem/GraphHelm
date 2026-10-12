@@ -172,7 +172,7 @@ fn every_restore_boundary_recovers_in_a_fresh_process() {
         let temp = tempfile::tempdir().unwrap();
         let plan = fixture(temp.path());
         let state = temp.path().join("state");
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
+        let status = graphhelm_process::command(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "restore::tests::restore_process_child",

@@ -902,7 +902,8 @@ fn process_start_time(pid: u32) -> Option<u64> {
 pub fn configure(command: &mut std::process::Command) {
     use std::os::windows::process::CommandExt;
     use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
-    command.creation_flags(CREATE_SUSPENDED);
+    // Hidden console as well: the owner rule forbids a child opening its own window.
+    command.creation_flags(CREATE_SUSPENDED | graphhelm_process::CREATE_NO_WINDOW);
 }
 
 /// Put the suspended child in a kill-on-close job object, then resume it.
@@ -1606,13 +1607,13 @@ mod post_enumeration_join_window {
     /// real, assignable job member without needing it to execute any code. The arguments name a test
     /// that does not exist; they are never read, because this is never resumed.
     fn spawn_suspended_member() -> std::process::Child {
-        std::process::Command::new(std::env::current_exe().unwrap())
+        graphhelm_process::command(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "process_tree::post_enumeration_join_window::never_run",
                 "--nocapture",
             ])
-            .creation_flags(CREATE_SUSPENDED)
+            .creation_flags(CREATE_SUSPENDED | graphhelm_process::CREATE_NO_WINDOW)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -2437,7 +2438,7 @@ mod tests {
     #[test]
     fn a_delayed_leader_is_reaped_but_a_stuck_leader_still_hits_the_ceiling() {
         use std::io::{Read, Write};
-        use std::process::{Command, Stdio};
+        use std::process::Stdio;
         use std::time::{Duration, Instant};
 
         const CHILD_DELAY: &str = "GRAPHHELM_REAP_FIXTURE_DELAY_MS";
@@ -2448,7 +2449,7 @@ mod tests {
         }
 
         for (delay, should_exit) in [(1500, true), (60_000, false)] {
-            let mut child = Command::new(std::env::current_exe().unwrap())
+            let mut child = graphhelm_process::command(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
                     "tests::a_delayed_leader_is_reaped_but_a_stuck_leader_still_hits_the_ceiling",
@@ -2640,7 +2641,7 @@ mod tests {
     /// run here is the half that carries the weight there.
     #[test]
     fn a_bound_identity_still_answers_after_the_process_is_reaped() {
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        let mut child = graphhelm_process::command(std::env::current_exe().unwrap())
             .arg("--this-argument-makes-the-test-binary-exit-immediately")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -2680,11 +2681,11 @@ mod tests {
     /// the sleeper ends.
     fn sleeper() -> std::process::Child {
         if cfg!(windows) {
-            let mut command = std::process::Command::new("ping");
+            let mut command = graphhelm_process::command("ping");
             command.args(["-n", "30", "127.0.0.1"]);
             command
         } else {
-            let mut command = std::process::Command::new("sleep");
+            let mut command = graphhelm_process::command("sleep");
             command.arg("30");
             command
         }
@@ -2872,7 +2873,7 @@ mod zombie_liveness {
     /// satisfy the zombie assertion and look like the fix.
     #[test]
     fn a_zombie_is_not_running_and_a_live_child_still_is() {
-        let mut alive = std::process::Command::new("/bin/sleep")
+        let mut alive = graphhelm_process::command("/bin/sleep")
             .arg("30")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -2888,7 +2889,7 @@ mod zombie_liveness {
         );
 
         #[allow(clippy::zombie_processes)]
-        let departed = std::process::Command::new("/bin/true")
+        let departed = graphhelm_process::command("/bin/true")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

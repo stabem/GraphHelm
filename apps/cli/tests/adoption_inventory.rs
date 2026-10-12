@@ -3,7 +3,9 @@ use std::path::Path;
 use serde_json::Value;
 
 fn graphhelm() -> assert_cmd::Command {
-    assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    assert_cmd::Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )))
 }
 
 fn output_json(output: std::process::Output) -> Value {
@@ -202,7 +204,7 @@ fn link_directory(target: &Path, link: &Path) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        let status = std::process::Command::new("cmd")
+        let status = graphhelm_process::command("cmd")
             .raw_arg(format!(
                 "/C mklink /J \"{}\" \"{}\"",
                 link.display(),

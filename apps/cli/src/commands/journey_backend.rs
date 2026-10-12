@@ -187,7 +187,7 @@ fn dechunk(mut rest: &str) -> String {
 pub(super) fn command(project: &Path, argv: &str) -> Result<Observation, String> {
     let mut words = argv.split_whitespace();
     let program = words.next().ok_or("empty argv")?;
-    let mut child = crate::process::command(program)
+    let mut child = graphhelm_process::command(program)
         .args(words)
         .current_dir(project)
         .stdin(Stdio::null())

@@ -7,7 +7,7 @@ use std::process::{Command, Output};
 use serde_json::{Value, json};
 
 fn graphhelm() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
 }
 
 fn step(id: &str, screen: &str, scope: &str) -> Value {

@@ -13,6 +13,10 @@ import subprocess
 import sys
 import urllib.parse
 import urllib.request
+import os
+
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
 def get(url, token):
@@ -81,14 +85,14 @@ def records(base, token, execution):
 def github(pr, repo):
     result = subprocess.run(["gh", "pr", "view", str(pr), "--repo", repo,
                              "--json", "state,mergeCommit,mergedAt,closingIssuesReferences,body"],
-                            capture_output=True, text=True, encoding="utf-8", timeout=3, check=True)
+                            capture_output=True, text=True, encoding="utf-8", timeout=3, check=True, creationflags=NO_WINDOW)
     return json.loads(result.stdout)
 
 
 def github_issue(issue, repo):
     result = subprocess.run(["gh", "issue", "view", str(issue), "--repo", repo,
                              "--json", "state,assignees"], capture_output=True, text=True,
-                            encoding="utf-8", timeout=3, check=True)
+                            encoding="utf-8", timeout=3, check=True, creationflags=NO_WINDOW)
     return json.loads(result.stdout)
 
 

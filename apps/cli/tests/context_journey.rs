@@ -11,7 +11,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -51,7 +51,7 @@ fn serve_with(
     args: &[String],
     env: &[(String, String)],
 ) -> (ServerGuard, String, String) {
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command
         .args([
             "serve",
@@ -176,7 +176,7 @@ fn gateway_key() -> String {
 }
 
 fn credential_set(broker: &Path, keyring: &Path, key_id: &str, reference: &str, route: &str) {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "gateway",
             "credential",
@@ -271,7 +271,7 @@ fn scratch_project(directory: &Path, name: &str, files: &[(&str, &str)]) -> Path
         std::fs::write(full, text).unwrap();
     }
     let git = |args: &[&str]| {
-        let status = Command::new("git")
+        let status = graphhelm_process::command("git")
             .args(args)
             .current_dir(&project)
             .env("GIT_CONFIG_NOSYSTEM", "1")

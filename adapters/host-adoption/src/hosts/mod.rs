@@ -217,7 +217,7 @@ fn run_contained(operation: &HostOperation) -> Result<HostReply, AdoptionError> 
     // loaded Windows host sometimes needed to signal and observe every job member.
     let termination_budget_ms = (operation.timeout_ms / 2).clamp(1, 500);
     let terminate_at = deadline - Duration::from_millis(termination_budget_ms);
-    let mut command = Command::new(&operation.program);
+    let mut command = graphhelm_process::command(&operation.program);
     command
         .args(&operation.args)
         .stdin(Stdio::null())

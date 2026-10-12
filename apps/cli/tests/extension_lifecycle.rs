@@ -126,11 +126,13 @@ fn synthetic_package(marker: &str) -> (TempDir, PathBuf) {
 }
 
 fn extension(args: &[&str]) -> std::process::Output {
-    Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .arg("extension")
-        .args(args)
-        .output()
-        .expect("the binary runs")
+    Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )))
+    .arg("extension")
+    .args(args)
+    .output()
+    .expect("the binary runs")
 }
 
 fn ok_json(output: &std::process::Output, command: &str) -> Value {

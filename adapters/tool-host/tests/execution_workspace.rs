@@ -8,7 +8,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use graphhelm_tool_broker::call::{RepositoryAction, ShellAction, ToolCall};
@@ -19,7 +18,7 @@ use graphhelm_tool_host::process::ProcessLimits;
 use graphhelm_tool_host::workspace::WorkspaceConfig;
 
 fn git(project: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
+    let output = graphhelm_process::command("git")
         .args(args)
         .current_dir(project)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -398,7 +397,7 @@ fn execution_workspace_ownership_survives_until_process_exit() {
     }
     let (dir, project) = scratch_repo();
     let staging = dir.path().join("staging");
-    let mut child = Command::new(std::env::current_exe().unwrap())
+    let mut child = graphhelm_process::command(std::env::current_exe().unwrap())
         .args([
             "--exact",
             "execution_workspace_ownership_survives_until_process_exit",
@@ -868,7 +867,7 @@ fn keep_workspace_leaves_the_execution_tree_for_the_operator() {
     );
     // This test's own tree to delete; the registration goes with it.
     for name in workspaces_in(staging.path()) {
-        let _ = Command::new("git")
+        let _ = graphhelm_process::command("git")
             .args(["worktree", "remove", "--force"])
             .arg(staging.path().join(name))
             .current_dir(&project)
@@ -938,7 +937,7 @@ fn a_hostile_execution_id_lands_under_the_digest_ref() {
 #[test]
 fn a_sha256_repository_lands_its_commit_and_ref() {
     let probe = tempfile::tempdir().unwrap();
-    let supported = Command::new("git")
+    let supported = graphhelm_process::command("git")
         .args(["init", "--quiet", "--object-format=sha256"])
         .current_dir(probe.path())
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -1005,7 +1004,7 @@ fn no_repository_hook_runs_on_commit_or_landing() {
         std::fs::write(hooks.join(hook), hook_script(hook)).unwrap();
     }
     // The hooks are real: run one by hand the way git would, to prove the fixture can fire.
-    let probe = Command::new("sh")
+    let probe = graphhelm_process::command("sh")
         .arg(hooks.join("pre-commit"))
         .current_dir(&project)
         .status();
@@ -1053,7 +1052,7 @@ fn no_repository_hook_runs_on_commit_or_landing() {
         let planted_hook = tree.join(path);
         assert!(planted_hook.is_file(), "{path} must have been planted");
         // The planted hook is real: run it by hand the way git would, then clear its marker.
-        let status = Command::new("sh")
+        let status = graphhelm_process::command("sh")
             .arg(&planted_hook)
             .current_dir(&tree)
             .status()
@@ -1147,7 +1146,7 @@ fn a_symbolic_execution_ref_is_replaced_and_the_branch_never_moves() {
         landed,
         "the execution ref must hold the landed commit"
     );
-    let still_symbolic = Command::new("git")
+    let still_symbolic = graphhelm_process::command("git")
         .args(["symbolic-ref", "--quiet", &reference])
         .current_dir(&project)
         .output()

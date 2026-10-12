@@ -276,7 +276,7 @@ fn unavailable_diagnostic_preserves_a_safe_stable_stage_code() {
         return;
     }
 
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
+    let output = graphhelm_process::command(std::env::current_exe().unwrap())
         .args([
             "--exact",
             "unavailable_diagnostic_preserves_a_safe_stable_stage_code",
@@ -830,7 +830,7 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
         let restore_path = PathBuf::from(std::env::var("GRAPHHELM_TEST_PG_RESTORE").unwrap());
         let tool = |path: PathBuf| {
             let digest = hex::encode(Sha256::digest(std::fs::read(&path).unwrap()));
-            let output = std::process::Command::new(&path)
+            let output = graphhelm_process::command(&path)
                 .arg("--version")
                 .output()
                 .unwrap();
@@ -2635,7 +2635,7 @@ fn constructor_bounds_reconciliation_catalog_locks() {
         let pinned = |environment: &str| {
             let path = PathBuf::from(std::env::var(environment).unwrap());
             let digest = hex::encode(Sha256::digest(std::fs::read(&path).unwrap()));
-            let output = std::process::Command::new(&path)
+            let output = graphhelm_process::command(&path)
                 .arg("--version")
                 .output()
                 .unwrap();

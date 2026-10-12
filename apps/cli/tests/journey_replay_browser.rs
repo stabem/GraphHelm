@@ -96,7 +96,7 @@ impl Drop for Server {
 }
 
 fn cli() -> Command {
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command.arg("--json").env("GRAPHHELM_EVENTS_KEY", KEY);
     command
 }
@@ -108,7 +108,7 @@ fn reply(command: &mut Command) -> (i32, Value) {
 }
 
 fn git(project: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
+    let out = graphhelm_process::command("git")
         .arg("-C")
         .arg(project)
         .args([
@@ -216,10 +216,10 @@ fn two_credential_free_paths_replay_to_canonical_cache_sealed_captures_and_fresh
     .unwrap();
     std::fs::write(project.join("fixture-server.mjs"), FIXTURE).unwrap();
     // Only this test-owned project links the explicitly declared installed toolchain.
-    let linked=Command::new("node").args(["-e","require('node:fs').symlinkSync(process.argv[1],process.argv[2],process.platform==='win32'?'junction':'dir')"])
+    let linked=graphhelm_process::command("node").args(["-e","require('node:fs').symlinkSync(process.argv[1],process.argv[2],process.platform==='win32'?'junction':'dir')"])
         .arg(toolchain.join("node_modules")).arg(project.join("node_modules")).status().unwrap();
     assert!(linked.success(), "OBSERVER_MISSING: toolchain link");
-    let mut command = Command::new("node");
+    let mut command = graphhelm_process::command("node");
     command.arg(project.join("fixture-server.mjs"));
     let mut app = Server::start(command);
     let base = app.started["base"].as_str().unwrap().to_owned();
@@ -442,7 +442,7 @@ fn two_credential_free_paths_replay_to_canonical_cache_sealed_captures_and_fresh
     assert_eq!(u32::from_be_bytes(png[20..24].try_into().unwrap()), 720);
     let image_file = scratch.path().join("sealed-pay.png");
     std::fs::write(&image_file, png).unwrap();
-    let decoded=Command::new("node").args(["-e",concat!(
+    let decoded=graphhelm_process::command("node").args(["-e",concat!(
         "(async()=>{const fs=require('node:fs'),{createRequire}=require('node:module');",
         "const {chromium}=createRequire(require('node:path').join(process.argv[1],'package.json'))('@playwright/test');",
         "const b=await chromium.launch({headless:true});try{const p=await b.newPage();",
@@ -664,7 +664,7 @@ fn two_credential_free_paths_replay_to_canonical_cache_sealed_captures_and_fresh
         let external = scratch.path().join("linked-cache");
         std::fs::rename(original, &external).unwrap();
         assert!(
-            Command::new("node")
+            graphhelm_process::command("node")
                 .args([
                     "-e",
                     "require('node:fs').symlinkSync(process.argv[1],process.argv[2],'junction')"
@@ -864,7 +864,7 @@ fn owner_token(project: &Path) -> String {
     // store (events, token, keys, owner records) out of git, so the test ignores exactly that.
     let gitignore = project.join(".gitignore");
     let kept = std::fs::read(&gitignore).ok();
-    let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["--json", "init", "--project"])
         .arg(project)
         .args(["--harness", "claude-code"])

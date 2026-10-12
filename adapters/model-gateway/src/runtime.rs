@@ -20,7 +20,7 @@
 //! explicitly passes as `extra_env` — never a copy of the gateway's own ambient environment.
 
 use std::io::{Read, Write};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -171,8 +171,9 @@ impl<'a> RuntimeAdapter<'a> {
             .expect("native_runtime routes carry command — enforced by manifest validation");
         let cleanup_permit = CleanupPermit::acquire().ok_or(GatewayError::ProviderUnavailable)?;
 
-        let mut command =
-            Command::new(resolve_program(std::path::Path::new(&command_spec.program)));
+        let mut command = graphhelm_process::command(resolve_program(std::path::Path::new(
+            &command_spec.program,
+        )));
         command
             .args(&command_spec.args)
             .env_clear()
@@ -1113,16 +1114,16 @@ mod tests {
         CleanupPermit, Duration, Instant, REAPER_CAPACITY, join_writer_until, parse_codex_jsonl,
         spawn_background_reaper,
     };
-    use std::process::{Child, Command};
+    use std::process::Child;
     use std::sync::mpsc;
 
     static CLEANUP_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn delayed_child(seconds: u64) -> Child {
         #[cfg(windows)]
-        let mut command = Command::new("cmd");
+        let mut command = graphhelm_process::command("cmd");
         #[cfg(unix)]
-        let mut command = Command::new("sh");
+        let mut command = graphhelm_process::command("sh");
         #[cfg(windows)]
         command.args(["/C", &format!("ping 127.0.0.1 -n {} > NUL", seconds + 1)]);
         #[cfg(unix)]

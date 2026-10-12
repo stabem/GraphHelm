@@ -1,7 +1,7 @@
 //! Journey capture freshness and arrows, folded against real temporary git repositories.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use graphhelm_execution::{
     ArrowState, CaptureRecord, ContractInput, Freshness, GitHistory, JourneysView, ScreenInput,
@@ -9,7 +9,7 @@ use graphhelm_execution::{
 };
 
 fn git_available() -> bool {
-    let available = Command::new("git")
+    let available = graphhelm_process::command("git")
         .arg("--version")
         .stdin(Stdio::null())
         .output()
@@ -21,7 +21,7 @@ fn git_available() -> bool {
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
+    let output = graphhelm_process::command("git")
         .arg("-C")
         .arg(dir)
         .args([

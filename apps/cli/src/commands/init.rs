@@ -494,7 +494,7 @@ pub(super) fn ensure_gitignore(project: &Path, path: &Path) -> Result<State, Fai
         }
     };
     let git_command = || {
-        let mut command = crate::process::command("git");
+        let mut command = graphhelm_process::command("git");
         command
             .arg("-C")
             .arg(project)

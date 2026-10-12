@@ -11,7 +11,6 @@
 //! ran the test on the parent would certify the gate against itself.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -104,7 +103,7 @@ impl Drop for KeelProveGate {
 }
 
 fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = graphhelm_process::command("git")
         .arg("-C")
         .arg(repo)
         .args([

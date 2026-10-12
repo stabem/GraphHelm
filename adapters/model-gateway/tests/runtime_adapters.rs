@@ -8,7 +8,6 @@
 use std::fs;
 use std::io;
 use std::path::PathBuf;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use graphhelm_gateway::call::ModelCall;
@@ -797,7 +796,7 @@ fn the_child_environment_is_an_allowlist_and_never_carries_broker_material() {
 
     let dump_file = tempfile::NamedTempFile::new().expect("create a scratch file for the dump");
     let test_binary = std::env::current_exe().expect("current test binary path");
-    let status = Command::new(&test_binary)
+    let status = graphhelm_process::command(&test_binary)
         .arg("the_child_environment_is_an_allowlist_and_never_carries_broker_material")
         .arg("--exact")
         .env(REEXEC_OUTPUT_PATH_ENV, dump_file.path())
@@ -988,7 +987,7 @@ fn crash_sites_distinguish_unclean_writer_and_timeout_cleanup() {
         ("hold-stdin-timeout", "TimeoutCleanupUnobserved"),
     ] {
         let holder = Holder(
-            Command::new(fake_runtime_path())
+            graphhelm_process::command(fake_runtime_path())
                 .env("FAKE_RUNTIME_MODE", "hang")
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())

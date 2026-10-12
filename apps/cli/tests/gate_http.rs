@@ -8,7 +8,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -44,7 +44,7 @@ struct ServeExtra {
 }
 
 fn serve_with(events: &Path, extra: &ServeExtra) -> (ServerGuard, String, String) {
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command
         .args([
             "serve",
@@ -158,7 +158,7 @@ fn hang_forever_server() -> String {
 }
 
 fn credential_set(broker: &Path, keyring: &Path, key_id: &str, reference: &str, route: &str) {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "gateway",
             "credential",
@@ -386,7 +386,7 @@ fn start(serve: &GateServe, execution: &str, key: &str) -> (u16, Value) {
 }
 
 fn certify(serve: &GateServe, gate: &str) -> std::process::Output {
-    Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "quality",
             "certify",
@@ -629,7 +629,7 @@ fn an_unknown_gate_is_refused_with_the_registry_code() {
 /// only in the pull request.
 #[test]
 fn the_help_text_does_not_enumerate_the_gate_registry() {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["quality", "certify", "--help"])
         .output()
         .unwrap();
@@ -1070,7 +1070,7 @@ fn a_refused_time_scale_is_a_quick_named_red_that_leaves_no_server_behind() {
         let _ = serve_with(&directory.path().join("events"), &extra);
         return;
     }
-    let mut command = Command::new(std::env::current_exe().unwrap());
+    let mut command = graphhelm_process::command(std::env::current_exe().unwrap());
     command
         .args(["--exact", CELL, "--nocapture"])
         .env("GRAPHHELM_TEST_REFUSED_SCALE_CHILD", "1")

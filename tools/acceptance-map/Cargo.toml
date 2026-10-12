@@ -8,6 +8,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+graphhelm-process = { path = "../../core/process" }
 sha2.workspace = true
 hex.workspace = true
 serde.workspace = true

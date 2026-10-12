@@ -13,7 +13,6 @@
 //! funnel -- no second spawn path.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use graphhelm_tool_host::process::{HostError, ProcessLimits};
 use graphhelm_tool_host::session::ContainedProviderSession;
@@ -34,7 +33,7 @@ fn scratch_repo() -> (tempfile::TempDir, PathBuf) {
     )
     .unwrap();
     let git = |args: &[&str]| {
-        let status = Command::new("git")
+        let status = graphhelm_process::command("git")
             .args(args)
             .current_dir(&project)
             .env("GIT_CONFIG_NOSYSTEM", "1")

@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn runner() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_graphhelm-development-benchmark"))
+    graphhelm_process::command(env!("CARGO_BIN_EXE_graphhelm-development-benchmark"))
 }
 
 fn shipped_manifest() -> PathBuf {

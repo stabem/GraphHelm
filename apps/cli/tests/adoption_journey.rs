@@ -4,7 +4,9 @@ use std::path::Path;
 mod fixture;
 
 fn command(p: &Path, h: &Path, s: &Path) -> assert_cmd::Command {
-    let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ));
     command
         .arg("setup")
         .arg("--project")
@@ -293,7 +295,7 @@ fn offline_cli_journey_keeps_compatible_skills_and_restores_with_later_user_key(
     std::fs::write(&configfile, &before).unwrap();
     let executable = s.path().join("inert-host.exe");
     assert!(
-        std::process::Command::new("rustc")
+        graphhelm_process::command("rustc")
             .args(["--edition=2024"])
             .arg(
                 Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -404,27 +406,31 @@ fn offline_cli_journey_keeps_compatible_skills_and_restores_with_later_user_key(
         .insert("user_added".into(), toml::Value::String("keep me".into()));
     std::fs::write(&configfile, toml::to_string(&edited).unwrap()).unwrap();
     let restore = output(
-        assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-            .arg("restore")
-            .arg("--state-root")
-            .arg(s.path())
-            .output()
-            .unwrap(),
+        assert_cmd::Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+            "graphhelm"
+        )))
+        .arg("restore")
+        .arg("--state-root")
+        .arg(s.path())
+        .output()
+        .unwrap(),
     );
     let restoreplan = &restore["data"]["plan"];
     let restorefile = s.path().join("restore.json");
     std::fs::write(&restorefile, serde_json::to_vec(restoreplan).unwrap()).unwrap();
     let restored = output(
-        assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-            .arg("restore")
-            .arg("--state-root")
-            .arg(s.path())
-            .arg("--apply")
-            .arg(&restorefile)
-            .arg("--accept")
-            .arg(restoreplan["digest"].as_str().unwrap())
-            .output()
-            .unwrap(),
+        assert_cmd::Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+            "graphhelm"
+        )))
+        .arg("restore")
+        .arg("--state-root")
+        .arg(s.path())
+        .arg("--apply")
+        .arg(&restorefile)
+        .arg("--accept")
+        .arg(restoreplan["digest"].as_str().unwrap())
+        .output()
+        .unwrap(),
     );
     assert_eq!(restored["data"]["receipt"]["spec"]["state"], "restored");
     let restored: toml::Value =

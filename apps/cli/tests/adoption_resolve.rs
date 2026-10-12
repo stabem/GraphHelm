@@ -3,7 +3,9 @@ use serde_json::Value;
 use std::path::Path;
 
 fn setup(p: &Path, h: &Path) -> assert_cmd::Command {
-    let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ));
     command
         .arg("setup")
         .arg("--project")
@@ -364,7 +366,9 @@ fn the_user_claude_instruction_file_resolves_applies_and_restores() {
     assert_eq!(std::fs::read(p.path().join("AGENTS.md")).unwrap(), ORIGINAL);
 
     let restore = |extra: &[&std::ffi::OsStr]| {
-        let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+        let mut command = assert_cmd::Command::from_std(graphhelm_process::command(
+            assert_cmd::cargo::cargo_bin!("graphhelm"),
+        ));
         command.arg("restore").arg("--state-root").arg(s.path());
         for arg in extra {
             command.arg(arg);
@@ -516,7 +520,9 @@ fn setup_registers_the_user_mcp_and_upserts_the_user_block_idempotently() {
     );
     assert!(!again.exists());
 
-    let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ));
     let (ok, restore) = json(
         command
             .arg("restore")
@@ -529,7 +535,9 @@ fn setup_registers_the_user_mcp_and_upserts_the_user_block_idempotently() {
     let plan = &restore["data"]["plan"];
     let planfile = s.path().join("restore.json");
     std::fs::write(&planfile, serde_json::to_vec(plan).unwrap()).unwrap();
-    let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ));
     let (ok, restored) = json(
         command
             .arg("restore")
@@ -594,7 +602,9 @@ fn setup_applies_and_restores_the_init_project_registration() {
     let settings = h.path().join(".claude/settings.json");
     let original_settings = std::fs::read(&settings).unwrap();
     std::fs::write(&mcp, original).unwrap();
-    let mut init = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut init = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ));
     let (ok, initialized) = json(
         init.args(["init", "--project"])
             .arg(p.path())
@@ -683,7 +693,9 @@ fn setup_applies_and_restores_the_init_project_registration() {
     );
     assert!(!s.path().join("again.json").exists());
 
-    let mut restore = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut restore = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ));
     let (ok, preview) = json(
         restore
             .arg("restore")
@@ -696,7 +708,9 @@ fn setup_applies_and_restores_the_init_project_registration() {
     let plan = &preview["data"]["plan"];
     let restore_file = s.path().join("restore.json");
     std::fs::write(&restore_file, serde_json::to_vec(plan).unwrap()).unwrap();
-    let mut restore = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut restore = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ));
     let (ok, restored) = json(
         restore
             .arg("restore")

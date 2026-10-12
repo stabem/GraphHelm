@@ -7,7 +7,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 #[path = "support/time_scale.rs"]
@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 const EVENTS_KEY: &str = "0101010101010101010101010101010101010101010101010101010101010101";
 
 fn cli(args: &[&str]) -> Value {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .env("GRAPHHELM_EVENTS_KEY", EVENTS_KEY)
         .args(args)
         .output()
@@ -90,7 +90,7 @@ impl Drop for Server {
 }
 
 fn serve(events: &Path, extra: &[&str]) -> (Server, String, String) {
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .env("GRAPHHELM_EVENTS_KEY", EVENTS_KEY)
         .args([
             "serve",

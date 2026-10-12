@@ -1472,7 +1472,7 @@ mod tests {
         std::fs::write(dir.path().join("rule.md"), "Rule").unwrap();
         let documents = ProjectDocuments::open(dir.path()).unwrap();
         let before = documents.read("rule.md").unwrap();
-        let child = Command::new(std::env::current_exe().unwrap())
+        let child = graphhelm_process::command(std::env::current_exe().unwrap())
             .arg("--exact")
             .arg("documents::tests::windows_project_lock_child")
             .arg("--nocapture")

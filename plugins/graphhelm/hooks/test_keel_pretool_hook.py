@@ -6,12 +6,16 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import os
+
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 SCRIPT = Path(__file__).with_name("keel_pretool_hook.py")
 
 
 def git(repo, *args):
-    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, creationflags=NO_WINDOW)
 
 
 class KeelPreToolHook(unittest.TestCase):
@@ -33,7 +37,7 @@ class KeelPreToolHook(unittest.TestCase):
         payload = {"cwd": str(self.repo), "tool_name": "Write",
                    "tool_input": {"file_path": str(self.repo / path), **tool_input}}
         out = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(payload),
-                             capture_output=True, text=True, check=True).stdout
+                             capture_output=True, text=True, check=True, creationflags=NO_WINDOW).stdout
         return json.loads(out)["hookSpecificOutput"] if out.strip() else None
 
     def test_large_code_write_without_card_is_denied(self):
@@ -66,7 +70,7 @@ class KeelPreToolHook(unittest.TestCase):
             payload = {"cwd": str(self.repo), "tool_input": {"file_path": other + "/x.py",
                                                               "content": "x\n" * 50}}
             out = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(payload),
-                                 capture_output=True, text=True, check=True).stdout
+                                 capture_output=True, text=True, check=True, creationflags=NO_WINDOW).stdout
             self.assertEqual(out.strip(), "")
 
 

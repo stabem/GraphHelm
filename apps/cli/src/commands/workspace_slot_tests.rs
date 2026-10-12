@@ -146,7 +146,7 @@ fn batch_child_failure_keeps_prefix_and_stops_children() {
 #[test]
 fn batch_child_environment_is_cleared_in_child() {
     if std::env::var_os("GRAPHHELM_SLOT_BATCH").is_none() {
-        let output = crate::process::command(std::env::current_exe().unwrap())
+        let output = graphhelm_process::command(std::env::current_exe().unwrap())
             .args(["--exact", "commands::workspace_slot::workspace_slot_tests::batch_child_environment_is_cleared_in_child", "--test-threads=2", "--nocapture"])
             .env("GRAPHHELM_SLOT_BATCH", "sentinel")
             .output()

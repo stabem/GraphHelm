@@ -14,7 +14,9 @@ use serde_json::Value;
 const REFUSED: &str = "GHCLI035_SKILLS_SYNC_REFUSED";
 
 fn command() -> assert_cmd::Command {
-    let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ));
     command.env_remove("CODEX_HOME");
     command
 }

@@ -9,11 +9,14 @@ import sys
 import tempfile
 import unittest
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 SCRIPT = Path(__file__).with_name("keel_stop_hook.py")
 
 
 def git(repo, *args):
-    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, creationflags=NO_WINDOW)
 
 
 class KeelStopHook(unittest.TestCase):
@@ -36,7 +39,7 @@ class KeelStopHook(unittest.TestCase):
         git_dir = os.path.dirname(shutil.which("git"))
         env = dict(os.environ, PATH=os.pathsep.join((os.path.dirname(sys.executable), git_dir, os.environ["PATH"])))
         out = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(payload),
-                             capture_output=True, text=True, env=env, check=True).stdout
+                             capture_output=True, text=True, env=env, check=True, creationflags=NO_WINDOW).stdout
         return json.loads(out) if out.strip() else None
 
     def code(self, lines):

@@ -194,11 +194,11 @@ fn run_step(
     let mut words = command.split_whitespace();
     let program = words.next().unwrap_or_default();
     let mut process = if cfg!(windows) {
-        let mut process = crate::process::command("cmd");
+        let mut process = graphhelm_process::command("cmd");
         process.args(["/C", program]);
         process
     } else {
-        crate::process::command(program)
+        graphhelm_process::command(program)
     };
     // The child's output would corrupt the JSON on stdout; it goes to stderr for the owner.
     let mut child = process
@@ -225,7 +225,7 @@ fn run_step(
 /// `cmd /C npm` leaves npm and node as children of `cmd`; killing `cmd` alone would orphan them.
 fn kill_tree(child: &mut std::process::Child) {
     if cfg!(windows) {
-        let _ = crate::process::command("taskkill")
+        let _ = graphhelm_process::command("taskkill")
             .args(["/T", "/F", "/PID", &child.id().to_string()])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

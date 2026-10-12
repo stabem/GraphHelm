@@ -332,13 +332,15 @@ describe("the Graph WORK rail fits a narrow viewport (#884)", () => {
 
 describe("the task inspector fits its ladder and preserves lane names (#918)", () => {
   it("wraps ladder labels inside their own rung", () => {
-    const rule = CODE.match(/\.mg-inspector\s+\.mg-ladder\s+li\s*\{([^}]*)\}/)?.[1] ?? "";
+    const stylesheet = STYLESHEETS["./styles.css"] ?? "";
+    const rule = stylesheet.match(/\.mg-inspector\s+\.mg-ladder\s+li\s*\{([^}]*)\}/)?.[1] ?? "";
     expect(rule).toMatch(/min-width:\s*0/);
     expect(rule).toMatch(/overflow-wrap:\s*anywhere/);
   });
 
   it("ellipsizes lane names without breaking words and keeps the full name in the title", () => {
-    const rule = CODE.match(/\.mg-inspector\s+\.mg-who\s*\{([^}]*)\}/)?.[1] ?? "";
+    const stylesheet = STYLESHEETS["./styles.css"] ?? "";
+    const rule = stylesheet.match(/\.mg-inspector\s+\.mg-who\s*\{([^}]*)\}/)?.[1] ?? "";
     expect(rule).toMatch(/min-width:\s*0/);
     expect(rule).toMatch(/white-space:\s*nowrap/);
     expect(rule).toMatch(/overflow:\s*hidden/);

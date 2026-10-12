@@ -47,7 +47,7 @@ class RuntimeHandler(BaseHTTPRequestHandler):
                     "contentSha256": digest, "content": content}}
         elif "/events?after=" in self.path:
             after = int(self.path.split("after=", 1)[1].split("&", 1)[0])
-            if self.scripted_pages is not None:
+            if self.scripted_pages:
                 body = {"ok": True, "data": self.scripted_pages.pop(0)}
                 self._write(body)
                 return

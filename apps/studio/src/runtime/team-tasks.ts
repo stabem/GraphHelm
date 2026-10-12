@@ -743,9 +743,10 @@ function contentDigest(evidence: EvidenceContent): Promise<string> {
  * that recorded it is skipped: the Runtime refuses those, and an old log must not draw them. */
 /** The verified `task.*` records themselves, in sequence order, each with its `occurredAt`: the
  * Graph tab's lanes timeline needs when each one happened, which the fold does not keep. */
-export async function readTaskEventRecords({ executionId, events, readEvidence, onProgress, shouldContinue }: ReadClaudeTasksOptions & {
+export async function readTaskEventRecords({ executionId, events, readEvidence, onProgress, shouldContinue, onReadFailure }: ReadClaudeTasksOptions & {
   onProgress?: (records: TaskEventRecord[]) => void;
   shouldContinue?: () => boolean;
+  onReadFailure?: (count: number) => void;
 }): Promise<TaskEventRecord[]> {
   const ordered = [...events].sort((a, b) => a.sequence - b.sequence).filter(isTaskEventSignal);
   const read = async (event: RuntimeEvent): Promise<TaskEventRecord | null> => {
@@ -756,7 +757,15 @@ export async function readTaskEventRecords({ executionId, events, readEvidence, 
     const envelopeHash = text(payload?.envelopeSha256, 128);
     if (seq === null || evidenceId === null || envelopeHash === null || typeof event.actorId !== "string") return null;
     let evidence: EvidenceContent;
-    try { evidence = await readEvidence(executionId, evidenceId); } catch { return null; }
+    try {
+      for (let attempt = 1;; attempt += 1) {
+        try { evidence = await readEvidence(executionId, evidenceId); break; }
+        catch {
+          if (attempt === 3 || !(shouldContinue?.() ?? true)) throw new Error("Evidence read failed");
+          await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** (attempt - 1)));
+        }
+      }
+    } catch { onReadFailure?.(1); return null; }
     if (evidence.evidenceId !== evidenceId) return null;
     const computed = await contentDigest(evidence);
     if (rawHash(envelopeHash) !== computed || rawHash(evidence.contentSha256) !== computed) return null;

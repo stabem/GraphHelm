@@ -215,6 +215,26 @@ describe("readTaskEventRecords composed with foldTaskEvents", () => {
     return { sequence, kind: "signal_recorded", payload: { kind, sourceId: actorId, sourceKind: "user", signalId: `signal-${evidence.evidenceId}`, envelopeSha256: evidence.contentSha256 }, occurredAt: null, actorId, actorType: "agent", idempotencyKey: null, eventId: `event-${sequence}`, evidenceRefs: [evidence.evidenceId] };
   }
 
+  it("retries a failed sealed read and reports only evidence still unreadable", async () => {
+    const recovered = await sealed("retry-ok", "task.claimed", "lane-a", { issue: 1, lane: "lane-a", branch: "issue-1" });
+    const missing = await sealed("retry-missing", "task.claimed", "lane-a", { taskId: "issue-2", issue: 2, lane: "lane-a", branch: "issue-2" });
+    const attempts = new Map<string, number>();
+    const failures: number[] = [];
+    const records = await readTaskEventRecords({
+      executionId: "run", events: [event(1, "lane-a", "task.claimed", recovered), event(2, "lane-a", "task.claimed", missing)],
+      readEvidence: async (_, id) => {
+        const count = (attempts.get(id) ?? 0) + 1;
+        attempts.set(id, count);
+        if (id === missing.evidenceId || count < 3) throw new Error("temporary read failure");
+        return recovered;
+      },
+      onReadFailure: (count) => failures.push(count),
+    });
+    expect(records.map((record) => record.sequence)).toEqual([1]);
+    expect([...attempts.values()]).toEqual([3, 3]);
+    expect(failures).toEqual([1]);
+  });
+
   it("progressive task history publishes verified ordered chunks before the final read", async () => {
     const envelopes = await Promise.all(Array.from({ length: 65 }, (_, index) =>
       sealed(`progress-${index}`, "task.claimed", "lane-a", { taskId: `issue-${index}`, issue: index + 1, lane: "lane-a", branch: `issue-${index}` })));

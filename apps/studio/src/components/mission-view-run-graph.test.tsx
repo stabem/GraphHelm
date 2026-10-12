@@ -94,4 +94,14 @@ describe("#647 MissionView: the Team canvas controls on the Graph page", () => {
     expect(screen.getByRole("list", { name: "Agent lanes" })).toBeInTheDocument();
     expect(screen.queryByText("Loading the team's history…")).toBeNull();
   });
+
+  it("shows a partial history warning in Graph and Lanes with a working Retry", async () => {
+    const retry = vi.fn();
+    render(<MissionView {...base} lanes={[]} historyFailedCount={2} onRetryHistory={retry} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("History partly loaded · 2 records could not be read");
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Lanes" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("History partly loaded");
+    await fastUserEvent().click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
 });

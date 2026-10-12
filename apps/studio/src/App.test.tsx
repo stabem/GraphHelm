@@ -4031,6 +4031,36 @@ describe("the board remembers its graph file", () => {
  * a message box that posts nothing still clears itself after you press send.
  */
 describe("the exchange", () => {
+  it("settles partial task history and Retry recovers the unreadable record", async () => {
+    const description = JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-941", revision: 1,
+      at: "2026-10-11T12:00:00Z", issue: 941, lane: "codex-18", branch: "issue-941-history-stream" });
+    const content = JSON.stringify({ id: "task-941", source: { type: "user", id: "codex-18" }, type: "task.claimed", description });
+    const hash = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
+    let available = false;
+    const readEvidence = vi.fn(async () => {
+      if (!available) throw new Error("Runtime restarted");
+      return { evidenceId: "ev-task-941", mediaType: "application/json" as const, sensitivity: "internal" as const,
+        contentSha256: `sha256:${hash}`, content };
+    });
+    const client = stubClient({
+      getEvents: vi.fn(async () => ({ head: 1, events: [{ sequence: 1, kind: "signal_recorded",
+        payload: { kind: "task.claimed", sourceId: "codex-18", sourceKind: "user", signalId: "task-941", envelopeSha256: hash },
+        occurredAt: "2026-10-11T12:00:00Z", actorId: "codex-18", actorType: "agent", idempotencyKey: "k-941",
+        eventId: "event-941", evidenceRefs: ["ev-task-941"] }] })),
+      readEvidence,
+    });
+    await open(client, null, false);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
+    const mission = await screen.findByRole("region", { name: "Canvas" });
+    expect(await within(mission).findByRole("alert")).toHaveTextContent("History partly loaded · 1 records could not be read");
+    expect(within(mission).queryByText("Loading work…")).not.toBeInTheDocument();
+    available = true;
+    await userEvent.click(within(mission).getByRole("button", { name: "Retry" }));
+    expect(await within(mission).findByRole("button", { name: /Row No PR/ })).toBeInTheDocument();
+    await waitFor(() => expect(within(mission).queryByRole("alert")).not.toBeInTheDocument());
+  });
+
   it("bounds the first work-page read to a small tail while full history loads", async () => {
     const client = stubClient({
       listExecutions: vi.fn(async () => ({ executions: [{ executionId: "demo-deploy", mode: "supervised", status: "running",

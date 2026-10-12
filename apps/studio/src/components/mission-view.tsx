@@ -73,6 +73,8 @@ interface Props {
   historyLoading?: boolean;
   /** Recent task history is ready for Lanes while the complete history is still loading. */
   lanesHistoryLoading?: boolean;
+  historyFailedCount?: number;
+  onRetryHistory?: () => void;
   onSelectJourney?: (contractId: string) => void;
   /** #591: the "While you were away" gap, for the summary's `N h away · N shipped`; absent, omitted. */
   away?: { minutes: number; shipped: number } | null;
@@ -231,7 +233,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, lanesHistoryLoading = historyLoading, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
   const journeys = useMemo(() => {
     const known = new Set(compiledJourneys.map((journey) => journey.contractId));
     return [...compiledJourneys, ...(flows?.flows ?? []).filter((flow) => !known.has(flow.id)).map((flow): JourneyView => ({
@@ -325,7 +327,8 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
       {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
   </>;
   const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} {...(onOpenNode ? { onOpenNode } : {})} />;
-  if (sel === null) return <div className="mv" data-wide="true" data-page={page}>{header}
+  if (sel === null) return <div className="mv" data-wide="true" data-page={page}>
+    {historyFailedCount > 0 && <div role="alert">History partly loaded · {historyFailedCount} records could not be read · <button type="button" onClick={onRetryHistory}>Retry</button></div>}{header}
     {sub === "lanes" ? <div className="mv-pad">{lanesView}</div>
       : <>{sub === "graph" && runGraph}<p className="mv-none mv-pad" role={historyLoading ? "status" : undefined}>{historyLoading ? "Loading work…" : "No journeys in this project yet"}</p></>}</div>;
   const rawGroup: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
@@ -419,6 +422,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   return (
     // data-wide: the Studio layout gives the mission view the whole main area (mission-view.css).
     <div className="mv" data-wide="true" data-page={page}>
+      {historyFailedCount > 0 && <div role="alert">History partly loaded · {historyFailedCount} records could not be read · <button type="button" onClick={onRetryHistory}>Retry</button></div>}
       {header}
       {gsum && sub === "graph" && (
         <p className="mg-summary mv-summary" aria-label="Summary">

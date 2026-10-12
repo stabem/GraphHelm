@@ -8,12 +8,12 @@
   },
   "rubric": {
     "path": "evals/graphhelm-development-contracts/keel-observer-missing/graders/criteria.md",
-    "sha256": "add9f8b39e984fb7ca531b8879532be44531ac4a85d7c758299d14c2b6ff3a68"
+    "sha256": "795320b0ac240aa594dc6a288b6068f6a5a744aceef3d86b5d3e3668945c52d4"
   },
   "examples": [
     {
       "id": "chrome-proxy-missing",
-      "transcript": "The headless Chrome mobile viewport is a proxy, not an observation of iOS Safari. The iOS keyboard promise cannot be called verified.\nOBSERVER_MISSING: iOS Safari device or simulator",
+      "transcript": "The headless Chrome mobile viewport passed its own check, but it is only a proxy, not an observation of iOS Safari. The iOS keyboard promise cannot be called verified.\nOBSERVER_MISSING: iOS Safari device or simulator",
       "completionStatus": "completed",
       "proposedLabel": "PASS",
       "rationale": "Refuses verification, identifies Chrome as a proxy, and names the missing iOS Safari observer.",

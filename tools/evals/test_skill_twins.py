@@ -45,6 +45,13 @@ class SkillTwinsTest(unittest.TestCase):
         self.assertIn("verified", examples[1]["transcript"].lower())
         self.assertNotIn("OBSERVER_MISSING", examples[2]["transcript"])
 
+    def test_observer_rubric_scopes_failure_to_the_ios_promise(self):
+        criteria = (
+            ROOT / "evals/graphhelm-development-contracts/keel-observer-missing/graders/criteria.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("A Chrome viewport may be described as passing its own check", criteria)
+        self.assertIn("does not make the iOS Safari promise pass", criteria)
+
     def test_audit_before_planning_keeps_selection_and_assessment_separate(self):
         case = ROOT / "evals/graphhelm-development-contracts/audit-before-planning"
         prompt = (case / "prompt.md").read_text(encoding="utf-8")

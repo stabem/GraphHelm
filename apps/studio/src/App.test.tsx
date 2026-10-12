@@ -23,6 +23,7 @@ import { MAX_NODE_TIMEOUT_SECONDS, RuntimeError, RuntimeClient as ReadClient, RU
 import type { GraphTopology, MutationEvidence } from "./runtime/types";
 import type { ModelContextLike, WebMcpToolDescriptor } from "./webmcp/adapter";
 import { digestOf } from "./runtime/customs";
+import { readTaskEventRecords } from "./runtime/team-tasks";
 
 const STATUS = {
   executionId: "demo-deploy",
@@ -4049,11 +4050,12 @@ describe("the exchange", () => {
       { sequence: 1, kind: "task.claimed", actor: "lane-a", taskId: "issue-947", issue: 947, lane: "lane-a", branch: "issue-947-work" },
       { sequence: 2, kind: "task.pr_opened", actor: "lane-a", taskId: "issue-947", pr: 955, headSha: "aaaaaaaa", lane: "lane-a", journeys: [] },
       { sequence: 3, kind: "task.merged", actor: "reviewer-a", taskId: "issue-947", pr: 955, mergeSha: "bbbbbbbb", merger: "reviewer-a", closes: [947] },
-      { sequence: 4, kind: "task.pr_opened", actor: "lane-b", taskId: "issue-919", pr: 921, headSha: "cccccccc", lane: "lane-b", journeys: [] },
-      { sequence: 5, kind: "task.merged", actor: "reviewer-a", taskId: "issue-919", pr: 921, mergeSha: "dddddddd", merger: "reviewer-a", closes: [] },
-      { sequence: 6, kind: "task.pr_opened", actor: "lane-c", taskId: "issue-919", pr: 922, headSha: "eeeeeeee", lane: "lane-c", journeys: [] },
-      { sequence: 7, kind: "task.merged", actor: "reviewer-a", taskId: "issue-919", pr: 922, mergeSha: "ffffffff", merger: "reviewer-a", closes: [] },
-      { sequence: 8, kind: "task.pr_opened", actor: "lane-d", taskId: "issue-919", pr: 923, headSha: "11111111", lane: "lane-d", journeys: [] },
+      { sequence: 4, kind: "task.claimed", actor: "lane-b", taskId: "issue-919", issue: 919, lane: "lane-b", branch: "issue-919-work" },
+      { sequence: 5, kind: "task.pr_opened", actor: "lane-b", taskId: "issue-919", pr: 921, headSha: "cccccccc", lane: "lane-b", journeys: [] },
+      { sequence: 6, kind: "task.merged", actor: "reviewer-a", taskId: "issue-919", pr: 921, mergeSha: "dddddddd", merger: "reviewer-a", closes: [] },
+      { sequence: 7, kind: "task.pr_opened", actor: "lane-c", taskId: "issue-919", pr: 922, headSha: "eeeeeeee", lane: "lane-c", journeys: [] },
+      { sequence: 8, kind: "task.merged", actor: "reviewer-a", taskId: "issue-919", pr: 922, mergeSha: "ffffffff", merger: "reviewer-a", closes: [] },
+      { sequence: 9, kind: "task.pr_opened", actor: "lane-d", taskId: "issue-919", pr: 923, headSha: "11111111", lane: "lane-d", journeys: [] },
       { sequence: 133, kind: "task.review_assigned", actor: "lane-d", taskId: "issue-919", pr: 923, headSha: "11111111", lane: "lane-d", reviewer: "reviewer-b" },
       { sequence: 134, kind: "task.review_verdict", actor: "reviewer-a", taskId: "issue-947", pr: 955, headSha: "aaaaaaaa", reviewer: "reviewer-a", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/955#c1" },
     ];
@@ -4092,6 +4094,8 @@ describe("the exchange", () => {
     expect(within(mission).getAllByRole("status").some((item) => item.textContent?.includes("Loading the team's history"))).toBe(true);
     expect(within(mission).queryByRole("region", { name: "Work by stage" })).not.toBeInTheDocument();
     await act(async () => releaseHistory());
+    expect(await readTaskEventRecords({ executionId: "demo-deploy", events: entries.map(({ event }) => event),
+      readEvidence: client.readEvidence })).toHaveLength(entries.length);
     const kanban = await within(mission).findByRole("region", { name: "Work by stage" });
     expect(kanban).not.toHaveTextContent("PR #955");
     expect(kanban).not.toHaveTextContent("PR #921");

@@ -2013,7 +2013,7 @@ fn a_bounded_events_tail_stays_fast_at_six_thousand_events() {
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
     let execution = "exec-latency";
-    let scope = graphhelm_events::RepositoryScope::new(
+    let scope = graphhelm_protocols::RepositoryScope::new(
         graphhelm_protocols::WorkspaceId::parse("workspace-latency").unwrap(),
         graphhelm_protocols::ProjectId::parse("project-latency").unwrap(),
         Some(graphhelm_protocols::ExecutionId::parse(execution).unwrap()),

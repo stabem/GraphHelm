@@ -72,3 +72,9 @@ A zero delta means the base model already behaves this way on that prompt (or a 
 instruction file carries the same rule), so the case guards against regression rather than
 showing the skill's lift. Only `test-audit-deletion` currently shows lift. Harder keel cases are
 the next step.
+
+## Offline selection report
+
+`python tools/evals/selection_report.py <observations.json>` turns recorded outcomes into stable JSON. The input is an array of objects with `case_id`, `status`, `invoked_skills`, `completion`, and `rubric`; `judge` and `human_label` are optional `pass`/`fail` values. `completion` is required only when `status` is `completed`. Every case id must name a directory in this corpus. Any other run status, including timeout, executor error, or missing transcript, is `incomplete` in both selection and completion and enters no other bucket.
+
+Selection and completion are reported separately for `prompted`, `unprompted`, `no_skill`, and `competing_intent` cases. A skill expected by the case grader counts as `correct_trigger`; otherwise a needed skill is a `miss`. No-skill cases count skill use as `false_trigger` and no use as `correct_abstain`. Completion counts `pass`/`fail` only for completed runs. Judge comparisons use only observations with a `human_label`: `false_pass` and `false_fail` compare the judge with that label. Repeated, differing judge verdicts for one case and rubric count as one `repeat_disagreement`. A rubric with no human labels is `unqualified`, and its accuracy counts are null. The report reads local files only; it makes no model, network, or Runtime calls. This is accounting for recorded outcomes, not a measured result or judge qualification.

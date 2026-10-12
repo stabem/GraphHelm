@@ -362,7 +362,8 @@ describe("the mission header fits a phone viewport (#948)", () => {
     const shellPhone = shell.split("@media (max-width: 600px)").at(-1) ?? "";
     const phone = mission.split("@media (max-width: 600px)").at(-1) ?? "";
     expect(shellPhone).toMatch(/\.topbar-mission,\s*\.topbar-menu,\s*\.topbar button\[aria-label="Refresh"\]\s*\{\s*display:\s*none/s);
-    expect(phone).toMatch(/\.mv\[data-page="full"\]\s*>\s*\.mv-head\s*\{[^}]*max-height:\s*120px/s);
+    expect(phone).toMatch(/\.mv\[data-page="full"\]\s*>\s*\.mv-head\s*\{[^}]*flex-wrap:\s*nowrap/s);
+    expect(phone).toMatch(/\.mv\[data-page="full"\]\s*>\s*\.mv-head\s+\.mv-live-age\s*\{[^}]*display:\s*none/s);
     expect(phone).toMatch(/\.mv\[data-page="full"\]\s*>\s*\.mv-body\s*\{[^}]*min-height:\s*75vh[^}]*overflow-y:\s*auto/s);
     expect(phone).toMatch(/\.mv-crumbs\s*\{[^}]*display:\s*none/s);
     expect(mission).toMatch(/\.mv-crumbs\s*>\s*\.mv-dim,\s*\.mv-crumbs\s*>\s*\.mv-brand:last-child\s*\{[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/s);

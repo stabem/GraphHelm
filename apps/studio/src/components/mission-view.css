@@ -168,10 +168,11 @@
   .mv[data-page="full"] > .mv-head {
     box-sizing: border-box;
     flex: 0 0 auto;
-    max-height: 120px;
+    flex-wrap: nowrap;
     padding: 6px 8px;
     gap: 6px;
   }
+  .mv[data-page="full"] > .mv-head .mv-live-age { display: none; }
   .mv[data-page="full"] > .mv-head .mv-crumbs { display: none; }
   .mv[data-page="full"] > .mv-body {
     box-sizing: border-box;

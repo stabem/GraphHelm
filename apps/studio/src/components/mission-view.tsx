@@ -300,7 +300,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
         </div>
         {sub === "test" && <button type="button" className="mv-back" onClick={() => setSub("proof")}>‹ Back to proof</button>}
         {lastRecordAt != null && Number.isFinite(lastRecordAt) && (
-          <span className="mv-live"><span className="mv-live-dot" aria-hidden="true" />{`live · last record ${ago(now - lastRecordAt)}`}</span>
+          <span className="mv-live" aria-label={`live · last record ${ago(now - lastRecordAt)}`}><span className="mv-live-dot" aria-hidden="true" />live<span className="mv-live-age">{` · last record ${ago(now - lastRecordAt)}`}</span></span>
         )}
       </header>
   );

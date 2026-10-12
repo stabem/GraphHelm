@@ -37,15 +37,17 @@ describe("buildWorkGroups", () => {
     const merged = task("merged", { issue: 883, pr: 900, step: "merged", mergeSha: "abc" });
     const released = task("released", { issue: 883, releasedBy: "supervisor", lastSequence: 2 });
     const mixed = buildWorkGroups([merged, released], [])[0]!;
-    expect(mixed.tasks.map((t) => t.key)).toEqual(["merged"]);
-    expect(mixed.rows.map((r) => r.key)).toEqual(["merged"]);
-    expect(mixed.stages).toEqual({ merged: "merged" });
+    expect(mixed.tasks.map((t) => t.key)).toEqual(["merged", "released"]);
+    expect(mixed.rows.map((r) => r.key)).toEqual(["released", "merged"]);
+    expect(mixed.graphRows.map((r) => r.key)).toEqual(["merged"]);
+    expect(mixed.stages).toEqual({ merged: "merged", released: "implement" });
     expect(mixed.releasedKeys).toEqual(["released"]);
 
     const onlyReleased = buildWorkGroups([released], [])[0]!;
-    expect(onlyReleased.tasks).toEqual([]);
-    expect(onlyReleased.rows).toEqual([]);
-    expect(onlyReleased.stages).toEqual({});
+    expect(onlyReleased.tasks.map((t) => t.key)).toEqual(["released"]);
+    expect(onlyReleased.rows).toHaveLength(1);
+    expect(onlyReleased.graphRows).toEqual([]);
+    expect(onlyReleased.stages).toEqual({ released: "implement" });
     expect(onlyReleased.open).toBe(false);
   });
   it("groups by issue with the issue title, PR order and the union of journeys", () => {

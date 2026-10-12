@@ -37,6 +37,8 @@ export interface WorkGroup {
   /** #591: one row per PR, each with its own path along the stage columns; open rows first
    * (most urgent first, the `focusTask` rule), merged rows last. */
   rows: PrRow[];
+  /** Graph rows exclude released pre-PR history while Kanban can still inspect all rows. */
+  graphRows: PrRow[];
 }
 
 /** #591: where a cell sits on its PR's own path. */
@@ -114,7 +116,9 @@ export function buildWorkGroups(tasks: TaskState[], journeys: JourneyView[], run
     const issue = rows[0]!.issue;
     // Released pre-PR claims are history, not slices of the issue's active graph.
     const visible = rows.filter((r) => !(r.pr === null && r.releasedBy !== undefined));
-    const sorted = [...visible].sort(byPr);
+    const sorted = [...rows].sort(byPr);
+    const paths = orderRows(rows).map((t) => ({ ...prPath(t, proven.has(t.key)), open: t.step !== "merged" && t.releasedBy === undefined, task: toMissionTask(t) }));
+    const visibleKeys = new Set(visible.map((t) => t.key));
     const named = rows.find((r) => r.title);
     return {
       key, issue,
@@ -123,12 +127,13 @@ export function buildWorkGroups(tasks: TaskState[], journeys: JourneyView[], run
       tasks: sorted.map(toMissionTask),
       stages: Object.fromEntries(sorted.map((t) => [t.key, workStage(t, proven.has(t.key))])),
       journeyIds: [...new Set(sorted.flatMap((t) => t.journeys))],
-      open: visible.some((r) => r.step !== "merged" && r.releasedBy === undefined),
+      open: rows.some((r) => r.step !== "merged" && r.releasedBy === undefined),
       releasedKeys: rows.filter((r) => r.releasedBy !== undefined).map((r) => r.key),
       latest: Math.max(...rows.map((r) => r.lastSequence ?? 0)),
       summary: sorted.find((r) => r.summary)?.summary ?? null,
       focus: focusTask(visible),
-      rows: orderRows(visible).map((t) => ({ ...prPath(t, proven.has(t.key)), open: t.step !== "merged" && t.releasedBy === undefined, task: toMissionTask(t) })),
+      rows: paths,
+      graphRows: paths.filter((r) => visibleKeys.has(r.key)),
     };
   });
   return groups.sort((a, b) => Number(b.open) - Number(a.open) || b.latest - a.latest);

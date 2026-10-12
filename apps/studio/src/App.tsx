@@ -1903,14 +1903,9 @@ export default function App({
   const envelopes = useEnvelopes(eventList, selected === "" ? undefined : selected, openEvidence);
   const workMessages = useMemo(() => workConversation(selected, eventList, envelopes,
     runTeamRead?.executionId === selected ? runTeamRead : null), [selected, eventList, envelopes, runTeamRead]);
-  const hasRecordedAgentWork = useMemo(() => {
-    const agentSequences = new Set(eventList.filter((event) =>
-      event.kind === "signal_recorded" && event.actorType === "agent").map((event) => event.sequence));
-    return workMessages.some((message) => message.provenance === "stored" && agentSequences.has(message.sequence));
-  }, [eventList, workMessages]);
-  const agentWorkPending = !hasRecordedAgentWork && eventList.some((event) =>
-    event.kind === "signal_recorded" && event.actorType === "agent" && event.evidenceRefs.length > 0
-    && envelopes[event.sequence] === undefined);
+  const hasRecordedAgentWork = useMemo(() => eventList.some((event) =>
+    event.kind === "signal_recorded" && event.actorType === "agent"), [eventList]);
+  const agentWorkPending = events === null;
   const recentActivity = useMemo(() => eventList
     .filter((event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && !isTaskEventSignal(event) && !isRunTeamSignal(event))
     .slice(-5)
@@ -2655,7 +2650,7 @@ export default function App({
   const stepActions = (item: StepItem | DraftItem): ReactNode => {
     if (item.kind === "draft") return <button type="button" onClick={focusPendingProposal}>Review proposal</button>;
     if (item.kind === "waiting_step") {
-      return <button type="button" onClick={pendingQuestion !== null ? () => answerQuestion(pendingQuestion.asker, pendingQuestion.signalId) : focusRunReply}>Answer in chat</button>;
+      return <button type="button" onClick={pendingQuestion !== null ? () => answerQuestion(pendingQuestion.asker, pendingQuestion.signalId) : focusRunReply}>Open run conversation</button>;
     }
     const node = item.nodeId;
     const failure = item.reason === "blocked_node" ? retryFailures.get(node) : undefined;

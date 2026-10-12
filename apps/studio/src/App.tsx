@@ -131,6 +131,7 @@ function budgetSecondsLegal(typed: string | undefined): boolean {
  * Runtime a fresh store open plus a full stream replay, so fewer, larger pages are what make a
  * big run open fast: 200 per page made a 5,000-event run cost 25 serial full replays. */
 const EVENT_PAGE_SIZE = 1000;
+const FIRST_SCREEN_EVENT_SIZE = 200;
 /** How many tail pages are asked for at once once the first page has told us the head. */
 const EVENT_PAGE_PARALLEL = 4;
 const LIST_PAGE_SIZE = 20;
@@ -518,10 +519,10 @@ export default function App({
         }
       });
       try {
-        const [nextStatus, nextEvents] = await Promise.all([
-          client.getStatus(id),
-          readEvents(client, id, 0),
-        ]);
+        const nextStatus = await client.getStatus(id);
+        // The tail contains the work the owner needs now. Paint it before replaying older pages.
+        const recentAfter = Math.max(0, nextStatus.headSequence - FIRST_SCREEN_EVENT_SIZE);
+        const nextEvents = await client.getEvents(id, { after: recentAfter, limit: FIRST_SCREEN_EVENT_SIZE });
         // THE CONNECTION IS A GUARD AXIS TOO (PR #467 review, P1): dispose() cannot cancel a
         // fetch already in flight, and Runtime B can hold the SAME execution id as Runtime A -
         // so a run-id guard alone lets A's late completion land under B. The client object this
@@ -539,6 +540,22 @@ export default function App({
             : nextEvents,
         );
         setError("");
+        if (recentAfter > 0) {
+          // Yield a paint before the older replay. A changed selection/connection discards it.
+          setTimeout(() => {
+            if (clientRef.current !== client || selectedRef.current !== id) return;
+            void readEvents(client, id, 0).then((history) => {
+              if (clientRef.current !== client || selectedRef.current !== id) return;
+              setEvents((previous) => {
+                if (previous === null || previous.head > history.head) return previous;
+                const newTail = previous.events.filter((event) => event.sequence > (history.events.at(-1)?.sequence ?? 0));
+                return { head: Math.max(previous.head, history.head), events: [...history.events, ...newTail] };
+              });
+            }).catch(() => {
+              if (clientRef.current === client && selectedRef.current === id) setError("Older history could not be read.");
+            });
+          }, 0);
+        }
       } catch (reason) {
         // Guarded like the success path: a superseded run's FAILURE must not banner the run the
         // operator moved to, and its finally must not clear that run's busy flag (PR #467 review
@@ -1680,8 +1697,7 @@ export default function App({
     [loadExecution, loadList, observeStatus],
   );
 
-  /** One immutable evidence read per connection and id, shared by the task board and conversation.
-   * Keep invalid-ID refusals; evict other failures so the operator's retry can recover. */
+  /** Keep invalid-ID refusals stable across render passes, including injected clients. */
   const evidenceReads = useRef<{ client: RuntimeClient | null; entries: Map<string, Promise<EvidenceContent>> }>({ client: null, entries: new Map() });
   const openEvidence = useCallback(
     async (executionId: string, evidenceId: string): Promise<EvidenceContent> => {

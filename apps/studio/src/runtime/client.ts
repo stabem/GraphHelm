@@ -493,6 +493,7 @@ export class RuntimeClient {
   readonly #baseUrl: string;
   readonly #fetch: typeof fetch;
   #activeRequests = new Set<AbortController>();
+  #evidenceReads = new Map<string, Promise<EvidenceContent>>();
   /** Set once this Runtime has refused the route listing as fixture-only. See `listRoutes`. */
   #fixtureOnly = false;
 
@@ -509,6 +510,7 @@ export class RuntimeClient {
    * sending `Bearer null`. */
   dispose(): void {
     this.#token = null;
+    this.#evidenceReads.clear();
     for (const controller of this.#activeRequests) controller.abort();
     this.#activeRequests.clear();
   }
@@ -2076,10 +2078,19 @@ export class RuntimeClient {
     if (typeof evidenceId !== "string" || !/^[\x21-\x2e\x30-\x39\x3b-\x5b\x5d-\x7e]{1,128}$/.test(evidenceId)) {
       throw new RuntimeError("evidenceId is not a valid Runtime evidence identifier.", 0, []);
     }
-    return this.#request<EvidenceContent>({
+    const key = `${id}\u0000${evidenceId}`;
+    const existing = this.#evidenceReads.get(key);
+    if (existing) return existing;
+    const pending = this.#request<EvidenceContent>({
       method: "GET",
       path: `/v1/executions/${encodeURIComponent(id)}/evidence/${encodeURIComponent(evidenceId)}`,
     });
+    this.#evidenceReads.set(key, pending);
+    // Transient failures can be retried. Immutable successful evidence stays for this connection.
+    void pending.catch(() => {
+      if (this.#evidenceReads.get(key) === pending) this.#evidenceReads.delete(key);
+    });
+    return pending;
   }
 
   async readDocument(executionId: string, document: { evidenceId: string; index: number }): Promise<{content: string; contentSha256: string}> {

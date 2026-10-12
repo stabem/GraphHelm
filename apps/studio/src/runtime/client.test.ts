@@ -77,6 +77,23 @@ function statusData(overrides: Record<string, unknown> = {}) {
 }
 
 describe("RuntimeClient reads", () => {
+  it("shares one evidence request across three readers of the same connection", async () => {
+    const { fetchImpl, calls } = scriptedFetch([{
+      match: (call) => call.url === "/v1/executions/demo/evidence/signal-1",
+      reply: ok({ id: "signal-1", items: [] }, "execution.evidence"),
+    }]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    const [graph, lanes, thread] = await Promise.all([
+      client.readEvidence("demo", "signal-1"),
+      client.readEvidence("demo", "signal-1"),
+      client.readEvidence("demo", "signal-1"),
+    ]);
+    expect(graph).toEqual(lanes);
+    expect(lanes).toEqual(thread);
+    expect(calls).toHaveLength(1);
+    await client.readEvidence("demo", "signal-1");
+    expect(calls).toHaveLength(1);
+  });
   it("says in words that no Runtime answers when the dev proxy replies 502 with no JSON", async () => {
     const fetchImpl = vi.fn(async () => new Response("", { status: 502 })) as unknown as typeof fetch;
     const client = new RuntimeClient("tok", { fetch: fetchImpl });

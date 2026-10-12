@@ -3050,7 +3050,7 @@ export default function App({
             </div>
             {(canvasTab === "graph" || canvasTab === "journey") && (
               <div id="studio-panel-graph" role="tabpanel" aria-label={canvasTab === "journey" ? "Proof" : "Graph"}>
-                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && taskGraphs?.executionId !== selected && (recentTaskGraphs?.executionId !== selected || recentTaskGraphs.records.length === 0)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
+                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} events={eventList} envelopes={envelopes} wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && taskGraphs?.executionId !== selected && (recentTaskGraphs?.executionId !== selected || recentTaskGraphs.records.length === 0)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
                   initialView={canvasTab === "journey" ? "proof" : "graph"} focusJourneyId={journeyContract}
                   flows={flowsRead.view} onApprove={approveFlow} onWatch={watchFlow}
 

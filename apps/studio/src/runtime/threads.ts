@@ -83,9 +83,11 @@ export function describeActivity(item: ActivityItem, names: Record<string, strin
     return { sequence: item.sequence, text: `${who} recorded ${documentKind(item.text ?? "")}`, at: item.occurredAt };
   }
   const words = firstLine(item.text ?? "", 80);
-  const to = envelopes[item.sequence]?.to ?? null;
+  const envelope = envelopes[item.sequence];
+  const to = envelope?.to ?? null;
   const text = words === ""
     ? `${who} recorded a sealed note`
+    : envelope?.replyTo !== null && envelope?.replyTo !== undefined && to === operatorId ? `${who} replied to you “${words}”`
     : to === operatorId ? `${who} asked you “${words}”`
     : to !== null ? `${who} told ${names[to] ?? to} “${words}”`
     : `${who} said “${words}”`;

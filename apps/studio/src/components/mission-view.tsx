@@ -21,6 +21,9 @@ import { realName } from "../runtime/lane-bars";
 import { laneLiveness } from "../runtime/stage-health";
 import { WORK_STAGES } from "../runtime/work-groups";
 import { LaneActions, laneRoster, type LaneNote } from "./lane-actions";
+import { laneRepliedAfterAsk } from "./lane-actions";
+import type { EnvelopeRecord } from "../graph/ledger";
+import type { RuntimeEvent } from "../runtime/types";
 import type { SlotView } from "../runtime/slots";
 import type { GraphNode } from "../graph/model";
 import { readable } from "./format";
@@ -36,6 +39,8 @@ function timerTask(task: TaskState): TaskState {
 }
 
 interface Props {
+  events?: RuntimeEvent[];
+  envelopes?: EnvelopeRecord;
   journeys: JourneyView[];
   tasks: TaskState[];
   taskRecords?: TaskEventRecord[];
@@ -226,7 +231,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, lanesHistoryLoading = historyLoading, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, lanesHistoryLoading = historyLoading, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
   const journeys = useMemo(() => {
     const known = new Set(compiledJourneys.map((journey) => journey.contractId));
     return [...compiledJourneys, ...(flows?.flows ?? []).filter((flow) => !known.has(flow.id)).map((flow): JourneyView => ({
@@ -400,6 +405,7 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
         await onReviewAssigned(task, reviewer);
       }}
       askedAt={askedAt[id]?.at ?? null} listening={wakeListeners?.includes(lane) ?? null}
+      answered={askedAt[id] !== undefined && laneRepliedAfterAsk(events, envelopes, lane, askedAt[id].at)}
       askedListening={askedAt[id]?.listening} onAsked={(at, listening) => setAskedAt((m) => ({ ...m, [id]: { at, listening } }))} />;
   } : undefined;
   const shownTask = taskKey === undefined ? group?.focus ?? null : taskKey;

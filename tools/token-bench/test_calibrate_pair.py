@@ -67,10 +67,10 @@ def test_calibration_refuses_more_than_two_hundred_cohorts():
 
 
 def test_calibration_refuses_too_many_or_duplicate_task_counts():
-    too_many = run_calibration("--task-counts", *("1" for _ in range(13)))
+    too_many = run_calibration("--task-counts", *(str(count) for count in range(1, 14)))
     assert too_many.returncode == 1
     assert too_many.stdout == ""
-    assert "at most 12 entries" in too_many.stderr
+    assert too_many.stderr.strip() == "error: task counts must contain at most 12 entries"
 
     duplicate = run_calibration("--task-counts", "6", "6")
     assert duplicate.returncode == 1

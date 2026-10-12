@@ -389,8 +389,10 @@ class HandoffTests(unittest.TestCase):
                                 MODULE.receive("codex", "receiver", "offer-1")
                             else:
                                 MODULE.status("codex", "receiver", None)
-                        self.assertEqual(len(RuntimeHandler.requests), 1)
+                        self.assertEqual(len(RuntimeHandler.requests), len(pages))
                         self.assertIn("/events?after=0", RuntimeHandler.requests[0][1])
+                        self.assertTrue(all(request[0] == "GET" and "/events?after=" in request[1]
+                                            for request in RuntimeHandler.requests))
 
     def test_event_page_bounds_allow_empty_and_advancing_heads(self):
         valid = [[{"events": [], "head": 0}],

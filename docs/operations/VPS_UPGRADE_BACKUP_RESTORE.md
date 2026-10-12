@@ -121,8 +121,12 @@ systemctl start graphhelm.service
 
 Wait for `/health` to return successfully before reconnecting clients.
 
-The unauthenticated health envelope includes `data.previousExit`: `null` on the first
-start, otherwise `{state, at, pid, location?, lastPanic?}` for the previous run on this events directory.
+The unauthenticated health envelope includes `data.currentRun`, the persisted
+`{instance, pid, startedAt}` identity for the serving process, and `data.previousExit`:
+`null` on the first start, otherwise `{instance, state, at, pid, location?, lastPanic?}`
+for the immediately previous run on this events directory. Old lifecycle records without
+an instance decode with `previousExit.instance: null`; this is unknown history, not the
+current Runtime identity.
 `state` is `clean`, `serve_error`, `panicked`, or `vanished`. Times are Unix seconds;
 for `vanished`, `at` is the previous start time, not an inferred time of death.
 `location`, when present, is a sanitized crate-relative Rust file and line or `unknown`.

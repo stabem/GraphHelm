@@ -112,6 +112,7 @@ fn serve_invalid(message: &str, pointer: &str) -> Failure {
 #[derive(Clone)]
 struct ServeState {
     previous_exit: serde_json::Value,
+    current_run: serde_json::Value,
     token: Arc<[u8]>,
     /// #380: the agent session token (`events.agent.token`), minted beside the owner token. It
     /// authenticates an agent session project-wide, forces the request's actor type to `agent`,
@@ -236,6 +237,7 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         super::runtime_record::new_instance().map_err(|message| serve_invalid(&message, "/"))?;
     let state = ServeState {
         previous_exit: serde_json::Value::Null,
+        current_run: serde_json::Value::Null,
         token: Arc::from(token.into_bytes()),
         agent_session_token: Arc::from(agent_session_token.into_bytes()),
         agent_credentials: Arc::new(agent_credentials),
@@ -564,8 +566,10 @@ async fn serve_forever(
     // verified prefix and verify only appended bytes.
     event_store(&state.events)
         .map_err(|_| serve_invalid("the events repository could not be opened", "/events"))?;
-    let (lifecycle, previous_exit) = lifecycle::Lifecycle::start(&state.events)?;
+    let (lifecycle, previous_exit, current_run) =
+        lifecycle::Lifecycle::start(&state.events, &state.instance)?;
     state.previous_exit = previous_exit;
+    state.current_run = current_run;
     #[cfg(debug_assertions)]
     if std::env::var("GRAPHHELM_TEST_PANIC_ON_BOOT").as_deref() == Ok("1") {
         panic!("private-panic-payload");
@@ -896,7 +900,7 @@ async fn health(State(state): State<ServeState>) -> impl IntoResponse {
         StatusCode::OK,
         Outcome::success(
             HEALTH_COMMAND,
-            serde_json::json!({ "instance": &*state.instance, "projectId": state.project_id.as_deref(), "previousExit": state.previous_exit }),
+            serde_json::json!({ "instance": &*state.instance, "projectId": state.project_id.as_deref(), "currentRun": state.current_run, "previousExit": state.previous_exit }),
         )
         .output,
     )

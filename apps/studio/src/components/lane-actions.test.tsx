@@ -17,7 +17,7 @@ describe("laneRoster", () => {
 describe("LaneActions", () => {
   const M = 60_000;
   const base = { listening: true, lane: "gh-claude-7", step: "Review", pr: 609, roster: laneRoster(["gh-claude-3"], lanes), lastSeenAt: 1_000, now: 10 * M };
-  it("Ask posts an operator_note, then reads asked · waiting, then Answered once the lane records anything newer", async () => {
+  it("clears the asked waiting label when the lane replies", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const onAsked = vi.fn();
     const { rerender } = render(<LaneActions {...base} askedAt={null} onAsked={onAsked} send={send} />);
@@ -27,8 +27,8 @@ describe("LaneActions", () => {
     rerender(<LaneActions {...base} askedAt={10 * M} onAsked={onAsked} send={send} now={12 * M} />);
     expect(screen.getByText("Asked 2 min ago · waiting")).toBeInTheDocument();
     rerender(<LaneActions {...base} askedAt={10 * M} onAsked={onAsked} send={send} now={13 * M} lastSeenAt={12 * M} />);
-    expect(screen.getByText(/Asked 3 min ago.*waiting/)).toBeInTheDocument();
-    expect(screen.getByText(/Activity observed 1 min ago; reply is unconfirmed/)).toBeInTheDocument();
+    expect(screen.getByText("Answered 1 min ago")).toBeInTheDocument();
+    expect(screen.queryByText(/waiting/)).not.toBeInTheDocument();
   });
   it("an ask without a live listener says nobody is listening", async () => {
     const send = vi.fn().mockResolvedValue(undefined);

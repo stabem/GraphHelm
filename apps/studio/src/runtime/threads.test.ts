@@ -28,6 +28,16 @@ describe("describeActivity", () => {
       .toBe("kit-9 recorded a sealed note");
   });
 
+  it("renders a lane operator_note with replyTo as an answer to the owner's ask", () => {
+    const names = namesOf(BOTS);
+    const envelopes = {
+      10: { to: "kit-1", replyTo: null, text: "Owner asks: status?" },
+      11: { to: "studio-operator", replyTo: "ask-10", text: "The fix is ready." },
+    };
+    expect(describeActivity({ sequence: 11, actorId: "kit-1", occurredAt: null, text: "The fix is ready." }, names, envelopes, "studio-operator").text)
+      .toBe("loja kit 1 replied to you “The fix is ready.”");
+  });
+
   it("describes journey records in words, never as their JSON", () => {
     const names = namesOf(BOTS);
     const title = (contractId: string, stepId: string) => ({ "kit:cart": "Cart", "kit:home": "Home", "kit:kit": "Kit page" } as Record<string, string>)[`${contractId}:${stepId}`] ?? stepId;

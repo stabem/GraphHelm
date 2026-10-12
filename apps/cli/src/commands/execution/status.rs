@@ -232,7 +232,10 @@ fn render_read(read: &Read, spec: Option<&GraphSpec>) -> serde_json::Value {
                 .get(lease.session_id.as_str())
                 .filter(|live| {
                     live.armed_at_sequence == event.sequence
-                        && live.matures_at.as_ref().is_none_or(|at| at.as_datetime() > &now)
+                        && live
+                            .matures_at
+                            .as_ref()
+                            .is_none_or(|at| at.as_datetime() > &now)
                 })
                 .map(|_| event.actor.id().as_str())
         })

@@ -1943,10 +1943,22 @@ fn operator_notes_listener_status_drops_matured_lease_without_append() {
     start_execution(&events, directory.path(), "exec-matured-listener");
     let (_guard, address, token) = serve(&events);
     let path = "/v1/executions/exec-matured-listener";
-    arm_lease_bounded(&events, "exec-matured-listener", "matured-listener", head(&events), Some(1));
-    assert_eq!(get_json(&address, &token, path)["data"]["wakeListeners"], serde_json::json!(["agent-sleeper"]));
+    arm_lease_bounded(
+        &events,
+        "exec-matured-listener",
+        "matured-listener",
+        head(&events),
+        Some(1),
+    );
+    assert_eq!(
+        get_json(&address, &token, path)["data"]["wakeListeners"],
+        serde_json::json!(["agent-sleeper"])
+    );
     std::thread::sleep(Duration::from_millis(1200));
-    assert_eq!(get_json(&address, &token, path)["data"]["wakeListeners"], serde_json::json!([]));
+    assert_eq!(
+        get_json(&address, &token, path)["data"]["wakeListeners"],
+        serde_json::json!([])
+    );
 }
 
 /// Cost: three local servers and one ten-second no-ring observation; temp stores only.

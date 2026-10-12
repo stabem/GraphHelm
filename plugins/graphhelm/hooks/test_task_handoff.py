@@ -279,7 +279,7 @@ class HandoffTests(unittest.TestCase):
             invalid_content = json.dumps(invalid_content, separators=(",", ":"))
             invalid_digest = hashlib.sha256(invalid_content.encode()).hexdigest()
 
-            for mutation, message in (("missing", None), ("corrupt", "digest"),
+            for mutation, message in (("missing", None), ("corrupt", "hash"),
                                       ("invalid", "receipt briefing")):
                 RuntimeHandler.evidence[evidence_id] = (original_content, original_digest)
                 receipt_event.clear()

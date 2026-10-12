@@ -70,9 +70,9 @@ def test_calibration_refuses_too_many_or_duplicate_task_counts():
     too_many = run_calibration("--task-counts", *("1" for _ in range(13)))
     assert too_many.returncode == 1
     assert too_many.stdout == ""
-    assert "at most 12" in too_many.stderr
+    assert "at most 12 entries" in too_many.stderr
 
     duplicate = run_calibration("--task-counts", "6", "6")
     assert duplicate.returncode == 1
     assert duplicate.stdout == ""
-    assert "unique" in duplicate.stderr
+    assert "must be unique" in duplicate.stderr

@@ -331,14 +331,17 @@ describe("the Graph WORK rail fits a narrow viewport (#884)", () => {
 });
 
 describe("the task inspector fits its ladder and preserves lane names (#918, #926)", () => {
-  it("keeps ladder labels on one line without breaking words", () => {
+  it("keeps the ladder bar full width and places readable labels in an intrinsic-width row", () => {
     const stylesheet = STYLESHEETS["./styles.css"] ?? "";
-    const rule = stylesheet.match(/\.mg-inspector\s+\.mg-ladder\s+li\s*\{([^}]*)\}/)?.[1] ?? "";
-    expect(rule).toMatch(/min-width:\s*0/);
-    expect(rule).toMatch(/white-space:\s*nowrap/);
-    expect(rule).toMatch(/overflow-wrap:\s*normal/);
-    expect(rule).toMatch(/overflow:\s*hidden/);
-    expect(rule).toMatch(/text-overflow:\s*ellipsis/);
+    const listRule = stylesheet.match(/\.mg-inspector\s+\.mg-ladder\s*\{([^}]*)\}/)?.[1] ?? "";
+    const itemRule = stylesheet.match(/\.mg-inspector\s+\.mg-ladder\s+li\s*\{([^}]*)\}/)?.[1] ?? "";
+    const rungRule = stylesheet.match(/\.mg-inspector\s+\.mg-ladder\s+\.mg-rung\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(listRule).toMatch(/grid-template-columns:\s*repeat\(5,\s*max-content\)/);
+    expect(listRule).toMatch(/justify-content:\s*space-between/);
+    expect(itemRule).toMatch(/white-space:\s*nowrap/);
+    expect(itemRule).not.toMatch(/overflow:\s*hidden/);
+    expect(itemRule).not.toMatch(/text-overflow:\s*ellipsis/);
+    expect(rungRule).toMatch(/width:\s*100%/);
   });
 
   it("ellipsizes lane names without breaking words and keeps the full name in the title", () => {

@@ -424,6 +424,47 @@ fn project_discovery_refuses_missing_or_ambiguous_project_bindings() {
     drop((runtime_a, runtime_b));
 }
 
+/// Restart records must not hide the one Runtime whose health proves its identity.
+/// Cost: one disposable Runtime and MCP client; local loopback only.
+#[test]
+fn project_discovery_ignores_more_than_sixteen_stale_restart_records() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = dir.path().join("registry");
+    let project = dir.path().join("project");
+    let events = project.join(".graphhelm").join("events");
+    std::fs::create_dir_all(&events).unwrap();
+    let _runtime = serve_with_project(&events, free_port(), &registry, Some(&project));
+    let project_records = std::fs::read_dir(registry.join("projects"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let live_path = std::fs::read_dir(&project_records)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(live_path).unwrap()).unwrap();
+    for index in 0..17_u32 {
+        let stale_instance = format!("{index:032x}");
+        record["instance"] = serde_json::json!(stale_instance);
+        std::fs::write(
+            project_records.join(format!("{stale_instance}.json")),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+    }
+    let mut bridge = Bridge::start_project(&project, &registry);
+    let reply = bridge.list();
+    assert!(
+        authorized(&reply),
+        "one live Runtime must be selected: {reply}"
+    );
+}
+
 fn authorized(reply: &str) -> bool {
     !reply.contains("GHCLI007")
         && !reply.contains("\"isError\":true")

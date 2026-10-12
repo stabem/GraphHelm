@@ -4103,11 +4103,12 @@ describe("the exchange", () => {
       readEvidence: client.readEvidence });
     expect(verified).toHaveLength(entries.length);
     expect(foldTaskEvents(verified).find((task) => task.pr === 923)).toMatchObject({ step: "review", currentReviewer: "reviewer-b" });
-    const kanban = await within(mission).findByRole("region", { name: "Work by stage" });
+    expect(await screen.findByText("PR #923")).toBeInTheDocument();
+    const kanban = screen.getByRole("region", { name: "Work by stage" });
     expect(kanban).not.toHaveTextContent("PR #955");
     expect(kanban).not.toHaveTextContent("PR #921");
     expect(kanban).not.toHaveTextContent("PR #922");
-    expect(await within(kanban).findByText("PR #923")).toBeInTheDocument();
+    expect(within(kanban).getByText("PR #923")).toBeInTheDocument();
     expect(kanban.querySelector('[data-col="review"]')).toHaveTextContent("PR #923");
     expect(kanban).toHaveTextContent("reviewer-b");
   });

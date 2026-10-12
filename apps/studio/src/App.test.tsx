@@ -2083,6 +2083,38 @@ describe("the conversation moves on its own", () => {
     expect(await within(panel).findByText(/waiting for a reply/i)).toBeInTheDocument();
   });
 
+  it("keeps an unconfirmed reply waiting when only activity arrives", async () => {
+    const activity = {
+      sequence: 9,
+      kind: "node_outcome_recorded",
+      payload: { nodeId: "implementation", outcome: "succeeded", nextState: "completed" },
+      occurredAt: "2026-08-30T13:15:00Z",
+      actorId: "system-runtime",
+      actorType: "system",
+      idempotencyKey: "k9",
+      eventId: "event-9",
+      evidenceRefs: [],
+    };
+    const client = stubClient({
+      getEvents: vi.fn(async () => ({ head: 9, events: [...conversationEvents(false), activity] })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    const panel = await screen.findByLabelText(/^Run (?!side panel)/);
+    expect(await within(panel).findByText(/waiting for a reply/i)).toBeInTheDocument();
+  });
+
+  it("clears the waiting state when an answer arrives", async () => {
+    const client = stubClient({
+      getEvents: vi.fn(async () => ({ head: 9, events: conversationEvents(true) })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    const panel = await screen.findByLabelText(/^Run (?!side panel)/);
+    await within(panel).findAllByText(/Said:/);
+    expect(within(panel).queryByText(/waiting for a reply/i)).not.toBeInTheDocument();
+  });
+
   /** #1083: nobody replies on an ended run, so the receipt says the run has ended instead of
    * promising a reply that cannot come. */
   it("says the run has ended instead of waiting for a reply on a completed run", async () => {

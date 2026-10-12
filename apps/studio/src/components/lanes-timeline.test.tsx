@@ -144,8 +144,9 @@ describe("LanesTimeline", () => {
       t({ pr: 923, step: "review", rounds: [roundAt(3), roundAt(1)] }),
       t({ pr: 924, step: "merged", rounds: [roundAt(2), roundAt(1)] }),
     ]} />);
-    expect(container.querySelector('[data-kind="pingpong"]')).toHaveTextContent("#923 · 2 BLOCKs#924 · 2 BLOCKs");
-    expect(container.querySelector('[data-kind="pingpong"]')).not.toHaveTextContent("#554");
+    const pingPong = container.querySelector('[data-kind="pingpong"]')!;
+    expect(pingPong).toHaveTextContent("#923 · 2 BLOCKs, #924 · 2 BLOCKs");
+    expect(pingPong).not.toHaveTextContent("#554");
   });
 
   it("a card with nothing reads none right now", () => {

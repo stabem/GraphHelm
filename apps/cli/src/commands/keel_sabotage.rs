@@ -164,6 +164,32 @@ impl Worktree {
     /// observer driver is copied, and every `node_modules` (the root and, in a pnpm or npm
     /// workspace, each package's own) is linked read-only by convention. Returns the linked paths.
     fn carry_toolchain(&self, repo: &Path) -> Result<Vec<String>, String> {
+        // Approval records are ignored by Git, but validation in the detached worktree
+        // must see the same owner decisions as the source project.
+        let records = Path::new(".graphhelm").join("events");
+        let source_records = repo.join(&records);
+        if source_records.is_dir() {
+            let mut pending = vec![records];
+            while let Some(relative) = pending.pop() {
+                let source = repo.join(&relative);
+                let target = self.path.join(&relative);
+                std::fs::create_dir_all(&target).map_err(|error| error.to_string())?;
+                for entry in std::fs::read_dir(source).map_err(|error| error.to_string())? {
+                    let entry = entry.map_err(|error| error.to_string())?;
+                    let kind = entry.file_type().map_err(|error| error.to_string())?;
+                    if kind.is_symlink() {
+                        return Err("owner record store contains a link".into());
+                    }
+                    let child = relative.join(entry.file_name());
+                    if kind.is_dir() {
+                        pending.push(child);
+                    } else if kind.is_file() {
+                        std::fs::copy(entry.path(), self.path.join(child))
+                            .map_err(|error| error.to_string())?;
+                    }
+                }
+            }
+        }
         let observers = Path::new(".graphhelm").join("observers");
         let source = repo.join(&observers);
         if source.is_dir() {

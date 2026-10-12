@@ -8234,6 +8234,10 @@ mod limit_tests {
         drop(build);
         let cache = PrefixCache::new(std::time::Duration::from_secs(3600));
         drop(shared_repository(directory.path(), &cache));
+        {
+            let mut slot = cache.slot.lock().unwrap();
+            slot.as_mut().unwrap().full_verified_at -= std::time::Duration::from_secs(3601);
+        }
         let again = shared_repository(directory.path(), &cache);
         assert_eq!(
             counters(&again),

@@ -208,17 +208,15 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
       </div>
       <ul className="lt-lanes" aria-label="Agent lanes" ref={listRef}>
         {lanes.map((l) => {
-          const open = l.bars.some((b) => b.open);
           const status = boardByLane.get(l.lane)?.status;
-          const presence = status === "offline" ? "offline" : status === "building" ? "busy" : status === "build_wait" || status === "waiting" ? "waiting" : status === "silent" || status === "stale" || (!status && l.silent) ? "silent" : status === "working" ? "busy" : status === "free" ? "idle" : open ? "busy" : "idle";
           const pack = packBars(l.bars);
           const trackH = pack.rows * SUB_H + (pack.rows - 1) * SUB_GAP + TRACK_PAD * 2;
           return (
             <li key={l.lane} className="lt-row lt-lane" style={{ height: Math.max(44, trackH + 14) }}>
               <span className="lt-who">
-                <span className="lt-dot" data-state={presence} />
+                <span className="lt-dot" data-state={status} />
                 <span className="lt-name">{botOf(l) ?? l.lane}</span>
-                {presence === "silent" ? <span className="lt-flag" data-flag="silent">silent</span> : presence === "offline" ? <span className="lt-flag" data-flag="offline">offline</span> : presence === "waiting" ? <span className="lt-flag" data-flag="waiting">waiting</span> : presence === "idle" && <span className="lt-flag" data-flag="free">free</span>}
+                {status && <span className="lt-flag" data-flag={status}>{PILL[status]}</span>}
               </span>
               <div className="lt-track" style={{ height: trackH }} data-subrows={pack.rows}>
                 <span className="lt-nowline" aria-hidden="true" />

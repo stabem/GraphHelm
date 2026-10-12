@@ -28,7 +28,8 @@ describe("LanesTimeline", () => {
     const board = screen.getByRole("list", { name: "Agent board" });
     expect(within(board).getByText("codex-12").closest("li")!.querySelector(".ab-pill")).toHaveAttribute("data-status", "waiting");
     const timeline = within(screen.getByRole("list", { name: "Agent lanes" })).getByText("codex-12").closest("li")!;
-    expect(timeline.querySelector('.lt-flag[data-flag="waiting"]')).toHaveTextContent("waiting");
+    expect(timeline.querySelector('.lt-flag[data-flag="waiting"]')).toHaveTextContent("Waiting");
+    expect(timeline.querySelector('.lt-dot')).toHaveAttribute("data-state", "waiting");
     expect(screen.getByRole("button", { name: "Waiting 1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Free 0" })).toBeInTheDocument();
     expect(container.querySelector('[data-kind="free"]')).toHaveTextContent("FREE HANDSnone right now");

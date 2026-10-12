@@ -143,15 +143,42 @@ fn serve(events: &Path) -> (ServerGuard, String, String) {
 fn lifecycle_killed_runtime_is_reported_as_vanished() {
     let dir = tempfile::tempdir().unwrap();
     let events = dir.path().join("events");
-    let (server, base, _) = serve(&events);
-    let first = json_body(&raw_request(&format!("{base}/health"), None).unwrap());
-    assert_eq!(first["data"].get("previousExit"), Some(&Value::Null));
-    let pid = server.child.id();
-    drop(server);
-    let (_next, base, _) = serve(&events);
+    let path = dir.path().join("events.runtime-lifecycle.json");
+    let mut prior: Option<(Value, u32)> = None;
+    for _ in 0..3 {
+        let (server, base, _) = serve(&events);
+        let health = json_body(&raw_request(&format!("{base}/health"), None).unwrap());
+        let data = &health["data"];
+        let record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let instance = data["instance"].as_str().unwrap();
+        assert!(!instance.is_empty());
+        assert_eq!(data["currentRun"]["instance"], instance);
+        assert_eq!(data["currentRun"]["pid"], server.child.id());
+        assert_eq!(data["currentRun"]["startedAt"], record["startedAt"]);
+        assert_eq!(record["instance"], instance);
+        assert_eq!(record["pid"], server.child.id());
+        if let Some((previous_instance, previous_pid)) = &prior {
+            assert_eq!(data["previousExit"]["state"], "vanished");
+            assert_eq!(data["previousExit"]["pid"], *previous_pid);
+            assert_eq!(data["previousExit"]["instance"], previous_instance);
+        } else {
+            assert_eq!(data.get("previousExit"), Some(&Value::Null));
+        }
+        prior = Some((Value::String(instance.to_owned()), server.child.id()));
+        drop(server);
+    }
+}
+
+#[test]
+fn lifecycle_legacy_record_has_no_instance() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    std::fs::write(dir.path().join("events.runtime-lifecycle.json"),
+        br#"{"pid":17,"startedAt":123,"version":"old","state":"running"}"#).unwrap();
+    let (_server, base, _) = serve(&events);
     let reply = json_body(&raw_request(&format!("{base}/health"), None).unwrap());
     assert_eq!(reply["data"]["previousExit"]["state"], "vanished");
-    assert_eq!(reply["data"]["previousExit"]["pid"], pid);
+    assert_eq!(reply["data"]["previousExit"]["instance"], Value::Null);
 }
 
 #[test]

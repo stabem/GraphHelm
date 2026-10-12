@@ -151,7 +151,16 @@ impl Worktree {
         let text = path.to_string_lossy().to_string();
         git(
             repo,
-            &["worktree", "add", "--detach", "--quiet", &text, "HEAD"],
+            &[
+                "-c",
+                "core.autocrlf=false",
+                "worktree",
+                "add",
+                "--detach",
+                "--quiet",
+                &text,
+                "HEAD",
+            ],
         )?;
         Ok(Self {
             repo: repo.to_path_buf(),
@@ -218,7 +227,10 @@ impl Worktree {
     }
 
     fn apply(&self, patch: &Path) -> Result<(), String> {
-        git(&self.path, &["apply", &patch.to_string_lossy()])
+        git(
+            &self.path,
+            &["apply", "--ignore-space-change", &patch.to_string_lossy()],
+        )
     }
 }
 

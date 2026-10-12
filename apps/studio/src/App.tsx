@@ -1707,6 +1707,23 @@ export default function App({
   const [claudeTaskRead, setClaudeTaskRead] = useState<ClaudeTaskReadModel | null>(null);
   // #391: the per-task graphs, folded from the run's `task.*` records.
   const [taskGraphs, setTaskGraphs] = useState<{ executionId: string; tasks: TaskState[]; records: TaskEventRecord[] } | null>(null);
+  // A recent page gives the Graph useful work while the complete history is still rebuilding.
+  // It is provisional: the full fold below replaces it, and the view keeps its loading label.
+  const [recentTaskGraphs, setRecentTaskGraphs] = useState<{ executionId: string; tasks: TaskState[]; records: TaskEventRecord[] } | null>(null);
+  useEffect(() => {
+    const client = clientRef.current;
+    const head = selectedSummary?.headSequence;
+    if (!client || !selected || head === undefined) return;
+    let cancelled = false;
+    setRecentTaskGraphs(null);
+    void client.getEvents(selected, { after: Math.max(0, head - EVENT_PAGE_SIZE), limit: EVENT_PAGE_SIZE })
+      .then((page) => readTaskEventRecords({ executionId: selected, events: page.events, readEvidence: openEvidence }))
+      .then((records) => {
+        if (!cancelled && clientRef.current === client && selectedRef.current === selected)
+          setRecentTaskGraphs({ executionId: selected, tasks: foldTaskEvents(records), records });
+      }, () => { /* The complete read remains authoritative. */ });
+    return () => { cancelled = true; };
+  }, [selected, selectedSummary?.headSequence, openEvidence]);
   useEffect(() => {
     if (!selected || events === null) {
       setRunTeamRead(null);
@@ -2135,7 +2152,9 @@ export default function App({
   const [journeyContract, setJourneyContract] = useState<string | null>(null);
   const botNameOf = useCallback((id: string) => botNames[id] ?? id, [botNames]);
   // #393: one thread per task, opened by the run's task.* records.
-  const runTasks = taskGraphs?.executionId === selected ? taskGraphs.tasks : null;
+  const currentTaskGraphs = taskGraphs?.executionId === selected ? taskGraphs
+    : recentTaskGraphs?.executionId === selected ? recentTaskGraphs : null;
+  const runTasks = currentTaskGraphs?.tasks ?? null;
   // #479: a message's issue/PR numbers link to the run's GitHub repository (read off its task
   // records) and a journey id it names opens the Journey tab on that journey.
   const saidLinks = useMemo<SaidLinkContext>(() => ({
@@ -2190,24 +2209,27 @@ export default function App({
   const [missionRuns, setMissionRuns] = useState<Record<string, JourneyRunView | null>>({});
   const [missionRunsRevision, setMissionRunsRevision] = useState(0);
   const [missionFrames, setMissionFrames] = useState<Record<string, string>>({});
+  const [selectedJourney, setSelectedJourney] = useState<string | null>(null);
+  useEffect(() => setSelectedJourney(null), [selected]);
+  const activeJourney = selectedJourney ?? journeyContract
+    ?? (canvasTab === "journey" ? journeysView?.journeys[0]?.contractId ?? flowsRead.view?.flows[0]?.id ?? null : null);
   useEffect(() => {
     const client = clientRef.current;
-    if (client === null || (canvasTab !== "graph" && canvasTab !== "journey") || journeysView === null) return undefined;
+    if (client === null || (canvasTab !== "graph" && canvasTab !== "journey") || !activeJourney) return undefined;
     let cancelled = false;
-    for (const journey of journeysView.journeys) {
-      client.journeyRun(journey.contractId).then(
-        (run) => { if (!cancelled) setMissionRuns((before) => ({ ...before, [journey.contractId]: run })); },
-        () => { if (!cancelled) setMissionRuns((before) => ({ ...before, [journey.contractId]: null })); });
-    }
+    client.journeyRun(activeJourney).then(
+      (run) => { if (!cancelled) setMissionRuns((before) => ({ ...before, [activeJourney]: run })); },
+      () => { if (!cancelled) setMissionRuns((before) => ({ ...before, [activeJourney]: null })); });
     return () => { cancelled = true; };
-  }, [canvasTab, journeysView, missionRunsRevision]);
+  }, [canvasTab, activeJourney, missionRunsRevision]);
   // Frames are fetched once per (journey, screen, run state); a URL is revoked only when its frame is
   // replaced or the Studio unmounts, never while it may still be on screen.
   const missionFrameKeys = useRef(new Map<string, { key: string; url: string | null }>());
   useEffect(() => {
     const client = clientRef.current;
-    if (client === null || (canvasTab !== "graph" && canvasTab !== "journey")) return;
+    if (client === null || (canvasTab !== "graph" && canvasTab !== "journey") || !activeJourney) return;
     for (const [contractId, run] of Object.entries(missionRuns)) {
+      if (contractId !== activeJourney) continue;
       for (const [screenId, screen] of Object.entries(run?.screens ?? {})) {
         if (!screen.frame) continue;
         const slot = `${contractId} ${screenId}`;
@@ -2225,7 +2247,7 @@ export default function App({
         }, () => { missionFrameKeys.current.delete(slot); });
       }
     }
-  }, [canvasTab, missionRuns]);
+  }, [canvasTab, missionRuns, activeJourney]);
   useEffect(() => {
     const kept = missionFrameKeys.current;
     return () => { for (const entry of kept.values()) if (entry.url !== null) URL.revokeObjectURL(entry.url); kept.clear(); };
@@ -3028,7 +3050,7 @@ export default function App({
             </div>
             {(canvasTab === "graph" || canvasTab === "journey") && (
               <div id="studio-panel-graph" role="tabpanel" aria-label={canvasTab === "journey" ? "Proof" : "Graph"}>
-                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={taskGraphs?.executionId === selected ? taskGraphs.records : []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} runFor={missionRunFor}
+                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
                   initialView={canvasTab === "journey" ? "proof" : "graph"} focusJourneyId={journeyContract}
                   flows={flowsRead.view} onApprove={approveFlow} onWatch={watchFlow}
 

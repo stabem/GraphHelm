@@ -15,6 +15,14 @@ const bot = (key: string, name: string, actorId: string | null = key): Bot => ({
 const base = { journeys: [], tasks: [], now: 0, runFor: () => null, frameUrl: () => null, onMarkSafe: vi.fn() };
 
 describe("#647 MissionView: the Team canvas controls on the Graph page", () => {
+  it("shows loading rather than an empty journey before task history settles", () => {
+    render(<MissionView {...base} lanes={[]} historyLoading journeys={[{
+      contractId: "watch", title: "Watch", arrows: [], steps: [{ stepId: "open", screen: { screenId: "open", title: "Open", scopePaths: [] }, promises: [] }],
+    }]} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading work");
+    expect(screen.queryByText("No work linked to this journey yet")).toBeNull();
+    expect(screen.queryByText("0 in flight")).toBeNull();
+  });
   it("keeps the reopened name field and draft when the saved alias arrives", async () => {
     const userEvent = fastUserEvent();
     const onNameBot = vi.fn();

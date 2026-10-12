@@ -345,6 +345,60 @@ class HandoffTests(unittest.TestCase):
             with self.assertRaises(MODULE.urllib.error.HTTPError):
                 MODULE.status("codex", "receiver", None)
 
+    def test_status_receipt_relation_refuses_contradictory_or_missing_links(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            selected = MODULE.offer("claude", "sender", "codex", "receiver", "selected")
+            other = MODULE.offer("claude", "sender", "codex", "receiver", "other")
+            receipt = MODULE.receive("codex", "receiver", selected["offerId"])
+            event = next(event for event in RuntimeHandler.events
+                         if event["kind"]["data"]["signalId"] == receipt["receiptId"])
+            evidence_id = f"evidence-{receipt['receiptId']}"
+            original, _ = RuntimeHandler.evidence[evidence_id]
+            original_signal = json.loads(original)
+            original_details = json.loads(original_signal["description"])
+            original_digest = hashlib.sha256(original.encode()).hexdigest()
+            cases = {
+                "description mismatch": (other["offerId"], selected["offerId"]),
+                "missing description offer": (None, selected["offerId"]),
+                "reply mismatch": (selected["offerId"], other["offerId"]),
+            }
+            for name, (description_offer, reply_to) in cases.items():
+                with self.subTest(name=name):
+                    signal = json.loads(json.dumps(original_signal))
+                    details = json.loads(json.dumps(original_details))
+                    if description_offer is None:
+                        details.pop("offerId")
+                    else:
+                        details["offerId"] = description_offer
+                    signal["description"] = json.dumps(details)
+                    signal["replyTo"] = reply_to
+                    content = json.dumps(signal, separators=(",", ":"))
+                    digest = hashlib.sha256(content.encode()).hexdigest()
+                    RuntimeHandler.evidence[evidence_id] = (content, digest)
+                    event["evidenceRefs"][0]["contentSha256"] = digest
+                    event["kind"]["data"]["envelopeSha256"] = digest
+                    RuntimeHandler.requests = []
+
+                    with self.assertRaises(ValueError):
+                        MODULE.status("codex", "receiver", selected["offerId"])
+                    self.assertFalse(any(row[0] == "POST" or "/briefing" in row[1]
+                                         for row in RuntimeHandler.requests))
+
+            # A consistently linked receipt for a different offer stays unrelated.
+            RuntimeHandler.evidence[evidence_id] = (original, original_digest)
+            event["evidenceRefs"][0]["contentSha256"] = original_digest
+            event["kind"]["data"]["envelopeSha256"] = original_digest
+            with self.subTest(name="valid unrelated receipt"):
+                report = MODULE.status("codex", "receiver", other["offerId"])
+                self.assertEqual(report["offers"][0]["receipts"], [])
+                self.assertFalse(any(row[0] == "POST" or "/briefing" in row[1]
+                                     for row in RuntimeHandler.requests))
+
+            # The selected receipt's historical digest remains byte-for-byte stable.
+            selected_report = MODULE.status("codex", "receiver", selected["offerId"])
+            self.assertEqual(selected_report["offers"][0]["receiptBriefings"][receipt["receiptId"]],
+                             receipt["receiptBriefing"])
+
     def test_status_empty_selection_does_not_read_unrelated_receipt(self):
         with patch.dict(os.environ, self.env, clear=False):
             selected = MODULE.offer("claude", "sender", "codex", "receiver")

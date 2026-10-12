@@ -36,7 +36,7 @@ import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/r
 import { foldTaskEvents, isClaudeTaskSignal, isTaskEventSignal, readClaudeTasks, readTaskEventRecords, type ClaudeTaskReadModel, type TaskEventRecord, type TaskState } from "./runtime/team-tasks";
 import { SlotPoll } from "./components/slot-poll";
 import { MissionView } from "./components/mission-view";
-import { laneBars, type Lane, type TimedTaskEvent } from "./runtime/lane-bars";
+import { laneBars, type TimedTaskEvent } from "./runtime/lane-bars";
 import { skippedEdgeInto } from "./runtime/mission";
 import { TaskGraphs } from "./components/task-graphs";
 import { JEV_ABSENT_NOTE, jevAvailability } from "./runtime/jev";
@@ -1711,7 +1711,6 @@ export default function App({
   const [taskGraphs, setTaskGraphs] = useState<{ executionId: string; tasks: TaskState[]; records: TaskEventRecord[] } | null>(null);
   const [historyFailure, setHistoryFailure] = useState<{ executionId: string; count: number } | null>(null);
   const [historyRetry, setHistoryRetry] = useState(0);
-  const [partialTaskGraphs, setPartialTaskGraphs] = useState<{ executionId: string; records: TaskEventRecord[] } | null>(null);
   // A recent page gives the Graph useful work while the complete history is still rebuilding.
   // It is provisional: the full fold below replaces it, and the view keeps its loading label.
   const [recentTaskGraphs, setRecentTaskGraphs] = useState<{ executionId: string; tasks: TaskState[]; records: TaskEventRecord[] } | null>(null);
@@ -1741,7 +1740,6 @@ export default function App({
     let unreadable = 0;
     let completedRecords: TaskEventRecord[] = [];
     setHistoryFailure(null);
-    setPartialTaskGraphs(null);
     void readRunTeam(run, eventList, openEvidence)
       .then((result) => { if (!cancelled) setRunTeamRead(result); })
       .catch(() => { if (!cancelled) setRunTeamRead({ executionId: run, members: [], messages: [], rejected: 0, unavailable: true }); });
@@ -1754,14 +1752,12 @@ export default function App({
       onProgress: (records) => {
         if (!cancelled && clientRef.current === client && selectedRef.current === run) {
           completedRecords = records;
-          setPartialTaskGraphs({ executionId: run, records });
         }
       },
     })
       .then((records) => { if (!cancelled && clientRef.current === client) {
         setTaskGraphs({ executionId: run, tasks: foldTaskEvents(records), records });
         setHistoryFailure(unreadable > 0 ? { executionId: run, count: unreadable } : null);
-        setPartialTaskGraphs(null);
       } })
       .catch(() => { if (!cancelled && clientRef.current === client) {
         setHistoryFailure({ executionId: run, count: Math.max(1, unreadable) });
@@ -2178,24 +2174,10 @@ export default function App({
   const [journeyContract, setJourneyContract] = useState<string | null>(null);
   const botNameOf = useCallback((id: string) => botNames[id] ?? id, [botNames]);
   // #393: one thread per task, opened by the run's task.* records.
-  const visibleTaskHistory = useRef<{ run: string; tasks: Map<string, TaskState> } | null>(null);
   const currentTaskGraphs = useMemo(() => {
-    if (taskGraphs?.executionId === selected) {
-      visibleTaskHistory.current = null;
-      return taskGraphs;
-    }
-    const recent = recentTaskGraphs?.executionId === selected ? recentTaskGraphs.records : [];
-    const partial = partialTaskGraphs?.executionId === selected ? partialTaskGraphs.records : [];
-    if (recent.length === 0 && partial.length === 0) return null;
-    const bySequence = new Map<number, TaskEventRecord>();
-    for (const record of partial) bySequence.set(record.sequence, record);
-    for (const record of recent) bySequence.set(record.sequence, record);
-    const records = [...bySequence.values()].sort((a, b) => a.sequence - b.sequence);
-    const folded = foldTaskEvents(records);
-    if (visibleTaskHistory.current?.run !== selected) visibleTaskHistory.current = { run: selected!, tasks: new Map() };
-    for (const task of folded) visibleTaskHistory.current.tasks.set(task.key, task);
-    return { executionId: selected!, tasks: [...visibleTaskHistory.current.tasks.values()], records };
-  }, [taskGraphs, recentTaskGraphs, partialTaskGraphs, selected]);
+    if (taskGraphs?.executionId === selected) return taskGraphs;
+    return recentTaskGraphs?.executionId === selected ? recentTaskGraphs : null;
+  }, [taskGraphs, recentTaskGraphs, selected]);
   const runTasks = currentTaskGraphs?.tasks ?? null;
   // #479: a message's issue/PR numbers link to the run's GitHub repository (read off its task
   // records) and a journey id it names opens the Journey tab on that journey.
@@ -2314,7 +2296,6 @@ export default function App({
   }, [journeysView, missionRuns, markFlowEdgeSafe]);
   // No Runtime route sends a journey step back to its author, so the Graph tab passes no onSendBack
   // and the Test canvas shows that button disabled with the reason.
-  const visibleLaneHistory = useRef<{ run: string; lanes: Map<string, Lane> } | null>(null);
   const missionLanes = useMemo(() => {
     const records = currentTaskGraphs?.records ?? [];
     const timed: TimedTaskEvent[] = records.flatMap((r) => (r.occurredAt ? [{ ...r, at: r.occurredAt }] : []));
@@ -2326,19 +2307,8 @@ export default function App({
       const at = event.occurredAt ? Date.parse(event.occurredAt) : NaN;
       if (lane && Number.isFinite(at) && (lane.endedAt === undefined || at > lane.endedAt)) lane.endedAt = at;
     }
-    if (taskGraphs?.executionId === selected) {
-      visibleLaneHistory.current = null;
-      return lanes;
-    }
-    if (visibleLaneHistory.current?.run !== selected) visibleLaneHistory.current = { run: selected!, lanes: new Map() };
-    for (const lane of lanes) {
-      const bars = new Map((visibleLaneHistory.current.lanes.get(lane.lane)?.bars ?? [])
-        .map((bar) => [`${bar.kind}:${bar.taskId}:${bar.since}`, bar] as const));
-      for (const bar of lane.bars) bars.set(`${bar.kind}:${bar.taskId}:${bar.since}`, bar);
-      visibleLaneHistory.current.lanes.set(lane.lane, { ...lane, bars: [...bars.values()] });
-    }
-    return [...visibleLaneHistory.current.lanes.values()];
-  }, [currentTaskGraphs, clock, eventList, taskGraphs, selected]);
+    return lanes;
+  }, [currentTaskGraphs, clock, eventList]);
   const watchFlow = useCallback(async (flowId: string, path?: string) => {
     const client = clientRef.current;
     if (client === null) throw new Error("Not connected.");

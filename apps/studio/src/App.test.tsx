@@ -4088,7 +4088,7 @@ describe("the exchange", () => {
         attention: "needs_you", startedAt: null, lastEventAt: null, headSequence: 65 },
         { executionId: "demo-calm", mode: "supervised", status: "running", attention: "can_sleep",
           startedAt: null, lastEventAt: null, headSequence: 0 }], hasMore: false, nextCursor: null })),
-      getEvents: vi.fn(async (run: string, options?: { after?: number }) => ({ head: run === "demo-calm" ? 0 : 65, events: run === "demo-calm" || options?.after ? []
+      getEvents: vi.fn(async (run: string, options?: { after?: number }) => ({ head: run === "demo-calm" ? 0 : 65, events: run === "demo-calm" ? [] : options?.after ? envelopes.slice(1, 64).map((item, index) => ({ sequence: index + 2, kind: "signal_recorded", payload: { kind: "task.claimed", sourceId: "codex-18", sourceKind: "user", signalId: `task-${index + 2}`, envelopeSha256: item.hash }, occurredAt: "2026-10-11T12:00:00Z", actorId: "codex-18", actorType: "agent", idempotencyKey: `tail-${index}`, eventId: `tail-task-${index}`, evidenceRefs: [item.evidenceId] }))
         : envelopes.map((item, index) => ({ sequence: index + 1, kind: "signal_recorded",
           payload: { kind: "task.claimed", sourceId: "codex-18", sourceKind: "user", signalId: `task-${index + 1}`, envelopeSha256: item.hash },
           occurredAt: "2026-10-11T12:00:00Z", actorId: "codex-18", actorType: "agent", idempotencyKey: `k-${index}`,

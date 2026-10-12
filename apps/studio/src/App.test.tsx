@@ -4070,6 +4070,11 @@ describe("the exchange", () => {
         eventId: `event-${sequence}`, evidenceRefs: [`ev-task-${sequence}`],
       } };
     }));
+    const timeline = Array.from({ length: 134 }, (_, index) => entries.find(({ sequence }) => sequence === index + 1)?.event ?? {
+      sequence: index + 1, kind: "signal_recorded", payload: { kind: "noop" }, occurredAt: "2026-10-12T18:00:00Z",
+      actorId: "fixture", actorType: "agent", idempotencyKey: `noop-${index + 1}`,
+      eventId: `noop-event-${index + 1}`, evidenceRefs: [],
+    });
     let releaseHistory!: () => void;
     const history = new Promise<void>((resolve) => { releaseHistory = resolve; });
     const client = stubClient({
@@ -4077,7 +4082,7 @@ describe("the exchange", () => {
         attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 134 }], hasMore: false, nextCursor: null })),
       getStatus: vi.fn(async () => ({ ...STATUS, attention: "can_sleep", attentionReasons: [], headSequence: 134 })),
       getEvents: vi.fn(async (_run: string, options?: { after?: number }) => ({ head: 134,
-        events: entries.filter(({ sequence }) => sequence > (options?.after ?? 0)).map(({ event }) => event) })),
+        events: timeline.filter(({ sequence }) => sequence > (options?.after ?? 0)) })),
       readEvidence: vi.fn(async (_run: string, id: string) => {
         if (id === "ev-task-1") await history;
         return entries.find(({ evidence }) => evidence.evidenceId === id)!.evidence;
@@ -4094,7 +4099,7 @@ describe("the exchange", () => {
     expect(within(mission).getAllByRole("status").some((item) => item.textContent?.includes("Loading the team's history"))).toBe(true);
     expect(within(mission).queryByRole("region", { name: "Work by stage" })).not.toBeInTheDocument();
     await act(async () => releaseHistory());
-    const verified = await readTaskEventRecords({ executionId: "demo-deploy", events: entries.map(({ event }) => event),
+    const verified = await readTaskEventRecords({ executionId: "demo-deploy", events: timeline,
       readEvidence: client.readEvidence });
     expect(verified).toHaveLength(entries.length);
     expect(foldTaskEvents(verified).find((task) => task.pr === 923)).toMatchObject({ step: "review", currentReviewer: "reviewer-b" });

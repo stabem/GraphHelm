@@ -2028,7 +2028,7 @@ fn a_bounded_events_tail_stays_fast_at_six_thousand_events() {
         graphhelm_protocols::PersistedActorType::System,
         graphhelm_protocols::ActorId::parse("system-latency").unwrap(),
     );
-    let new_events = (1..=6_000)
+    let new_events: Vec<_> = (1..=6_000)
         .map(|sequence| {
             graphhelm_protocols::NewEvent::new(
                 graphhelm_protocols::OpaqueId::parse(format!("latency-{sequence}")).unwrap(),

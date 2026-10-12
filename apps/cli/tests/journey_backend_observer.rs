@@ -86,6 +86,7 @@ fn project(id: &str, flow: &str) -> tempfile::TempDir {
     git(root, &["init", "--quiet", "--object-format=sha1"]);
     git(root, &["config", "user.email", "backend@example.invalid"]);
     git(root, &["config", "user.name", "Backend observer"]);
+    git(root, &["config", "core.autocrlf", "false"]);
     let (code, reply) = graphhelm(
         &["init", "--harness", "claude-code", "--project"],
         root,

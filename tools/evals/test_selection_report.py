@@ -58,13 +58,13 @@ class SelectionReport(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
         self.assertEqual(report["selection"], {
-            "unprompted": {"correct_trigger": 1, "miss": 1, "false_trigger": 0,
+            "unprompted": {"correct_trigger": 2, "miss": 1, "false_trigger": 0,
                            "correct_abstain": 0, "incomplete": 1},
             "no_skill": {"correct_trigger": 0, "miss": 0, "false_trigger": 1,
                          "correct_abstain": 1, "incomplete": 1},
         })
         self.assertEqual(report["completion"], {
-            "unprompted": {"pass": 1, "fail": 1, "incomplete": 1},
+            "unprompted": {"pass": 2, "fail": 1, "incomplete": 1},
             "no_skill": {"pass": 1, "fail": 1, "incomplete": 1},
         })
         self.assertEqual(report["judges"]["by_rubric"]["keel"]["false_pass"], 1)

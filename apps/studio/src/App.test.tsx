@@ -4054,8 +4054,8 @@ describe("the exchange", () => {
       { sequence: 6, kind: "task.pr_opened", actor: "lane-c", taskId: "issue-919", pr: 922, headSha: "eeeeeeee", lane: "lane-c", journeys: [] },
       { sequence: 7, kind: "task.merged", actor: "reviewer-a", taskId: "issue-919", pr: 922, mergeSha: "ffffffff", merger: "reviewer-a", closes: [] },
       { sequence: 8, kind: "task.pr_opened", actor: "lane-d", taskId: "issue-919", pr: 923, headSha: "11111111", lane: "lane-d", journeys: [] },
-      { sequence: 69, kind: "task.review_assigned", actor: "lane-d", taskId: "issue-919", pr: 923, headSha: "11111111", lane: "lane-d", reviewer: "reviewer-b" },
-      { sequence: 70, kind: "task.review_verdict", actor: "reviewer-a", taskId: "issue-947", pr: 955, headSha: "aaaaaaaa", reviewer: "reviewer-a", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/955#c1" },
+      { sequence: 133, kind: "task.review_assigned", actor: "lane-d", taskId: "issue-919", pr: 923, headSha: "11111111", lane: "lane-d", reviewer: "reviewer-b" },
+      { sequence: 134, kind: "task.review_verdict", actor: "reviewer-a", taskId: "issue-947", pr: 955, headSha: "aaaaaaaa", reviewer: "reviewer-a", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/955#c1" },
     ];
     const entries = await Promise.all(specs.map(async ({ sequence, kind, actor, ...fields }) => {
       const description = JSON.stringify({ schema: "graphhelm-task-event-v1", revision: sequence, at: "2026-10-12T18:00:00Z", ...fields });
@@ -4072,13 +4072,14 @@ describe("the exchange", () => {
     const history = new Promise<void>((resolve) => { releaseHistory = resolve; });
     const client = stubClient({
       listExecutions: vi.fn(async () => ({ executions: [{ executionId: "demo-deploy", mode: "supervised", status: "running",
-        attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 70 }], hasMore: false, nextCursor: null })),
-      getStatus: vi.fn(async () => ({ ...STATUS, attention: "can_sleep", attentionReasons: [], headSequence: 70 })),
-      getEvents: vi.fn(async (_run: string, options?: { after?: number }) => {
-        if (!options?.after) await history;
-        return { head: 70, events: entries.filter(({ sequence }) => sequence > (options?.after ?? 0)).map(({ event }) => event) };
+        attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 134 }], hasMore: false, nextCursor: null })),
+      getStatus: vi.fn(async () => ({ ...STATUS, attention: "can_sleep", attentionReasons: [], headSequence: 134 })),
+      getEvents: vi.fn(async (_run: string, options?: { after?: number }) => ({ head: 134,
+        events: entries.filter(({ sequence }) => sequence > (options?.after ?? 0)).map(({ event }) => event) })),
+      readEvidence: vi.fn(async (_run: string, id: string) => {
+        if (id === "ev-task-1") await history;
+        return entries.find(({ evidence }) => evidence.evidenceId === id)!.evidence;
       }),
-      readEvidence: vi.fn(async (_run: string, id: string) => entries.find(({ evidence }) => evidence.evidenceId === id)!.evidence),
     });
     render(<App createClient={() => client as unknown as RuntimeClient}
       session={async () => ({ token: "local-token", project: "dale-api-base" })} />);
@@ -4087,7 +4088,7 @@ describe("the exchange", () => {
     await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
     const mission = await screen.findByRole("region", { name: "Canvas" });
     await userEvent.click(within(mission).getByRole("tab", { name: "Lanes" }));
-    await waitFor(() => expect(client.readEvidence).toHaveBeenCalledWith("demo-deploy", "ev-task-70"));
+    await waitFor(() => expect(client.readEvidence).toHaveBeenCalledWith("demo-deploy", "ev-task-134"));
     expect(within(mission).getAllByRole("status").some((item) => item.textContent?.includes("Loading the team's history"))).toBe(true);
     expect(within(mission).queryByRole("region", { name: "Work by stage" })).not.toBeInTheDocument();
     await act(async () => releaseHistory());

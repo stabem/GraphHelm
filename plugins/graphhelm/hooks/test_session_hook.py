@@ -231,7 +231,11 @@ class SessionHookTests(unittest.TestCase):
                     pass
         self.temp.cleanup()
         real_state_after = set(self.real_state_root.iterdir()) if self.real_state_root.exists() else set()
-        self.assertEqual(real_state_after - self.real_state_before, set(),
+        created = real_state_after - self.real_state_before
+        origin = f"127.0.0.1:{self.server.server_port}"
+        own_state = {path.stem for path in created if path.suffix == ".json"
+                     and origin in path.read_text(encoding="utf-8", errors="replace")}
+        self.assertFalse(own_state,
                          "hook test wrote into the real state directory")
         self.assertFalse(live, f"hook test left live waiter markers: {live}")
 

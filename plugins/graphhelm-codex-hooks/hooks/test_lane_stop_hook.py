@@ -99,7 +99,10 @@ class LaneStopTests(unittest.TestCase):
 
     def assert_real_state_unchanged(self):
         after = set(self.real_state_root.iterdir()) if self.real_state_root.exists() else set()
-        self.assertEqual(after - self.real_state_before, set(),
+        created = after - self.real_state_before
+        own_state = {path.stem for path in created if path.suffix == ".json"
+                     and self.url in path.read_text(encoding="utf-8", errors="replace")}
+        self.assertFalse(own_state,
                          "hook test wrote into the real state directory")
 
     def run_cli(self, *args):

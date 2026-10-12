@@ -4080,7 +4080,9 @@ describe("the exchange", () => {
       }),
       readEvidence: vi.fn(async (_run: string, id: string) => entries.find(({ evidence }) => evidence.evidenceId === id)!.evidence),
     });
-    await open(client, null, false);
+    render(<App createClient={() => client as unknown as RuntimeClient}
+      session={async () => ({ token: "local-token", project: "dale-api-base" })} />);
+    await screen.findByLabelText("Projects");
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
     const mission = await screen.findByRole("region", { name: "Canvas" });

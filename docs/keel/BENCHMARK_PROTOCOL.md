@@ -138,7 +138,8 @@ uses the same eligibility checks, 5,000-resample decision function and explicit 
 task, baseline and candidate share the same generated quality outcome; their attempt costs are
 drawn independently from the same distribution in `null`, while `effect` scales candidate costs
 by the declared `effectCostFactor`. The JSON lists every cohort seed, task count, threshold and
-verdict count for both scenarios. Cohort count is limited to 200 and each task count to 12.
+verdict count for both scenarios. Cohort count is limited to 200 and task counts must be unique,
+with at most 12 values from 1 through 12. This bounds the run to 24 scenarios and 4,800 cohorts.
 
 Observed for seed 183, 40 cohorts, six tasks, a USD 0.50 minimum reduction, a 0.20 quality margin,
 and a 0.20 effect cost factor: `null` produced 0/40 `supported` and 40/40 `inconclusive`; `effect`

@@ -107,7 +107,11 @@ def main(argv: list[str] | None = None) -> int:
     if not 1 <= args.cohorts <= 200:
         print("error: cohorts must be between 1 and 200", file=sys.stderr)
         return 1
-    if not args.task_counts or any(not 1 <= count <= 12 for count in args.task_counts):
+    if (not args.task_counts or len(args.task_counts) > 12 or
+            len(set(args.task_counts)) != len(args.task_counts)):
+        print("error: task counts must contain at most 12 unique values", file=sys.stderr)
+        return 1
+    if any(not 1 <= count <= 12 for count in args.task_counts):
         print("error: each task count must be between 1 and 12", file=sys.stderr)
         return 1
     if (not math.isfinite(args.minimum_cost_reduction_usd) or args.minimum_cost_reduction_usd <= 0 or

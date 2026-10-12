@@ -85,4 +85,13 @@ describe("#647 MissionView: the Team canvas controls on the Graph page", () => {
     expect(within(laneRows).queryByText("lane-a")).toBeNull();
     expect(within(board).getByText("Alice")).toBeInTheDocument();
   });
+
+  it("shows recent Lanes history while the full task history is still loading", async () => {
+    const lanes: Lane[] = [{ lane: "codex-18", bars: [], silent: false, lastEventAt: 1 }];
+    render(<MissionView {...base} lanes={lanes} historyLoading lanesHistoryLoading={false} />);
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Lanes" }));
+
+    expect(screen.getByRole("list", { name: "Agent lanes" })).toBeInTheDocument();
+    expect(screen.queryByText("Loading the team's history…")).toBeNull();
+  });
 });

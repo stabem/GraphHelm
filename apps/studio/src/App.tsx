@@ -2273,7 +2273,7 @@ export default function App({
   // No Runtime route sends a journey step back to its author, so the Graph tab passes no onSendBack
   // and the Test canvas shows that button disabled with the reason.
   const missionLanes = useMemo(() => {
-    const records = taskGraphs?.executionId === selected ? taskGraphs.records : [];
+    const records = currentTaskGraphs?.records ?? [];
     const timed: TimedTaskEvent[] = records.flatMap((r) => (r.occurredAt ? [{ ...r, at: r.occurredAt }] : []));
     const lanes = laneBars(timed, clock, 14 * 3_600_000);
     for (const event of eventList) {
@@ -2284,7 +2284,7 @@ export default function App({
       if (lane && Number.isFinite(at) && (lane.endedAt === undefined || at > lane.endedAt)) lane.endedAt = at;
     }
     return lanes;
-  }, [taskGraphs, selected, clock, eventList]);
+  }, [currentTaskGraphs, clock, eventList]);
   const watchFlow = useCallback(async (flowId: string, path?: string) => {
     const client = clientRef.current;
     if (client === null) throw new Error("Not connected.");
@@ -3050,7 +3050,7 @@ export default function App({
             </div>
             {(canvasTab === "graph" || canvasTab === "journey") && (
               <div id="studio-panel-graph" role="tabpanel" aria-label={canvasTab === "journey" ? "Proof" : "Graph"}>
-                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
+                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && taskGraphs?.executionId !== selected && (recentTaskGraphs?.executionId !== selected || recentTaskGraphs.records.length === 0)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
                   initialView={canvasTab === "journey" ? "proof" : "graph"} focusJourneyId={journeyContract}
                   flows={flowsRead.view} onApprove={approveFlow} onWatch={watchFlow}
 

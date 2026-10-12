@@ -3256,7 +3256,11 @@ mod tests {
         stream.read_to_end(&mut response).await.unwrap();
         server.abort();
 
-        let body_start = response.windows(4).position(|window| window == b"\r\n\r\n").unwrap() + 4;
+        let body_start = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .unwrap()
+            + 4;
         let body: serde_json::Value = serde_json::from_slice(&response[body_start..]).unwrap();
         assert_eq!(body["data"]["seenActors"], serde_json::json!(["lane-a"]));
         assert_eq!(body["data"]["headSequence"], 1);

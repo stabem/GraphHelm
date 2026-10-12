@@ -144,6 +144,7 @@ export function ProjectRail({
   onRestoreRun,
   briefings = {},
   selectedPresentation = null,
+  onClose,
 }: {
   projects: Project[];
   selected: string;
@@ -172,6 +173,7 @@ export function ProjectRail({
   briefings?: Record<string, { objective: string | null; name?: string | null } | null>;
   /** Selected-run display only. The Runtime attention value remains unchanged in Details. */
   selectedPresentation?: { key: string; status: string } | null;
+  onClose?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(projectName ?? "");
@@ -201,6 +203,7 @@ export function ProjectRail({
           <Activity />
         </span>
         <span className="wordmark">GraphHelm</span>
+        {onClose && <button type="button" className="ghost rail-close" aria-label="Close projects" onClick={onClose}><X aria-hidden="true" /></button>}
         <span className={`rail-live ${connected && !stale ? "" : "off"}`}>
           <i aria-hidden="true" />
           {connected ? (stale ? "stale" : "live") : "offline"}

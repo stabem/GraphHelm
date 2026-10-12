@@ -269,6 +269,12 @@ describe("the stylesheet and the components agree", () => {
     expect(rule).toMatch(/white-space:\s*nowrap/);
     expect(rule).toMatch(/text-overflow:\s*ellipsis/);
   });
+
+  it("keeps the project backdrop out of desktop layout flow (#891)", () => {
+    const stylesheet = STYLESHEETS["./styles.css"]?.replace(/\/\*[\s\S]*?\*\//g, "") ?? "";
+    const desktopRules = stylesheet.split("@media (max-width: 900px)")[0] ?? "";
+    expect(desktopRules).toMatch(/\.projects-backdrop\s*\{[^}]*display:\s*none/s);
+  });
 });
 
 describe("Proof progress text stays readable in narrow cards", () => {

@@ -18,6 +18,15 @@ const t = (over: Partial<MissionTask>): MissionTask => ({
 const round = { reviewer: "r", headSha: "h", fixHead: "f" };
 
 describe("LanesTimeline", () => {
+  it("shows recent lane data while the full history is still loading", () => {
+    const now = Date.parse("2026-10-12T12:00:00Z");
+    const lane = { lane: "codex-18", silent: false, lastEventAt: now, bars: [] };
+    render(<LanesTimeline lanes={[lane]} now={now} windowMs={6 * 3_600_000} historyLoading />);
+
+    expect(screen.queryByText("Loading the team's history…")).toBeNull();
+    expect(screen.getByRole("region", { name: "Lanes" })).toBeInTheDocument();
+  });
+
   it("counts every available status in exactly one filter", async () => {
     const H = 3_600_000, at = 10 * H;
     const rows = [

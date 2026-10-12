@@ -19,6 +19,45 @@ const mission: Mission = {
 };
 
 describe("ProofTable", () => {
+  it("#947: a stale draft without a replay cannot be approved and explains both blockers", () => {
+    const onApprove = vi.fn();
+    render(<ProofTable mission={{ ...mission, title: "Old contract" }} onOpenTest={vi.fn()} onApprove={onApprove}
+      flow={{ id: "j", title: "Changed flow", status: "draft", approved: null, drift: [], findings: [], approvable: true,
+        screens: [], edges: [], paths: { main: [] } }} />);
+    const approve = screen.getByRole("button", { name: "Approve" });
+    expect(approve).toBeDisabled();
+    expect(approve).toHaveAccessibleDescription(/Contract out of date, regenerate first/);
+    expect(onApprove).not.toHaveBeenCalled();
+  });
+
+  it("#947: a current draft without a completed replay says why approval is unavailable", () => {
+    render(<ProofTable mission={mission} onOpenTest={vi.fn()} onApprove={vi.fn()}
+      flow={{ id: "j", title: "J", status: "draft", approved: null, drift: [], findings: [], approvable: true,
+        screens: [{ id: "mark", url: "/", state: "stable" }, { id: "next", url: "/", state: "stable" }],
+        edges: [{ id: "mark.next", from: "mark", to: "next" }], paths: { main: ["mark.next"] } }} />);
+    const approve = screen.getByRole("button", { name: "Approve" });
+    expect(approve).toBeDisabled();
+    expect(approve).toHaveAccessibleDescription(/Not run yet/);
+  });
+  it("#947: a complete replay enables approval, while a preview does not", async () => {
+    const flow = { id: "j", title: "J", status: "draft" as const, approved: null, drift: [], findings: [], approvable: true,
+      screens: [{ id: "mark", url: "/", state: "stable" }, { id: "next", url: "/", state: "stable" }],
+      edges: [{ id: "mark.next", from: "mark", to: "next" }], paths: { main: ["mark.next"] } };
+    const result = { state: "ready" as const, result: "pass" as const,
+      screens: { mark: { result: "pass" as const, frame: false }, next: { result: "pass" as const, frame: false } },
+      edges: { "mark.next": { result: "pass" as const } } };
+    const run: JourneyRunSource = { start: vi.fn(), read: vi.fn(async () => ({ ...result, kind: "preview" as const })),
+      screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null) };
+    const onApprove = vi.fn().mockResolvedValue(undefined);
+    const view = render(<ProofTable mission={mission} onOpenTest={vi.fn()} flow={flow} run={run} onApprove={onApprove} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled());
+    view.unmount();
+    run.read = vi.fn(async () => ({ ...result, kind: "replay" as const }));
+    render(<ProofTable mission={mission} onOpenTest={vi.fn()} flow={flow} run={run} onApprove={onApprove} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled());
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(onApprove).toHaveBeenCalledWith("j");
+  });
   it("reports a Proof rerun so its step evidence can refresh", async () => {
     const onRun = vi.fn();
     const run: JourneyRunSource = {

@@ -83,7 +83,7 @@ import { GraphFileRow } from "./components/graph-file-row";
 import { Beacon, NEEDS_YOU_ID, QuestionCards } from "./components/beacon";
 import { HandoverCard } from "./components/handover-card";
 import { RightPanel } from "./components/right-panel";
-import { beforeAfterPairs, captureDocuments, type BeforeAfterPair } from "./runtime/journeys";
+import { approvalBlockReason, beforeAfterPairs, captureDocuments, type BeforeAfterPair } from "./runtime/journeys";
 import type { JourneyFlowsView, JourneyRunView, JourneysView } from "./runtime/types";
 import type { JourneyRunSource } from "./components/journey-flows";
 import { SaidLinks, type SaidLinkContext } from "./components/said";
@@ -2683,6 +2683,13 @@ export default function App({
     </>;
   };
 
+  const pendingJourneyApprovals = (flowsRead.view?.flows ?? []).filter((flow) => {
+    if (!flow.approvable || (flow.status !== "draft" && flow.status !== "approval_stale")) return false;
+    const contract = journeysView?.journeys.find((journey) => journey.contractId === flow.id);
+    return contract !== undefined && approvalBlockReason(flow, contract, missionRunFor(contract.contractId)) === null;
+  });
+  const beaconState = needs.state.kind === "unknown" || pendingJourneyApprovals.length === 0 ? needs.state
+    : { kind: "lit" as const, count: (needs.state.kind === "lit" ? needs.state.count : 0) + pendingJourneyApprovals.length };
   return (
     <SaidLinks.Provider value={saidLinks}>
     <div className={`app ${projectsOpen ? "projects-open" : ""} ${conversationVisible ? "conversation-open" : ""}`} data-document-open={openDocument !== null} style={{ "--rail": `${railWidth}px` } as CSSProperties}>
@@ -2786,8 +2793,14 @@ export default function App({
           </div>
           {selected && status !== null && (
             <Beacon
-              state={needs.state}
+              state={beaconState}
               onOpen={() => {
+                if (pendingJourneyApprovals.length > 0) {
+                  setJourneyContract(pendingJourneyApprovals[0]!.id);
+                  setCanvasTab("journey");
+                  setTalkOpen(false);
+                  return;
+                }
                 // #402: the cards live in the Needs you thread; the beacon opens it.
                 setTalkOpen(true);
                 setFocus({ kind: "run" });

@@ -71,7 +71,7 @@ describe("MissionView", () => {
     expect(first.querySelector('[data-progress="work"]')).not.toHaveStyle({ background: "#4ADE9B" });
   });
 
-  it("moves draft approval to Proof and removes old navigation", async () => {
+  it("keeps an unrun draft in Proof without offering an unsafe approval", async () => {
     const user = fastUserEvent();
     const onApprove = vi.fn().mockResolvedValue(undefined);
     const onWatch = vi.fn().mockResolvedValue(undefined);
@@ -82,9 +82,9 @@ describe("MissionView", () => {
     expect(screen.queryByRole("button", { name: "Chat" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Journeys" })).toBeNull();
     await user.click(screen.getByRole("tab", { name: "Proof" }));
-    expect(screen.getByText("1 to approve")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Approve" }));
-    expect(onApprove).toHaveBeenCalledWith("watch");
+    expect(screen.getByText("1 awaiting proof")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(onApprove).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Watch" }));
     expect(onWatch).toHaveBeenCalledWith("watch");
   });

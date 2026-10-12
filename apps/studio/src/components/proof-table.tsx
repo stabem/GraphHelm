@@ -5,6 +5,7 @@ import { layoutMission } from "../runtime/mission-layout";
 import { STATUS_LABEL } from "./mission-graph";
 import { MiniBrowser } from "./issue-proof";
 import type { JourneyFlowView, JourneyRunView } from "../runtime/types";
+import { approvalBlockReason } from "../runtime/journeys";
 import { useJourneyRun, type JourneyRunSource } from "./journey-flows";
 
 const HINT: Record<StepStatus, string> = {
@@ -54,6 +55,7 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
   const draft = mission.title.match(/^(.*?)\s*\(draft:\s*(.*?)\)\s*$/i);
   const title = draft?.[1] ?? mission.title;
   const draftNote = draft?.[2];
+  const approvalReason = flow ? approvalBlockReason(flow, mission, preview.run) : null;
   return (
     <section className="proof" aria-label="Proof">
       <div className="proof-head">
@@ -66,7 +68,9 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
       </div>
       {flow && <div className="proof-flow-actions" role="group" aria-label="Journey actions">
         <span>{flow.status === "draft" ? "Waiting for your approval" : flow.status === "approval_stale" ? "Changed since approval" : flow.status === "approved" ? "Approved" : "Can't be read"}</span>
-        {flow.status !== "approved" && <button type="button" disabled={!flow.approvable || busy || !onApprove} onClick={() => onApprove && act(() => onApprove(flow.id))}>Approve</button>}
+        {flow.status !== "approved" && <><button type="button" disabled={!flow.approvable || approvalReason !== null || busy || !onApprove}
+          aria-describedby={approvalReason ? "proof-approval-reason" : undefined} onClick={() => onApprove && act(() => onApprove(flow.id))}>Approve</button>
+          {approvalReason && <span id="proof-approval-reason">{approvalReason}</span>}</>}
         {onWatch && <button type="button" disabled={busy} onClick={() => act(() => onWatch(flow.id))}>Watch</button>}
         {run && <button type="button" disabled={preview.launching || preview.run?.state === "running"} onClick={preview.again}>Run again</button>}
         {preview.run?.state === "ready" && <span>{preview.run.kind === "preview" ? "Preview only — not proof" : "Replay recorded"}</span>}

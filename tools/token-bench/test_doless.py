@@ -779,6 +779,57 @@ def test_pair_audit_admits_only_frozen_task_pairs(tmp_path):
     assert [item["reason"] for item in report["excluded"]] == ["duplicate_session"] * 3
 
 
+def test_pair_summary_accounts_for_admitted_attempts_and_partial_cohorts(tmp_path):
+    """Catches row-order pairing, dropped incomplete costs and false complete summaries; subprocess, <1s."""
+    controls = {"parent": "p", "evaluator": "e", "environment": "env", "budget": "b", "timeout": "t"}
+    def row(session, task, arm, verdict, cost):
+        return {"sessionId": session, "task": task, "taskSnapshot": "snap", "split": "train",
+                "arm": arm, "configDigest": arm, "controls": controls,
+                "verdict": verdict, "costUsd": cost}
+    rows = [row("a1", "one", "a", "PASS", 2), row("k1", "one", "k", "FAIL", 3),
+            row("a2", "one", "a", "INCOMPLETE", 4), row("k2", "one", "k", "PASS", 5),
+            row("a3", "two", "a", "FAIL", None), row("k3", "two", "k", "INCOMPLETE", 7),
+            row("orphan", "two", "a", "PASS", 1)]
+    groups = [{"task": task, "taskSnapshot": "snap", "split": "train", "controls": controls,
+               "baseline": {"arm": "a", "configDigest": "a"},
+               "candidate": {"arm": "k", "configDigest": "k"},
+               "treatmentDifferences": ["arm", "configDigest"], "repeats": repeats}
+              for task, repeats in (("one", [{"baseline": "a1", "candidate": "k1"},
+                                            {"baseline": "a2", "candidate": "k2"}]),
+                                    ("two", [{"baseline": "a3", "candidate": "k3"}]))]
+    def run(input_rows, input_groups=groups):
+        raw = "".join(json.dumps(r) + "\n" for r in input_rows).encode()
+        rows_path = tmp_path / "rows.jsonl"; rows_path.write_bytes(raw)
+        manifest_path = tmp_path / "manifest.json"
+        manifest_path.write_text(json.dumps({"version": 1, "rowsSha256": hashlib.sha256(raw).hexdigest(),
+            "comparison": "methodology", "weighting": "equal_task", "groups": input_groups}), encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(HERE / "doless.py"), "pair-summary",
+            "--manifest", str(manifest_path), "--rows", str(rows_path)], capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
+        return json.loads(proc.stdout)
+    report = run(rows)
+    assert report == run(list(reversed(rows)))
+    assert report["partial"] is True and report["unmatched"] == ["orphan"]
+    one, two = report["tasks"]
+    assert one["task"] == "one" and one["split"] == "train"
+    assert one["baseline"] == {"attempts": 2, "PASS": 1, "FAIL": 0, "INCOMPLETE": 1,
+        "successFraction": 0.5, "knownExpenditureUsd": 6.0, "unknownCostCount": 0,
+        "meanCostPerAttemptUsd": 3.0, "costPerProvenDeliveryUsd": 6.0,
+        "costPerProvenDeliveryReason": None}
+    assert one["candidate"]["attempts"] == 2 and one["candidate"]["FAIL"] == 1
+    assert one["candidate"]["knownExpenditureUsd"] == 8.0
+    assert one["deltaCandidateMinusBaseline"] == {"successFraction": 0,
+        "meanCostPerAttemptUsd": 1.0, "costPerProvenDeliveryUsd": 2.0}
+    assert two["baseline"]["meanCostPerAttemptUsd"] is None
+    assert two["baseline"]["costPerProvenDeliveryReason"] == "unknown_cost"
+    assert two["candidate"]["costPerProvenDeliveryReason"] == "no_pass"
+    assert two["deltaCandidateMinusBaseline"]["costPerProvenDeliveryUsd"] is None
+    assert "recommendation" not in report and "savings" not in report
+    duplicate = run(rows, groups + [groups[0] | {"task": "three", "repeats": [
+        {"baseline": "a1", "candidate": "k1"}]}])
+    assert duplicate["partial"] and duplicate["excluded"][0]["reason"] == "duplicate_session"
+
+
 def test_configured_run_records_requested_effort_and_incomplete_usage(tmp_path, monkeypatch):
     """Catches unobserved usage/model being published as a configured PASS; mocked process/file I/O, <1s."""
     import argparse

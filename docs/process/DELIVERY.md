@@ -133,7 +133,18 @@ plans enumerate every target as a separate command and release at the same bound
 boundaries; authorization never silently narrows coverage. This enforcement requires an upgraded CLI binary.
 Its 180-second target includes planning, queue and execution. Record the report and any pending
 checks in the PR; a budget miss is never green. This replaces the long-script slot pattern, not
-the existing review or load limits. Reached browser observers additionally require
+the existing review or load limits.
+
+**Resume, summary and preflight (#929).** Rerun the same command with the same `--output` after
+any stop: a step is reused only when the previous run passed it, ended with HEAD unchanged and a
+clean worktree, and its proof key still matches (commit tree, argv, cwd, tool versions and the
+`CARGO*`/`RUST*`/`GRAPHHELM_*`/`NODE*`/`PYTHON*`/`PG*` environment). Anything else, including a
+failure, a stale or unreadable report, reruns; `--no-resume` reruns everything. Before any step,
+preflight checks free disk (default 10 GB with Cargo steps, `--min-free-gb`), a relative
+`CARGO_TARGET_DIR`, configured tool paths that do not exist, and the git identity; a problem stops
+the run as `blocked` (`--skip-preflight` records it and goes on). Stdout is a short summary
+(passed/reused, failed with log path, pending, report path); `--json` prints the full report.
+The report's `measure` block records reused steps and the seconds they saved. Reached browser observers additionally require
 `--include-browser` and a configured local observer toolchain; otherwise the report stays incomplete.
 Broad audits and all-journey coverage remain explicit work,
 not mandatory feedback for every edit. See LANES.md §3 for warm targets and queue limits.

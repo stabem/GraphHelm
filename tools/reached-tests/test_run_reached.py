@@ -12,7 +12,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_reached as rr
 
 
+_FIXED_FINGERPRINT = {"tree": "t", "tools": {}, "toolsSha256": "a", "envSha256": "b"}
+
+
 class RunnerContracts(unittest.TestCase):
+    """Orchestration contracts; the fingerprint and preflight seams have their own suite below."""
+
+    def setUp(self):
+        for name, value in (("_fingerprint", lambda *unused: dict(_FIXED_FINGERPRINT)),
+                            ("_preflight", lambda *unused: ([], [])),
+                            ("_reusable_results", lambda *unused: ({}, None))):
+            patcher = patch.object(rr, name, side_effect=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def test_batch_cli_defaults_on_and_supports_explicit_opt_out(self):
         with patch.object(rr, "run", return_value=0) as run:
             self.assertEqual(rr.main(["--output", "feedback.json"]), 0)
@@ -550,6 +563,136 @@ class RunnerContracts(unittest.TestCase):
                 args.budget_seconds = .001
                 self.assertEqual(rr.run(args), 1)
             self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["status"], "budgetExceeded")
+
+
+class ResumeAndPreflightContracts(unittest.TestCase):
+    """Real git fixtures; a counter file outside the repo proves whether a step actually ran."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.repo = Path(temp.name) / "repo"
+        self.repo.mkdir()
+        self.output = Path(temp.name) / "out" / "feedback.json"
+        self.counter = Path(temp.name) / "count.txt"
+        self.git("init", "-q")
+        self.git("config", "user.name", "t")
+        self.git("config", "user.email", "t@t")
+        self.commit("one")
+        self.ok = ["python", "-c", f"open({str(self.counter)!r}, 'a').write('ok\\n')"]
+        self.bad = ["python", "-c", f"open({str(self.counter)!r}, 'a').write('bad\\n'); raise SystemExit(3)"]
+        self.steps = [self.ok]
+
+    def git(self, *args):
+        subprocess = __import__("subprocess")
+        return subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True, text=True).stdout
+
+    def commit(self, text):
+        (self.repo / "x").write_text(text, encoding="utf-8")
+        self.git("add", "x")
+        self.git("commit", "-qm", text)
+
+    def run_once(self, **extra):
+        plan = {"steps": [{"argv": argv, "cwd": ".", "slot": False} for argv in self.steps]}
+        fields = {"repo": str(self.repo), "output": str(self.output), "base": "HEAD", "head": "HEAD",
+                  "root": "D:/gh", "lane": "test", "budget_seconds": 180, "allow_whole_package": None,
+                  "plan": False, "min_free_gb": 0.0}
+        fields.update(extra)
+        with patch.object(rr, "_selector", return_value=plan):
+            code = rr.run(type("Args", (), fields)())
+        return code, json.loads(self.output.read_text(encoding="utf-8"))
+
+    def runs(self):
+        return self.counter.read_text(encoding="utf-8").split() if self.counter.exists() else []
+
+    def test_matching_pass_is_reused_without_running_the_child(self):
+        self.assertEqual(self.run_once()[0], 0)
+        code, report = self.run_once()
+        self.assertEqual(code, 0)
+        self.assertEqual(self.runs(), ["ok"])
+        self.assertTrue(report["completed"][0]["reused"])
+        self.assertEqual(report["measure"]["reusedSteps"], 1)
+
+    def test_changed_code_reruns(self):
+        self.run_once()
+        self.commit("two")
+        self.assertFalse(self.run_once()[1]["completed"][0].get("reused"))
+        self.assertEqual(self.runs(), ["ok", "ok"])
+
+    def test_changed_environment_reruns_and_unrelated_variable_does_not(self):
+        self.run_once()
+        with patch.dict(os.environ, {"UNRELATED_VARIABLE_FOR_TEST": "1"}):
+            self.assertTrue(self.run_once()[1]["completed"][0]["reused"])
+        with patch.dict(os.environ, {"GRAPHHELM_TEST_ONLY_VAR": "1"}):
+            self.assertFalse(self.run_once()[1]["completed"][0].get("reused"))
+        self.assertEqual(self.runs(), ["ok", "ok"])
+
+    def test_changed_tool_version_reruns(self):
+        self.run_once()
+        with patch.object(rr, "_tool_fingerprint", return_value={"python": "other"}):
+            self.assertFalse(self.run_once()[1]["completed"][0].get("reused"))
+        self.assertEqual(self.runs(), ["ok", "ok"])
+
+    def test_failure_is_never_reused_and_resume_starts_at_it(self):
+        self.steps = [self.ok, self.bad]
+        self.assertEqual(self.run_once()[0], 1)
+        code, report = self.run_once()
+        self.assertEqual(code, 1)
+        self.assertEqual(self.runs(), ["ok", "bad", "bad"])
+        self.assertEqual([e.get("reused", False) for e in report["completed"]], [True, False])
+        self.assertNotIn("reusable", report["completed"][1])
+
+    def test_unreadable_previous_report_reuses_nothing(self):
+        self.output.parent.mkdir(parents=True)
+        self.output.write_text("{not json", encoding="utf-8")
+        code, report = self.run_once()
+        self.assertEqual(code, 0)
+        self.assertIn("unreadable", report["resumeNote"])
+        self.assertEqual(self.runs(), ["ok"])
+
+    def test_forged_pass_without_reusable_mark_is_not_reused(self):
+        self.run_once()
+        report = json.loads(self.output.read_text(encoding="utf-8"))
+        report["completed"][0].pop("reusable")
+        self.output.write_text(json.dumps(report), encoding="utf-8")
+        self.assertFalse(self.run_once()[1]["completed"][0].get("reused"))
+        self.assertEqual(self.runs(), ["ok", "ok"])
+
+    def test_pass_from_a_run_that_dirtied_the_tree_is_not_reusable(self):
+        self.steps = [["python", "-c", "open('x', 'w').write('dirty')"]]
+        code, report = self.run_once()
+        self.assertEqual(code, 1)
+        self.assertNotIn("reusable", report["completed"][0])
+
+    def test_no_resume_runs_everything(self):
+        self.run_once()
+        self.run_once(resume=False)
+        self.assertEqual(self.runs(), ["ok", "ok"])
+
+    def test_preflight_blocks_before_any_step_and_can_be_overridden(self):
+        code, report = self.run_once(min_free_gb=1e12)
+        self.assertEqual((code, report["status"]), (1, "blocked"))
+        self.assertIn("disk:", report["preflight"]["problems"][0])
+        self.assertEqual(self.runs(), [])
+        self.assertEqual(self.run_once(min_free_gb=1e12, skip_preflight=True)[0], 0)
+        self.assertEqual(self.runs(), ["ok"])
+
+    def test_preflight_flags_missing_cli_path_and_relative_target(self):
+        with patch.dict(os.environ, {"GRAPHHELM_CLI": str(self.repo / "missing.exe"), "CARGO_TARGET_DIR": "rel"}):
+            problems, _ = rr._preflight(self.repo, self.output, [{"argv": ["cargo", "test", "-p", "x"]}], 0.0)
+        self.assertTrue(any("GRAPHHELM_CLI" in p for p in problems))
+        self.assertTrue(any("relative" in p for p in problems))
+
+    def test_default_stdout_is_the_short_summary(self):
+        self.steps = [self.ok, self.bad]
+        buffer = __import__("io").StringIO()
+        with patch("sys.stdout", buffer):
+            self.run_once()
+        text = buffer.getvalue()
+        self.assertTrue(text.startswith("reached-tests: failed | passed 1 (reused 0) | failed 1 | pending 0"))
+        self.assertIn("FAILED step 1", text)
+        self.assertIn(str(self.output), text)
+        self.assertNotIn('"schema"', text)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,12 @@ or secret holdout data. Reviewers must approve the labels before using them to q
 judge. Keep skill invocation, answer correctness, and completion/infrastructure status
 separate; an incomplete response cannot count as a pass.
 
+The packet's `contentSha256` binds its complete parsed content, including candidate transcripts
+and rationales. Cite this digest with the source commit during human review; any content edit
+creates a new review identity. Formatting-only changes do not alter the digest. It is an integrity
+reference, not a signature, approval, secret holdout, or protection against someone changing both
+the content and digest.
+
 Each `-unprompted` case keeps its prompted case's scenario and settings but removes the skill
 instruction, then requires transcript evidence that the expected skill was invoked. It measures
 skill selection separately from behavior after an explicit request; the offline pairing lint

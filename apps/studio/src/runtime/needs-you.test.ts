@@ -104,6 +104,15 @@ describe("needsYou", () => {
     expect(result.items.map((item) => item.kind)).toEqual(["question"]);
   });
 
+  it("does not claim a fixture wait needs the owner while agent work is still opening", () => {
+    const status = { ...STATUS, executor: "fixture" as const,
+      attentionReasons: [{ kind: "waiting_input_node", node: "implementation" }] };
+    const pending = base({ status, agentWorkPending: true });
+    expect(needsYou(pending)).toEqual({ state: { kind: "unknown", reason: "Checking recorded agent work" }, items: [] });
+    expect(needsYou({ ...pending, events: question, envelopes: asked }).state).toEqual({ kind: "lit", count: 1 });
+    expect(needsYou({ ...pending, agentWorkPending: false }).state).toEqual({ kind: "lit", count: 1 });
+  });
+
   it("lists waiting and blocked steps by name, and pending drafts", () => {
     const status = { ...STATUS, attentionReasons: [{ kind: "waiting_input_node", node: "start" }, { kind: "blocked_node", node: "cart" }, { kind: "untriaged_interruption", node: "pay" }] };
     const items = needsYou(base({ status, nodeNames: { cart: "Cart page" }, pendingDraftIds: ["d-1"] })).items;

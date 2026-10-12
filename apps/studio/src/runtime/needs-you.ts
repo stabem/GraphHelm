@@ -23,6 +23,7 @@ export interface NeedsYouInput {
   nodeNames: Record<string, string>;
   operatorId: string;
   agentWorkRecorded?: boolean;
+  agentWorkPending?: boolean;
 }
 
 export function needsYou(input: NeedsYouInput): { state: BeaconState; items: NeedsYouItem[] } {
@@ -53,7 +54,7 @@ export function needsYou(input: NeedsYouInput): { state: BeaconState; items: Nee
   // That wait is technical only when it is the sole owner-facing item (#511, #959).
   const otherStepItems = items.filter((item) => item.kind === "blocked_step");
   const graphWaitOnly = input.status?.status === "running" && input.status.executor === "fixture"
-    && input.agentWorkRecorded === true
+    && (input.agentWorkRecorded === true || input.agentWorkPending === true)
     && items.some((item) => item.kind === "waiting_step") && otherStepItems.length === 0;
   if (graphWaitOnly) {
     for (let index = items.length - 1; index >= 0; index -= 1) {
@@ -62,6 +63,8 @@ export function needsYou(input: NeedsYouInput): { state: BeaconState; items: Nee
   }
   const state: BeaconState = input.status === null || input.stale || input.nativeRequests === null
     ? { kind: "unknown", reason: RUNTIME_SILENT }
-    : items.length > 0 ? { kind: "lit", count: items.length } : { kind: "dark" };
+    : items.length > 0 ? { kind: "lit", count: items.length }
+      : graphWaitOnly && input.agentWorkRecorded !== true ? { kind: "unknown", reason: "Checking recorded agent work" }
+        : { kind: "dark" };
   return { state, items };
 }

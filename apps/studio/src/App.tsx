@@ -1905,6 +1905,9 @@ export default function App({
       event.kind === "signal_recorded" && event.actorType === "agent").map((event) => event.sequence));
     return workMessages.some((message) => message.provenance === "stored" && agentSequences.has(message.sequence));
   }, [eventList, workMessages]);
+  const agentWorkPending = !hasRecordedAgentWork && eventList.some((event) =>
+    event.kind === "signal_recorded" && event.actorType === "agent" && event.evidenceRefs.length > 0
+    && envelopes[event.sequence] === undefined);
   const recentActivity = useMemo(() => eventList
     .filter((event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && !isTaskEventSignal(event) && !isRunTeamSignal(event))
     .slice(-5)
@@ -2104,8 +2107,8 @@ export default function App({
   }, [connected, selected, pollIntervalMs]);
   const needs = useMemo(() => needsYou({ status, stale, events: eventList, envelopes, nativeRequests,
     pendingDraftIds: durableProposals.map((proposal) => proposal.draftId), nodeNames, operatorId: OPERATOR_ACTOR.id,
-    agentWorkRecorded: hasRecordedAgentWork }),
-    [status, stale, eventList, envelopes, nativeRequests, durableProposals, nodeNames, hasRecordedAgentWork]);
+    agentWorkRecorded: hasRecordedAgentWork, agentWorkPending }),
+    [status, stale, eventList, envelopes, nativeRequests, durableProposals, nodeNames, hasRecordedAgentWork, agentWorkPending]);
   const waitingAskers = useMemo(() => new Set(needs.items.flatMap((item) => item.kind === "question" ? [item.asker] : [])), [needs]);
   const team = useMemo(() => teamModel({ events: eventList, envelopes, personas, nativeLinks: nativePersonaLinks, aliases: actorAliases, model,
     claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null, waitingAskers, now: clock,

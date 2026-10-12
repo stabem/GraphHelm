@@ -26,6 +26,9 @@ describe("LaneActions", () => {
     expect(onAsked).toHaveBeenCalledWith(10 * M, true);
     rerender(<LaneActions {...base} askedAt={10 * M} onAsked={onAsked} send={send} now={12 * M} />);
     expect(screen.getByText("Asked 2 min ago · waiting")).toBeInTheDocument();
+    rerender(<LaneActions {...base} askedAt={10 * M} onAsked={onAsked} send={send} now={13 * M} lastSeenAt={12 * M} />);
+    expect(screen.getByText(/Asked 3 min ago.*waiting/)).toBeInTheDocument();
+    expect(screen.getByText(/Activity observed 1 min ago; reply is unconfirmed/)).toBeInTheDocument();
     rerender(<LaneActions {...base} askedAt={10 * M} answered onAsked={onAsked} send={send} now={13 * M} lastSeenAt={12 * M} />);
     expect(screen.getByText("Answered 1 min ago")).toBeInTheDocument();
     expect(screen.queryByText(/waiting/)).not.toBeInTheDocument();

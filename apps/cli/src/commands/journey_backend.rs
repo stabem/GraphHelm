@@ -265,7 +265,9 @@ pub(super) fn unmet(screen: &Value, seen: &Observation) -> Option<String> {
                         .is_some_and(|field| {
                             want.is_none_or(|want| match &field {
                                 Value::String(text) => text == want,
-                                other => other.to_string() == want,
+                                other => {
+                                    serde_json::from_str::<Value>(want).ok().as_ref() == Some(other)
+                                }
                             })
                         })
                 }

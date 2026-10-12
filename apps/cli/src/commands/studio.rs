@@ -206,6 +206,24 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
     };
     eprintln!("[update] GraphHelm source: {}", source.display());
     let clone = update(&source);
+    let head = git(&source, &["rev-parse", "HEAD"]);
+    let root = install_root(std::env::current_exe().ok().as_deref());
+    let stamp = root.as_ref().map(|root| root.join(STAMP));
+    let installed_head = stamp
+        .as_ref()
+        .and_then(|stamp| std::fs::read_to_string(stamp).ok());
+    if already_installed(head.as_deref(), installed_head.as_deref()) {
+        eprintln!("[update] graphhelm is already built from this commit; nothing to install");
+        return Outcome::success(
+            UPDATE,
+            json!({
+                "source": source.display().to_string(),
+                "head": git(&source, &["rev-parse", "--short", "HEAD"]),
+                "update": clone,
+                "installed": false,
+            }),
+        );
+    }
     let moved_aside = if cfg!(windows) {
         std::env::current_exe().ok().and_then(|exe| {
             let old = exe.with_file_name("graphhelm.old.exe");
@@ -218,12 +236,14 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
     // Install over THIS binary, wherever it lives: a graphhelm run from a versioned directory
     // (`~/.graphhelm/versions/<sha>/bin`) updated into `~/.cargo/bin` would leave PATH on the old
     // one, and on Windows with nothing at all once it was moved aside (2026-10-05).
-    let root = install_root(std::env::current_exe().ok().as_deref());
     eprintln!("[update] installing the CLI (cargo install --locked --path apps/cli)");
+    let target = target_dir(std::env::var_os("CARGO_TARGET_DIR"), &source);
+    eprintln!("[update] reusing build cache {}", target.display());
     let mut install = graphhelm_process::command("cargo");
     install
         .current_dir(&source)
-        .args(["install", "--locked", "--path", "apps/cli"]);
+        .args(["install", "--locked", "--path", "apps/cli", "--target-dir"])
+        .arg(&target);
     if let Some(root) = &root {
         eprintln!("[update] into {}", root.join("bin").display());
         // `--force`: cargo refuses to overwrite a binary it did not install itself, and a
@@ -241,6 +261,9 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
             "/install",
         );
     }
+    if let (Some(stamp), Some(head)) = (&stamp, &head) {
+        let _ = std::fs::write(stamp, head);
+    }
     Outcome::success(
         UPDATE,
         json!({
@@ -250,6 +273,24 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
             "installed": true,
         }),
     )
+}
+
+/// Beside `bin`, the commit the installed binary was built from: lets an update with nothing new
+/// return in seconds instead of rebuilding.
+const STAMP: &str = ".graphhelm-installed-head";
+
+/// True when the clone's HEAD is exactly the commit the installed binary was last built from.
+pub(super) fn already_installed(head: Option<&str>, installed: Option<&str>) -> bool {
+    matches!((head, installed), (Some(head), Some(installed)) if !head.is_empty() && head == installed.trim())
+}
+
+/// `cargo install` builds in a fresh temporary directory and deletes it, so every update rebuilt
+/// all ~300 crates from zero (over 10 minutes on Windows, 2026-10-12). A persistent target dir
+/// keeps the dependencies compiled between updates; `CARGO_TARGET_DIR` wins when set.
+pub(super) fn target_dir(environment: Option<std::ffi::OsString>, source: &Path) -> PathBuf {
+    environment
+        .filter(|value| !value.is_empty())
+        .map_or_else(|| source.join("target"), PathBuf::from)
 }
 
 /// The `cargo install --root` that puts the new binary exactly where the running one is: the
@@ -430,6 +471,26 @@ mod tests {
             None
         );
         assert_eq!(install_root(None), None);
+    }
+
+    #[test]
+    fn update_reuses_a_persistent_target_dir() {
+        let source = Path::new("/clone");
+        assert_eq!(target_dir(None, source), source.join("target"));
+        assert_eq!(target_dir(Some("".into()), source), source.join("target"));
+        assert_eq!(
+            target_dir(Some("/cache".into()), source),
+            PathBuf::from("/cache")
+        );
+    }
+
+    #[test]
+    fn update_skips_only_when_the_installed_head_matches() {
+        assert!(already_installed(Some("abc"), Some("abc\n")));
+        assert!(!already_installed(Some("abc"), Some("def")));
+        assert!(!already_installed(Some("abc"), None));
+        assert!(!already_installed(None, Some("abc")));
+        assert!(!already_installed(Some(""), Some("")));
     }
 
     #[test]

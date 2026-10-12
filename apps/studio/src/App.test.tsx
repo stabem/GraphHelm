@@ -23,7 +23,7 @@ import { MAX_NODE_TIMEOUT_SECONDS, RuntimeError, RuntimeClient as ReadClient, RU
 import type { GraphTopology, MutationEvidence } from "./runtime/types";
 import type { ModelContextLike, WebMcpToolDescriptor } from "./webmcp/adapter";
 import { digestOf } from "./runtime/customs";
-import { readTaskEventRecords } from "./runtime/team-tasks";
+import { foldTaskEvents, readTaskEventRecords } from "./runtime/team-tasks";
 
 const STATUS = {
   executionId: "demo-deploy",
@@ -4094,8 +4094,10 @@ describe("the exchange", () => {
     expect(within(mission).getAllByRole("status").some((item) => item.textContent?.includes("Loading the team's history"))).toBe(true);
     expect(within(mission).queryByRole("region", { name: "Work by stage" })).not.toBeInTheDocument();
     await act(async () => releaseHistory());
-    expect(await readTaskEventRecords({ executionId: "demo-deploy", events: entries.map(({ event }) => event),
-      readEvidence: client.readEvidence })).toHaveLength(entries.length);
+    const verified = await readTaskEventRecords({ executionId: "demo-deploy", events: entries.map(({ event }) => event),
+      readEvidence: client.readEvidence });
+    expect(verified).toHaveLength(entries.length);
+    expect(foldTaskEvents(verified).find((task) => task.pr === 923)).toMatchObject({ step: "review", currentReviewer: "reviewer-b" });
     const kanban = await within(mission).findByRole("region", { name: "Work by stage" });
     expect(kanban).not.toHaveTextContent("PR #955");
     expect(kanban).not.toHaveTextContent("PR #921");

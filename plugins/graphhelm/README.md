@@ -199,9 +199,12 @@ those IDs, from each validated sealed receipt. An offer without receipts has an 
 This historical receipt context needs no current briefing fetch and does not imply acceptance.
 
 When `status` names an offer ID, it opens only that offer's sealed content. It still validates the
-current recipient's receipt records to determine which reference that offer; receipt matching and
-integrity checks are unchanged. Unfiltered status continues opening all offer records. An unavailable
-unrelated offer cannot block a targeted read, while unavailable or corrupt selected evidence is refused.
+current recipient's receipt records to determine which reference that offer. A receipt claiming the
+selected offer through either `replyTo` or its sealed `offerId` is fully validated before it can be
+reported or ignored; missing or disagreeing relation metadata refuses the status result. A valid
+receipt consistently linked to another offer remains unrelated. Unfiltered status continues opening
+all offer records. An unavailable unrelated offer cannot block a targeted read, while unavailable or
+corrupt selected evidence is refused.
 
 A timed-out or disconnected write can have committed before its response was lost. The adapter
 does not repeat that POST. It reads the journal and validates the exact sealed offer or receipt,

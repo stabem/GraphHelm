@@ -451,7 +451,10 @@ def status(host: str, session: str, offer_id: str | None) -> dict:
                 candidate_details = json.loads(candidate_signal.get("description", "{}"))
             except (TypeError, json.JSONDecodeError) as error:
                 raise ValueError("handoff receipt metadata is invalid") from error
-            if not isinstance(candidate_details, dict) or candidate_details.get("offerId") != sid:
+            if not isinstance(candidate_details, dict):
+                raise ValueError("handoff receipt metadata is invalid")
+            if (candidate_signal.get("replyTo") != sid
+                    and candidate_details.get("offerId") != sid):
                 continue
             receipt_briefing = _validate_receipt(candidate_signal, execution, sid, current_actor, signal["source"]["id"])
             if candidate_signal.get("replyTo") == sid:

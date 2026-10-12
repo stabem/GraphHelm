@@ -239,7 +239,7 @@ def token_from_file(path: str) -> str:
     return token
 
 
-def arm_lane_wake(payload: dict, bound: tuple[str, str, str, str, str | None]) -> None:
+def arm_lane_wake(payload: dict, bound: tuple[str, str, str, str, str | None], matures_in: int = 60) -> None:
     """Renew the lane's finite lease from the last observed event head."""
     execution, token_file, url, _origin, _node = bound
     actor = os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload)
@@ -253,7 +253,7 @@ def arm_lane_wake(payload: dict, bound: tuple[str, str, str, str, str | None]) -
         raise ValueError("invalid event head")
     reply = request(f"{base}/wake-lease", token, "POST",
                     {"sessionId": session, "rendezvousId": str(uuid.uuid4()),
-                     "cursor": head, "maturesInSeconds": 60},
+                     "cursor": head, "maturesInSeconds": matures_in},
                     {"X-GraphHelm-Actor": actor, "X-GraphHelm-Actor-Type": "agent",
                      "Idempotency-Key": str(uuid.uuid4())})
     data = reply.get("data")
@@ -358,6 +358,11 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path) -> Non
         except (OSError, ValueError, KeyError):
             time.sleep(1)
     finally:
+        if not _heartbeat_fresh(heartbeat):
+            try:
+                arm_lane_wake(payload, bound, matures_in=1)
+            except (OSError, ValueError, KeyError):
+                pass
         try:
             if int(pid_path.read_text(encoding="ascii")) == os.getpid():
                 pid_path.unlink()
@@ -374,6 +379,10 @@ def stop_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None]
             os.kill(pid, signal.SIGTERM)
         pid_path.unlink(missing_ok=True)
     except (FileNotFoundError, ValueError, OSError):
+        pass
+    try:
+        arm_lane_wake(payload, bound, matures_in=1)
+    except (OSError, ValueError, KeyError):
         pass
 
 

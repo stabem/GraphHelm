@@ -219,6 +219,7 @@ fn render_read(read: &Read, spec: Option<&GraphSpec>) -> serde_json::Value {
     value["headSequence"] = serde_json::json!(read.at_sequence.unwrap_or(0));
     // A live lease means armed and not consumed, just as wake status reports. Its actor
     // comes from the arming envelope, not its opaque session id or a display alias.
+    let now = chrono::Utc::now();
     let listeners: std::collections::BTreeSet<_> = read
         .history
         .iter()
@@ -229,7 +230,10 @@ fn render_read(read: &Read, spec: Option<&GraphSpec>) -> serde_json::Value {
             read.projection
                 .wake_leases
                 .get(lease.session_id.as_str())
-                .filter(|live| live.armed_at_sequence == event.sequence)
+                .filter(|live| {
+                    live.armed_at_sequence == event.sequence
+                        && live.matures_at.as_ref().is_none_or(|at| at.as_datetime() > &now)
+                })
                 .map(|_| event.actor.id().as_str())
         })
         .collect();

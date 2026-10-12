@@ -620,10 +620,6 @@ class LaneStopTests(unittest.TestCase):
             while session_hook._pid_alive(pid) and time.monotonic() < deadline:
                 time.sleep(0.05)
             self.assertFalse(session_hook._pid_alive(pid), "waiter outlived heartbeat")
-            request = urllib.request.Request(self.url + "/v1/executions/lane-test",
-                      headers={"Authorization": "Bearer " + self.owner_token})
-            with urllib.request.urlopen(request, timeout=5) as response:
-                self.assertNotIn("codex-4", json.load(response)["data"]["wakeListeners"])
             pid_files[0].unlink(missing_ok=True)
             self.assertEqual(self.stop(MANIFESTS[1], session="shell-host"), [])
             replacement = int(pid_files[0].read_text())

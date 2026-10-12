@@ -168,7 +168,7 @@ export function TaskInspector({ task: t, step, onOpenTest, health = null, pace =
         <span className="mg-kick"><span className="mg-dot" data-state={st} />{`${nodeLabel(t, step)} · ${prText(t)}`}</span>
         <h3>{t.title}</h3>
         {health && <HealthFlag health={health} />}
-        {pace && <PaceBlock pace={pace} label={paceLabel} stuck={health?.flag === "stalled"} size="large" />}
+        {pace && <PaceBlock pace={pace} label={paceLabel} stuck={health?.flag === "stalled"} health={health} size="large" />}
         {step && <span className="mg-muted">{`Proves step ${step.index + 1} · `}<button type="button" className="mg-link" onClick={open}>open its test</button></span>}
       </div>
       <div className="mg-section">
@@ -270,7 +270,7 @@ interface IssueProps {
 export interface Pace { progress: StageProgress | null; activity: Activity }
 
 /** #591: the live timer, the progress bar against the usual stage time, and the last-activity line. */
-export function PaceBlock({ pace, label, stuck, size = "card" }: { pace: Pace; label: string; stuck: boolean; size?: "card" | "large" }) {
+export function PaceBlock({ pace, label, stuck, health, size = "card" }: { pace: Pace; label: string; stuck: boolean; health?: StageHealth | null; size?: "card" | "large" }) {
   const p = pace.progress, a = pace.activity;
   const tone = p ? (stuck ? "red" : p.tone) : null;
   const act = a.sinceMs === null ? "no activity recorded" : a.tone === "red" ? `no activity ${stageDuration(a.sinceMs)}`
@@ -285,10 +285,10 @@ export function PaceBlock({ pace, label, stuck, size = "card" }: { pace: Pace; l
           {tone && <>{" · "}<span className="mg-pace-x">{`${x}× typical`}</span></>}
         </span>
       )}
-      <span className="mg-pace-line">
+      {health?.flag !== "building" && health?.flag !== "waiting_build" && <span className="mg-pace-line">
         <span className="mg-act-dot" data-tone={a.tone} aria-hidden="true" />
         <span className="mg-act" data-tone={a.tone}>{act}</span>
-      </span>
+      </span>}
       {p && tone && (
         <span className="mg-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(p.ratio * 100)}
           aria-label={`${label} for ${stageDuration(p.elapsedMs)}, ${x} times the usual time`} data-tone={tone}>
@@ -354,7 +354,7 @@ export function CurrentCard({ cell: c, stage, task: t, health, pace, selected, l
         <WhoLine who={who} />
         {!pace && health?.elapsed && <span className="mg-node-time">{health.elapsed}</span>}
       </span>
-      {pace && <PaceBlock pace={pace} label={stageLabel(stage, t)} stuck={stuck} />}
+      {pace && <PaceBlock pace={pace} label={stageLabel(stage, t)} stuck={stuck} health={health} />}
     </button>
   );
 }

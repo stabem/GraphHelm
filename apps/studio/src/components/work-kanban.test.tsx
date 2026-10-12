@@ -31,6 +31,18 @@ const renderLanes = async () => {
 const col = (name: RegExp) => screen.getByRole("region", { name });
 
 describe("WorkKanban (#668)", () => {
+  it("describes a held slot instead of calling a four-hour-old record active", async () => {
+    const old = { lane: "gh-claude-1", silent: true, lastEventAt: NOW - 4 * 3_600_000, bars: [{
+      kind: "implement" as const, label: "#11", taskId: "a", start: NOW - 4 * 3_600_000, end: NOW, open: true,
+    }] } as Lane;
+    const slots = [{ root: "D:/gh", ok: true as const, holder: { lane: "gh-claude-1", label: "#11", pid: 1, worktree: null, heldSeconds: 60 }, waiting: [] }];
+    render(<MissionView journeys={[]} tasks={[tasks[0]!]} lanes={[old]} slots={slots} now={NOW} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Lanes" }));
+    const card = within(col(/^Waiting for build/)).getByRole("button", { name: /A very long pull request title/ });
+    expect(card).toHaveTextContent("building");
+    expect(card.querySelector(".mg-act")).toBeNull();
+    expect(card).not.toHaveTextContent(/author active 4h.*ago/);
+  });
   it("shows a loading state instead of empty counts until history settles", async () => {
     render(<MissionView journeys={[]} tasks={[]} lanes={[]} now={NOW} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} historyLoading />);
     await fastUserEvent().click(screen.getByRole("tab", { name: "Lanes" }));

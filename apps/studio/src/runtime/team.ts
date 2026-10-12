@@ -64,31 +64,50 @@ export function firstLine(text: string, max = 120): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
+function namedLane(text: string | undefined): string | null {
+  if (text === undefined) return null;
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^\s*Session:\s*([A-Za-z0-9][A-Za-z0-9._-]*)(?:\s+\[[^\]\r\n]+\])?\s+·\s+Head:\s+[0-9a-f]{8,64}(?:\s+.*)?\s*$/.exec(line);
+    if (match !== null) return match[1]!;
+  }
+  return null;
+}
+
 interface Seed { actorId: string | null; native: boolean; charter: string | null; title: string | null }
 interface Tally { count: number; lastAt: string | null; lastSequence: number }
 
 export function teamModel(input: TeamInput): TeamModel {
   const tallies = new Map<string, Tally>();
   const notes = new Map<string, string>();
+  const signedLanes = new Map((input.taskRecords ?? []).flatMap((record) => {
+    const lane = record.lane ?? (record.kind === "task.review_assigned" ? record.reviewer : undefined);
+    return lane === undefined ? [] : [[record.sequence, lane] as const];
+  }));
+  const attributedSharedSequences = new Set<number>();
   // #532: a lane the run knows stays on the canvas however long it has been idle.
   const known = new Set<string>();
   for (const event of input.events) {
     if (event.kind !== "signal_recorded" || event.actorType !== "agent" || event.actorId === null) continue;
-    const tally = tallies.get(event.actorId) ?? { count: 0, lastAt: null, lastSequence: 0 };
+    const envelope = input.envelopes[event.sequence];
+    const attributedLane = event.actorId === SHARED_CODEX_ACTOR
+      ? signedLanes.get(event.sequence) ?? namedLane(envelope?.text)
+      : undefined;
+    const actorId = attributedLane ?? event.actorId;
+    if (attributedLane !== undefined && event.actorId === SHARED_CODEX_ACTOR) attributedSharedSequences.add(event.sequence);
+    const tally = tallies.get(actorId) ?? { count: 0, lastAt: null, lastSequence: 0 };
     tally.count += 1;
     if (event.sequence >= tally.lastSequence) {
       tally.lastSequence = event.sequence;
       tally.lastAt = event.occurredAt;
     }
-    tallies.set(event.actorId, tally);
-    if (signalKind(event)?.startsWith("task.") === true) known.add(event.actorId);
+    tallies.set(actorId, tally);
+    if (signalKind(event)?.startsWith("task.") === true) known.add(actorId);
     if (signalKind(event) === "operator_note") {
-      known.add(event.actorId);
+      known.add(actorId);
       // #446: a sealed note not opened yet exists; it reads as opening, never as "no note".
-      const envelope = input.envelopes[event.sequence];
       const text = envelope?.text?.trim();
-      if (text) notes.set(event.actorId, firstLine(text));
-      else if (envelope === undefined && event.evidenceRefs.length > 0) notes.set(event.actorId, OPENING);
+      if (text) notes.set(actorId, firstLine(text));
+      else if (envelope === undefined && event.evidenceRefs.length > 0) notes.set(actorId, OPENING);
     }
   }
 
@@ -96,6 +115,10 @@ export function teamModel(input: TeamInput): TeamModel {
   for (const record of input.taskRecords ?? []) {
     const lane = record.lane ?? (record.kind === "task.review_assigned" ? record.reviewer : undefined);
     if (!lane) continue;
+    if (attributedSharedSequences.has(record.sequence)) {
+      known.add(lane);
+      continue;
+    }
     const tally = tallies.get(lane) ?? { count: 0, lastAt: null, lastSequence: 0 };
     if (record.sequence >= tally.lastSequence) {
       tally.lastSequence = record.sequence;
@@ -162,10 +185,11 @@ export function teamModel(input: TeamInput): TeamModel {
     const lastAt = timeOf(tally?.lastAt ?? null);
     const quietMinutes = lastAt === null ? null : Math.floor((input.now - lastAt) / 60_000);
     const waitingNode = tasks.some((task) => task.nodeId !== null && nodes.find((node) => node.id === task.nodeId)?.state === "waiting_input");
-    const newest = tasks.at(-1);
+    const allDone = tasks.length > 0 && tasks.every((task) => task.done && task.doneSequence !== null);
+    const latestDoneSequence = allDone ? Math.max(...tasks.map((task) => task.doneSequence!)) : null;
     let state: BotState;
     if ((seed.actorId !== null && input.waitingAskers.has(seed.actorId)) || waitingNode) state = "waiting_for_you";
-    else if (newest?.done === true && newest.doneSequence !== null && lastSequence <= newest.doneSequence) state = "done";
+    else if (allDone && latestDoneSequence !== null && lastSequence <= latestDoneSequence) state = "done";
     else if (lastAt !== null && input.now - lastAt < WORKING_MS) state = "working";
     else state = "quiet";
 

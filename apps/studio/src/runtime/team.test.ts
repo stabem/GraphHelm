@@ -91,6 +91,34 @@ describe("teamModel", () => {
     expect(kit1.tasks).toEqual([{ id: "t1", title: "Build cart", done: true, source: "task_record", nodeId: null, sequence: 90, doneSequence: 101 }]);
   });
 
+  it("keeps a bot active while any of its tasks are still open", () => {
+    const claudeTasks: ClaudeTaskReadModel = {
+      executionId: "run", rejected: 0,
+      tasks: [
+        { executionId: "run", nativeTaskId: "open", taskSubject: "Still working", createdByTeammateName: null,
+          completedByTeammateName: null, sourceId: "kit-1", parentSessionId: "p", createdSequence: 90,
+          createdAt: minutesAgo(30), createdEvidenceId: "ev-90", completedSequence: null, completedAt: null, completedEvidenceId: null },
+        { executionId: "run", nativeTaskId: "done", taskSubject: "Finished", createdByTeammateName: null,
+          completedByTeammateName: null, sourceId: "kit-1", parentSessionId: "p", createdSequence: 91,
+          createdAt: minutesAgo(20), createdEvidenceId: "ev-91", completedSequence: 102, completedAt: minutesAgo(2), completedEvidenceId: "ev-102" },
+      ],
+    };
+    const kit1 = teamModel(input({ events: [record(100, "kit-1", minutesAgo(3))], claudeTasks })).bots.find((bot) => bot.key === "kit-1")!;
+    expect(kit1.state).not.toBe("done");
+  });
+
+  it("attributes shared codex notes to the lane named in their identity line", () => {
+    const event = record(301, "codex", minutesAgo(1));
+    const team = teamModel(input({ events: [event], envelopes: {
+      301: { to: null, replyTo: null, text: "Working on checkout\nSession: gh-codex-1 · Head: 12345678" },
+    } }));
+    expect(team.bots.map((bot) => bot.key)).toContain("gh-codex-1");
+    expect(team.bots.find((bot) => bot.key === "gh-codex-1")).toMatchObject({
+      actorId: "gh-codex-1", name: "gh-codex-1", doingNow: "Working on checkout", shared: false,
+    });
+    expect(team.bots.map((bot) => bot.key)).not.toContain("codex");
+  });
+
   it("takes tasks from assigned graph nodes and never from note text", () => {
     const model = { nodes: [{ id: "cart", declaredName: "Cart page", state: "waiting_input", assignedActor: { type: "agent", id: "kit-1" }, touches: 1, lastEventAt: null, history: [{ sequence: 60 }] }] } as unknown as GraphModel;
     const kit1 = teamModel(input({ events: live, envelopes, model })).bots.find((bot) => bot.key === "kit-1")!;
@@ -165,5 +193,6 @@ describe("teamLinks", () => {
     const team = teamModel(input({ events: [event], taskRecords,
       taskStates: [{ lane: "codex-8", reviewers: [], title: "Active work", issue: 737, lastSequence: 201 } as unknown as TaskState] }));
     expect(team.bots.find((bot) => bot.key === "codex-8")).toMatchObject({ state: "working", quietMinutes: 2, lastRecordAt: minutesAgo(2) });
+    expect(team.bots.map((bot) => bot.key)).not.toContain("codex");
   });
 });

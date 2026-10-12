@@ -85,16 +85,22 @@ describe("needsYou", () => {
     expect(items.map((item) => item.key)).toEqual(["native:r-unobserved", "native:r-blocked"]);
   });
 
-  // #511: a run used only as the team's bus showed "1 decision needs you" for a graph step nobody asked about.
-  it("does not count a waiting graph step as a decision while agents record work and nothing else is open", () => {
+  // #959 narrows #511: only an explicitly scripted fixture wait is configuration, not a request.
+  it("keeps an unspecified fixture wait visible", () => {
     const status = { ...STATUS, executor: "fixture" as const, attention: "needs_you" as const, attentionReasons: [{ kind: "waiting_input_node", node: "implementation" }] };
-    expect(needsYou(base({ status, agentWorkRecorded: true }))).toEqual({ state: { kind: "dark" }, items: [] });
-    // A real executor's waiting step is the owner's to answer, with or without recorded agent work.
-    expect(needsYou(base({ status: { ...status, executor: "gateway" }, agentWorkRecorded: true })).state).toEqual({ kind: "lit", count: 1 });
-    expect(needsYou(base({ status: { ...status, executor: null }, agentWorkRecorded: true })).state).toEqual({ kind: "lit", count: 1 });
     expect(needsYou(base({ status })).state).toEqual({ kind: "lit", count: 1 });
-    expect(needsYou(base({ status, agentWorkRecorded: true, events: question, envelopes: asked })).items.map((item) => item.kind)).toEqual(["question", "waiting_step"]);
-    expect(needsYou(base({ status: { ...status, status: "paused" }, agentWorkRecorded: true })).state).toEqual({ kind: "lit", count: 1 });
+    // A real executor's waiting step remains the owner's to answer.
+    expect(needsYou(base({ status: { ...status, executor: "gateway" } })).state).toEqual({ kind: "lit", count: 1 });
+    expect(needsYou(base({ status: { ...status, executor: null } })).state).toEqual({ kind: "lit", count: 1 });
+  });
+
+  it("does not count a fixture-scripted wait, but still counts a real owner question", () => {
+    const status = { ...STATUS, executor: "fixture" as const, attention: "needs_you" as const,
+      attentionReasons: [{ kind: "waiting_input_node", node: "implementation", reason: "fixture_scripted" }] };
+    expect(needsYou(base({ status })).state).toEqual({ kind: "dark" });
+    const result = needsYou(base({ status, events: question, envelopes: asked }));
+    expect(result.state).toEqual({ kind: "lit", count: 1 });
+    expect(result.items.map((item) => item.kind)).toEqual(["question"]);
   });
 
   it("lists waiting and blocked steps by name, and pending drafts", () => {

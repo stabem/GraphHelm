@@ -2103,9 +2103,8 @@ export default function App({
     return () => { active = false; window.clearInterval(timer); };
   }, [connected, selected, pollIntervalMs]);
   const needs = useMemo(() => needsYou({ status, stale, events: eventList, envelopes, nativeRequests,
-    pendingDraftIds: durableProposals.map((proposal) => proposal.draftId), nodeNames, operatorId: OPERATOR_ACTOR.id,
-    agentWorkRecorded: hasRecordedAgentWork }),
-    [status, stale, eventList, envelopes, nativeRequests, durableProposals, nodeNames, hasRecordedAgentWork]);
+    pendingDraftIds: durableProposals.map((proposal) => proposal.draftId), nodeNames, operatorId: OPERATOR_ACTOR.id }),
+    [status, stale, eventList, envelopes, nativeRequests, durableProposals, nodeNames]);
   const waitingAskers = useMemo(() => new Set(needs.items.flatMap((item) => item.kind === "question" ? [item.asker] : [])), [needs]);
   const team = useMemo(() => teamModel({ events: eventList, envelopes, personas, nativeLinks: nativePersonaLinks, aliases: actorAliases, model,
     claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null, waitingAskers, now: clock,

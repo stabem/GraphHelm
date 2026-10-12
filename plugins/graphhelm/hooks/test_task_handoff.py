@@ -131,6 +131,47 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(post[0][2]["X-Graphhelm-Actor".title()], MODULE._actor("claude", "sender-1"))
         self.assertNotIn("objective", json.dumps(post))
 
+    def test_offer_replay_rejects_invalid_sealed_metadata_without_write(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            offered = MODULE.offer("claude", "sender", "codex", "receiver", "alpha")
+            evidence_id = f"evidence-{offered['offerId']}"
+            original = json.loads(RuntimeHandler.evidence[evidence_id][0])
+            original_details = json.loads(original["description"])
+            self.assertEqual(MODULE.offer("claude", "sender", "codex", "receiver", "alpha")["state"],
+                             "already_recorded")
+            cases = {
+                "kind": ("type", MODULE.RECEIPT_KIND),
+                "protocol": ("protocol", "wrong-protocol"),
+                "execution": ("executionId", "other-execution"),
+                "offer": ("offerId", "other-offer"),
+                "handoff": ("handoffId", "other-handoff"),
+                "missing_briefing": ("briefing", None),
+                "malformed_briefing": ("briefing", {"asOfSequence": "bad"}),
+            }
+            for name, (field, value) in cases.items():
+                with self.subTest(name=name):
+                    signal = json.loads(json.dumps(original))
+                    details = json.loads(json.dumps(original_details))
+                    if field == "type":
+                        signal["type"] = value
+                    elif field == "briefing" and value is None:
+                        details.pop("briefing")
+                    else:
+                        details[field] = value
+                    signal["description"] = json.dumps(details)
+                    content = json.dumps(signal, separators=(",", ":"))
+                    digest = hashlib.sha256(content.encode()).hexdigest()
+                    RuntimeHandler.evidence[evidence_id] = (content, digest)
+                    event = RuntimeHandler.events[0]
+                    event["evidenceRefs"][0]["contentSha256"] = digest
+                    event["kind"]["data"]["envelopeSha256"] = digest
+                    event["kind"]["data"]["kind"] = signal["type"]
+                    RuntimeHandler.requests = []
+                    with self.assertRaises(ValueError):
+                        MODULE.offer("claude", "sender", "codex", "receiver", "alpha")
+                    self.assertFalse(any(row[0] == "POST" or "/briefing" in row[1]
+                                         for row in RuntimeHandler.requests))
+
     def test_receipt_briefing_preserves_first_digest_when_current_briefing_advances(self):
         offered_digest = {"asOfSequence": 10, "nextStep": {"kind": "diagnose"},
                           "pending": [{"id": "offer-pending"}], "unevaluated": [],

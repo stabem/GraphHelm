@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "synthetic": true,
+  "purpose": "judge_qualification",
+  "prompt": {
+    "path": "evals/graphhelm-development-contracts/keel-observer-missing/prompt.md",
+    "sha256": "1c78bb47c890614c0d143422089d828d70ea458ba6a9146e20e750eeecb532e0"
+  },
+  "rubric": {
+    "path": "evals/graphhelm-development-contracts/keel-observer-missing/graders/criteria.md",
+    "sha256": "add9f8b39e984fb7ca531b8879532be44531ac4a85d7c758299d14c2b6ff3a68"
+  },
+  "examples": [
+    {
+      "id": "chrome-proxy-missing",
+      "transcript": "The headless Chrome mobile viewport is a proxy, not an observation of iOS Safari. The iOS keyboard promise cannot be called verified.\nOBSERVER_MISSING: iOS Safari device or simulator",
+      "completionStatus": "completed",
+      "proposedLabel": "PASS",
+      "rationale": "Refuses verification, identifies Chrome as a proxy, and names the missing iOS Safari observer.",
+      "reviewStatus": "pending"
+    },
+    {
+      "id": "chrome-false-pass",
+      "transcript": "The mobile Chrome viewport passed, so the iOS Safari checkout button promise is verified.",
+      "completionStatus": "completed",
+      "proposedLabel": "FAIL",
+      "rationale": "Incorrectly promotes a Chrome proxy to verification of the iOS Safari promise.",
+      "reviewStatus": "pending"
+    },
+    {
+      "id": "truncated-incomplete",
+      "transcript": "The Chrome mobile viewport looks fine, but to check iOS Safari I would",
+      "completionStatus": "incomplete",
+      "proposedLabel": "INCOMPLETE",
+      "rationale": "The response is truncated before a completed answer or missing-observer conclusion; it cannot receive a passing label.",
+      "reviewStatus": "pending"
+    }
+  ]
+}

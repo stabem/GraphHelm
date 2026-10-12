@@ -51,9 +51,10 @@ export function needsYou(input: NeedsYouInput): { state: BeaconState; items: Nee
   }
   // A fixture run can park on its entry graph while recorded agent work carries on elsewhere.
   // That wait is technical only when it is the sole owner-facing item (#511, #959).
+  const otherStepItems = items.filter((item) => item.kind === "blocked_step");
   const graphWaitOnly = input.status?.status === "running" && input.status.executor === "fixture"
     && input.agentWorkRecorded === true
-    && items.length > 0 && items.every((item) => item.kind === "waiting_step");
+    && items.some((item) => item.kind === "waiting_step") && otherStepItems.length === 0;
   if (graphWaitOnly) {
     for (let index = items.length - 1; index >= 0; index -= 1) {
       if (items[index].kind === "waiting_step") items.splice(index, 1);

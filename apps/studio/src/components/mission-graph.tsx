@@ -360,7 +360,7 @@ export function CurrentCard({ cell: c, stage, task: t, health, pace, selected, l
       {c.sub && <span className="mg-node-sub" data-tone={fixing ? "danger" : "neutral"} title={c.sub}>{c.sub}</span>}
       {cardFlag && <HealthFlag health={cardFlag} time={false} />}
       <span className="mg-node-foot">
-        {!reReview && <WhoLine who={who} />}
+        {!(reReview && c.sub) && <WhoLine who={who} />}
         {!pace && health?.elapsed && <span className="mg-node-time">{health.elapsed}</span>}
       </span>
       {pace && <PaceBlock pace={pace} label={stageLabel(stage, t)} stuck={stuck} health={health} />}

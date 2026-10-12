@@ -17,6 +17,7 @@ import time
 import threading
 import unittest
 from unittest import mock
+import urllib.error
 import urllib.request
 
 from plugins.graphhelm.hooks import tasks_reconcile
@@ -38,7 +39,7 @@ class LaneStopTests(unittest.TestCase):
         root = Path(self.tmp.name)
         self.env = {**os.environ, "GRAPHHELM_EVENTS_KEY": "12" * 32,
                     "GRAPHHELM_EXECUTION_ID": "lane-test", "GRAPHHELM_ACTOR": "codex-4"}
-        self.cli = shutil.which("graphhelm")
+        self.cli = os.environ.get("GRAPHHELM_CLI") or shutil.which("graphhelm")
         self.assertIsNotNone(self.cli, "installed graphhelm is required")
         keyring = root / "keyring"
         keyring.mkdir()
@@ -203,8 +204,13 @@ class LaneStopTests(unittest.TestCase):
             data=json.dumps({"signal": signal}).encode(), headers={"Authorization": "Bearer " + token,
             "Content-Type": "application/json", "Idempotency-Key": "claim-766",
             "X-GraphHelm-Actor": "codex-4", "X-GraphHelm-Actor-Type": "agent"})
-        with urllib.request.urlopen(req, timeout=5) as response:
-            self.assertTrue(json.load(response)["ok"])
+        try:
+            response = urllib.request.urlopen(req, timeout=5)
+        except urllib.error.HTTPError as error:
+            self.fail(f"claim request failed: HTTP {error.code}: {error.read().decode('utf-8', 'replace')}")
+        with response:
+            answer = json.load(response)
+            self.assertTrue(answer["ok"], answer)
         with mock.patch.object(tasks_reconcile, "github_issue", return_value={"state": "CLOSED", "assignees": []}):
             self.assertEqual(tasks_reconcile.reconcile(args)["released"], [766])
             self.assertEqual(tasks_reconcile.reconcile(args)["released"], [])

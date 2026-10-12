@@ -77,7 +77,7 @@ describe("task review assignment recovery", () => {
       },
       selectedStepId: null, selectedTaskKey: null, onSelectStep: vi.fn(), onSelectTask: vi.fn(), onOpenTest: vi.fn(),
     }));
-    expect(screen.getByText("→ codexrev-1")).toBeInTheDocument();
+    expect(screen.getByText("codexrev-1")).toBeInTheDocument();
     expect(screen.queryByText("nobody yet")).not.toBeInTheDocument();
   });
 
@@ -89,7 +89,7 @@ describe("task review assignment recovery", () => {
         issue: 913, lane: "codex-2", branch: `issue-913-${pr}`,
       }));
       records.push(taskRecord(++sequence, "task.pr_opened", "codex-2", "issue-913", {
-        pr, headSha: `abcdef${String(pr).padStart(7, "0")}`, lane: "codex-2",
+        pr, headSha: `abcdef${String(pr).padStart(7, "0")}`, lane: "codex-2", journeys: [],
       }));
       records.push(taskRecord(++sequence, "task.merged", "coordinator", "pr-" + pr, {
         pr, mergeSha: `fedcba${String(pr).padStart(7, "0")}`, closes: [], merger: "coordinator",

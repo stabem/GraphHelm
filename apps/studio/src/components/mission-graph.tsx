@@ -118,7 +118,7 @@ export function MissionGraph({ mission, selectedStepId, selectedTaskKey, onSelec
                       <span className="mg-node-pr">{prText(t)}</span>
                     </span>
                     <span className="mg-node-title" title={t.title}>{t.title}</span>
-                    <span className="mg-node-who">{t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : "nobody yet"}</span>
+                    <span className="mg-node-who">{t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : t.reviewers.join(", ") || "nobody yet"}</span>
                   </button>
                 );
               })}
@@ -321,7 +321,7 @@ export function HealthFlag({ health, time = true }: { health: StageHealth; time?
 function cardWho(c: PrRow["cells"][number], stage: WorkStage, t: MissionTask): string {
   if (stage === "fix" && t.blocked) return t.lane ?? "nobody yet";
   if (stage === "review" && Boolean(c.title?.startsWith("Re-review")) && c.who) return c.who;
-  return t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : "nobody yet";
+  return t.lane ? [t.lane, t.reviewers.join(", ")].filter(Boolean).join(" → ") : t.reviewers.join(", ") || "nobody yet";
 }
 
 /** #706: "author → reviewer" with each lane kept whole: a name never breaks inside itself. */

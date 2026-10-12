@@ -173,8 +173,11 @@ fn lifecycle_killed_runtime_is_reported_as_vanished() {
 fn lifecycle_legacy_record_has_no_instance() {
     let dir = tempfile::tempdir().unwrap();
     let events = dir.path().join("events");
-    std::fs::write(dir.path().join("events.runtime-lifecycle.json"),
-        br#"{"pid":17,"startedAt":123,"version":"old","state":"running"}"#).unwrap();
+    std::fs::write(
+        dir.path().join("events.runtime-lifecycle.json"),
+        br#"{"pid":17,"startedAt":123,"version":"old","state":"running"}"#,
+    )
+    .unwrap();
     let (_server, base, _) = serve(&events);
     let reply = json_body(&raw_request(&format!("{base}/health"), None).unwrap());
     assert_eq!(reply["data"]["previousExit"]["state"], "vanished");

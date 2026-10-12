@@ -6,7 +6,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 #[path = "support/time_scale.rs"]
@@ -34,7 +34,7 @@ fn token_path(events: &Path) -> PathBuf {
 }
 
 fn serve(events: &Path) -> (ServerGuard, String, String) {
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "serve",
             "--events",
@@ -133,7 +133,7 @@ fn start_execution(events: &Path, directory: &Path, execution: &str) {
         &serde_json::json!({"nodeOutcomes": {"implementation": "failure", "deploy": "success"}}),
     );
     let graph = root().join("examples/graphs/manual-override-deploy.yaml");
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "execution",
             "start",
@@ -446,7 +446,7 @@ fn hammering_the_monitor_never_changes_a_byte_of_the_store() {
     }
 
     fn status_json(events: &Path, execution: &str) -> serde_json::Value {
-        let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .args([
                 "execution",
                 "status",

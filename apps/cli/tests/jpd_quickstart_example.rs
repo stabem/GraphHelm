@@ -6,12 +6,11 @@
 //! Real CLI, Git and child processes; no browser, Node or provider. Cost: a few seconds after
 //! build; needs `sh` and `python3`.
 use std::path::Path;
-use std::process::Command;
 
 use serde_json::Value;
 
 fn graphhelm(project: &Path, args: &[&str]) -> (i32, Value) {
-    let out = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .current_dir(project)
         .arg("--json")
         .args(args)
@@ -24,7 +23,7 @@ fn graphhelm(project: &Path, args: &[&str]) -> (i32, Value) {
 }
 
 fn git(project: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = graphhelm_process::command("git")
         .arg("-C")
         .arg(project)
         .args(args)

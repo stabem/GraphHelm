@@ -7,7 +7,7 @@
 //! bytes it returned.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use graphhelm_events::SecretBytes;
@@ -222,7 +222,7 @@ fn probe_native_runtime(route: &ModelRoute) -> Check {
     let program = graphhelm_model_gateway::runtime::resolve_program(std::path::Path::new(
         &command_spec.program,
     ));
-    let mut command = Command::new(&program);
+    let mut command = graphhelm_process::command(&program);
     command
         .arg("--version")
         .env_clear()

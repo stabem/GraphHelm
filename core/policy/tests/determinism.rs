@@ -7,8 +7,6 @@
 //! rather than believed. This cell repeats the SAME input in two separate processes, where the
 //! seeds genuinely differ, and compares the bytes.
 
-use std::process::Command;
-
 /// Enough distinct conflict keys that two independent hash orders coinciding is not a thing that
 /// happens. The bar is named rather than felt: with N keys the chance of two independent orders
 /// agreeing is 1/N!, and at N = 16 that is about 1 in 2e13. A smaller fixture would make this cell
@@ -23,7 +21,7 @@ fn resolve_in_a_fresh_process() -> Vec<u8> {
     // Keeping the diagnostic matters more than the shortest diff: this message is the only thing
     // that says WHICH binary was missing when the harness cannot start.
     let shown = binary.display().to_string();
-    let output = Command::new(binary)
+    let output = graphhelm_process::command(binary)
         .arg(DISTINCT_KEYS.to_string())
         .output()
         .unwrap_or_else(|error| panic!("HARNESS: could not spawn {shown}: {error}"));

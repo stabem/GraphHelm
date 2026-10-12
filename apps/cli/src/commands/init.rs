@@ -28,7 +28,7 @@
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use graphhelm_protocols::Diagnostic;
 use serde_json::{Map, Value, json};
@@ -496,7 +496,7 @@ pub(super) fn ensure_gitignore(project: &Path, path: &Path) -> Result<State, Fai
         }
     };
     let git_command = || {
-        let mut command = Command::new("git");
+        let mut command = graphhelm_process::command("git");
         command
             .arg("-C")
             .arg(project)

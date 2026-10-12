@@ -9,6 +9,10 @@ from pathlib import Path
 import subprocess
 import unittest
 from unittest.mock import Mock, patch
+import os
+
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 spec = importlib.util.spec_from_file_location("measure", Path(__file__).with_name("measure.py"))
 measure = importlib.util.module_from_spec(spec)
@@ -28,7 +32,7 @@ class ReportTests(unittest.TestCase):
                 def evaluate(expression):
                     script = "\n".join(scripts + [
                         f"console.log(JSON.stringify(({expression}) ?? null));"])
-                    value = subprocess.check_output(["node", "-e", script], text=True)
+                    value = subprocess.check_output(["node", "-e", script], text=True, creationflags=NO_WINDOW)
                     scripts.append(f"{expression};")
                     return json.loads(value)
 

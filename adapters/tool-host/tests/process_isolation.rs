@@ -208,7 +208,7 @@ fn the_child_environment_is_an_allowlist_and_never_carries_host_secrets() {
     // environment; the INNER run (marker set) is the real assertion, whose parent environment
     // now genuinely carries the sentinels.
     if std::env::var_os("GH_TOOL_HOST_INNER").is_none() {
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
+        let status = graphhelm_process::command(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "the_child_environment_is_an_allowlist_and_never_carries_host_secrets",
@@ -808,7 +808,7 @@ fn an_extra_env_cbm_cache_dir_is_refused_before_the_process_starts() {
 #[test]
 fn a_host_cbm_cache_dir_never_reaches_the_child() {
     if std::env::var_os("GH_TOOL_HOST_INNER_CBM").is_none() {
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
+        let status = graphhelm_process::command(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "a_host_cbm_cache_dir_never_reaches_the_child",
@@ -1286,7 +1286,7 @@ fn a_killed_cli_process_leaves_no_live_grandchild() {
         .expect("the readiness listener has an address")
         .to_string();
     let workspace = tempfile::tempdir().expect("the CLI workspace must be creatable");
-    let mut surrogate = std::process::Command::new(fake_tool())
+    let mut surrogate = graphhelm_process::command(fake_tool())
         .args(["cli-surrogate", &report_address])
         .current_dir(workspace.path())
         .spawn()
@@ -1744,13 +1744,13 @@ fn retained_fixture_cleanup_ends_both_children_during_unwind() {
         }
     }
     let mut first = ChildOwner(
-        std::process::Command::new(fake_tool())
+        graphhelm_process::command(fake_tool())
             .arg("sleep")
             .spawn()
             .unwrap(),
     );
     let mut second = ChildOwner(
-        std::process::Command::new(fake_tool())
+        graphhelm_process::command(fake_tool())
             .arg("sleep")
             .spawn()
             .unwrap(),

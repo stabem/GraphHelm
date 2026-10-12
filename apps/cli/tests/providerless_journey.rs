@@ -71,7 +71,7 @@ impl Journey {
     /// which is what the document tells the reader to use — the flow names repository-relative
     /// inputs (`examples/…`, `core/architect/fixtures/…`); only the STORE lives in `<tmp>`.
     fn command(&mut self, args: &[String]) -> Command {
-        let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+        let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
         command.env_clear();
         for name in ["PATH", "SYSTEMROOT", "TEMP", "TMP"] {
             if let Ok(value) = std::env::var(name) {

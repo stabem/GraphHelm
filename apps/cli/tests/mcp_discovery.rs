@@ -13,7 +13,7 @@ use time_scale::scaled;
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 use std::time::{Duration, Instant};
 
 struct Killed(Child);
@@ -95,7 +95,7 @@ fn serve(events: &Path, port: u16, registry: &Path) -> Killed {
 }
 
 fn serve_with_project(events: &Path, port: u16, registry: &Path, project: Option<&Path>) -> Killed {
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command
         .args(["serve", "--events", events.to_str().unwrap(), "--bind"])
         .arg(format!("127.0.0.1:{port}"));
@@ -147,7 +147,7 @@ struct Bridge {
 
 impl Bridge {
     fn start(port: u16, registry: &Path, token_args: &[&str]) -> Self {
-        let child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        let child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .args(["mcp", "--url"])
             .arg(format!("http://127.0.0.1:{port}"))
             .args(token_args)
@@ -163,7 +163,7 @@ impl Bridge {
     }
 
     fn start_project(project: &Path, registry: &Path) -> Self {
-        let child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        let child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .args(["mcp", "--discover", "--project"])
             .arg(project)
             .args(["--actor", "project-discovery-test"])
@@ -178,7 +178,7 @@ impl Bridge {
     }
 
     fn start_in_project_cwd(project: &Path, registry: &Path) -> Self {
-        let child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        let child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .args(["mcp", "--discover", "--actor", "project-discovery-test"])
             .current_dir(project)
             .env("GRAPHHELM_RUNTIME_DIR", registry)
@@ -265,7 +265,7 @@ fn project_discovery_from_a_linked_worktree_finds_the_main_checkout_runtime() {
         ],
         vec!["worktree", "add", "--detach", worktree.to_str().unwrap()],
     ] {
-        let output = Command::new("git")
+        let output = graphhelm_process::command("git")
             .current_dir(&project)
             .args(args)
             .output()
@@ -339,7 +339,8 @@ fn shipped_mcp_registrations_discover_without_port_or_token_overrides() {
                         .replace("${GRAPHHELM_TOKEN_FILE}", "")
                 })
                 .collect::<Vec<_>>();
-            let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+            let mut command =
+                graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
             command
                 .args(&args)
                 .current_dir(if explicit { &elsewhere } else { &project })
@@ -543,7 +544,7 @@ fn one_discovering_bridge_follows_a_runtime_swap_on_the_same_port() {
 fn an_ephemeral_port_publishes_no_record() {
     let dir = tempfile::tempdir().unwrap();
     let registry = dir.path().join("registry");
-    let child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["serve", "--events"])
         .arg(dir.path().join("events"))
         .args(["--bind", "127.0.0.1:0"])
@@ -569,7 +570,7 @@ fn project_discovery_uses_the_runtime_assigned_loopback_port() {
     let events = project.join(".graphhelm").join("events");
     std::fs::create_dir_all(&events).unwrap();
 
-    let child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["serve", "--events"])
         .arg(&events)
         .args(["--bind", "127.0.0.1:0", "--project"])
@@ -628,7 +629,7 @@ fn project_discovery_uses_the_runtime_assigned_loopback_port() {
 
 #[test]
 fn discover_and_token_file_together_are_refused() {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "mcp",
             "--url",
@@ -674,7 +675,7 @@ fn project_discovery_hands_out_the_agent_token_not_the_owner_token() {
 /// #380: an owner-typed MCP session is never discovered; it names the owner token explicitly.
 #[test]
 fn discover_with_an_owner_actor_type_is_refused() {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["mcp", "--discover", "--actor", "a", "--actor-type", "owner"])
         .stdin(Stdio::null())
         .output()

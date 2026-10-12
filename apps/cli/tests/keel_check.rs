@@ -11,7 +11,7 @@ use std::path::Path;
 use tempfile::TempDir;
 
 fn git(repo: &Path, args: &[&str]) {
-    let status = std::process::Command::new("git")
+    let status = graphhelm_process::command("git")
         .arg("-C")
         .arg(repo)
         .args([
@@ -328,14 +328,14 @@ fn prove_new_tests_earns_the_regression_test_and_flags_the_one_green_on_the_pare
     );
     assert_eq!(codes(&reply), vec!["keel.test.green_on_parent"], "{reply}");
 
-    let status = std::process::Command::new("git")
+    let status = graphhelm_process::command("git")
         .arg("-C")
         .arg(repo.path())
         .args(["status", "--porcelain"])
         .output()
         .unwrap();
     assert!(status.stdout.is_empty(), "the checkout was written");
-    let worktrees = std::process::Command::new("git")
+    let worktrees = graphhelm_process::command("git")
         .arg("-C")
         .arg(repo.path())
         .args(["worktree", "list", "--porcelain"])
@@ -1195,7 +1195,7 @@ fn owner_token(project: &Path) -> String {
     // store (events, token, keys, owner records) out of git, so the test ignores exactly that.
     let gitignore = project.join(".gitignore");
     let kept = std::fs::read(&gitignore).ok();
-    let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["--json", "init", "--project"])
         .arg(project)
         .args(["--harness", "claude-code"])

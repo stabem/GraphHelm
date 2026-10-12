@@ -23,6 +23,9 @@ import shutil
 import subprocess
 import sys
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 DEFAULT_COMMAND = "npx --no-install playwright test --reporter=json"
 REPORT = Path(".graphhelm") / "playwright-report.json"
 OBSERVED = {0: "passed", 1: "failed"}
@@ -59,7 +62,7 @@ def observe(project: Path, command: str, timeout: int) -> dict:
     env = dict(os.environ, PLAYWRIGHT_JSON_OUTPUT_NAME=str(report_path.resolve()))
     try:
         result = subprocess.run(argv, cwd=project, capture_output=True, text=True,
-                                timeout=timeout, env=env)
+                                timeout=timeout, env=env, creationflags=NO_WINDOW)
     except subprocess.TimeoutExpired:
         return {"verdict": "observer_missing", "exitCode": None,
                 "evidence": [f"OBSERVER_MISSING: `{command}` did not finish in {timeout}s"]}
@@ -121,7 +124,7 @@ def _run_cli(graphhelm: str, tail: list[str], base: list[str]) -> str | None:
     """Run one `graphhelm journey ...`; None on success, else the reason it was refused."""
     try:
         result = subprocess.run(_split(graphhelm) + tail[:2] + base + tail[2:],
-                                capture_output=True, text=True, timeout=120)
+                                capture_output=True, text=True, timeout=120, creationflags=NO_WINDOW)
     except FileNotFoundError:
         return "graphhelm not found"
     except subprocess.TimeoutExpired:

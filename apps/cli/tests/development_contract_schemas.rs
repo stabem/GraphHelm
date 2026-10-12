@@ -935,7 +935,7 @@ fn the_bound_closed_artifacts_are_byte_identical_to_their_pins() {
             "6d19998169701b5ff41d2a0f32ae39c0bbc322d6",
         ),
     ] {
-        let output = std::process::Command::new("git")
+        let output = graphhelm_process::command("git")
             .args(["rev-parse", &format!("HEAD:{relative}")])
             .current_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."))
             .output()
@@ -1015,7 +1015,7 @@ fn the_released_event_envelope_copy_is_pinned_and_its_live_divergence_is_declare
     const RELEASED_BLOB: &str = "81de59f93c92b50c0bc133c5aa6474f3452db03f";
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
 
-    let output = std::process::Command::new("git")
+    let output = graphhelm_process::command("git")
         .args(["hash-object", RELEASED])
         .current_dir(&repo)
         .output()

@@ -17,7 +17,9 @@
 use std::time::Duration;
 
 fn refuse_output(url: &str) -> (bool, String) {
-    let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ));
     let output = command
         .arg("mcp")
         .arg("--url")
@@ -68,7 +70,9 @@ fn a_base_carrying_a_fragment_is_refused_before_any_protocol_byte() {
 /// without a running Runtime can see.
 #[test]
 fn the_ordinary_loopback_base_is_not_refused_for_its_url() {
-    let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ));
     let output = command
         .arg("mcp")
         .arg("--url")

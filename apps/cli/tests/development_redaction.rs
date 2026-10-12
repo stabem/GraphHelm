@@ -7,7 +7,6 @@
 //! never body content.
 
 use std::collections::BTreeSet;
-use std::process::Command;
 
 use serde_json::Value;
 
@@ -21,7 +20,7 @@ const DEVELOPMENT_OPERATIONS: &[&str] = &[
 ];
 
 fn raw_output(subcommand: &str) -> Vec<u8> {
-    Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["development", subcommand])
         .output()
         .unwrap_or_else(|error| panic!("the built binary runs `development {subcommand}`: {error}"))

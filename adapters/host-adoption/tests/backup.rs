@@ -405,7 +405,7 @@ fn link_directory(target: &std::path::Path, link: &std::path::Path) {
         // keeps under ~/.claude/skills.
         use std::os::windows::process::CommandExt;
         // cmd.exe does not parse arguments the way std quotes them; hand it the raw line.
-        let status = std::process::Command::new("cmd")
+        let status = graphhelm_process::command("cmd")
             .raw_arg(format!(
                 "/C mklink /J \"{}\" \"{}\"",
                 link.display(),

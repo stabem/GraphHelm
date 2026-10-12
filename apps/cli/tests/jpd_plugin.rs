@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use graphhelm_schema::OfflineSchemaSet;
 use serde_json::Value;
@@ -109,7 +108,7 @@ fn trust_compatibility_candidate() -> Value {
 
 #[test]
 fn built_in_jpd_extension_is_a_closed_digest_bound_package() {
-    let output = Command::new(env!("CARGO_BIN_EXE_graphhelm"))
+    let output = graphhelm_process::command(env!("CARGO_BIN_EXE_graphhelm"))
         .args(["extension", "validate"])
         .arg(package_root())
         .output()
@@ -176,7 +175,7 @@ fn digest_bound_text_resources_pin_lf_checkout_bytes() {
         .map(|path| format!("extensions/builtin/graphhelm-jpd/{path}"))
         .collect::<Vec<_>>();
 
-    let output = Command::new("git")
+    let output = graphhelm_process::command("git")
         .current_dir(root)
         .args(["check-attr", "eol", "--"])
         .args(&paths)

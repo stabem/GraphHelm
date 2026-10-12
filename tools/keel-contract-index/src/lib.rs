@@ -15,7 +15,7 @@ use std::{
     fs, io,
     io::Read,
     path::{Component, Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
 };
 
 #[cfg(unix)]
@@ -1231,7 +1231,7 @@ fn git_stdout_bounded(root: &Path, args: &[&str]) -> Result<Vec<u8>, AppError> {
     let path = root
         .to_str()
         .ok_or_else(|| AppError::Message("KIDX5 invalid repo path".into()))?;
-    let mut child = Command::new("git")
+    let mut child = graphhelm_process::command("git")
         .args(["-c", "core.fsmonitor=false", "-C", path])
         .args(args)
         .stdout(Stdio::piped())
@@ -1863,7 +1863,6 @@ fn add_item(item: &syn::Item, out: &mut Vec<Declaration>) {
 #[cfg(test)]
 mod publication_tests {
     use super::*;
-    use std::process::Command;
 
     fn sample_index() -> Index {
         Index {
@@ -1877,13 +1876,13 @@ mod publication_tests {
 
     fn snapshot_repo() -> tempfile::TempDir {
         let repo = tempfile::tempdir().unwrap();
-        Command::new("git")
+        graphhelm_process::command("git")
             .args(["init", "-q", repo.path().to_str().unwrap()])
             .status()
             .unwrap();
         fs::write(repo.path().join("lib.rs"), "pub fn original() {}\n").unwrap();
         fs::write(repo.path().join("README.md"), "plain source\n").unwrap();
-        Command::new("git")
+        graphhelm_process::command("git")
             .args(["-C", repo.path().to_str().unwrap(), "add", "."])
             .status()
             .unwrap();
@@ -1968,7 +1967,7 @@ mod publication_tests {
             "scoped secret\n",
         )
         .unwrap();
-        Command::new("git")
+        graphhelm_process::command("git")
             .args(["-C", repo.path().to_str().unwrap(), "add", "."])
             .status()
             .unwrap();
@@ -2024,7 +2023,7 @@ mod publication_tests {
         let repo = snapshot_repo();
         fs::write(repo.path().join("a.md"), "needle\n").unwrap();
         fs::write(repo.path().join("b.md"), "needle\n").unwrap();
-        Command::new("git")
+        graphhelm_process::command("git")
             .args(["-C", repo.path().to_str().unwrap(), "add", "."])
             .status()
             .unwrap();
@@ -2049,7 +2048,7 @@ mod publication_tests {
         // Defect caught: filename-only evidence changes the candidate set during adoption.
         let repo = snapshot_repo();
         fs::write(repo.path().join("auth_note.md"), "ordinary content\n").unwrap();
-        Command::new("git")
+        graphhelm_process::command("git")
             .args(["-C", repo.path().to_str().unwrap(), "add", "."])
             .status()
             .unwrap();
@@ -2073,7 +2072,7 @@ mod publication_tests {
             "<script setup>const hiddenFeature = 1;</script>\n",
         )
         .unwrap();
-        Command::new("git")
+        graphhelm_process::command("git")
             .args(["-C", repo.path().to_str().unwrap(), "add", "Component.vue"])
             .status()
             .unwrap();
@@ -2157,7 +2156,7 @@ mod publication_tests {
         fs::create_dir(&generated).unwrap();
         let missing = generated.join("receipt.bin");
         fs::write(&missing, b"generated receipt\n").unwrap();
-        Command::new("git")
+        graphhelm_process::command("git")
             .args(["-C", repo.path().to_str().unwrap(), "add", "."])
             .status()
             .unwrap();

@@ -364,7 +364,7 @@ fn a_directory_link_pointing_outside_is_not_served_as_evidence() {
     // silently on this machine, and passed green while testing nothing.
     let link = dir.path().join("escape-hatch");
     #[cfg(windows)]
-    let made = std::process::Command::new("cmd")
+    let made = graphhelm_process::command("cmd")
         .args(["/C", "mklink", "/J"])
         .arg(&link)
         .arg(outside.path())
@@ -483,7 +483,7 @@ fn a_symlinked_workspace_root_is_refused_at_admission() {
     let link = holder.path().join("linked-root");
 
     #[cfg(windows)]
-    let made = std::process::Command::new("cmd")
+    let made = graphhelm_process::command("cmd")
         .args(["/C", "mklink", "/J"])
         .arg(&link)
         .arg(outside.path())
@@ -602,7 +602,7 @@ fn a_workspace_reached_through_a_symlinked_ancestor_is_searchable() {
     let link = holder.path().join("link");
 
     #[cfg(windows)]
-    let made = std::process::Command::new("cmd")
+    let made = graphhelm_process::command("cmd")
         .args(["/C", "mklink", "/J"])
         .arg(&link)
         .arg(target.path())

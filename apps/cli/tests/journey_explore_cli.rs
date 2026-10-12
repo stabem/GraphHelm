@@ -61,11 +61,13 @@ fn invalid_exploration_inputs_refuse_before_artifacts_or_model_dispatch() {
             extra
         };
         args.extend(extra);
-        let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-            .args(args)
-            .env_remove("GRAPHHELM_SECRET_missing_credential_356")
-            .output()
-            .unwrap();
+        let output = Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+            "graphhelm"
+        )))
+        .args(args)
+        .env_remove("GRAPHHELM_SECRET_missing_credential_356")
+        .output()
+        .unwrap();
         assert_eq!(
             output.status.code(),
             Some(3),
@@ -82,45 +84,49 @@ fn invalid_exploration_inputs_refuse_before_artifacts_or_model_dispatch() {
 
 #[test]
 fn fixture_and_live_route_conflict_and_hidden_worker_cannot_be_entered() {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args([
-            "--json",
-            "journey",
-            "explore",
-            "--base",
-            "http://127.0.0.1:1",
-            "--goal",
-            "Visit checkout",
-            "--id",
-            "checkout",
-            "--fixture",
-            "fixture.json",
-            "--manifest",
-            "manifest.yaml",
-            "--route",
-            "live",
-        ])
-        .output()
-        .unwrap();
+    let output = Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )))
+    .args([
+        "--json",
+        "journey",
+        "explore",
+        "--base",
+        "http://127.0.0.1:1",
+        "--goal",
+        "Visit checkout",
+        "--id",
+        "checkout",
+        "--fixture",
+        "fixture.json",
+        "--manifest",
+        "manifest.yaml",
+        "--route",
+        "live",
+    ])
+    .output()
+    .unwrap();
     assert_eq!(output.status.code(), Some(2));
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args([
-            "--json",
-            "journey",
-            "explore",
-            "--base",
-            "http://127.0.0.1:1",
-            "--goal",
-            "Visit checkout",
-            "--id",
-            "checkout",
-            "--fixture",
-            "fixture.json",
-            "--explore-worker",
-        ])
-        .env_remove("GRAPHHELM_EXPLORE_WORKER")
-        .output()
-        .unwrap();
+    let output = Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )))
+    .args([
+        "--json",
+        "journey",
+        "explore",
+        "--base",
+        "http://127.0.0.1:1",
+        "--goal",
+        "Visit checkout",
+        "--id",
+        "checkout",
+        "--fixture",
+        "fixture.json",
+        "--explore-worker",
+    ])
+    .env_remove("GRAPHHELM_EXPLORE_WORKER")
+    .output()
+    .unwrap();
     let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(reply["diagnostics"][0]["code"], "explore.worker_invalid");
     assert_eq!(output.status.code(), Some(3));

@@ -14,6 +14,9 @@ from pathlib import Path
 
 import pytest
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 
 MODULE_PATH = Path(__file__).with_name("run.py")
 spec = importlib.util.spec_from_file_location("token_bench_run", MODULE_PATH)
@@ -375,19 +378,19 @@ def test_evaluator_snapshot_has_exact_source_without_git_metadata(tmp_path, monk
     """Three preflight observers do not need costly git init/add/commit passes."""
     source = tmp_path / "source"
     source.mkdir()
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=source, check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=source, check=True, creationflags=NO_WINDOW)
     (source / "proof.bin").write_bytes(b"historical\x00source")
-    subprocess.run(["git", "add", "proof.bin"], cwd=source, check=True)
+    subprocess.run(["git", "add", "proof.bin"], cwd=source, check=True, creationflags=NO_WINDOW)
     subprocess.run(["git", "-c", "user.name=bench", "-c", "user.email=bench@invalid",
-                    "commit", "-qm", "source"], cwd=source, check=True)
+                    "commit", "-qm", "source"], cwd=source, check=True, creationflags=NO_WINDOW)
     sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=source, check=True,
-                         capture_output=True, text=True).stdout.strip()
+                         capture_output=True, text=True, creationflags=NO_WINDOW).stdout.strip()
     committed = subprocess.run(["git", "show", f"{sha}:proof.bin"], cwd=source, check=True,
-                               capture_output=True).stdout
+                               capture_output=True, creationflags=NO_WINDOW).stdout
     (source / "proof.bin").write_bytes(b"future fix")
-    subprocess.run(["git", "commit", "-qam", "future fix"], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-qam", "future fix"], cwd=source, check=True, creationflags=NO_WINDOW)
     future_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=source, check=True,
-                                capture_output=True, text=True).stdout.strip()
+                                capture_output=True, text=True, creationflags=NO_WINDOW).stdout.strip()
     monkeypatch.setattr(runner, "REPO", source)
     monkeypatch.setenv("TOKEN_BENCH_SCRATCH", str(tmp_path / "scratch"))
     snapshot = runner.make_snapshot("fixture", "preflight", sha)
@@ -397,13 +400,13 @@ def test_evaluator_snapshot_has_exact_source_without_git_metadata(tmp_path, monk
     assert (agent / "proof.bin").read_bytes() == committed
     assert (agent / ".git").is_dir()
     assert subprocess.run(["git", "remote"], cwd=agent, check=True,
-                          capture_output=True, text=True).stdout == ""
+                          capture_output=True, text=True, creationflags=NO_WINDOW).stdout == ""
     assert subprocess.run(["git", "rev-parse", "HEAD"], cwd=agent, check=True,
-                          capture_output=True, text=True).stdout.strip() == sha
+                          capture_output=True, text=True, creationflags=NO_WINDOW).stdout.strip() == sha
     assert subprocess.run(["git", "rev-list", "--count", "HEAD"], cwd=agent, check=True,
-                          capture_output=True, text=True).stdout.strip() == "1"
+                          capture_output=True, text=True, creationflags=NO_WINDOW).stdout.strip() == "1"
     assert subprocess.run(["git", "cat-file", "-e", future_sha], cwd=agent,
-                          capture_output=True).returncode != 0
+                          capture_output=True, creationflags=NO_WINDOW).returncode != 0
     assert not (agent / ".git" / "FETCH_HEAD").exists()
 
 

@@ -8,7 +8,7 @@ fn host(root: &Path, name: &str) -> std::path::PathBuf {
     let executable = root.join("inert-host.exe");
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../adapters/host-adoption/tests/fixtures/inert-host.rs");
-    let status = std::process::Command::new("rustc")
+    let status = graphhelm_process::command("rustc")
         .args(["--edition=2024"])
         .arg(source)
         .arg("-o")
@@ -47,7 +47,9 @@ fn exercise(name: &str) -> (Value, bool, Vec<u8>) {
     plan["digest"] = json!(accepted);
     let planfile = s.path().join("plan.json");
     std::fs::write(&planfile, serde_json::to_vec(&plan).unwrap()).unwrap();
-    let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ));
     command
         .arg("setup")
         .arg("--project")

@@ -37,6 +37,9 @@ import uuid
 from contextlib import contextmanager, nullcontext
 from pathlib import Path, PureWindowsPath
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 TASKS = json.loads((HERE / "tasks.json").read_text(encoding="utf-8"))["tasks"]
@@ -93,7 +96,7 @@ def compose_arm_c_prompt(issue_prompt: str, card_path: Path, signal_path: Path) 
 
 
 def sh(args: list[str], cwd: Path | None = None, check: bool = True, **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(args, cwd=cwd, check=check, text=True, capture_output=True, **kw)
+    return subprocess.run(args, cwd=cwd, check=check, text=True, capture_output=True, **kw, creationflags=NO_WINDOW)
 
 
 def git_show(sha: str, path: str) -> str:
@@ -102,7 +105,7 @@ def git_show(sha: str, path: str) -> str:
 
 def git_show_bytes(sha: str, path: str) -> bytes:
     return subprocess.run(["git", "show", f"{sha}:{path}"], cwd=REPO,
-                          check=True, capture_output=True).stdout
+                          check=True, capture_output=True, creationflags=NO_WINDOW).stdout
 
 
 def digest_bytes(value: bytes) -> str:
@@ -124,7 +127,7 @@ def claude_cli_identity() -> dict:
     path = Path(found).resolve(strict=True)
     digest = digest_file(path)
     version = subprocess.run([str(path), "--version"], check=True, text=True,
-                             capture_output=True, timeout=10).stdout.strip()
+                             capture_output=True, timeout=10, creationflags=NO_WINDOW).stdout.strip()
     if not digest or not version:
         raise RuntimeError("Claude CLI identity could not be verified")
     return {"path": str(path), "sha256": digest, "version": version}
@@ -221,7 +224,7 @@ def make_snapshot(task_id: str, arm: str, parent_sha: str) -> Path:
     base.mkdir(parents=True, exist_ok=True)
     wt = base / name
     wt.mkdir(parents=True)
-    archive = subprocess.run(["git", "archive", "--format=tar", parent_sha], cwd=REPO, check=True, capture_output=True).stdout
+    archive = subprocess.run(["git", "archive", "--format=tar", parent_sha], cwd=REPO, check=True, capture_output=True, creationflags=NO_WINDOW).stdout
     import io, tarfile
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as tar:  # not the shell's tar: msys mangles Windows paths
         tar.extractall(wt)
@@ -249,7 +252,7 @@ def validate_prerequisites(arm: str, executor: str = "claude") -> dict:
             raise SystemExit("TOKEN_BENCH_GRAPHHELM_CLI must name an existing GraphHelm executable")
         try:
             version = subprocess.run([str(Path(raw).resolve()), "--version"], check=True,
-                                     text=True, capture_output=True, timeout=10).stdout.strip()
+                                     text=True, capture_output=True, timeout=10, creationflags=NO_WINDOW).stdout.strip()
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             raise SystemExit("TOKEN_BENCH_GRAPHHELM_CLI is not launchable") from exc
         if not version.startswith("graphhelm "):
@@ -260,7 +263,7 @@ def validate_prerequisites(arm: str, executor: str = "claude") -> dict:
             raise RuntimeError("Codex CLI executable is unavailable")
         path = Path(found).resolve(strict=True)
         version = subprocess.run([str(path), "--version"], check=True, text=True,
-                                 capture_output=True, timeout=10).stdout.strip()
+                                 capture_output=True, timeout=10, creationflags=NO_WINDOW).stdout.strip()
         digest = digest_file(path)
         if not digest or not version.startswith("codex-cli "):
             raise RuntimeError("Codex CLI identity could not be verified")
@@ -298,11 +301,11 @@ def _run_captured(command: list[str], *, cwd: Path, timeout: float, env: dict | 
     try:
         if os.name != "posix":
             return subprocess.run(command, cwd=cwd, input=input, text=True, capture_output=True,
-                                  encoding="utf-8", errors=errors, env=env, timeout=timeout), False
+                                  encoding="utf-8", errors=errors, env=env, timeout=timeout, creationflags=NO_WINDOW), False
         # Ordinary descendants only: a child that deliberately leaves the group is not contained.
         process = subprocess.Popen(command, cwd=cwd, text=True, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, stdin=subprocess.PIPE if input is not None else None,
-                                   encoding="utf-8", errors=errors, env=env, start_new_session=True)
+                                   encoding="utf-8", errors=errors, env=env, start_new_session=True, creationflags=NO_WINDOW)
         try:
             stdout, stderr = process.communicate(input=input, timeout=timeout)
         except BaseException:
@@ -679,7 +682,7 @@ def run_oracle(wt: Path, task: dict) -> tuple[str, int, str]:
             target.write_bytes((HERE / entry["source"]).read_bytes())
         else:
             target.write_bytes(git_show_bytes(task["fixSha"], entry["file"]))
-    proc = subprocess.run(oracle["command"], cwd=wt, text=True, capture_output=True, env=bench_env(task))
+    proc = subprocess.run(oracle["command"], cwd=wt, text=True, capture_output=True, env=bench_env(task), creationflags=NO_WINDOW)
     verdict = "PASS" if proc.returncode == 0 else "FAIL"
     # keep the lines that say WHICH assertion failed; the raw tail was CLIXML progress noise from stderr
     lines = [l for l in proc.stdout.splitlines() if "FAIL" in l or "assertions" in l or "HARNESS" in l]
@@ -693,7 +696,7 @@ def run_submitted_suite(wt: Path, task: dict) -> tuple[str, int | None, str]:
     if not spec:
         return "UNOBSERVED", None, "task has no submitted-suite command"
     command = spec["command"] if isinstance(spec, dict) else spec
-    proc = subprocess.run(command, cwd=wt, text=True, capture_output=True, env=bench_env(task))
+    proc = subprocess.run(command, cwd=wt, text=True, capture_output=True, env=bench_env(task), creationflags=NO_WINDOW)
     verdict = "PASS" if proc.returncode == 0 else "FAIL"
     return verdict, proc.returncode, (proc.stdout + "\n" + proc.stderr)[-2000:]
 
@@ -713,7 +716,7 @@ def run_regression(wt: Path, task: dict) -> tuple[str, int | None, str]:
         target = wt / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(git_show_bytes(task["parentSha"], path))
-    proc = subprocess.run(command, cwd=wt, text=True, capture_output=True, env=bench_env(task))
+    proc = subprocess.run(command, cwd=wt, text=True, capture_output=True, env=bench_env(task), creationflags=NO_WINDOW)
     verdict = "PASS" if proc.returncode == 0 else "FAIL"
     tail = (proc.stdout + "\n" + proc.stderr)[-2000:]
     return verdict, proc.returncode, tail

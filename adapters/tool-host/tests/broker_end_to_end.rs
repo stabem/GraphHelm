@@ -5,7 +5,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use graphhelm_tool_broker::call::{RepositoryAction, ShellAction, TestsAction, ToolCall};
@@ -25,7 +24,7 @@ fn scratch_repo() -> (tempfile::TempDir, PathBuf) {
     std::fs::create_dir_all(project.join("src")).unwrap();
     std::fs::write(project.join("src/lib.rs"), "// scratch\n").unwrap();
     let git = |args: &[&str]| {
-        let status = Command::new("git")
+        let status = graphhelm_process::command("git")
             .args(args)
             .current_dir(&project)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -372,7 +371,7 @@ fn commit_inside_the_workspace_never_moves_the_project_head() {
     let (_dir, project) = scratch_repo();
     let staging = tempfile::tempdir().unwrap();
     let host = host(&project, staging.path());
-    let head_before = Command::new("git")
+    let head_before = graphhelm_process::command("git")
         .args(["-C", &project.display().to_string(), "rev-parse", "HEAD"])
         .output()
         .unwrap()
@@ -401,7 +400,7 @@ fn commit_inside_the_workspace_never_moves_the_project_head() {
         String::from_utf8_lossy(&commit_streams.stderr)
     );
 
-    let head_after = Command::new("git")
+    let head_after = graphhelm_process::command("git")
         .args(["-C", &project.display().to_string(), "rev-parse", "HEAD"])
         .output()
         .unwrap()
@@ -503,7 +502,7 @@ fn credentials_are_demonstrably_absent_from_the_tier_1_workspace() {
     // wrapper: the OUTER run re-executes this binary filtered to this test with the
     // sentinels planted; the INNER run does the work.
     if std::env::var_os("GH_TOOL_HOST_INNER").is_none() {
-        let status = Command::new(std::env::current_exe().unwrap())
+        let status = graphhelm_process::command(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "credentials_are_demonstrably_absent_from_the_tier_1_workspace",
@@ -679,7 +678,7 @@ fn an_identical_snapshot_closed_read_is_served_from_cache_without_executing() {
 
     // A new commit is a new snapshot: the key must include HEAD, so the next call misses.
     std::fs::write(project.join("src/lib.rs"), "// changed\n").unwrap();
-    let commit = Command::new("git")
+    let commit = graphhelm_process::command("git")
         .args(["commit", "-aqm", "change"])
         .current_dir(&project)
         .env("GIT_AUTHOR_NAME", "scratch")

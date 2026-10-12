@@ -5,7 +5,7 @@ use tempfile::TempDir;
 
 fn repo() -> TempDir {
     let d = tempfile::tempdir().unwrap();
-    Command::new("git")
+    Command::from_std(graphhelm_process::command("git"))
         .args(["init", "-q", d.path().to_str().unwrap()])
         .assert()
         .success();
@@ -15,7 +15,7 @@ fn repo() -> TempDir {
     )
     .unwrap();
     fs::write(d.path().join("README.md"), "hello\n").unwrap();
-    Command::new("git")
+    Command::from_std(graphhelm_process::command("git"))
         .args(["-C", d.path().to_str().unwrap(), "add", "."])
         .assert()
         .success();
@@ -200,7 +200,7 @@ fn ignored_files_are_reported_as_omissions() {
 fn invalid_utf8_is_explicitly_unparseable() {
     let d = repo();
     fs::write(d.path().join("broken.rs"), [0xff, 0xfe]).unwrap();
-    Command::new("git")
+    Command::from_std(graphhelm_process::command("git"))
         .args(["-C", d.path().to_str().unwrap(), "add", "broken.rs"])
         .assert()
         .success();
@@ -570,7 +570,7 @@ interface Hidden { value: string }
         "module.exports = { hidden: true };\n",
     )
     .unwrap();
-    Command::new("git")
+    Command::from_std(graphhelm_process::command("git"))
         .args(["-C", d.path().to_str().unwrap(), "add", "."])
         .assert()
         .success();
@@ -660,7 +660,7 @@ export const setupFeature: string = "ok";
         "<script data-lang=\"ts\">interface InvalidInJavaScript { value: string }</script>\n",
     )
     .unwrap();
-    Command::new("git")
+    Command::from_std(graphhelm_process::command("git"))
         .args(["-C", d.path().to_str().unwrap(), "add", "."])
         .assert()
         .success();
@@ -717,7 +717,7 @@ fn scan_disables_repository_fsmonitor_commands() {
         format!("#!/bin/sh\nprintf ran > \"{marker_path}\"\n"),
     )
     .unwrap();
-    Command::new("git")
+    Command::from_std(graphhelm_process::command("git"))
         .args([
             "-C",
             d.path().to_str().unwrap(),
@@ -727,7 +727,7 @@ fn scan_disables_repository_fsmonitor_commands() {
         ])
         .assert()
         .success();
-    Command::new("git")
+    Command::from_std(graphhelm_process::command("git"))
         .args(["-C", d.path().to_str().unwrap(), "status", "--porcelain"])
         .assert()
         .success();
@@ -767,7 +767,7 @@ fn scan_does_not_run_repository_clean_filters() {
     )
     .unwrap();
     fs::write(d.path().join("filtered.txt"), "before\n").unwrap();
-    Command::new("git")
+    Command::from_std(graphhelm_process::command("git"))
         .args([
             "-C",
             d.path().to_str().unwrap(),
@@ -777,7 +777,7 @@ fn scan_does_not_run_repository_clean_filters() {
         ])
         .assert()
         .success();
-    Command::new("git")
+    Command::from_std(graphhelm_process::command("git"))
         .args([
             "-C",
             d.path().to_str().unwrap(),
@@ -800,7 +800,7 @@ fn scan_does_not_run_repository_clean_filters() {
         .unwrap()
         .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000))
         .unwrap();
-    Command::new("git")
+    Command::from_std(graphhelm_process::command("git"))
         .args(["-C", d.path().to_str().unwrap(), "status", "--porcelain"])
         .assert()
         .success();

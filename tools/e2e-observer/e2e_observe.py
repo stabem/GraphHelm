@@ -23,6 +23,9 @@ import shutil
 import subprocess
 import sys
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 DEFAULT_COMMAND = "npx --no-install e2e run --reporter list,json,junit"
 REPORT = Path(".e2e") / "report.json"
 OBSERVED = {0: "passed", 1: "failed"}
@@ -45,7 +48,7 @@ def observe(project: Path, command: str, timeout: int) -> dict:
     # A report left by an earlier run must never stand in for this one.
     (project / REPORT).unlink(missing_ok=True)
     try:
-        result = subprocess.run(argv, cwd=project, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(argv, cwd=project, capture_output=True, text=True, timeout=timeout, creationflags=NO_WINDOW)
     except subprocess.TimeoutExpired:
         return {"verdict": "observer_missing", "exitCode": None,
                 "evidence": [f"OBSERVER_MISSING: `{command}` did not finish in {timeout}s"]}

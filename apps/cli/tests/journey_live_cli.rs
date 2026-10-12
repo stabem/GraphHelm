@@ -5,7 +5,6 @@
 //! installed observer is a tripwire that must never start; cost: seconds after build, offline,
 //! no Node/browser/provider.
 use std::path::Path;
-use std::process::Command;
 
 use serde_json::Value;
 
@@ -13,7 +12,7 @@ const FLOW: &str = include_str!("fixtures/journey_flow/checkout.journey.yaml");
 const CACHE: &str = include_str!("fixtures/journey_replay/checkout-cache.json");
 
 fn cli(project: &Path, args: &[&str]) -> (i32, Value) {
-    let out = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["--json", "journey"])
         .args(args)
         .arg("--project")
@@ -58,7 +57,7 @@ fn approved() -> tempfile::TempDir {
         vec!["commit", "--quiet", "--no-verify", "-m", "fixture"],
     ] {
         assert!(
-            Command::new("git")
+            graphhelm_process::command("git")
                 .arg("-C")
                 .arg(dir.path())
                 .args(args)
@@ -605,7 +604,7 @@ fn owner_token(project: &Path) -> String {
     // store (events, token, keys, owner records) out of git, so the test ignores exactly that.
     let gitignore = project.join(".gitignore");
     let kept = std::fs::read(&gitignore).ok();
-    let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["--json", "init", "--project"])
         .arg(project)
         .args(["--harness", "claude-code"])

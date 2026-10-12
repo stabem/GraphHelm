@@ -12,6 +12,9 @@ import threading
 import unittest
 from unittest.mock import patch
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 
 SCRIPT = Path(__file__).with_name("session_hook.py")
 
@@ -174,7 +177,7 @@ class SessionHookTests(unittest.TestCase):
                 result = subprocess.run(args,
                     input=json.dumps({"hook_event_name": "SessionStart", "session_id": "s1",
                                       "session_title": "just words here"}), text=True,
-                    capture_output=True, env=env, timeout=12)
+                    capture_output=True, env=env, timeout=12, creationflags=NO_WINDOW)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIsInstance(json.loads(result.stdout), dict)
                 self.assertIn("lane not bound: title has no lane id", result.stderr)
@@ -210,7 +213,7 @@ class SessionHookTests(unittest.TestCase):
         return subprocess.run(
             [sys.executable, str(SCRIPT), phase, "--host", host],
             input=json.dumps({"hook_event_name": event, "session_id": "session-123", **payload}),
-            text=True, capture_output=True, env=self.env, timeout=6, check=False,
+            text=True, capture_output=True, env=self.env, timeout=6, check=False, creationflags=NO_WINDOW
         )
 
     def test_unbound_start_is_silent_without_explicit_keel_opt_in(self):
@@ -224,7 +227,7 @@ class SessionHookTests(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "start", "--host", "claude", "--format", "portable"],
             input=json.dumps({"hook_event_name": "SessionStart", "session_id": "session-123"}),
-            text=True, capture_output=True, env=self.env, timeout=6, check=False,
+            text=True, capture_output=True, env=self.env, timeout=6, check=False, creationflags=NO_WINDOW
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
@@ -254,7 +257,7 @@ class SessionHookTests(unittest.TestCase):
         self.assertEqual(json.loads(end.stdout)["delivery"], "acknowledged")
         inspect = subprocess.run(
             [sys.executable, str(SCRIPT), "inspect", "--host", "third-party-agent"],
-            text=True, capture_output=True, env=self.env, timeout=6, check=False,
+            text=True, capture_output=True, env=self.env, timeout=6, check=False, creationflags=NO_WINDOW
         )
         report = json.loads(inspect.stdout)
         self.assertEqual(report["format"], "graphhelm-portable-v1")
@@ -300,7 +303,7 @@ class SessionHookTests(unittest.TestCase):
         process = subprocess.Popen(
             [sys.executable, str(SCRIPT), "start", "--host", "claude"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, env=self.env,
+            text=True, env=self.env, creationflags=NO_WINDOW
         )
         process.stdin.write(json.dumps({"hook_event_name": "SessionStart", "session_id": "session-123"}))
         process.stdin.flush()
@@ -419,7 +422,7 @@ class SessionHookTests(unittest.TestCase):
         process = subprocess.Popen(
             [sys.executable, str(SCRIPT), "end", "--host", "codex"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, env=self.env,
+            text=True, env=self.env, creationflags=NO_WINDOW
         )
         process.stdin.write(json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}))
         process.stdin.close()
@@ -492,7 +495,7 @@ class SessionHookTests(unittest.TestCase):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "inspect", "--host", "claude", "--session-id", "session-123"],
-            text=True, capture_output=True, env=self.env, timeout=6, check=False,
+            text=True, capture_output=True, env=self.env, timeout=6, check=False, creationflags=NO_WINDOW
         )
         self.assertEqual(result.returncode, 0)
         report = json.loads(result.stdout)
@@ -507,7 +510,7 @@ class SessionHookTests(unittest.TestCase):
         root.mkdir(parents=True)
         (root / "oversized.json").write_text("x" * 100_000, encoding="utf-8")
         self.env["GRAPHHELM_TOKEN_FILE"] = str(Path(self.temp.name) / "missing-token")
-        result = subprocess.run([sys.executable, str(SCRIPT), "inspect", "--host", "claude"], text=True, capture_output=True, env=self.env, timeout=6, check=False)
+        result = subprocess.run([sys.executable, str(SCRIPT), "inspect", "--host", "claude"], text=True, capture_output=True, env=self.env, timeout=6, check=False, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 0)
         report = json.loads(result.stdout)
         self.assertEqual(report["localObservations"], [])
@@ -517,7 +520,7 @@ class SessionHookTests(unittest.TestCase):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         RuntimeHandler.post_started = threading.Event()
         RuntimeHandler.post_release = threading.Event()
-        process = subprocess.Popen([sys.executable, str(SCRIPT), "end", "--host", "claude"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.env)
+        process = subprocess.Popen([sys.executable, str(SCRIPT), "end", "--host", "claude"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.env, creationflags=NO_WINDOW)
         process.stdin.write(json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}))
         process.stdin.close()
         process.stdin = None
@@ -554,7 +557,7 @@ class SessionHookTests(unittest.TestCase):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         RuntimeHandler.post_started = threading.Event()
         RuntimeHandler.post_release = threading.Event()
-        process = subprocess.Popen([sys.executable, str(SCRIPT), "end", "--host", "claude"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.env)
+        process = subprocess.Popen([sys.executable, str(SCRIPT), "end", "--host", "claude"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.env, creationflags=NO_WINDOW)
         process.stdin.write(json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}))
         process.stdin.close()
         process.stdin = None
@@ -576,7 +579,7 @@ class SessionHookTests(unittest.TestCase):
         self.env["LOCALAPPDATA"] = str(Path(self.temp.name) / "local")
         self.run_hook("end")
         def inspect():
-            result = subprocess.run([sys.executable, str(SCRIPT), "inspect", "--host", "claude", "--session-id", "session-123"], env=self.env, capture_output=True, text=True, timeout=6)
+            result = subprocess.run([sys.executable, str(SCRIPT), "inspect", "--host", "claude", "--session-id", "session-123"], env=self.env, capture_output=True, text=True, timeout=6, creationflags=NO_WINDOW)
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(result.stdout)
         report = inspect()

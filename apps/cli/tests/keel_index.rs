@@ -13,12 +13,12 @@ use tempfile::TempDir;
 
 fn repository() -> TempDir {
     let repo = tempfile::tempdir().unwrap();
-    Command::new("git")
+    Command::from_std(graphhelm_process::command("git"))
         .args(["init", "-q", repo.path().to_str().unwrap()])
         .assert()
         .success();
     fs::write(repo.path().join("lib.rs"), "pub fn hello() {}\n").unwrap();
-    Command::new("git")
+    Command::from_std(graphhelm_process::command("git"))
         .args(["-C", repo.path().to_str().unwrap(), "add", "."])
         .assert()
         .success();

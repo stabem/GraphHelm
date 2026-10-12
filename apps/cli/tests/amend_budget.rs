@@ -11,14 +11,13 @@
 //! button, because it looks like progress.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 fn cli(args: &[&str]) -> serde_json::Value {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(args)
         .output()
         .unwrap();

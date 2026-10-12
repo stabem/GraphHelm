@@ -1,7 +1,6 @@
 //! Process boundaries exercise durable files, never a production environment failpoint.
 use super::*;
 use serde_json::json;
-use std::process::Command;
 fn fixture_plan(root: &Path) -> Value {
     let (p, h, _) = dirs(root);
     let mut p = json!({"apiVersion":"p50.dev/adoption/v1","kind":"AdoptionPlan","id":"crash-plan","spec":{
@@ -43,7 +42,7 @@ fn fixture(root: &Path) {
     }
 }
 fn child(root: &Path, mode: &str, point: usize) -> std::process::ExitStatus {
-    Command::new(std::env::current_exe().unwrap())
+    graphhelm_process::command(std::env::current_exe().unwrap())
         .args(["--exact", "apply::tests::process_child", "--nocapture"])
         .env("GH_ADOPTION_TEST_ROOT", root)
         .env("GH_ADOPTION_TEST_MODE", mode)

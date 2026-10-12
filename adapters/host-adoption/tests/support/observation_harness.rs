@@ -118,7 +118,7 @@ fn fake_host(root: &std::path::Path, codex: bool) -> std::path::PathBuf {
     let source =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/inert-host.rs");
     assert!(
-        std::process::Command::new("rustc")
+        graphhelm_process::command("rustc")
             .args(["--edition=2024"])
             .arg(source)
             .arg("-o")

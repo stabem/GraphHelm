@@ -12,11 +12,11 @@ use std::process::Command;
 use graphhelm_development_benchmark::{Case, corpus_digest, frozen_files_digest};
 
 fn driver() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_paired-driver"))
+    graphhelm_process::command(env!("CARGO_BIN_EXE_paired-driver"))
 }
 
 fn runner() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_graphhelm-development-benchmark"))
+    graphhelm_process::command(env!("CARGO_BIN_EXE_graphhelm-development-benchmark"))
 }
 
 /// Two cases, tiny repo, fresh retrieval artifacts: everything the driver needs, nothing shared
@@ -86,7 +86,7 @@ fn arrange(root: &Path) -> PathBuf {
     // against one source tree must not slice another). The artifacts declare `sha256-g1`, so the
     // arrangement rewrites that to the tree this checkout actually hashes to.
     let git = |args: &[&str]| {
-        let status = Command::new("git")
+        let status = graphhelm_process::command("git")
             .args(args)
             .current_dir(root.join("repo"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -102,7 +102,7 @@ fn arrange(root: &Path) -> PathBuf {
     git(&["add", "-A"]);
     git(&["commit", "--quiet", "-m", "fixture"]);
     let tree = String::from_utf8(
-        Command::new("git")
+        graphhelm_process::command("git")
             .args(["rev-parse", "HEAD^{tree}"])
             .current_dir(root.join("repo"))
             .output()

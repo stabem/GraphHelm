@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{ExitStatus, Stdio};
 
 use graphhelm_extension_host::{ActivationClaim, ActivationRecord, ClaimRefusal, ClaimStatus};
 
@@ -24,7 +24,7 @@ fn latest_persisted_frame(path: &std::path::Path) -> serde_json::Value {
 }
 
 fn spawn_claim_child(root: &std::path::Path, mode: &str) -> std::process::Child {
-    Command::new(std::env::current_exe().expect("current test executable"))
+    graphhelm_process::command(std::env::current_exe().expect("current test executable"))
         .args(["--exact", "claim_holder_child", "--nocapture"])
         .env(CHILD_MODE, mode)
         .env(CHILD_ROOT, root)
@@ -363,7 +363,7 @@ fn a_reparse_point_claim_is_refused_without_touching_its_target() {
     let claim_path = root.path().join("activation.claim");
     fs::create_dir(&target).expect("target directory");
     fs::write(&sentinel, b"sentinel").expect("target");
-    let status = Command::new("cmd")
+    let status = graphhelm_process::command("cmd")
         .args(["/C", "mklink", "/J"])
         .arg(&claim_path)
         .arg(&target)
@@ -390,7 +390,7 @@ fn a_reparse_point_ancestor_is_refused_before_the_claim_is_opened() {
     let real_install = real_parent.join("install");
     let alias = root.path().join("alias-parent");
     fs::create_dir_all(&real_install).expect("real install root");
-    let status = Command::new("cmd")
+    let status = graphhelm_process::command("cmd")
         .args(["/C", "mklink", "/J"])
         .arg(&alias)
         .arg(&real_parent)

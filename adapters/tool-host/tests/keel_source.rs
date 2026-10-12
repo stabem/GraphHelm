@@ -5,8 +5,6 @@
 //! scoped factory state is absent, and unsafe reader paths are refused. Existing channel tests
 //! cover the live walk; these tests cover the new selection and snapshot boundary.
 
-use std::process::Command;
-
 use graphhelm_runtime::context::SEARCH_BOUNDS;
 use graphhelm_runtime::ports::{
     BoundedSourceReader, BoundedSourceSearch, SourceReadError, SourceSearchOrigin,
@@ -18,7 +16,7 @@ use graphhelm_tool_host::keel_source::{
 use graphhelm_tool_host::source_channel::WorkspaceSourceChannel;
 
 fn git(root: &std::path::Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = graphhelm_process::command("git")
         .args(["-C", root.to_str().unwrap()])
         .args(args)
         .status()

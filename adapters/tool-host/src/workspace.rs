@@ -8,7 +8,6 @@
 //! says what it actually reaches, walking the real filesystem against links and junctions.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use graphhelm_tool_broker::path::RelativePath;
@@ -227,7 +226,7 @@ impl Tier1Workspace {
         // The reason `run_in_workspace` itself cannot be reused here is unchanged and still the
         // real one: it needs an existing root, and this is what creates it. What #617 changed is
         // that not-reusing it no longer means not being reachable.
-        let mut command = Command::new("git");
+        let mut command = graphhelm_process::command("git");
         // SCRUBBED FIRST, then the git-specific variables below, which win (#491). Provisioning
         // ran with the parent's WHOLE environment: `git worktree add` performs a checkout, a
         // checkout runs any configured clean/smudge FILTER, and a filter is an arbitrary program
@@ -400,7 +399,7 @@ impl Tier1Workspace {
                 }
                 std::thread::sleep(*backoff);
             }
-            let mut prune = Command::new("git");
+            let mut prune = graphhelm_process::command("git");
             // The third spawn, and it is easy to miss because it is a fallback: the same scrub
             // applies (#491). A spawn that runs only when something already went wrong is exactly
             // the one that gets a weaker posture by accident.
@@ -443,7 +442,7 @@ impl Tier1Workspace {
         // the child is in a job object like every other spawn in this crate -- a `git worktree
         // remove` that wedges is then killable by the same mechanism as anything else, instead
         // of being the one spawn nothing can reach.
-        let mut command = Command::new("git");
+        let mut command = graphhelm_process::command("git");
         // Same posture as provisioning, for the same reason: `worktree remove --force` deletes a
         // checked-out tree and git may consult configuration to do it (#491).
         scrub_environment(&mut command);
@@ -474,7 +473,7 @@ impl Tier1Workspace {
 /// [`HostError::Config`] if the tree still exists after every attempt.
 fn reclaim_stale(project: &Path, root: &Path) -> Result<(), HostError> {
     let git_remove = || {
-        let mut command = Command::new("git");
+        let mut command = graphhelm_process::command("git");
         scrub_environment(&mut command);
         command
             .arg("-C")
@@ -511,7 +510,7 @@ fn reclaim_stale(project: &Path, root: &Path) -> Result<(), HostError> {
     }
     // The registration goes regardless of which step freed the tree: `worktree add` refuses a
     // root that is still registered even when nothing is on disk.
-    let mut prune = Command::new("git");
+    let mut prune = graphhelm_process::command("git");
     scrub_environment(&mut prune);
     prune
         .arg("-C")

@@ -131,7 +131,7 @@ fn main() {
             // grandchild before the host's kill could fail to, which is the observation the fixture
             // exists to make possible.
             #[allow(clippy::zombie_processes)]
-            let grandchild = std::process::Command::new(std::env::current_exe().expect("own path"))
+            let grandchild = graphhelm_process::command(std::env::current_exe().expect("own path"))
                 .arg("sleep")
                 .stdin(std::process::Stdio::null())
                 // NOT enough to stop inheritance on Windows, and this comment used to claim it was.
@@ -183,7 +183,7 @@ fn main() {
             #[allow(clippy::zombie_processes)]
             let grandchild = {
                 let mut command =
-                    std::process::Command::new(std::env::current_exe().expect("own path"));
+                    graphhelm_process::command(std::env::current_exe().expect("own path"));
                 command
                     .arg("sleep")
                     .stdin(std::process::Stdio::null())
@@ -224,7 +224,7 @@ fn main() {
             // write end, so nothing would block. Asking for the parent's stdout is how a Unix
             // orphan comes to hold the pipe -- and it is what a tests runner's worker does.
             #[allow(clippy::zombie_processes)]
-            let grandchild = std::process::Command::new(std::env::current_exe().expect("own path"))
+            let grandchild = graphhelm_process::command(std::env::current_exe().expect("own path"))
                 .arg("sleep")
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::inherit())

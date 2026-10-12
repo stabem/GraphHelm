@@ -54,7 +54,9 @@ fn mcp_session_inner(
         input.push_str(&line.to_string());
         input.push('\n');
     }
-    let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ));
     command.arg("mcp").args(args);
     for (name, value) in env {
         command.env(name, value);
@@ -290,7 +292,7 @@ fn an_invalid_actor_is_refused_with_ghcli015() {
 use std::io::{BufRead, BufReader, Read as IoRead, Write as IoWrite};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 
 struct ServerGuard {
     child: Child,
@@ -329,7 +331,7 @@ const FIXTURE_KEY_ID: &str = "mcp-fixture-key";
 fn serve_sealed(events: &Path) -> (ServerGuard, String, String) {
     let keyring = events.parent().unwrap().join("keyring");
     std::fs::create_dir_all(&keyring).unwrap();
-    let init = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let init = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "gateway",
             "keyring",
@@ -355,7 +357,7 @@ fn serve_with_keyring(
     events: &Path,
     keyring: Option<(&Path, &str)>,
 ) -> (ServerGuard, String, String) {
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command.args([
         "serve",
         "--events",
@@ -561,17 +563,19 @@ impl WiredHarness {
     }
 
     fn head_sequence(&self, execution: &str) -> u64 {
-        let value = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-            .args([
-                "execution",
-                "status",
-                "--events",
-                self.events.to_str().unwrap(),
-                "--execution",
-                execution,
-            ])
-            .output()
-            .unwrap();
+        let value = assert_cmd::Command::from_std(graphhelm_process::command(
+            assert_cmd::cargo::cargo_bin!("graphhelm"),
+        ))
+        .args([
+            "execution",
+            "status",
+            "--events",
+            self.events.to_str().unwrap(),
+            "--execution",
+            execution,
+        ])
+        .output()
+        .unwrap();
         let reply: serde_json::Value = serde_json::from_slice(&value.stdout).unwrap();
         reply["data"]["headSequence"].as_u64().unwrap()
     }
@@ -1978,17 +1982,19 @@ fn a_second_harness_reads_the_same_briefing_the_first_one_left_in_the_store() {
     assert_eq!(envelope["command"], "execution.briefing", "{envelope}");
     let over_mcp = envelope["data"].clone();
 
-    let output = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args([
-            "execution",
-            "briefing",
-            "--events",
-            harness.events.to_str().unwrap(),
-            "--execution",
-            "exec-two-harness",
-        ])
-        .output()
-        .unwrap();
+    let output = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ))
+    .args([
+        "execution",
+        "briefing",
+        "--events",
+        harness.events.to_str().unwrap(),
+        "--execution",
+        "exec-two-harness",
+    ])
+    .output()
+    .unwrap();
     let over_cli: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(over_cli["ok"], true, "{over_cli}");
 

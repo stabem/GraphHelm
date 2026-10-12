@@ -13,7 +13,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -76,7 +76,7 @@ struct ServeExtra {
 }
 
 fn serve_with(events: &Path, extra: &ServeExtra) -> (ServerGuard, String, String) {
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command
         .args([
             "serve",
@@ -289,7 +289,7 @@ fn lifecycle_clean_shutdown_is_reported_on_restart() {
 fn lifecycle_main_panic_is_reported_without_payload_or_home_path() {
     let dir = tempfile::tempdir().unwrap();
     let events = dir.path().join("events");
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command
         .args([
             "serve",
@@ -340,7 +340,9 @@ fn lifecycle_second_runtime_refuses_without_changing_live_record() {
     let (_server, _, _) = serve(&events);
     let path = dir.path().join("events.runtime-lifecycle.json");
     let before = std::fs::read(&path).unwrap();
-    let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ));
     let assertion = command
         .args([
             "serve",
@@ -372,13 +374,13 @@ fn runtime_http_pipe_holder_helper() {
 
     #[cfg(windows)]
     let mut command = {
-        let mut command = Command::new("cmd");
+        let mut command = graphhelm_process::command("cmd");
         command.args(["/C", "ping -n 30 127.0.0.1"]);
         command
     };
     #[cfg(not(windows))]
     let mut command = {
-        let mut command = Command::new("sleep");
+        let mut command = graphhelm_process::command("sleep");
         command.arg("30");
         command
     };
@@ -404,7 +406,7 @@ fn server_guard_closes_a_descendant_holding_stdout() {
     // descendant. Defect caught: `Child::kill` alone kills only the test server and leaves the
     // descendant holding the pipe, so a reader can block forever. Existing runtime journey tests
     // only exercise the direct server and cannot observe this teardown boundary.
-    let mut command = Command::new(std::env::current_exe().unwrap());
+    let mut command = graphhelm_process::command(std::env::current_exe().unwrap());
     command
         .args([
             "--exact",
@@ -975,7 +977,7 @@ fn gateway_key() -> String {
 /// credential set` subprocess — the same operator flow `gateway_cli.rs` exercises, reused here
 /// rather than hand-rolling `SealedKeyProvider`/`CredentialBroker` calls directly.
 fn credential_set(broker: &Path, keyring: &Path, key_id: &str, reference: &str, route: &str) {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "gateway",
             "credential",
@@ -2334,7 +2336,7 @@ fn scratch_project(directory: &Path) -> PathBuf {
     std::fs::create_dir_all(project.join("src")).unwrap();
     std::fs::write(project.join("src/lib.rs"), "// scratch\n").unwrap();
     let git = |args: &[&str]| {
-        let status = Command::new("git")
+        let status = graphhelm_process::command("git")
             .args(args)
             .current_dir(&project)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -2535,7 +2537,7 @@ fn an_agent_and_a_tool_node_run_to_completion_with_sealed_evidence() {
 
     // Byte-identical double replay of the finished stream — the §8 clause verbatim.
     let replay = |_: ()| {
-        let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .args(["graph", "replay", "--events", events.to_str().unwrap()])
             .output()
             .unwrap();
@@ -2942,7 +2944,7 @@ fn flip_last_character(id: &str) -> String {
 /// Creates the sealing key through the real `graphhelm gateway keyring init`, with no broker and no
 /// credential anywhere — the setup an operator who wants the message path and no model performs.
 fn keyring_init(keyring: &Path, key_id: &str) {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "gateway",
             "keyring",
@@ -3093,7 +3095,7 @@ fn initialising_a_key_twice_is_refused_rather_than_replacing_it() {
     std::fs::create_dir_all(&keyring).unwrap();
     keyring_init(&keyring, "twice");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "gateway",
             "keyring",
@@ -3580,7 +3582,7 @@ spec:
 
 /// `git` in the operator's project, as the operator would run it.
 fn project_git(project: &Path, args: &[&str]) -> std::process::Output {
-    Command::new("git")
+    graphhelm_process::command("git")
         .args(args)
         .current_dir(project)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -3783,7 +3785,7 @@ fn a_useful_change_lands_with_tools_and_no_model_credential() {
     // Byte-identical double replay of the finished stream — the same clause the all-real story
     // proves, verbatim.
     let replay = |_: ()| {
-        let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .args(["graph", "replay", "--events", events.to_str().unwrap()])
             .output()
             .unwrap();
@@ -3802,7 +3804,7 @@ fn a_half_given_tool_half_is_refused_at_startup() {
     let staging = directory.path().join("staging");
     let events = directory.path().join("events");
     let refusal = |args: &[&str]| -> (Option<i32>, Value) {
-        let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .args(["serve", "--bind", "127.0.0.1:0"])
             .args(["--events", events.to_str().unwrap()])
             .args(args)
@@ -4527,7 +4529,7 @@ fn issue178_reply_suggestions_refuse_truncated_candidates_before_judgment() {
             "nodeOutcomes":{"step_one":"unknown"}
         }),
     );
-    let start = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let start = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "execution",
             "start",
@@ -4560,7 +4562,7 @@ fn issue178_reply_suggestions_refuse_truncated_candidates_before_judgment() {
         "chat-credential",
         "chat_route",
     );
-    let mut credential = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut credential = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "gateway",
             "credential",
@@ -4704,7 +4706,7 @@ fn issue369_reply_suggestions_name_the_failing_chat_route() {
         "fixtures.json",
         &serde_json::json!({"nodeOutcomes":{"step_one":"unknown"}}),
     );
-    let start = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let start = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "execution",
             "start",
@@ -4729,7 +4731,7 @@ fn issue369_reply_suggestions_name_the_failing_chat_route() {
     let broker = directory.path().join("broker");
     let keyring = directory.path().join("keyring");
     std::fs::create_dir_all(&keyring).unwrap();
-    let mut credential = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut credential = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "gateway",
             "credential",
@@ -4906,7 +4908,7 @@ fn concurrent_cold_requests(two_starts: bool) {
             } else {
                 "cold-second"
             };
-            let reopened = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            let reopened = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
                 .args(["--json", "execution", "status", "--events"])
                 .arg(&events)
                 .args(["--execution", execution])

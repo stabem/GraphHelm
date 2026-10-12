@@ -312,7 +312,7 @@ impl Drop for Scratch {
 /// `git worktree remove --force <path>`, which also clears the record of a directory that is gone.
 /// Always one exact path: never `git worktree prune`, which would touch records this run did not make.
 fn remove_worktree_record(repo: &Path, worktree: &Path) {
-    let _ = Command::new("git")
+    let _ = graphhelm_process::command("git")
         .arg("-C")
         .arg(repo)
         .args(["worktree", "remove", "--force"])
@@ -380,7 +380,7 @@ fn clear_stale_records(repo: &Path, scratch_root: &Path) {
 }
 
 fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = graphhelm_process::command("git")
         .arg("-C")
         .arg(repo)
         .args(args)
@@ -633,7 +633,7 @@ fn run_command(
         .replace("{file}", &shell_quote(path))
         .replace("{name}", &shell_quote(name))
         .replace("{report}", &shell_quote(&report.to_string_lossy()));
-    let mut command = Command::new("sh");
+    let mut command = graphhelm_process::command("sh");
     command
         .current_dir(tree)
         .args(["-c", &line])
@@ -945,7 +945,7 @@ fn run_test(
         None
     };
     let command = || {
-        let mut command = Command::new("cargo");
+        let mut command = graphhelm_process::command("cargo");
         command
             .current_dir(tree)
             .env("CARGO_TARGET_DIR", options.target_dir.join(side))

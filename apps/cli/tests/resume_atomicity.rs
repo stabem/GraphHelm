@@ -27,7 +27,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -112,7 +112,7 @@ fn write_json(directory: &Path, name: &str, value: &Value) -> PathBuf {
 /// output on a non-zero exit so a bad fixture fails loudly at the call site rather than at a later,
 /// more confusing assertion.
 fn cli(args: &[&str]) -> Value {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(args)
         .output()
         .unwrap();
@@ -191,7 +191,7 @@ fn serve_with_env(
     extra: &[&str],
     key: Option<&str>,
 ) -> (ServerGuard, String, String) {
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command
         .args([
             "serve",

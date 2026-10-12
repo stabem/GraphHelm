@@ -4,7 +4,6 @@
 //! `WorkspaceSourceReader` — the whole month's gates, composed and observed working together.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use graphhelm_codebase_memory_mcp::DecodeLimits;
@@ -36,7 +35,7 @@ fn scratch_repo() -> (tempfile::TempDir, PathBuf) {
     std::fs::create_dir_all(project.join("src")).unwrap();
     std::fs::write(project.join("src/lib.rs"), "// scratch\n").unwrap();
     let git = |args: &[&str]| {
-        let status = Command::new("git")
+        let status = graphhelm_process::command("git")
             .args(args)
             .current_dir(&project)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -479,7 +478,7 @@ fn multiple_paths_use_escaped_file_selection() {
         ),
     )
     .unwrap();
-    let selected = Command::new("git")
+    let selected = graphhelm_process::command("git")
         .args([
             "grep",
             "--no-index",

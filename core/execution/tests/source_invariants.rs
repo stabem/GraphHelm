@@ -109,7 +109,8 @@ fn the_execution_crate_depends_on_exactly_the_declared_crates() {
         [
             "graphhelm-protocols",
             "graphhelm-events",
-            "graphhelm-policy"
+            "graphhelm-policy",
+            "graphhelm-process"
         ]
     );
 }

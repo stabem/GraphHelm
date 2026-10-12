@@ -7,7 +7,9 @@ use graphhelm_protocols::{EventEnvelope, EventKind};
 use serde_json::{Value, json};
 
 fn command() -> Command {
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )));
     command.env("GRAPHHELM_EVENTS_KEY", "01".repeat(32));
     command
 }

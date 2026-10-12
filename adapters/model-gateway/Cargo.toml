@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+graphhelm-process = { path = "../../core/process" }
 fs2.workspace = true
 graphhelm-events = { path = "../../core/events" }
 graphhelm-gateway = { path = "../../core/gateway" }

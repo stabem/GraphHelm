@@ -6,7 +6,9 @@ use chrono::TimeZone;
 use serde_json::{Value, json};
 
 fn command() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )))
 }
 fn write(directory: &Path, name: &str, value: &Value) -> PathBuf {
     let path = directory.join(name);

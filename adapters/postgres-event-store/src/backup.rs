@@ -2141,8 +2141,8 @@ fn dump_command(
     profile: &DatabaseProcessProfile,
     snapshot: &str,
 ) -> std::process::Command {
-    use std::process::{Command, Stdio};
-    let mut command = Command::new(executable);
+    use std::process::Stdio;
+    let mut command = graphhelm_process::command(executable);
     command
         .env_clear()
         .env("PGHOST", &profile.host)
@@ -2172,8 +2172,8 @@ fn restore_command(
     profile: &DatabaseProcessProfile,
     application: &str,
 ) -> std::process::Command {
-    use std::process::{Command, Stdio};
-    let mut command = Command::new(executable);
+    use std::process::Stdio;
+    let mut command = graphhelm_process::command(executable);
     command
         .env_clear()
         .env("PGHOST", &profile.host)
@@ -4864,8 +4864,8 @@ fn run_bounded_process(
     environment: &[(&str, &str)],
     timeout: Duration,
 ) -> Result<ProcessResult, BackupError> {
-    use std::process::{Command, Stdio};
-    let mut command = Command::new(executable);
+    use std::process::Stdio;
+    let mut command = graphhelm_process::command(executable);
     command
         .args(arguments)
         .env_clear()
@@ -5303,7 +5303,7 @@ mod process_tests {
             Ok("noisy") => eprint!("{}", "noise-canary".repeat(7_000)),
             Ok("hang") => std::thread::sleep(Duration::from_secs(30)),
             Ok("descendant") => {
-                let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                let mut child = graphhelm_process::command(std::env::current_exe().unwrap())
                     .args([
                         "--exact",
                         "backup::process_tests::fake_process_child",
@@ -5774,10 +5774,10 @@ mod process_tests {
 
     #[test]
     fn process_watchdog_owns_kills_and_reaps_the_child() {
-        use std::process::{Command, Stdio};
+        use std::process::Stdio;
 
         let executable = std::env::current_exe().unwrap();
-        let mut command = Command::new(executable);
+        let mut command = graphhelm_process::command(executable);
         command
             .args([
                 "--exact",
@@ -5807,10 +5807,10 @@ mod process_tests {
 
     #[test]
     fn process_watchdog_releases_before_reaping_a_normally_finished_child() {
-        use std::process::{Command, Stdio};
+        use std::process::Stdio;
 
         let executable = std::env::current_exe().unwrap();
-        let mut command = Command::new(executable);
+        let mut command = graphhelm_process::command(executable);
         command
             .args([
                 "--exact",
@@ -5896,10 +5896,10 @@ mod process_tests {
 
     #[test]
     fn cancellation_signal_kills_and_reaps_a_blocked_process_without_waiting_for_timeout() {
-        use std::process::{Command, Stdio};
+        use std::process::Stdio;
 
         let executable = std::env::current_exe().unwrap();
-        let mut command = Command::new(executable);
+        let mut command = graphhelm_process::command(executable);
         command
             .args([
                 "--exact",
@@ -5933,14 +5933,14 @@ mod process_tests {
 
     #[test]
     fn cancelled_watchdog_kills_the_owned_process_tree() {
-        use std::process::{Command, Stdio};
+        use std::process::Stdio;
 
         let pid_path = std::env::temp_dir().join(format!(
             "graphhelm-process-tree-{}.pid",
             uuid::Uuid::new_v4().simple()
         ));
         let executable = std::env::current_exe().unwrap();
-        let mut command = Command::new(executable);
+        let mut command = graphhelm_process::command(executable);
         command
             .args([
                 "--exact",

@@ -7,7 +7,9 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 fn command() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )))
 }
 
 fn repository_root() -> PathBuf {
@@ -1347,13 +1349,15 @@ fn real_mcp_tool_names() -> Vec<String> {
         input.push_str(&line.to_string());
         input.push('\n');
     }
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args(["mcp", "--url", "http://127.0.0.1:9", "--actor", "agent-x"])
-        .env("GRAPHHELM_API_TOKEN", "test-token")
-        .write_stdin(input)
-        .timeout(std::time::Duration::from_secs(30))
-        .output()
-        .expect("the mcp server runs to EOF");
+    let output = Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )))
+    .args(["mcp", "--url", "http://127.0.0.1:9", "--actor", "agent-x"])
+    .env("GRAPHHELM_API_TOKEN", "test-token")
+    .write_stdin(input)
+    .timeout(std::time::Duration::from_secs(30))
+    .output()
+    .expect("the mcp server runs to EOF");
 
     let reply = String::from_utf8(output.stdout)
         .expect("stdout is UTF-8")

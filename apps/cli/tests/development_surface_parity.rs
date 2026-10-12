@@ -20,7 +20,7 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 #[path = "support/time_scale.rs"]
@@ -322,7 +322,7 @@ fn parse_help_subcommand_names(help_text: &str) -> Vec<String> {
 }
 
 fn real_cli_development_leaves() -> Vec<String> {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["development", "--help"])
         .output()
         .expect("the built binary runs `development --help`");
@@ -330,7 +330,7 @@ fn real_cli_development_leaves() -> Vec<String> {
 }
 
 fn real_cli_execution_leaves() -> Vec<String> {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["execution", "--help"])
         .output()
         .expect("the built binary runs `execution --help`");
@@ -353,13 +353,15 @@ fn real_mcp_tool_names() -> Vec<String> {
         input.push_str(&line.to_string());
         input.push('\n');
     }
-    let output = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args(["mcp", "--url", "http://127.0.0.1:9", "--actor", "agent-x"])
-        .env("GRAPHHELM_API_TOKEN", "test-token")
-        .write_stdin(input)
-        .timeout(scaled(Duration::from_secs(30)))
-        .output()
-        .expect("the mcp server runs to EOF");
+    let output = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ))
+    .args(["mcp", "--url", "http://127.0.0.1:9", "--actor", "agent-x"])
+    .env("GRAPHHELM_API_TOKEN", "test-token")
+    .write_stdin(input)
+    .timeout(scaled(Duration::from_secs(30)))
+    .output()
+    .expect("the mcp server runs to EOF");
     let replies: Vec<Value> = String::from_utf8(output.stdout)
         .expect("stdout is UTF-8")
         .lines()
@@ -393,7 +395,7 @@ fn real_mcp_tool_names() -> Vec<String> {
 fn probe_http_route_exists(method_path: &str) {
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "serve",
             "--events",

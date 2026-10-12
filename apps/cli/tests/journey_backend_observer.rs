@@ -7,7 +7,6 @@
 //! processes; no browser, Node or provider. Cost: a few seconds after build; needs `sh` and
 //! `python3`.
 use std::path::Path;
-use std::process::Command;
 
 use serde_json::Value;
 
@@ -20,7 +19,7 @@ const SERVER: &str = include_str!("fixtures/journey_backend/server.py");
 const IGNORE: &str = "deletes.count\n.graphhelm/*\n!.graphhelm/journeys/\n!.graphhelm/journeys/**\n!.graphhelm/journey-fixture.json\n";
 
 fn graphhelm(args: &[&str], project: &Path, extra: &[&Path]) -> (i32, Value) {
-    let out = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .arg("--json")
         .args(args)
         .arg(project)
@@ -34,7 +33,7 @@ fn graphhelm(args: &[&str], project: &Path, extra: &[&Path]) -> (i32, Value) {
 }
 
 fn git(project: &Path, args: &[&str]) -> Vec<u8> {
-    let out = Command::new("git")
+    let out = graphhelm_process::command("git")
         .arg("-C")
         .arg(project)
         .args(args)

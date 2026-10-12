@@ -543,7 +543,7 @@ fn release_requested(path: &Path, metadata_error_reported: &mut bool) -> bool {
 /// the test removes its private release directory.
 fn run_orphan() {
     let exe = std::env::current_exe().expect("fake_runtime: could not resolve its own exe path");
-    let child = std::process::Command::new(exe)
+    let child = graphhelm_process::command(exe)
         .env("FAKE_RUNTIME_MODE", "hang")
         .spawn();
     if let (Ok(child), Ok(path)) = (child, std::env::var("FAKE_RUNTIME_ORPHAN_PID_PATH")) {

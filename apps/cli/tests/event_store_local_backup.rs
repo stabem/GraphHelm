@@ -27,7 +27,9 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 
 fn command() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )))
 }
 
 fn json_output(arguments: &[&str]) -> (i32, Value) {
@@ -440,7 +442,7 @@ fn a_backup_waits_for_a_writer_holding_the_store_lock() {
     );
 
     let archive = directory.path().join("under-lock.ghbak");
-    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "events",
             "backup",
@@ -577,7 +579,7 @@ fn a_backup_is_not_blocked_by_another_reader() {
     // and, inside a gate stage, the gate. A red is a verdict; a hang is the absence of one, and
     // the absence is the failure that never reports itself.
     let archive = directory.path().join("shared.ghbak");
-    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "events",
             "backup",

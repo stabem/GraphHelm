@@ -5,7 +5,6 @@
 //! run started on every read. Real CLI/tempdir/Git boundary, the installed observer is a tripwire
 //! that must never start; cost: seconds after build, offline, no Node/browser/provider.
 use std::path::Path;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 #[path = "support/time_scale.rs"]
@@ -17,7 +16,7 @@ use serde_json::Value;
 const FLOW: &str = include_str!("fixtures/journey_flow/checkout.journey.yaml");
 
 fn cli(project: &Path, args: &[&str]) -> (i32, Value) {
-    let out = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["--json", "journey"])
         .args(args)
         .arg("--project")
@@ -62,7 +61,7 @@ fn draft() -> tempfile::TempDir {
         vec!["commit", "--quiet", "--no-verify", "-m", "fixture"],
     ] {
         assert!(
-            Command::new("git")
+            graphhelm_process::command("git")
                 .arg("-C")
                 .arg(dir.path())
                 .args(args)

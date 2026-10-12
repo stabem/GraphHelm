@@ -284,7 +284,7 @@ pub fn verify_demonstration(root: &Path, directory: &str) -> Vec<String> {
 /// Every file a committed artifact directory holds must be TRACKED by git — a named but
 /// gitignored artifact silently vanishes from fresh clones (the 05f journal lesson).
 pub fn verify_tracked(root: &Path, directory: &str) -> Vec<String> {
-    let output = std::process::Command::new("git")
+    let output = graphhelm_process::command("git")
         .args(["-C", &root.to_string_lossy(), "ls-files", "--", directory])
         .output();
     let Ok(output) = output else {
@@ -543,7 +543,7 @@ mod tests {
         // ARRANGEMENT FIRST: git must actually refuse here. If some ancestor of the temp directory
         // were a work tree, git would answer and this test would be about a repository instead of
         // about a refusal — passing for a reason that has nothing to do with the property.
-        let probe = std::process::Command::new("git")
+        let probe = graphhelm_process::command("git")
             .args(["-C", &root.to_string_lossy(), "ls-files", "--", "evidence"])
             .output()
             .expect("git runs");

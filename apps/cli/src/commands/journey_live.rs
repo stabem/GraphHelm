@@ -235,7 +235,7 @@ pub(super) fn open_in_runtime(args: &JourneyOpenArgs) -> Outcome {
     let Ok(executable) = std::env::current_exe() else {
         return report(OPEN, data, Some(failure("live.host_invalid", "/host", 3)));
     };
-    let mut command = Command::new(executable);
+    let mut command = graphhelm_process::command(executable);
     if args.watch {
         command
             .args(["--json", "journey", "watch", &args.id])
@@ -379,7 +379,7 @@ fn spawn_host(args: &JourneyOpenArgs, data: Value) -> Outcome {
     let Ok(executable) = std::env::current_exe() else {
         return report(OPEN, data, Some(failure("live.host_invalid", "/host", 3)));
     };
-    let mut command = Command::new(executable);
+    let mut command = graphhelm_process::command(executable);
     command
         .args([
             "--json",
@@ -1219,16 +1219,16 @@ pub(super) fn base_reachable(base: &str) -> bool {
 /// A POSIX shell: `GRAPHHELM_POSIX_SHELL`, else Git for Windows' bash on Windows, else `sh`.
 fn posix_shell() -> Command {
     if let Some(shell) = std::env::var_os("GRAPHHELM_POSIX_SHELL") {
-        return Command::new(shell);
+        return graphhelm_process::command(shell);
     }
     #[cfg(windows)]
     {
         let git_bash = Path::new(r"C:\Program Files\Git\bin\bash.exe");
         if git_bash.is_file() {
-            return Command::new(git_bash);
+            return graphhelm_process::command(git_bash);
         }
     }
-    Command::new("sh")
+    graphhelm_process::command("sh")
 }
 
 /// The most of a failed launcher's output the report keeps.
@@ -2247,7 +2247,7 @@ mod frame_tests {
             "graphhelm-replay-{}",
             uuid::Uuid::new_v4().simple()
         ));
-        let made = std::process::Command::new("cmd")
+        let made = graphhelm_process::command("cmd")
             .args(["/C", "mklink", "/J"])
             .arg(link.to_string_lossy().trim_start_matches(r"\\?\"))
             .arg(target.path())

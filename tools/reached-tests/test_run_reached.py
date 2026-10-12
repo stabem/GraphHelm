@@ -11,6 +11,9 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_reached as rr
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = rr.NO_WINDOW
+
 
 _FIXED_FINGERPRINT = {"tree": "t", "tools": {}, "toolsSha256": "a", "envSha256": "b"}
 
@@ -97,10 +100,10 @@ class RunnerContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess = __import__("subprocess")
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
             (repo / "x").write_text("x", encoding="utf-8")
-            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
             output = Path(temp).parent / (Path(temp).name + "-batch-report.json")
             plan = {"steps": [
                 {"argv": ["cargo", "+1.97.1", "test", "--lib"], "cwd": ".", "slot": True},
@@ -148,10 +151,10 @@ class RunnerContracts(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp:
                 repo = Path(temp)
                 subprocess = __import__("subprocess")
-                subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+                subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
                 (repo / "x").write_text("x", encoding="utf-8")
-                subprocess.run(["git", "add", "x"], cwd=repo, check=True)
-                subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+                subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+                subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
                 output = Path(temp).parent / (Path(temp).name + "-report.json")
                 plan = {"steps": [{"argv": ["cargo", "+1.97.1", "test", "--lib"], "cwd": ".", "slot": True}]}
                 def fake_run(command, **kwargs):
@@ -218,10 +221,10 @@ class RunnerContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess = __import__("subprocess")
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
             (repo / "x").write_text("x", encoding="utf-8")
-            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
             output = Path(temp).parent / (Path(temp).name + "-missing-cli-report.json")
             plan = {"steps": [{"argv": ["python", "-c", "pass"], "cwd": ".", "slot": True}]}
             args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
@@ -274,10 +277,10 @@ class RunnerContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess = __import__("subprocess")
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
             (repo / "x").write_text("x", encoding="utf-8")
-            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
             output = Path(temp).parent / (Path(temp).name + "-browser-report.json")
             plan = {"steps": [{"argv": ["python", "-c", "raise SystemExit(99)"], "cwd": ".", "slot": False, "observer": "browser"}]}
             args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
@@ -295,10 +298,10 @@ class RunnerContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess = __import__("subprocess")
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
             (repo / "x").write_text("x", encoding="utf-8")
-            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
             output = Path(temp).parent / (Path(temp).name + "-browser-mixed-report.json")
             marker = Path(temp).parent / (Path(temp).name + "-browser-mixed-marker")
             plan = {"steps": [
@@ -321,10 +324,10 @@ class RunnerContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess = __import__("subprocess")
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
             (repo / "x").write_text("x", encoding="utf-8")
-            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
             output = Path(temp).parent / (Path(temp).name + "-browser-optin-report.json")
             plan = {"steps": [{"argv": ["node", "browser.test.mjs"], "cwd": ".", "slot": False, "observer": "browser"}]}
             args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
@@ -340,10 +343,10 @@ class RunnerContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess = __import__("subprocess")
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
             (repo / "x").write_text("x", encoding="utf-8")
-            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
             output = Path(temp).parent / (Path(temp).name + "-report.json")
             plan = {"steps": [{"argv": ["python", "-c", "raise SystemExit(7)"], "cwd": ".", "slot": False}]}
             with patch.object(rr, "_selector", return_value=plan):
@@ -361,11 +364,11 @@ class RunnerContracts(unittest.TestCase):
             fixture.write_text("def test_failure():\n    assert False\n", encoding="utf-8")
             control = repo / "test_control.py"
             control.write_text("import unittest\nclass Control(unittest.TestCase):\n def test_ok(self): self.assertTrue(True)\n", encoding="utf-8")
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
             (repo / "tracked").write_text("x", encoding="utf-8")
             (repo / ".gitignore").write_text("__pycache__/\n.pytest_cache/\n", encoding="utf-8")
-            subprocess.run(["git", "add", "tracked", "test_fixture.py", "test_control.py", ".gitignore"], cwd=repo, check=True)
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "tracked", "test_fixture.py", "test_control.py", ".gitignore"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
             output = Path(temp).parent / (Path(temp).name + "-pytest-report.json")
             plan = {"steps": [{"argv": [sys.executable, "-m", "pytest", "-q", "test_fixture.py"], "cwd": ".", "slot": False},
                               {"argv": [sys.executable, "-m", "unittest", "test_control"], "cwd": ".", "slot": False}]}
@@ -381,11 +384,11 @@ class RunnerContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess = __import__("subprocess")
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
             (repo / "empty_test.py").write_text("# no unittest cases\n", encoding="utf-8")
             (repo / ".gitignore").write_text("__pycache__/\n.pytest_cache/\n", encoding="utf-8")
-            subprocess.run(["git", "add", "empty_test.py", ".gitignore"], cwd=repo, check=True)
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "empty_test.py", ".gitignore"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
             output = Path(temp).parent / (Path(temp).name + "-empty-unittest-report.json")
             plan = {"steps": [{"argv": ["python", "-m", "unittest", "empty_test.py"],
                                "cwd": ".", "slot": False}]}
@@ -410,11 +413,11 @@ class RunnerContracts(unittest.TestCase):
                 "        session.exitstatus = 0\n",
                 encoding="utf-8",
             )
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
             (repo / "tracked").write_text("x", encoding="utf-8")
             (repo / ".gitignore").write_text("__pycache__/\n.pytest_cache/\n", encoding="utf-8")
-            subprocess.run(["git", "add", "tracked", "test_empty.py", "conftest.py", ".gitignore"], cwd=repo, check=True)
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "tracked", "test_empty.py", "conftest.py", ".gitignore"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
             output = Path(temp).parent / (Path(temp).name + "-zero-pytest-report.json")
             plan = {"steps": [{"argv": [sys.executable, "-m", "pytest", "-q", "test_empty.py"], "cwd": ".", "slot": False}]}
             with patch.object(rr, "_selector", return_value=plan):
@@ -432,10 +435,10 @@ class RunnerContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess = __import__("subprocess")
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
             (repo / "x").write_text("x", encoding="utf-8")
-            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
             output = Path(temp).parent / (Path(temp).name + "-report.json")
             plan = {"steps": [{"argv": ["cargo", "+1.97.1", "test", "--lib"], "cwd": ".", "slot": True},
                                {"argv": ["python", "-c", "pass"], "cwd": ".", "slot": False}]}
@@ -467,10 +470,10 @@ class RunnerContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess = __import__("subprocess")
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
             (repo / "x").write_text("x", encoding="utf-8")
-            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
             output = Path(temp).parent / (Path(temp).name + "-unsupported-report.json")
             marker = Path(temp).parent / (Path(temp).name + "-unsupported-marker")
             plan = {"unsupported": [{"package": "graphhelm-cli", "target": "keel", "reason": "target requires features: keel"}],
@@ -493,10 +496,10 @@ class RunnerContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess = __import__("subprocess")
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
             (repo / "x").write_text("x", encoding="utf-8")
-            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
             output = Path(temp).parent / (Path(temp).name + "-report.json")
             marker = Path(temp).parent / (Path(temp).name + "-child-marker")
             plan = {"steps": [{"argv": ["python", "-c", f"from pathlib import Path; Path(r'{marker}').write_text('done')"], "cwd": ".", "slot": False},
@@ -526,14 +529,14 @@ class RunnerContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess = __import__("subprocess")
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
             (repo / "x").write_text("one", encoding="utf-8")
-            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "one"], cwd=repo, check=True)
-            old = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "one"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            old = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True, creationflags=NO_WINDOW).stdout.strip()
             (repo / "x").write_text("two", encoding="utf-8")
-            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "two"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "two"], cwd=repo, check=True, creationflags=NO_WINDOW)
             output = Path(temp).parent / (Path(temp).name + "-report.json")
             args = type("Args", (), {"repo": str(repo), "output": str(output), "base": old, "head": old,
                                       "root": "D:/gh", "lane": "test", "budget_seconds": 180,
@@ -545,10 +548,10 @@ class RunnerContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess = __import__("subprocess")
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
             (repo / "x").write_text("one", encoding="utf-8")
-            subprocess.run(["git", "add", "x"], cwd=repo, check=True)
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "one"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "one"], cwd=repo, check=True, creationflags=NO_WINDOW)
             output = Path(temp).parent / (Path(temp).name + "-report.json")
             plan = {"steps": [{"argv": ["python", "-c", "open('x','w').write('two')"], "cwd": ".", "slot": False}]}
             with patch.object(rr, "_selector", return_value=plan):
@@ -558,7 +561,7 @@ class RunnerContracts(unittest.TestCase):
                 self.assertEqual(rr.run(args), 1)
             self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["status"], "incomplete")
 
-            subprocess.run(["git", "checkout", "--", "x"], cwd=repo, check=True)
+            subprocess.run(["git", "checkout", "--", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
             with patch.object(rr, "_selector", side_effect=lambda *unused: (time.sleep(.02) or {"steps": []})):
                 args.budget_seconds = .001
                 self.assertEqual(rr.run(args), 1)
@@ -585,7 +588,7 @@ class ResumeAndPreflightContracts(unittest.TestCase):
 
     def git(self, *args):
         subprocess = __import__("subprocess")
-        return subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True, text=True).stdout
+        return subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True, text=True, creationflags=NO_WINDOW).stdout
 
     def commit(self, text):
         (self.repo / "x").write_text(text, encoding="utf-8")

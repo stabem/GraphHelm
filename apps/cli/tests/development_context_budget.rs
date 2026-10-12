@@ -22,7 +22,7 @@
 use std::io::{Read as _, Write as _};
 use std::net::TcpStream;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 #[path = "support/time_scale.rs"]
@@ -59,7 +59,7 @@ struct Run {
 /// test is about is named by the assertion, so the arrangement must survive long enough for the
 /// assertion to be reached and to print what actually happened.
 fn run(args: &[&str]) -> Run {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(args)
         .output()
         .expect("the built binary is invocable");
@@ -258,7 +258,7 @@ impl Drop for Server {
 
 fn start_server(directory: &Path) -> Server {
     let events = directory.join("events");
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "serve",
             "--events",
@@ -480,7 +480,7 @@ fn the_http_route_still_accepts_the_bodyless_request_it_answered_before() {
 /// Returns the `tools/call` reply. Both processes are real: an MCP test that stubs the API cannot
 /// see a refusal that only exists because the route produced it.
 fn mcp_call(server: &Server, arguments: &serde_json::Value) -> serde_json::Value {
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "mcp",
             "--url",

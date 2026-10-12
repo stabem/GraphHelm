@@ -106,7 +106,6 @@ pub(crate) fn run_ended(
         Err(_) => unavailable("Runtime unavailable"),
     }
 }
-use std::process::Command;
 
 use graphhelm_protocols::Diagnostic;
 use serde_json::Value;
@@ -128,7 +127,7 @@ pub(super) fn run(args: &TasksArgs) -> Outcome {
         return failure("unsupported tasks command");
     };
     let python = if cfg!(windows) { "python" } else { "python3" };
-    let mut child = Command::new(python);
+    let mut child = graphhelm_process::command(python);
     child
         .arg("-c")
         .arg(SCRIPT)

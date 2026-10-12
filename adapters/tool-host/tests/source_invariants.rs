@@ -405,7 +405,7 @@ fn the_role_exemption_spares_fixtures_and_still_reads_prose() {
 /// guard's question is "does this entry redirect the walk elsewhere", not "which reparse tag".
 #[cfg(windows)]
 fn plant_directory_link(link: &Path, target: &Path) -> bool {
-    std::process::Command::new("cmd")
+    graphhelm_process::command("cmd")
         .arg("/C")
         .arg("mklink")
         .arg("/J")

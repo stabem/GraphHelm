@@ -15,7 +15,9 @@ const SENTINEL: &str = "sk-ant-SENTINEL-0123456789abcdef";
 const DISTINCTIVE_MARKER: &str = "MARKER-9F8E7D2C1B-NEVER-LEAK";
 
 fn command() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )))
 }
 
 fn json(output: &[u8]) -> Value {
@@ -952,7 +954,7 @@ fn concurrent_route_sets_preserve_every_distinct_route() {
     let mut children = Vec::new();
     for index in 0..12 {
         let id = format!("route_{index}");
-        let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+        let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
         child
             .args(["gateway", "route", "set", "--manifest"])
             .arg(&manifest)
@@ -1243,7 +1245,7 @@ fn slow_native_program(dir: &Path, delay_ms: u64) -> String {
     static BINARY: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
     let built = BINARY.get_or_init(|| {
         let temp = tempfile::tempdir().unwrap();
-        let status = std::process::Command::new("rustc")
+        let status = graphhelm_process::command("rustc")
             .args(["--edition=2024", "tests/fixtures/slow-version.rs", "-o"])
             .arg(
                 temp.path()

@@ -9,6 +9,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 WT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path.cwd()
 
 
@@ -60,7 +63,7 @@ def section(text: str, heading: str) -> str:
 
 def rustfmt_check(path: str) -> None:
     proc = subprocess.run(["rustfmt", "+1.97.1", "--edition", "2024", "--check", path], cwd=WT,
-                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     if proc.returncode != 0:
         fail(f"rustfmt --check {path} exit {proc.returncode}: {(proc.stdout + proc.stderr)[-400:]}")
 
@@ -68,7 +71,7 @@ def rustfmt_check(path: str) -> None:
 def git_changed_paths() -> list[str]:
     """Paths changed relative to the checkout's baseline commit (the task's parent)."""
     def run(*args: str) -> str:
-        return subprocess.run(["git", *args], cwd=WT, capture_output=True, text=True, check=True).stdout
+        return subprocess.run(["git", *args], cwd=WT, capture_output=True, text=True, check=True, creationflags=NO_WINDOW).stdout
     base = run("rev-list", "--max-parents=0", "HEAD").strip()
     changed = run("diff", "--name-only", base) + run("ls-files", "--others", "--exclude-standard")
     return sorted({line for line in changed.splitlines() if line.strip()})
@@ -79,14 +82,14 @@ REPO = Path(__file__).resolve().parents[4]
 
 def repo_show(sha: str, path: str) -> bytes:
     """A file as it is at `sha` in the benchmark's own repository (never the agent's checkout)."""
-    return subprocess.run(["git", "show", f"{sha}:{path}"], cwd=REPO, capture_output=True, check=True).stdout
+    return subprocess.run(["git", "show", f"{sha}:{path}"], cwd=REPO, capture_output=True, check=True, creationflags=NO_WINDOW).stdout
 
 
 def added_rust_tests() -> int:
     """`#[test]` attributes the session added to Rust files: baseline commit to the scored snapshot."""
     def run(*args: str) -> str:
         return subprocess.run(["git", *args], cwd=WT, capture_output=True, text=True, check=True,
-                              encoding="utf-8", errors="replace").stdout
+                              encoding="utf-8", errors="replace", creationflags=NO_WINDOW).stdout
     base = run("rev-list", "--max-parents=0", "HEAD").strip()
     diff = run("diff", base, "HEAD", "--", "*.rs")  # the scored snapshot; regression restores files
     return sum(1 for line in diff.splitlines() if line.startswith("+") and line[1:].strip() == "#[test]")
@@ -97,7 +100,7 @@ def cargo_test(package: str, test_target: str, name: str, timeout: int = 1500) -
     try:
         proc = subprocess.run(["cargo", "test", "-q", "-p", package, "--test", test_target, name, "--",
                                "--exact"], cwd=WT, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=timeout)
+                              errors="replace", timeout=timeout, creationflags=NO_WINDOW)
     except subprocess.TimeoutExpired:
         fail(f"cargo test {name} timed out after {timeout}s")
     out = proc.stdout + proc.stderr
@@ -120,7 +123,7 @@ def hidden_unittest(sha: str, path: str, extra: str = "", timeout: int = 600) ->
     target.write_text(text, encoding="utf-8")
     try:
         proc = subprocess.run([sys.executable, str(target)], cwd=WT, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=timeout)
+                              encoding="utf-8", errors="replace", timeout=timeout, creationflags=NO_WINDOW)
     except subprocess.TimeoutExpired:
         fail(f"hidden {path} timed out after {timeout}s")
     finally:
@@ -134,6 +137,6 @@ def diff_since_base(*paths: str) -> str:
     """The unified diff from the checkout's baseline commit to the scored snapshot (HEAD)."""
     def run(*args: str) -> str:
         return subprocess.run(["git", *args], cwd=WT, capture_output=True, text=True, check=True,
-                              encoding="utf-8", errors="replace").stdout
+                              encoding="utf-8", errors="replace", creationflags=NO_WINDOW).stdout
     base = run("rev-list", "--max-parents=0", "HEAD").strip()
     return run("diff", base, "HEAD", "--", *paths)

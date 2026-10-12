@@ -6,7 +6,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -271,7 +271,7 @@ fn serve_with_env_observed(
     envs: &[(&str, &str)],
     on_spawn: Option<SpawnObserver>,
 ) -> (ServerGuard, String, String) {
-    let child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "serve",
             "--events",
@@ -503,7 +503,7 @@ const CHILD_REACHED_ITS_OWN_SABOTAGE: &str =
 #[test]
 fn server_guard_surfaces_a_panicking_childs_stderr_in_the_failure_report() {
     let this_binary = std::env::current_exe().unwrap();
-    let output = Command::new(this_binary)
+    let output = graphhelm_process::command(this_binary)
         .env(SABOTAGE_CONFIRM_ENV, "1")
         .args([
             "api_http::server_guard_sabotage_ignored",
@@ -578,7 +578,7 @@ fn server_guard_sabotage_ignored() {
         return;
     }
     let this_binary = std::env::current_exe().unwrap();
-    let mut child = Command::new(this_binary)
+    let mut child = graphhelm_process::command(this_binary)
         .env(MARKER_ECHO_CONFIRM_ENV, "1")
         .args([
             "api_http::server_guard_marker_echo_ignored",
@@ -683,7 +683,11 @@ fn server_guard_sabotage_is_platform_portable() {
         .map(|offset| start + offset)
         .expect("HARNESS-BROKE: could not bound the sabotage/marker-echo region");
     let region = &source[start..end];
-    for shell in ["Command::new(\"cmd\")", "Command::new(\"sh\")", "/bin/"] {
+    for shell in [
+        "graphhelm_process::command(\"cmd\")",
+        "graphhelm_process::command(\"sh\")",
+        "/bin/",
+    ] {
         assert!(
             !region.contains(shell),
             "the sabotage/marker-echo region names a platform-specific shell ({shell:?}) again — \
@@ -1603,7 +1607,7 @@ fn health_answers_without_auth_and_everything_else_refuses_without_the_token() {
 fn the_executor_refuses_to_run_without_a_declared_program_allowlist() {
     let directory = tempfile::tempdir().unwrap();
     let missing = directory.path().join("nothing-here");
-    let output = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["serve", "--bind", "127.0.0.1:0"])
         .args(["--events", directory.path().to_str().unwrap()])
         .args(["--manifest", missing.to_str().unwrap()])
@@ -1658,7 +1662,7 @@ fn the_executor_refuses_to_run_without_a_declared_program_allowlist() {
 fn a_non_loopback_bind_is_refused_fail_closed_before_anything_is_opened() {
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "serve",
             "--events",
@@ -1733,7 +1737,7 @@ fn write_json(directory: &Path, name: &str, value: &Value) -> PathBuf {
 /// output on a non-zero exit so a bad fixture fails loudly at the call site rather than at a later,
 /// confusing assertion.
 fn cli(args: &[&str]) -> Value {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(args)
         .output()
         .unwrap();
@@ -3997,7 +4001,7 @@ fn resume_over_http_is_attributed_idempotent_and_maps_its_refusal_to_409() {
     let graph = root().join("examples/graphs/manual-override-deploy.yaml");
     let fixtures = blocked_fixtures(directory.path());
     cli_start(&events, &fixtures, execution);
-    let pause_output = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let pause_output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "execution",
             "pause",
@@ -4678,7 +4682,7 @@ fn run_story_over_cli(events: &Path, directory: &Path) -> (Value, Value) {
         graphhelm_events::SecretBytes::new(vec![1; 32]),
     )
     .unwrap();
-    let signal_output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let signal_output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "execution",
             "signal",
@@ -5044,7 +5048,7 @@ fn gateway_manifest_value() -> Value {
 /// Spawns the CLI subcommand and returns its whole printed envelope, for the parity
 /// comparisons below.
 fn cli_envelope(args: &[&str]) -> Value {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(args)
         .output()
         .unwrap();
@@ -9216,7 +9220,7 @@ fn serve_with_judge_route(
     let broker = directory.join("broker");
     let keyring = directory.join("keyring");
     std::fs::create_dir_all(&keyring).unwrap();
-    let planted = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let planted = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "gateway",
             "credential",

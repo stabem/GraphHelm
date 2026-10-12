@@ -28,7 +28,7 @@ const WEBP: &[u8] = b"RIFF\x04\0\0\0WEBPVP8 ";
 const SVG: &[u8] = b"<svg xmlns='http://www.w3.org/2000/svg'/>";
 
 fn graphhelm() -> Command {
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command.env("GRAPHHELM_EVENTS_KEY", EVENTS_KEY);
     command
 }
@@ -515,14 +515,16 @@ fn mcp(harness: &Harness, arguments: Value) -> Value {
         input.push_str(&line.to_string());
         input.push('\n');
     }
-    let output = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args(["mcp", "--url", &harness.base, "--token-file"])
-        .arg(&token_file)
-        .args(["--actor", "agent-chat", "--actor-type", "agent"])
-        .write_stdin(input)
-        .timeout(scaled(Duration::from_secs(60)))
-        .output()
-        .unwrap();
+    let output = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ))
+    .args(["mcp", "--url", &harness.base, "--token-file"])
+    .arg(&token_file)
+    .args(["--actor", "agent-chat", "--actor-type", "agent"])
+    .write_stdin(input)
+    .timeout(scaled(Duration::from_secs(60)))
+    .output()
+    .unwrap();
     String::from_utf8(output.stdout)
         .unwrap()
         .lines()

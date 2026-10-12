@@ -15,6 +15,7 @@ name = "graphhelm"
 path = "src/main.rs"
 
 [dependencies]
+graphhelm-process = { path = "../../core/process" }
 axum.workspace = true
 chrono.workspace = true
 clap.workspace = true

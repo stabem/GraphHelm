@@ -72,6 +72,8 @@ Its unobserved results are investigation leads; missing coverage never proves co
 
 ## Toolchain and repository commands
 
+**No console windows.** Rule: every child process GraphHelm code starts runs hidden in the calling terminal. Rust spawns only through `graphhelm_process::command` (`CREATE_NO_WINDOW` on Windows) and ORs `CREATE_NO_WINDOW` into any other creation flags; Python passes `creationflags=NO_WINDOW`. Source guards enforce the spawn sites (`core/process/tests/no_console_window.rs` over every `.rs` file, `tools/reached-tests/test_no_console_window.py` over every `.py` file); the absence of windows on real Windows is observed with `tools/no-window/observe.ps1`, and that observation is pending until it has been run there.
+
 The pinned toolchain is Rust `1.97.1` with `rustfmt` and `clippy`. Install it when missing:
 
 ```powershell

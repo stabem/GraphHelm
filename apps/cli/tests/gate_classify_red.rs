@@ -32,7 +32,9 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn command() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+        "graphhelm"
+    )))
 }
 
 fn classify(log: &Path, judge: &Path, extra: &[&str]) -> Output {

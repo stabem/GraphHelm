@@ -225,7 +225,7 @@ fn uninstall_removes_a_planted_junction_without_reaching_its_target() {
     std::fs::write(&user_file, b"authored by a person").expect("the user file writes");
 
     let junction = installed.root.join("planted-junction");
-    let status = std::process::Command::new("cmd")
+    let status = graphhelm_process::command("cmd")
         .args([
             "/c",
             "mklink",

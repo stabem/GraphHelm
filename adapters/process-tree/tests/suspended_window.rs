@@ -45,7 +45,7 @@
 /// and the RESULT, not a dead process, is what each assertion reads.
 fn long_lived_child() -> std::process::Command {
     use std::os::windows::process::CommandExt;
-    let mut command = std::process::Command::new("cmd");
+    let mut command = graphhelm_process::command("cmd");
     // `raw_arg`, not `arg`: Rust quotes for a C-runtime parser and `cmd.exe` does not use one.
     command.arg("/c");
     command.raw_arg("ping -n 30 127.0.0.1 > nul");

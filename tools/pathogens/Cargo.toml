@@ -7,6 +7,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+graphhelm-process = { path = "../../core/process" }
 graphhelm-policy = { path = "../../core/policy" }
 graphhelm-process-tree = { path = "../../adapters/process-tree" }
 serde = { workspace = true }

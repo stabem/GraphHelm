@@ -831,7 +831,7 @@ fn the_sweep_byte_budget_refuses_a_tree_over_it() {
 
 #[cfg(windows)]
 fn make_directory_link(link: &Path, target: &Path) {
-    let status = std::process::Command::new("cmd")
+    let status = graphhelm_process::command("cmd")
         .args([
             "/c",
             "mklink",

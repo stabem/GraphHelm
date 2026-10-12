@@ -34,7 +34,7 @@ fn shipped_policy() -> Value {
 }
 
 fn run_memory_status() -> Value {
-    let output = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["development", "memory-status"])
         .output()
         .expect("the built binary runs `development memory-status`");
@@ -47,7 +47,7 @@ fn run_memory_status() -> Value {
 }
 
 fn run_accounting() -> Value {
-    let output = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["development", "accounting"])
         .output()
         .expect("the built binary runs `development accounting`");
@@ -221,7 +221,7 @@ fn the_shipped_policy_and_the_runtime_allow_exactly_the_same_publication_moves()
 fn code_index_refuses_dirty_tracked_source_without_writing_the_checkout() {
     use sha2::{Digest as _, Sha256};
     use std::io::Read as _;
-    use std::process::Command;
+
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     std::fs::create_dir_all(project.join("src")).unwrap();
@@ -232,7 +232,7 @@ fn code_index_refuses_dirty_tracked_source_without_writing_the_checkout() {
         vec!["add", "-A"],
         vec!["commit", "--quiet", "-m", "source"],
     ] {
-        let output = Command::new("git")
+        let output = graphhelm_process::command("git")
             .args(["-c", "core.hooksPath=NUL"])
             .args(arguments)
             .current_dir(&project)
@@ -263,7 +263,7 @@ fn code_index_refuses_dirty_tracked_source_without_writing_the_checkout() {
         if relative {
             std::fs::write(project.join("src/lib.rs"), "pub fn original() {}\n").unwrap();
             std::fs::write(project.join("src/added.rs"), "pub fn added() {}\n").unwrap();
-            let added = Command::new("git")
+            let added = graphhelm_process::command("git")
                 .args(["-c", "core.hooksPath=NUL", "add", "src/added.rs"])
                 .current_dir(&project)
                 .output()
@@ -273,7 +273,7 @@ fn code_index_refuses_dirty_tracked_source_without_writing_the_checkout() {
                 "local staged-population fixture failed"
             );
         }
-        let output = Command::new(executable)
+        let output = graphhelm_process::command(executable)
             .args([
                 "--json",
                 "tool",
@@ -331,7 +331,7 @@ fn code_index_refuses_dirty_tracked_source_without_writing_the_checkout() {
                 "sandbox scratch leaked into original checkout"
             );
         }
-        let listing = Command::new("git")
+        let listing = graphhelm_process::command("git")
             .args(["worktree", "list", "--porcelain"])
             .current_dir(&project)
             .output()

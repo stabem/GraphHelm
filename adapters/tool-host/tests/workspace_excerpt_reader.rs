@@ -108,7 +108,7 @@ fn a_junction_inside_the_root_pointing_outside_is_refused() {
     // A directory junction needs no Windows privilege (symlinks do); creating it via cmd is
     // harness territory, the same fixture `workspace_containment.rs` stages.
     let junction = root.join("src").join("link");
-    let status = std::process::Command::new("cmd")
+    let status = graphhelm_process::command("cmd")
         .args(["/c", "mklink", "/J"])
         .arg(&junction)
         .arg(directory.path().join("elsewhere"))

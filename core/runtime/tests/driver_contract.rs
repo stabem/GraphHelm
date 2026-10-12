@@ -1482,7 +1482,7 @@ impl ToolPort for ProcessFixtureToolPort {
         _actor: &'a str,
     ) -> Pin<Box<dyn Future<Output = ToolPortResult> + Send + 'a>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        let child = std::process::Command::new(std::env::current_exe().unwrap())
+        let child = graphhelm_process::command(std::env::current_exe().unwrap())
             .args(["--exact", "retry_fixture_process", "--nocapture"])
             .env("GH_RETRY_FIXTURE_MODE", "fail_then_pass")
             .env("GH_RETRY_FIXTURE_MARKER", &self.marker)
@@ -1727,13 +1727,13 @@ impl KillingToolPort {
 
     fn spawn_sleeper() -> std::process::Child {
         if cfg!(windows) {
-            std::process::Command::new("ping")
+            graphhelm_process::command("ping")
                 .args(["-n", "60", "127.0.0.1"])
                 .stdout(std::process::Stdio::null())
                 .spawn()
                 .expect("a sleeping child")
         } else {
-            std::process::Command::new("sleep")
+            graphhelm_process::command("sleep")
                 .arg("60")
                 .spawn()
                 .expect("a sleeping child")

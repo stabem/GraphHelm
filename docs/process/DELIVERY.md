@@ -119,6 +119,12 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
 - Every cargo build, test and clippy run goes through the build slot (LANES.md §3). Run clippy
   only on touched crates; name and justify any broader lint scope in the card. Rust tests use
   `-- --test-threads=2`. The fmt and workspace-source-guard checks remain reached by Rust edits.
+- Spawn rule: every child the CLI, the Runtime, a tool or a hook starts must run hidden in the
+  calling terminal (`CREATE_NO_WINDOW` on Windows). The source guards enforce the spawn sites, not
+  the behavior: `core/process/tests/no_console_window.rs` (every `.rs` file) and
+  `tools/reached-tests/test_no_console_window.py` (every `.py` file) fail on a spawn that skips the
+  helper. Real-Windows observation (`tools/no-window/observe.ps1`, PASS means zero console windows
+  shown) is pending until it is run on a Windows machine.
 - Docs-only changes need only the existing applicable docs guards and `git diff --check`, not
   Rust builds, Studio checks or journey previews.
 

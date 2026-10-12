@@ -19,7 +19,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -66,7 +66,7 @@ struct ServeExtra {
 }
 
 fn serve_with(events: &Path, extra: &ServeExtra) -> (ServerGuard, String, String) {
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command
         .args([
             "serve",
@@ -264,7 +264,7 @@ fn gateway_key() -> String {
 /// `NativeRuntime` arm wraps the route with no broker call), and no node in this test's graph
 /// ever dispatches far enough to need a model reply regardless.
 fn credential_set(broker: &Path, keyring: &Path, key_id: &str, reference: &str, route: &str) {
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "gateway",
             "credential",

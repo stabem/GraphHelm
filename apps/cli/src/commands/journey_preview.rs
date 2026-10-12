@@ -14,7 +14,7 @@
 //! preview started the app under test itself (#515's rule, `would_destroy`).
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -92,7 +92,7 @@ fn flow_and_key(project: &Path, id: &str) -> Result<(Value, String, String)> {
 
 /// The project's commit, part of the key: the same flow on new code is a new preview.
 fn commit_of(project: &Path) -> String {
-    Command::new("git")
+    graphhelm_process::command("git")
         .arg("-C")
         .arg(project)
         .args(["rev-parse", "HEAD"])
@@ -176,7 +176,7 @@ fn alive(pid: u64) -> Liveness {
         if pid == 0 || pid >= u32::MAX as u64 {
             return Liveness::Dead;
         }
-        let Ok(output) = Command::new("tasklist")
+        let Ok(output) = graphhelm_process::command("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
@@ -368,7 +368,7 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
     let Ok(executable) = std::env::current_exe() else {
         return answer(current, Some(failure("preview.unwritable", "/runner", 1)));
     };
-    let mut command = Command::new(executable);
+    let mut command = graphhelm_process::command(executable);
     command
         .args([
             "--json",
@@ -1799,7 +1799,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
     /// process, a shell and temp files; no browser/network, at most 15 seconds waiting for up.
     #[test]
     fn a_preview_records_its_fixture_before_up_returns() {
-        use std::process::{Command, Stdio};
+        use std::process::Stdio;
         use std::sync::{Arc, Mutex};
         use std::time::{Duration, Instant};
         const CHILD: &str = "GRAPHHELM_TEST_PREVIEW_DURING_UP";
@@ -1866,7 +1866,7 @@ fi
 "#,
         )
         .unwrap();
-        let mut runner = Command::new(std::env::current_exe().unwrap())
+        let mut runner = graphhelm_process::command(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "commands::journey_preview::tests::a_preview_records_its_fixture_before_up_returns",

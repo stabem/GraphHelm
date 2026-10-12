@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use graphhelm_policy::keel::{ChangedPath, check_scope};
 use serde::{Deserialize, Serialize};
@@ -198,7 +198,7 @@ impl GitHistory {
     /// Runs `git -C <project> <args>` with optional locks off and stdin closed. `None` when git
     /// cannot be started.
     fn git(&self, args: &[&str]) -> Option<std::process::Output> {
-        Command::new("git")
+        graphhelm_process::command("git")
             .arg("-C")
             .arg(&self.project)
             .args(args)

@@ -11,13 +11,13 @@ const KEY_ID: &str = "owner-key";
 const RUN: &str = "journey-producers";
 
 fn graphhelm() -> Command {
-    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command.env("GRAPHHELM_EVENTS_KEY", EVENTS_KEY);
     command
 }
 
 fn git_available() -> bool {
-    match Command::new("git").arg("--version").output() {
+    match graphhelm_process::command("git").arg("--version").output() {
         Ok(output) if output.status.success() => true,
         _ => {
             println!("skipped: `git --version` failed on this host");
@@ -27,7 +27,7 @@ fn git_available() -> bool {
 }
 
 fn git(project: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
+    let output = graphhelm_process::command("git")
         .arg("-C")
         .arg(project)
         .args(["-c", "user.name=t", "-c", "user.email=t@t"])

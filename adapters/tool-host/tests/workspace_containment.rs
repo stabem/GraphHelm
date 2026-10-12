@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::process::Command;
 
 use graphhelm_tool_broker::path::RelativePath;
 use graphhelm_tool_host::workspace::{Tier1Workspace, WorkspaceConfig};
@@ -16,7 +15,7 @@ fn scratch_repo() -> (tempfile::TempDir, PathBuf) {
     std::fs::create_dir_all(project.join("src")).unwrap();
     std::fs::write(project.join("src/lib.rs"), "// scratch\n").unwrap();
     let git = |args: &[&str]| {
-        let status = Command::new("git")
+        let status = graphhelm_process::command("git")
             .args(args)
             .current_dir(&project)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -54,7 +53,7 @@ fn provision_creates_a_detached_worktree_and_remove_cleans_it_up() {
     assert!(!root.exists(), "the workspace outlives nothing");
     // And the project repository holds no stale worktree registration: `git worktree list`
     // names exactly one tree (the project itself).
-    let listed = Command::new("git")
+    let listed = graphhelm_process::command("git")
         .args(["worktree", "list"])
         .current_dir(&project)
         .output()
@@ -137,7 +136,7 @@ fn resolve_contains_paths_and_refuses_a_junction_escape() {
     let junction = workspace.root().join("escape");
     #[cfg(windows)]
     {
-        let status = Command::new("cmd")
+        let status = graphhelm_process::command("cmd")
             .args(["/c", "mklink", "/J"])
             .arg(&junction)
             .arg(outside.path())
@@ -266,7 +265,7 @@ fn completed_removal_releases_ownership_before_an_unrelated_child_execs() {
         Ok(())
     };
     let child = std::thread::spawn(move || {
-        let mut command = Command::new("git");
+        let mut command = graphhelm_process::command("git");
         command
             .arg("--version")
             .stdout(std::process::Stdio::null())
@@ -345,7 +344,7 @@ fn a_checkout_filter_does_not_see_the_hosts_environment() {
     // The filter is configured in the PROJECT's own repository, which is the threat model: the
     // repository being provisioned is untrusted.
     let git = |args: &[&str]| {
-        let status = Command::new("git")
+        let status = graphhelm_process::command("git")
             .args(args)
             .current_dir(&project)
             .env("GIT_CONFIG_NOSYSTEM", "1")

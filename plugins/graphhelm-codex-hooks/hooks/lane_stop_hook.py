@@ -15,6 +15,9 @@ from urllib.parse import quote
 
 from session_hook import _lane_actor, binding, hook_input, request, token_from_file, ID
 
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 
 def pending(payload: dict | None = None) -> bool:
     bound = binding(payload)
@@ -95,14 +98,14 @@ def main() -> int:
             cwd = payload.get("cwd")
             if isinstance(cwd, str) and Path(cwd).is_dir():
                 remote = subprocess.run(["git", "-C", cwd, "remote", "get-url", "origin"],
-                                        capture_output=True, text=True, timeout=1, check=True).stdout.strip()
+                                        capture_output=True, text=True, timeout=1, check=True, creationflags=NO_WINDOW).stdout.strip()
                 match = re.fullmatch(r"(?:git@github\.com:|https://github\.com/)([^/\s]+/[^/\s]+?)(?:\.git)?", remote)
                 if match is not None:
                     cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
                     subprocess.run([cli, "tasks", "reconcile", "--execution", execution,
                                     "--token-file", token_file, "--url", url, "--lane", lane,
                                     "--repo", match.group(1)],
-                                   capture_output=True, timeout=5)
+                                   capture_output=True, timeout=5, creationflags=NO_WINDOW)
     except (OSError, ValueError, subprocess.SubprocessError):
         pass
     # The host sets this on the continuation caused by a Stop block. One reminder
@@ -112,7 +115,7 @@ def main() -> int:
     try:
         result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--scan"],
                                 input=json.dumps(payload), text=True,
-                                capture_output=True, timeout=2)
+                                capture_output=True, timeout=2, creationflags=NO_WINDOW)
         status = result.returncode
     except (OSError, subprocess.SubprocessError):
         status = 2

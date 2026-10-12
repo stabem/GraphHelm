@@ -6,6 +6,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import os
+
+# Owner rule: children run hidden in the calling terminal, never in a new console window.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 SCRIPT = Path(__file__).with_name("playwright_observe.py")
 
@@ -36,7 +40,7 @@ class PlaywrightObserve(unittest.TestCase):
             + f"sys.stderr.write('runner says {exit_code}\\n'); sys.exit({exit_code})\n")
         result = subprocess.run([sys.executable, str(SCRIPT), "--project", str(self.project),
                                  "--command", f"{sys.executable} {fake}"],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, creationflags=NO_WINDOW)
         return result.returncode, json.loads(result.stdout)
 
     def test_passing_run_is_observed(self):
@@ -77,7 +81,7 @@ class PlaywrightObserve(unittest.TestCase):
     def test_missing_runner_is_observer_missing(self):
         result = subprocess.run([sys.executable, str(SCRIPT), "--project", str(self.project),
                                  "--command", "definitely-not-a-runner-xyz test"],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 2)
 
 
@@ -129,7 +133,7 @@ class JourneyMode(unittest.TestCase):
                                  "--journey", "checkout", "--events", "ev", "--execution", "run-1",
                                  "--keyring", "kr", "--key-id", "key",
                                  "--graphhelm", f"{sys.executable} {self.fake_cli}", *extra],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, creationflags=NO_WINDOW)
         calls = [json.loads(line) for line in self.calls.read_text().splitlines()] if self.calls.exists() else []
         return result.returncode, json.loads(result.stdout), calls
 
@@ -167,7 +171,7 @@ class JourneyMode(unittest.TestCase):
 
     def test_journey_without_its_record_flags_is_a_usage_error(self):
         result = subprocess.run([sys.executable, str(SCRIPT), "--project", str(self.project), "--journey", "checkout"],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 2)
         self.assertIn("--events", result.stderr)
 
@@ -178,7 +182,7 @@ class JourneyMode(unittest.TestCase):
             result = subprocess.run([sys.executable, str(SCRIPT), "--project", str(self.project), "--journey", bad,
                                      "--events", "e", "--execution", "x", "--keyring", "k", "--key-id", "i",
                                      "--graphhelm", f"{sys.executable} {self.fake_cli}"],
-                                    capture_output=True, text=True)
+                                    capture_output=True, text=True, creationflags=NO_WINDOW)
             self.assertEqual(result.returncode, 2, bad)
             self.assertIn("valid journey id", result.stderr, bad)
             self.assertFalse(self.calls.exists(), bad)
@@ -194,7 +198,7 @@ class JourneyMode(unittest.TestCase):
                                  "--journey", "checkout", "--events", "ev", "--execution", "run-1",
                                  "--keyring", "kr", "--key-id", "key",
                                  "--graphhelm", f"{sys.executable} {self.fake_cli}"],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 2)
         self.assertEqual(json.loads(result.stdout)["verdict"], "observer_missing")
         self.assertFalse(self.calls.exists())

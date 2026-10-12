@@ -19,7 +19,20 @@ const SERVER: &str = include_str!("fixtures/journey_backend/server.py");
 const IGNORE: &str = "deletes.count\n.graphhelm/*\n!.graphhelm/journeys/\n!.graphhelm/journeys/**\n!.graphhelm/journey-fixture.json\n";
 
 fn graphhelm(args: &[&str], project: &Path, extra: &[&Path]) -> (i32, Value) {
-    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    #[cfg(windows)]
+    {
+        // Git Bash is the shell used by the fixture launcher, but its bin directory is not
+        // necessarily on PATH for the backend `sh greet.sh` act.
+        let git_bin = Path::new(r"C:\Program Files\Git\bin");
+        if git_bin.join("sh.exe").is_file() {
+            let mut path = std::ffi::OsString::from(git_bin.as_os_str());
+            path.push(";");
+            path.push(std::env::var_os("PATH").unwrap_or_default());
+            command.env("PATH", path);
+        }
+    }
+    let out = command
         .arg("--json")
         .args(args)
         .arg(project)

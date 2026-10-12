@@ -259,7 +259,7 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
   const missions = useMemo(() => journeys.map((j) => buildMission(j, runFor(j.contractId), tasks, taskRecords)), [journeys, tasks, taskRecords, runFor]);
   const [goneQuietOpen, setGoneQuietOpen] = useState(false);
   const proofTitles = missions.map((m) => {
-    const flow = flowForContract(flows, m.contractId);
+    const flow = flowForContract(flows?.flows ?? [], m.contractId);
     return flow?.title && flow.title !== m.title ? flow.title : splitDraftTitle(m.title).name;
   });
   const groups = useMemo(() => buildWorkGroups(tasks, journeys, runFor), [tasks, journeys, runFor]);
@@ -340,7 +340,7 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
     : linkedId ?? journeys.find((j) => { const r = runFor(j.contractId); return r !== null && r.state !== "none"; })?.contractId ?? journeys[0]?.contractId ?? null;
   const journey = journeys.find((j) => j.contractId === (proofMode ? proofId : linkedId)) ?? null;
   const contractId = journey?.contractId ?? null;
-  const flow: JourneyFlowView | undefined = flows?.flows.find((item) => item.id === contractId);
+  const flow: JourneyFlowView | undefined = contractId ? flowForContract(flows?.flows ?? [], contractId) : undefined;
   const draftCount = flows?.flows.filter((item) => item.status === "draft" || item.status === "approval_stale").length ?? 0;
   const mission = contractId ? missions.find((m) => m.contractId === contractId)! : null;
   const openTest = (id: string) => {
@@ -429,7 +429,7 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
               const on = m.contractId === contractId;
               return (
                 <div key={m.contractId} className="mv-jcard" data-selected={on}>
-                  <JourneyRailButton mission={m} flow={flowForContract(flows, m.contractId)} duplicateTitle={proofTitles.filter((title) => title === proofTitles[missions.indexOf(m)]).length > 1} selected={on} onSelect={() => pickProof(m.contractId)} />
+                  <JourneyRailButton mission={m} flow={flowForContract(flows?.flows ?? [], m.contractId)} duplicateTitle={proofTitles.filter((title) => title === proofTitles[missions.indexOf(m)]).length > 1} selected={on} onSelect={() => pickProof(m.contractId)} />
                   {historyLoading ? <span className="mv-progress-text" role="status">… loading work</span> : <JourneyProgress statuses={journeyStepProgress(m)} />}
                 </div>
               );

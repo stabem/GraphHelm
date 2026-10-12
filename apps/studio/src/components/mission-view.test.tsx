@@ -43,7 +43,7 @@ describe("MissionView", () => {
       screens: [{ id: "mission", url: "/", state: "stable" }, { id: "asked", url: "/", state: "stable" }, { id: "answering", url: "/", state: "stable" }, { id: "answered", url: "/", state: "success" }],
       edges: [{ id: "mission.chat", from: "mission", to: "asked" }, { id: "asked.answer", from: "asked", to: "answering" }, { id: "answering.send", from: "answering", to: "answered" }],
       paths: { main: ["mission.chat", "asked.answer", "answering.send"] } } as JourneyFlowView;
-    render(<MissionView journeys={[contract]} flows={[flow]} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    render(<MissionView journeys={[contract]} flows={{ flows: [flow] }} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
     await fastUserEvent().click(screen.getByRole("tab", { name: "Proof" }));
     const item = screen.getByRole("navigation", { name: "Journeys" }).querySelector(".mv-proof-journey")!;
     expect(item.querySelector(".mv-journey-title")).toHaveTextContent(flow.title!);

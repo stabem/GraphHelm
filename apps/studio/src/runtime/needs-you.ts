@@ -22,8 +22,8 @@ export interface NeedsYouInput {
   pendingDraftIds: string[];
   nodeNames: Record<string, string>;
   operatorId: string;
-  /** An agent's recorded work stands in this run's log (the same fact the run tag reads). */
   agentWorkRecorded?: boolean;
+  agentWorkPending?: boolean;
 }
 
 export function needsYou(input: NeedsYouInput): { state: BeaconState; items: NeedsYouItem[] } {
@@ -43,19 +43,28 @@ export function needsYou(input: NeedsYouInput): { state: BeaconState; items: Nee
     const node = typeof reason.node === "string" ? reason.node : null;
     const kind = typeof reason.kind === "string" ? reason.kind : "";
     if (node === null) continue;
+    // GHCLI021 parks a fixture graph at a scripted input with no answer. This is configuration,
+    // not a request to the owner; identify that exact reason so genuine waits still count.
+    if (input.status?.status === "running" && input.status.executor === "fixture" && reason.reason === "fixture_scripted") continue;
     const step = kind === "waiting_input_node" ? "waiting_step" : kind === "blocked_node" || kind === "untriaged_interruption" ? "blocked_step" : null;
     if (step === null) continue;
     items.push({ kind: step, key: `${kind}:${node}`, nodeId: node, name: input.nodeNames[node] ?? node, reason: kind });
   }
-  // A demonstration run's scripted wait, while agents record work and nothing else is open, is a
-  // technical fact, not an owner request (#511). Only the fixture executor: a real executor's
-  // waiting step is the owner's to answer, whatever else the run records.
+  // A fixture run can park on its entry graph while recorded agent work carries on elsewhere.
+  // That wait is technical only when it is the sole owner-facing item (#511, #959).
+  const otherStepItems = items.filter((item) => item.kind === "blocked_step");
   const graphWaitOnly = input.status?.status === "running" && input.status.executor === "fixture"
-    && input.agentWorkRecorded === true
-    && items.length > 0 && items.every((item) => item.kind === "waiting_step");
-  if (graphWaitOnly) items.length = 0;
+    && (input.agentWorkRecorded === true || input.agentWorkPending === true)
+    && items.some((item) => item.kind === "waiting_step") && otherStepItems.length === 0;
+  if (graphWaitOnly) {
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      if (items[index].kind === "waiting_step") items.splice(index, 1);
+    }
+  }
   const state: BeaconState = input.status === null || input.stale || input.nativeRequests === null
     ? { kind: "unknown", reason: RUNTIME_SILENT }
-    : items.length > 0 ? { kind: "lit", count: items.length } : { kind: "dark" };
+    : items.length > 0 ? { kind: "lit", count: items.length }
+      : graphWaitOnly && input.agentWorkRecorded !== true ? { kind: "unknown", reason: "Checking recorded agent work" }
+        : { kind: "dark" };
   return { state, items };
 }

@@ -824,6 +824,66 @@ def test_pair_summary_accounts_for_admitted_attempts_and_partial_cohorts(tmp_pat
     assert two["baseline"]["costPerProvenDeliveryReason"] == "unknown_cost"
     assert two["candidate"]["costPerProvenDeliveryReason"] == "no_pass"
     assert two["deltaCandidateMinusBaseline"]["costPerProvenDeliveryUsd"] is None
+
+
+def test_pair_analysis_plan_binds_explicit_thresholds_to_frozen_inputs(tmp_path):
+    """Rejects an old or implicit threshold plan; local subprocess and tiny files, <2s."""
+    controls = {key: key for key in ("parent", "evaluator", "environment", "budget", "timeout")}
+    rows = [{"sessionId": side, "task": "task", "taskSnapshot": "snapshot", "split": "test",
+             "arm": side, "configDigest": side, "controls": controls, "verdict": "PASS", "costUsd": 1}
+            for side in ("a", "k")]
+    rows_raw = b"".join((json.dumps(row) + "\n").encode() for row in rows)
+    rows_path = tmp_path / "rows.jsonl"; rows_path.write_bytes(rows_raw)
+    manifest = {"version": 1, "rowsSha256": hashlib.sha256(rows_raw).hexdigest(),
+                "comparison": "methodology", "weighting": "equal_task",
+                "groups": [{"task": "task", "taskSnapshot": "snapshot", "split": "test",
+                            "controls": controls, "baseline": {"arm": "a", "configDigest": "a"},
+                            "candidate": {"arm": "k", "configDigest": "k"},
+                            "treatmentDifferences": ["arm", "configDigest"],
+                            "repeats": [{"baseline": "a", "candidate": "k"}]}]}
+    manifest_path = tmp_path / "manifest.json"; manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    manifest_hash = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    plan = {"version": 1, "manifestSha256": manifest_hash, "rowsSha256": manifest["rowsSha256"],
+            "comparison": "methodology", "split": "test", "independentUnit": "task",
+            "weighting": "equal_task", "costMetric": "all_attempt_cost_per_proven_delivery_usd",
+            "minimumCostReductionUsd": 0.2, "maximumQualityRegression": 0.05,
+            "assumptionStatement": "Tasks are independent by design."}
+    plan_path = tmp_path / "plan.json"
+
+    def run(value=None, raw=None):
+        if raw is None:
+            raw = json.dumps(value).encode()
+        plan_path.write_bytes(raw)
+        return subprocess.run([sys.executable, str(HERE / "doless.py"), "pair-summary",
+                               "--manifest", str(manifest_path), "--rows", str(rows_path),
+                               "--analysis-plan", str(plan_path)], capture_output=True, text=True)
+
+    no_option = subprocess.run([sys.executable, str(HERE / "doless.py"), "pair-summary",
+                                "--manifest", str(manifest_path), "--rows", str(rows_path)],
+                               capture_output=True, text=True)
+    assert no_option.returncode == 0 and "analysisPlan" not in json.loads(no_option.stdout)
+    good = run(plan)
+    assert good.returncode == 0, good.stderr
+    report = json.loads(good.stdout)
+    assert report["analysisPlan"] == plan
+    assert report["analysisPlanSha256"] == hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    assert report["inferenceStatus"] == "not_implemented"
+    assert report["tasks"][0]["baseline"]["PASS"] == 1
+    assert all(key not in report for key in ("recommendation", "confidenceInterval", "savings"))
+
+    bad = [plan | {"manifestSha256": "0" * 64}, plan | {"rowsSha256": "0" * 64},
+           plan | {"comparison": "other"}, plan | {"weighting": "equal_repeat"},
+           plan | {"minimumCostReductionUsd": True}, plan | {"maximumQualityRegression": float("nan")},
+           plan | {"maximumQualityRegression": float("inf")}, plan | {"version": 2},
+           plan | {"extra": 1}, {key: value for key, value in plan.items()
+                                  if key != "minimumCostReductionUsd"}]
+    for invalid in bad:
+        refused = run(invalid)
+        assert refused.returncode != 0 and not refused.stdout, invalid
+    assert run(raw=b" " * (4 * 1024 * 1024 + 1)).returncode != 0
+    manifest["groups"].append(manifest["groups"][0] | {"task": "second", "split": "train"})
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert run(plan).returncode != 0
     assert "recommendation" not in report and "savings" not in report
     duplicate = run(rows, groups + [groups[0] | {"task": "three", "repeats": [
         {"baseline": "a1", "candidate": "k1"}]}])

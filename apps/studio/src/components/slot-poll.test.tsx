@@ -20,6 +20,27 @@ describe("SlotPoll", () => {
     expect(client.workspaceSlots).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
   });
+  it("shows unavailable on the first failed read", async () => {
+    const client = { workspaceSlots: vi.fn().mockRejectedValue(Object.assign(new Error("offline"), { status: 503 })) };
+    render(<SlotPoll client={client}>{(s) => <span>{s.length ? "unavailable" : "no slots"}</span>}</SlotPoll>);
+    await flush();
+    expect(screen.getByText("unavailable")).toBeTruthy();
+  });
+  it("pauses polling in a hidden tab and resumes when visible", async () => {
+    vi.useFakeTimers();
+    const client = { workspaceSlots: vi.fn().mockResolvedValue(parseSlots({ slots: [{ root: "D:/gh", holder: null, waiting: [] }] })) };
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    render(<SlotPoll client={client}>{(s) => <span>{`n=${s.length}`}</span>}</SlotPoll>);
+    await flush();
+    expect(client.workspaceSlots).toHaveBeenCalledTimes(1);
+    visibility.mockReturnValue("hidden");
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); vi.advanceTimersByTime(30_000); });
+    expect(client.workspaceSlots).toHaveBeenCalledTimes(1);
+    visibility.mockReturnValue("visible");
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); await Promise.resolve(); await Promise.resolve(); });
+    expect(client.workspaceSlots).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
   it("a 403 is quiet: no slots", async () => {
     const client = { workspaceSlots: vi.fn().mockRejectedValue(Object.assign(new Error("no"), { status: 403 })) };
     render(<SlotPoll client={client}>{(s) => <span>{`n=${s.length}`}</span>}</SlotPoll>);

@@ -140,6 +140,43 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(post[0][2]["X-Graphhelm-Actor".title()], MODULE._actor("claude", "sender-1"))
         self.assertNotIn("objective", json.dumps(post))
 
+    def test_invalid_offer_metadata_is_refused_by_cli_without_side_effects(self):
+        for case, mutate in (
+                ("non_string_description", lambda signal: signal.update(description=5)),
+                ("invalid_json_description", lambda signal: signal.update(description="not-json")),
+                ("non_object_source", lambda signal: signal.update(source="sender"))):
+            with self.subTest(case=case):
+                with patch.dict(os.environ, self.env, clear=False):
+                    offered = MODULE.offer("claude", "sender-1", "codex", "receiver-1", case)
+                event = next(event for event in RuntimeHandler.events
+                             if event["kind"]["data"]["signalId"] == offered["offerId"])
+                evidence_id = event["evidenceRefs"][0]["evidenceId"]
+                signal = json.loads(RuntimeHandler.evidence[evidence_id][0])
+                mutate(signal)
+                content = json.dumps(signal, separators=(",", ":"))
+                digest = hashlib.sha256(content.encode()).hexdigest()
+                RuntimeHandler.evidence[evidence_id] = (content, digest)
+                event["evidenceRefs"][0]["contentSha256"] = digest
+                event["kind"]["data"]["envelopeSha256"] = digest
+                RuntimeHandler.requests = []
+
+                for command in ("status", "receive"):
+                    with self.subTest(command=command):
+                        RuntimeHandler.requests = []
+                        result = subprocess.run(
+                            [sys.executable, str(SCRIPT), command, "--host", "codex",
+                             "--session-id", "receiver-1", "--offer-id", offered["offerId"]],
+                            env={**os.environ, **self.env}, capture_output=True, text=True,
+                            creationflags=NO_WINDOW)
+                        self.assertEqual(result.returncode, 1)
+                        self.assertIn("handoff offer metadata is invalid", result.stderr)
+                        self.assertNotIn("Traceback", result.stderr)
+                        self.assertEqual(json.loads(result.stdout), {
+                            "format": "graphhelm-portable-v1", "phase": command,
+                            "activation": "unobserved"})
+                        self.assertFalse(any(row[0] == "POST" or "/briefing" in row[1]
+                                             for row in RuntimeHandler.requests))
+
     def test_offer_replay_rejects_invalid_sealed_metadata_without_write(self):
         with patch.dict(os.environ, self.env, clear=False):
             offered = MODULE.offer("claude", "sender", "codex", "receiver", "alpha")

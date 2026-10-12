@@ -329,3 +329,21 @@ describe("the Graph WORK rail fits a narrow viewport (#884)", () => {
     expect(CSS).toMatch(/\.topbar-mission\s+\.run-selection-identity\s*\{[^}]*flex-basis:\s*100%/s);
   });
 });
+
+describe("the task inspector fits its ladder and preserves lane names (#918)", () => {
+  it("wraps ladder labels inside their own rung", () => {
+    const rule = CODE.match(/\.mg-inspector\s+\.mg-ladder\s+li\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(rule).toMatch(/min-width:\s*0/);
+    expect(rule).toMatch(/overflow-wrap:\s*anywhere/);
+  });
+
+  it("ellipsizes lane names without breaking words and keeps the full name in the title", () => {
+    const rule = CODE.match(/\.mg-inspector\s+\.mg-who\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(rule).toMatch(/min-width:\s*0/);
+    expect(rule).toMatch(/white-space:\s*nowrap/);
+    expect(rule).toMatch(/overflow:\s*hidden/);
+    expect(rule).toMatch(/text-overflow:\s*ellipsis/);
+    expect(rule).toMatch(/overflow-wrap:\s*normal/);
+    expect(componentSource()).toMatch(/<span className="mg-who" title=\{r\.who\}>/);
+  });
+});

@@ -830,6 +830,77 @@ def test_pair_summary_accounts_for_admitted_attempts_and_partial_cohorts(tmp_pat
     assert duplicate["partial"] and duplicate["excluded"][0]["reason"] == "duplicate_session"
 
 
+def test_task_group_sessions_account_for_unequal_arms_and_exclude_whole_task(tmp_path):
+    """Protect all-attempt accounting and atomic v2 admission; tiny CLI subprocesses."""
+    controls = {key: key for key in ("parent", "evaluator", "environment", "budget", "timeout")}
+    def row(session, arm, verdict, cost):
+        return {"sessionId": session, "task": "one", "taskSnapshot": "snap", "split": "test",
+                "arm": arm, "configDigest": arm, "controls": controls,
+                "verdict": verdict, "costUsd": cost}
+    rows = [row("a1", "a", "PASS", 2), row("a2", "a", "FAIL", 3),
+            row("a3", "a", "INCOMPLETE", 5), row("k1", "k", "PASS", 4),
+            row("k2", "k", "PASS", 6)]
+    group = {"task": "one", "taskSnapshot": "snap", "split": "test", "controls": controls,
+             "baseline": {"arm": "a", "configDigest": "a"},
+             "candidate": {"arm": "k", "configDigest": "k"},
+             "treatmentDifferences": ["arm", "configDigest"],
+             "sessions": {"baseline": ["a1", "a2", "a3"], "candidate": ["k1", "k2"]}}
+    def run(items=rows, declared=group, command="pair-summary", plan=None):
+        raw = "".join(json.dumps(item) + "\n" for item in items).encode()
+        rows_path = tmp_path / "rows.jsonl"; rows_path.write_bytes(raw)
+        manifest = {"version": 2, "rowsSha256": hashlib.sha256(raw).hexdigest(),
+                    "comparison": "methodology", "weighting": "equal_task", "groups": [declared]}
+        manifest_path = tmp_path / "manifest.json"; manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        args = [sys.executable, str(HERE / "doless.py"), command, "--manifest", str(manifest_path),
+                "--rows", str(rows_path)]
+        if plan:
+            plan_path = tmp_path / "plan.json"; plan_path.write_text(json.dumps(plan | {
+                "manifestSha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                "rowsSha256": manifest["rowsSha256"]}), encoding="utf-8")
+            args += ["--analysis-plan", str(plan_path)]
+        proc = subprocess.run(args, capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
+        return json.loads(proc.stdout)
+    report = run()
+    assert report["version"] == 2 and report["partial"] is False
+    task = report["tasks"][0]
+    assert task["sessions"] == group["sessions"]
+    assert task["baseline"]["attempts"] == 3 and task["baseline"]["PASS"] == 1
+    assert task["baseline"]["FAIL"] == 1 and task["baseline"]["INCOMPLETE"] == 1
+    assert task["baseline"]["knownExpenditureUsd"] == 10
+    assert task["baseline"]["successFraction"] == 1 / 3
+    assert task["baseline"]["costPerProvenDeliveryUsd"] == 10
+    assert task["candidate"]["attempts"] == 2 and task["candidate"]["PASS"] == 2
+    assert task["candidate"]["knownExpenditureUsd"] == 10
+    assert task["candidate"]["costPerProvenDeliveryUsd"] == 5
+    assert task["deltaCandidateMinusBaseline"]["costPerProvenDeliveryUsd"] == -5
+    shuffled = run(list(reversed(rows)), group | {"sessions": {
+        "baseline": list(reversed(group["sessions"]["baseline"])),
+        "candidate": list(reversed(group["sessions"]["candidate"]))}})
+    assert shuffled["tasks"][0]["baseline"] == task["baseline"]
+    assert shuffled["tasks"][0]["candidate"] == task["candidate"]
+    unknown = run([rows[0] | {"costUsd": None}, *rows[1:]])["tasks"][0]["baseline"]
+    assert unknown["meanCostPerAttemptUsd"] is None
+    assert unknown["costPerProvenDeliveryReason"] == "unknown_cost"
+    missing = run(rows[1:], command="pair-audit")
+    assert missing["admitted"] == [] and missing["excluded"][0]["reason"] == "missing_control"
+    assert missing["excluded"][0]["sessions"] == group["sessions"]
+    duplicate = run(rows, group | {"sessions": {"baseline": ["a1", "a1"],
+        "candidate": ["k1", "k2"]}}, command="pair-audit")
+    assert duplicate["admitted"] == [] and duplicate["excluded"][0]["reason"] == "duplicate_session"
+    mismatched = run([rows[0] | {"controls": controls | {"budget": "changed"}}, *rows[1:]],
+                     command="pair-audit")
+    assert mismatched["admitted"] == [] and mismatched["excluded"][0]["reason"] == "control_mismatch"
+    plan = {"version": 1, "comparison": "methodology", "split": "test",
+            "independentUnit": "task", "weighting": "equal_task",
+            "costMetric": "all_attempt_cost_per_proven_delivery_usd",
+            "minimumCostReductionUsd": 0.2, "maximumQualityRegression": 0.05,
+            "assumptionStatement": "Operator declaration for independent tasks."}
+    planned = run(plan=plan)
+    assert planned["analysisPlan"]["minimumCostReductionUsd"] == 0.2
+    assert planned["inferenceStatus"] == "not_implemented"
+
+
 def test_pair_analysis_plan_binds_explicit_thresholds_to_frozen_inputs(tmp_path):
     """Rejects an old or implicit threshold plan; local subprocess and tiny files, <2s."""
     controls = {key: key for key in ("parent", "evaluator", "environment", "budget", "timeout")}

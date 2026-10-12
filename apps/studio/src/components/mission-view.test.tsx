@@ -262,7 +262,7 @@ describe("MissionView", () => {
       runName="gh-team" lastRecordAt={0} onTeam={onTeam} />);
     expect(screen.getByText("Run gh-team")).toBeInTheDocument();
     expect(screen.getByText("Mission graph")).toBeInTheDocument();
-    expect(screen.getByText("live · last record 12 s ago")).toBeInTheDocument();
+    expect(screen.getByLabelText("live · last record 12 s ago")).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Team" })).toBeNull();
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Graph", "Lanes", "Proof"]);
   });

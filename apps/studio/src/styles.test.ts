@@ -277,3 +277,11 @@ describe("Proof progress text stays readable in narrow cards", () => {
     expect(rule).not.toMatch(/white-space:\s*nowrap/);
   });
 });
+
+describe("the Graph WORK rail fits a narrow viewport (#884)", () => {
+  it("lets the rail and its group cards shrink to the available width", () => {
+    const mission = STYLESHEETS["./components/mission-view.css"];
+    expect(mission).toMatch(/\.mv-journeys\s*\{[^}]*max-width:\s*100%/s);
+    expect(mission).toMatch(/\.mv-groups\s*\{[^}]*max-width:\s*100%/s);
+  });
+});

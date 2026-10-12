@@ -33,6 +33,17 @@ describe("workStage", () => {
 });
 
 describe("buildWorkGroups", () => {
+  // Cost: a pure grouping call with no I/O, completed in milliseconds.
+  it("labels unclaimed tasks as not read yet only while the history is partial (#993)", () => {
+    const unknownIssue = task("issue-913#pr-914", { taskId: "issue-913", pr: 914 });
+
+    expect(buildWorkGroups([unknownIssue], [], undefined, true)).toMatchObject([
+      { key: "not-read-yet", issue: null, label: "Not read yet" },
+    ]);
+    expect(buildWorkGroups([unknownIssue], [], undefined, false)).toMatchObject([
+      { key: "no-issue", issue: null, label: "No issue" },
+    ]);
+  });
   it("excludes released PR-less claims from a closed issue's progress and graph", () => {
     const merged = task("merged", { issue: 883, pr: 900, step: "merged", mergeSha: "abc" });
     const released = task("released", { issue: 883, releasedBy: "supervisor", lastSequence: 2 });

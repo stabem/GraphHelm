@@ -12,6 +12,14 @@ const journeys: JourneyView[] = [{
 }];
 
 describe("MissionView", () => {
+  // Cost: one jsdom render with no network or browser session.
+  it("marks recent work partial once and removes the loading line above it (#993)", () => {
+    render(<MissionView journeys={journeys} tasks={[{ key: "recent", taskId: "issue-913", pr: 914 }] as unknown as TaskState[]} lanes={[]} now={0}
+      runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} historyLoading partial />);
+
+    expect(screen.getAllByText("Showing recent work · still reading the history")).toHaveLength(1);
+    expect(screen.queryByText("Loading work…")).toBeNull();
+  });
   it("#830: a preview-only step is not counted in work even with a linked task", async () => {
     const preview = { ...journeys[0]!, contractId: "preview" };
     const tasks = [{ key: "active", taskId: "active", pr: 10, journeys: ["preview"], step: "review", reviewers: [] }] as unknown as TaskState[];

@@ -17,6 +17,17 @@ function record(sequence: number, kind: string, actorId: string, document: Recor
 }
 
 describe("foldTaskEvents", () => {
+  // Cost: a pure fold with no I/O, completed in milliseconds.
+  it("recovers an issue from taskId when the claim is outside the recent page (#993)", () => {
+    const tasks = foldTaskEvents([
+      record(1, "task.pr_opened", "codex-6", { taskId: "issue-913", pr: 914, headSha: "aaaaaaaa", journeys: [], lane: "codex-6" }),
+      record(2, "task.review_verdict", "gh-claude-4", { taskId: "issue-913", pr: 914, headSha: "aaaaaaaa", reviewer: "gh-claude-4", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/914#c1" }),
+      record(3, "task.pr_opened", "codex-6", { taskId: "pr-384", pr: 384, headSha: "bbbbbbbb", journeys: [], lane: "codex-6" }),
+    ]);
+
+    expect(tasks.find((task) => task.taskId === "issue-913")).toMatchObject({ issue: 913, pr: 914 });
+    expect(tasks.find((task) => task.taskId === "pr-384")?.issue).toBeNull();
+  });
   it("attaches a plan recorded before its claim to the PR that later merges (#880)", () => {
     const taskId = "issue-758";
     const events = [

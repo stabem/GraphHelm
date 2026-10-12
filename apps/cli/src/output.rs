@@ -1,5 +1,6 @@
 use graphhelm_protocols::Diagnostic;
 use serde::Serialize;
+use std::io::Write as _;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -129,7 +130,9 @@ pub fn print(output: &CommandOutput, pretty: bool) {
     .unwrap_or_else(|_| {
         "{\"ok\":false,\"command\":\"internal\",\"data\":null,\"diagnostics\":[]}".into()
     });
-    println!("{serialized}");
+    // A closed pipe (`graphhelm --json ... | head`) is the reader's choice, not a panic.
+    let mut stdout = std::io::stdout().lock();
+    let _ = writeln!(stdout, "{serialized}").and_then(|()| stdout.flush());
 }
 
 #[cfg(test)]

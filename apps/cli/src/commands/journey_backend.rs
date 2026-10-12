@@ -18,6 +18,8 @@ const ACT_LIMIT: Duration = Duration::from_secs(30);
 const MAX_BODY: u64 = 1024 * 1024;
 const METHODS: &[&str] = &["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"];
 const HTTP_EXPECTS: &[&str] = &["status", "json", "text"];
+/// Request headers the runner owns; an act's `headers` may not set them (journey-flow 1.4.0).
+const RESERVED_HEADERS: &[&str] = &["host", "content-length", "connection", "transfer-encoding"];
 const CLI_EXPECTS: &[&str] = &["exit", "stdout"];
 
 /// What one act observed.
@@ -76,6 +78,17 @@ pub(super) fn findings(flow: &Value) -> Vec<(&'static str, String, &'static str)
                     continue;
                 }
             };
+            if act["headers"].as_object().is_some_and(|headers| {
+                headers
+                    .keys()
+                    .any(|name| RESERVED_HEADERS.contains(&name.to_ascii_lowercase().as_str()))
+            }) {
+                found.push((
+                    "flow.backend_header_reserved",
+                    format!("{pointer}/headers"),
+                    "an http act may not set Host, Content-Length, Connection or Transfer-Encoding",
+                ));
+            }
             if !valid {
                 found.push((
                     "flow.backend_act_invalid",
@@ -111,6 +124,7 @@ pub(super) fn request(
     method: &str,
     path: &str,
     body: Option<&str>,
+    headers: Option<&serde_json::Map<String, Value>>,
 ) -> Result<Observation, String> {
     let authority = base
         .split_once("://")
@@ -132,7 +146,20 @@ pub(super) fn request(
         "{method} {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\nAccept: */*\r\nContent-Length: {}\r\n",
         body.len()
     );
-    if !body.is_empty() {
+    let mut typed = false;
+    for (name, value) in headers.into_iter().flatten() {
+        let Some(value) = value.as_str() else {
+            continue;
+        };
+        if value.contains(['\r', '\n'])
+            || RESERVED_HEADERS.contains(&name.to_ascii_lowercase().as_str())
+        {
+            continue;
+        }
+        typed |= name.eq_ignore_ascii_case("content-type");
+        head.push_str(&format!("{name}: {value}\r\n"));
+    }
+    if !body.is_empty() && !typed {
         head.push_str("Content-Type: application/json\r\n");
     }
     head.push_str("\r\n");
@@ -230,6 +257,7 @@ pub(super) fn play(project: &Path, base: &str, act: &Value) -> Result<Observatio
             act["role"].as_str().unwrap_or("GET"),
             name,
             act["text"].as_str(),
+            act["headers"].as_object(),
         ),
         Some("cli") => command(project, name),
         _ => Err("not a backend act".into()),
@@ -288,6 +316,39 @@ pub(super) fn unmet(screen: &Value, seen: &Observation) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// The defect named (ml-saas trial): an http act's `headers` (a tenant id) never reached the
+    /// app, and a reserved header could smuggle a second Host or a forged length. Cost: one
+    /// loopback socket, no network.
+    #[test]
+    fn http_act_sends_its_headers_but_never_reserved_ones() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 1024];
+            while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = socket.read(&mut buf).unwrap();
+                seen.extend_from_slice(&buf[..n]);
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                .unwrap();
+            String::from_utf8(seen).unwrap()
+        });
+        let act = json!({"kind":"http","role":"GET","name":"/x",
+            "headers":{"x-tenant-id":"t1","Host":"evil"}});
+        let seen = play(Path::new("."), &base, &act).unwrap();
+        assert_eq!(seen.status, Some(200));
+        let request = server.join().unwrap();
+        assert!(request.contains("x-tenant-id: t1\r\n"), "{request}");
+        assert!(!request.contains("evil"), "{request}");
+        assert_eq!(
+            findings(&json!({"edges":[{"acts":[act]}]}))[0].0,
+            "flow.backend_header_reserved"
+        );
+    }
 
     /// The defect named: a backend expectation that passes on the wrong value (a status prefix,
     /// a JSON field compared as its quoted form, a missing field read as present).

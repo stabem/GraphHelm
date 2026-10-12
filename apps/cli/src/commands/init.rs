@@ -54,7 +54,9 @@ const MCP_SERVER_NAME: &str = "graphhelm";
 const MCP_ACTOR: &str = "agent-chat";
 /// The block appended to `.gitignore`. The comment line is what makes a second run recognize its
 /// own work without parsing; the pattern is what git reads.
-const GITIGNORE_BLOCK: &str = "\n# GraphHelm Runtime working directory: bearer token, event store, sealing key.\n.graphhelm/\n/.mcp.json\n";
+/// `.graphhelm/*` (not `.graphhelm/`) so the journeys and the launcher declaration stay tracked:
+/// git cannot re-include a file whose parent directory is excluded (ml-saas trial).
+const GITIGNORE_BLOCK: &str = "\n# GraphHelm Runtime working directory: bearer token, event store, sealing key.\n# Journeys and the launcher declaration stay tracked.\n.graphhelm/*\n!.graphhelm/journeys/\n!.graphhelm/journey-fixture.json\n/.mcp.json\n";
 /// `.mcp.json` and `.gitignore` are small hand-edited files; anything past this is not one, and
 /// is refused before being read into memory (PR #1070 review: the ignore file had no bound).
 const MAX_EDITED_FILE_BYTES: u64 = 1024 * 1024;
@@ -477,7 +479,7 @@ pub(super) fn ensure_gitignore(project: &Path, path: &Path) -> Result<State, Fai
         && metadata.len() > MAX_EDITED_FILE_BYTES
     {
         return Err(refused(
-            "the .gitignore file is larger than init will read; add the .graphhelm/ and /.mcp.json lines by hand",
+            "the .gitignore file is larger than init will read; add the .graphhelm/* and /.mcp.json lines by hand",
             "/gitignore",
         ));
     }
@@ -517,7 +519,6 @@ pub(super) fn ensure_gitignore(project: &Path, path: &Path) -> Result<State, Fai
     };
     let mut generated = vec![
         PathBuf::from(CLAUDE_CODE_FILE),
-        PathBuf::from(RUNTIME_DIRECTORY).join(""),
         PathBuf::from(RUNTIME_DIRECTORY).join(KEY_FILE),
         secret_file::token_path(&PathBuf::from(RUNTIME_DIRECTORY).join(EVENTS_DIRECTORY)),
         PathBuf::from(RUNTIME_DIRECTORY).join(CODEX_SNIPPET_FILE),

@@ -1,5 +1,13 @@
 # Schema Changelog
 
+## journey-flow 1.4.0 - request headers on `http` acts
+
+An `http` act gains optional `headers`: at most 16 fixed, non-secret request headers (token
+names, values without CR or LF), so a multi-tenant or authenticated API can be observed without a
+header-injecting proxy in the launcher. `Host`, `Content-Length`, `Connection` and
+`Transfer-Encoding` stay the runner's (`flow.backend_header_reserved`). Additive: every 1.3.0 flow
+stays valid. The catalog digest is updated from canonical JSON.
+
 ## journey-flow 1.3.0 - backend acts `http` and `cli` (#927)
 
 An act's `kind` gains `http` (method in `role`, path on `base` in `name`, optional body in

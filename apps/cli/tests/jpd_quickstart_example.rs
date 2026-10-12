@@ -88,6 +88,21 @@ fn the_quickstart_example_validates_green_and_its_sabotage_is_caught() {
     // A draft never runs its `cli` act, so validation cannot be green yet.
     let (code, report) = graphhelm(root, &["keel", "test", "validation", "--repo", "."]);
     assert_eq!(code, 2, "{report}");
+    // ml-saas trial: the exit 2 must say why (a draft), not only `ok: false`.
+    // The concrete cause stays first; the draft is named beside it, never instead of it.
+    assert_eq!(
+        report["data"]["failures"][0]["reason"], "execution_failed",
+        "{report}"
+    );
+    assert_eq!(
+        report["data"]["failures"][0]["reasons"],
+        serde_json::json!(["execution_failed", "flow_not_approved"]),
+        "{report}"
+    );
+    assert_eq!(
+        report["diagnostics"][0]["code"], "GHCLI039_KEEL_VALIDATION_BLOCKED",
+        "{report}"
+    );
 
     let (code, reply) = graphhelm(
         root,
@@ -120,6 +135,18 @@ fn the_quickstart_example_validates_green_and_its_sabotage_is_caught() {
         report["data"]["paths"][0]["execution"], "completed",
         "{report}"
     );
+
+    // ml-saas trial: a hand-written `*.json` beside the flows is named `unsupported` with its
+    // reason and never blocks a sweep whose every declared path completed.
+    std::fs::write(root.join(".graphhelm/journeys/legacy.json"), "{}").unwrap();
+    let (code, report) = graphhelm(root, &["keel", "test", "validation", "--repo", "."]);
+    assert_eq!(code, 0, "{report}");
+    let legacy = &report["data"]["standaloneContracts"][0];
+    assert_eq!(
+        legacy["reason"], "standalone_contract_not_executed",
+        "{report}"
+    );
+    std::fs::remove_file(root.join(".graphhelm/journeys/legacy.json")).unwrap();
 
     let (code, report) = graphhelm(
         root,

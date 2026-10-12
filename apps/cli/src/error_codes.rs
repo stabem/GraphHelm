@@ -68,6 +68,9 @@ pub const GHCLI036_JOURNEY_APPROVE_OWNER_ONLY: &str = "GHCLI036_JOURNEY_APPROVE_
 /// A `task.*` record names another actor than the one that recorded it: a lane cannot record a
 /// step under another lane's name (#386).
 pub const GHCLI038_ACTOR_MISMATCH: &str = "GHCLI038_ACTOR_MISMATCH";
+/// `keel test validation` could not complete its sweep; the diagnostic names why (a failed or
+/// draft flow, missing coverage, a source change), so exit 2 is never silent (ml-saas trial).
+pub const GHCLI039_KEEL_VALIDATION_BLOCKED: &str = "GHCLI039_KEEL_VALIDATION_BLOCKED";
 
 /// Every registered code. A code that is not in this list is not a code: the tests below refuse a
 /// literal anywhere else under `apps/cli/src`, so a new allocation has to come through here. The
@@ -115,6 +118,7 @@ pub const ALL: &[&str] = &[
     GHCLI037_WORKSPACE_REFUSED,
     GHCLI036_JOURNEY_APPROVE_OWNER_ONLY,
     GHCLI038_ACTOR_MISMATCH,
+    GHCLI039_KEEL_VALIDATION_BLOCKED,
 ];
 
 /// Numbers allocated twice BEFORE the registry existed, each pair a wire contract on both sides.

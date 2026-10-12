@@ -47,7 +47,8 @@ class LaneStopTests(unittest.TestCase):
         events = root / "events"
         self.env["GRAPHHELM_EVENTS_DIR"] = str(events)
         self.env["GRAPHHELM_CLI"] = self.cli
-        self.env["GRAPHHELM_HOOK_STATE_DIR"] = str(root / "hook-state")
+        self.hook_state_dir = root / "hook-state"
+        self.env["GRAPHHELM_HOOK_STATE_DIR"] = str(self.hook_state_dir)
         self.run_cli("execution", "start", "--file", str(REPO / "examples/graphs/software-feature.yaml"),
                      "--events", str(events), "--execution", "lane-test", "--mode", "manual", "--held")
         self.log = (root / "runtime.log").open("w+")
@@ -56,6 +57,7 @@ class LaneStopTests(unittest.TestCase):
                                         "--keyring", str(keyring), "--key-id", "test"],
                                        env=self.env, stdout=self.log, stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
         self.addCleanup(self.stop_server)
+        self.addCleanup(self.stop_waiters)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             self.log.seek(0)
@@ -75,6 +77,27 @@ class LaneStopTests(unittest.TestCase):
     def stop_server(self):
         self.server.terminate()
         self.server.wait(timeout=10)
+
+    def stop_waiters(self):
+        """Stop only waiter processes recorded in this test's disposable state directory."""
+        for pid_file in self.hook_state_dir.glob("*.waiter.pid"):
+            try:
+                pid = int(pid_file.read_text())
+                self.stop_waiter_pid(pid)
+                pid_file.unlink(missing_ok=True)
+            except (OSError, ValueError):
+                pass
+
+    @staticmethod
+    def stop_waiter_pid(pid):
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
+                           timeout=5, creationflags=NO_WINDOW)
+        elif session_hook._pid_alive(pid):
+            os.kill(pid, signal.SIGTERM)
+        deadline = time.monotonic() + 5
+        while session_hook._pid_alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
 
     def run_cli(self, *args):
         result = subprocess.run([self.cli, *args], env=self.env, capture_output=True, text=True, timeout=15, creationflags=NO_WINDOW)
@@ -264,7 +287,7 @@ class LaneStopTests(unittest.TestCase):
         output = root / "cli-args.txt"
         script = root / "record_cli.py"
         script.write_text("import sys\nfrom pathlib import Path\n"
-                          f"Path({str(output)!r}).write_text(' '.join(sys.argv[1:]))\n")
+                          f"Path({str(output)!r}).open('a').write(' '.join(sys.argv[1:]) + '\\n')\n")
         if os.name == "nt":
             cli = root / "configured-graphhelm.cmd"
             cli.write_text(f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n')
@@ -278,9 +301,11 @@ class LaneStopTests(unittest.TestCase):
                               "stop_hook_active": True}), text=True, capture_output=True,
             env=self.env, timeout=12, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("tasks reconcile --execution lane-test", output.read_text())
-        self.assertIn("--lane codex-4", output.read_text())
-        self.assertIn("--repo stabem/GraphHelm", output.read_text())
+        calls = output.read_text().splitlines()
+        reconcile = next((call for call in calls if call.startswith("tasks reconcile ")), "")
+        self.assertIn("tasks reconcile --execution lane-test", reconcile)
+        self.assertIn("--lane codex-4", reconcile)
+        self.assertIn("--repo stabem/GraphHelm", reconcile)
 
     def stop(self, manifest, active=False, session="test-session"):
         # Drive the registered Stop commands, not an unregistered helper. On the parent
@@ -546,22 +571,19 @@ class LaneStopTests(unittest.TestCase):
         payload = {"hook_event_name": "SessionStart", "session_id": session}
         result = subprocess.run([sys.executable, str(script), "start", "--host", "codex"],
                                 input=json.dumps(payload), text=True, env=self.env,
-                                capture_output=True, timeout=8)
+                                capture_output=True, timeout=8, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("UNOBSERVED", result.stdout)
         pid_files = list(Path(self.env.get("GRAPHHELM_HOOK_STATE_DIR", "")).glob("*.waiter.pid"))
         self.assertEqual(len(pid_files), 1)
         pid = int(pid_files[0].read_text())
         def stop_waiter():
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except OSError:
-                pass
+            self.stop_waiter_pid(pid)
         self.addCleanup(stop_waiter)
         self.assertTrue(session_hook._pid_alive(pid), "wake waiter exited before an append")
         again = subprocess.run([sys.executable, str(script), "start", "--host", "codex"],
                                input=json.dumps(payload), text=True, env=self.env,
-                               capture_output=True, timeout=8)
+                               capture_output=True, timeout=8, creationflags=NO_WINDOW)
         self.assertEqual(again.returncode, 0, again.stderr)
         self.assertEqual(int(pid_files[0].read_text()), pid)
         self.note("other-2", to="codex-5")
@@ -572,7 +594,7 @@ class LaneStopTests(unittest.TestCase):
             self.assertIn("codex-4", json.load(response)["data"]["wakeListeners"])
         # Repeated unrelated rings must leave a listener, including after a
         # waiter exits and Stop has to replace it for this same session.
-        os.kill(pid, signal.SIGTERM)
+        self.stop_waiter_pid(pid)
         deadline = time.monotonic() + 3
         while session_hook._pid_alive(pid) and time.monotonic() < deadline:
             time.sleep(0.05)
@@ -580,7 +602,7 @@ class LaneStopTests(unittest.TestCase):
         self.assertEqual(self.stop(MANIFESTS[1], session=session), [])
         replacement = int(pid_files[0].read_text())
         self.assertNotEqual(replacement, pid)
-        self.addCleanup(lambda: os.kill(replacement, signal.SIGTERM) if session_hook._pid_alive(replacement) else None)
+        self.addCleanup(lambda: self.stop_waiter_pid(replacement))
         for cycle in range(3):
             self.note(f"other-cycle-{cycle}", to="codex-5")
             deadline = time.monotonic() + 5
@@ -605,14 +627,15 @@ class LaneStopTests(unittest.TestCase):
                          "capture_output=True,timeout=8); "
                          "print(p.returncode, flush=True); time.sleep(30)")
             host = subprocess.Popen([sys.executable, "-c", host_code, *shell, command, payload],
-                                    env=self.env, stdout=subprocess.PIPE, text=True)
+                                    env=self.env, stdout=subprocess.PIPE, text=True,
+                                    creationflags=NO_WINDOW)
             self.addCleanup(lambda p=host: p.kill() if p.poll() is None else None)
             self.addCleanup(host.stdout.close)
             self.assertEqual(host.stdout.readline().strip(), "0")
             pid_files = list(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.waiter.pid"))
             self.assertEqual(len(pid_files), 1)
             pid = int(pid_files[0].read_text())
-            self.addCleanup(lambda p=pid: os.kill(p, signal.SIGTERM) if session_hook._pid_alive(p) else None)
+            self.addCleanup(lambda p=pid: self.stop_waiter_pid(p))
             self.assertTrue(session_hook._pid_alive(pid), "waiter died with hook shell")
             host.kill()
             host.wait(timeout=5)
@@ -630,7 +653,7 @@ class LaneStopTests(unittest.TestCase):
             self.assertEqual(self.stop(MANIFESTS[1], session="shell-host"), [])
             replacement = int(pid_files[0].read_text())
             self.assertNotEqual(replacement, pid)
-            self.addCleanup(lambda p=replacement: os.kill(p, signal.SIGTERM) if session_hook._pid_alive(p) else None)
+            self.addCleanup(lambda p=replacement: self.stop_waiter_pid(p))
 
     def test_only_own_reply_clears_pending_note(self):
         self.note("request-1", to="codex-4")

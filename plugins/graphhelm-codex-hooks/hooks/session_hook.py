@@ -344,7 +344,8 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path) -> Non
         result = subprocess.run([cli, "wake-wait", "--events", str(events),
                                  "--execution", bound[0], "--session-id", session],
                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL, check=False)
+                                stderr=subprocess.DEVNULL, check=False,
+                                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         # An append can consume the lease before wake-wait parks its pipe.
         # Exit 2 then means stale, and exit 3 means the short lease matured.
         if result.returncode not in (0, 2, 3):

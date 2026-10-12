@@ -130,6 +130,23 @@ non-finite numbers. Without the option,
 prove that the plan preceded outcome inspection, or establish a real improvement. It does
 not recommend a treatment or claim realized savings.
 
+### Offline paired-inference calibration
+
+Run `python tools/token-bench/calibrate_pair.py --seed 183 --cohorts 40 --task-counts 6` to
+measure the existing `pair-summary` decision over bounded synthetic paired cohorts. The command
+uses the same eligibility checks, 5,000-resample decision function and explicit plan thresholds. Within each synthetic
+task, baseline and candidate share the same generated quality outcome; their attempt costs are
+drawn independently from the same distribution in `null`, while `effect` scales candidate costs
+by the declared `effectCostFactor`. The JSON lists every cohort seed, task count, threshold and
+verdict count for both scenarios. Cohort count is limited to 200 and each task count to 12.
+
+Observed for seed 183, 40 cohorts, six tasks, a USD 0.50 minimum reduction, a 0.20 quality margin,
+and a 0.20 effect cost factor: `null` produced 0/40 `supported` and 40/40 `inconclusive`; `effect`
+produced 40/40 `supported`. This is one synthetic instrument check, not a calibrated false-support
+rate, a statistical guarantee, or evidence of savings on real tasks. Other cohort sizes, seeds,
+distributions, tied cases, independence, multiplicity, held-out calibration and actual improvement
+remain unmeasured.
+
 The claim is **equal or better delivered-code quality at lower total cost per proven delivery**.
 Input-token reduction alone is a diagnostic, not a win. A unit is one independently started
 agent session on one frozen task and one arm. A paired task uses the same parent commit, issue

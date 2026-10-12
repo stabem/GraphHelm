@@ -209,9 +209,14 @@ def _sealed_signal(url: str, token: str, execution: str, event: dict,
         raise ValueError("sealed handoff evidence is not JSON") from error
     if not isinstance(signal, dict) or signal.get("id") != record.get("signalId"):
         raise ValueError("sealed evidence does not match journal envelope")
-    if signal.get("source", {}).get("id") != record.get("sourceId"):
+    source = signal.get("source")
+    if not isinstance(source, dict):
+        if signal.get("type") == OFFER_KIND:
+            raise ValueError("handoff offer metadata is invalid")
         raise ValueError("sealed evidence actor does not match journal envelope")
-    if signal.get("source", {}).get("type") != "tool" or signal.get("type") not in allowed_kinds:
+    if source.get("id") != record.get("sourceId"):
+        raise ValueError("sealed evidence actor does not match journal envelope")
+    if source.get("type") != "tool" or signal.get("type") not in allowed_kinds:
         raise ValueError("sealed evidence is not a handoff signal")
     if signal.get("type") != record.get("kind") or signal.get("severity") != record.get("severity"):
         raise ValueError("sealed evidence metadata does not match journal record")
@@ -273,6 +278,19 @@ def _validate_receipt(receipt: dict, execution: str, offer_id: str,
         return _validate_digest(details.get("briefing"))
     except (TypeError, ValueError, KeyError) as error:
         raise ValueError("handoff receipt briefing reference is invalid") from error
+
+
+def _offer_details(signal: dict) -> dict:
+    description = signal.get("description", "{}")
+    if not isinstance(description, str) or not isinstance(signal.get("source"), dict):
+        raise ValueError("handoff offer metadata is invalid")
+    try:
+        details = json.loads(description)
+    except (TypeError, ValueError) as error:
+        raise ValueError("handoff offer metadata is invalid") from error
+    if not isinstance(details, dict):
+        raise ValueError("handoff offer metadata is invalid")
+    return details
 
 
 def offer(host: str, session: str, recipient_host: str, recipient_session: str,
@@ -340,14 +358,17 @@ def receive(host: str, session: str, offer_id: str) -> dict:
         raise ValueError("original handoff offer is not recorded")
     offer_signal = _sealed_signal(url, token, execution, event)
     record = _signal_record(event)
-    if record.get("executionId") != execution or record.get("sourceId") != offer_signal.get("source", {}).get("id"):
+    source = offer_signal.get("source")
+    if not isinstance(source, dict):
+        raise ValueError("handoff offer metadata is invalid")
+    if record.get("executionId") != execution or record.get("sourceId") != source.get("id"):
         raise ValueError("handoff journal actor or execution does not match sealed offer")
     target = offer_signal.get("to")
     actor = _actor(host, session)
     if target != actor or offer_signal.get("type") != OFFER_KIND:
         raise ValueError("handoff offer recipient does not match this adapter")
-    details = json.loads(offer_signal.get("description", "{}"))
-    if (not isinstance(details, dict) or details.get("protocol") != PROTOCOL
+    details = _offer_details(offer_signal)
+    if (details.get("protocol") != PROTOCOL
             or details.get("offerId") != offer_id
             or details.get("executionId") != execution
             or details.get("sender") != offer_signal.get("source", {}).get("id")
@@ -413,8 +434,8 @@ def status(host: str, session: str, offer_id: str | None) -> dict:
         if len(selected_offers) >= MAX_OFFERS:
             truncated = True
             break
-        details = json.loads(signal.get("description", "{}"))
-        if (not isinstance(details, dict) or details.get("protocol") != PROTOCOL
+        details = _offer_details(signal)
+        if (details.get("protocol") != PROTOCOL
                 or details.get("executionId") != execution or details.get("offerId") != sid
                 or details.get("sender") != signal.get("source", {}).get("id")
                 or details.get("recipient") != signal.get("to")):
@@ -679,7 +700,8 @@ def main() -> int:
         print(json.dumps(result, separators=(",", ":")))
         return 0
     except (OSError, ValueError, KeyError, RecursionError, json.JSONDecodeError) as error:
-        print(f"graphhelm-task-handoff: {args.phase} unobserved ({type(error).__name__})", file=sys.stderr)
+        message = str(error) if str(error) == "handoff offer metadata is invalid" else type(error).__name__
+        print(f"graphhelm-task-handoff: {args.phase} unobserved ({message})", file=sys.stderr)
         print(json.dumps({"format": "graphhelm-portable-v1", "phase": args.phase,
                           "activation": "unobserved"}, separators=(",", ":")))
         return 1

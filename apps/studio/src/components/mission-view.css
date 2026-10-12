@@ -189,6 +189,14 @@
     box-sizing: border-box;
     padding: 0;
   }
+  /* The body owns phone scrolling; the desktop column height cap would create a
+   * second scroll area below the counters and step strip. */
+  .mv[data-page="full"] > .mv-body > .mv-journeys,
+  .mv[data-page="full"] > .mv-body > .mv-content {
+    max-height: none;
+    overflow: visible;
+    padding-bottom: 0;
+  }
 }
 
 /* #735: one progress bar per work group, counts spelled out under it; no spinners. */

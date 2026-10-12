@@ -27,6 +27,7 @@ import type { RuntimeEvent } from "../runtime/types";
 import type { SlotView } from "../runtime/slots";
 import type { GraphNode } from "../graph/model";
 import { readable } from "./format";
+import { approvalBlockReason } from "../runtime/journeys";
 
 type Sub = "graph" | "proof" | "test" | "lanes";
 const WINDOW_MS = 14 * 3_600_000;
@@ -349,7 +350,11 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   const journey = journeys.find((j) => j.contractId === (proofMode ? proofId : linkedId)) ?? null;
   const contractId = journey?.contractId ?? null;
   const flow: JourneyFlowView | undefined = contractId ? flowForContract(flows?.flows ?? [], contractId) : undefined;
-  const draftCount = flows?.flows.filter((item) => item.status === "draft" || item.status === "approval_stale").length ?? 0;
+  const pendingFlows = flows?.flows.filter((item) => item.status === "draft" || item.status === "approval_stale") ?? [];
+  const approvableCount = pendingFlows.filter((item) => {
+    const contract = journeys.find((candidate) => candidate.contractId === item.id);
+    return item.approvable && contract !== undefined && approvalBlockReason(item, contract, runFor(contract.contractId)) === null;
+  }).length;
   const mission = contractId ? missions.find((m) => m.contractId === contractId)! : null;
   const openTest = (id: string) => {
     if (!journey) return;
@@ -434,7 +439,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
         {proofMode && (
           <nav aria-label="Journeys" className="mv-journeys">
             <span className="mv-cap">Journeys</span>
-            {draftCount > 0 && <span className="mv-cap">{`${draftCount} to approve`}</span>}
+            {pendingFlows.length > 0 && <span className="mv-cap">{approvableCount > 0 ? `${approvableCount} to approve` : `${pendingFlows.length} awaiting proof`}</span>}
             {missions.length === 0 && <p className="mv-none">No journeys in this project yet</p>}
             {missions.map((m) => {
               const on = m.contractId === contractId;

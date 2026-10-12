@@ -4,7 +4,25 @@
  */
 import type { EnvelopeRecord } from "../graph/ledger";
 import { timeOf } from "./team";
-import type { JourneyView, LiveSession, LiveState, RuntimeEvent } from "./types";
+import type { JourneyFlowView, JourneyRunView, JourneyView, LiveSession, LiveState, RuntimeEvent } from "./types";
+
+/** A flow approval must be backed by the current compiled contract and a complete replay. */
+export function approvalBlockReason(flow: JourneyFlowView, contract: { contractId: string; title: string; steps: readonly { stepId: string }[] }, run: JourneyRunView | null): string | null {
+  const path = contract.contractId === flow.id ? "main" : contract.contractId.slice(flow.id.length + 1);
+  const edgeIds = flow.paths[path];
+  const edges = edgeIds?.map((id) => flow.edges.find((edge) => edge.id === id));
+  const stepIds = edges?.length && edges.every((edge) => edge !== undefined)
+    ? [edges[0]!.from, ...edges.map((edge) => edge!.to)] : flow.screens.map((screen) => screen.id);
+  if (flow.title !== contract.title || edgeIds === undefined || stepIds.length !== contract.steps.length
+    || stepIds.some((id, index) => id !== contract.steps[index]?.stepId)
+    || flow.findings.some((finding) => finding.code === "flow.contract_stale" && finding.pointer === `/journeys/${contract.contractId}.json`)) {
+    return "Contract out of date, regenerate first";
+  }
+  if (run?.state !== "ready" || run.kind !== "replay" || run.result !== "pass"
+    || contract.steps.length === 0 || contract.steps.some((step) => run.screens?.[step.stepId]?.result !== "pass")
+    || edgeIds.some((id) => run.edges?.[id]?.result !== "pass")) return "Not run yet — complete every step in a replay first";
+  return null;
+}
 
 export const SCREEN_CAPTURE_KIND = "jpd.screen_captured";
 export const SCREEN_CAPTURE_PROTOCOL = "graphhelm-screen-capture-v1";

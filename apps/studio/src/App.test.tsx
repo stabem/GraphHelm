@@ -522,6 +522,19 @@ describe("live team layout", () => {
     expect(await screen.findByRole("button", { name: "Nothing needs you" })).toHaveClass("beacon-dark");
   });
 
+  it("#947: a replayed journey awaiting approval lights the top bar", async () => {
+    const calm = { ...STATUS, attention: "can_sleep", attentionReasons: [], nodeStateCounts: { ready: 1 } };
+    const flow = { id: "watch", title: "Watch", status: "draft", approved: null, drift: [], findings: [], approvable: true,
+      screens: [{ id: "mark", url: "/", state: "stable" }], edges: [], paths: { main: [] } };
+    const journeys = { journeys: [{ contractId: "watch", title: "Watch", arrows: [],
+      steps: [{ stepId: "mark", screen: { screenId: "mark", title: "Mark", scopePaths: [] }, promises: [] }] }] };
+    await open(stubClient({ getStatus: vi.fn(async () => calm), journeyFlows: vi.fn(async () => ({ flows: [flow] })),
+      journeys: vi.fn(async () => journeys), journeyRun: vi.fn(async () => ({ state: "ready", kind: "replay", result: "pass",
+        screens: { mark: { result: "pass", frame: false } }, edges: {} })) }));
+    await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
+    expect(await screen.findByRole("button", { name: "1 decision needs you" })).toHaveClass("beacon-lit");
+  });
+
   it("shows the handover after a long gap and advances only on Got it", async () => {
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
     await open(longGapClient());

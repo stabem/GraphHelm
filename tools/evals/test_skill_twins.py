@@ -18,6 +18,25 @@ INVOCATION = re.compile(r"Use the ([\w-]+) skill(?: in audit mode)?")
 
 
 class SkillTwinsTest(unittest.TestCase):
+    def test_no_skill_audit_grammar_is_a_complete_near_miss(self):
+        case = ROOT / "evals/graphhelm-development-contracts/no-skill-audit-grammar"
+        prompt = (case / "prompt.md").read_text(encoding="utf-8")
+        criteria = (case / "graders/criteria.md").read_text(encoding="utf-8")
+        self.assertEqual(
+            prompt,
+            "---\nmax_turns: 4\nallowed_tools: [Skill]\n---\n\n"
+            'Correct the grammar in this sentence: "The test audit start tomorrow." '
+            "Reply with only the corrected sentence.\n",
+        )
+        self.assertIn("completed transcript", criteria)
+        self.assertIn("grammatical correction", criteria)
+        self.assertIn("preserves the original meaning", criteria)
+        self.assertIn("equivalent corrections", criteria)
+        self.assertIn("no Skill invocation", criteria)
+        for incomplete in ("missing transcript", "truncated transcript", "tool failure", "infrastructure failure"):
+            self.assertIn(incomplete, criteria)
+        self.assertIn("INCOMPLETE", criteria)
+
     def test_no_skill_arithmetic_is_a_complete_negative_control(self):
         case = ROOT / "evals/graphhelm-development-contracts/no-skill-arithmetic"
         prompt = (case / "prompt.md").read_text(encoding="utf-8")

@@ -949,12 +949,21 @@ struct Guard {
 
 impl Guard {
     /// The step reason an act is not sent with, or `None` when it is played.
+    ///
+    /// #927 backend acts: a `cli` act in a draft is never run (`cli_needs_approval`): there is no
+    /// isolated target for a command, so only the owner's approval of the exact argv lets it
+    /// play. A mutating `http` act (any method but GET, HEAD, OPTIONS) in a draft is refused even
+    /// on a launched app, and an approved flow holds it for the owner's click.
     fn stops_before(self, act: &Value) -> Option<&'static str> {
+        let backend = matches!(act["kind"].as_str(), Some("http" | "cli"));
+        if act["kind"] == "cli" && !self.approved {
+            return Some("cli_needs_approval");
+        }
         would_destroy(act)?;
         if self.approved {
             (!self.confirmed).then_some("confirm_needed")
         } else {
-            (!self.launched).then_some("guard_refused")
+            (backend || !self.launched).then_some("guard_refused")
         }
     }
 }
@@ -1564,6 +1573,49 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         };
         assert_eq!(draft(false).stops_before(&pay), Some("guard_refused"));
         assert_eq!(draft(true).stops_before(&pay), None);
+    }
+
+    /// #927 review: backend acts must not bypass the guard. Defects named: a DELETE or POST read
+    /// as harmless because its path holds no deny-list word, and a draft running a command.
+    #[test]
+    fn backend_mutations_and_draft_commands_are_guarded() {
+        let http = |method: &str| json!({"kind":"http","role":method,"name":"/items/3"});
+        let cli = json!({"kind":"cli","role":"exec","name":"sh greet.sh"});
+        let wipe = json!({"kind":"cli","role":"exec","name":"git push --force"});
+        for launched in [false, true] {
+            let draft = Guard {
+                approved: false,
+                launched,
+                confirmed: false,
+            };
+            for method in ["DELETE", "POST", "put", "BREW"] {
+                assert_eq!(
+                    draft.stops_before(&http(method)),
+                    Some("guard_refused"),
+                    "{method}"
+                );
+            }
+            for method in ["GET", "HEAD", "options"] {
+                assert_eq!(draft.stops_before(&http(method)), None, "{method}");
+            }
+            assert_eq!(draft.stops_before(&cli), Some("cli_needs_approval"));
+        }
+        let approved = Guard {
+            approved: true,
+            launched: true,
+            confirmed: false,
+        };
+        for method in ["DELETE", "POST"] {
+            assert_eq!(approved.stops_before(&http(method)), Some("confirm_needed"));
+        }
+        assert_eq!(approved.stops_before(&http("GET")), None);
+        assert_eq!(approved.stops_before(&cli), None);
+        assert_eq!(approved.stops_before(&wipe), Some("confirm_needed"));
+        let clicked = Guard {
+            confirmed: true,
+            ..approved
+        };
+        assert_eq!(clicked.stops_before(&http("DELETE")), None);
     }
 
     /// #519 slice 3: only an approved flow with all four recording arguments records proof; a

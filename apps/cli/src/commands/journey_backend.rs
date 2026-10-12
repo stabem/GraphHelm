@@ -16,7 +16,7 @@ use serde_json::Value;
 const ACT_LIMIT: Duration = Duration::from_secs(30);
 /// The most of a response or stdout an observation keeps.
 const MAX_BODY: u64 = 1024 * 1024;
-const METHODS: &[&str] = &["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
+const METHODS: &[&str] = &["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"];
 const HTTP_EXPECTS: &[&str] = &["status", "json", "text"];
 const CLI_EXPECTS: &[&str] = &["exit", "stdout"];
 

@@ -54,7 +54,27 @@ pub(crate) fn would_destroy(act: &Value) -> Option<&'static str> {
     ) {
         return None;
     }
+    // #927: a request that is not a read mutates, whatever its path says; an unknown method too.
+    if act["kind"] == "http"
+        && !matches!(
+            act["role"]
+                .as_str()
+                .unwrap_or_default()
+                .to_ascii_uppercase()
+                .as_str(),
+            "GET" | "HEAD" | "OPTIONS"
+        )
+    {
+        return Some("http_mutation");
+    }
     let lower = act["name"].as_str().unwrap_or_default().to_lowercase();
+    if act["kind"] == "cli"
+        && let Some(word) = lower
+            .split(|c: char| !c.is_alphanumeric())
+            .find_map(|word| ["rm", "push", "drop"].into_iter().find(|w| *w == word))
+    {
+        return Some(word);
+    }
     DESTRUCTIVE
         .iter()
         .copied()

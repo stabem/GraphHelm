@@ -25,7 +25,9 @@ A backend flow (`http` and `cli` acts, see
 [Journey flows](../harness/JOURNEY_PROVEN_DEVELOPMENT.md#backend-flows-http-and-cli-acts-927))
 runs without the Playwright driver; it needs the isolated launcher only when it sends requests.
 Its paths report `collection: not_applicable`: they prove execution only, collect no coverage and
-do not hold the sweep open for missing browser coverage. Sabotage reads them like any other path.
+do not hold the sweep open for missing browser coverage. Sabotage reads them like any other path. A `cli` act runs only in an approved flow, and a mutating `http` act holds
+until the owner confirms, so a backend flow that relies on either reports that path as not
+completed.
 
 ## Reading the report
 

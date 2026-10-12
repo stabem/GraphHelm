@@ -1,17 +1,23 @@
 //! #927: a backend-only project proves a journey without a browser. The flow runs a `cli` act
-//! (`sh greet.sh`, exit code and stdout) and an `http` act (GET on a `python3 -m http.server`
-//! fixture, status and a JSON field). Credible defects: a backend flow that still demands the
-//! browser observer or browser coverage (validation never green), and an expectation that passes
-//! on the wrong value (sabotage `missed` where it must be `caught`). Real CLI, Git worktree,
-//! launcher and child processes; no browser, Node or provider. Cost: a few seconds after build;
-//! needs `sh` and `python3`.
+//! (`sh greet.sh`, exit code and stdout) and an `http` act (GET on a small Python fixture server,
+//! status and a JSON field). Credible defects: a backend flow that still demands the browser
+//! observer or browser coverage (validation never green), an expectation that passes on the
+//! wrong value (sabotage `missed` where it must be `caught`), a draft that runs a command, and a
+//! mutating request sent without the owner's click. Real CLI, Git worktree, launcher and child
+//! processes; no browser, Node or provider. Cost: a few seconds after build; needs `sh` and
+//! `python3`.
 use std::path::Path;
 use std::process::Command;
 
 use serde_json::Value;
 
 const FLOW: &str = include_str!("fixtures/journey_backend/backend.journey.yaml");
+const CLEANUP: &str = include_str!("fixtures/journey_backend/cleanup.journey.yaml");
 const LAUNCHER: &str = include_str!("fixtures/journey_backend/fixture.sh");
+const SERVER: &str = include_str!("fixtures/journey_backend/server.py");
+/// `graphhelm init` owns the ignore file; keep the journeys and the launcher declaration tracked
+/// while owner and runtime material stays private.
+const IGNORE: &str = "deletes.count\n.graphhelm/*\n!.graphhelm/journeys/\n!.graphhelm/journeys/**\n!.graphhelm/journey-fixture.json\n";
 
 fn graphhelm(args: &[&str], project: &Path, extra: &[&Path]) -> (i32, Value) {
     let out = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
@@ -38,7 +44,14 @@ fn git(project: &Path, args: &[&str]) -> Vec<u8> {
     out.stdout
 }
 
-fn project() -> tempfile::TempDir {
+fn commit(root: &Path, message: &str) {
+    std::fs::write(root.join(".gitignore"), IGNORE).unwrap();
+    git(root, &["add", "."]);
+    git(root, &["commit", "--quiet", "--no-verify", "-m", message]);
+}
+
+/// A committed project holding one DRAFT flow `id`, with the fixture app and its launcher.
+fn project(id: &str, flow: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     for (path, text) in [
@@ -47,11 +60,12 @@ fn project() -> tempfile::TempDir {
         ("greet.sh", "echo hello from the cli\n"),
         ("README.txt", "not observed\n"),
         ("fixture.sh", LAUNCHER),
+        ("server.py", SERVER),
         (
             ".graphhelm/journey-fixture.json",
             r#"{"schema":"graphhelm-journey-fixture/1","script":"fixture.sh","isolated":true}"#,
         ),
-        (".graphhelm/journeys/backend.journey.yaml", FLOW),
+        (&format!(".graphhelm/journeys/{id}.journey.yaml"), flow),
     ] {
         let file = root.join(path);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -61,7 +75,7 @@ fn project() -> tempfile::TempDir {
         &[
             "journey",
             "compile",
-            "backend",
+            id,
             "--fmt",
             "--include-draft",
             "--project",
@@ -73,17 +87,58 @@ fn project() -> tempfile::TempDir {
     git(root, &["init", "--quiet", "--object-format=sha1"]);
     git(root, &["config", "user.email", "backend@example.invalid"]);
     git(root, &["config", "user.name", "Backend observer"]);
-    git(root, &["add", "."]);
-    git(root, &["commit", "--quiet", "--no-verify", "-m", "fixture"]);
+    let (code, reply) = graphhelm(
+        &["init", "--harness", "claude-code", "--project"],
+        root,
+        &[],
+    );
+    assert_eq!(code, 0, "{reply}");
+    commit(root, "fixture");
     dir
+}
+
+/// The owner approves `id` and the approval is committed.
+fn approve(root: &Path, id: &str) {
+    let token = root.join(".graphhelm/events.token");
+    let token = token.to_str().unwrap();
+    let (code, reply) = graphhelm(
+        &["journey", "approve", id, "--token-file", token, "--project"],
+        root,
+        &[],
+    );
+    assert_eq!(code, 0, "{reply}");
+    commit(root, "approved flow");
+}
+
+fn deletes(root: &Path) -> usize {
+    std::fs::read_to_string(root.join("deletes.count")).map_or(0, |count| count.len())
 }
 
 #[test]
 fn a_backend_journey_is_green_on_good_code_and_sabotage_catches_a_break() {
-    let dir = project();
+    let dir = project("backend", FLOW);
     let root = dir.path();
     let scratch = tempfile::tempdir().unwrap();
 
+    // A draft never runs a command: nobody has reviewed its argv.
+    let (code, report) = graphhelm(&["keel", "test", "validation", "--repo"], root, &[]);
+    assert_eq!(code, 2, "{report}");
+    assert_eq!(
+        report["data"]["paths"][0]["execution"], "skipped",
+        "{report}"
+    );
+    let state = std::fs::read_dir(report["data"]["resultDir"].as_str().unwrap())
+        .unwrap()
+        .flatten()
+        .find_map(|entry| std::fs::read(entry.path().join("state.json")).ok())
+        .map(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap());
+    let state = state.expect("the validation run keeps its state");
+    assert_eq!(
+        state["edges"]["greet"]["reason"], "cli_needs_approval",
+        "{state}"
+    );
+
+    approve(root, "backend");
     let (code, report) = graphhelm(&["keel", "test", "validation", "--repo"], root, &[]);
     assert_eq!(code, 0, "{report}");
     let data = &report["data"];
@@ -116,4 +171,51 @@ fn a_backend_journey_is_green_on_good_code_and_sabotage_catches_a_break() {
             );
         }
     }
+}
+
+/// #927 review: a DELETE is a mutation whatever its path says. A draft never sends it, an
+/// approved flow holds it until the owner's click, and only the confirmed run reaches the app,
+/// counted by the server itself.
+#[test]
+fn a_backend_delete_is_held_until_the_owner_confirms() {
+    let dir = project("cleanup", CLEANUP);
+    let root = dir.path();
+    // Start a preview in the background and read its finished result.
+    let preview = |extra: &[&str]| -> Value {
+        let mut args = vec!["journey", "preview", "cleanup"];
+        args.extend(extra);
+        args.push("--project");
+        let (code, reply) = graphhelm(&args, root, &[]);
+        assert_eq!(code, 0, "{reply}");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        loop {
+            let (_, read) = graphhelm(
+                &["journey", "preview", "cleanup", "--read", "--project"],
+                root,
+                &[],
+            );
+            if read["data"]["state"] != "running" && read["data"]["ranAt"].is_string() {
+                return read["data"].clone();
+            }
+            assert!(std::time::Instant::now() < deadline, "never ended: {read}");
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    };
+
+    let draft = preview(&[]);
+    assert_eq!(draft["edges"]["wipe"]["reason"], "guard_refused", "{draft}");
+    assert_eq!(deletes(root), 0, "a draft sent a DELETE");
+
+    approve(root, "cleanup");
+    let held = preview(&[]);
+    assert_eq!(held["held"]["edge"], "wipe", "{held}");
+    assert_eq!(deletes(root), 0, "a held DELETE reached the app");
+
+    let played = preview(&["--confirm"]);
+    assert_eq!(played["edges"]["wipe"]["result"], "pass", "{played}");
+    assert_eq!(
+        deletes(root),
+        1,
+        "the confirmed DELETE did not reach the app once"
+    );
 }

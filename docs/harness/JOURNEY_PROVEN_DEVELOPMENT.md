@@ -338,7 +338,14 @@ HTTP status, exactly), `json` (`a.b.0=value` compares a field, `a.b` asserts it 
 roles are refused (`flow.backend_expect_invalid`). When the flow sends requests, its start screen
 is observed by a GET of its `url`; a `cli`-only flow's start screen is its precondition and is
 not observed, and no launcher is needed. An act that cannot run is `fail`; an unmet expectation
-is `drift`. `journey preview` plays these flows and records the same result shape as a browser
+is `drift`. **Safety.** Backend acts go through the destructive-act guard. Any `http` method other than
+`GET`, `HEAD` or `OPTIONS` (an unknown method included) is a mutation, whatever its path says:
+a draft never sends it (`guard_refused`, even on a launched app), and an approved flow holds it
+at `confirm_needed` until the owner's click (`--confirm`). Validation and sabotage never confirm.
+A `cli` act never runs in a draft (`cli_needs_approval`): the owner's approval of the exact argv
+is what lets it play. In an approved flow, an argv that holds a deny-list word, or `rm`, `push`
+or `drop` as a whole word, still holds at `confirm_needed`.
+`journey preview` plays these flows and records the same result shape as a browser
 run, so `keel test validation` and `keel test sabotage` work unchanged. Replay and live sessions
 remain browser-only. The compiled contract submits a request or activates a command and asks for
 `http_acceptance` or `process_exit` evidence.

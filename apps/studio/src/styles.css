@@ -2620,6 +2620,10 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .journey-live-detail { display: grid; gap: 6px; font-size: 13px; }
 .journey-live-error { color: var(--danger); font-size: 12px; }
 
+/* #918: keep task inspector text within its ladder cell and custody column. */
+.mg-inspector .mg-ladder li { min-width: 0; overflow-wrap: anywhere; }
+.mg-inspector .mg-who { min-width: 0; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; }
+
 /* #447: a flow's branch path reads as a sub-row of the flow above it. */
 .right-journey-branch { margin-left: 14px; }
 

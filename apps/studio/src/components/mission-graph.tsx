@@ -192,7 +192,7 @@ export function TaskInspector({ task: t, step, onOpenTest, health = null, pace =
         <span className="mg-cap">Who touched it</span>
         <ul className="mg-custody" aria-label="Who touched it">
           {custodyRows(t).map((r, i) => (
-            <li key={i} className="mg-custody-row"><span className="mg-stage">{r.stage}</span><span className="mg-who">{r.who}</span><span className="mg-verdict" data-tone={r.tone}>{r.verdict}</span></li>
+            <li key={i} className="mg-custody-row"><span className="mg-stage">{r.stage}</span><span className="mg-who" title={r.who}>{r.who}</span><span className="mg-verdict" data-tone={r.tone}>{r.verdict}</span></li>
           ))}
         </ul>
         {t.reviewerHistory && t.reviewerHistory.length > 0 && <p className="mg-muted">{`Earlier reviewers: ${t.reviewerHistory.join(", ")}`}</p>}

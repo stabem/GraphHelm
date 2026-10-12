@@ -1,9 +1,26 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import type { EnvelopeRecord } from "../graph/ledger";
 import { placeholderLane, type Lane } from "../runtime/lane-bars";
+import type { RuntimeEvent } from "../runtime/types";
 
 /** The one payload the Studio sends to a lane: an owner note on the run (client.signal). */
 export interface LaneNote { type: "operator_note"; to: string; description: string }
 export interface RosterLane { name: string; silent: boolean }
+
+/** True only when this lane replied to an owner note sent after the current ask. */
+export function laneRepliedAfterAsk(events: RuntimeEvent[], envelopes: EnvelopeRecord, lane: string, askedAt: number): boolean {
+  const asks = new Set<string>();
+  for (const event of events) {
+    if (event.actorType !== "owner" || event.kind !== "signal_recorded" || event.actorId !== "studio-operator") continue;
+    if ((Date.parse(event.occurredAt ?? "") || 0) < askedAt) continue;
+    const envelope = envelopes[event.sequence];
+    const signalId = event.payload !== null && typeof event.payload === "object" && !Array.isArray(event.payload)
+      ? (event.payload as Record<string, unknown>).signalId : null;
+    if (envelope?.to === lane && typeof signalId === "string") asks.add(signalId);
+  }
+  return events.some((event) => event.actorType === "agent" && event.actorId === lane && event.kind === "signal_recorded"
+    && asks.has(envelopes[event.sequence]?.replyTo ?? ""));
+}
 
 /** #591: the lanes the owner can hand work to: the team's agents plus every lane with records,
  * "TBD" and empty names dropped, silent lanes marked. */
@@ -21,9 +38,10 @@ export function laneRoster(agentNames: readonly string[], lanes: readonly Lane[]
 const ago = (ms: number) => `${Math.max(0, Math.floor(ms / 60_000))} min ago`;
 
 /** Review hand-offs record the assignment before announcing it to either lane. */
-export function LaneActions({ lane, step, pr, roster, lastSeenAt, now, askedAt, listening = null, askedListening = listening, onAsked, send, assignReview }: {
+export function LaneActions({ lane, step, pr, roster, lastSeenAt, now, askedAt, listening = null, askedListening = listening, answered = false, onAsked, send, assignReview }: {
   lane: string; step: string; pr: number | null; roster: RosterLane[]; lastSeenAt: number | null; now: number;
   askedAt: number | null; listening?: boolean | null; askedListening?: boolean | null;
+  answered?: boolean;
   onAsked(at: number, listening: boolean | null): void;
   send(note: LaneNote): Promise<unknown>;
   assignReview?: (lane: string) => Promise<unknown>;
@@ -83,7 +101,7 @@ export function LaneActions({ lane, step, pr, roster, lastSeenAt, now, askedAt, 
     <div className="mg-section mg-lane-actions">
       <span className="mg-cap">Owner</span>
       <div className="mg-actions">
-        {askedAt !== null ? <span className="mg-muted">{`Asked ${ago(now - askedAt)} · ${askedListening === true ? "waiting" : askedListening === false ? "nobody is listening" : "listener status unavailable"}`}</span> : (
+        {askedAt !== null ? <span className="mg-muted">{answered ? `Answered ${ago(now - lastSeenAt!)}` : `Asked ${ago(now - askedAt)} · ${askedListening === true ? "waiting" : askedListening === false ? "nobody is listening" : "listener status unavailable"}`}</span> : (
           <button type="button" className="mg-secondary" disabled={busy} onClick={ask}>{`Ask ${lane} for status`}</button>
         )}
         <span className="mg-menu-anchor">
@@ -102,7 +120,7 @@ export function LaneActions({ lane, step, pr, roster, lastSeenAt, now, askedAt, 
           )}
         </span>
       </div>
-      {activityAfterAsk && <p className="mg-muted">{`Activity observed ${ago(now - lastSeenAt!)}; reply is unconfirmed`}</p>}
+      {activityAfterAsk && !answered && <p className="mg-muted">{`Activity observed ${ago(now - lastSeenAt!)}; reply is unconfirmed`}</p>}
       {target && (
         <div className="mg-confirm" role="group" aria-label="Confirm hand-off">
           <span>{`Hand ${step.toLowerCase()} of ${prText} to ${target}?`}</span>

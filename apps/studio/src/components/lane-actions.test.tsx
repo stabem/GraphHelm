@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
-import { LaneActions, laneRoster } from "./lane-actions";
+import { LaneActions, laneRepliedAfterAsk, laneRoster } from "./lane-actions";
 
 const userEvent = fastUserEvent();
 const lanes = [{ lane: "gh-claude-7", bars: [], silent: false, lastEventAt: 0 }, { lane: "gh-claude-9", bars: [], silent: true, lastEventAt: 0 }, { lane: "TBD", bars: [], silent: false, lastEventAt: 0 }];
@@ -17,7 +17,7 @@ describe("laneRoster", () => {
 describe("LaneActions", () => {
   const M = 60_000;
   const base = { listening: true, lane: "gh-claude-7", step: "Review", pr: 609, roster: laneRoster(["gh-claude-3"], lanes), lastSeenAt: 1_000, now: 10 * M };
-  it("Ask posts an operator_note, then reads asked · waiting, then Answered once the lane records anything newer", async () => {
+  it("clears the asked waiting label when the lane replies", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const onAsked = vi.fn();
     const { rerender } = render(<LaneActions {...base} askedAt={null} onAsked={onAsked} send={send} />);
@@ -29,6 +29,22 @@ describe("LaneActions", () => {
     rerender(<LaneActions {...base} askedAt={10 * M} onAsked={onAsked} send={send} now={13 * M} lastSeenAt={12 * M} />);
     expect(screen.getByText(/Asked 3 min ago.*waiting/)).toBeInTheDocument();
     expect(screen.getByText(/Activity observed 1 min ago; reply is unconfirmed/)).toBeInTheDocument();
+    rerender(<LaneActions {...base} askedAt={10 * M} answered onAsked={onAsked} send={send} now={13 * M} lastSeenAt={12 * M} />);
+    expect(screen.getByText("Answered 1 min ago")).toBeInTheDocument();
+    expect(screen.queryByText(/waiting/)).not.toBeInTheDocument();
+  });
+  it("recognizes only the addressed lane's replyTo to an owner ask", () => {
+    const events = [
+      { sequence: 1, kind: "signal_recorded", actorType: "owner", actorId: "studio-operator", occurredAt: new Date(10 * M).toISOString(), payload: { signalId: "ask-1" } },
+      { sequence: 2, kind: "signal_recorded", actorType: "agent", actorId: "gh-claude-7", occurredAt: new Date(12 * M).toISOString(), payload: { signalId: "reply-1" } },
+    ] as never[];
+    const envelopes = {
+      1: { to: "gh-claude-7", replyTo: null, text: "Owner asks: status?" },
+      2: { to: "studio-operator", replyTo: "ask-1", text: "Ready." },
+    };
+    expect(laneRepliedAfterAsk(events, envelopes, "gh-claude-7", 10 * M)).toBe(true);
+    expect(laneRepliedAfterAsk(events, envelopes, "gh-claude-9", 10 * M)).toBe(false);
+    expect(laneRepliedAfterAsk(events, { ...envelopes, 2: { ...envelopes[2], replyTo: null } }, "gh-claude-7", 10 * M)).toBe(false);
   });
   it("an ask without a live listener says nobody is listening", async () => {
     const send = vi.fn().mockResolvedValue(undefined);

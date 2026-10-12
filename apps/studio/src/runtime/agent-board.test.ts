@@ -106,7 +106,7 @@ describe("agentBoard", () => {
       expect(r!.status).toBe("free");
     });
     it("a verdict on the current head makes the lane Free again; a new head reopens it", () => {
-      const round = { reviewer: "rev", headSha: "h2", fixHead: null };
+      const round = { reviewer: "rev", headSha: "h2", fixHead: null, blockedAt: null };
       const [done] = agentBoard([bot("rev")], [lane("rev", [])], [pr({ reviewers: ["rev"], rounds: [round] })], now);
       expect(done!.status).toBe("free");
       const [blocked] = agentBoard([bot("rev")], [lane("rev", [])], [pr({ reviewers: ["rev"], blocked: true, blockedBy: { reviewer: "rev", headSha: "h2" } })], now);
@@ -123,7 +123,7 @@ describe("agentBoard", () => {
     it("frees the reviewer of an older blocked head", () => {
       const rows = agentBoard([bot("old"), bot("new")], [lane("old", []), lane("new", [])],
         [pr({ headSha: "head-b", reviewers: ["old", "new"], currentReviewer: "new",
-          rounds: [{ reviewer: "old", headSha: "head-a", fixHead: "head-b" }] })], now);
+          rounds: [{ reviewer: "old", headSha: "head-a", fixHead: "head-b", blockedAt: null }] })], now);
       expect(rows.find((r) => r.name === "old")!.status).toBe("free");
       expect(rows.find((r) => r.name === "new")!.label).toBe("Reviewing");
     });

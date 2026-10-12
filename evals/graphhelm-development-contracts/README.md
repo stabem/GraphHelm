@@ -20,6 +20,12 @@ instruction, then requires transcript evidence that the expected skill was invok
 skill selection separately from behavior after an explicit request; the offline pairing lint
 checks the twins without running a model.
 
+`no-skill-arithmetic` is one negative selection case: Skill remains available, but the request
+only needs arithmetic. This is corpus preparation, not a measured selection result. Before any
+result is accepted, the external runner must preserve the grader distinction between a completed
+answer with no Skill invocation and an INCOMPLETE run caused by a missing or truncated transcript,
+tool failure, or infrastructure failure.
+
 First run (2026-10-05, 3 runs per arm). This is one noisy sample: a review re-run of
 `keel-scope` scored 0.67 with the skill and 1.00 without it, so treat any single-run number as
 +/- one run. Use `--runs` to raise runs per arm before reading a delta as real.

@@ -2048,16 +2048,18 @@ fn a_bounded_events_tail_stays_fast_at_six_thousand_events() {
             )
         })
         .collect();
-    let request = graphhelm_events::PreparedAppend::new(
-        scope,
-        graphhelm_protocols::OpaqueId::parse(execution).unwrap(),
-        1,
-        new_events,
-        vec![],
-        vec![],
-    )
-    .unwrap();
-    assert_eq!(store.append_atomic(&request).unwrap().len(), 6_000);
+    for (batch, chunk) in new_events.chunks(100).enumerate() {
+        let request = graphhelm_events::PreparedAppend::new(
+            scope.clone(),
+            graphhelm_protocols::OpaqueId::parse(execution).unwrap(),
+            (batch * 100 + 1) as u64,
+            chunk.to_vec(),
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(store.append_atomic(&request).unwrap().len(), chunk.len());
+    }
     drop(store);
 
     let (_guard, base, token) = serve(&events);

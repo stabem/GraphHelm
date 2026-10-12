@@ -8262,10 +8262,14 @@ mod limit_tests {
             let mut slot = cache.slot.lock().unwrap();
             slot.as_mut().unwrap().full_verified_at -= std::time::Duration::from_secs(3601);
         }
-        assert!(
-            shared_repository(directory.path(), &cache).is_err(),
-            "an expired shared cache must re-verify unchanged-length bytes"
+        let checked = LocalEventRepository::open_with_prefix_cache(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(FixedIds),
+            crate::ReadBudget::unbounded(),
+            &cache,
         );
+        assert!(checked.is_err(), "expired cache must re-verify the prefix");
     }
 
     /// #506: a walk from genesis is stamped when it ENDS. Stamped at its start, a walk longer

@@ -138,6 +138,11 @@ class SessionHookTests(unittest.TestCase):
         cls.thread.join()
 
     def setUp(self):
+        spec = importlib.util.spec_from_file_location("session_hook_state_guard", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        self.real_state_root = hook._state_root()
+        self.real_state_before = set(self.real_state_root.iterdir()) if self.real_state_root.exists() else set()
         RuntimeHandler.requests = []
         RuntimeHandler.reply_ok = True
         RuntimeHandler.redirect_to = None
@@ -225,6 +230,9 @@ class SessionHookTests(unittest.TestCase):
                 except (OSError, ValueError):
                     pass
         self.temp.cleanup()
+        real_state_after = set(self.real_state_root.iterdir()) if self.real_state_root.exists() else set()
+        self.assertEqual(real_state_after - self.real_state_before, set(),
+                         "hook test wrote into the real state directory")
         self.assertFalse(live, f"hook test left live waiter markers: {live}")
 
     def test_descriptive_title_binds_leading_lane_id(self):

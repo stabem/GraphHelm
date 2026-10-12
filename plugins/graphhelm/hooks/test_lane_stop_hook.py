@@ -34,6 +34,9 @@ MANIFESTS = (HERE / "hooks.json", HERE / "codex-hooks.json",
 
 class LaneStopTests(unittest.TestCase):
     def setUp(self):
+        self.real_state_root = session_hook._state_root()
+        self.real_state_before = set(self.real_state_root.iterdir()) if self.real_state_root.exists() else set()
+        self.addCleanup(self.assert_real_state_unchanged)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name)
@@ -86,9 +89,15 @@ class LaneStopTests(unittest.TestCase):
             try:
                 pid = int(pid_file.read_text())
                 self.stop_waiter_pid(pid)
+                self.assertFalse(session_hook._pid_alive(pid), f"waiter {pid} survived cleanup")
                 pid_file.unlink(missing_ok=True)
             except (OSError, ValueError):
                 pass
+
+    def assert_real_state_unchanged(self):
+        after = set(self.real_state_root.iterdir()) if self.real_state_root.exists() else set()
+        self.assertEqual(after - self.real_state_before, set(),
+                         "hook test wrote into the real state directory")
 
     @staticmethod
     def stop_waiter_pid(pid):

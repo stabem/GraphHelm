@@ -248,14 +248,14 @@ def arm_lane_wake(payload: dict, bound: tuple[str, str, str, str, str | None], m
         return
     token = token_from_file(token_file)
     base = f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}"
-    head = request(f"{base}/events?after=0&limit=1", token, "GET")["data"]["head"]
+    head = request(f"{base}/events?after=0&limit=1", token, "GET", timeout=ARM_REQUEST_TIMEOUT)["data"]["head"]
     if type(head) is not int or head < 0:
         raise ValueError("invalid event head")
     reply = request(f"{base}/wake-lease", token, "POST",
                     {"sessionId": session, "rendezvousId": str(uuid.uuid4()),
                      "cursor": head, "maturesInSeconds": matures_in},
                     {"X-GraphHelm-Actor": actor, "X-GraphHelm-Actor-Type": "agent",
-                     "Idempotency-Key": str(uuid.uuid4())})
+                     "Idempotency-Key": str(uuid.uuid4())}, timeout=ARM_REQUEST_TIMEOUT)
     data = reply.get("data")
     if not isinstance(data, dict) or data.get("sessionId") != session or data.get("armedCursor") != head:
         raise ValueError("wake lease acknowledgement mismatch")
@@ -266,6 +266,7 @@ def _waiter_path(payload: dict, bound: tuple[str, str, str, str, str | None], ho
 
 
 HEARTBEAT_MAX_AGE = 30 * 60
+ARM_REQUEST_TIMEOUT = 5.0
 
 
 def _heartbeat_path(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> Path:

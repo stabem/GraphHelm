@@ -2644,6 +2644,7 @@ export default function App({
       <ProjectRail
         projects={[{ name: project ?? "this runtime", path: projectPath, runs: visibleExecutions.map((run) => run.executionId === selected && pendingOwnerReview ? { ...run, attention: "needs_you" as const } : run) }]}
         selectedPresentation={recordedWorkBehindGraphWait ? { key: "calm", status: "agent work recorded · graph step waiting" } : null}
+        onClose={() => setProjectsOpen(false)}
         selected={selected}
         connected={connected}
         previousExit={previousExit}
@@ -2681,6 +2682,7 @@ export default function App({
         briefings={briefings}
       />
 
+      {projectsOpen && <button type="button" className="projects-backdrop" aria-label="Close projects" onClick={() => setProjectsOpen(false)} />}
       {/* The grip is a real control, so it is focusable and the keyboard can move it: a pointer
           is not the only way somebody sizes a pane. */}
       <div

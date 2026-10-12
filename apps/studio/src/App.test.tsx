@@ -220,6 +220,24 @@ describe("Studio organization and responsive navigation", () => {
   });
 
 
+  it("starts with the projects drawer closed on mobile and opens it from the hamburger", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: false, media: query }));
+    try {
+      await open(stubClient(), null, false);
+      const toggle = screen.getByRole("button", { name: "Toggle projects" });
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      await userEvent.click(toggle);
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByRole("button", { name: "Close projects" }));
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      await userEvent.click(toggle);
+      await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByRole("button", { name: "Close projects" }));
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+    } finally {
+      cleanup();
+      vi.unstubAllGlobals();
+    }
+  });
   it.each([
     [false, "demo-deploy"],
     [false, "demo-calm"],

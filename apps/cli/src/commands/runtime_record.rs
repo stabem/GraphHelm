@@ -30,7 +30,9 @@ use serde::{Deserialize, Serialize};
 pub(crate) const DIR_ENV: &str = "GRAPHHELM_RUNTIME_DIR";
 const VERSION: u32 = 1;
 const MAX_RECORD_BYTES: u64 = 16 * 1024;
-const MAX_PROJECT_RECORDS: usize = 16;
+// Restarted Runtimes leave records behind. Discovery health-checks each record before
+// counting live instances, so this bound limits registry input, not live candidates.
+const MAX_PROJECT_RECORDS: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

@@ -130,6 +130,7 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
     const slot = ids.map((n) => slotStatus(n, slots)).find((x) => x !== null) ?? null;
     if (!slot) {
       if (r.status !== "free" || onDemand.some((name) => ids.includes(name))) return r;
+      // A wake listener is the live signal; sessions must arm one before this path can identify them.
       if (live.some((name) => ids.includes(name))) return { ...r, latest: "live now · wake listener", forMs: 0 };
       const seen = Math.max(pairs[i]!.lane?.lastEventAt ?? 0,
         ...bots.filter((b) => ids.includes(b.name) || (b.actorId !== null && ids.includes(b.actorId)))

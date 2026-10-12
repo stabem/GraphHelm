@@ -212,7 +212,10 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
     let installed_head = stamp
         .as_ref()
         .and_then(|stamp| std::fs::read_to_string(stamp).ok());
-    if already_installed(head.as_deref(), installed_head.as_deref()) {
+    // Uncommitted edits are not in HEAD, so a matching stamp says nothing about them: build.
+    let clean = git(&source, &["status", "--porcelain", "--untracked-files=no"])
+        .is_some_and(|status| status.is_empty());
+    if clean && already_installed(head.as_deref(), installed_head.as_deref()) {
         eprintln!("[update] graphhelm is already built from this commit; nothing to install");
         return Outcome::success(
             UPDATE,

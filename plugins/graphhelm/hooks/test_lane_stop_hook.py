@@ -532,7 +532,7 @@ class LaneStopTests(unittest.TestCase):
         request = urllib.request.Request(self.url + "/v1/executions/lane-test",
                   headers={"Authorization": "Bearer " + self.owner_token})
         with urllib.request.urlopen(request, timeout=5) as response:
-            self.assertNotIn("codex-4", json.load(response)["data"]["wakeListeners"])
+            self.assertIn("codex-4", json.load(response)["data"]["wakeListeners"])
 
     def test_session_waiter_survives_unrelated_append_and_catches_ask(self):
         session = "session-wake-test"
@@ -587,6 +587,44 @@ class LaneStopTests(unittest.TestCase):
                 self.fail(f"lane lost its wake listener after cycle {cycle}")
         self.note("request-2", to="codex-4")
         self.assertTrue(any(d.get("decision") == "block" for d in self.stop(MANIFESTS[0])))
+
+    def test_shell_launched_waiter_tracks_host_and_stop_restores_missing_pid(self):
+        """A hook shell exits before its host; the waiter must follow the host."""
+        script = HERE / "session_hook.py"
+        payload = json.dumps({"hook_event_name": "SessionStart", "session_id": "shell-host"})
+        for shell in (["cmd", "/c"] if os.name == "nt" else ["bash", "-c"] for _ in (0,)):
+            command = subprocess.list2cmdline([sys.executable, str(script), "start", "--host", "codex"])
+            host_code = ("import subprocess,sys,time; "
+                         "p=subprocess.run(sys.argv[1:3]+[sys.argv[3]],input=sys.argv[4],text=True,"
+                         "capture_output=True,timeout=8); "
+                         "print(p.returncode, flush=True); time.sleep(30)")
+            host = subprocess.Popen([sys.executable, "-c", host_code, *shell, command, payload],
+                                    env=self.env, stdout=subprocess.PIPE, text=True)
+            self.addCleanup(lambda p=host: p.kill() if p.poll() is None else None)
+            self.addCleanup(host.stdout.close)
+            self.assertEqual(host.stdout.readline().strip(), "0")
+            pid_files = list(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.waiter.pid"))
+            self.assertEqual(len(pid_files), 1)
+            pid = int(pid_files[0].read_text())
+            self.addCleanup(lambda p=pid: os.kill(p, signal.SIGTERM) if session_hook._pid_alive(p) else None)
+            self.assertTrue(session_hook._pid_alive(pid), "waiter died with hook shell")
+            if os.name == "nt":
+                detail = subprocess.run(["powershell", "-NoProfile", "-Command",
+                    f"(Get-CimInstance Win32_Process -Filter \"ProcessId = {pid}\").CommandLine"],
+                    capture_output=True, text=True, timeout=5).stdout
+                self.assertIn(f"--host-pid {host.pid}", detail)
+            host.kill()
+            host.wait(timeout=5)
+            self.note("host-exit-wake", to="codex-5")
+            deadline = time.monotonic() + 65
+            while session_hook._pid_alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertFalse(session_hook._pid_alive(pid), "waiter outlived host")
+            pid_files[0].unlink(missing_ok=True)
+            self.assertEqual(self.stop(MANIFESTS[1], session="shell-host"), [])
+            replacement = int(pid_files[0].read_text())
+            self.assertNotEqual(replacement, pid)
+            self.addCleanup(lambda p=replacement: os.kill(p, signal.SIGTERM) if session_hook._pid_alive(p) else None)
 
     def test_only_own_reply_clears_pending_note(self):
         self.note("request-1", to="codex-4")

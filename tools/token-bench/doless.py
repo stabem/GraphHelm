@@ -726,7 +726,12 @@ def cmd_pair_summary(a: argparse.Namespace) -> None:
         counts = {verdict: sum(row.get("verdict") == verdict for row in attempts)
                   for verdict in ("PASS", "FAIL", "INCOMPLETE")}
         costs = [observed_cost(row) for row in attempts]
-        known = sum(cost for cost in costs if cost is not None)
+        known = 0.0
+        for cost in costs:
+            if cost is not None:
+                known += cost
+                if not math.isfinite(known):
+                    raise ValueError("non-finite paired summary cost aggregate")
         missing = sum(cost is None for cost in costs)
         count = len(attempts)
         reason = "unknown_cost" if missing else "no_pass" if not counts["PASS"] else None
@@ -747,6 +752,8 @@ def cmd_pair_summary(a: argparse.Namespace) -> None:
         delta = {key: (candidate[key] - baseline[key] if candidate[key] is not None
                         and baseline[key] is not None else None)
                  for key in ("successFraction", "meanCostPerAttemptUsd", "costPerProvenDeliveryUsd")}
+        if any(value is not None and not math.isfinite(value) for value in delta.values()):
+            raise ValueError("non-finite paired summary task delta")
         tasks.append({"task": task, "split": groups[task]["split"],
                       ("sessions" if audit["version"] == 2 else "repeats"):
                       admitted["sessions"] if audit["version"] == 2 else admitted["repeats"],
@@ -779,8 +786,15 @@ def cmd_pair_summary(a: argparse.Namespace) -> None:
             quality, cost = [], []
             for _ in range(samples):
                 selected = [differences[rng.randrange(len(differences))] for _ in differences]
-                quality.append(sum(item["successFraction"] for item in selected) / len(selected))
-                cost.append(sum(item["costPerProvenDeliveryUsd"] for item in selected) / len(selected))
+                try:
+                    quality_mean = math.fsum(item["successFraction"] for item in selected) / len(selected)
+                    cost_mean = math.fsum(item["costPerProvenDeliveryUsd"] for item in selected) / len(selected)
+                except OverflowError as exc:
+                    raise ValueError("non-finite paired summary resampled statistic") from exc
+                if not math.isfinite(quality_mean) or not math.isfinite(cost_mean):
+                    raise ValueError("non-finite paired summary resampled statistic")
+                quality.append(quality_mean)
+                cost.append(cost_mean)
             def interval(values: list[float]) -> dict:
                 values.sort()
                 return {"lower": values[int((samples - 1) * 0.025)],
@@ -796,11 +810,17 @@ def cmd_pair_summary(a: argparse.Namespace) -> None:
             plan_output.update({"inferenceStatus": status, "inference": {
                 "method": "paired_task_bootstrap_percentile_95", "seed": seed, "resamples": samples,
                 "qualityDifference": quality_interval, "costDifferenceUsd": cost_interval}})
-    print(json.dumps({"version": audit["version"], "comparison": audit["comparison"],
-                      "weighting": audit["weighting"], "partial": bool(audit["excluded"] or audit["unmatched"]),
-                      "tasks": tasks, "excluded": audit["excluded"], "unmatched": audit["unmatched"],
-                      **plan_output},
-                     sort_keys=True))
+    try:
+        report = {"version": audit["version"], "comparison": audit["comparison"],
+                  "weighting": audit["weighting"], "partial": bool(audit["excluded"] or audit["unmatched"]),
+                  "tasks": tasks, "excluded": audit["excluded"], "unmatched": audit["unmatched"],
+                  **plan_output}
+        encoded = json.dumps(report, sort_keys=True, allow_nan=False)
+    except (OverflowError, ValueError) as exc:
+        if isinstance(exc, ValueError) and str(exc).startswith("non-finite paired summary"):
+            raise
+        raise ValueError("non-finite paired summary output") from exc
+    print(encoded)
 
 
 def cmd_run(a: argparse.Namespace) -> None:

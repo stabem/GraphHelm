@@ -122,7 +122,10 @@ interval, even when the remaining admitted tasks satisfy the inference requireme
 takes precedence over other inference-ineligibility reasons; the validated plan, digest, task
 accounting, exclusions, and unmatched identities remain in the report. Otherwise, unknown cost,
 no PASS in either arm of an admitted task, or fewer than two admitted tasks produces
-`not_computable` with its corresponding reason and no interval. Without the option,
+`not_computable` with its corresponding reason and no interval. If finite input costs overflow an
+arm aggregate, task delta, or resampled statistic, the command refuses before publishing stdout;
+it does not convert overflow into unknown cost or drop an attempt. Final JSON encoding also rejects
+non-finite numbers. Without the option,
 `pair-summary` keeps its existing report shape. This small-corpus interval does not validate task independence or exchangeability,
 prove that the plan preceded outcome inspection, or establish a real improvement. It does
 not recommend a treatment or claim realized savings.

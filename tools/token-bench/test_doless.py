@@ -1077,16 +1077,18 @@ def test_pair_summary_nonfinite_aggregate(tmp_path):
     """Finite costs must not overflow report arithmetic; CLI refuses before stdout, <1s."""
     controls = {key: key for key in ("parent", "evaluator", "environment", "budget", "timeout")}
 
-    def fixture(costs):
+    def fixture(costs, repeats=1):
         rows, groups = [], []
         for index, (baseline_cost, candidate_cost) in enumerate(costs):
             task = f"task-{index}"
-            sessions = {"baseline": [f"a-{index}"], "candidate": [f"k-{index}"]}
+            sessions = {side: [f"{arm}-{index}-{repeat}" for repeat in range(repeats)]
+                        for side, arm in (("baseline", "a"), ("candidate", "k"))}
             for side, arm, cost in (("baseline", "a", baseline_cost),
                                     ("candidate", "k", candidate_cost)):
-                rows.append({"sessionId": sessions[side][0], "task": task, "taskSnapshot": "snap",
-                             "split": "test", "arm": arm, "configDigest": arm, "controls": controls,
-                             "verdict": "PASS", "costUsd": cost})
+                for session in sessions[side]:
+                    rows.append({"sessionId": session, "task": task, "taskSnapshot": "snap",
+                                 "split": "test", "arm": arm, "configDigest": arm, "controls": controls,
+                                 "verdict": "PASS", "costUsd": cost})
             groups.append({"task": task, "taskSnapshot": "snap", "split": "test", "controls": controls,
                            "baseline": {"arm": "a", "configDigest": "a"},
                            "candidate": {"arm": "k", "configDigest": "k"},
@@ -1111,14 +1113,14 @@ def test_pair_summary_nonfinite_aggregate(tmp_path):
         args = command + (["--analysis-plan", str(plan_path)] if plan_path else [])
         return subprocess.run(args, capture_output=True, text=True, creationflags=NO_WINDOW)
 
-    arm_overflow, plan = fixture([(1e308, 1), (1e308, 1)])
+    arm_overflow, plan = fixture([(1.7e308, 1)], repeats=2)
     for plan_path in (None, plan):
         refused = run(arm_overflow, plan_path)
         assert refused.returncode != 0
         assert refused.stdout == ""
         assert "non-finite" in refused.stderr
 
-    bootstrap_overflow, plan = fixture([(1e308, 0), (1e308, 0)])
+    bootstrap_overflow, plan = fixture([(1.7e308, 0), (1.7e308, 0)])
     refused = run(bootstrap_overflow, plan)
     assert refused.returncode != 0
     assert refused.stdout == ""
@@ -1127,9 +1129,9 @@ def test_pair_summary_nonfinite_aggregate(tmp_path):
     finite, _ = fixture([(10, 8), (12, 9)])
     control = run(finite)
     assert control.returncode == 0, control.stderr
-    assert math.isfinite(json.loads(control.stdout, parse_constant=lambda value:
-                                    (_ for _ in ()).throw(ValueError(value)))
-                        ["tasks"][0]["baseline"]["knownExpenditureUsd"])
+    assert json.loads(control.stdout, parse_constant=lambda value:
+                       (_ for _ in ()).throw(ValueError(value)))["tasks"][0]["baseline"][
+                           "knownExpenditureUsd"] == 10
 
 
 def test_pair_inference_partial_cohort_withholds_intervals(tmp_path):

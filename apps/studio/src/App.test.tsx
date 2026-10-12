@@ -4044,6 +4044,60 @@ describe("the board remembers its graph file", () => {
  * a message box that posts nothing still clears itself after you press send.
  */
 describe("the exchange", () => {
+  it("keeps Lanes loading until complete PR history replaces a misleading recent tail (#961)", async () => {
+    const specs = [
+      { sequence: 1, kind: "task.claimed", actor: "lane-a", taskId: "issue-947", issue: 947, lane: "lane-a", branch: "issue-947-work" },
+      { sequence: 2, kind: "task.pr_opened", actor: "lane-a", taskId: "issue-947", pr: 955, headSha: "aaaaaaaa", lane: "lane-a", journeys: [] },
+      { sequence: 3, kind: "task.merged", actor: "reviewer-a", taskId: "issue-947", pr: 955, mergeSha: "bbbbbbbb", merger: "reviewer-a", closes: [947] },
+      { sequence: 4, kind: "task.pr_opened", actor: "lane-b", taskId: "issue-919", pr: 921, headSha: "cccccccc", lane: "lane-b", journeys: [] },
+      { sequence: 5, kind: "task.merged", actor: "reviewer-a", taskId: "issue-919", pr: 921, mergeSha: "dddddddd", merger: "reviewer-a", closes: [] },
+      { sequence: 6, kind: "task.pr_opened", actor: "lane-c", taskId: "issue-919", pr: 922, headSha: "eeeeeeee", lane: "lane-c", journeys: [] },
+      { sequence: 7, kind: "task.merged", actor: "reviewer-a", taskId: "issue-919", pr: 922, mergeSha: "ffffffff", merger: "reviewer-a", closes: [] },
+      { sequence: 8, kind: "task.pr_opened", actor: "lane-d", taskId: "issue-919", pr: 923, headSha: "11111111", lane: "lane-d", journeys: [] },
+      { sequence: 69, kind: "task.review_assigned", actor: "lane-d", taskId: "issue-919", pr: 923, headSha: "11111111", lane: "lane-d", reviewer: "reviewer-b" },
+      { sequence: 70, kind: "task.review_verdict", actor: "reviewer-a", taskId: "issue-947", pr: 955, headSha: "aaaaaaaa", reviewer: "reviewer-a", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/955#c1" },
+    ];
+    const entries = await Promise.all(specs.map(async ({ sequence, kind, actor, ...fields }) => {
+      const description = JSON.stringify({ schema: "graphhelm-task-event-v1", revision: sequence, at: "2026-10-12T18:00:00Z", ...fields });
+      const content = JSON.stringify({ id: `task-${sequence}`, source: { type: "user", id: actor }, type: kind, description });
+      const hash = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
+      return { sequence, evidence: { evidenceId: `ev-task-${sequence}`, mediaType: "application/json" as const,
+        sensitivity: "internal" as const, contentSha256: `sha256:${hash}`, content }, event: {
+        sequence, kind: "signal_recorded", payload: { kind, sourceId: actor, sourceKind: "user", signalId: `task-${sequence}`, envelopeSha256: hash },
+        occurredAt: "2026-10-12T18:00:00Z", actorId: actor, actorType: "agent", idempotencyKey: `k-${sequence}`,
+        eventId: `event-${sequence}`, evidenceRefs: [`ev-task-${sequence}`],
+      } };
+    }));
+    let releaseHistory!: () => void;
+    const history = new Promise<void>((resolve) => { releaseHistory = resolve; });
+    const client = stubClient({
+      listExecutions: vi.fn(async () => ({ executions: [{ executionId: "demo-deploy", mode: "supervised", status: "running",
+        attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 70 }], hasMore: false, nextCursor: null })),
+      getStatus: vi.fn(async () => ({ ...STATUS, attention: "can_sleep", attentionReasons: [], headSequence: 70 })),
+      getEvents: vi.fn(async (_run: string, options?: { after?: number }) => {
+        if (!options?.after) await history;
+        return { head: 70, events: entries.filter(({ sequence }) => sequence > (options?.after ?? 0)).map(({ event }) => event) };
+      }),
+      readEvidence: vi.fn(async (_run: string, id: string) => entries.find(({ evidence }) => evidence.evidenceId === id)!.evidence),
+    });
+    await open(client, null, false);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
+    const mission = await screen.findByRole("region", { name: "Canvas" });
+    await userEvent.click(within(mission).getByRole("tab", { name: "Lanes" }));
+    await waitFor(() => expect(client.readEvidence).toHaveBeenCalledWith("demo-deploy", "ev-task-70"));
+    expect(within(mission).getAllByRole("status").some((item) => item.textContent?.includes("Loading the team's history"))).toBe(true);
+    expect(within(mission).queryByRole("region", { name: "Work by stage" })).not.toBeInTheDocument();
+    await act(async () => releaseHistory());
+    const kanban = await within(mission).findByRole("region", { name: "Work by stage" });
+    expect(kanban).not.toHaveTextContent("PR #955");
+    expect(kanban).not.toHaveTextContent("PR #921");
+    expect(kanban).not.toHaveTextContent("PR #922");
+    expect(within(kanban).getByText("PR #923")).toBeInTheDocument();
+    expect(kanban.querySelector('[data-col="review"]')).toHaveTextContent("PR #923");
+    expect(kanban).toHaveTextContent("reviewer-b");
+  });
+
   it("settles partial task history and Retry recovers the unreadable record", async () => {
     const description = JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-941", revision: 1,
       at: "2026-10-11T12:00:00Z", issue: 941, lane: "codex-18", branch: "issue-941-history-stream" });

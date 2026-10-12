@@ -8258,12 +8258,14 @@ mod limit_tests {
         bytes[10] = bytes[10].wrapping_add(1);
         std::fs::write(&journal, &bytes).unwrap();
 
-        let fresh = LocalEventRepository::open(
-            directory.path(),
-            Arc::new(FixedClock),
-            Arc::new(FixedIds),
+        {
+            let mut slot = cache.slot.lock().unwrap();
+            slot.as_mut().unwrap().full_verified_at -= std::time::Duration::from_secs(3601);
+        }
+        assert!(
+            shared_repository(directory.path(), &cache).is_err(),
+            "an expired shared cache must re-verify unchanged-length bytes"
         );
-        assert!(fresh.is_err(), "a fresh verification rejects the rewrite");
     }
 
     /// #506: a walk from genesis is stamped when it ENDS. Stamped at its start, a walk longer

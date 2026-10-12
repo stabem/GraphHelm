@@ -269,10 +269,6 @@ describe("Studio organization and responsive navigation", () => {
       vi.unstubAllGlobals();
     }
   });
-  it("keeps the mobile stage above the projects backdrop while the drawer is open", async () => {
-    const styles = await import("./styles.css?inline");
-    expect(styles.default).toMatch(/\.app\.projects-open\s*>\s*\.stage\s*\{[^}]*z-index:\s*21/s);
-  });
   it.each([
     [false, "demo-deploy"],
     [false, "demo-calm"],

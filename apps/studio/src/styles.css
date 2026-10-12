@@ -2621,7 +2621,9 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .journey-live-error { color: var(--danger); font-size: 12px; }
 
 /* #918: keep task inspector text within its ladder cell and custody column. */
-.mg-inspector .mg-ladder li { min-width: 0; overflow-wrap: anywhere; }
+.mg-inspector .mg-ladder { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.mg-inspector .mg-ladder li { white-space: nowrap; }
+.mg-inspector .mg-ladder .mg-rung { width: 100%; }
 .mg-inspector .mg-who { min-width: 0; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; }
 
 /* #447: a flow's branch path reads as a sub-row of the flow above it. */

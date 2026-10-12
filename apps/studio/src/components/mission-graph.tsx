@@ -183,7 +183,7 @@ export function TaskInspector({ task: t, step, onOpenTest, health = null, pace =
         <span className="mg-cap">How far it got</span>
         <ul className="mg-ladder" aria-label="How far it got" data-state={st}>
           {TRUST_LABELS.map((label, i) => (
-            <li key={label} data-lit={rungs[i].lit} data-pending={rungs[i].pending ?? false} title={rungs[i].title}><span className="mg-rung" />{label}</li>
+            <li key={label} data-lit={rungs[i].lit} data-pending={rungs[i].pending ?? false} aria-label={label} title={`${label}: ${rungs[i].title}`}><span className="mg-rung" />{["Written", "Review", "Merged", "Proven", "Seen"][i]}</li>
           ))}
         </ul>
       </div>

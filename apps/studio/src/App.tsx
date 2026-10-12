@@ -540,7 +540,7 @@ export default function App({
             : nextEvents,
         );
         setError("");
-        if (recentAfter > 0) {
+        if (recentAfter > 0 || (nextEvents.events.at(-1)?.sequence ?? 0) < nextEvents.head) {
           // Yield a paint before the older replay. A changed selection/connection discards it.
           setTimeout(() => {
             if (clientRef.current !== client || selectedRef.current !== id) return;

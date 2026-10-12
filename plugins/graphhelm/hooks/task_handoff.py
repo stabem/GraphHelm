@@ -248,7 +248,7 @@ def _make_offer(execution: str, host: str, session: str, recipient_host: str,
 
 
 def _validate_receipt(receipt: dict, execution: str, offer_id: str,
-                      recipient: str, sender: str) -> None:
+                      recipient: str, sender: str) -> dict:
     if (receipt.get("type") != RECEIPT_KIND
             or receipt.get("source", {}).get("type") != "tool"
             or receipt.get("source", {}).get("id") != recipient
@@ -263,6 +263,10 @@ def _validate_receipt(receipt: dict, execution: str, offer_id: str,
             or details.get("executionId") != execution or details.get("offerId") != offer_id
             or details.get("recipient") != recipient or details.get("sender") != sender):
         raise ValueError("handoff receipt metadata is invalid")
+    try:
+        return _validate_digest(details.get("briefing"))
+    except (TypeError, ValueError, KeyError) as error:
+        raise ValueError("handoff receipt briefing reference is invalid") from error
 
 
 def offer(host: str, session: str, recipient_host: str, recipient_session: str,
@@ -337,7 +341,7 @@ def receive(host: str, session: str, offer_id: str) -> dict:
     acknowledgement = None
     if existing:
         receipt = _sealed_signal(url, token, execution, existing)
-        _validate_receipt(receipt, execution, offer_id, actor, offer_signal["source"]["id"])
+        receipt_briefing = _validate_receipt(receipt, execution, offer_id, actor, offer_signal["source"]["id"])
         state = "already_recorded"
     else:
         receipt = {"id": receipt_id, "source": {"type": "tool", "id": actor}, "type": RECEIPT_KIND,
@@ -351,12 +355,13 @@ def receive(host: str, session: str, offer_id: str) -> dict:
         recorded = _signal_event(_events(url, token, execution), receipt_id)
         if not recorded:
             raise ValueError("Runtime did not expose the recorded handoff receipt")
-        _validate_receipt(_sealed_signal(url, token, execution, recorded), execution, offer_id,
-                          actor, offer_signal["source"]["id"])
+        receipt_briefing = _validate_receipt(_sealed_signal(url, token, execution, recorded),
+                                              execution, offer_id, actor, offer_signal["source"]["id"])
         state = "recorded"
     result = {"format": "graphhelm-portable-v1", "phase": "receive", "state": state,
             "executionId": execution, "offerId": offer_id, "receiptId": receipt_id,
-            "recipient": actor, "offeredBriefing": offered_briefing, "briefing": briefing,
+            "recipient": actor, "offeredBriefing": offered_briefing,
+            "receiptBriefing": receipt_briefing, "briefing": briefing,
             "accepted": False, "activation": "unobserved"}
     if acknowledgement and acknowledgement.get("writeAcknowledgement") == "unobserved":
         result["writeAcknowledgement"] = "unobserved"

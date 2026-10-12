@@ -131,6 +131,8 @@ function budgetSecondsLegal(typed: string | undefined): boolean {
  * Runtime a fresh store open plus a full stream replay, so fewer, larger pages are what make a
  * big run open fast: 200 per page made a 5,000-event run cost 25 serial full replays. */
 const EVENT_PAGE_SIZE = 1000;
+/** The first work paint opens only a small tail; the complete fold still follows. */
+const FIRST_WORK_PAGE_SIZE = 64;
 /** How many tail pages are asked for at once once the first page has told us the head. */
 const EVENT_PAGE_PARALLEL = 4;
 const LIST_PAGE_SIZE = 20;
@@ -1716,7 +1718,7 @@ export default function App({
     if (!client || !selected || head === undefined) return;
     let cancelled = false;
     setRecentTaskGraphs(null);
-    void client.getEvents(selected, { after: Math.max(0, head - EVENT_PAGE_SIZE), limit: EVENT_PAGE_SIZE })
+    void client.getEvents(selected, { after: Math.max(0, head - FIRST_WORK_PAGE_SIZE), limit: FIRST_WORK_PAGE_SIZE })
       .then((page) => readTaskEventRecords({ executionId: selected, events: page.events, readEvidence: openEvidence }))
       .then((records) => {
         if (!cancelled && clientRef.current === client && selectedRef.current === selected)

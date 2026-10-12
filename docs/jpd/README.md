@@ -100,7 +100,7 @@ All take `--json` for the machine-readable envelope.
 | `graphhelm journey preview <id> --project .` | Plays a flow in the background (never proof); read it with `--read`, release a held destructive act with `--confirm`. |
 | `graphhelm journey approve <id> --token-file .graphhelm/events.token --project .` | The owner approves the flow at HEAD; commit the result. |
 | `graphhelm journey replay <id> --project .` | Replays an approved browser flow with the installed observer. |
-| `graphhelm keel test validation --repo .` | Runs every journey path at committed HEAD in isolation. Exit 0 when every path of an approved flow is `completed`; 2 otherwise, with diagnostic `GHCLI039_KEEL_VALIDATION_BLOCKED` and `data.blockingReasons` naming why (for example `flow <id>: flow_not_approved` for a draft, or `execution_failed`). |
+| `graphhelm keel test validation --repo .` | Runs every journey path at committed HEAD in isolation. Exit 0 when every path of an approved flow is `completed`; 2 otherwise, with diagnostic `GHCLI039_KEEL_VALIDATION_BLOCKED` and `data.blockingReasons` naming why (for example `flow <id>: execution_failed, <detail>, flow_not_approved` for a failed draft: the concrete cause first, the draft beside it). |
 | `graphhelm keel test sabotage --repo . --patch <break.diff>` | Applies a product-breaking patch in a temporary worktree and reruns validation. |
 
 Sabotage verdicts (only `caught` exits 0; every other verdict exits 2):

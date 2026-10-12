@@ -467,13 +467,13 @@ pub(crate) fn run(repo: &Path) -> Outcome {
             paths.push(path_entry(id, &path, state, collection));
         }
         if !successful {
-            // A draft plays in validation but is never proof: say so instead of a bare exit 2.
-            let reason = if flow["status"] == "approved" {
-                "execution_failed"
-            } else {
-                "flow_not_approved"
-            };
-            let mut failure = json!({"flow":id,"reason":reason,"status":flow["status"],"result":result["result"],"detail":result["reason"]});
+            // The concrete cause stays the reason; a draft adds `flow_not_approved` beside it,
+            // never in its place, because a draft is never proof.
+            let mut reasons = vec!["execution_failed"];
+            if flow["status"] != "approved" {
+                reasons.push("flow_not_approved");
+            }
+            let mut failure = json!({"flow":id,"reason":"execution_failed","reasons":reasons,"status":flow["status"],"result":result["result"],"detail":result["reason"]});
             if !result["launchLog"].is_null() {
                 failure["launchLog"] = result["launchLog"].clone();
             }
@@ -662,10 +662,17 @@ pub(crate) fn run(repo: &Path) -> Outcome {
     };
     let mut blocking = Vec::new();
     for failure in &failures {
+        let mut why: Vec<&str> = failure["reasons"]
+            .as_array()
+            .map(|reasons| reasons.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_else(|| vec![failure["reason"].as_str().unwrap_or_default()]);
+        if let Some(detail) = failure["detail"].as_str() {
+            why.insert(1, detail);
+        }
         blocking.push(format!(
             "flow {}: {}",
             failure["flow"].as_str().unwrap_or_default(),
-            failure["reason"].as_str().unwrap_or_default()
+            why.join(", ")
         ));
     }
     if paths.is_empty() {

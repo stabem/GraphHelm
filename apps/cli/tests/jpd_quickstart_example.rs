@@ -89,8 +89,14 @@ fn the_quickstart_example_validates_green_and_its_sabotage_is_caught() {
     let (code, report) = graphhelm(root, &["keel", "test", "validation", "--repo", "."]);
     assert_eq!(code, 2, "{report}");
     // ml-saas trial: the exit 2 must say why (a draft), not only `ok: false`.
+    // The concrete cause stays first; the draft is named beside it, never instead of it.
     assert_eq!(
-        report["data"]["failures"][0]["reason"], "flow_not_approved",
+        report["data"]["failures"][0]["reason"], "execution_failed",
+        "{report}"
+    );
+    assert_eq!(
+        report["data"]["failures"][0]["reasons"],
+        serde_json::json!(["execution_failed", "flow_not_approved"]),
         "{report}"
     );
     assert_eq!(

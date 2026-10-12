@@ -82,6 +82,21 @@ describe("MissionGraph", () => {
     expect(ins).toHaveTextContent("Journey replay · step 2Needs you · data-changing");
   });
 
+  it("lights proof only from a replay-proven step and leaves owner approval unrecorded", () => {
+    setup({ mission: { ...mission, steps: [mission.steps[0], { ...mission.steps[1], status: "proven" }] }, selectedTaskKey: "k564" });
+    const ladder = screen.getByRole("list", { name: "How far it got" });
+    expect(within(ladder).getByText("Proven")).toHaveAttribute("data-lit", "true");
+    expect(within(ladder).getByText("Seen by you")).toHaveAttribute("data-lit", "false");
+    expect(within(ladder).getByText("Seen by you")).toHaveAttribute("title", "not recorded yet: the owner's approval of this step is not in the records");
+  });
+
+  it("shows an assigned review as pending, not approved", () => {
+    setup({ mission: { ...mission, tasks: [{ ...blocked, blocked: false, blockedBy: null }] }, selectedTaskKey: "k560" });
+    const reviewed = within(screen.getByRole("list", { name: "How far it got" })).getByText("Reviewed");
+    expect(reviewed).toHaveAttribute("data-lit", "false");
+    expect(reviewed).toHaveAttribute("data-pending", "true");
+  });
+
   it("a blocked task names the BLOCK, its reviewer and head", () => {
     setup({ mission: { ...mission, tasks: [blocked] }, selectedTaskKey: "k560" });
     const ins = screen.getByRole("complementary", { name: "Selected work" });

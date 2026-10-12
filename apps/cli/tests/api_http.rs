@@ -2005,6 +2005,75 @@ fn status_over_http_matches_the_cli_and_the_events_tail_pages() {
     );
 }
 
+/// A page at the tail must stay responsive when the verified journal is large. The fixture
+/// uses one append, so setup does not repeatedly scan the growing journal. Cost: one local
+/// 6,000-event append and three loopback HTTP requests, no external service.
+#[test]
+fn a_bounded_events_tail_stays_fast_at_six_thousand_events() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-latency";
+    let scope = graphhelm_events::RepositoryScope::new(
+        graphhelm_protocols::WorkspaceId::parse("workspace-latency").unwrap(),
+        graphhelm_protocols::ProjectId::parse("project-latency").unwrap(),
+        Some(graphhelm_protocols::ExecutionId::parse(execution).unwrap()),
+    );
+    let store = graphhelm_events::LocalEventRepository::open(
+        &events,
+        std::sync::Arc::new(WallClock),
+        std::sync::Arc::new(Ids::default()),
+    )
+    .unwrap();
+    let actor = graphhelm_protocols::PersistedActor::new(
+        graphhelm_protocols::PersistedActorType::System,
+        graphhelm_protocols::ActorId::parse("system-latency").unwrap(),
+    );
+    let new_events = (1..=6_000)
+        .map(|sequence| {
+            graphhelm_protocols::NewEvent::new(
+                graphhelm_protocols::OpaqueId::parse(format!("latency-{sequence}")).unwrap(),
+                actor.clone(),
+                graphhelm_protocols::Sensitivity::Internal,
+                graphhelm_protocols::EventKind::WakeLease(graphhelm_protocols::WakeLease {
+                    execution_id: graphhelm_protocols::OpaqueId::parse(execution).unwrap(),
+                    session_id: graphhelm_protocols::OpaqueId::parse(format!("session-{sequence}"))
+                        .unwrap(),
+                    cursor: 1,
+                    rendezvous_id: graphhelm_protocols::OpaqueId::parse(format!("rdv-{sequence}"))
+                        .unwrap(),
+                    matures_in_seconds: None,
+                }),
+                vec![],
+                vec![],
+            )
+        })
+        .collect();
+    let request = graphhelm_events::PreparedAppend::new(
+        scope,
+        graphhelm_protocols::OpaqueId::parse(execution).unwrap(),
+        1,
+        new_events,
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    assert_eq!(store.append_atomic(&request).unwrap().len(), 6_000);
+    drop(store);
+
+    let (_guard, base, token) = serve(&events);
+    for url in [
+        format!("{base}/v1/executions/{execution}/events?after=5999&limit=1"),
+        format!("{base}/v1/executions/{execution}/events?after=0&limit=1"),
+        format!("{base}/health"),
+    ] {
+        let started = std::time::Instant::now();
+        let reply = get_json(&url, Some(&token));
+        let elapsed = started.elapsed();
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert!(elapsed < std::time::Duration::from_millis(200), "{url} took {elapsed:?}");
+    }
+}
+
 /// #1063: `GET /v1/executions/{id}/briefing` is `execution briefing`'s own read - same store,
 /// same bytes. The CLI reads the store directly; the API reads it through the server; a
 /// harness on either side gets the same briefing.

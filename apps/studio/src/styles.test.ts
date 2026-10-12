@@ -284,4 +284,16 @@ describe("the Graph WORK rail fits a narrow viewport (#884)", () => {
     expect(mission).toMatch(/\.mv-journeys\s*\{[^}]*max-width:\s*100%/s);
     expect(mission).toMatch(/\.mv-groups\s*\{[^}]*max-width:\s*100%/s);
   });
+
+  it("keeps the mobile graph inside the viewport and scrollable within its box", () => {
+    const mission = STYLESHEETS["./components/mission-view.css"];
+    const graph = STYLESHEETS["./components/mission-graph.css"];
+    expect(mission).toMatch(/\.mv-body\s*\{[^}]*min-width:\s*0/s);
+    expect(mission).toMatch(/\.mv-graph\s*\{[^}]*width:\s*100%[^}]*max-width:\s*100%/s);
+    expect(graph).toMatch(/\.mg-scroll\s*\{[^}]*overflow-x:\s*auto/s);
+  });
+
+  it("lets the mobile project title yield to the attention pill", () => {
+    expect(CSS).toMatch(/\.topbar-mission\s+\.run-project\s*\{[^}]*min-width:\s*0[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/s);
+  });
 });

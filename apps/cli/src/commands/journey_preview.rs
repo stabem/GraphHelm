@@ -194,8 +194,8 @@ fn alive(pid: u64) -> Liveness {
     }
     #[cfg(not(windows))]
     {
-        let path = Path::new(&format!("/proc/{pid}"));
-        match std::fs::metadata(path) {
+        let path = format!("/proc/{pid}");
+        match std::fs::metadata(&path) {
             Ok(_) => Liveness::Alive,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Liveness::Dead,
             Err(_) => Liveness::Unknown,

@@ -65,3 +65,31 @@ it has no required consumer. Record the evidence in the PR's `Retirement:` secti
 This command supplements the [Keel retirement rule](KEEL_SPEC.md); it does not change
 [`keel check`](KEEL_CHECK.md) into a dead-code detector. A clean report proves only the declared
 journeys and the collection limits reported for that run.
+
+## Sabotage proof: `keel test sabotage`
+
+```sh
+graphhelm --json keel test sabotage --repo <project> --patch <break.diff>
+```
+
+Validation shows that journeys run; sabotage shows that they would notice a broken product. In a
+temporary detached `git worktree` of HEAD (the working tree is never touched, and the worktree is
+always removed), the command runs the same journey validation, applies the patch with `git apply`,
+and runs it again. Green means every declared path completed; coverage completeness is not
+required. The `verdict` is:
+
+- `caught` (exit 0): the same declared paths ran after the patch and at least one executed and
+  failed (`failed`, or `drift` when an expected screen was missing); `failing` lists them.
+- `missed`: every path stayed green. The journeys do not observe the patched code.
+- `no_journey_ran`: after the patch there was no well-formed validation report, or its paths were
+  only `not_run` or `held`. Nothing observed the break.
+- `journey_set_changed`: the patch changed which journey paths are declared.
+- `patch_touches_observer`: the patch edits `.graphhelm/` (journeys or observers). Sabotage must
+  break the product, not the test. Checked with `git apply --numstat` before anything runs.
+- `baseline_not_green`: validation was not green before the patch.
+- `patch_not_applicable`: `git apply` refused the patch at HEAD.
+
+Every verdict except `caught` exits 2. The worktree gets copies of the ignored
+`.graphhelm/observers/` files and a link to the project's `node_modules`, so the journeys can run.
+
+Only committed HEAD is tested; uncommitted edits are not in the worktree.

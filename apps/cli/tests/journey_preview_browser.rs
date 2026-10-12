@@ -416,6 +416,103 @@ fn an_approved_journey_holds_before_its_destructive_act_and_plays_it_only_when_c
 #[test]
 #[ignore = "requires an explicitly observer-enabled validation project"]
 fn keel_validation_reports_called_and_untouched_fixture_functions_with_current_source_hash() {
+    let (_scratch, project, _owned_node_modules_link, preview_sentinel) = coverage_fixture();
+
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["--json", "keel", "test", "validation", "--repo"])
+        .arg(&project)
+        .output()
+        .unwrap();
+    let envelope: Value =
+        serde_json::from_slice(&output.stdout).expect("validation must return its JSON envelope");
+    let launch_log = std::fs::read_to_string(project.join("fixture-launch.log"))
+        .unwrap_or_else(|error| format!("<fixture-launch.log unavailable: {error}>"));
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{envelope}; fixture launch log:\n{launch_log}"
+    );
+    let data = &envelope["data"];
+    assert_eq!(data["failures"], json!([]), "{data}");
+    assert!(
+        data["unknown"].as_array().unwrap().iter().any(|item| {
+            item["source"] == "fixture-server.mjs"
+                || item["path"] == "fixture-server.mjs"
+                || item["reason"] == "backend_or_native_unobserved"
+        }),
+        "tracked backend launcher must remain unknown: {}",
+        data["unknown"]
+    );
+    assert_eq!(data["deadConfirmed"], json!([]), "{data}");
+    let used = data["used"].as_array().unwrap();
+    let untouched = data["notObserved"].as_array().unwrap();
+    let called = used
+        .iter()
+        .find(|item| item["name"] == "calledFunction")
+        .expect("called generated function must be used");
+    assert_eq!(called["source"], "app.js", "{called}");
+    assert_eq!(
+        called["sourceSha256"],
+        hex::encode(sha2::Sha256::digest(
+            std::fs::read(project.join("app.js")).unwrap(),
+        )),
+        "source association must use the current file hash"
+    );
+    assert!(
+        untouched
+            .iter()
+            .any(|item| item["name"] == "untouchedFunction" && item["source"] == "app.js"),
+        "an untouched generated function must be a review candidate: {untouched:?}"
+    );
+
+    assert_eq!(
+        std::fs::read(&preview_sentinel).unwrap(),
+        br#"{"sentinel":"ordinary-preview"}"#,
+        "validation must not rewrite the ordinary preview cache"
+    );
+
+    // A non-isolated launcher is refused before browser execution and cannot consume the
+    // ordinary preview cache. This is a separate bounded refusal check on the same fixture.
+    std::fs::write(
+        project.join(".graphhelm/journey-fixture.json"),
+        r#"{"schema":"graphhelm-journey-fixture/1","script":"fixture.sh","isolated":false}"#,
+    )
+    .unwrap();
+    let refused = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["--json", "keel", "test", "validation", "--repo"])
+        .arg(&project)
+        .output()
+        .unwrap();
+    let refused_envelope: Value = serde_json::from_slice(&refused.stdout)
+        .expect("refused validation must return its JSON envelope");
+    assert_ne!(
+        refused.status.code(),
+        Some(0),
+        "non-isolated launcher must not pass: {refused_envelope}"
+    );
+    assert!(
+        refused_envelope["data"]["failures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| {
+                item["reason"] == "execution_failed"
+                    || item["reason"] == "launcher_not_isolated"
+                    || item["code"] == "preview.launcher_not_isolated"
+            }),
+        "non-isolated launcher refusal must be reported: {}",
+        refused_envelope["data"]
+    );
+    assert_eq!(
+        std::fs::read(&preview_sentinel).unwrap(),
+        br#"{"sentinel":"ordinary-preview"}"#,
+        "refused validation must preserve the ordinary preview cache"
+    );
+}
+
+/// The isolated coverage fixture: a committed Git project whose one journey path clicks the
+/// `Run` button served by `fixture-server.mjs` and loads `app.js`. Shared by validation and sabotage.
+fn coverage_fixture() -> (tempfile::TempDir, PathBuf, OwnedNodeModulesLink, PathBuf) {
     let toolchain = PathBuf::from(
         std::env::var_os("GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT")
             .expect("OBSERVER_MISSING: GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT"),
@@ -443,7 +540,7 @@ fn keel_validation_reports_called_and_untouched_fixture_functions_with_current_s
         .status()
         .unwrap();
     assert!(linked.success(), "OBSERVER_MISSING: toolchain link");
-    let _owned_node_modules_link = OwnedNodeModulesLink(node_modules_link);
+    let owned_node_modules_link = OwnedNodeModulesLink(node_modules_link);
     std::fs::write(
         project.join(".graphhelm/observers/journey_driver.mjs"),
         DRIVER,
@@ -539,95 +636,83 @@ if (mode === 'up') {
         &project,
         &["commit", "--quiet", "--no-verify", "-m", "coverage fixture"],
     );
-
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args(["--json", "keel", "test", "validation", "--repo"])
-        .arg(&project)
-        .output()
-        .unwrap();
-    let envelope: Value =
-        serde_json::from_slice(&output.stdout).expect("validation must return its JSON envelope");
-    let launch_log = std::fs::read_to_string(project.join("fixture-launch.log"))
-        .unwrap_or_else(|error| format!("<fixture-launch.log unavailable: {error}>"));
+    (scratch, project, owned_node_modules_link, preview_sentinel)
+}
+/// #914: a green journey must go red when the code it observes is broken. Sabotage applies a patch
+/// in a temporary worktree of HEAD; the plausible regression is a verdict computed from the
+/// unpatched tree, or a patched path that still reads as green. Breaking the served heading the
+/// journey expects must be `caught`; changing a function the journey never calls must be `missed`.
+/// Cost: two isolated launcher runs per patch (baseline and sabotaged), one Chromium each.
+#[test]
+#[ignore = "requires an explicitly observer-enabled validation project"]
+fn keel_sabotage_catches_a_patch_the_journey_observes_and_misses_one_it_does_not() {
+    let (scratch, project, _owned_node_modules_link, _) = coverage_fixture();
+    let head_before = std::fs::read(project.join("app.js")).unwrap();
+    // Each patch is the Git diff of one in-place edit, reverted before sabotage runs.
+    for (name, file, from, to, verdict, code) in [
+        // The journey expects this heading: breaking it must be caught.
+        (
+            "covered",
+            "fixture-server.mjs",
+            "<h1>Coverage fixture</h1>",
+            "<h1>Broken fixture</h1>",
+            "caught",
+            0,
+        ),
+        // The journey never calls this function: changing it must be missed.
+        (
+            "uncovered",
+            "app.js",
+            "return 'never';",
+            "return 'sabotaged';",
+            "missed",
+            2,
+        ),
+        // Editing the journey itself is not a product break.
+        (
+            "observer",
+            ".graphhelm/journeys/coverage.journey.yaml",
+            "Coverage fixture",
+            "Other",
+            "patch_touches_observer",
+            2,
+        ),
+    ] {
+        let target = project.join(file);
+        let original = std::fs::read_to_string(&target).unwrap();
+        assert!(original.contains(from), "{name}: fixture text moved");
+        std::fs::write(&target, original.replacen(from, to, 1)).unwrap();
+        let diff = Command::new("git")
+            .arg("-C")
+            .arg(&project)
+            .args(["diff", "--", file])
+            .output()
+            .unwrap();
+        std::fs::write(&target, &original).unwrap();
+        let patch_path = scratch.path().join(format!("{name}.diff"));
+        std::fs::write(&patch_path, &diff.stdout).unwrap();
+        let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args(["--json", "keel", "test", "sabotage", "--repo"])
+            .arg(&project)
+            .arg("--patch")
+            .arg(&patch_path)
+            .output()
+            .unwrap();
+        let envelope: Value =
+            serde_json::from_slice(&output.stdout).expect("sabotage must return its JSON envelope");
+        assert_eq!(envelope["data"]["verdict"], verdict, "{name}: {envelope}");
+        assert_eq!(output.status.code(), Some(code), "{name}: {envelope}");
+        println!("{name}: {envelope}");
+        if verdict == "caught" {
+            assert!(
+                !envelope["data"]["failing"].as_array().unwrap().is_empty(),
+                "{envelope}"
+            );
+        }
+    }
     assert_eq!(
-        output.status.code(),
-        Some(0),
-        "{envelope}; fixture launch log:\n{launch_log}"
-    );
-    let data = &envelope["data"];
-    assert_eq!(data["failures"], json!([]), "{data}");
-    assert!(
-        data["unknown"].as_array().unwrap().iter().any(|item| {
-            item["source"] == "fixture-server.mjs"
-                || item["path"] == "fixture-server.mjs"
-                || item["reason"] == "backend_or_native_unobserved"
-        }),
-        "tracked backend launcher must remain unknown: {}",
-        data["unknown"]
-    );
-    assert_eq!(data["deadConfirmed"], json!([]), "{data}");
-    let used = data["used"].as_array().unwrap();
-    let untouched = data["notObserved"].as_array().unwrap();
-    let called = used
-        .iter()
-        .find(|item| item["name"] == "calledFunction")
-        .expect("called generated function must be used");
-    assert_eq!(called["source"], "app.js", "{called}");
-    assert_eq!(
-        called["sourceSha256"],
-        hex::encode(sha2::Sha256::digest(
-            std::fs::read(project.join("app.js")).unwrap(),
-        )),
-        "source association must use the current file hash"
-    );
-    assert!(
-        untouched
-            .iter()
-            .any(|item| item["name"] == "untouchedFunction" && item["source"] == "app.js"),
-        "an untouched generated function must be a review candidate: {untouched:?}"
-    );
-
-    assert_eq!(
-        std::fs::read(&preview_sentinel).unwrap(),
-        br#"{"sentinel":"ordinary-preview"}"#,
-        "validation must not rewrite the ordinary preview cache"
-    );
-
-    // A non-isolated launcher is refused before browser execution and cannot consume the
-    // ordinary preview cache. This is a separate bounded refusal check on the same fixture.
-    std::fs::write(
-        project.join(".graphhelm/journey-fixture.json"),
-        r#"{"schema":"graphhelm-journey-fixture/1","script":"fixture.sh","isolated":false}"#,
-    )
-    .unwrap();
-    let refused = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args(["--json", "keel", "test", "validation", "--repo"])
-        .arg(&project)
-        .output()
-        .unwrap();
-    let refused_envelope: Value = serde_json::from_slice(&refused.stdout)
-        .expect("refused validation must return its JSON envelope");
-    assert_ne!(
-        refused.status.code(),
-        Some(0),
-        "non-isolated launcher must not pass: {refused_envelope}"
-    );
-    assert!(
-        refused_envelope["data"]["failures"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|item| {
-                item["reason"] == "execution_failed"
-                    || item["reason"] == "launcher_not_isolated"
-                    || item["code"] == "preview.launcher_not_isolated"
-            }),
-        "non-isolated launcher refusal must be reported: {}",
-        refused_envelope["data"]
-    );
-    assert_eq!(
-        std::fs::read(&preview_sentinel).unwrap(),
-        br#"{"sentinel":"ordinary-preview"}"#,
-        "refused validation must preserve the ordinary preview cache"
+        std::fs::read(project.join("app.js")).unwrap(),
+        head_before,
+        "sabotage must not touch the user's tree"
     );
 }

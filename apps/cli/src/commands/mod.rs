@@ -20,6 +20,7 @@ mod journey_replay;
 mod journey_validate;
 mod journeys;
 mod keel;
+mod keel_sabotage;
 mod keel_validation;
 mod lint;
 mod mcp;
@@ -647,6 +648,7 @@ pub fn run(command: TopLevel) -> Outcome {
         TopLevel::Keel(args) => match args.command {
             KeelCommand::Test { command } => match command {
                 KeelTestCommand::Validation { repo } => keel_validation::run(&repo),
+                KeelTestCommand::Sabotage { repo, patch } => keel_sabotage::run(&repo, &patch),
             },
             KeelCommand::Index { repo, out } => {
                 keel::run(keel_contract_index::Operation::Scan { repo, out })

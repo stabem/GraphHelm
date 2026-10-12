@@ -450,6 +450,7 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
                         <span className="mv-journey-title">{g.label}</span>
                       </button>
                       <GroupProgress states={g.tasks.map((t) => stageState(g.stages[t.key]!, t))} />
+                      {g.tasks.length === 0 && g.releasedKeys.length > 0 && <span className="mv-journey-meta">released</span>}
                     </div>
                   );
                   return (
@@ -458,6 +459,7 @@ export function MissionView({ journeys: compiledJourneys, tasks, taskRecords = [
                         <span className="mv-journey-title">{g.label}</span>
                       </button>
                       <GroupProgress states={g.tasks.map((t) => stageState(g.stages[t.key]!, t))} />
+                      {g.tasks.length === 0 && g.releasedKeys.length > 0 && <span className="mv-journey-meta">released</span>}
                       <span className="mv-journey-meta">{`${g.issue !== null ? `issue #${g.issue}` : "no issue"} · ${prs} ${prs === 1 ? "PR" : "PRs"}`}</span>
                       <div className="mv-chips">
                         {g.tasks.map((t, i) => {

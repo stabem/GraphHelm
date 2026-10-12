@@ -112,7 +112,9 @@ export function buildWorkGroups(tasks: TaskState[], journeys: JourneyView[], run
   }
   const groups = [...byIssue.entries()].map(([key, rows]): WorkGroup => {
     const issue = rows[0]!.issue;
-    const sorted = [...rows].sort(byPr);
+    // Released pre-PR claims are history, not slices of the issue's active graph.
+    const visible = rows.filter((r) => !(r.pr === null && r.releasedBy !== undefined));
+    const sorted = [...visible].sort(byPr);
     const named = rows.find((r) => r.title);
     return {
       key, issue,
@@ -121,12 +123,12 @@ export function buildWorkGroups(tasks: TaskState[], journeys: JourneyView[], run
       tasks: sorted.map(toMissionTask),
       stages: Object.fromEntries(sorted.map((t) => [t.key, workStage(t, proven.has(t.key))])),
       journeyIds: [...new Set(sorted.flatMap((t) => t.journeys))],
-      open: rows.some((r) => r.step !== "merged" && r.releasedBy === undefined),
+      open: visible.some((r) => r.step !== "merged" && r.releasedBy === undefined),
       releasedKeys: rows.filter((r) => r.releasedBy !== undefined).map((r) => r.key),
       latest: Math.max(...rows.map((r) => r.lastSequence ?? 0)),
       summary: sorted.find((r) => r.summary)?.summary ?? null,
-      focus: focusTask(rows),
-      rows: orderRows(rows).map((t) => ({ ...prPath(t, proven.has(t.key)), open: t.step !== "merged" && t.releasedBy === undefined, task: toMissionTask(t) })),
+      focus: focusTask(visible),
+      rows: orderRows(visible).map((t) => ({ ...prPath(t, proven.has(t.key)), open: t.step !== "merged" && t.releasedBy === undefined, task: toMissionTask(t) })),
     };
   });
   return groups.sort((a, b) => Number(b.open) - Number(a.open) || b.latest - a.latest);

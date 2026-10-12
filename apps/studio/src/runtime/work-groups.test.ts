@@ -33,6 +33,21 @@ describe("workStage", () => {
 });
 
 describe("buildWorkGroups", () => {
+  it("excludes released PR-less claims from a closed issue's progress and graph", () => {
+    const merged = task("merged", { issue: 883, pr: 900, step: "merged", mergeSha: "abc" });
+    const released = task("released", { issue: 883, releasedBy: "supervisor", lastSequence: 2 });
+    const mixed = buildWorkGroups([merged, released], [])[0]!;
+    expect(mixed.tasks.map((t) => t.key)).toEqual(["merged"]);
+    expect(mixed.rows.map((r) => r.key)).toEqual(["merged"]);
+    expect(mixed.stages).toEqual({ merged: "merged" });
+    expect(mixed.releasedKeys).toEqual(["released"]);
+
+    const onlyReleased = buildWorkGroups([released], [])[0]!;
+    expect(onlyReleased.tasks).toEqual([]);
+    expect(onlyReleased.rows).toEqual([]);
+    expect(onlyReleased.stages).toEqual({});
+    expect(onlyReleased.open).toBe(false);
+  });
   it("groups by issue with the issue title, PR order and the union of journeys", () => {
     const groups = buildWorkGroups([
       task("p2", { issue: 519, pr: 578, title: "Watch plays", journeys: ["watch"] }),

@@ -289,7 +289,7 @@ describe("the Graph WORK rail fits a narrow viewport (#884)", () => {
     const mission = STYLESHEETS["./components/mission-view.css"];
     const graph = STYLESHEETS["./components/mission-graph.css"];
     expect(mission).toMatch(/\.mv-body\s*\{[^}]*min-width:\s*0/s);
-    expect(mission).toMatch(/\.mv-graph\s*\{[^}]*width:\s*100%[^}]*max-width:\s*100%/s);
+    expect(mission).toMatch(/\.mv\s+\.mg-graph\s*\{[^}]*width:\s*100%[^}]*max-width:\s*100%/s);
     expect(graph).toMatch(/\.mg-scroll\s*\{[^}]*overflow-x:\s*auto/s);
   });
 

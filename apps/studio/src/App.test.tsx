@@ -683,12 +683,13 @@ describe("live team layout", () => {
 });
 
 /** The ordinary loop: the dev server hands the page a token and it opens connected. */
-async function open(client: ReturnType<typeof stubClient>, modelContext: ModelContextLike | null = null, conversation = true) {
+async function open(client: ReturnType<typeof stubClient>, modelContext: ModelContextLike | null = null, conversation = true, pollIntervalMs = 4000) {
   render(
     <App
       createClient={() => client as unknown as RuntimeClient}
       modelContext={modelContext}
       session={async () => ({ token: "local-token", project: "dale-api-base" })}
+      pollIntervalMs={pollIntervalMs}
     />,
   );
   await screen.findByLabelText("Projects");
@@ -3271,7 +3272,7 @@ describe("round-3: the rail is live and the screen belongs to one run", () => {
         return { ...STATUS, executionId: id, status: statusReads > 1 ? "paused" : "running" };
       }),
     });
-    await open(client);
+    await open(client, null, true, 40);
 
     railPending = true;
     await waitFor(() => expect(railReads).toBeGreaterThan(1));

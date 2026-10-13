@@ -114,12 +114,12 @@ class ScenarioAdapterSelection(unittest.TestCase):
 
         def observing_popen(args, *positional, **kwargs):
             command = [str(part) for part in args]
-            events = Path(command[command.index("--events") + 1]).resolve()
-            keyring = Path(command[command.index("--keyring") + 1]).resolve()
-            if events.name == "store" and len([item for item in starts if item["events"].name == "store"]) == 1:
-                source_exited_before_replacement.append(starts[0]["process"].poll() is not None)
             process = real_popen(args, *positional, **kwargs)
-            if len(command) > 2 and command[1] == "serve":
+            if len(command) > 2 and command[1] == "serve" and "--events" in command:
+                events = Path(command[command.index("--events") + 1]).resolve()
+                keyring = Path(command[command.index("--keyring") + 1]).resolve()
+                if events.name == "store" and len([item for item in starts if item["events"].name == "store"]) == 1:
+                    source_exited_before_replacement.append(starts[0]["process"].poll() is not None)
                 starts.append({
                     "process": process,
                     "events": events,

@@ -957,6 +957,9 @@ describe("opening", () => {
       />,
     );
     expect(await screen.findByLabelText(/bearer token/i)).toBeInTheDocument();
+    expect(screen.getByText(/open the complete link printed by graphhelm studio start/i)).toBeInTheDocument();
+    expect(screen.getByText(/including its \?session= part/i)).toBeInTheDocument();
+    expect(screen.queryByText(/page was not served by the studio/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 

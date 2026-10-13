@@ -342,6 +342,7 @@ export function CurrentCard({ cell: c, stage, task: t, health, pace, selected, l
   const st: NodeState = stuck ? "stalled" : fixing ? "work" : stageState(stage, t);
   const base = stuck ? "Stalled" : c.title ?? stageLabel(stage, t);
   const who = cardWho(c, stage, t);
+  const reReview = stage === "review" && Boolean(c.title?.startsWith("Re-review"));
   // The Fixing card's sub-line already names the BLOCK; its "Blocked by" flag would say it twice.
   const flag = health && !(fixing && health.flag === "blocked") ? health : null;
   const silentLane = flag?.flag === "stalled" ? flag.text.split(" silent ")[0] : null;
@@ -356,10 +357,10 @@ export function CurrentCard({ cell: c, stage, task: t, health, pace, selected, l
         <span className="mg-node-pr">{prText(t)}</span>
       </span>
       <span className="mg-node-title" title={t.title}>{t.title}</span>
-      {c.sub && <span className="mg-node-sub" title={c.sub.replace(who, "").trim()}>{c.sub.replace(who, "").trim()}</span>}
+      {c.sub && <span className="mg-node-sub" data-tone={fixing ? "danger" : "neutral"} title={c.sub}>{c.sub}</span>}
       {cardFlag && <HealthFlag health={cardFlag} time={false} />}
       <span className="mg-node-foot">
-        <WhoLine who={who} />
+        {!(reReview && c.sub) && <WhoLine who={who} />}
         {!pace && health?.elapsed && <span className="mg-node-time">{health.elapsed}</span>}
       </span>
       {pace && <PaceBlock pace={pace} label={stageLabel(stage, t)} stuck={stuck} health={health} />}

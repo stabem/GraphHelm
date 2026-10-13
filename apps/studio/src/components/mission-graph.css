@@ -158,7 +158,8 @@
 .mg-node[data-dense="true"] .mg-node-title { -webkit-line-clamp: 1; }
 .mg-node .mg-health { width: 100%; min-width: 0; }
 .mg-node .mg-health-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mg-node-sub { width: 100%; font-family: var(--mono); font-size: 10px; color: #FF8A7E; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mg-node-sub { width: 100%; font-family: var(--mono); font-size: 10px; color: #A9AEB8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mg-node-sub[data-tone="danger"] { color: #FF8A7E; }
 .mg-node-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; width: 100%; min-width: 0; }
 .mg-node-foot .mg-node-who { flex: 1 1 auto; min-width: 0; width: auto; }
 .mg-node-time { flex: none; margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: #A9AEB8; }

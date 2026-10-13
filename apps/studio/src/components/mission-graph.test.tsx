@@ -288,15 +288,38 @@ describe("PR #581's shape on the Graph (#591)", () => {
       const { container } = render(<MissionView journeys={[]} tasks={[task]} runFor={() => null} lanes={lanes} now={NOW} frameUrl={() => ""} onMarkSafe={vi.fn()} />);
       const card = container.querySelector('.mg-node[data-current="true"]')!;
       expect(card.querySelector(".mg-node-label")).toHaveTextContent("Re-review");
-      expect(card.querySelector(".mg-node-sub")).toHaveTextContent("waiting on");
-      expect(card.querySelector(".mg-node-sub")).not.toHaveTextContent("gh-claude-8");
-      expect(card.querySelector(".mg-node-who")!.textContent).toBe("gh-claude-8");
-      expect(card.querySelector(".mg-node-who")).toHaveTextContent("gh-claude-8");
+      expect(card.querySelector(".mg-node-sub")).toHaveTextContent("waiting on gh-claude-8");
+      expect(card.querySelector(".mg-node-sub")).toHaveAttribute("data-tone", "neutral");
+      expect(card.querySelector(".mg-node-who")).toBeNull();
       expect(card).toHaveTextContent("3h 00m 00s");
       expect(container).not.toHaveTextContent("Fixing");
       expect(container).not.toHaveTextContent("Blocked by");
       expect(screen.getByText("fix pushed 66613c95")).toBeInTheDocument();
     } finally { vi.useRealTimers(); }
+  });
+  it("a re-review with no assigned reviewer still names the author", async () => {
+    const { MissionView } = await import("./mission-view");
+    const t = ts("pr-no-reviewer", { issue: 986, pr: 992, prTitle: "Re-review", step: "review", lane: "codex-6", reviewers: ["codex-review"], currentReviewer: null,
+      headSha: "66613c95aa", rounds: [{ reviewer: "codex-review", headSha: "1a1a1a1a00", commentUrl: "", fixHead: "66613c95aa", blockedAt: "2026-10-09T06:30:00Z", fixedAt: "2026-10-09T09:30:00Z" }] });
+    const records = [
+      { kind: "task.pr_opened", actorId: "codex-6", sequence: 1, taskId: "issue-986", issue: 986, pr: 992, lane: "codex-6", headSha: "66613c95aa" },
+      { kind: "task.review_assigned", actorId: "coordinator", sequence: 2, taskId: "issue-986", pr: 992, headSha: "old-head", reviewer: "codex-review" },
+    ] as const;
+    const { container } = render(<MissionView journeys={[]} tasks={[t]} taskRecords={records as never} runFor={() => null} lanes={[]} now={Date.parse("2026-10-09T12:00:00Z")} frameUrl={() => ""} onMarkSafe={vi.fn()} />);
+    const card = container.querySelector('.mg-node[data-current="true"]')!;
+    expect(card.querySelector(".mg-node-sub")).toBeNull();
+    expect(card.querySelector(".mg-node-who")).toHaveTextContent("codex-6");
+  });
+  it("keeps the after BLOCK sub-line red on the author's fix card", async () => {
+    const { MissionView } = await import("./mission-view");
+    const task = ts("pr-block", { issue: 549, pr: 581, prTitle: "Fix the thing", step: "implement", lane: "gh-claude-11", reviewers: ["gh-claude-8"],
+      blockedBy: { reviewer: "gh-claude-8", headSha: "1a1a1a1a00", commentUrl: "" },
+      rounds: [{ reviewer: "gh-claude-8", headSha: "1a1a1a1a00", commentUrl: "", fixHead: null, blockedAt: "2026-10-09T06:30:00Z", fixedAt: null }],
+      clock: { since: "2026-10-09T06:30:00Z", spent: {} } });
+    const { container } = render(<MissionView journeys={[]} tasks={[task]} runFor={() => null} lanes={[]} now={Date.parse("2026-10-09T12:00:00Z")} frameUrl={() => ""} onMarkSafe={vi.fn()} />);
+    const sub = container.querySelector('.mg-node[data-current="true"] .mg-node-sub');
+    expect(sub).toHaveTextContent("after BLOCK by gh-claude-8");
+    expect(sub).toHaveAttribute("data-tone", "danger");
   });
   it("a re-review card shows the round count once, not the review total", () => {
     const rounds = [1, 2, 3].map((n) => ({ reviewer: `reviewer-${n}`, headSha: `head-${n}`, commentUrl: "", fixHead: `fix-${n}`, blockedAt: null, fixedAt: null }));

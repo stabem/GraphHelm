@@ -81,7 +81,7 @@ describe("TaskGraphs", () => {
     expect(within(design).getAllByRole("listitem")[0]).toHaveAttribute("title", "Record the plan; light Plan.");
     expect(steps(/issue #481/i)).toEqual(["Plan", "Implement", "Review", "Merge"]);
     expect(within(screen.getByRole("group", { name: /issue #481/i })).getByRole("listitem", { current: "step" })).toHaveTextContent("Implement");
-    const unplanned = within(screen.getByRole("group", { name: /PR #482/i })).getAllByRole("listitem")[0];
+    const unplanned = within(screen.getByRole("group", { name: /issue #482/i })).getAllByRole("listitem")[0];
     expect(unplanned).toHaveClass("task-node-unrecorded");
     expect(unplanned).toHaveTextContent("not recorded");
   });
@@ -110,7 +110,7 @@ describe("TaskGraphs", () => {
       record(3, "issue-9", "task.review_verdict", "gh-claude-5", { pr: 19, headSha: "a".repeat(40), reviewer: "gh-claude-5", verdict: "APPROVE", commentUrl }),
     ]);
     render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} />);
-    const graph = screen.getByRole("group", { name: /PR #19/i });
+    const graph = screen.getByRole("group", { name: /issue #9/i });
     expect(within(graph).getByText(/APPROVE by gh-claude-5 on aaaaaaaa, superseded by bbbbbbbb/)).toBeInTheDocument();
     expect(within(graph).queryByText(/no pr_opened record/)).toBeNull();
     expect(within(graph).getByRole("listitem", { current: "step" })).toHaveTextContent(/review/i);
@@ -123,7 +123,7 @@ describe("TaskGraphs", () => {
       record(3, "issue-9", "task.pr_opened", "gh-claude-2", { pr: 19, headSha: "b".repeat(40), journeys: [], lane: "gh-claude-2" }),
     ]);
     render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} />);
-    const graph = screen.getByRole("group", { name: /PR #19/i });
+    const graph = screen.getByRole("group", { name: /issue #9/i });
     expect(within(graph).getByRole("listitem", { current: "step" })).toHaveTextContent(/merge/i);
     expect(within(graph).getByText("gh-claude-5")).toBeInTheDocument();
     expect(within(graph).queryByText(/no pr_opened record|superseded/)).toBeNull();
@@ -554,13 +554,13 @@ describe("TaskGraphs critic rounds without a task (#562)", () => {
     const { rerender } = render(<TaskGraphs tasks={foldTaskEvents([round])} onOpenJourney={vi.fn()} />);
     const groups = screen.getAllByRole("group");
     expect(groups).toHaveLength(1);
-    expect(groups[0]).toHaveAttribute("aria-label", "No task");
+    expect(groups[0]).toHaveAttribute("aria-label", "issue #900");
     expect(within(groups[0]).getByText("issue-900 · gh-claude-3 · design approved in round 1, 9/10")).toBeInTheDocument();
     expect(screen.queryByText("Implement")).toBeNull();
 
     const claimed = record(2, "issue-900", "task.claimed", "gh-claude-3", { issue: 900, lane: "gh-claude-3", branch: "issue-900-x" });
     rerender(<TaskGraphs tasks={foldTaskEvents([round, claimed])} onOpenJourney={vi.fn()} />);
-    expect(screen.queryByRole("group", { name: "No task" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "issue #900" })).toBeNull();
     expect(screen.getByText("design approved in round 1, 9/10")).toBeInTheDocument();
     expect(screen.getAllByRole("group").some((group) => /#900$/.test(group.getAttribute("aria-label") ?? ""))).toBe(true);
   });

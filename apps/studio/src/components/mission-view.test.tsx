@@ -14,7 +14,7 @@ const journeys: JourneyView[] = [{
 describe("MissionView", () => {
   // Cost: one jsdom render with no network or browser session.
   it("marks recent work partial once and removes the loading line above it (#993)", () => {
-    render(<MissionView journeys={journeys} tasks={[{ key: "recent", taskId: "issue-913", pr: 914 }] as unknown as TaskState[]} lanes={[]} now={0}
+    render(<MissionView journeys={journeys} tasks={[{ key: "recent", taskId: "issue-913", issue: 913, pr: 914, journeys: [], step: "implement" }] as unknown as TaskState[]} lanes={[]} now={0}
       runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} historyLoading partial />);
 
     expect(screen.getAllByText("Showing recent work · still reading the history")).toHaveLength(1);

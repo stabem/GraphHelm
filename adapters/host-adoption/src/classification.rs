@@ -54,6 +54,8 @@ pub struct Resolution {
     pub item: String,
     pub decision: Decision,
     pub after: Option<Vec<u8>>,
+    /// Optional freshness evidence for an explicitly reviewed plugin-backed cleanup.
+    pub guard: Option<Value>,
 }
 
 struct Reviewed {
@@ -236,13 +238,17 @@ pub fn resolve(inventory: &Value, resolutions: &[Resolution]) -> Result<Value, A
                     "decision": "replace",
                     "protected": false,
                 }));
-                operations.push(json!({
+                let mut operation = json!({
                     "root": item.root,
                     "path": item.path,
                     "beforeDigest": before,
                     "afterDigest": after_digest,
                     "after": after_text,
-                }));
+                });
+                if let Some(guard) = &resolution.guard {
+                    operation["pluginGuard"] = guard.clone();
+                }
+                operations.push(operation);
             }
             Decision::Disable | Decision::Unresolved => return Err(review_required()),
         }

@@ -79,7 +79,7 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
         })?;
         let mut resolutions = Vec::new();
         for text in &args.resolve {
-            if let Some(resolution) = parse_resolution(text, args, &registration)? {
+            if let Some(resolution) = parse_resolution(text, args, &registration, &inventory)? {
                 resolutions.push(resolution);
             }
         }
@@ -226,8 +226,26 @@ fn suggestions(inventory: &serde_json::Value) -> Vec<String> {
         })
     };
     let mut out = Vec::new();
-    if present("home/.claude.json") {
+    let has_plugin_scope = |scope: &str| {
+        inventory["spec"]["hosts"].as_array().is_some_and(|hosts| {
+            hosts.iter().any(|host| {
+                host["host"] == "claude"
+                    && host["pluginContributions"]
+                        .as_array()
+                        .is_some_and(|v| v.iter().any(|item| item["scope"] == scope))
+            })
+        })
+    };
+    let user_plugin = has_plugin_scope("user");
+    let project_plugin = has_plugin_scope("project") || has_plugin_scope("user");
+    if present("home/.claude.json") && !user_plugin {
         out.push("home/.claude.json=register-mcp".to_owned());
+    }
+    if user_plugin && present("home/.claude.json") {
+        out.push("home/.claude.json=use-plugin-mcp".to_owned());
+    }
+    if project_plugin && present("project/.mcp.json") {
+        out.push("project/.mcp.json=use-plugin-mcp".to_owned());
     }
     for id in ["home/.claude/CLAUDE.md", "home/AGENTS.md"] {
         if present(id) {
@@ -259,10 +277,38 @@ struct Registrations {
     user: serde_json::Value,
 }
 
+fn remove_registration(
+    before: &[u8],
+) -> Result<Option<Vec<u8>>, graphhelm_protocols::adoption::AdoptionError> {
+    use graphhelm_protocols::adoption::{AdoptionError, AdoptionReason};
+    let invalid = || AdoptionError {
+        reason: AdoptionReason::InvalidConfiguration,
+    };
+    let bytes = before.strip_prefix(b"\xef\xbb\xbf").unwrap_or(before);
+    let mut document: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    let map = document.as_object_mut().ok_or_else(invalid)?;
+    let servers = map
+        .get_mut("mcpServers")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(invalid)?;
+    let entry = servers.get("graphhelm").ok_or_else(invalid)?;
+    if !graphhelm_host_adoption::is_graphhelm_registration(entry) {
+        return Err(invalid());
+    }
+    servers.remove("graphhelm");
+    if servers.is_empty() {
+        map.remove("mcpServers");
+    }
+    let mut after = serde_json::to_vec_pretty(&document).map_err(|_| invalid())?;
+    after.push(b'\n');
+    Ok(Some(after))
+}
+
 fn parse_resolution(
     text: &str,
     args: &AdoptionSetupArgs,
     registrations: &Registrations,
+    inventory: &serde_json::Value,
 ) -> Result<Option<graphhelm_host_adoption::Resolution>, graphhelm_protocols::adoption::AdoptionError>
 {
     use graphhelm_policy::adoption::Decision;
@@ -278,6 +324,7 @@ fn parse_resolution(
         item: item.to_owned(),
         decision,
         after,
+        guard: None,
     };
     match decision {
         "keep" => Ok(Some(resolution(Decision::Keep, None))),
@@ -306,6 +353,45 @@ fn parse_resolution(
             let before = read_bytes(&item_path(item, args).ok_or_else(invalid)?)?;
             Ok(merge_registration(&before, registration)?
                 .map(|after| resolution(Decision::Replace, Some(after))))
+        }
+        "use-plugin-mcp" => {
+            if item != "home/.claude.json" && item != "project/.mcp.json" {
+                return Err(invalid());
+            }
+            let target_scope = if item.starts_with("home/") {
+                "user"
+            } else {
+                "project"
+            };
+            let contribution = inventory["spec"]["hosts"]
+                .as_array()
+                .and_then(|hosts| hosts.iter().find(|h| h["host"] == "claude"))
+                .and_then(|h| h["pluginContributions"].as_array())
+                .and_then(|v| {
+                    let matches = v
+                        .iter()
+                        .filter(|item| item["scope"] == target_scope)
+                        .collect::<Vec<_>>();
+                    let matches = if matches.is_empty() && target_scope == "project" {
+                        v.iter()
+                            .filter(|item| item["scope"] == "user")
+                            .collect::<Vec<_>>()
+                    } else {
+                        matches
+                    };
+                    (matches.len() == 1).then(|| matches[0])
+                })
+                .ok_or_else(invalid)?;
+            let before = read_bytes(&item_path(item, args).ok_or_else(invalid)?)?;
+            let after = remove_registration(&before)?.ok_or_else(invalid)?;
+            let mut guard = contribution.clone();
+            guard["targetScope"] = json!(target_scope);
+            Ok(Some(graphhelm_host_adoption::Resolution {
+                item: item.to_owned(),
+                decision: Decision::Replace,
+                after: Some(after),
+                guard: Some(guard),
+            }))
         }
         _ => {
             let file = decision.strip_prefix("replace:").ok_or_else(invalid)?;

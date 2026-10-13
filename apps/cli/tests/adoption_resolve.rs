@@ -561,6 +561,204 @@ fn setup_registers_the_user_mcp_and_upserts_the_user_block_idempotently() {
     );
 }
 
+#[test]
+fn enabled_graphhelm_plugin_gets_explicit_duplicate_cleanup_with_freshness_guard() {
+    let (p, h) = seeded();
+    std::fs::create_dir_all(p.path().join(".claude")).unwrap();
+    let plugin = tempfile::tempdir().unwrap();
+    std::fs::write(plugin.path().join(".mcp.json"), serde_json::to_vec(&serde_json::json!({
+        "mcpServers": {"graphhelm": {"command": assert_cmd::cargo::cargo_bin!("graphhelm"), "args": ["mcp", "--discover", "--project", "${GRAPHHELM_PROJECT:-.}", "--actor", "agent-chat"]}}
+    }))).unwrap();
+    std::fs::write(
+        h.path().join(".claude/settings.json"),
+        br#"{"enabledPlugins":{"graphhelm@local":true}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        p.path().join(".claude/settings.json"),
+        br#"{"enabledPlugins":{"graphhelm@local":true}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        h.path().join(".claude/plugins/installed_plugins.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "plugins": {"graphhelm@local": [
+                {"installPath": plugin.path(), "scope": "user"},
+                {"installPath": plugin.path(), "scope": "project", "projectPath": "C:/unrelated-worktree"},
+                {"installPath": plugin.path(), "scope": "project", "projectPath": p.path()}
+            ]}
+        })),
+    )
+    .unwrap();
+    std::fs::write(h.path().join(".claude.json"), serde_json::to_vec(&serde_json::json!({
+        "keep": 1, "mcpServers": {"other": {"command":"other"}, "graphhelm": {"command": assert_cmd::cargo::cargo_bin!("graphhelm"), "args": ["mcp", "--discover", "--actor", "agent-chat"]}}
+    }))).unwrap();
+    std::fs::write(p.path().join(".mcp.json"), serde_json::to_vec(&serde_json::json!({
+        "keep": true, "mcpServers": {"graphhelm": {"command": assert_cmd::cargo::cargo_bin!("graphhelm"), "args": ["mcp", "--discover", "--project", p.path(), "--actor", "agent-chat"]}}
+    }))).unwrap();
+    let state = private_dir();
+    let out = state.path().join("plan.json");
+    let (ok, preview) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{preview}");
+    assert!(
+        preview["data"]["suggestedResolutions"]
+            .as_array()
+            .unwrap()
+            .contains(&"home/.claude.json=use-plugin-mcp".into())
+    );
+    let (ok, resolved) = json(
+        setup(p.path(), h.path())
+            .args([
+                "--resolve",
+                "project/AGENTS.md=keep",
+                "--resolve",
+                "home/.claude.json=use-plugin-mcp",
+                "--resolve",
+                "project/.mcp.json=use-plugin-mcp",
+                "--out",
+            ])
+            .arg(&out)
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{resolved}");
+    let digest = resolved["data"]["acceptance"]["digest"].as_str().unwrap();
+    let user_before = std::fs::read(h.path().join(".claude.json")).unwrap();
+    let project_before = std::fs::read(p.path().join(".mcp.json")).unwrap();
+    let plugin_mcp = plugin.path().join(".mcp.json");
+    let plugin_original = std::fs::read(&plugin_mcp).unwrap();
+    std::fs::write(&plugin_mcp, br#"{"mcpServers":{}}"#).unwrap();
+    let (ok, stale) = json(
+        setup(p.path(), h.path())
+            .args(["--state-root"])
+            .arg(state.path())
+            .args(["--apply"])
+            .arg(&out)
+            .args(["--accept"])
+            .arg(digest)
+            .output()
+            .unwrap(),
+    );
+    assert!(!ok, "stale plugin contribution was accepted: {stale}");
+    assert_eq!(stale["diagnostics"][0]["path"], "/adoption/review_required");
+    assert_eq!(
+        std::fs::read(h.path().join(".claude.json")).unwrap(),
+        user_before
+    );
+    assert_eq!(
+        std::fs::read(p.path().join(".mcp.json")).unwrap(),
+        project_before
+    );
+    std::fs::write(&plugin_mcp, &plugin_original).unwrap();
+    let settings_path = h.path().join(".claude/settings.json");
+    let settings_original = std::fs::read(&settings_path).unwrap();
+    std::fs::write(
+        &settings_path,
+        br#"{"enabledPlugins":{"graphhelm@local":false}}"#,
+    )
+    .unwrap();
+    let (ok, disabled) = json(
+        setup(p.path(), h.path())
+            .args(["--state-root"])
+            .arg(state.path())
+            .args(["--apply"])
+            .arg(&out)
+            .args(["--accept"])
+            .arg(digest)
+            .output()
+            .unwrap(),
+    );
+    assert!(!ok, "disabled plugin contribution was accepted: {disabled}");
+    assert_eq!(
+        disabled["diagnostics"][0]["path"],
+        "/adoption/review_required"
+    );
+    std::fs::write(&settings_path, settings_original).unwrap();
+    std::fs::remove_file(&plugin_mcp).unwrap();
+    let (ok, removed) = json(
+        setup(p.path(), h.path())
+            .args(["--state-root"])
+            .arg(state.path())
+            .args(["--apply"])
+            .arg(&out)
+            .args(["--accept"])
+            .arg(digest)
+            .output()
+            .unwrap(),
+    );
+    assert!(!ok, "removed plugin contribution was accepted: {removed}");
+    assert_eq!(
+        removed["diagnostics"][0]["path"],
+        "/adoption/review_required"
+    );
+    std::fs::write(&plugin_mcp, &plugin_original).unwrap();
+    let record = h.path().join(".claude/plugins/installed_plugins.json");
+    let record_original = std::fs::read(&record).unwrap();
+    std::fs::remove_file(&record).unwrap();
+    let (ok, removed_record) = json(
+        setup(p.path(), h.path())
+            .args(["--state-root"])
+            .arg(state.path())
+            .args(["--apply"])
+            .arg(&out)
+            .args(["--accept"])
+            .arg(digest)
+            .output()
+            .unwrap(),
+    );
+    assert!(!ok, "removed plugin record was accepted: {removed_record}");
+    assert_eq!(
+        removed_record["diagnostics"][0]["path"],
+        "/adoption/review_required"
+    );
+    std::fs::write(&record, record_original).unwrap();
+    let (ok, applied) = json(
+        setup(p.path(), h.path())
+            .args(["--state-root"])
+            .arg(state.path())
+            .args(["--apply"])
+            .arg(&out)
+            .args(["--accept"])
+            .arg(digest)
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{applied}");
+    let applied_bytes: Value =
+        serde_json::from_slice(&std::fs::read(h.path().join(".claude.json")).unwrap()).unwrap();
+    assert!(applied_bytes["mcpServers"]["graphhelm"].is_null());
+    assert_eq!(applied_bytes["mcpServers"]["other"]["command"], "other");
+    let project_bytes: Value =
+        serde_json::from_slice(&std::fs::read(p.path().join(".mcp.json")).unwrap()).unwrap();
+    assert!(project_bytes["mcpServers"]["graphhelm"].is_null());
+    assert_eq!(project_bytes["keep"], true);
+    let (ok, again) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{again}");
+    assert!(
+        !again["data"]["suggestedResolutions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "home/.claude.json=use-plugin-mcp"
+                || v == "project/.mcp.json=use-plugin-mcp")
+    );
+    let plan: Value = serde_json::from_slice(&std::fs::read(out).unwrap()).unwrap();
+    let operation = plan["spec"]["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["path"] == ".claude.json")
+        .unwrap();
+    assert!(
+        operation["pluginGuard"]["contributionDigest"]
+            .as_str()
+            .is_some()
+    );
+    let after: Value = serde_json::from_str(operation["after"].as_str().unwrap()).unwrap();
+    assert!(after["mcpServers"]["graphhelm"].is_null());
+    assert_eq!(after["mcpServers"]["other"]["command"], "other");
+}
+
 /// #1323: the generated decisions are bounded to their surfaces. A block cannot target a settings
 /// file, a registration cannot target an instruction file, and an unknown decision is refused.
 #[test]

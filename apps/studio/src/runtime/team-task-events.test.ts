@@ -510,6 +510,26 @@ describe("foldTaskEvents slices (#460)", () => {
     const closed = record(3, "task.closed", "codex-6", { taskId: "issue-685", pr: 685, reason: "superseded", by: 740 });
     expect(foldTaskEvents([opened, sibling, closed]).map((task) => task.pr)).toEqual([688]);
   });
+
+  it("restores only the closed PR slice reopened by its author (#1003)", () => {
+    const issue = { taskId: "issue-1003" };
+    const opened = record(1, "task.pr_opened", "codex-1", { ...issue, pr: 1004, headSha: "aaaaaaaa", journeys: [], lane: "codex-1" });
+    const sibling = record(2, "task.pr_opened", "codex-1", { ...issue, pr: 1005, headSha: "bbbbbbbb", journeys: [], lane: "codex-1" });
+    const closed = record(3, "task.closed", "coordinator", { ...issue, pr: 1004, reason: "superseded", by: 1006 });
+    const siblingClosed = record(4, "task.closed", "coordinator", { ...issue, pr: 1005, reason: "superseded", by: 1006 });
+    const reopened = record(5, "task.pr_opened", "codex-1", { ...issue, pr: 1004, headSha: "cccccccc", journeys: [], lane: "codex-1" });
+    const approved = record(6, "task.review_verdict", "codex-review", { ...issue, pr: 1004, headSha: "cccccccc", reviewer: "codex-review", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/1004#c1" });
+    const merged = record(7, "task.merged", "codex-review", { ...issue, pr: 1004, mergeSha: "dddddddd", closes: [], merger: "codex-review" });
+    const repeated = record(8, "task.pr_opened", "codex-1", { ...issue, pr: 1004, headSha: "eeeeeeee", journeys: [], lane: "codex-1" });
+
+    expect(foldTaskEvents([opened, sibling, closed, siblingClosed])).toEqual([]);
+    expect(foldTaskEvents([opened, sibling, closed, siblingClosed, reopened]))
+      .toMatchObject([{ pr: 1004, headSha: "cccccccc", step: "review" }]);
+    expect(foldTaskEvents([opened, sibling, closed, siblingClosed, reopened, approved]))
+      .toMatchObject([{ pr: 1004, headSha: "cccccccc", step: "review", currentReviewer: "codex-review" }]);
+    expect(foldTaskEvents([opened, sibling, closed, siblingClosed, reopened, approved, merged, repeated]))
+      .toMatchObject([{ pr: 1004, headSha: "cccccccc", step: "merged", mergeSha: "dddddddd" }]);
+  });
 });
 
 describe("merges recorded by another lane (#765)", () => {

@@ -1,0 +1,13 @@
+schema: graphhelm.journey-flow/1
+id: keel-task-handoff
+title: "A Codex session recovers a Claude handoff from Runtime history"
+status: draft
+approved: null
+base: http://127.0.0.1:0
+actors: [claude, codex]
+secrets: []
+risks: [persistence, compatibility]
+screens: []
+edges: []
+paths: {main: []}
+drift: []

@@ -82,6 +82,38 @@ then a `keel.surface.<kind>_over_budget` finding names both numbers.
 | 2 | A finding blocks. `ok` is false and the report is still in `data`. |
 | 3 | Input error `GHCLI031_KEEL_CHECK_INPUT`: the range is not a range, git failed, or the card is not a card. |
 
+## Reading offline review verdicts
+
+`graphhelm --json keel verdict --head <full-sha> --reviewer <session-identity> --comments <snapshot.json>`
+reads a local snapshot only. It makes no GitHub request and cannot authorize or perform a merge.
+The snapshot shape is strict JSON with exactly one top-level `comments` array; each item has only
+`id` and `body` string fields:
+
+```json
+{
+  "comments": [
+    {
+      "id": "comment-123",
+      "body": "Session: codex-review · Head: 0123abcd\n\n**APPROVE** (reviewed checks passed)"
+    }
+  ]
+}
+```
+
+The requested head must be a 40-character hexadecimal SHA. The reviewer must equal the session
+identity exactly. A comment matches only when it has exactly one `Session:` identity line equal to
+`Session: <reviewer> · Head: <first-eight-sha-characters>` and a body line starts with one of
+`APPROVE`, `APPROVE-WITH-RISK`, or `BLOCK` (optionally wrapped in `**`) followed by a word
+boundary, `:`, or `|`. This uses the repository's comment identity format,
+whose head component is the first eight SHA characters. Malformed identity lines do not match.
+Matching BLOCK comment ids are listed in `data.matchingBlockIds`; the reader does not claim a BLOCK
+was answered.
+
+The reader refuses snapshots over 1 MiB, more than 500 comments, ids over 128 printable ASCII
+bytes or duplicate ids, and bodies over 64 KiB. Unknown JSON fields and malformed JSON are input
+errors. A successful result with an empty `data.verdicts` array means no comment matched both the
+requested reviewer and head; it says nothing about merge authorization or whether a merge occurred.
+
 ## Proving new tests: `--prove-new-tests`
 
 Keel Law 3 says a test is born against a named defect. `--prove-new-tests` checks that for every new

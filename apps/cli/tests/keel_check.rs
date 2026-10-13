@@ -83,6 +83,145 @@ fn run(repo: &Path, card: Option<&Path>) -> (i32, Value) {
     (output.status.code().unwrap(), reply)
 }
 
+fn run_verdict(comments: &Path, head: &str, reviewer: &str) -> (i32, Value) {
+    let output = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args([
+            "--json",
+            "keel",
+            "verdict",
+            "--head",
+            head,
+            "--reviewer",
+            reviewer,
+            "--comments",
+        ])
+        .arg(comments)
+        .output()
+        .unwrap();
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
+        panic!(
+            "expected a structured verdict result, got: {}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    });
+    (output.status.code().unwrap_or(1), reply)
+}
+
+/// The offline reader admits only a matching reviewer and head, and exposes matching BLOCKs.
+/// Cost: six short CLI processes and one small local JSON snapshot; no server or network.
+#[test]
+fn keel_verdict_matches_only_the_requested_head_and_reviewer() {
+    let snapshot = tempfile::tempdir().unwrap();
+    let comments = snapshot.path().join("comments.json");
+    let head_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let head_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    for (body, requested_head, reviewer, comment_id, expected) in [
+        (
+            "APPROVE\n\nSession: codex-review · Head: aaaaaaaa",
+            head_a,
+            "codex-review",
+            "approval-a",
+            serde_json::json!([{"commentId":"approval-a","verdict":"APPROVE"}]),
+        ),
+        (
+            "APPROVE | looks good\n\nSession: codex-review · Head: bbbbbbbb",
+            head_b,
+            "codex-review",
+            "approval-b",
+            serde_json::json!([{"commentId":"approval-b","verdict":"APPROVE"}]),
+        ),
+        (
+            "APPROVE\n\nSession: codex-review · Head: aaaaaaaa",
+            head_b,
+            "codex-review",
+            "approval-a",
+            serde_json::json!([]),
+        ),
+        (
+            "APPROVE\n\nSession: another-reviewer · Head: bbbbbbbb",
+            head_b,
+            "codex-review",
+            "approval-b",
+            serde_json::json!([]),
+        ),
+        (
+            "APPROVE\n\nSession: codex-review Head: bbbbbbbb",
+            head_b,
+            "codex-review",
+            "approval-b",
+            serde_json::json!([]),
+        ),
+        (
+            "BLOCK: stale assumption\n\nSession: codex-review · Head: bbbbbbbb",
+            head_b,
+            "codex-review",
+            "block-b",
+            serde_json::json!([{"commentId":"block-b","verdict":"BLOCK"}]),
+        ),
+        (
+            "Session: codex-review · Head: bbbbbbbb\n\n**BLOCK**\n\nFinding",
+            head_b,
+            "codex-review",
+            "identity-first-block",
+            serde_json::json!([{"commentId":"identity-first-block","verdict":"BLOCK"}]),
+        ),
+        (
+            "Session: codex-review · Head: bbbbbbbb\n\n**BLOCK** (reason)",
+            head_b,
+            "codex-review",
+            "bold-block-with-reason",
+            serde_json::json!([{"commentId":"bold-block-with-reason","verdict":"BLOCK"}]),
+        ),
+    ] {
+        fs::write(
+            &comments,
+            serde_json::json!({"comments": [{"id": comment_id, "body": body}]}).to_string(),
+        )
+        .unwrap();
+        let (exit, reply) = run_verdict(&comments, requested_head, reviewer);
+        assert_eq!(exit, 0, "{reply}");
+        assert_eq!(reply["command"], "keel.verdict");
+        assert_eq!(reply["data"]["verdicts"], expected);
+        assert_eq!(
+            reply["data"]["matchingBlockIds"],
+            if ["block-b", "identity-first-block", "bold-block-with-reason"].contains(&comment_id) {
+                serde_json::json!([comment_id])
+            } else {
+                serde_json::json!([])
+            }
+        );
+    }
+}
+
+/// The offline reader rejects malformed and oversized snapshots before returning evidence.
+/// Cost: three short CLI processes and a local fixture up to 1 MiB; no server or network.
+#[test]
+fn keel_verdict_refuses_malformed_and_oversized_snapshots() {
+    let snapshot = tempfile::tempdir().unwrap();
+    let comments = snapshot.path().join("comments.json");
+    let head = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    fs::write(&comments, r#"{"comments":[],"unexpected":true}"#).unwrap();
+    let (exit, reply) = run_verdict(&comments, head, "codex-review");
+    assert_eq!(exit, 3);
+    assert_eq!(reply["command"], "keel.verdict");
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI031_KEEL_CHECK_INPUT");
+
+    fs::write(&comments, vec![b' '; 1024 * 1024 + 1]).unwrap();
+    let (exit, reply) = run_verdict(&comments, head, "codex-review");
+    assert_eq!(exit, 3);
+    assert_eq!(reply["command"], "keel.verdict");
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI031_KEEL_CHECK_INPUT");
+
+    fs::write(&comments, r#"{"comments":[]}"#).unwrap();
+    let (exit, reply) = run_verdict(&comments, "not-a-full-sha", "codex-review");
+    assert_eq!(exit, 3);
+    assert_eq!(reply["command"], "keel.verdict");
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI031_KEEL_CHECK_INPUT");
+}
+
 /// Validation must expose an invalid discovered flow as a failure, rather than treating a
 /// non-executed journey as clean coverage. This protects the user-visible negative-evidence
 /// boundary; existing keel check tests do not invoke the validation supervisor.

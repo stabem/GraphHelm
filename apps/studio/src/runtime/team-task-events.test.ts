@@ -138,6 +138,40 @@ describe("foldTaskEvents", () => {
     expect(state.headSha).toBe("eeeeeeee");
   });
 
+  it("keeps a BLOCK until its reviewer answers, and records approval with risk (#1002)", () => {
+    const opened = record(1, "task.pr_opened", "codex-1", { taskId: "issue-1002", pr: 1002, headSha: "aaaaaaaa", journeys: [], lane: "codex-1" });
+    const block = record(2, "task.review_verdict", "reviewer-one", { taskId: "issue-1002", pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-one", verdict: "BLOCK", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c1" });
+    const otherApproval = record(3, "task.review_verdict", "reviewer-two", { taskId: "issue-1002", pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-two", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c2" });
+    const ownApproval = record(4, "task.review_verdict", "reviewer-one", { taskId: "issue-1002", pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-one", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c3" });
+    const riskApproval = record(5, "task.review_verdict", "reviewer-two", { taskId: "issue-1002", pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-two", verdict: "APPROVE-WITH-RISK", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c4" });
+    const plainApproval = record(6, "task.review_verdict", "reviewer-one", { taskId: "issue-1002", pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-one", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c5" });
+
+    expect(foldTaskEvents([opened, block, otherApproval])[0]).toMatchObject({ step: "review", blockedBy: { reviewer: "reviewer-one" } });
+    expect(foldTaskEvents([opened, block, otherApproval, ownApproval])[0]).toMatchObject({ step: "merge", blockedBy: null });
+    expect(foldTaskEvents([opened, riskApproval])[0]).toMatchObject({
+      step: "merge", approvedWithRisk: { reviewer: "reviewer-two", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c4" },
+    });
+    expect(foldTaskEvents([opened, riskApproval, plainApproval])[0].approvedWithRisk).toEqual({
+      reviewer: "reviewer-two", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c4",
+    });
+  });
+
+  it("routes a shared PR review by the head named in the event (#1002)", () => {
+    const taskA = "issue-1002-a";
+    const taskB = "issue-1002-b";
+    const records = [
+      record(1, "task.claimed", "lane-a", { taskId: taskA, issue: 1002, lane: "lane-a", branch: "a" }),
+      record(2, "task.pr_opened", "lane-a", { taskId: taskA, pr: 1002, headSha: "aaaaaaaa", journeys: [], lane: "lane-a" }),
+      record(3, "task.claimed", "lane-b", { taskId: taskB, issue: 1002, lane: "lane-b", branch: "b" }),
+      record(4, "task.pr_opened", "lane-b", { taskId: taskB, pr: 1002, headSha: "bbbbbbbb", journeys: [], lane: "lane-b" }),
+      record(5, "task.review_verdict", "reviewer", { taskId: taskB, pr: 1002, headSha: "bbbbbbbb", reviewer: "reviewer", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c1" }),
+    ];
+
+    const states = foldTaskEvents(records);
+    expect(states.find((state) => state.headSha === "aaaaaaaa")).toMatchObject({ step: "review", blockedBy: null });
+    expect(states.find((state) => state.headSha === "bbbbbbbb")).toMatchObject({ step: "merge", blockedBy: null });
+  });
+
   it("keeps an approved same-head repeat in Merge and preserves its review clock (#1002)", () => {
     const at = (sequence: number, kind: string, actor: string, document: Record<string, unknown>, occurredAt: string) => ({
       ...record(sequence, kind, actor, document), occurredAt,

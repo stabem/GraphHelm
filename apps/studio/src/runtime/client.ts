@@ -45,6 +45,7 @@ import type {
   WireActorType,
   LiveAct,
 } from "./types";
+import { RUNTIME_UNREACHABLE_HEADER } from "./proxy-signal";
 
 /** The actor id the human interface records. */
 export const OPERATOR_ACTOR: Actor = { id: "studio-operator", type: "owner" };
@@ -59,12 +60,12 @@ export const OPERATOR_ACTOR: Actor = { id: "studio-operator", type: "owner" };
  */
 export const WEBMCP_ACTOR: Actor = { id: "studio-webmcp-adapter", type: "agent" };
 
-/** The largest event page the Studio will ask for. The API's own ceiling is 1000; this is the
- * Studio's smaller working bound, so a page always fits one render pass. */
-/** #1170: set by the dev proxy (vite.config.ts) only when the Runtime refused the connection. */
-export const RUNTIME_UNREACHABLE_HEADER = "x-graphhelm-runtime-unreachable";
+export { RUNTIME_UNREACHABLE_HEADER };
+/** #1170: the diagnostic code for a request the Runtime never received. */
 export const RUNTIME_UNREACHABLE = "GHSTUDIO_RUNTIME_UNREACHABLE";
 
+/** The largest event page the Studio will ask for. The API's own ceiling is 1000; this is the
+ * Studio's smaller working bound, so a page always fits one render pass. */
 export const MAX_EVENT_LIMIT = 200;
 /** The Runtime's own ceiling for one events page (`MAX_EVENTS_LIMIT` in `serve/routes.rs`). The
  * client's own loops keep `MAX_EVENT_LIMIT`; a caller may ask for up to this many at once. */

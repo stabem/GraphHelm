@@ -1051,6 +1051,31 @@ describe("the projects rail", () => {
     await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("active-run", true));
     expect(client.getStatus).not.toHaveBeenCalledWith("quiet-demo");
   });
+
+  /** #1169: a reload mid-run reopens the run the address names, not the default pick. */
+  it("reopens the run named in the address after a reload, and writes the open run there", async () => {
+    window.history.replaceState(null, "", "/?session=abc&run=quiet-demo");
+    try {
+      const client = stubClient({
+        listExecutions: vi.fn(async () => ({
+          executions: [
+            { executionId: "quiet-demo", mode: "supervised", status: "running", attention: "can_sleep", startedAt: null, lastEventAt: "2026-09-25T13:00:00Z", headSequence: 7 },
+            { executionId: "active-run", mode: "supervised", status: "running", attention: "needs_you", startedAt: null, lastEventAt: "2026-09-25T17:00:00Z", headSequence: 39 },
+          ],
+          hasMore: false,
+          nextCursor: null,
+        })),
+      });
+      await open(client);
+      await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("quiet-demo", true));
+      expect(client.getStatus).not.toHaveBeenCalledWith("active-run", true);
+      const params = new URLSearchParams(window.location.search);
+      expect(params.get("run")).toBe("quiet-demo");
+      expect(params.get("session")).toBe("abc");
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
 });
 
 describe("the board", () => {

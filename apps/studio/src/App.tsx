@@ -272,6 +272,9 @@ export default function App({
   }, [executions]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selected, setSelected] = useState("");
+  // #1169: the open run lives in the address (`?run=`), so a reload reopens it. An empty
+  // selection before connect must not erase it; the draft path clears it on purpose.
+  useEffect(() => { if (selected) rememberSelectedRun(selected); }, [selected]);
   // #1156: the resume prompt belongs to the run it was asked for.
   useEffect(() => { setResumeNeedsFile(false); }, [selected]);
   const [governedActorByNode, setGovernedActorByNode] = useState<Record<string, string>>({});
@@ -861,6 +864,7 @@ export default function App({
     setTalkOpen(true);
     selectedRef.current = "";
     setSelected("");
+    rememberSelectedRun("");
     setStatus(null);
     setEvents(null);
     setTopology(null);
@@ -1417,7 +1421,11 @@ export default function App({
         candidate = mostRecentNeedsYou(next.executions);
         cursor = next.hasMore ? next.nextCursor : null;
       }
-      const first = candidate ?? firstVisible;
+      // #1169: a reload reopens the run its address names, unless that run was removed here.
+      const wanted = selectedRunFromUrl();
+      const first = wanted && visible({ executionId: wanted } as ExecutionSummary)
+        ? { executionId: wanted }
+        : candidate ?? firstVisible;
       if (first) {
         selectedRef.current = first.executionId;
         setSelected(first.executionId);
@@ -1590,6 +1598,8 @@ export default function App({
     restoredOutsidePage.current.clear();
     setNextCursor(null);
     setSelected("");
+    // #1169: another token may open another project; its runs must not inherit this `?run=`.
+    rememberSelectedRun("");
     setStatus(null);
     setEvents(null);
     setEvidence(null);
@@ -3638,4 +3648,20 @@ export default function App({
     </div>
     </SaidLinks.Provider>
   );
+}
+
+/** #1169: the run named by `?run=` in this tab's address, or none. */
+export function selectedRunFromUrl(): string {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get("run") ?? "";
+}
+
+/** #1169: keep `?run=` in step with the open run, leaving every other parameter alone. */
+export function rememberSelectedRun(run: string): void {
+  if (typeof window === "undefined" || typeof window.history?.replaceState !== "function") return;
+  const url = new URL(window.location.href);
+  if ((url.searchParams.get("run") ?? "") === run) return;
+  if (run) url.searchParams.set("run", run);
+  else url.searchParams.delete("run");
+  window.history.replaceState(window.history.state, "", url);
 }

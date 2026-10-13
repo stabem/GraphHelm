@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ACTIVE_GAP_MS, clockStep, duration, emptyClock, pace, typicalStep } from "./step-timing";
+import { clockStep, duration, emptyClock, pace, typicalStep } from "./step-timing";
 import { foldTaskEvents, parseTaskEvent, type TaskEventRecord } from "./team-tasks";
 
 /* #502 (owner: a timer and a bar on the lit step). These cells observe the clock the fold keeps per
@@ -62,14 +62,15 @@ describe("step clock in the fold (#502)", () => {
     const opened = record(1, 0, "task.pr_opened", "l1", { pr: 19, headSha: head, journeys: [], lane: "l1" });
     const pushed = record(2, 13 * 60 * 60, "task.pr_opened", "l1", { pr: 19, headSha: "b".repeat(40), journeys: [], lane: "l1" });
     const task = foldTaskEvents([opened, pushed])[0];
-    expect(task.clock).toEqual({ since: at(13 * 60 * 60), spent: { implement: ACTIVE_GAP_MS } });
+    expect(task.clock).toEqual({ since: at(13 * 60 * 60), spent: {} });
   });
-  it("banks completed time when a step resumes after a stall-sized gap", () => {
+  it("starts a fresh interval when a step resumes after a stall-sized gap", () => {
     const claim = record(1, 0, "task.claimed", "l1", { issue: 9, lane: "l1", branch: "b" });
     const resumed = record(2, 13 * 60 * 60, "task.planned", "l1", { lane: "l1", classes: ["code"],
       reviews: 1, proof: "tests", critic: { mode: "none", passScore: 8, maxRounds: 3 }, summary: "s" });
-    expect(foldTaskEvents([claim, resumed])[0].clock).toEqual({ since: at(13 * 60 * 60), spent: { implement: 30 * 60_000 } });
+    expect(foldTaskEvents([claim, resumed])[0].clock).toEqual({ since: at(13 * 60 * 60), spent: {} });
   });
+
   it("keeps a BLOCK and a new head inside Review instead of restarting the clock", () => {
     const tasks = foldTaskEvents([
       record(1, 0, "task.pr_opened", "l1", { pr: 19, headSha: head, journeys: [], lane: "l1" }),
@@ -98,7 +99,7 @@ describe("typical step time and pace (#502)", () => {
   it("banks completed time when a resumed step follows a 30 minute gap", () => {
     const clock = { since: at(0), spent: {} as Record<string, number> };
     clockStep(clock, "implement", "implement", at(60), true);
-    expect(clock).toEqual({ since: at(60), spent: { implement: ACTIVE_GAP_MS } });
+    expect(clock).toEqual({ since: at(60), spent: {} });
   });
 
   it("is green under the typical time, amber past it and red past twice it", () => {

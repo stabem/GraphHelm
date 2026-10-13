@@ -693,7 +693,7 @@ describe("foldTaskEvents plan step (#480)", () => {
       record(3, "task.claimed", "lane-b", { taskId: "issue-2", issue: 2, lane: "lane-b", branch: "second" }),
       record(4, "task.pr_opened", "lane-b", { taskId: "issue-2", pr: 11, headSha: "bbbbbbbb", journeys: [], lane: "lane-b" }),
       record(5, "task.review_verdict", "reviewer", { taskId: "issue-1", pr: 10, headSha: "aaaaaaaa", reviewer: "reviewer", verdict: "APPROVE", commentUrl: "https://github.com/o/r/pull/10#c1" }),
-      record(6, "task.merged", "reviewer", { taskId: "issue-1", pr: 10, mergeSha: "cccccccc", closes: [], merger: "reviewer" }),
+      record(6, "task.merged", "reviewer", { taskId: "issue-1", pr: 10, mergeSha: "cccccccc", closes: [2], merger: "reviewer" }),
     ];
     const tasks = foldTaskEvents(events);
     expect(tasks.filter((task) => task.step === "merged")).toHaveLength(2);

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -84,6 +85,45 @@ class ScenarioAdapterSelection(unittest.TestCase):
             self.assertEqual(result.get("phase"), "receive")
             self.assertEqual(result.get("activation"), "unobserved")
             self.assertEqual(result.get("reason"), REFUSAL)
+
+    def test_prior_task_evidence_is_recovered_from_runtime_history(self):
+        """A fresh receiver must recover literal pre-handoff evidence, not sender memory.
+
+        Contract: prior task evidence remains readable after a Claude-to-Codex handoff.
+        Regression: checking only the offer and receipt can hide loss of work that predates
+        the handshake. The existing scenario covers handoff continuity but seeds no earlier
+        task record. This assertion requires literal content, Runtime actor/type/execution,
+        sealed evidence identity/digest, and ordering before the offer. It adds no production
+        seam; one bounded local Runtime scenario and its short-lived child processes are used.
+        """
+        if not os.environ.get("GRAPHHELM_CLI"):
+            self.fail("OBSERVER_MISSING: set GRAPHHELM_CLI to the pinned executable")
+
+        result = load_scenario().run()
+        recovered = result.get("priorTaskEvidence")
+        self.assertIsInstance(recovered, dict, "fresh receiver returned no prior task evidence")
+        self.assertEqual(recovered.get("objective"),
+                         "Synthetic objective: restore the fixture search path without changing production state.")
+        self.assertEqual(recovered.get("keelCard"),
+                         "Scope: fixture-only. Promise: prior evidence remains readable after handoff. Proof: recover this record from Runtime history.")
+        self.assertEqual(recovered.get("priorProof"),
+                         "Synthetic prior proof: the isolated dry-run observed the fixture search path.")
+        self.assertEqual(recovered.get("recordType"), "signal_recorded")
+        self.assertEqual(recovered.get("signalType"), "no_progress")
+        self.assertEqual(recovered.get("executionId"), "keel-handoff-fixture")
+        self.assertEqual(recovered.get("actor"), {"type": "agent", "id": "claude-fixture"})
+        self.assertTrue(recovered.get("evidenceId"))
+        self.assertEqual(recovered.get("contentSha256"), recovered.get("envelopeSha256"))
+        self.assertLess(recovered.get("sequence", 0), result.get("offerSequence", 0))
+
+
+def load_scenario():
+    spec = importlib.util.spec_from_file_location("handoff_positive_scenario", SCENARIO)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load the isolated handoff scenario")
+    scenario = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scenario)
+    return scenario
 
 
 if __name__ == "__main__":

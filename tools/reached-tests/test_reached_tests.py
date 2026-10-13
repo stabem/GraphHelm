@@ -54,6 +54,11 @@ class Reach(unittest.TestCase):
             self.assertEqual(tools, [expected])
             self.assertEqual(other, [])
 
+            # Exercise the selector's executable plan as well as its legacy display mapping.
+            self.assertEqual(rt.steps(set(), set(), [], tools, repo=Path(repo)), [
+                {"argv": ["python", scenario], "cwd": ".", "slot": False},
+            ])
+
             with patch.dict("os.environ", {"GRAPHHELM_HANDOFF_WRONG_STORE": "1"}):
                 *_, wrong_store_tools, _, wrong_store_other = reach(scenario, repo=repo)
             self.assertEqual(wrong_store_tools, [expected + " --wrong-store"])

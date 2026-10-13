@@ -306,7 +306,7 @@ describe("Studio organization and responsive navigation", () => {
     saveRemovedRuns(`${location.origin}:dale-api-base`, ["demo-deploy"]);
     const client = stubClient();
     await open(client);
-    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("demo-calm"));
+    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("demo-calm", true));
     expect(client.getStatus).not.toHaveBeenCalledWith("demo-deploy");
   });
 
@@ -325,11 +325,11 @@ describe("Studio organization and responsive navigation", () => {
     await screen.findByRole("navigation", { name: "Projects" });
     if (token === "local-token") {
       expect(screen.getByRole("button", { name: "Rename My workspace" })).toBeVisible();
-      await waitFor(() => expect(second.getStatus).toHaveBeenCalledWith("demo-calm"));
+      await waitFor(() => expect(second.getStatus).toHaveBeenCalledWith("demo-calm", true));
       expect(second.getStatus).not.toHaveBeenCalledWith("demo-deploy");
     } else {
       expect(screen.getByRole("button", { name: "Rename this runtime" })).toBeVisible();
-      await waitFor(() => expect(second.getStatus).toHaveBeenCalledWith("demo-deploy"));
+      await waitFor(() => expect(second.getStatus).toHaveBeenCalledWith("demo-deploy", true));
     }
   });
 
@@ -1021,7 +1021,7 @@ describe("the projects rail", () => {
   it("opens on the run that needs the operator, not merely the first one", async () => {
     const client = stubClient();
     await open(client);
-    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("demo-deploy"));
+    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("demo-deploy", true));
   });
 
   it("opens the most recently active run when several runs need the operator", async () => {
@@ -1036,7 +1036,7 @@ describe("the projects rail", () => {
       })),
     });
     await open(client);
-    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("active-run"));
+    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("active-run", true));
     expect(client.getStatus).not.toHaveBeenCalledWith("quiet-demo");
   });
 });

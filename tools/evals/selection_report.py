@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CASES = ROOT / "evals/graphhelm-development-contracts"
 SKILL_LINE = re.compile(r"Use the ([A-Za-z0-9_-]+) skill\b", re.IGNORECASE)
 VERDICTS = {"pass", "fail"}
+RESPONSE_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 
 class InputError(ValueError):
@@ -68,8 +69,18 @@ def load_observations(path):
         if not isinstance(item.get("rubric"), str) or not item["rubric"]:
             raise InputError(f"{label} ({case_id}) needs rubric")
         for field in ("judge", "human_label"):
-            if field in item and item[field] not in ("pass", "fail"):
+            if field in item and item[field] not in VERDICTS:
                 raise InputError(f"{label} ({case_id}) {field} must be pass or fail")
+        has_response = "response_sha256" in item
+        has_judge_id = "judge_id" in item
+        if has_response != has_judge_id:
+            raise InputError(f"{label} ({case_id}) response_sha256 and judge_id must occur together")
+        if has_response:
+            if not isinstance(item["response_sha256"], str) or not RESPONSE_SHA256.fullmatch(item["response_sha256"]):
+                raise InputError(f"{label} ({case_id}) response_sha256 must be 64 lowercase hexadecimal characters")
+            judge_id = item["judge_id"]
+            if not isinstance(judge_id, str) or not judge_id.strip() or len(judge_id) > 128:
+                raise InputError(f"{label} ({case_id}) judge_id must be a nonempty identifier of at most 128 characters")
     return value, catalog
 
 
@@ -87,8 +98,9 @@ def build_report(observations, catalog):
     completion = defaultdict(empty_completion)
     judges = defaultdict(lambda: {"observed": 0, "pass": 0, "fail": 0,
                                   "human_labeled": 0, "false_pass": 0, "false_fail": 0,
-                                  "repeat_disagreement": 0})
-    repeats = defaultdict(set)
+                                  "repeat_groups": 0, "repeat_disagreement": 0,
+                                  "repeat_unidentified": 0})
+    repeats = defaultdict(list)
 
     for item in observations:
         case_id = item["case_id"]
@@ -110,7 +122,10 @@ def build_report(observations, catalog):
         if "judge" in item:
             judges[rubric]["observed"] += 1
             judges[rubric][item["judge"]] += 1
-            repeats[(case_id, rubric)].add(item["judge"])
+            if "response_sha256" in item:
+                repeats[(case_id, rubric, item["response_sha256"], item["judge_id"])].append(item["judge"])
+            else:
+                judges[rubric]["repeat_unidentified"] += 1
         if "human_label" in item:
             counts = judges[rubric]
             counts["human_labeled"] += 1
@@ -119,9 +134,11 @@ def build_report(observations, catalog):
             if item.get("judge") == "fail" and item["human_label"] == "pass":
                 counts["false_fail"] += 1
 
-    for (_, rubric), verdicts in repeats.items():
+    for (_, rubric, _, _), verdicts in repeats.items():
         if len(verdicts) > 1:
-            judges[rubric]["repeat_disagreement"] += 1
+            judges[rubric]["repeat_groups"] += 1
+            if len(set(verdicts)) > 1:
+                judges[rubric]["repeat_disagreement"] += 1
 
     judge_report = {}
     for rubric in sorted(set(judges) | {item["rubric"] for item in observations}):
@@ -133,7 +150,9 @@ def build_report(observations, catalog):
                                     "pass": counts["pass"], "fail": counts["fail"],
                                     "human_labeled": 0,
                                     "false_pass": None, "false_fail": None,
-                                    "repeat_disagreement": counts["repeat_disagreement"]}
+                                    "repeat_groups": counts["repeat_groups"],
+                                    "repeat_disagreement": counts["repeat_disagreement"],
+                                    "repeat_unidentified": counts["repeat_unidentified"]}
 
     return {
         "selection": {kind: selection[kind] for kind in sorted(selection)},

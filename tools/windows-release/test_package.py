@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 COMMAND = ROOT / "tools" / "windows-release" / "package.py"
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def pe_fixture(machine=0x8664, truncated=False):
@@ -31,6 +32,7 @@ class PackageCommandTests(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
+            creationflags=NO_WINDOW,
         )
 
     def test_creates_zip_manifest_and_checksum_for_exact_binary(self):

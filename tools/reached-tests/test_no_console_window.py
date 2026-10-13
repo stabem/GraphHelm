@@ -51,7 +51,7 @@ def offenders(root: Path) -> list[str]:
             continue
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
         modules, functions = _aliases(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
@@ -80,6 +80,8 @@ class NoConsoleWindow(unittest.TestCase):
             (root / "bad.py").write_text(
                 "import subprocess\nsubprocess.run(['git'])\n"
                 "subprocess.run(['git'], creationflags=0)\n", encoding="utf-8")
+            (root / "bom.py").write_text(
+                "import subprocess\nsubprocess.run(['git'])\n", encoding="utf-8-sig")
             (root / "alias.py").write_text(
                 "import subprocess as sp\nfrom subprocess import Popen as P, check_output\nimport os\n"
                 "sp.run(['git'])\nP(['git'])\ncheck_output(['git'])\nos.spawnl(0, 'git')\n"
@@ -91,6 +93,7 @@ class NoConsoleWindow(unittest.TestCase):
                 "alias.py:7 os.spawnl cannot hide its window",
                 "alias.py:8 subprocess.getoutput cannot hide its window",
                 "bad.py:2 subprocess.run without creationflags=NO_WINDOW",
+                "bom.py:2 subprocess.run without creationflags=NO_WINDOW",
             ])
 
 

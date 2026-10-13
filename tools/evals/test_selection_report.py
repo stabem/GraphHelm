@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORT = ROOT / "tools/evals/selection_report.py"
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 class SelectionReport(unittest.TestCase):
@@ -20,10 +21,10 @@ class SelectionReport(unittest.TestCase):
         self.observations = [
             {"case_id": "keel-green-on-parent-unprompted", "status": "completed",
              "invoked_skills": ["keel"], "completion": "pass", "rubric": "keel",
-             "judge": "pass", "human_label": "fail"},
-            {"case_id": "keel-observer-missing-unprompted", "status": "completed",
+             "judge": "pass", "human_label": "fail", "response_sha256": "a" * 64, "judge_id": "judge-v1"},
+            {"case_id": "keel-green-on-parent-unprompted", "status": "completed",
              "invoked_skills": ["test-audit"], "completion": "fail", "rubric": "keel",
-             "judge": "fail", "human_label": "pass"},
+             "judge": "fail", "human_label": "pass", "response_sha256": "b" * 64, "judge_id": "judge-v1"},
             {"case_id": "no-skill-arithmetic", "status": "completed",
              "invoked_skills": ["keel"], "completion": "fail", "rubric": "arithmetic",
              "judge": "fail"},
@@ -38,7 +39,7 @@ class SelectionReport(unittest.TestCase):
              "judge": "pass"},
             {"case_id": "keel-green-on-parent-unprompted", "status": "completed",
              "invoked_skills": ["keel"], "completion": "pass", "rubric": "keel",
-             "judge": "fail"},
+             "judge": "fail", "response_sha256": "c" * 64, "judge_id": "judge-v1"},
             {"case_id": "unknown-case", "status": "completed", "invoked_skills": [],
              "completion": "pass", "rubric": "unknown", "judge": "pass"},
         ]
@@ -46,7 +47,8 @@ class SelectionReport(unittest.TestCase):
     def run_report(self):
         self.input_path.write_text(json.dumps(self.observations), encoding="utf-8")
         return subprocess.run([sys.executable, str(REPORT), str(self.input_path)],
-                              cwd=ROOT, capture_output=True, text=True)
+                              cwd=ROOT, capture_output=True, text=True,
+                              creationflags=NO_WINDOW)
 
     def test_reports_separate_counts_incomplete_judges_and_rejects_unknown_case(self):
         result = self.run_report()
@@ -69,7 +71,9 @@ class SelectionReport(unittest.TestCase):
         })
         self.assertEqual(report["judges"]["by_rubric"]["keel"]["false_pass"], 1)
         self.assertEqual(report["judges"]["by_rubric"]["keel"]["false_fail"], 1)
-        self.assertEqual(report["judges"]["by_rubric"]["keel"]["repeat_disagreement"], 1)
+        self.assertEqual(report["judges"]["by_rubric"]["keel"]["repeat_disagreement"], 0)
+        self.assertEqual(report["judges"]["by_rubric"]["keel"]["repeat_groups"], 0)
+        self.assertEqual(report["judges"]["by_rubric"]["keel"]["repeat_unidentified"], 0)
         again = self.run_report()
         self.assertEqual(result.stdout, again.stdout)
 
@@ -88,8 +92,30 @@ class SelectionReport(unittest.TestCase):
         self.assertEqual(rubric["pass"], 1)
         self.assertEqual(rubric["fail"], 1)
         self.assertEqual(rubric["repeat_disagreement"], 0)
+        self.assertEqual(rubric["repeat_groups"], 0)
+        self.assertEqual(rubric["repeat_unidentified"], 2)
         self.assertIsNone(rubric["false_pass"])
         self.assertIsNone(rubric["false_fail"])
+
+    def test_repeat_identity_groups_only_same_response_and_judge(self):
+        base = {"case_id": "keel-green-on-parent-unprompted", "status": "completed",
+                "invoked_skills": ["keel"], "completion": "pass", "rubric": "keel",
+                "response_sha256": "a" * 64, "judge_id": "judge-v1"}
+        self.observations = [{**base, "judge": "pass"}, {**base, "judge": "fail"},
+                             {**base, "judge_id": "judge-v2", "judge": "pass"}]
+        result = self.run_report()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rubric = json.loads(result.stdout)["judges"]["by_rubric"]["keel"]
+        self.assertEqual(rubric["repeat_groups"], 1)
+        self.assertEqual(rubric["repeat_disagreement"], 1)
+
+    def test_invalid_repeat_identity_is_rejected(self):
+        self.observations = [{"case_id": "no-skill-arithmetic", "status": "completed",
+                              "invoked_skills": [], "completion": "pass", "rubric": "r",
+                              "judge": "pass", "response_sha256": "a" * 64}]
+        result = self.run_report()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("must occur together", result.stderr)
 
 
 if __name__ == "__main__":

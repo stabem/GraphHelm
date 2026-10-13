@@ -665,6 +665,9 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .tag.needs { background: var(--signal); color: var(--signal-ink); }
 .tag.calm { background: var(--live-wash); color: var(--live); }
 .tag.unknown { background: var(--agent-wash); color: var(--agent); }
+.mg-health[data-tone="unknown"] .mg-health-text,
+.mg-act[data-tone="unknown"] { color: var(--dim); }
+.mg-act-dot[data-tone="unknown"] { background: var(--dim); }
 
 .topbar .meta { color: var(--faint); font-size: 11px; }
 

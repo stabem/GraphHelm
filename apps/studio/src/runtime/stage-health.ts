@@ -6,8 +6,8 @@ import { openBlock } from "./mission";
 import type { TimedStep } from "./step-timing";
 import { slotStatus, slotText, type SlotView } from "./slots";
 
-export type HealthFlag = "needs_you" | "building" | "waiting_build" | "stalled" | "blocked" | "slow" | "moving";
-export interface StageHealth { flag: HealthFlag; text: string; tone: "red" | "orange" | "amber" | "green" | "blue"; elapsedMs: number | null; elapsed: string | null }
+export type HealthFlag = "needs_you" | "building" | "waiting_build" | "stalled" | "blocked" | "slow" | "moving" | "unknown";
+export interface StageHealth { flag: HealthFlag; text: string; tone: "red" | "orange" | "amber" | "green" | "blue" | "unknown"; elapsedMs: number | null; elapsed: string | null }
 
 /** Slow: elapsed more than this many times the stage's expected time (`expectedTime`). */
 export const SLOW_FACTOR = 2;
@@ -128,12 +128,13 @@ export function stageHealth(t: TaskState, lanes: Lane[], groupTasks: TaskState[]
   // #636: the owner lane building or waiting for a build slot is never Slow or Stalled.
   const slot = slotBelongsToTask(t, owner, lanes) ? slotStatus(owner, slots) : null;
   if (slot) return { ...base, flag: slot.kind === "building" ? "building" : "waiting_build", text: slotText(slot), tone: "blue" };
-  const live = laneLiveness(owner, lanes, groupTasks, now);
+  const live = laneLiveness(owner, lanes, groupTasks, now, slots);
   if (!live.live && live.sinceMs !== null) {
     return { ...base, flag: "stalled", text: `${owner} silent ${stageDuration(live.sinceMs)}`, tone: "red" };
   }
   const block = openBlock(t);
   if (block) return { ...base, flag: "blocked", text: `Blocked by ${block.reviewer || "a reviewer"}`, tone: "orange" };
+  if (live.sinceMs === null) return { ...base, flag: "unknown", text: "Unknown", tone: "unknown" };
   const exp = expectedTime(t, groupTasks);
   if (elapsedMs !== null && exp && exp.samples >= SLOW_MIN_SAMPLES && elapsedMs > SLOW_FACTOR * exp.expectedMs) {
     const who = live.sinceMs !== null ? ` · ${ownerRole(t)} active ${stageDuration(live.sinceMs)} ago` : "";
@@ -153,7 +154,7 @@ export function liveDuration(ms: number): string {
 }
 
 /** Red belongs to Stalled alone (the liveness rule), which the view applies; pace never paints red. */
-export type PaceTone = "green" | "amber" | "red";
+export type PaceTone = "green" | "amber" | "red" | "unknown";
 /** `tone`: green up to the expected time, amber past it. */
 export interface StageProgress { elapsedMs: number; expectedMs: number; ratio: number; pace: number; tone: "green" | "amber" }
 
@@ -175,6 +176,6 @@ export interface Activity { sinceMs: number | null; tone: PaceTone; role?: Owner
 export function activity(lane: string | null | undefined, lanes: Lane[], now: number, records: TaskState[] = [], role?: OwnerRole, slots: SlotView[] = []): Activity {
   const l = laneLiveness(lane, lanes, records, now, slots);
   const r = role ? { role } : {};
-  if (l.sinceMs === null) return { sinceMs: null, tone: "red", ...r };
+  if (l.sinceMs === null) return { sinceMs: null, tone: "unknown", ...r };
   return { sinceMs: l.sinceMs, tone: l.live ? "green" : "red", ...r };
 }

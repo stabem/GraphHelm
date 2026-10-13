@@ -58,22 +58,24 @@ describe("stageHealth", () => {
     expect(STAGE_ALLOWANCE_MS).toEqual({ plan: 30 * M, implement: 3 * H, fix: 2 * H, review: H, merge: 15 * M });
     const others = [done("o1", 4 * H), done("o2", 5 * H), done("o3", 6 * H)]; // median 5h > 3h allowance
     const at = (ms: number) => ts("a", { clock: { since: iso(NOW - ms), spent: {} } });
-    expect(stageHealth(at(10 * H), [], [at(10 * H), ...others], NOW)?.flag).toBe("moving");
-    expect(stageHealth(at(10 * H + 1000), [], [at(10 * H + 1000), ...others], NOW)?.flag).toBe("slow");
+    const active = [lane("gh-claude-1", NOW)];
+    expect(stageHealth(at(10 * H), active, [at(10 * H), ...others], NOW)?.flag).toBe("moving");
+    expect(stageHealth(at(10 * H + 1000), active, [at(10 * H + 1000), ...others], NOW)?.flag).toBe("slow");
     // allowance wins over a small median
     const quick = [done("q1", M), done("q2", M), done("q3", M)];
-    expect(stageHealth(at(6 * H), [], [at(6 * H), ...quick], NOW)?.flag).toBe("moving");
-    expect(stageHealth(at(6 * H + 1000), [], [at(6 * H + 1000), ...quick], NOW)?.flag).toBe("slow");
-    expect(stageHealth(at(10 * H), [], [others[0]!, others[1]!], NOW)?.flag).toBe("moving");
+    expect(stageHealth(at(6 * H), active, [at(6 * H), ...quick], NOW)?.flag).toBe("moving");
+    expect(stageHealth(at(6 * H + 1000), active, [at(6 * H + 1000), ...quick], NOW)?.flag).toBe("slow");
+    expect(stageHealth(at(10 * H), active, [others[0]!, others[1]!], NOW)?.flag).toBe("moving");
   });
   it("Plan: 43s and 11m are not slow against a 1s median; 61m with no samples is not slow", () => {
     const planDone = (k: string) => ts(k, { step: "merged", clock: { since: null, spent: { plan: 1000 } } });
     const plan = (ms: number) => ts("p", { step: "plan", clock: { since: iso(NOW - ms), spent: {} } });
     const g = [planDone("a"), planDone("b"), planDone("c")];
-    expect(stageHealth(plan(43_000), [], g, NOW)?.flag).toBe("moving");
-    expect(stageHealth(plan(11 * M), [], g, NOW)?.flag).toBe("moving");
-    expect(stageHealth(plan(61 * M), [], [], NOW)?.flag).toBe("moving");
-    expect(stageHealth(plan(60 * M + 1000), [], g, NOW)?.flag).toBe("slow");
+    const active = [lane("gh-claude-1", NOW)];
+    expect(stageHealth(plan(43_000), active, g, NOW)?.flag).toBe("moving");
+    expect(stageHealth(plan(11 * M), active, g, NOW)?.flag).toBe("moving");
+    expect(stageHealth(plan(61 * M), active, [], NOW)?.flag).toBe("moving");
+    expect(stageHealth(plan(60 * M + 1000), active, g, NOW)?.flag).toBe("slow");
   });
   it("Slow with a live owner names who is active", () => {
     const others = [done("o1", H), done("o2", H), done("o3", H)];
@@ -85,7 +87,12 @@ describe("stageHealth", () => {
     expect(ownerRole(r)).toBe("reviewer");
     expect(ownerRole(t)).toBe("author");
   });
-  it("Moving otherwise, in muted green", () => expect(stageHealth(ts("a"), [], [], NOW)).toMatchObject({ flag: "moving", text: "Moving", tone: "green" }));
+  it("Moving with a current owner record, in muted green", () => expect(stageHealth(ts("a"), [lane("gh-claude-1", NOW)], [], NOW)).toMatchObject({ flag: "moving", text: "Moving", tone: "green" }));
+  it("does not call a task with no owner Moving", () => {
+    const unowned = ts("unowned", { lane: null });
+    expect(stageHealth(unowned, [], [unowned], NOW)).toMatchObject({ flag: "unknown", text: "Unknown", tone: "unknown" });
+    expect(stageHealth(ts("unrecorded"), [], [], NOW)).toMatchObject({ flag: "unknown", text: "Unknown", tone: "unknown" });
+  });
 });
 
 describe("liveDuration", () => {
@@ -114,10 +121,10 @@ describe("stageProgress", () => {
 });
 
 describe("activity", () => {
-  it("green under LIVENESS_MS, red at it or with no lane (the Stalled rule)", () => {
+  it("green under LIVENESS_MS, red at it, unknown without a record", () => {
     expect(activity("l", [lane("l", NOW - LIVENESS_MS + 1)], NOW)).toEqual({ sinceMs: LIVENESS_MS - 1, tone: "green" });
     expect(activity("l", [lane("l", NOW - LIVENESS_MS)], NOW).tone).toBe("red");
-    expect(activity("z", [lane("l", NOW)], NOW)).toEqual({ sinceMs: null, tone: "red" });
+    expect(activity("z", [lane("l", NOW)], NOW)).toEqual({ sinceMs: null, tone: "unknown" });
   });
 });
 
@@ -167,6 +174,13 @@ describe("#636 build-slot queue", () => {
   it("a queued lane counts as alive", () => {
     expect(laneLiveness("gh-claude-2", [lane("gh-claude-2", NOW - 9 * H)], [], NOW).live).toBe(false);
     expect(laneLiveness("gh-claude-2", [lane("gh-claude-2", NOW - 9 * H)], [], NOW, slots).live).toBe(true);
+  });
+  it("keeps the health flag and activity dot aligned for a queued lane", () => {
+    const task = ts("queued", { lane: "gh-claude-2" });
+    const stale = [lane("gh-claude-2", NOW - 9 * H)];
+    const queued = parseSlots({ slots: [{ root: "D:/gh", holder: null, waiting: [{ lane: "gh-claude-2", waitedSeconds: 120 }] }] });
+    expect(stageHealth(task, stale, [task], NOW, false, queued)).toMatchObject({ flag: "moving", tone: "green" });
+    expect(activity("gh-claude-2", stale, NOW, [task], undefined, queued)).toMatchObject({ sinceMs: 9 * H, tone: "green" });
   });
   it("a released slot wait no longer appears on its card", () => {
     const task = ts("issue-808", { lane: "reviewer", step: "review", pr: 808, headSha: "bbbbbbbb", reviewers: ["reviewer"] });

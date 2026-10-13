@@ -33,11 +33,11 @@ edges:
     acts:
       - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-card-accepted/run.py inside}
   - id: start.refuse-out-of-scope
-    from: start
+    from: accepted
     to: refused
     acts:
       - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-card-accepted/run.py outside}
 paths:
-  main: [start.accept-in-scope]
-  out-of-scope: [start.refuse-out-of-scope]
+  main: [start.accept-in-scope, start.refuse-out-of-scope]
+  refusal-only: [start.accept-in-scope, start.refuse-out-of-scope]
 drift: []

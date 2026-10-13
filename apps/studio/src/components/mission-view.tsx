@@ -1,5 +1,5 @@
 import "./mission-view.css";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { JourneyFlowView, JourneyFlowsView, JourneyRunView, JourneyView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
 import type { TaskEventRecord } from "../runtime/team-tasks";
@@ -329,7 +329,11 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   </>;
   const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} {...(onOpenNode ? { onOpenNode } : {})} />;
   const contentRef = useRef<HTMLDivElement>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (sub === "test" && stepId !== null) {
+      contentRef.current?.querySelector(".tc-head")?.scrollIntoView?.({ block: "start" });
+    }
+  }, [sub, stepId]);
   if (sel === null) return <div className="mv" data-wide="true" data-page={page}>
     {historyFailedCount > 0 && <div role="alert">History partly loaded · {historyFailedCount} records could not be read · <button type="button" onClick={onRetryHistory}>Retry</button></div>}{header}
     {sub === "lanes" ? <div className="mv-pad">{lanesView}</div>
@@ -367,7 +371,6 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
     setStepId(id);
     setFrame(Math.max(0, journey.steps.findIndex((s) => s.stepId === id)));
     if (contentRef.current) contentRef.current.scrollTop = 0;
-    if (bodyRef.current) bodyRef.current.scrollTop = 0;
     setSub("test");
   };
   const reset = () => { setProofJid(null); setStepId(null); setTaskKey(undefined); setStageCol(null); if (sub === "test") setSub("graph"); };
@@ -443,7 +446,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
       {historyFailedCount > 0 && <div role="alert">History partly loaded · {historyFailedCount} records could not be read · <button type="button" onClick={onRetryHistory}>Retry</button></div>}
       {header}
       {page !== "full" && summary}
-      <div className="mv-body" ref={bodyRef}>
+      <div className="mv-body">
         {page === "full" && summary}
         {page === "full" && sub === "graph" && runGraph}
         {proofMode && (

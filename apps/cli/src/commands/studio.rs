@@ -523,10 +523,19 @@ pub(super) fn run_install(
             return false;
         }
     };
-    Progress::say(&progress.info("waiting for the shared build admission lock"));
-    if let Err(message) = super::workspace_slot::lock_build_admission(&admission) {
-        Progress::say(&progress.warn(&message));
-        return false;
+    match admission.try_lock() {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+            Progress::say(&progress.info("waiting for the shared build admission lock"));
+            if admission.lock().is_err() {
+                Progress::say(&progress.warn("the build admission lock could not be acquired"));
+                return false;
+            }
+        }
+        Err(_) => {
+            Progress::say(&progress.warn("the build admission lock could not be checked"));
+            return false;
+        }
     }
     let moved_aside = if cfg!(windows) {
         current_exe.and_then(|exe| {

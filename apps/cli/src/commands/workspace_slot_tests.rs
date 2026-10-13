@@ -530,6 +530,8 @@ fn shared_admission_serializes_children_across_slot_roots() {
     let command_b = command_for("b", &release_b);
     let cwd = dir.path().to_owned();
     let admission = dir.path().join("shared-test-admission");
+    let expected_target_a = super::shared_target(&root_a).to_string_lossy().into_owned();
+    let expected_target_b = super::shared_target(&root_b).to_string_lossy().into_owned();
     let barrier = Arc::new(std::sync::Barrier::new(2));
     let first_barrier = Arc::clone(&barrier);
     let first_admission = admission.clone();
@@ -559,12 +561,13 @@ fn shared_admission_serializes_children_across_slot_roots() {
     {
         std::thread::sleep(Duration::from_millis(10));
     }
-    let first_tag = std::fs::read_to_string(&log)
-        .unwrap_or_default()
+    let first_log = std::fs::read_to_string(&log).unwrap_or_default();
+    let first_tag = first_log
         .lines()
         .next()
-        .and_then(|line| line.split_whitespace().next());
-    match first_tag {
+        .and_then(|line| line.split_whitespace().next())
+        .map(str::to_owned);
+    match first_tag.as_deref() {
         Some("a") => std::fs::write(&release_a, b"release").unwrap(),
         Some("b") => std::fs::write(&release_b, b"release").unwrap(),
         _ => {
@@ -572,12 +575,12 @@ fn shared_admission_serializes_children_across_slot_roots() {
             std::fs::write(&release_b, b"release").unwrap();
         }
     }
-    let second_tag = match first_tag {
+    let second_tag = match first_tag.as_deref() {
         Some("a") => "b",
         Some("b") => "a",
         _ => "",
     };
-    let first_end = first_tag.map(|tag| format!("{tag} end"));
+    let first_end = first_tag.as_deref().map(|tag| format!("{tag} end"));
     let ended = std::time::Instant::now();
     while ended.elapsed() < Duration::from_secs(3)
         && first_end.as_deref().is_some_and(|line| {
@@ -606,8 +609,25 @@ fn shared_admission_serializes_children_across_slot_roots() {
                 .join(" ")
         })
         .collect::<Vec<_>>();
+    let first_target = first
+        .output
+        .data
+        .as_ref()
+        .and_then(|data| data["targetDir"].as_str())
+        .unwrap_or_default()
+        .to_owned();
+    let second_target = second
+        .output
+        .data
+        .as_ref()
+        .and_then(|data| data["targetDir"].as_str())
+        .unwrap_or_default()
+        .to_owned();
     assert!(first.output.ok, "first child failed: {:?}", first.output);
     assert!(second.output.ok, "second child failed: {:?}", second.output);
+    assert_eq!(first_target, expected_target_a);
+    assert_eq!(second_target, expected_target_b);
+    assert_ne!(first_target, second_target);
     assert!(
         lines == vec!["a start", "a end", "b start", "b end"]
             || lines == vec!["b start", "b end", "a start", "a end"],

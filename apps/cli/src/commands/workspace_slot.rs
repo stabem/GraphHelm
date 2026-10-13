@@ -98,11 +98,6 @@ pub(crate) fn open_build_admission(path: &Path) -> Result<File, String> {
         .map_err(|_| "the build admission lock could not be opened".to_owned())
 }
 
-pub(crate) fn lock_build_admission(lock: &File) -> Result<(), String> {
-    lock.lock()
-        .map_err(|_| "the build admission lock could not be acquired".to_owned())
-}
-
 fn slot_dir(root: &Path) -> PathBuf {
     root.join(super::workspace::LEDGER).join("slot")
 }

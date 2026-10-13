@@ -444,6 +444,16 @@ def reach(changed, packages, embedded, repo=None):
             if target:
                 single.add(target)
             hit = True
+        proportional_fixture = ".graphhelm/fixtures/keel-proportional-rows"
+        proportional_script = f"{proportional_fixture}/run.py"
+        proportional_test = f"{proportional_fixture}/test_run.py"
+        if path in {proportional_script, proportional_test}:
+            if root is not None and (root / proportional_test).is_file():
+                tools.add(f"python {proportional_test}")
+                hit = True
+            elif root is not None:
+                other.append({"path": proportional_test,
+                              "reason": "proportional-rows fixture observer is missing"})
         # Fixture behavior is observed by previews of the changed flows. It has no
         # standalone offline test, so keep it mapped without claiming a proxy pass.
         if path.startswith("tools/studio-journey-fixture/"):
@@ -860,6 +870,7 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
             allowed = {
                 ".graphhelm/fixtures/keel-task-handoff/scenario.py": {(), ("--wrong-store",)},
                 ".graphhelm/fixtures/keel-task-handoff/test_scenario.py": {()},
+                ".graphhelm/fixtures/keel-proportional-rows/test_run.py": {()},
             }
             if script not in allowed or tuple(args) not in allowed[script]:
                 raise ValueError(f"unrecognised python observer arguments: {tool}")

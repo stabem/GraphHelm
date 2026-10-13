@@ -35,6 +35,40 @@ def reach(*changed, repo=None):
 
 class Reach(unittest.TestCase):
 
+    def test_proportional_rows_fixture_selects_its_offline_test_once(self):
+        """Fixture edits must execute the guidance regression, not only the Python guard.
+
+        Cost: temporary files and direct plan construction; milliseconds, no Cargo, network,
+        browser or Runtime.
+        """
+        fixture = ".graphhelm/fixtures/keel-proportional-rows"
+        script = f"{fixture}/run.py"
+        observer = f"{fixture}/test_run.py"
+        expected = f"python {observer}"
+        with tempfile.TemporaryDirectory() as repo:
+            for relative in (script, observer):
+                path = Path(repo, relative)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("import unittest\n", encoding="utf-8")
+
+            for changed in (script, observer):
+                *_, tools, _, other = reach(changed, repo=repo)
+                self.assertEqual(tools.count(expected), 1)
+                self.assertEqual(other, [])
+                self.assertIn({"argv": ["python", observer], "cwd": ".", "slot": False},
+                              rt.steps(set(), set(), [], tools, repo=Path(repo)))
+
+            *_, combined_tools, _, combined_other = reach(script, observer, repo=repo)
+            self.assertEqual(combined_tools.count(expected), 1)
+            self.assertEqual(combined_other, [])
+            self.assertEqual(rt.steps(set(), set(), [], combined_tools, repo=Path(repo)).count(
+                {"argv": ["python", observer], "cwd": ".", "slot": False}), 1)
+
+            Path(repo, observer).unlink()
+            *_, missing_tools, _, missing = reach(script, repo=repo)
+            self.assertNotIn(expected, missing_tools)
+            self.assertIn({"path": observer, "reason": "proportional-rows fixture observer is missing"}, missing)
+
     def test_any_changed_python_file_selects_no_console_window_guard(self):
         """Run the repository-wide Python guard for Python edits outside tools/.
 

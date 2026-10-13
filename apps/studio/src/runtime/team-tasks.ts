@@ -571,7 +571,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
   for (const event of [...records].sort((a, b) => a.sequence - b.sequence)) {
     if (event.kind === "task.heartbeat") {
       const claim = slices.filter((slice) => slice.taskId === event.taskId && slice.lane === event.lane
-        && slice.pr === null && slice.releasedBy === undefined && slice.claimSequence !== undefined
+        && slice.releasedBy === undefined && slice.claimSequence !== undefined
         && slice.claimSequence < event.sequence && !ended.has(slice)).at(-1);
       if (claim !== undefined && event.actorId === claim.lane) {
         claim.lastHeartbeatAt = event.occurredAt ?? null;

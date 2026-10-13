@@ -511,7 +511,10 @@ fn concurrent_heartbeats_append_at_most_once() {
     let before = history(&events).len();
     let mut heartbeat = as_actor(package_fixture("claimed"));
     heartbeat.as_object_mut().unwrap().retain(|key, _| {
-        matches!(key.as_str(), "schema" | "taskId" | "revision" | "at" | "lane")
+        matches!(
+            key.as_str(),
+            "schema" | "taskId" | "revision" | "at" | "lane"
+        )
     });
     let barrier = Arc::new(Barrier::new(3));
     let replies: Vec<_> = ["race-left", "race-right"]
@@ -528,14 +531,23 @@ fn concurrent_heartbeats_append_at_most_once() {
         })
         .collect();
     barrier.wait();
-    let replies: Vec<_> = replies.into_iter().map(|thread| thread.join().unwrap()).collect();
-    assert_eq!(replies.iter().filter(|reply| reply["ok"] == true).count(), 1, "{replies:?}");
+    let replies: Vec<_> = replies
+        .into_iter()
+        .map(|thread| thread.join().unwrap())
+        .collect();
+    assert_eq!(
+        replies.iter().filter(|reply| reply["ok"] == true).count(),
+        1,
+        "{replies:?}"
+    );
     assert_eq!(history(&events).len(), before + 1);
     assert_eq!(
         history(&events)
             .iter()
-            .filter(|event| matches!(&event.kind, EventKind::SignalRecorded(recorded)
-                if recorded.kind == "task.heartbeat"))
+            .filter(
+                |event| matches!(&event.kind, EventKind::SignalRecorded(recorded)
+                if recorded.kind == "task.heartbeat")
+            )
             .count(),
         1
     );

@@ -9,10 +9,17 @@ use graphhelm_policy::keel::{self as policy_keel, Card, Finding, JourneyScreen, 
 use graphhelm_policy::keel_plan;
 use graphhelm_policy::keel_prove::{self, ProveOptions};
 use graphhelm_protocols::Diagnostic;
+use serde::Deserialize;
+use std::io::Read;
 
 use crate::output::{CommandOutput, Outcome};
 
 const COMMAND: &str = "keel";
+const VERDICT_COMMAND: &str = "keel.verdict";
+const MAX_VERDICT_SNAPSHOT_BYTES: usize = 1024 * 1024;
+const MAX_VERDICT_COMMENTS: usize = 500;
+const MAX_VERDICT_ID_BYTES: usize = 128;
+const MAX_VERDICT_BODY_BYTES: usize = 64 * 1024;
 
 /// The shipped Keel rules, embedded so the verdict names the policy version the binary was built
 /// with and never depends on where the package is installed. The same bytes are the
@@ -50,6 +57,129 @@ fn input_error(message: impl Into<String>, path: &str) -> Outcome {
         COMMAND,
         Diagnostic::error(INPUT_INVALID, message, path, "keel"),
     )
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VerdictSnapshot {
+    comments: Vec<VerdictComment>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VerdictComment {
+    id: String,
+    body: String,
+}
+
+/// Read a bounded offline comment snapshot. A matching result identifies evidence only: it does
+/// not answer a BLOCK, authorize a merge, or claim a merge occurred.
+pub(super) fn verdict(head: &str, reviewer: &str, comments_path: &Path) -> Outcome {
+    if head.len() != 40 || !head.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return verdict_input_error("head must be a full 40-character hexadecimal commit SHA", "/head");
+    }
+    if reviewer.is_empty()
+        || reviewer.len() > MAX_VERDICT_ID_BYTES
+        || reviewer.trim() != reviewer
+        || reviewer.chars().any(char::is_control)
+    {
+        return verdict_input_error("reviewer must be a non-empty session identity", "/reviewer");
+    }
+
+    let file = match std::fs::File::open(comments_path) {
+        Ok(file) => file,
+        Err(_) => return verdict_input_error("comments snapshot cannot be read", "/comments"),
+    };
+    let mut bytes = Vec::new();
+    if file
+        .take((MAX_VERDICT_SNAPSHOT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return verdict_input_error("comments snapshot cannot be read", "/comments");
+    }
+    if bytes.len() > MAX_VERDICT_SNAPSHOT_BYTES {
+        return verdict_input_error("comments snapshot exceeds 1 MiB", "/comments");
+    }
+    let snapshot: VerdictSnapshot = match serde_json::from_slice(&bytes) {
+        Ok(snapshot) => snapshot,
+        Err(_) => {
+            return verdict_input_error(
+                "comments snapshot must contain only a comments array with id and body fields",
+                "/comments",
+            );
+        }
+    };
+    if snapshot.comments.len() > MAX_VERDICT_COMMENTS {
+        return verdict_input_error("comments snapshot exceeds 500 comments", "/comments/comments");
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    if snapshot.comments.iter().any(|comment| {
+        comment.id.is_empty()
+            || comment.id.len() > MAX_VERDICT_ID_BYTES
+            || !comment.id.bytes().all(|byte| byte.is_ascii_graphic())
+            || comment.body.len() > MAX_VERDICT_BODY_BYTES
+            || !ids.insert(comment.id.as_str())
+    }) {
+        return verdict_input_error(
+            "comment ids must be unique printable values up to 128 bytes and bodies at most 64 KiB",
+            "/comments/comments",
+        );
+    }
+
+    let short_head = &head[..8];
+    let mut verdicts = Vec::new();
+    let mut matching_block_ids = Vec::new();
+    for comment in snapshot.comments {
+        if !verdict_identity_matches(&comment.body, reviewer, short_head) {
+            continue;
+        }
+        let Some(value) = comment_verdict(&comment.body) else {
+            continue;
+        };
+        if value == "BLOCK" {
+            matching_block_ids.push(comment.id.clone());
+        }
+        verdicts.push(serde_json::json!({"commentId": comment.id, "verdict": value}));
+    }
+    Outcome::success(
+        VERDICT_COMMAND,
+        serde_json::json!({
+            "head": head,
+            "reviewer": reviewer,
+            "verdicts": verdicts,
+            "matchingBlockIds": matching_block_ids,
+        }),
+    )
+}
+
+fn verdict_input_error(message: &str, path: &str) -> Outcome {
+    Outcome::application(
+        VERDICT_COMMAND,
+        Diagnostic::error(INPUT_INVALID, message, path, "keel"),
+    )
+}
+
+fn verdict_identity_matches(body: &str, reviewer: &str, head: &str) -> bool {
+    let identity_lines: Vec<&str> = body
+        .lines()
+        .filter(|line| line.starts_with("Session:"))
+        .collect();
+    identity_lines.len() == 1
+        && identity_lines[0] == format!("Session: {reviewer} · Head: {head}")
+}
+
+fn comment_verdict(body: &str) -> Option<&'static str> {
+    let first_line = body.lines().find(|line| !line.trim().is_empty())?.trim();
+    ["APPROVE-WITH-RISK", "APPROVE", "BLOCK"]
+        .into_iter()
+        .find(|verdict| {
+            first_line == *verdict
+                || first_line
+                    .strip_prefix(verdict)
+                    .and_then(|suffix| suffix.chars().next())
+                    .is_some_and(|first| first.is_whitespace() || first == ':' || first == '|')
+        })
 }
 
 /// `--prove-new-tests` and its bounds (#1333).

@@ -83,23 +83,7 @@ fn run(repo: &Path, card: Option<&Path>) -> (i32, Value) {
     (output.status.code().unwrap(), reply)
 }
 
-/// The offline verdict reader must reject an approval whose identity line names a different
-/// head. The parent has no `keel verdict` command; that missing-command result is recorded as
-/// the public-surface baseline, not as proof of stale-verdict filtering.
-#[test]
-fn keel_verdict_does_not_match_an_approval_from_another_head() {
-    let snapshot = tempfile::tempdir().unwrap();
-    let comments = snapshot.path().join("comments.json");
-    fs::write(
-        &comments,
-        serde_json::json!({"comments": [{
-            "id": "comment-1",
-            "body": "APPROVE\n\nSession: codex-review · Head: aaaaaaaa"
-        }]})
-        .to_string(),
-    )
-    .unwrap();
-
+fn run_verdict(comments: &Path, head: &str, reviewer: &str) -> (i32, Value) {
     let output = Command::cargo_bin("graphhelm")
         .unwrap()
         .args([
@@ -107,24 +91,105 @@ fn keel_verdict_does_not_match_an_approval_from_another_head() {
             "keel",
             "verdict",
             "--head",
-            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            head,
             "--reviewer",
-            "codex-review",
+            reviewer,
             "--comments",
         ])
-        .arg(&comments)
+        .arg(comments)
         .output()
         .unwrap();
-    let reply: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
-        panic!(
-            "expected a structured verdict result, got: {}",
-            String::from_utf8_lossy(&output.stdout)
+    let reply: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("expected a structured verdict result, got: {}", String::from_utf8_lossy(&output.stdout)));
+    (output.status.code().unwrap_or(1), reply)
+}
+
+/// The offline reader admits only a matching reviewer and head, and exposes matching BLOCKs.
+/// Cost: six short CLI processes and one small local JSON snapshot; no server or network.
+#[test]
+fn keel_verdict_matches_only_the_requested_head_and_reviewer() {
+    let snapshot = tempfile::tempdir().unwrap();
+    let comments = snapshot.path().join("comments.json");
+    let head_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let head_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    for (body, requested_head, reviewer, expected) in [
+        (
+            "APPROVE\n\nSession: codex-review · Head: aaaaaaaa",
+            head_a,
+            "codex-review",
+            serde_json::json!([{"commentId":"approval-a","verdict":"APPROVE"}]),
+        ),
+        (
+            "APPROVE | looks good\n\nSession: codex-review · Head: bbbbbbbb",
+            head_b,
+            "codex-review",
+            serde_json::json!([{"commentId":"approval-b","verdict":"APPROVE"}]),
+        ),
+        (
+            "APPROVE\n\nSession: codex-review · Head: aaaaaaaa",
+            head_b,
+            "codex-review",
+            serde_json::json!([]),
+        ),
+        (
+            "APPROVE\n\nSession: another-reviewer · Head: bbbbbbbb",
+            head_b,
+            "codex-review",
+            serde_json::json!([]),
+        ),
+        (
+            "APPROVE\n\nSession: codex-review Head: bbbbbbbb",
+            head_b,
+            "codex-review",
+            serde_json::json!([]),
+        ),
+        (
+            "BLOCK: stale assumption\n\nSession: codex-review · Head: bbbbbbbb",
+            head_b,
+            "codex-review",
+            serde_json::json!([{"commentId":"block-b","verdict":"BLOCK"}]),
+        ),
+    ] {
+        fs::write(
+            &comments,
+            serde_json::json!({"comments": [{"id": if body.starts_with("BLOCK") { "block-b" } else if body.contains("Head: aaaaaaaa") { "approval-a" } else { "approval-b" }, "body": body}]}).to_string(),
         )
-    });
-    assert_eq!(output.status.code(), Some(0));
+        .unwrap();
+        let (exit, reply) = run_verdict(&comments, requested_head, reviewer);
+        assert_eq!(exit, 0, "{reply}");
+        assert_eq!(reply["command"], "keel.verdict");
+        assert_eq!(reply["data"]["verdicts"], expected);
+        assert_eq!(
+            reply["data"]["matchingBlockIds"],
+            if body.starts_with("BLOCK") {
+                serde_json::json!(["block-b"])
+            } else {
+                serde_json::json!([])
+            }
+        );
+    }
+}
+
+/// The offline reader rejects malformed and oversized snapshots before returning evidence.
+/// Cost: two short CLI processes and a 1 MiB local fixture; no server or network.
+#[test]
+fn keel_verdict_refuses_malformed_and_oversized_snapshots() {
+    let snapshot = tempfile::tempdir().unwrap();
+    let comments = snapshot.path().join("comments.json");
+    let head = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    fs::write(&comments, r#"{"comments":[],"unexpected":true}"#).unwrap();
+    let (exit, reply) = run_verdict(&comments, head, "codex-review");
+    assert_eq!(exit, 3);
     assert_eq!(reply["command"], "keel.verdict");
-    assert_eq!(reply["data"]["verdicts"], serde_json::json!([]));
-    assert_eq!(reply["data"]["matchingBlockIds"], serde_json::json!([]));
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI031_KEEL_CHECK_INPUT");
+
+    fs::write(&comments, vec![b' '; 1024 * 1024 + 1]).unwrap();
+    let (exit, reply) = run_verdict(&comments, head, "codex-review");
+    assert_eq!(exit, 3);
+    assert_eq!(reply["command"], "keel.verdict");
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI031_KEEL_CHECK_INPUT");
 }
 
 /// Validation must expose an invalid discovered flow as a failure, rather than treating a

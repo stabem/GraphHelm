@@ -637,6 +637,18 @@ pub enum KeelCommand {
         #[arg(long)]
         index: PathBuf,
     },
+    /// Read verdict comments from an offline JSON snapshot, pinned to one head and reviewer.
+    Verdict {
+        /// Full 40-character commit SHA under review.
+        #[arg(long)]
+        head: String,
+        /// Exact session identity from the review comment identity line.
+        #[arg(long)]
+        reviewer: String,
+        /// Offline snapshot object containing a `comments` array of `{id, body}` objects.
+        #[arg(long)]
+        comments: PathBuf,
+    },
     /// Query declarations and paths from a verified index.
     Query {
         #[arg(long)]

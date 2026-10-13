@@ -657,6 +657,11 @@ pub fn run(command: TopLevel) -> Outcome {
             KeelCommand::Verify { repo, index } => {
                 keel::run(keel_contract_index::Operation::Verify { repo, index })
             }
+            KeelCommand::Verdict {
+                head,
+                reviewer,
+                comments,
+            } => keel::verdict(&head, &reviewer, &comments),
             KeelCommand::Query { repo, index, term } => {
                 keel::run(keel_contract_index::Operation::Query { repo, index, term })
             }

@@ -555,6 +555,17 @@ describe("the token", () => {
     expect(document.cookie).toBe("");
   });
 
+  it("adds process liveness to the board read without changing ordinary status", async () => {
+    const { fetchImpl, calls } = scriptedFetch([
+      { match: (call) => call.url === "/v1/executions/demo", reply: ok(statusData()) },
+      { match: (call) => call.url === "/v1/seen-actors", reply: ok({ seenActors: ["lane-a"], seenActorAgesMs: { "lane-a": 180000 } }, "serve.seen_actors") },
+    ]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    expect((await client.getStatus("demo")).seenActors).toBeUndefined();
+    expect(await client.getStatus("demo", true)).toMatchObject({ seenActors: ["lane-a"], seenActorAgesMs: { "lane-a": 180000 } });
+    expect(calls.filter((call) => call.url === "/v1/seen-actors")).toHaveLength(1);
+  });
+
   it("cannot be serialised out of the client by accident", () => {
     const client = new RuntimeClient("tok-abc");
     expect(JSON.stringify(client)).not.toContain("tok-abc");

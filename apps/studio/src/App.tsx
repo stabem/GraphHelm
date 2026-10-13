@@ -527,7 +527,7 @@ export default function App({
       });
       try {
         const [nextStatus, nextEvents] = await Promise.all([
-          client.getStatus(id),
+          client.getStatus(id, true),
           readEvents(client, id, 0),
         ]);
         // THE CONNECTION IS A GUARD AXIS TOO (PR #467 review, P1): dispose() cannot cancel a
@@ -645,7 +645,7 @@ export default function App({
             return rows;
           };
           const [nextStatus, fresh] = await Promise.all([
-            client.getStatus(selected),
+            client.getStatus(selected, true),
             readEvents(client, selected, lastSeen),
           ]);
           // The connection too, not just the run: Runtime B can hold the same execution id, and

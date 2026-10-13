@@ -803,6 +803,7 @@ fn build_router(state: ServeState) -> Router {
         .route("/v1/executions", get(routes::list_executions))
         .route("/v1/native-chats", get(native_chats::list))
         .route("/v1/executions/{id}", get(routes::status))
+        .route("/v1/seen-actors", get(routes::seen_actors))
         .route(
             "/v1/executions/{id}/reply-suggestions",
             get(routes::reply_suggestions),
@@ -3322,16 +3323,37 @@ mod tests {
         stream.write_all(b"GET /v1/executions/execution-known HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer test-token\r\nX-GraphHelm-Actor: lane-a\r\nConnection: close\r\n\r\n").await.unwrap();
         let mut response = Vec::new();
         stream.read_to_end(&mut response).await.unwrap();
-        server.abort();
-
         let body_start = response
             .windows(4)
             .position(|window| window == b"\r\n\r\n")
             .unwrap()
             + 4;
         let body: serde_json::Value = serde_json::from_slice(&response[body_start..]).unwrap();
-        assert_eq!(body["data"]["seenActors"], serde_json::json!(["lane-a"]));
-        assert!(body["data"]["seenActorAgesMs"]["lane-a"].as_u64().unwrap() < 60_000);
+        assert!(body["data"].get("seenActors").is_none());
+        let mut liveness = tokio::net::TcpStream::connect(address).await.unwrap();
+        liveness.write_all(b"GET /v1/seen-actors HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer test-token\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut liveness_response = Vec::new();
+        liveness.read_to_end(&mut liveness_response).await.unwrap();
+        server.abort();
+        let liveness_body_start = liveness_response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .unwrap()
+            + 4;
+        let liveness_body: serde_json::Value =
+            serde_json::from_slice(&liveness_response[liveness_body_start..]).unwrap();
+        assert_eq!(
+            liveness_body["data"]["seenActors"],
+            serde_json::json!(["lane-a"])
+        );
+        assert!(
+            liveness_body["data"]["seenActorAgesMs"]["lane-a"]
+                .as_u64()
+                .unwrap()
+                < 60_000
+        );
+        assert_eq!(state_for_expiry.seen_actors(), vec!["lane-a"]);
+        assert!(state_for_expiry.seen_actor_ages_ms()["lane-a"] < 60_000);
         assert_eq!(body["data"]["headSequence"], 1);
         assert!(
             state_for_expiry

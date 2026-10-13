@@ -796,16 +796,27 @@ pub(super) async fn status(
         );
     };
     match result {
-        Ok(mut value) => {
-            value["seenActors"] = serde_json::json!(state.seen_actors());
-            value["seenActorAgesMs"] = serde_json::json!(state.seen_actor_ages_ms());
-            respond(
-                StatusCode::OK,
-                Outcome::success(STATUS_COMMAND, value).output,
-            )
-        }
+        Ok(value) => respond(
+            StatusCode::OK,
+            Outcome::success(STATUS_COMMAND, value).output,
+        ),
         Err(failure) => respond_failure(STATUS_COMMAND, failure),
     }
+}
+
+/// Process-local request liveness is separate from the event-backed execution status.
+pub(super) async fn seen_actors(State(state): State<ServeState>) -> Response {
+    respond(
+        StatusCode::OK,
+        Outcome::success(
+            "serve.seen_actors",
+            serde_json::json!({
+                "seenActors": state.seen_actors(),
+                "seenActorAgesMs": state.seen_actor_ages_ms(),
+            }),
+        )
+        .output,
+    )
 }
 
 /// `GET /v1/executions/{id}/reply-suggestions`: produce two operator replies for a live

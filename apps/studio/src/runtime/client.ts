@@ -692,13 +692,23 @@ export class RuntimeClient {
     });
   }
 
-  async getStatus(executionId: string): Promise<ExecutionStatus> {
+  async getStatus(executionId: string, includeSeenActors = false): Promise<ExecutionStatus> {
     const id = checkedId(executionId, "executionId");
-    return this.#request<ExecutionStatus>({
+    const status = await this.#request<ExecutionStatus>({
       method: "GET",
       path: `/v1/executions/${encodeURIComponent(id)}`,
       timeoutMs: RUNTIME_READ_TIMEOUT_MS,
     });
+    if (!includeSeenActors) return status;
+    try {
+      const seen = await this.#request<Pick<ExecutionStatus, "seenActors" | "seenActorAgesMs">>({
+        method: "GET", path: "/v1/seen-actors", timeoutMs: RUNTIME_READ_TIMEOUT_MS,
+      });
+      return { ...status, ...seen };
+    } catch {
+      // Older Runtimes do not expose process-local liveness. Status remains readable.
+      return status;
+    }
   }
 
   async listNativeChats(options: { cursor?: string } = {}): Promise<NativeChatPage> {

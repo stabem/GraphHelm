@@ -482,6 +482,8 @@ fn card_guidance(
         .any(|finding| finding.rule.starts_with("keel.invariant."));
     let class = if invariant {
         keel_plan::TaskClass::Invariant
+    } else if !changed.is_empty() && changed.iter().all(|path| keel_plan::is_prose(path)) {
+        keel_plan::TaskClass::Docs
     } else {
         planned
             .classes

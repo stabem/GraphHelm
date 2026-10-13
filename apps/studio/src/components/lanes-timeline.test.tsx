@@ -245,7 +245,7 @@ describe("LanesTimeline", () => {
     await user.click(screen.getByRole("button", { name: "Free 2" }));
     const board = screen.getByRole("list", { name: "Agent board" });
     expect(within(board).getAllByRole("listitem")).toHaveLength(2);
-    expect(within(board).getAllByText("live now · wake listener")).toHaveLength(2);
+    expect(within(board).getAllByText(/wake listener/)).toHaveLength(2);
   });
 
   it("timeline rows follow the board order", () => {

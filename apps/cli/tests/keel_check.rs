@@ -345,6 +345,9 @@ fn without_a_card_nothing_about_scope_blocks() {
 #[test]
 fn check_guidance_keeps_docs_summary_only() {
     let repo = repository(&[("docs/notes.md", "documentation update\n")]);
+    fs::write(repo.path().join("src/lib.rs"), "pub fn old() {}\n").unwrap();
+    git(repo.path(), &["add", "src/lib.rs"]);
+    git(repo.path(), &["commit", "--amend", "-q", "--no-edit"]);
     let (code, reply) = run(repo.path(), None);
     assert_eq!(code, 0, "{reply}");
     assert_eq!(reply["data"]["cardGuidance"]["kind"], "summary_only");

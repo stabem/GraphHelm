@@ -62,9 +62,9 @@ export function Connect({
           </button>
         </form>
         <p className="gate-note">
-          You are seeing this because the page was not served by the Studio&apos;s own dev server —
-          run <code>npm run dev</code> with <code>GRAPHHELM_EVENTS</code> set and it connects
-          without asking. The token stays in this tab&apos;s memory either way: never storage,
+          This page opened without its session link. Open the address{" "}
+          <code>graphhelm studio start</code> printed (it ends in <code>?session=…</code>) and it
+          connects without asking, or paste the token above. The token stays in this tab&apos;s memory either way: never storage,
           never a cookie, never a URL, never a log line.
         </p>
       </section>

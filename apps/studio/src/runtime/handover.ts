@@ -89,8 +89,7 @@ export function buildHandover(input: HandoverInput): Handover {
   const needsYou: HandoverLine[] = input.openItems.flatMap((item): HandoverLine[] => {
     switch (item.kind) {
       case "question":
-        return item.sequence > input.fromSeq && item.sequence <= input.toSeq
-          ? [{ text: `${botName(item.asker)} asked: ${firstLine(item.text)}`, sequences: [item.sequence] }] : [];
+        return [{ text: `${botName(item.asker)} asked: ${firstLine(item.text)}`, sequences: [item.sequence] }];
       case "native_request": return [{ text: `${item.title}: request ${item.state === "blocked" ? "blocked" : "not confirmed"}`, sequences: [] }];
       case "waiting_step": return [{ text: `${item.name} is waiting for you`, sequences: [] }];
       case "blocked_step": return [{ text: `${item.name} is blocked`, sequences: [] }];

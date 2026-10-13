@@ -28,7 +28,7 @@ export function useSlotPoll(client: SlotSource | null, everyMs = SLOT_POLL_MS): 
         consecutiveFailures += 1;
         if (consecutiveFailures >= 3) {
           setSlots((known) => known.map((slot) => ({ root: slot.root, ok: false, errorCodes: [] })));
-        } else if (consecutiveFailures === 1) {
+        } else if (consecutiveFailures === 1 && latestRead === 1) {
           setSlots([{ root: "unavailable", ok: false, errorCodes: [] }]);
         }
       });

@@ -48,7 +48,7 @@ describe("LanesTimeline", () => {
     const user = fastUserEvent();
     const board = screen.getByRole("list", { name: "Agent board" });
     const filters = [["Working", ["building", "working"]], ["Waiting", ["awaiting"]], ["Free", ["free"]], ["Silent", ["stale"]]] as const;
-    expect(screen.getByRole("button", { name: "Available 2" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Available 1" })).toBeInTheDocument();
     for (const [name, expected] of filters) {
       await user.click(screen.getByRole("button", { name: `${name} ${expected.length}` }));
       expect(Array.from(board.querySelectorAll(".ab-name")).map((row) => row.textContent)).toEqual(expected);
@@ -64,10 +64,12 @@ describe("LanesTimeline", () => {
     ];
     render(<LanesTimeline lanes={rows} now={at} windowMs={4 * H} />);
     const board = screen.getByRole("list", { name: "Agent board" });
-    expect(screen.getByRole("button", { name: "Available 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Available 0" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Silent 0" }));
     expect(within(board).queryByText("stale")).toBeNull();
     expect(screen.getByRole("button", { name: "Stale claim 1" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Stale claim 1" }));
+    expect(within(board).getByText("stale")).toBeInTheDocument();
   });
 
   it("shows an old-record slot holder as busy without hatching its open bar after the slot began", () => {
@@ -203,8 +205,8 @@ describe("LanesTimeline", () => {
     const user = fastUserEvent();
     render(<LanesTimeline lanes={lanes} now={now} windowMs={1000} />);
     const board = screen.getByRole("list", { name: "Agent board" });
-    expect(within(board).getAllByRole("listitem").map((li) => li.querySelector(".ab-name")!.textContent)).toEqual(["gh-claude-5", "gh-claude-6"]);
-    expect(screen.getByRole("button", { name: "Available 2" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(board).getAllByRole("listitem").map((li) => li.querySelector(".ab-name")!.textContent)).toEqual(["gh-claude-6"]);
+    expect(screen.getByRole("button", { name: "Available 1" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Working 0" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Free 1" }));
     expect(within(board).getAllByRole("listitem")).toHaveLength(1);
@@ -292,6 +294,7 @@ describe("LanesTimeline", () => {
     const H = 3_600_000, T = 10 * H;
     const stale = { lane: "gh-claude-11", silent: false, lastEventAt: T - 3 * H, bars: [{ kind: "implement" as const, label: "issue 549", issue: 549, start: T - 3 * H, end: T, open: true }] };
     render(<LanesTimeline lanes={[stale]} now={T} windowMs={4 * H} />);
+    await fastUserEvent().click(screen.getByRole("button", { name: "Stale claim 1" }));
     const row = within(screen.getByRole("list", { name: "Agent board" })).getByText("gh-claude-11").closest("li")!;
     expect(row.querySelector(".ab-name")!.textContent).toBe("gh-claude-11");
     const pill = row.querySelector(".ab-pill")!, tag = row.querySelector(".ab-tag")!;

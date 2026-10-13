@@ -34,11 +34,16 @@ MANIFESTS = (HERE / "hooks.json", HERE / "codex-hooks.json",
 
 class LaneStopTests(unittest.TestCase):
     def setUp(self):
+        self.real_state_root = session_hook._state_root()
+        self.real_state_before = set(self.real_state_root.iterdir()) if self.real_state_root.exists() else set()
+        self.addCleanup(self.assert_real_state_unchanged)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name)
         self.env = {**os.environ, "GRAPHHELM_EVENTS_KEY": "12" * 32,
-                    "GRAPHHELM_EXECUTION_ID": "lane-test", "GRAPHHELM_ACTOR": "codex-4"}
+                    "GRAPHHELM_EXECUTION_ID": "lane-test", "GRAPHHELM_ACTOR": "codex-4",
+                    "LOCALAPPDATA": str(root / "local"),
+                    "XDG_STATE_HOME": str(root / "xdg-state")}
         self.cli = os.environ.get("GRAPHHELM_CLI") or shutil.which("graphhelm")
         self.assertIsNotNone(self.cli, "installed graphhelm is required")
         keyring = root / "keyring"
@@ -84,9 +89,18 @@ class LaneStopTests(unittest.TestCase):
             try:
                 pid = int(pid_file.read_text())
                 self.stop_waiter_pid(pid)
+                self.assertFalse(session_hook._pid_alive(pid), f"waiter {pid} survived cleanup")
                 pid_file.unlink(missing_ok=True)
             except (OSError, ValueError):
                 pass
+
+    def assert_real_state_unchanged(self):
+        after = set(self.real_state_root.iterdir()) if self.real_state_root.exists() else set()
+        created = after - self.real_state_before
+        own_state = {path.stem for path in created if path.suffix == ".json"
+                     and self.url in path.read_text(encoding="utf-8", errors="replace")}
+        self.assertFalse(own_state,
+                         "hook test wrote into the real state directory")
 
     @staticmethod
     def stop_waiter_pid(pid):
@@ -343,7 +357,6 @@ class LaneStopTests(unittest.TestCase):
         self.env["HOME"] = str(home)
         self.env["USERPROFILE"] = str(home)
         self.env["GRAPHHELM_EVENTS_KEY"] = "12" * 32
-        self.env.pop("GRAPHHELM_HOOK_STATE_DIR", None)
         self.note("request-desktop", to="codex-4")
         start = {"hook_event_name": "SessionStart", "session_id": "session-desktop",
                  "session_title": "codex-4 - journeys", "cwd": str(repo)}

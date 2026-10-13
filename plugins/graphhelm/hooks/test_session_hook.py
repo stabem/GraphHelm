@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -137,6 +138,11 @@ class SessionHookTests(unittest.TestCase):
         cls.thread.join()
 
     def setUp(self):
+        spec = importlib.util.spec_from_file_location("session_hook_state_guard", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        self.real_state_root = hook._state_root()
+        self.real_state_before = set(self.real_state_root.iterdir()) if self.real_state_root.exists() else set()
         RuntimeHandler.requests = []
         RuntimeHandler.reply_ok = True
         RuntimeHandler.redirect_to = None
@@ -152,6 +158,8 @@ class SessionHookTests(unittest.TestCase):
         self.token_file.write_text("test-token", encoding="utf-8")
         self.env = {
             **os.environ,
+            "LOCALAPPDATA": str(Path(self.temp.name) / "local"),
+            "XDG_STATE_HOME": str(Path(self.temp.name) / "xdg-state"),
             "GRAPHHELM_RUNTIME_URL": f"http://127.0.0.1:{self.server.server_port}",
             "GRAPHHELM_TOKEN_FILE": str(self.token_file),
             "GRAPHHELM_HOOK_STATE_DIR": str(Path(self.temp.name) / "state"),
@@ -206,7 +214,30 @@ class SessionHookTests(unittest.TestCase):
         self.assertNotIn("extensions", main_manifest)
 
     def tearDown(self):
+        roots = (Path(self.temp.name) / "state",
+                 Path(self.temp.name) / "local" / "GraphHelm" / "session-hooks")
+        live = []
+        for root in roots:
+            for marker in root.glob("*.waiter.pid"):
+                try:
+                    pid = int(marker.read_text(encoding="ascii"))
+                    if os.name == "nt":
+                        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                                       capture_output=True, timeout=5, creationflags=NO_WINDOW)
+                    else:
+                        os.kill(pid, signal.SIGTERM)
+                    live.append(pid)
+                except (OSError, ValueError):
+                    pass
         self.temp.cleanup()
+        real_state_after = set(self.real_state_root.iterdir()) if self.real_state_root.exists() else set()
+        created = real_state_after - self.real_state_before
+        origin = f"127.0.0.1:{self.server.server_port}"
+        own_state = {path.stem for path in created if path.suffix == ".json"
+                     and origin in path.read_text(encoding="utf-8", errors="replace")}
+        self.assertFalse(own_state,
+                         "hook test wrote into the real state directory")
+        self.assertFalse(live, f"hook test left live waiter markers: {live}")
 
     def test_descriptive_title_binds_leading_lane_id(self):
         spec = importlib.util.spec_from_file_location("session_hook_title", SCRIPT)

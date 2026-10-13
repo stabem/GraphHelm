@@ -403,6 +403,19 @@ class Reach(unittest.TestCase):
         commands = rt.commands(whole, single, studio)
         self.assertEqual(commands, ["(cd apps/studio && npx vitest related --run --maxWorkers=1 src/runtime/team-tasks.ts && npx tsc -b)"])
 
+    def test_studio_config_reaches_full_suite_in_both_plans(self):
+        for paths in (("apps/studio/vite.config.ts",),
+                      ("apps/studio/vite.config.ts", "apps/studio/src/runtime/team-tasks.ts")):
+            with self.subTest(paths=paths):
+                whole, single, studio, *_ = reach(*paths)
+                self.assertEqual(rt.commands(whole, single, studio),
+                                 ["(cd apps/studio && npx vitest run --maxWorkers=1 && npx tsc -b)"])
+                self.assertEqual(rt.steps(whole, single, studio)[-2:], [
+                    {"argv": ["npx", "vitest", "run", "--maxWorkers=1"],
+                     "cwd": "apps/studio", "slot": False},
+                    {"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio", "slot": False},
+                ])
+
     def test_docs_reach_nothing_and_are_not_reported_unmapped(self):
         whole, single, studio, tools, validate, other = reach("docs/process/DELIVERY.md", "docs/journeys/x/shot.jpg")
         self.assertEqual((whole, single, studio, tools, validate, other), (set(), set(), [], [], [], []))

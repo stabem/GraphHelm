@@ -299,7 +299,6 @@ function Said({
   useEffect(() => {
     if (!eager) return;
     let live = true;
-    const failedReads = new Set<string>();
     setState({ at: "loading" });
     openSealed(executionId, evidenceId, open).then(
       (content) => {
@@ -875,8 +874,6 @@ export function useEnvelopes(
     ? Object.assign({ ...envelopes.map }, { __pendingEnvelopeSequences: [...envelopes.failed] })
     : Object.assign({}, { __pendingEnvelopeSequences: [] });
 }
-
-const NO_ENVELOPES: EnvelopeRecord = {};
 
 /**
  * The way back in: say something into a run that is already going.

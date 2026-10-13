@@ -77,6 +77,19 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
         {preview.run?.state === "ready" && <span>{preview.run.kind === "preview" ? "Preview only — not proof" : "Replay recorded"}</span>}
         {(error || preview.failure || preview.busyReason) && <p role="alert">{error ?? preview.failure ?? preview.busyReason}</p>}
       </div>}
+      <div className="proof-summary">
+        <section className="proof-promise-list" aria-labelledby="proof-promise-heading">
+          <h3 id="proof-promise-heading">Promise</h3>
+          {mission.steps.map((step) => <p key={step.stepId}>{step.promise ?? step.title}</p>)}
+        </section>
+        <section className="proof-observer" aria-labelledby="proof-observer-heading">
+          <h3 id="proof-observer-heading">Observer and evidence</h3>
+          <p>No observer recorded</p>
+          {preview.run?.state === "ready" && preview.run.ranAt ? (
+            <p>{`${preview.run.kind === "replay" ? "Replay" : "Preview"} recorded ${new Date(preview.run.ranAt).toLocaleString()} (${preview.run.result ?? "result unavailable"})`}</p>
+          ) : <p>No evidence yet</p>}
+        </section>
+      </div>
       <div className="proof-cols" aria-hidden="true"><span>Step</span><span>Promise</span><span>Replay saw</span><span>Chain of custody · evidence</span><span>Your call</span></div>
       <ol className="proof-rows" aria-label="Steps">
         {mission.steps.map((s) => {

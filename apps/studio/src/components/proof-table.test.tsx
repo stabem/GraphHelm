@@ -19,6 +19,18 @@ const mission: Mission = {
 };
 
 describe("ProofTable", () => {
+
+  it("shows the flow promise and the last observer evidence with accessible headings", () => {
+    render(<ProofTable mission={mission} onOpenTest={vi.fn()}
+      flow={{ id: "j", title: "J", status: "draft", approved: null, drift: [], findings: [], approvable: true,
+        screens: [], edges: [], paths: { main: [] } }} />);
+
+    expect(screen.getByRole("heading", { name: "Promise" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Observer and evidence" })).toBeInTheDocument();
+    const evidence = screen.getByRole("region", { name: "Observer and evidence" });
+    expect(within(evidence).getByText("No observer recorded")).toBeInTheDocument();
+    expect(within(evidence).getByText("No evidence yet")).toBeInTheDocument();
+  });
   it("#947: a stale draft without a replay cannot be approved and explains both blockers", () => {
     const onApprove = vi.fn();
     render(<ProofTable mission={{ ...mission, title: "Old contract" }} onOpenTest={vi.fn()} onApprove={onApprove}

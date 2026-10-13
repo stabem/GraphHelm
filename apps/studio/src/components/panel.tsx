@@ -173,20 +173,15 @@ const DRAFTS = new Map<string, string>();
 export function resetPanelCaches(): void {
   DRAFTS.clear();
   OPENED_EVIDENCE.clear();
+  RESOLVED_EVIDENCE.clear();
   KEEL_CHECKS.clear();
 }
 
-/** Opened sealed content, shared by every hook instance and panel. An envelope is immutable
- * once sealed, so one open serves the page's lifetime — this map is what makes both the live
- * tail and a second panel affordable, and it is module-level on purpose: an instance-local
- * cache made the agent window re-fetch everything the app view already opened (round-3).
- *
- * It stores PROMISES, not values: two consumers racing the same envelope on the same render
- * (the hooks and the Said bubble mount together) must share one fetch, not both miss an empty
- * cache. A failed open is evicted so retry stays possible. Round 4 found Said reaching past
- * this map entirely — every eager envelope fetched twice — so the rule is now a function all
- * three consumers go through. */
+/** Opened sealed content, shared by every hook instance and panel. Settled values let warm
+ * consumers publish without one promise turn per carrier; in-flight promises still deduplicate
+ * concurrent opens. */
 const OPENED_EVIDENCE = new Map<string, Promise<EvidenceContent>>();
+const RESOLVED_EVIDENCE = new Map<string, EvidenceContent>();
 const KEEL_CHECKS = new Map<string, Promise<EvidenceContent>>();
 
 function openSealed(
@@ -199,7 +194,10 @@ function openSealed(
   if (held !== undefined) return held;
   const fetched = open(executionId, evidenceId);
   OPENED_EVIDENCE.set(key, fetched);
-  fetched.catch(() => OPENED_EVIDENCE.delete(key));
+  fetched.then(
+    (content) => RESOLVED_EVIDENCE.set(key, content),
+    () => OPENED_EVIDENCE.delete(key),
+  );
   return fetched;
 }
 
@@ -860,41 +858,92 @@ export function useEnvelopes(
         .filter((carrier) => previous.forId !== executionId || previous.map[carrier.sequence] === undefined)
         .map((carrier) => carrier.sequence)),
     }));
+    const openedEnvelope = (content: EvidenceContent) => {
+      const recommendations = recommendations_of(content.content, content.mediaType);
+      return {
+        ...address_of(content.content, content.mediaType),
+        text: readable_content(content.content, content.mediaType),
+        ...(recommendations.length > 0 ? { recommendations } : {}),
+      };
+    };
     let live = true;
+    const ready: Array<{ page: number; sequence: number; value: ReturnType<typeof openedEnvelope> }> = [];
+    const failed: number[] = [];
+    const publish = () => {
+      if (!live) return;
+      const byPage = new Map<number, typeof ready>();
+      for (const entry of ready.splice(0)) {
+        const entries = byPage.get(entry.page) ?? [];
+        entries.push(entry);
+        byPage.set(entry.page, entries);
+      }
+      const failedSequences = failed.splice(0);
+      for (const entries of byPage.values()) {
+        setEnvelopes((previous) => {
+          const base = previous.forId === executionId ? previous.map : {};
+          const nextMap = { ...base };
+          const nextFailed = new Set(previous.forId === executionId ? previous.failed : []);
+          const nextPending = new Set(previous.forId === executionId ? previous.pending : []);
+          for (const { sequence, value } of entries) {
+            const before = nextMap[sequence];
+            const unchanged = before?.to === value.to && before.replyTo === value.replyTo && before.text === value.text
+              && (before.recommendations ?? []).join("\u0000") === (value.recommendations ?? []).join("\u0000");
+            if (!unchanged) nextMap[sequence] = value;
+            nextFailed.delete(sequence);
+            nextPending.delete(sequence);
+          }
+          for (const sequence of failedSequences) {
+            nextFailed.add(sequence);
+            nextPending.delete(sequence);
+          }
+          return { forId: executionId, map: nextMap, failed: nextFailed, pending: nextPending };
+        });
+      }
+      if (failedSequences.length > 0 && byPage.size === 0) {
+        setEnvelopes((previous) => {
+          const nextFailed = new Set(previous.forId === executionId ? previous.failed : []);
+          const nextPending = new Set(previous.forId === executionId ? previous.pending : []);
+          for (const sequence of failedSequences) {
+            nextFailed.add(sequence);
+            nextPending.delete(sequence);
+          }
+          return { forId: executionId, map: previous.forId === executionId ? previous.map : {}, failed: nextFailed, pending: nextPending };
+        });
+      }
+    };
+    const cached: typeof ready = [];
+    const uncached: Array<{ carrier: (typeof carriers)[number]; page: number }> = [];
+    carriers.forEach((carrier, carrierIndex) => {
+      const key = `${executionId}/${carrier.evidenceRefs[0]}`;
+      const content = RESOLVED_EVIDENCE.get(key);
+      const page = Math.floor(carrierIndex / 50);
+      if (content !== undefined) cached.push({ page, sequence: carrier.sequence, value: openedEnvelope(content) });
+      else uncached.push({ carrier, page });
+    });
+    // Cached content has no I/O dependency, so publish it now in groups of fifty.
+    const cachedPages = new Map<number, typeof cached>();
+    for (const entry of cached) {
+      const page = cachedPages.get(entry.page) ?? [];
+      page.push(entry);
+      cachedPages.set(entry.page, page);
+    }
+    for (const page of cachedPages.values()) {
+      ready.push(...page);
+      publish();
+    }
+    const read = async ({ carrier, page }: (typeof uncached)[number]) => {
+      const key = `${executionId}/${carrier.evidenceRefs[0]}`;
+      try {
+        const content = RESOLVED_EVIDENCE.get(key) ?? await openSealed(executionId, carrier.evidenceRefs[0], openEvidence);
+        if (live) ready.push({ page, sequence: carrier.sequence, value: openedEnvelope(content) });
+      } catch {
+        if (live) failed.push(carrier.sequence);
+      }
+    };
     void (async () => {
-      for (const carrier of carriers) {
-        try {
-          const content = await openSealed(executionId, carrier.evidenceRefs[0], openEvidence);
-          if (!live) return;
-          const recommendations = recommendations_of(content.content, content.mediaType);
-          const opened = {
-            ...address_of(content.content, content.mediaType),
-            // The words too: the attention block quotes the pending question out of the same
-            // fetch the addressing already made.
-            text: readable_content(content.content, content.mediaType),
-            ...(recommendations.length > 0 ? { recommendations } : {}),
-          };
-          setEnvelopes((previous) => {
-            const before = previous.forId === executionId ? previous.map[carrier.sequence] : undefined;
-            const unchanged = before?.to === opened.to && before.replyTo === opened.replyTo && before.text === opened.text
-              && (before.recommendations ?? []).join("\u0000") === (opened.recommendations ?? []).join("\u0000");
-            const nextFailed = new Set(previous.forId === executionId ? previous.failed : []);
-            nextFailed.delete(carrier.sequence);
-            const nextPending = new Set(previous.forId === executionId ? previous.pending : []);
-            nextPending.delete(carrier.sequence);
-            return { forId: executionId, map: unchanged ? previous.map : { ...(previous.forId === executionId ? previous.map : {}), [carrier.sequence]: opened }, failed: nextFailed, pending: nextPending };
-          });
-        } catch {
-          // Keep the failure observable as an unopened candidate and retry it on the next event
-          // page update. It must not turn a failed evidence read into a dark beacon.
-          if (live) setEnvelopes((previous) => {
-            const nextFailed = new Set(previous.forId === executionId ? previous.failed : []);
-            nextFailed.add(carrier.sequence);
-            const nextPending = new Set(previous.forId === executionId ? previous.pending : []);
-            nextPending.delete(carrier.sequence);
-            return { forId: executionId, map: previous.forId === executionId ? previous.map : {}, failed: nextFailed, pending: nextPending };
-          });
-        }
+      for (let start = 0; start < uncached.length; start += 50) {
+        await Promise.all(uncached.slice(start, start + 50).map(read));
+        publish();
       }
     })();
     return () => {

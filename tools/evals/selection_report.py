@@ -97,7 +97,8 @@ def build_report(observations, catalog):
     selection = defaultdict(empty_selection)
     completion = defaultdict(empty_completion)
     judges = defaultdict(lambda: {"observed": 0, "pass": 0, "fail": 0,
-                                  "human_labeled": 0, "false_pass": 0, "false_fail": 0,
+                                  "human_labeled": 0, "compared": 0,
+                                  "false_pass": 0, "false_fail": 0,
                                   "repeat_groups": 0, "repeat_disagreement": 0,
                                   "repeat_unidentified": 0})
     repeats = defaultdict(list)
@@ -129,10 +130,12 @@ def build_report(observations, catalog):
         if "human_label" in item:
             counts = judges[rubric]
             counts["human_labeled"] += 1
-            if item.get("judge") == "pass" and item["human_label"] == "fail":
-                counts["false_pass"] += 1
-            if item.get("judge") == "fail" and item["human_label"] == "pass":
-                counts["false_fail"] += 1
+            if "judge" in item:
+                counts["compared"] += 1
+                if item["judge"] == "pass" and item["human_label"] == "fail":
+                    counts["false_pass"] += 1
+                if item["judge"] == "fail" and item["human_label"] == "pass":
+                    counts["false_fail"] += 1
 
     for (_, rubric, _, _), verdicts in repeats.items():
         if len(verdicts) > 1:
@@ -143,12 +146,13 @@ def build_report(observations, catalog):
     judge_report = {}
     for rubric in sorted(set(judges) | {item["rubric"] for item in observations}):
         counts = judges[rubric]
-        if counts["human_labeled"]:
-            judge_report[rubric] = {"status": "qualified", **counts}
+        if counts["compared"]:
+            judge_report[rubric] = {"status": "comparisons_available", **counts}
         else:
             judge_report[rubric] = {"status": "unqualified", "observed": counts["observed"],
                                     "pass": counts["pass"], "fail": counts["fail"],
-                                    "human_labeled": 0,
+                                    "human_labeled": counts["human_labeled"],
+                                    "compared": 0,
                                     "false_pass": None, "false_fail": None,
                                     "repeat_groups": counts["repeat_groups"],
                                     "repeat_disagreement": counts["repeat_disagreement"],

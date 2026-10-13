@@ -28,6 +28,7 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 SELECTOR = Path(__file__).with_name("reached_tests.py")
 MAX_CAPTURE = 4000
+MAX_VITEST_REPORT = 2 * 1024 * 1024
 _SHELL_MARKERS = ("&&", "||", "|", ">", "<", "`", "$(")
 _SHELL_EXECUTABLES = {"sh", "bash", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe"}
 _CARGO_TEST_TARGET_FLAGS = ("--test", "--bin", "--lib", "--doc", "--example")
@@ -171,6 +172,32 @@ def _resolve_argv(repo: Path, cwd: Path, argv: list[str]) -> list[str]:
     if entry is None or not entry.is_file():
         raise RuntimeError(f"local Studio tool missing: {package}; run npm ci in apps/studio")
     return ["node", str(entry), *argv[2:]]
+
+
+def _vitest_step(step: dict[str, Any]) -> bool:
+    return step["cwd"] == "apps/studio" and step["argv"][:2] == ["npx", "vitest"]
+
+
+def _vitest_evidence(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        if path.stat().st_size > MAX_VITEST_REPORT:
+            return None, "Vitest report exceeds size limit"
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return None, f"Vitest report missing or malformed: {type(exc).__name__}"
+    fields = ("numTotalTests", "numPassedTests", "numFailedTests", "numPendingTests", "numTodoTests",
+              "numFailedTestSuites")
+    if not isinstance(data, dict) or any(type(data.get(key)) is not int or data[key] < 0 for key in fields):
+        return None, "Vitest report has invalid counts"
+    if type(data.get("success")) is not bool or not isinstance(data.get("testResults"), list):
+        return None, "Vitest report has invalid result fields"
+    passed, failed = data["numPassedTests"], data["numFailedTests"]
+    if passed + failed + data["numPendingTests"] + data["numTodoTests"] > data["numTotalTests"]:
+        return None, "Vitest report has inconsistent counts"
+    evidence = {"passed": passed, "failed": failed, "skipped": data["numPendingTests"] + data["numTodoTests"],
+                "errors": data["numFailedTestSuites"], "total": data["numTotalTests"],
+                "success": data["success"], "files": len(data["testResults"]), "report": str(path)}
+    return evidence, None
 
 
 def _browser_toolchain_ready() -> bool:
@@ -349,6 +376,10 @@ def _reusable_results(output: Path) -> tuple[dict[str, dict[str, Any]], str | No
     for entry in prior.get("completed") or []:
         if (isinstance(entry, dict) and entry.get("reusable") is True and entry.get("returncode") == 0
                 and isinstance(entry.get("proofKey"), str) and not entry.get("error") and not entry.get("zeroTests")):
+            if _vitest_step(entry) and (not isinstance(entry.get("vitest"), dict)
+                                        or entry["vitest"].get("passed", 0) + entry["vitest"].get("failed", 0) <= 0
+                                        or entry["vitest"].get("failed") != 0 or entry["vitest"].get("errors") != 0):
+                continue
             found[entry["proofKey"]] = entry
     return found, None
 
@@ -392,14 +423,18 @@ def _summary(report: dict[str, Any], output: Path) -> str:
     completed = report.get("completed", [])
     passed = [e for e in completed if e.get("returncode") == 0 and not e.get("error") and not e.get("zeroTests")]
     reused = [e for e in passed if e.get("reused")]
-    failed = [e for e in completed if e not in passed]
+    unobserved = [e for e in completed if e not in passed and e.get("returncode") == 0 and e.get("error")
+                  and not (isinstance(e.get("vitest"), dict) and (e["vitest"]["failed"] or e["vitest"]["errors"]))]
+    failed = [e for e in completed if e not in passed and e not in unobserved]
     lines = [f"reached-tests: {report.get('status')} | passed {len(passed)} (reused {len(reused)})"
-             f" | failed {len(failed)} | pending {len(report.get('pending', []))}"
+             f" | failed {len(failed)} | unobserved {len(unobserved)} | pending {len(report.get('pending', []))}"
              f" | {report.get('elapsedSeconds')}s"]
     for problem in report.get("preflight", {}).get("problems", []):
         lines.append(f"  BLOCKED {problem}")
     for entry in failed:
         lines.append(f"  FAILED step {entry['index']}: {' '.join(entry['argv'])} (exit {entry.get('returncode')}) -> {entry.get('log')}")
+    for entry in unobserved:
+        lines.append(f"  UNOBSERVED step {entry['index']}: {entry.get('error')} -> {entry.get('log')}")
     for index in report.get("pending", []):
         steps = report.get("plan", {}).get("steps", [])
         argv = ' '.join(steps[index]["argv"]) if index < len(steps) else "?"
@@ -506,7 +541,7 @@ def run(args: argparse.Namespace) -> int:
                 report["completed"].append({"index": index, "argv": steps[index]["argv"], "cwd": steps[index]["cwd"],
                                             "slot": steps[index]["slot"], "returncode": 0, "reused": True,
                                             "proofKey": keys[index], "log": prior.get("log"),
-                                            "stepSeconds": prior.get("stepSeconds")})
+                                            "stepSeconds": prior.get("stepSeconds"), "vitest": prior.get("vitest")})
                 reused_seconds += float(prior.get("stepSeconds") or 0.0)
             report["measure"] = {"plannedSteps": len(steps), "reusedSteps": len(steps) - len(report["pending"]),
                                  "reusedSecondsSaved": round(reused_seconds, 3)}
@@ -537,6 +572,10 @@ def run(args: argparse.Namespace) -> int:
                 commands = []
                 for item in group:
                     command = _resolve_argv(repo, cwd, list(item["argv"]))
+                    if _vitest_step(item):
+                        artifact = logs / f"vitest-{item['index']}.json"
+                        artifact.unlink(missing_ok=True)
+                        command.extend(["--reporter=default", "--reporter=json", f"--outputFile.json={artifact}"])
                     if command and command[0] in ("python", "python3"):
                         command[0] = sys.executable
                     if selected_graphhelm is not None and command and Path(command[0]).name.lower() in ("graphhelm", "graphhelm.exe"):
@@ -628,6 +667,15 @@ def run(args: argparse.Namespace) -> int:
                 zero_tests = "-m" in entry["argv"] and "unittest" in entry["argv"] and bool(_UNITTEST_ZERO.search(tail))
                 if zero_tests:
                     result["zeroTests"] = True
+                if _vitest_step(entry):
+                    evidence, evidence_error = _vitest_evidence(logs / f"vitest-{index}.json")
+                    result["vitest"] = evidence
+                    if evidence_error:
+                        result["error"] = evidence_error
+                    elif evidence["failed"] or evidence["errors"]:
+                        result["error"] = "Vitest reported test or suite failures"
+                    elif evidence["passed"] == 0 or not evidence["success"]:
+                        result["error"] = "Vitest executed no passing tests or reported unsuccessful"
                 report["completed"].append(result)
                 if zero_tests:
                     report["status"] = "incomplete"
@@ -635,6 +683,10 @@ def run(args: argparse.Namespace) -> int:
                     break
                 if result["returncode"]:
                     report["status"] = "failed"
+                    break
+                if result.get("error"):
+                    report["status"] = "failed" if result.get("vitest") and result["vitest"]["failed"] else "incomplete"
+                    report["error"] = f"step {index} {result['error']}"
                     break
                 if elapsed > args.budget_seconds:
                     report["status"] = "budgetExceeded"

@@ -300,6 +300,40 @@ class Reach(unittest.TestCase):
             self.assertEqual(whole, {"graphhelm-fixture"})
             self.assertEqual(single, set())
 
+    def test_deleted_journey_embedded_by_cli_source_selects_only_binary(self):
+        """#1075: a deleted flow must compile its Rust owner without planning every CLI test.
+
+        Cost: local temporary files and selector work; milliseconds, no Cargo or services.
+        """
+        flow = ".graphhelm/journeys/studio-answer-node.journey.yaml"
+        with tempfile.TemporaryDirectory() as repo:
+            source = Path(repo, "apps/cli/src/commands/journey_preview.rs")
+            source.parent.mkdir(parents=True)
+            source.write_text('std::fs::read(root().join(".graphhelm/journeys/studio-answer-node.journey.yaml"));',
+                              encoding="utf-8")
+            packages = [dict(PACKAGES[2], targets=[{"name": "graphhelm", "kind": "bin",
+                                                   "src": "apps/cli/src/main.rs"}])]
+            whole, single, *_ = rt.reach([flow], packages, {}, repo)
+            self.assertEqual(whole, set())
+            self.assertEqual(single, {("graphhelm-cli", "bin:graphhelm", None),
+                                      ("graphhelm-cli", "journeys", "journey_scope_guard")})
+            self.assertEqual([step["argv"] for step in rt.steps(whole, single, [], lint_packages=[])][:1], [
+                ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli", "--bin", "graphhelm",
+                 "--", "--test-threads=2"]])
+
+    def test_embedded_file_in_cli_test_module_selects_only_that_module(self):
+        """A test fixture must not select unrelated CLI modules; pure local selector cost."""
+        fixture = "fixtures/changed.yaml"
+        with tempfile.TemporaryDirectory() as repo:
+            source = Path(repo, "apps/cli/tests/journey_preview.rs")
+            source.parent.mkdir(parents=True)
+            source.write_text('include_str!("../../../fixtures/changed.yaml");', encoding="utf-8")
+            packages = [dict(PACKAGES[2], bundles={"journey_preview": "cli"},
+                             tests=[{"name": "cli", "src": "apps/cli/tests/cli.rs"}])]
+            whole, single, *_ = rt.reach([fixture], packages, {}, repo)
+            self.assertEqual(whole, set())
+            self.assertEqual(single, {("graphhelm-cli", "cli", "journey_preview")})
+
     def test_deleted_non_rust_literal_root_join_reaches_embedding_crate_compile(self):
         """Resolve a repository-root literal joined at a Rust file read site.
 

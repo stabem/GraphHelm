@@ -64,6 +64,33 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
 
 
 class TaskRecordTest(unittest.TestCase):
+    def test_open_claim_heartbeat_posts_the_canonical_activity_record(self):
+        # #1024: an eligible heartbeat must be emitted by the real recorder. On the parent,
+        # the CLI rejects this valid kind before any request. Cost: one bounded local HTTP call.
+        FakeRuntime.history = [{
+            "sequence": 7,
+            "occurredAt": "2026-10-13T12:00:00Z",
+            "actor": {"id": "lane-a"},
+            "kind": {"type": "signal.recorded", "kind": "task.claimed"},
+            "evidence": [{"id": "claim-evidence"}],
+        }]
+        FakeRuntime.evidence = {"claim-evidence": {
+            "type": "task.claimed", "source": {"id": "lane-a"},
+            "description": json.dumps({"schema": "graphhelm-task-event-v1", "taskId": "issue-1024",
+                                       "revision": 1, "at": "2026-10-13T12:00:00Z", "issue": 1024,
+                                       "lane": "lane-a", "branch": "issue-1024-heartbeat"}),
+        }}
+        with patch.object(task_record.datetime, "datetime") as clock:
+            clock.now.return_value = task_record.datetime.datetime(2026, 10, 13, 12, 6, tzinfo=task_record.datetime.timezone.utc)
+            code, out = self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024", "--no-github")
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.startswith("recorded "), out)
+        signal = FakeRuntime.seen[-1][1]["signal"]
+        self.assertEqual(signal["type"], "task.heartbeat")
+        document = json.loads(signal["description"])
+        self.assertEqual({key: document[key] for key in ("schema", "taskId", "revision", "lane")},
+                         {"schema": "graphhelm-task-event-v1", "taskId": "issue-1024", "revision": 1, "lane": "lane-a"})
+
     def test_release_records_the_exact_claim_sequence_and_reason(self):
         code, out = self.run_step("--lane", "lane-a", "released", "--issue", "86",
                                   "--claim-sequence", "12", "--release-reason", "Work moved elsewhere")

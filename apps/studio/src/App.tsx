@@ -594,11 +594,13 @@ export default function App({
   const [stale, setStale] = useState(false);
   const pollGeneration = useRef(0);
   const railRefreshBusy = useRef(false);
+  const successfulRailRefreshes = useRef(0);
   useEffect(() => {
     if (!connected || selected === "") return;
     const generation = ++pollGeneration.current;
     let tickBusy = false;
     let hiddenTicks = 0;
+    successfulRailRefreshes.current = 0;
     pollMisses.current = 0;
     setStale(false);
     const timer = setInterval(() => {
@@ -620,18 +622,20 @@ export default function App({
           // non-selected run flipping to needs-you stayed frozen until the next click
           // (round-3, two reviewers).
           const lastSeen = eventsRef.current?.events.at(-1)?.sequence ?? 0;
-          // The rail refresh covers EVERY row the operator has paged in, not just page one: a
-          // kept-but-stale row let a page-two run flip to needs_you invisibly under the "live"
-          // badge (PR #467 review). Pages follow the loaded count, bounded at 50 hops.
+          // Refresh page one on quiet ticks, then refresh the loaded prefix every fifth
+          // successful rail read. Deep pages still update without making every poll traverse
+          // the entire loaded rail (issue #1010, Card 2).
           const loadedRows = executionsRef.current.filter((run) => !restoredOutsidePage.current.has(run.executionId)).length;
-          const readList = async () => {
+          const readList = async (fullRefresh: boolean) => {
             const first = await client.listExecutions({ limit: LIST_PAGE_SIZE });
             const rows = [...first.executions];
             let cursor = first.hasMore ? first.nextCursor : null;
-            for (let hops = 1; cursor !== null && rows.length < loadedRows && hops < 50; hops += 1) {
-              const next = await client.listExecutions({ after: cursor, limit: LIST_PAGE_SIZE });
-              rows.push(...next.executions);
-              cursor = next.hasMore ? next.nextCursor : null;
+            if (fullRefresh) {
+              for (let hops = 1; cursor !== null && rows.length < loadedRows && hops < 50; hops += 1) {
+                const next = await client.listExecutions({ after: cursor, limit: LIST_PAGE_SIZE });
+                rows.push(...next.executions);
+                cursor = next.hasMore ? next.nextCursor : null;
+              }
             }
             return rows;
           };
@@ -658,8 +662,10 @@ export default function App({
           setStale(false);
           if (!railRefreshBusy.current) {
             railRefreshBusy.current = true;
-            void readList().then((listRows) => {
+            const fullRefreshDue = successfulRailRefreshes.current >= 4;
+            void readList(fullRefreshDue).then((listRows) => {
               if (pollGeneration.current !== generation || clientRef.current !== client || selectedRef.current !== selected) return;
+              successfulRailRefreshes.current = fullRefreshDue ? 0 : successfulRailRefreshes.current + 1;
               for (const run of listRows) restoredOutsidePage.current.delete(run.executionId);
               setExecutions((previous) => {
                 const refreshed = new Map(listRows.map((run) => [run.executionId, run]));

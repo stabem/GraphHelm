@@ -3248,6 +3248,109 @@ describe("round-3: what you typed survives, and what waits is true", () => {
 });
 
 describe("round-3: the rail is live and the screen belongs to one run", () => {
+  it("refreshes the loaded rail prefix every fifth successful poll and retries a failed full refresh", async () => {
+    vi.useFakeTimers();
+    const makeRun = (index: number, attention: "can_sleep" | "needs_you") => ({
+      executionId: `run-${String(index).padStart(2, "0")}`,
+      mode: "supervised",
+      status: "running",
+      attention,
+      startedAt: null,
+      lastEventAt: "2026-10-12T12:00:00Z",
+      headSequence: 13,
+    });
+    let firstPageAttention: "can_sleep" | "needs_you" = "can_sleep";
+    let thirdPageAttention: "can_sleep" | "needs_you" = "can_sleep";
+    let holdSecondPage = false;
+    let rejectSecondPage!: (error: Error) => void;
+    const secondPagePending = new Promise<never>((_resolve, reject) => { rejectSecondPage = reject; });
+    const listExecutions = vi.fn(async (options?: { after?: string }) => {
+      if (options?.after === "page-two") {
+        if (holdSecondPage) return secondPagePending;
+        return { executions: Array.from({ length: 20 }, (_, offset) => makeRun(offset + 20, "can_sleep")), hasMore: true, nextCursor: "page-three" };
+      }
+      if (options?.after === "page-three") {
+        return { executions: [makeRun(40, thirdPageAttention)], hasMore: false, nextCursor: null };
+      }
+      return {
+        executions: Array.from({ length: 20 }, (_, index) => makeRun(index, index === 0 ? "needs_you" : firstPageAttention)),
+        hasMore: true,
+        nextCursor: "page-two",
+      };
+    });
+    let status = "running";
+    let eventHead = 13;
+    const client = stubClient({
+      listExecutions,
+      getStatus: vi.fn(async (executionId: string) => ({ ...STATUS, executionId, status })),
+      getEvents: vi.fn(async () => ({ head: ++eventHead, events: [] })),
+    });
+    const settle = async () => act(async () => {
+      for (let turn = 0; turn < 40; turn += 1) await Promise.resolve();
+    });
+    const tick = async () => {
+      await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+      await settle();
+    };
+
+    try {
+      render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null}
+        session={async () => ({ token: "local-token", project: "dale-api-base" })} pollIntervalMs={4000} />);
+      await settle();
+      const rail = screen.getByRole("navigation", { name: "Projects" });
+      expect(within(rail).getByRole("button", { name: /^run-00/i })).toBeInTheDocument();
+      fireEvent.click(within(rail).getByRole("button", { name: /show more/i }));
+      await settle();
+      expect(within(rail).getByRole("button", { name: /^run-20/i })).toBeInTheDocument();
+      fireEvent.click(within(rail).getByRole("button", { name: /show more/i }));
+      await settle();
+      expect(within(rail).getByRole("button", { name: /^run-40/i })).toBeInTheDocument();
+      listExecutions.mockClear();
+
+      firstPageAttention = "needs_you";
+      for (let refresh = 0; refresh < 4; refresh += 1) await tick();
+      expect(listExecutions).toHaveBeenCalledTimes(4);
+      expect(listExecutions.mock.calls.every(([options]) => options?.after === undefined)).toBe(true);
+      expect(within(rail).getByRole("button", { name: /^run-01.*needs you/i })).toBeInTheDocument();
+      expect(within(rail).getByRole("button", { name: /^run-40.*can sleep/i })).toBeInTheDocument();
+
+      thirdPageAttention = "needs_you";
+      await tick();
+      expect(listExecutions).toHaveBeenCalledTimes(7);
+      expect(listExecutions.mock.calls.slice(4).map(([options]) => options?.after)).toEqual([undefined, "page-two", "page-three"]);
+      expect(within(rail).getByRole("button", { name: /^run-40.*needs you/i })).toBeInTheDocument();
+
+      for (let refresh = 0; refresh < 4; refresh += 1) await tick();
+      expect(listExecutions).toHaveBeenCalledTimes(11);
+      expect(listExecutions.mock.calls.slice(7).every(([options]) => options?.after === undefined)).toBe(true);
+
+      thirdPageAttention = "can_sleep";
+      status = "paused";
+      holdSecondPage = true;
+      const statusReadsBeforeHold = vi.mocked(client.getStatus).mock.calls.length;
+      const eventReadsBeforeHold = vi.mocked(client.getEvents).mock.calls.length;
+      await tick();
+      expect(listExecutions).toHaveBeenCalledTimes(13);
+      expect(listExecutions.mock.calls.slice(11).map(([options]) => options?.after)).toEqual([undefined, "page-two"]);
+      await tick();
+      expect(vi.mocked(client.getStatus).mock.calls.length).toBeGreaterThan(statusReadsBeforeHold);
+      expect(vi.mocked(client.getEvents).mock.calls.length).toBeGreaterThan(eventReadsBeforeHold);
+      expect(screen.getByText(/^Execution \/ paused$/)).toBeInTheDocument();
+      expect(listExecutions).toHaveBeenCalledTimes(13);
+
+      holdSecondPage = false;
+      await act(async () => { rejectSecondPage(new Error("deep page unavailable")); });
+      await settle();
+      await tick();
+      expect(listExecutions).toHaveBeenCalledTimes(16);
+      expect(listExecutions.mock.calls.slice(13).map(([options]) => options?.after)).toEqual([undefined, "page-two", "page-three"]);
+      expect(within(rail).getByRole("button", { name: /^run-40.*can sleep/i })).toBeInTheDocument();
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps selected-run polling live while one rail refresh is pending or rejected", async () => {
     let releaseRail: () => void = () => {};
     const heldRail = new Promise<void>((resolve) => { releaseRail = resolve; });

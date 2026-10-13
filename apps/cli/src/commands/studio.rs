@@ -125,6 +125,132 @@ fn git(source: &Path, arguments: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
+/// The default upstream of the managed install clone when the seed clone names none.
+const UPSTREAM: &str = "https://github.com/stabem/GraphHelm.git";
+
+/// #1134: the install clone `graphhelm update` and `studio start` use when no `--source` or
+/// `GRAPHHELM_SOURCE` names one: `<home>/.graphhelm/source`. It belongs to GraphHelm alone, so
+/// agents working in the owner's own clone can never block an update with local changes. It is
+/// created on first use from the seed clone's `origin` (or the public upstream).
+pub(super) fn managed_dir(home: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    home.filter(|value| !value.is_empty())
+        .map(|home| PathBuf::from(home).join(".graphhelm").join("source"))
+}
+
+fn user_home() -> Option<std::ffi::OsString> {
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+}
+
+/// The managed install clone, cloned from `seed`'s origin on first use.
+fn managed_clone(seed: Option<&Path>, progress: &Progress) -> Result<PathBuf, String> {
+    let dir = managed_dir(user_home())
+        .ok_or_else(|| "no home directory for the GraphHelm install clone".to_string())?;
+    if dir.join(LAUNCHER).is_file() {
+        return Ok(plain(std::fs::canonicalize(&dir).unwrap_or(dir)));
+    }
+    let url = seed
+        .and_then(|seed| git(seed, &["remote", "get-url", "origin"]))
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| UPSTREAM.to_owned());
+    Progress::say(&progress.info(&format!(
+        "creating the GraphHelm install clone {} from {url}",
+        dir.display()
+    )));
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|_| format!("could not create {}", parent.display()))?;
+    }
+    let cloned = graphhelm_process::command("git")
+        .args(["clone", "--quiet", "--branch", "main", &url])
+        .arg(&dir)
+        .status()
+        .is_ok_and(|status| status.success());
+    if !cloned || !dir.join(LAUNCHER).is_file() {
+        return Err(format!("could not clone {url} into {}", dir.display()));
+    }
+    Ok(plain(std::fs::canonicalize(&dir).unwrap_or(dir)))
+}
+
+/// Moves the managed clone to `origin/main`, whatever is in it: nobody edits it, so a change
+/// there is GraphHelm's own leftover and is discarded rather than blocking the update.
+fn sync_managed(source: &Path, progress: Progress) -> serde_json::Value {
+    let progress = progress.retag("studio");
+    if git(source, &["fetch", "--quiet", "origin", "main"]).is_none() {
+        Progress::say(&progress.warn("could not fetch origin/main; running the clone as it is"));
+        return json!({ "state": "unchecked" });
+    }
+    let before = git(source, &["rev-parse", "HEAD"]).unwrap_or_default();
+    let target = git(source, &["rev-parse", "origin/main"]).unwrap_or_default();
+    let clean = git(source, &["status", "--porcelain", "--untracked-files=no"])
+        .is_some_and(|status| status.is_empty());
+    let modules = source.join("apps/studio/node_modules").is_dir();
+    if before == target && clean && modules {
+        Progress::say(&progress.ok("already up to date with origin/main"));
+        return json!({ "state": "up_to_date" });
+    }
+    if git(
+        source,
+        &["checkout", "--quiet", "--force", "--detach", "origin/main"],
+    )
+    .is_none()
+    {
+        Progress::say(&progress.warn("could not move the install clone; running it as it is"));
+        return json!({ "state": "stale", "reason": "the install clone could not be moved" });
+    }
+    let behind = git(
+        source,
+        &["rev-list", "--count", &format!("{before}..{target}")],
+    )
+    .and_then(|count| count.parse::<u64>().ok())
+    .unwrap_or(0);
+    let lock_moved = !modules
+        || git(
+            source,
+            &["diff", "--quiet", &before, "HEAD", "--", LOCKFILE],
+        )
+        .is_none();
+    if lock_moved {
+        Progress::say(&progress.info("installing the Studio's dependencies (npm ci)"));
+        let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
+        let installed = graphhelm_process::command(npm)
+            .args(["ci", "--prefix"])
+            .arg(source.join("apps/studio"))
+            .status()
+            .is_ok_and(|status| status.success());
+        if !installed {
+            Progress::say(&progress.warn("npm ci failed; the Studio may not start"));
+        }
+    }
+    Progress::say(&progress.ok(&format!(
+        "install clone at origin/main ({behind} new commit(s))"
+    )));
+    json!({ "state": "updated", "commits": behind, "dependenciesReinstalled": lock_moved, "managed": true })
+}
+
+/// Which clone to run and how to bring it up to date: an explicit `--source` or
+/// `GRAPHHELM_SOURCE` is the operator's own clone and is only fast-forwarded when clean; otherwise
+/// the managed install clone (#1134), seeded from the clone this binary was built from.
+fn choose_source(
+    explicit: Option<PathBuf>,
+    progress: &Progress,
+) -> Result<(PathBuf, bool), String> {
+    let explicit = [
+        explicit,
+        std::env::var_os("GRAPHHELM_SOURCE").map(PathBuf::from),
+    ];
+    if explicit.iter().any(Option::is_some) {
+        return resolve_source(&explicit)
+            .map(|source| (source, false))
+            .ok_or_else(|| {
+                format!(
+                    "no GraphHelm clone with {LAUNCHER} was found at --source or GRAPHHELM_SOURCE"
+                )
+            });
+    }
+    let seed = resolve_source(&[Some(PathBuf::from(BUILT_FROM))]);
+    managed_clone(seed.as_deref(), progress).map(|source| (source, true))
+}
+
 /// Brings the clone up to `origin/main` when [`freshness`] allows it. Returns what happened, for
 /// the envelope; a clone git cannot read (no git, no remote, offline) is run as it is.
 fn update(source: &Path, progress: Progress) -> serde_json::Value {
@@ -198,26 +324,20 @@ fn update(source: &Path, progress: Progress) -> serde_json::Value {
 /// running binary is moved aside to `graphhelm.old.exe` first and moved back if the install fails.
 pub fn update_cli(args: &UpdateArgs) -> Outcome {
     const UPDATE: &str = "update";
-    let candidates = [
-        args.source.clone(),
-        std::env::var_os("GRAPHHELM_SOURCE").map(PathBuf::from),
-        Some(PathBuf::from(BUILT_FROM)),
-    ];
-    let Some(source) = resolve_source(&candidates) else {
-        return refused_as(
-            UPDATE,
-            format!(
-                "no GraphHelm clone with {LAUNCHER} was found; pass --source <your GraphHelm clone> or set GRAPHHELM_SOURCE"
-            ),
-            "/source",
-        );
-    };
     let started = std::time::Instant::now();
     let progress = Progress::decide("update");
     Progress::say(&progress.banner("graphhelm update: sync, build, install"));
     Progress::say(&progress.step(1, 3, "Syncing the clone"));
+    let (source, managed) = match choose_source(args.source.clone(), &progress) {
+        Ok(chosen) => chosen,
+        Err(message) => return refused_as(UPDATE, message, "/source"),
+    };
     Progress::say(&progress.info(&format!("GraphHelm source: {}", source.display())));
-    let clone = update(&source, progress);
+    let clone = if managed {
+        sync_managed(&source, progress)
+    } else {
+        update(&source, progress)
+    };
     // A clone that could not be fast-forwarded would only rebuild the old code: a long compile
     // that installs nothing new (owner run, 2026-10-12: 18 minutes, 28 commits behind).
     if clone["state"] == "stale" && !args.keep_local {
@@ -281,7 +401,14 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
         &progress
             .info("installing the CLI (cargo install --locked --profile update --path apps/cli)"),
     );
-    let target = target_dir(std::env::var_os("CARGO_TARGET_DIR"), &source);
+    // The managed clone shares the build cache of the clone this binary came from, so its first
+    // build reuses compiled dependencies instead of starting cold.
+    let cache_root = if managed {
+        resolve_source(&[Some(PathBuf::from(BUILT_FROM))]).unwrap_or_else(|| source.clone())
+    } else {
+        source.clone()
+    };
+    let target = target_dir(std::env::var_os("CARGO_TARGET_DIR"), &cache_root);
     Progress::say(&progress.info(&format!("reusing build cache {}", target.display())));
     let mut install = graphhelm_process::command("cargo");
     install
@@ -383,27 +510,18 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
             "/project",
         );
     }
-    let candidates = [
-        args.source.clone(),
-        std::env::var_os("GRAPHHELM_SOURCE").map(PathBuf::from),
-        Some(PathBuf::from(BUILT_FROM)),
-    ];
-    let Some(source) = resolve_source(&candidates) else {
-        return refused(
-            format!(
-                "no GraphHelm clone with {LAUNCHER} was found; pass --source <your GraphHelm clone> or set GRAPHHELM_SOURCE"
-            ),
-            "/source",
-        );
+    let studio_progress = Progress::new("studio", false, crate::palette::Palette::plain());
+    let (source, managed) = match choose_source(args.source.clone(), &studio_progress) {
+        Ok(chosen) => chosen,
+        Err(message) => return refused(message, "/source"),
     };
     eprintln!("[studio] Studio source: {}", source.display());
     let freshness = if args.no_update {
         json!({ "state": "skipped" })
+    } else if managed {
+        sync_managed(&source, studio_progress)
     } else {
-        update(
-            &source,
-            Progress::new("studio", false, crate::palette::Palette::plain()),
-        )
+        update(&source, studio_progress)
     };
     let head = git(&source, &["rev-parse", "--short", "HEAD"]);
 
@@ -486,6 +604,69 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1134: the install clone lives under the user's home, never in a clone agents work in.
+    #[test]
+    fn the_install_clone_lives_under_the_home_graphhelm_directory() {
+        assert_eq!(
+            managed_dir(Some("/home/u".into())),
+            Some(PathBuf::from("/home/u/.graphhelm/source"))
+        );
+        assert_eq!(managed_dir(Some("".into())), None);
+        assert_eq!(managed_dir(None), None);
+    }
+
+    /// #1134: local changes in the managed install clone never stop an update; it is moved to
+    /// origin/main. Defect named: the owner's update refused twice in a day because agents had
+    /// edited the clone it built from. Cost: two temporary git repositories, no network.
+    #[test]
+    fn a_dirty_install_clone_is_moved_to_origin_main_instead_of_refusing() {
+        let run = |dir: &Path, args: &[&str]| {
+            let ok = graphhelm_process::command("git")
+                .arg("-C")
+                .arg(dir)
+                .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        let scratch = tempfile::tempdir().unwrap();
+        let origin = scratch.path().join("origin");
+        std::fs::create_dir_all(origin.join("apps/studio/tools")).unwrap();
+        run(&origin, &["init", "--quiet", "--initial-branch", "main"]);
+        std::fs::write(origin.join(LAUNCHER), "v1").unwrap();
+        std::fs::write(origin.join(LOCKFILE), "{}").unwrap();
+        run(&origin, &["add", "."]);
+        run(&origin, &["commit", "--quiet", "-m", "one"]);
+        let clone = scratch.path().join("clone");
+        run(
+            scratch.path(),
+            &["clone", "--quiet", origin.to_str().unwrap(), "clone"],
+        );
+        std::fs::create_dir_all(clone.join("apps/studio/node_modules")).unwrap();
+        std::fs::write(origin.join(LAUNCHER), "v2").unwrap();
+        run(&origin, &["commit", "--quiet", "-am", "two"]);
+        std::fs::write(clone.join(LAUNCHER), "an agent's edit").unwrap();
+
+        let result = sync_managed(
+            &clone,
+            Progress::new("test", false, crate::palette::Palette::plain()),
+        );
+
+        assert_eq!(result["state"], "updated", "{result}");
+        assert_eq!(result["commits"], 1, "{result}");
+        assert_eq!(std::fs::read_to_string(clone.join(LAUNCHER)).unwrap(), "v2");
+        assert_eq!(
+            sync_managed(
+                &clone,
+                Progress::new("test", false, crate::palette::Palette::plain())
+            )["state"],
+            "up_to_date"
+        );
+    }
 
     #[test]
     fn fast_forwards_only_a_clean_main_that_is_strictly_behind() {

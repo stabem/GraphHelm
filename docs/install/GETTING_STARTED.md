@@ -269,10 +269,16 @@ cd C:\path\to\your-project
 graphhelm studio start
 ```
 
-To update GraphHelm itself (the clone and the installed CLI), run `graphhelm update`: the same
-conservative fast-forward, then `cargo install --locked --path apps/cli` inside the clone. On
-Windows the running `graphhelm.exe` is renamed to `graphhelm.old.exe` first, and restored if the
-install fails.
+To update GraphHelm itself, run `graphhelm update`. It works from GraphHelm's own install clone,
+`~/.graphhelm/source` (`%USERPROFILE%\.graphhelm\source` on Windows), which it creates on first
+use from the `origin` of the clone your binary was built from. Nobody else works in that clone,
+so it is always moved to `origin/main`: local changes in your own GraphHelm clone, or edits agents
+make there, never block an update (#1134). Then it runs `cargo install --locked --path apps/cli`
+inside the install clone, reusing your clone's build cache. `graphhelm studio start` runs the
+Studio from the same install clone. To build or run your own clone instead, pass `--source <clone>`
+or set `GRAPHHELM_SOURCE`; that clone is only fast-forwarded when it is clean and on `main`
+(`--keep-local` builds it as it is). On Windows the running `graphhelm.exe` is renamed to
+`graphhelm.old.exe` first, and restored if the install fails.
 
 The same launch by hand. Windows, one command — reuses the Runtime from section 3 if it is already answering, otherwise
 starts one; installs dependencies on the first run; opens the browser connected:

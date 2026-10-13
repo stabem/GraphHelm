@@ -3,6 +3,7 @@
 //! Runs `keel test validation` in a temporary detached worktree of HEAD, applies the patch there,
 //! and runs it again. The user's working tree is never touched and the worktree is always removed.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -138,6 +139,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<(), String> {
 struct Worktree {
     repo: PathBuf,
     path: PathBuf,
+    linked_modules: RefCell<Vec<PathBuf>>,
 }
 
 impl Worktree {
@@ -149,11 +151,21 @@ impl Worktree {
         let text = path.to_string_lossy().to_string();
         git(
             repo,
-            &["worktree", "add", "--detach", "--quiet", &text, "HEAD"],
+            &[
+                "-c",
+                "core.autocrlf=false",
+                "worktree",
+                "add",
+                "--detach",
+                "--quiet",
+                &text,
+                "HEAD",
+            ],
         )?;
         Ok(Self {
             repo: repo.to_path_buf(),
             path,
+            linked_modules: RefCell::new(Vec::new()),
         })
     }
 
@@ -161,6 +173,32 @@ impl Worktree {
     /// observer driver is copied, and every `node_modules` (the root and, in a pnpm or npm
     /// workspace, each package's own) is linked read-only by convention. Returns the linked paths.
     fn carry_toolchain(&self, repo: &Path) -> Result<Vec<String>, String> {
+        // Approval records are ignored by Git, but validation in the detached worktree
+        // must see the same owner decisions as the source project.
+        let records = Path::new(".graphhelm").join("events");
+        let source_records = repo.join(&records);
+        if source_records.is_dir() {
+            let mut pending = vec![records];
+            while let Some(relative) = pending.pop() {
+                let source = repo.join(&relative);
+                let target = self.path.join(&relative);
+                std::fs::create_dir_all(&target).map_err(|error| error.to_string())?;
+                for entry in std::fs::read_dir(source).map_err(|error| error.to_string())? {
+                    let entry = entry.map_err(|error| error.to_string())?;
+                    let kind = entry.file_type().map_err(|error| error.to_string())?;
+                    if kind.is_symlink() {
+                        return Err("owner record store contains a link".into());
+                    }
+                    let child = relative.join(entry.file_name());
+                    if kind.is_dir() {
+                        pending.push(child);
+                    } else if kind.is_file() {
+                        std::fs::copy(entry.path(), self.path.join(child))
+                            .map_err(|error| error.to_string())?;
+                    }
+                }
+            }
+        }
         let observers = Path::new(".graphhelm").join("observers");
         let source = repo.join(&observers);
         if source.is_dir() {
@@ -177,12 +215,22 @@ impl Worktree {
             }
         }
         let mut linked = Vec::new();
-        link_node_modules(repo, &self.path, Path::new(""), 0, &mut linked)?;
+        link_node_modules(
+            repo,
+            &self.path,
+            Path::new(""),
+            0,
+            &mut linked,
+            &mut self.linked_modules.borrow_mut(),
+        )?;
         Ok(linked)
     }
 
     fn apply(&self, patch: &Path) -> Result<(), String> {
-        git(&self.path, &["apply", &patch.to_string_lossy()])
+        git(
+            &self.path,
+            &["apply", "--ignore-space-change", &patch.to_string_lossy()],
+        )
     }
 }
 
@@ -197,6 +245,7 @@ fn link_node_modules(
     relative: &Path,
     depth: usize,
     linked: &mut Vec<String>,
+    created: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
     let here = repo.join(relative);
     let modules = here.join("node_modules");
@@ -205,7 +254,23 @@ fn link_node_modules(
         #[cfg(unix)]
         std::os::unix::fs::symlink(&modules, &link).map_err(|error| error.to_string())?;
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&modules, &link).map_err(|error| error.to_string())?;
+        {
+            use std::os::windows::process::CommandExt;
+            let status = graphhelm_process::command("cmd")
+                .raw_arg(format!(
+                    "/C mklink /J \"{}\" \"{}\"",
+                    link.display(),
+                    modules.display()
+                ))
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .status()
+                .map_err(|error| error.to_string())?;
+            if !status.success() {
+                return Err(format!("mklink /J failed: {status}"));
+            }
+        }
+        created.push(link);
         linked.push(
             relative
                 .join("node_modules")
@@ -230,7 +295,14 @@ fn link_node_modules(
         .collect();
     children.sort();
     for child in children {
-        link_node_modules(repo, worktree, &relative.join(child), depth + 1, linked)?;
+        link_node_modules(
+            repo,
+            worktree,
+            &relative.join(child),
+            depth + 1,
+            linked,
+            created,
+        )?;
     }
     Ok(())
 }
@@ -253,6 +325,16 @@ fn baseline_cause(baseline: &Value) -> Value {
 
 impl Drop for Worktree {
     fn drop(&mut self) {
+        for link in self.linked_modules.get_mut().iter().rev() {
+            #[cfg(windows)]
+            if std::fs::remove_dir(link).is_err() {
+                return;
+            }
+            #[cfg(unix)]
+            if std::fs::remove_file(link).is_err() {
+                return;
+            }
+        }
         let text = self.path.to_string_lossy().to_string();
         let _ = git(&self.repo, &["worktree", "remove", "--force", &text]);
         let _ = std::fs::remove_dir_all(&self.path);
@@ -283,6 +365,13 @@ pub(crate) fn run(repo: &Path, patch: &Path) -> Outcome {
     let Ok(patch) = patch.canonicalize() else {
         return error("--patch must name a readable file", "/patch");
     };
+    // Git for Windows cannot open the verbatim drive path returned by canonicalize.
+    #[cfg(windows)]
+    let patch = patch
+        .to_str()
+        .and_then(|path| path.strip_prefix(r"\\?\"))
+        .filter(|path| path.as_bytes().get(1) == Some(&b':'))
+        .map_or_else(|| patch.clone(), PathBuf::from);
     let observer = match touches_observer(&repo, &patch) {
         Ok(touches) => touches,
         Err(detail) => return error(format!("cannot read patch: {detail}"), "/patch"),
@@ -439,6 +528,7 @@ mod tests {
         git(repo, &["init", "-q"]).unwrap();
         git(repo, &["config", "user.email", "t@example.com"]).unwrap();
         git(repo, &["config", "user.name", "t"]).unwrap();
+        git(repo, &["config", "core.autocrlf", "false"]).unwrap();
         std::fs::write(repo.join("app.js"), "ok\n").unwrap();
         git(repo, &["add", "."]).unwrap();
         git(repo, &["commit", "-qm", "init"]).unwrap();

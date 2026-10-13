@@ -10,7 +10,19 @@ use std::path::Path;
 use serde_json::Value;
 
 fn graphhelm(project: &Path, args: &[&str]) -> (i32, Value) {
-    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    #[cfg(windows)]
+    {
+        // The example's CLI act runs `sh`; Git Bash can be installed without `sh` on PATH.
+        let git_bin = Path::new(r"C:\Program Files\Git\bin");
+        if git_bin.join("sh.exe").is_file() {
+            let mut path = std::ffi::OsString::from(git_bin.as_os_str());
+            path.push(";");
+            path.push(std::env::var_os("PATH").unwrap_or_default());
+            command.env("PATH", path);
+        }
+    }
+    let out = command
         .current_dir(project)
         .arg("--json")
         .args(args)

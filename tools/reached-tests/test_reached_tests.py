@@ -131,6 +131,38 @@ class Reach(unittest.TestCase):
             self.assertNotIn(expected, missing_tools)
             self.assertIn({"path": observer, "reason": "handoff adapter-selection observer is missing"}, missing)
 
+    def test_task_handoff_scenario_test_selects_full_offline_observers(self):
+        """Reach the fixture regression and positive continuity scenario together.
+
+        Cost: selector fixture only; milliseconds, no Cargo, network, browser or Runtime.
+        """
+        scenario = ".graphhelm/fixtures/keel-task-handoff/scenario.py"
+        readme = ".graphhelm/fixtures/keel-task-handoff/README.md"
+        test = ".graphhelm/fixtures/keel-task-handoff/test_scenario.py"
+        positive = f"python {scenario}"
+        unit = f"python {test}"
+        with tempfile.TemporaryDirectory() as repo:
+            for path in (scenario, readme, test):
+                target = Path(repo, path)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("", encoding="utf-8")
+
+            *_, tools, _, other = reach(scenario, test, repo=repo)
+            self.assertEqual(tools, [positive, unit])
+            self.assertEqual(other, [])
+            self.assertEqual(rt.steps(set(), set(), [], tools, repo=Path(repo)), [
+                {"argv": ["python", scenario], "cwd": ".", "slot": False},
+                {"argv": ["python", test], "cwd": ".", "slot": False},
+            ])
+
+            *_, combined_tools, _, combined_other = reach(scenario, readme, test, repo=repo)
+            self.assertEqual(combined_tools, [positive, unit])
+            self.assertEqual(combined_other, [])
+
+            *_, missing_tools, _, missing_other = reach(test)
+            self.assertEqual(missing_tools, [])
+            self.assertEqual(missing_other, [test])
+
     def test_shipped_plugin_diff_selects_executable_version_guard(self):
         """A shipped plugin edit must run the version guard for the selected refs.
 

@@ -102,6 +102,13 @@ class SelectionReport(unittest.TestCase):
                               "criteriaSha256": self.digest(case_dir / "graders/criteria.md")}
         return {"version": 1, "cases": cases}
 
+    @staticmethod
+    def bind_observations(observations, manifest):
+        canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=False).encode("utf-8")
+        identity = hashlib.sha256(canonical).hexdigest()
+        return [{**item, "partition_manifest_sha256": identity} for item in observations]
+
     def test_partition_manifest_separates_counts_and_binds_case_content(self):
         with tempfile.TemporaryDirectory() as directory:
             script, evals = self.copied_report(Path(directory))
@@ -116,6 +123,7 @@ class SelectionReport(unittest.TestCase):
                 {"case_id": "no-skill-audit-grammar", "status": "timeout",
                  "invoked_skills": [], "completion": "pass", "rubric": "r", "judge": "pass"},
             ]
+            observations = self.bind_observations(observations, manifest)
             result = self.run_partitioned(script, observations, manifest)
             self.assertEqual(result.returncode, 0, result.stderr)
             report = json.loads(result.stdout)
@@ -150,6 +158,7 @@ class SelectionReport(unittest.TestCase):
                 [case.name for case in evals.iterdir() if case.is_dir() and case.name.startswith("no-skill-")])
             observation = [{"case_id": "no-skill-arithmetic", "status": "completed",
                             "invoked_skills": [], "completion": "pass", "rubric": "r"}]
+            observation = self.bind_observations(observation, manifest)
             missing = dict(manifest["cases"])
             missing.pop("no-skill-arithmetic")
             for invalid, expected in [

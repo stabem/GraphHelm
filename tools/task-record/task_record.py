@@ -46,7 +46,6 @@ PROOFS = ("none", "tests", "journey", "both")
 # #477: what the naming standard asks (DELIVERY.md "Naming") and what the Runtime accepts.
 STANDARD = {"claimed": 50, "pr_opened": 60, "summary": 100}
 ACCEPTED = {"title": 200, "summary": 300}
-HEARTBEAT_INTERVAL = datetime.timedelta(seconds=300)
 MAX_HISTORY_EVENTS = 10_000
 MAX_HISTORY_PAGES = MAX_HISTORY_EVENTS // 1000
 MAX_HEARTBEAT_EVIDENCE_READS = 256
@@ -545,23 +544,13 @@ def read_execution_history(args):
     return [(event, kind, evidence_docs[event["evidenceRefs"][0]["evidenceId"]]) for event, kind in relevant]
 
 
-def _event_time(value):
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return None
-    return parsed.astimezone(datetime.timezone.utc)
-
-
 def heartbeat_document(args, history, now):
+    """The heartbeat record for the lane's open pre-PR claim. The 300 s cooldown is not checked
+    here (#1147): the Runtime owns that rule (`validate_heartbeat`) and its refusal is the answer.
+    Earlier heartbeats still count toward the revision."""
     task_id = f"issue-{args.issue}"
     open_claims = []
     opened_prs = []
-    last_heartbeat = None
     max_revision = 0
     for event, kind, envelope in history:
         if envelope.get("type") != kind or envelope.get("source", {}).get("id") != args.lane:
@@ -609,16 +598,8 @@ def heartbeat_document(args, history, now):
                 # A terminal record names the task's PR. If PR-open history is incomplete,
                 # still fail closed for this task rather than heartbeat a terminal claim.
                 open_claims.pop(0)
-        elif kind == "task.heartbeat":
-            occurred_at = _event_time(event.get("occurredAt"))
-            if occurred_at is None:
-                sys.exit("task_record: heartbeat event time is invalid; no record sent")
-            last_heartbeat = occurred_at
     if not open_claims:
         sys.exit("task_record: no open pre-PR claim for this lane/task; heartbeat not sent")
-    now_dt = datetime.datetime.fromisoformat(now.replace("Z", "+00:00"))
-    if last_heartbeat is not None and now_dt - last_heartbeat < HEARTBEAT_INTERVAL:
-        sys.exit("task_record: heartbeat is limited to one per 300 seconds; no record sent")
     return {"schema": "graphhelm-task-event-v1", "taskId": task_id,
             "revision": max_revision + 1, "at": now, "lane": args.lane}
 

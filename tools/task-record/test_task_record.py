@@ -187,11 +187,18 @@ class TaskRecordTest(unittest.TestCase):
                                        self.history_event(terminal_kind, 2)]
                 self.assert_refused_without_post()
 
-    def test_heartbeat_cooldown_uses_event_time_at_299_and_300_seconds(self):
+    def test_heartbeat_cooldown_is_the_runtimes_answer_not_a_local_clock(self):
+        # #1147: the 300 s rule has one owner. A heartbeat 299 s after the last one is still sent,
+        # and the Runtime's refusal is what the lane reads; the script never pre-empts it.
         FakeRuntime.history = [self.history_event("task.claimed", 1),
                                self.history_event("task.heartbeat", 2, occurred="2026-10-13T11:55:01Z",
                                                   at="2099-01-01T00:00:00Z")]
-        self.assert_refused_without_post()
+        FakeRuntime.reject_heartbeat = True
+        code, out = self.run_heartbeat()
+        self.assertEqual((code, out.split()[0]), (1, "REFUSED"), out)
+        self.assertEqual(len(FakeRuntime.seen), 1)
+        FakeRuntime.reject_heartbeat = False
+        FakeRuntime.seen.clear()
         FakeRuntime.history = [self.history_event("task.claimed", 1)]
         first_code, first_out = self.run_heartbeat()
         self.assertEqual((first_code, first_out.split()[0]), (0, "recorded"), first_out)
@@ -211,11 +218,7 @@ class TaskRecordTest(unittest.TestCase):
         self.assertEqual(second[0], 0, second[1])
         self.assertEqual(FakeRuntime.seen[0][0], FakeRuntime.seen[1][0])
 
-    def test_new_claim_and_unrelated_lane_or_task_do_not_bypass_or_reset_cooldown(self):
-        FakeRuntime.history = [self.history_event("task.claimed", 1),
-                               self.history_event("task.heartbeat", 2, occurred="2026-10-13T11:55:01Z"),
-                               self.history_event("task.claimed", 3)]
-        self.assert_refused_without_post()
+    def test_unrelated_lane_or_task_heartbeats_do_not_block_this_one(self):
         FakeRuntime.history = [self.history_event("task.claimed", 1),
                                self.history_event("task.claimed", 2, lane="lane-b", task_id="issue-1024"),
                                self.history_event("task.heartbeat", 3, lane="lane-b", task_id="issue-1024",

@@ -175,17 +175,6 @@ const token = fs.readFileSync(tokenFile, 'utf8').trim();
 })().catch(() => { console.error('fixture: task record refused; stop without widening permissions'); process.exit(1); });
 NODE
   fi
-  if [ "$flow" = studio-answer-node ]; then
-    printf '%s\n' '{"nodeOutcomes":{"implementation":"success","deploy":"unknown"}}' > "$dir/.graphhelm/waiting-fixtures.json"
-    # Governed genesis starts at version 1 without a predecessor, with a matching run id.
-    sed -e 's/^  executionId: exec_override[[:space:]]*$/  executionId: waiting/' \
-      -e 's/^  version: 13[[:space:]]*$/  version: 1/' -e '/^  basedOn:/d' \
-      "$repo/examples/graphs/manual-override-deploy.yaml" > "$dir/.graphhelm/waiting-graph.yaml"
-    "$bin" --json execution start --file "$dir/.graphhelm/waiting-graph.yaml" \
-      --events "$dir/.graphhelm/events" --fixtures "$dir/.graphhelm/waiting-fixtures.json" \
-      --mode supervised --execution waiting --keyring "$dir/.graphhelm/keyring" --key-id studio \
-      > "$dir/.graphhelm/waiting-seed.json"
-  fi
   # #137: the async Runtime driver records delegation; no model executor is wired.
   if [ "$flow" = studio-delegation-label ]; then
     node - "$repo" "$dir" <<'NODE'

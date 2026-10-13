@@ -63,6 +63,9 @@ class Reach(unittest.TestCase):
                 *_, wrong_store_tools, _, wrong_store_other = reach(scenario, repo=repo)
             self.assertEqual(wrong_store_tools, [expected + " --wrong-store"])
             self.assertEqual(wrong_store_other, [])
+            self.assertEqual(rt.steps(set(), set(), [], wrong_store_tools, repo=Path(repo)), [
+                {"argv": ["python", scenario, "--wrong-store"], "cwd": ".", "slot": False},
+            ])
 
             *_, readme_tools, _, readme_other = reach(readme, repo=repo)
             self.assertEqual(readme_tools, [expected])

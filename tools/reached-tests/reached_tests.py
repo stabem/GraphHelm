@@ -745,10 +745,13 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
             test_path = tool[len("python -m pytest "):]
             out.append({"argv": ["python", "-m", "pytest", test_path], "cwd": ".", "slot": False})
         elif tool.startswith("python "):
-            script = tool[len("python "):].split(" ", 1)[0]
+            parts = tool[len("python "):].split(" ")
+            script, args = parts[0], parts[1:]
             if repo is None or not (Path(repo) / script).is_file():
                 raise ValueError(f"python observer script is missing: {script}")
-            out.append({"argv": ["python", script], "cwd": ".", "slot": False})
+            if args and (script != ".graphhelm/fixtures/keel-task-handoff/scenario.py" or args != ["--wrong-store"]):
+                raise ValueError(f"unrecognised python observer arguments: {tool}")
+            out.append({"argv": ["python", script, *args], "cwd": ".", "slot": False})
         elif tool.startswith("node --test "):
             if repo is None:
                 raise ValueError("node test paths require the repository root")

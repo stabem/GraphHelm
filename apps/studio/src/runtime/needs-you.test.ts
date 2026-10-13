@@ -28,6 +28,19 @@ describe("needsYou", () => {
     expect(needsYou(base())).toEqual({ state: { kind: "dark" }, items: [] });
   });
 
+  it("is unknown while a candidate question envelope is missing", () => {
+    expect(needsYou(base({ events: question })).state).toEqual({ kind: "unknown", reason: "Checking question envelopes" });
+  });
+
+  it("does not stay unknown after a candidate envelope is read as unrelated", () => {
+    expect(needsYou(base({ events: question, envelopes: { 5: { to: "another-owner", replyTo: null, text: "FYI" } } })).state).toEqual({ kind: "dark" });
+  });
+
+  it("does not let bookkeeping signals keep the beacon unknown", () => {
+    const task = { ...signal(5, "kit-3", "task-1"), payload: { kind: "agent_task_created" } };
+    expect(needsYou(base({ events: [task] })).state).toEqual({ kind: "dark" });
+  });
+
   it("is lit with one card per open question, carrying its choices", () => {
     const result = needsYou(base({ events: question, envelopes: asked }));
     expect(result.state).toEqual({ kind: "lit", count: 1 });

@@ -2118,7 +2118,7 @@ export default function App({
     const timer = window.setInterval(read, pollIntervalMs);
     return () => { active = false; window.clearInterval(timer); };
   }, [connected, selected, pollIntervalMs]);
-  const needs = useMemo(() => needsYou({ status, stale, events: eventList, envelopes, nativeRequests,
+  const needs = useMemo(() => needsYou({ status, stale, events: eventList, envelopes, pendingEnvelopeSequences: envelopes.__pendingEnvelopeSequences, nativeRequests,
     pendingDraftIds: durableProposals.map((proposal) => proposal.draftId), nodeNames, operatorId: OPERATOR_ACTOR.id,
     agentWorkRecorded: hasRecordedAgentWork, agentWorkPending }),
     [status, stale, eventList, envelopes, nativeRequests, durableProposals, nodeNames, hasRecordedAgentWork, agentWorkPending]);

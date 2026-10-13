@@ -523,7 +523,7 @@ describe("live team layout", () => {
     expect(await screen.findByRole("button", { name: "Nothing needs you" })).toHaveClass("beacon-dark");
   });
 
-  it("keeps the top bar dark for a fixture-scripted input with no owner question", async () => {
+  it("keeps the beacon checking while fixture work evidence is unread", async () => {
     const status = { ...STATUS, executor: "fixture" as const,
       attentionReasons: [{ kind: "waiting_input_node", node: "implementation" }] };
     const work = { sequence: 12, kind: "signal_recorded", payload: { kind: "operator_note", signalId: "work" }, occurredAt: "2026-10-05T11:00:00Z",
@@ -533,7 +533,7 @@ describe("live team layout", () => {
     await open(stubClient({ getStatus: vi.fn(async () => status), getEvents: vi.fn(async () => ({ head: 13, events: [work] })),
       readEvidence: vi.fn(async () => { await evidenceReady; return { evidenceId: "e12", mediaType: "application/json", sensitivity: "confidential",
         contentSha256: "sha256:fixture", content: JSON.stringify({ to: null, replyTo: null, text: "Implementation finished" }) }; }) }));
-    expect(await screen.findByRole("button", { name: "Nothing needs you" })).toHaveClass("beacon-dark");
+    expect(await screen.findByRole("button", { name: "Checking question envelopes" })).toHaveClass("beacon-unknown");
     expect(screen.queryByRole("button", { name: "1 decision needs you" })).not.toBeInTheDocument();
     releaseEvidence();
     expect(await screen.findByRole("button", { name: "Nothing needs you" })).toHaveClass("beacon-dark");

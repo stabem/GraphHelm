@@ -3,6 +3,8 @@
  * connection or a missing status is `unknown` - never dark, and never a count the page cannot back.
  */
 import { openQuestions, type EnvelopeRecord } from "../graph/ledger";
+import { isSubagentLifecycleSignal } from "./subagents";
+import { isClaudeTaskSignal } from "./team-tasks";
 import type { ExecutionStatus, NativeChatRequest, NativeChatRequestState, RuntimeEvent } from "./types";
 
 export interface QuestionItem { kind: "question"; key: string; asker: string; text: string; signalId: string | null; recommendations: string[]; at: string | null; sequence: number; task?: string | null }
@@ -18,6 +20,7 @@ export interface NeedsYouInput {
   stale: boolean;
   events: RuntimeEvent[];
   envelopes: EnvelopeRecord;
+  pendingEnvelopeSequences?: number[];
   nativeRequests: NativeChatRequest[] | null;
   pendingDraftIds: string[];
   nodeNames: Record<string, string>;
@@ -28,6 +31,13 @@ export interface NeedsYouInput {
 
 export function needsYou(input: NeedsYouInput): { state: BeaconState; items: NeedsYouItem[] } {
   const items: NeedsYouItem[] = [];
+  const pendingEnvelopeSequences = input.pendingEnvelopeSequences;
+  const unreadQuestionEnvelope = pendingEnvelopeSequences !== undefined
+    ? pendingEnvelopeSequences.length > 0
+    : input.events.some((event) => event.kind === "signal_recorded"
+      && event.actorType === "agent" && event.actorId !== null
+      && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event)
+      && input.envelopes[event.sequence] === undefined);
   for (const debt of openQuestions(input.events, input.envelopes, input.operatorId)) {
     items.push({ kind: "question", key: `question:${debt.signalId ?? `seq-${debt.sequence}`}`, asker: debt.asker, text: debt.text,
       signalId: debt.signalId, recommendations: input.envelopes[debt.sequence]?.recommendations ?? [], at: debt.at, sequence: debt.sequence,
@@ -64,7 +74,8 @@ export function needsYou(input: NeedsYouInput): { state: BeaconState; items: Nee
   const state: BeaconState = input.status === null || input.stale || input.nativeRequests === null
     ? { kind: "unknown", reason: RUNTIME_SILENT }
     : items.length > 0 ? { kind: "lit", count: items.length }
-      : graphWaitOnly && input.agentWorkRecorded !== true ? { kind: "unknown", reason: "Checking recorded agent work" }
+      : unreadQuestionEnvelope ? { kind: "unknown", reason: "Checking question envelopes" }
+        : graphWaitOnly && input.agentWorkRecorded !== true ? { kind: "unknown", reason: "Checking recorded agent work" }
         : { kind: "dark" };
   return { state, items };
 }

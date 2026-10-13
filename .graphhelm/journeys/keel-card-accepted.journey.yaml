@@ -1,0 +1,43 @@
+schema: graphhelm.journey-flow/1
+id: keel-card-accepted
+title: Accept in-scope work and refuse work outside the Keel card
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [contributor]
+secrets: []
+risks: []
+screens:
+  - id: start
+    title: A contributor change is ready for its scope check
+    url: /
+    state: stable
+    expect: [{role: exit, name: "0"}]
+    scope: unknown
+  - id: accepted
+    title: A change inside the card is accepted
+    url: /
+    state: success
+    expect: [{role: exit, name: "0"}, {role: stdout, name: '"ok":true'}]
+    scope: unknown
+  - id: refused
+    title: A change outside the card is refused with its path
+    url: /
+    state: success
+    expect: [{role: exit, name: "2"}, {role: stdout, name: keel.scope.path_outside_card}, {role: stdout, name: docs/notes.md}]
+    scope: unknown
+edges:
+  - id: start.accept-in-scope
+    from: start
+    to: accepted
+    acts:
+      - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-card-accepted/run.py inside}
+  - id: start.refuse-out-of-scope
+    from: start
+    to: refused
+    acts:
+      - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-card-accepted/run.py outside}
+paths:
+  main: [start.accept-in-scope]
+  out-of-scope: [start.refuse-out-of-scope]
+drift: []

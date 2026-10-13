@@ -58,10 +58,6 @@ def main() -> int:
             repo = Path(temporary)
             (repo / "src").mkdir()
             (repo / "src/lib.rs").write_text("pub fn existing() {}\n", encoding="utf-8")
-            (repo / "keel.yaml").write_text(
-                "version: 1\ninvariants:\n  persistence: [core/events/]\n",
-                encoding="utf-8",
-            )
             git(repo, "init", "--quiet", "--object-format=sha1")
             commit(repo, "base")
 
@@ -76,6 +72,11 @@ def main() -> int:
 
             (repo / "core/events").mkdir(parents=True)
             (repo / "core/events/journal.rs").write_text("pub fn x() {}\n", encoding="utf-8")
+            if mode == "expanded":
+                (repo / "keel.yaml").write_text(
+                    "version: 1\ninvariants:\n  persistence: [core/events/]\n",
+                    encoding="utf-8",
+                )
             commit(repo, "one-line persistence change")
 
             result = run(

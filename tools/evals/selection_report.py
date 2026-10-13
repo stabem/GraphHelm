@@ -85,7 +85,8 @@ def empty_completion():
 def build_report(observations, catalog):
     selection = defaultdict(empty_selection)
     completion = defaultdict(empty_completion)
-    judges = defaultdict(lambda: {"human_labeled": 0, "false_pass": 0, "false_fail": 0,
+    judges = defaultdict(lambda: {"observed": 0, "pass": 0, "fail": 0,
+                                  "human_labeled": 0, "false_pass": 0, "false_fail": 0,
                                   "repeat_disagreement": 0})
     repeats = defaultdict(set)
 
@@ -107,6 +108,8 @@ def build_report(observations, catalog):
 
         rubric = item["rubric"]
         if "judge" in item:
+            judges[rubric]["observed"] += 1
+            judges[rubric][item["judge"]] += 1
             repeats[(case_id, rubric)].add(item["judge"])
         if "human_label" in item:
             counts = judges[rubric]
@@ -126,7 +129,9 @@ def build_report(observations, catalog):
         if counts["human_labeled"]:
             judge_report[rubric] = {"status": "qualified", **counts}
         else:
-            judge_report[rubric] = {"status": "unqualified", "human_labeled": 0,
+            judge_report[rubric] = {"status": "unqualified", "observed": counts["observed"],
+                                    "pass": counts["pass"], "fail": counts["fail"],
+                                    "human_labeled": 0,
                                     "false_pass": None, "false_fail": None,
                                     "repeat_disagreement": counts["repeat_disagreement"]}
 

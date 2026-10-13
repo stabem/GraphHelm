@@ -76,11 +76,18 @@ class SelectionReport(unittest.TestCase):
     def test_unqualified_rubric_reports_no_accuracy(self):
         self.observations = [{"case_id": "no-skill-arithmetic", "status": "completed",
                              "invoked_skills": [], "completion": "pass", "rubric": "new",
-                             "judge": "pass"}]
+                             "judge": "pass"},
+                             {"case_id": "no-skill-audit-grammar", "status": "completed",
+                              "invoked_skills": [], "completion": "pass", "rubric": "new",
+                              "judge": "fail"}]
         result = self.run_report()
         self.assertEqual(result.returncode, 0, result.stderr)
         rubric = json.loads(result.stdout)["judges"]["by_rubric"]["new"]
         self.assertEqual(rubric["status"], "unqualified")
+        self.assertEqual(rubric["observed"], 2)
+        self.assertEqual(rubric["pass"], 1)
+        self.assertEqual(rubric["fail"], 1)
+        self.assertEqual(rubric["repeat_disagreement"], 0)
         self.assertIsNone(rubric["false_pass"])
         self.assertIsNone(rubric["false_fail"])
 

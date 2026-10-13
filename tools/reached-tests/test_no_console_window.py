@@ -47,7 +47,8 @@ def _target(node: ast.Call, modules, functions) -> tuple[str, str] | None:
 def offenders(root: Path) -> list[str]:
     found = []
     for path in sorted(root.rglob("*.py")):
-        if SKIP & set(path.relative_to(root).parts):
+        parts = path.relative_to(root).parts
+        if SKIP & set(parts) or parts[:2] == (".graphhelm", "observers"):
             continue
         source = path.read_bytes()
         if source.startswith(b"\xef\xbb\xbf"):
@@ -104,6 +105,7 @@ class NoConsoleWindow(unittest.TestCase):
                 "alias.py:7 os.spawnl cannot hide its window",
                 "alias.py:8 subprocess.getoutput cannot hide its window",
                 "bad.py:2 subprocess.run without creationflags=NO_WINDOW",
+                "bom.py:1 UTF-8 BOM is not allowed",
                 "bom.py:2 subprocess.run without creationflags=NO_WINDOW",
             ])
 

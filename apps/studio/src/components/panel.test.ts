@@ -94,6 +94,37 @@ it("shows the newest sealed report while an older evidence read is still pending
   expect(open.mock.calls[0][1]).toBe("new");
 });
 
+it("retries a failed candidate envelope read and exposes it once it opens", async () => {
+  resetPanelCaches();
+  const candidate = event(5, "signal_recorded", { kind: "operator_note", signalId: "sig-q" });
+  candidate.actorId = "kit-3";
+  candidate.evidenceRefs = ["question"];
+  const open = vi.fn()
+    .mockRejectedValueOnce(new Error("temporarily unavailable"))
+    .mockResolvedValueOnce({ evidenceId: "question", content: JSON.stringify({ type: "operator_note", description: "Merge now?", target: { id: "studio-operator", type: "user" } }), contentSha256: "hash", mediaType: "application/json", sensitivity: "confidential" as const });
+  const { result, rerender } = renderHook(({ rows }) => useEnvelopes(rows, "run", open), { initialProps: { rows: [candidate] } });
+  await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+  expect(result.current[5]).toBeUndefined();
+  rerender({ rows: [...[candidate]] });
+  await waitFor(() => expect(result.current[5]?.to).toBe("studio-operator"));
+});
+
+it("does not reuse a previously opened envelope when execution sequence numbers repeat", async () => {
+  resetPanelCaches();
+  const first = event(5, "signal_recorded", { kind: "operator_note", signalId: "sig-a" });
+  first.evidenceRefs = ["first"];
+  const second = event(5, "signal_recorded", { kind: "operator_note", signalId: "sig-b" });
+  second.evidenceRefs = ["second"];
+  const open = vi.fn(async (_run: string, id: string): Promise<EvidenceContent> => ({ evidenceId: id,
+    content: JSON.stringify({ type: "operator_note", description: id, target: { id: "studio-operator", type: "user" } }),
+    contentSha256: "hash", mediaType: "application/json", sensitivity: "confidential" }));
+  const { result, rerender } = renderHook(({ rows, run }) => useEnvelopes(rows, run, open), { initialProps: { rows: [first], run: "run-a" } });
+  await waitFor(() => expect(result.current[5]?.text).toBe("first"));
+  rerender({ rows: [second], run: "run-b" });
+  expect(result.current[5]).toBeUndefined();
+  await waitFor(() => expect(result.current[5]?.text).toBe("second"));
+});
+
 /**
  * Pure, because jsdom lays nothing out: every height there is zero, so an "is it scrolled"
  * assertion in a component test measures the test double, not the behavior. The predicate is

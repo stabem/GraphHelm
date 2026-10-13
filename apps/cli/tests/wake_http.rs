@@ -4007,11 +4007,12 @@ fn a_silent_deadline_reports_a_silent_receipt_not_just_silence() {
     assert_eq!(
         entries,
         [
+            "startup-lease-validated",
             "deadline-transition",
             "receipt-read-attempt",
             "outcome-publication"
         ],
-        "CAUSAL_TRACE_ORDER: the deadline, its one receipt read, and publication must be causally ordered"
+        "CAUSAL_TRACE_ORDER: startup validation, deadline, its one receipt read, and publication must be causally ordered"
     );
     assert_eq!(code, Some(3), "{value}");
     let data = &value["data"];

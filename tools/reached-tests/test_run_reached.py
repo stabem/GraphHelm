@@ -608,6 +608,27 @@ class ResumeAndPreflightContracts(unittest.TestCase):
     def runs(self):
         return self.counter.read_text(encoding="utf-8").split() if self.counter.exists() else []
 
+    def test_vitest_exit_zero_without_report_is_incomplete_and_not_reused(self):
+        self.steps = [["npx", "vitest", "run", "--maxWorkers=1"]]
+        real_run = rr.subprocess.run
+        calls = []
+
+        def child(command, **kwargs):
+            if command[0] != "node" or "stdout" not in kwargs:
+                return real_run(command, **kwargs)
+            calls.append(command)
+            kwargs["stdout"].write(" RUN  v4.1.11\n")
+            return __import__("subprocess").CompletedProcess(command, 0)
+
+        with patch.object(rr, "_resolve_argv", side_effect=lambda repo, cwd, argv: ["node", "vitest", *argv[2:]]), patch.object(rr.subprocess, "run", side_effect=child):
+            code, report = self.run_once()
+            self.assertEqual(code, 1)
+            self.assertEqual(report["status"], "incomplete")
+            self.assertEqual(report["completed"][0]["returncode"], 0)
+            self.assertNotIn("reusable", report["completed"][0])
+            self.run_once()
+        self.assertEqual(len(calls), 2)
+
     def test_matching_pass_is_reused_without_running_the_child(self):
         self.assertEqual(self.run_once()[0], 0)
         code, report = self.run_once()

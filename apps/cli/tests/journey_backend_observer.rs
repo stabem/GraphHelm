@@ -79,6 +79,7 @@ fn pinned_verdict_journey_replays_all_four_obligations() {
     let data = &report["data"];
     assert_eq!(data["failures"], serde_json::json!([]), "{data}");
     assert_eq!(data["paths"][0]["execution"], "completed", "{data}");
+    assert_eq!(data["paths"][0]["collection"], "not_applicable", "{data}");
 }
 
 fn git(project: &Path, args: &[&str]) -> Vec<u8> {

@@ -33,6 +33,31 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class RecordBlockTest(unittest.TestCase):
+    def test_check_recommendation_records_structured_block_and_pass(self):
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        with tempfile.TemporaryDirectory() as tmp:
+            token = Path(tmp) / "t"
+            token.write_text("tok")
+            env = {"GRAPHHELM_EXECUTION_ID": "demo", "GRAPHHELM_TOKEN_FILE": str(token),
+                   "GRAPHHELM_RUNTIME_URL": f"http://127.0.0.1:{server.server_port}",
+                   "GRAPHHELM_NODE_ID": "implementation"}
+            with mock.patch.dict(os.environ, env):
+                blocked = {"data": {"recommendation": {"step": "implement", "head": "abc123",
+                    "findingIds": ["keel.scope.path_outside_card", "keel.card.scope_empty"],
+                    "paths": ["src/b.py", "src/a.py"], "applied": False}}}
+                self.assertTrue(keel_record.record_check(blocked, {"session_id": "s1"}))
+                review = {"data": {"recommendation": {"step": "review", "head": "def456",
+                    "findingIds": [], "paths": [], "applied": False}}}
+                self.assertTrue(keel_record.record_check(review, {"session_id": "s1"}))
+        server.shutdown()
+        blocked_signal, passed_signal = [body["signal"] for _, body in Handler.seen[-2:]]
+        self.assertEqual(blocked_signal["type"], "keel.blocked")
+        self.assertEqual(blocked_signal["evidence"], ["head: abc123", "finding: keel.card.scope_empty",
+            "finding: keel.scope.path_outside_card", "path: src/a.py", "path: src/b.py"])
+        self.assertEqual(passed_signal["type"], "keel.passed")
+        self.assertIn("head: def456", passed_signal["evidence"])
+
     def test_outside_an_execution_nothing_is_sent(self):
         with mock.patch.dict(os.environ, {"GRAPHHELM_EXECUTION_ID": ""}):
             self.assertFalse(keel_record.record_block("stop", "no card", {}))

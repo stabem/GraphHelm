@@ -8,6 +8,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import keel_record
+import keel_stop_hook
 
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -20,6 +25,21 @@ def git(repo, *args):
 
 
 class KeelStopHook(unittest.TestCase):
+    def test_bound_check_recommendation_reaches_recorder(self):
+        self.code(20)
+        (self.repo / ".graphhelm").mkdir()
+        (self.repo / ".graphhelm" / "keel-card.json").write_text("{}")
+        envelope = {"data": {"recommendation": {"step": "review", "head": "abc123",
+                    "findingIds": [], "paths": [], "applied": False}}}
+        result = mock.Mock(returncode=0, stdout=json.dumps(envelope))
+        with mock.patch.object(keel_stop_hook, "_merge_base", return_value="base"), \
+             mock.patch.object(keel_stop_hook, "code_lines_changed", return_value=20), \
+             mock.patch.object(keel_stop_hook.shutil, "which", return_value="graphhelm"), \
+             mock.patch.object(keel_stop_hook.subprocess, "run", return_value=result), \
+             mock.patch.object(keel_record, "record_check") as record:
+            self.assertIsNone(keel_stop_hook.decide(self.repo, {"session_id": "s1"}))
+        record.assert_called_once_with(envelope, {"session_id": "s1"})
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)

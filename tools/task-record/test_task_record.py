@@ -52,9 +52,6 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
             evidence_id = parsed.path.rsplit("/", 1)[-1]
             content = FakeRuntime.evidence.get(evidence_id)
             reply = {"ok": content is not None, "data": {"content": json.dumps(content)} if content else {}}
-        elif FakeRuntime.reject_heartbeat and body["signal"]["type"] == "task.heartbeat":
-            status, reply = 400, {"ok": False, "diagnostics": [{"code": "GHCLI003_SIGNAL_INVALID", "severity": "error",
-                                                                    "path": "/signal/description", "message": "heartbeat refused"}]}
         else:
             self.send_error(404)
             return
@@ -77,6 +74,9 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
         elif FakeRuntime.old and ("title" in described or "summary" in described):
             status, reply = 400, {"ok": False, "diagnostics": [{"code": "GHCLI003_SIGNAL_INVALID", "severity": "error",
                                                                   "path": "/signal/description", "message": "one document for its kind"}]}
+        elif FakeRuntime.reject_heartbeat and body["signal"]["type"] == "task.heartbeat":
+            status, reply = 400, {"ok": False, "diagnostics": [{"code": "GHCLI003_SIGNAL_INVALID", "severity": "error",
+                                                                    "path": "/signal/description", "message": "heartbeat refused"}]}
         elif key in FakeRuntime.keys and FakeRuntime.keys[key] != identity:
             status, reply = 409, {"ok": False, "diagnostics": [{"code": "GHE003_IDEMPOTENCY_CONFLICT", "severity": "error",
                                                                   "path": "/idempotencyKey", "message": "already committed"}]}

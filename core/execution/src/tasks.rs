@@ -1104,13 +1104,13 @@ fn slice_for(slices: &mut Vec<Slice>, event: &TaskEventRecord) -> usize {
         let mine = own
             .iter()
             .copied()
-            .filter(|&i| slices[i].state.pr.is_none() && slices[i].state.step != TaskStep::Merged)
-            .last()
+            .rev()
+            .find(|&i| slices[i].state.pr.is_none() && slices[i].state.step != TaskStep::Merged)
             .or_else(|| {
                 own.iter()
                     .copied()
-                    .filter(|&i| slices[i].state.step != TaskStep::Merged)
-                    .last()
+                    .rev()
+                    .find(|&i| slices[i].state.step != TaskStep::Merged)
             });
         if let Some(index) = mine {
             return index;
@@ -1130,8 +1130,8 @@ fn slice_for(slices: &mut Vec<Slice>, event: &TaskEventRecord) -> usize {
         group
             .iter()
             .copied()
-            .filter(|&i| open(&slices[i].state))
-            .last()
+            .rev()
+            .find(|&i| open(&slices[i].state))
     } else {
         group.iter().copied().find(|&i| {
             let s = &slices[i].state;

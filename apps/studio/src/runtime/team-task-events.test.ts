@@ -670,6 +670,22 @@ describe("foldTaskEvents plan step (#480)", () => {
     expect(state[0]).toMatchObject({ step: "review", plan: { critic: { mode: "design" } } });
   });
 
+  it("starts a new lane-owned slice for plan and critic records after merge", () => {
+    const claim = record(1, "task.claimed", "lane-a", { ...issue, issue: 480, lane: "lane-a", branch: "first" });
+    const opened = record(2, "task.pr_opened", "lane-a", { ...issue, pr: 481, headSha: "aaaaaaaa", journeys: [], lane: "lane-a" });
+    const merged = record(3, "task.merged", "reviewer", { ...issue, pr: 481, mergeSha: "bbbbbbbb", closes: [], merger: "reviewer" });
+    const foreign = record(4, "task.claimed", "lane-b", { ...issue, issue: 480, lane: "lane-b", branch: "foreign" });
+    const plan = record(5, "task.planned", "lane-a", { ...issue, lane: "lane-a", classes: ["code"], reviews: 1,
+      proof: "tests", critic: { mode: "design", passScore: 8, maxRounds: 3 }, summary: "next plan" });
+    const round = record(6, "task.critic_verdict", "lane-a", { ...issue, lane: "lane-a", round: 1, score: 9,
+      passScore: 8, maxRounds: 3, verdict: "pass", designRef: "d", reasons: ["r"] });
+    const tasks = foldTaskEvents([claim, opened, merged, foreign, plan, round]);
+    expect(tasks).toHaveLength(3);
+    expect(tasks.find((task) => task.pr === 481)).toMatchObject({ step: "merged", mergeSha: "bbbbbbbb", plan: null, critic: null });
+    expect(tasks.find((task) => task.branch === "foreign")).toMatchObject({ lane: "lane-b", pr: null, plan: null });
+    expect(tasks.find((task) => task.lane === "lane-a" && task.pr === null)).toMatchObject({ step: "implement", plan: { summary: "next plan" }, critic: { verdict: "pass" } });
+  });
+
   it("refuses a planned record for another lane or out of the schema's bounds", () => {
     const parse = (actor: string, document: Record<string, unknown>) => parseTaskEvent("task.planned", actor, JSON.stringify({
       schema: "graphhelm-task-event-v1", taskId: "issue-480", revision: 1, at: "2026-10-08T00:00:00Z", lane: "gh-claude-1",

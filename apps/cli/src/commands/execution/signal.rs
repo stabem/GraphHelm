@@ -399,12 +399,23 @@ fn record_on(
     let task_history = if envelope
         .get("type")
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|kind| kind == "task.released")
+        .is_some_and(|kind| matches!(kind, "task.released" | "task.heartbeat"))
     {
         Some(super::resolve_stream(store, execution)?.2)
     } else {
         None
     };
+    // A heartbeat's claim and cooldown are checked against this exact journal head. Carry its
+    // next sequence to append_atomic so another writer cannot change eligibility in between.
+    let heartbeat_sequence =
+        if envelope.get("type").and_then(serde_json::Value::as_str) == Some("task.heartbeat") {
+            task_history
+                .as_ref()
+                .and_then(|history| history.last())
+                .and_then(|event| event.sequence.checked_add(1))
+        } else {
+            None
+        };
     super::documents::validate_task_event(
         &envelope,
         &actor,
@@ -717,9 +728,12 @@ fn record_on(
     }
     match sealed {
         Some((item, images)) => {
-            let next_sequence = store
-                .next_sequence(&scope, stream_id.as_str())
-                .map_err(|error| repository_failure(&error))?;
+            let next_sequence = match heartbeat_sequence {
+                Some(sequence) => sequence,
+                None => store
+                    .next_sequence(&scope, stream_id.as_str())
+                    .map_err(|error| repository_failure(&error))?,
+            };
             let request = graphhelm_events::PreparedAppend::new(
                 scope.clone(),
                 stream_id.clone(),

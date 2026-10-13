@@ -244,6 +244,315 @@ fn as_actor(mut document: Value) -> Value {
     document
 }
 
+/// A heartbeat is admitted through the real sealed signal door only while this lane owns a claim.
+#[test]
+fn heartbeat_on_an_open_claim_is_recorded_without_changing_the_claim() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let claim = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-claim",
+        "task.claimed",
+        ACTOR,
+        &as_actor(package_fixture("claimed")),
+    );
+    assert_eq!(claim["ok"], json!(true), "{claim}");
+    let before = history(&events);
+    let mut heartbeat = as_actor(package_fixture("claimed"));
+    heartbeat.as_object_mut().unwrap().retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "schema" | "taskId" | "revision" | "at" | "lane"
+        )
+    });
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-first",
+        "task.heartbeat",
+        ACTOR,
+        &heartbeat,
+    );
+    assert_eq!(reply["ok"], json!(true), "{reply}");
+    let after = history(&events);
+    assert_eq!(after.len(), before.len() + 1);
+    assert!(
+        matches!(&after.last().unwrap().kind, EventKind::SignalRecorded(recorded)
+        if recorded.kind == "task.heartbeat")
+    );
+    for (id, patch, code) in [
+        ("heartbeat-repeat", None, "GHCLI003_SIGNAL_INVALID"),
+        (
+            "heartbeat-forbidden-pr",
+            Some(("pr", json!(42))),
+            "GHCLI003_SIGNAL_INVALID",
+        ),
+        (
+            "heartbeat-forbidden-head",
+            Some(("headSha", json!("abcdef0"))),
+            "GHCLI003_SIGNAL_INVALID",
+        ),
+        (
+            "heartbeat-wrong-lane",
+            Some(("lane", json!("other-lane"))),
+            "GHCLI038_ACTOR_MISMATCH",
+        ),
+    ] {
+        let mut candidate = heartbeat.clone();
+        if let Some((key, value)) = patch {
+            candidate[key] = value;
+        }
+        candidate["at"] = json!("1900-01-01T00:00:00Z");
+        let head = history(&events).len();
+        let refused = signal(
+            scratch.path(),
+            &events,
+            id,
+            "task.heartbeat",
+            ACTOR,
+            &candidate,
+        );
+        assert_eq!(refused["diagnostics"][0]["code"], code, "{id}: {refused}");
+        assert_eq!(history(&events).len(), head, "{id} moved journal head");
+    }
+}
+
+#[test]
+fn heartbeat_needs_an_open_claim_and_a_pr_ends_it() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let mut heartbeat = as_actor(package_fixture("claimed"));
+    heartbeat.as_object_mut().unwrap().retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "schema" | "taskId" | "revision" | "at" | "lane"
+        )
+    });
+    let head = history(&events).len();
+    let absent = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-absent",
+        "task.heartbeat",
+        ACTOR,
+        &heartbeat,
+    );
+    assert_eq!(absent["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID");
+    assert_eq!(history(&events).len(), head);
+    let claim = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-claim-2",
+        "task.claimed",
+        ACTOR,
+        &as_actor(package_fixture("claimed")),
+    );
+    assert_eq!(claim["ok"], true, "{claim}");
+    let pr = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-pr",
+        "task.pr_opened",
+        ACTOR,
+        &as_actor(package_fixture("pr-opened")),
+    );
+    assert_eq!(pr["ok"], true, "{pr}");
+    let head = history(&events).len();
+    let ended = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-ended",
+        "task.heartbeat",
+        ACTOR,
+        &heartbeat,
+    );
+    assert_eq!(ended["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID");
+    assert_eq!(history(&events).len(), head);
+}
+
+#[test]
+fn release_ends_heartbeat_eligibility_for_its_claim() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let claim = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-release-claim",
+        "task.claimed",
+        ACTOR,
+        &as_actor(package_fixture("claimed")),
+    );
+    assert_eq!(claim["ok"], true, "{claim}");
+    let claim_sequence = history(&events).last().unwrap().sequence;
+    let mut heartbeat = as_actor(package_fixture("claimed"));
+    heartbeat.as_object_mut().unwrap().retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "schema" | "taskId" | "revision" | "at" | "lane"
+        )
+    });
+    let mut release = heartbeat.clone();
+    release["claimSequence"] = json!(claim_sequence);
+    release["reason"] = json!("Stopped working on this claim");
+    let done = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-release",
+        "task.released",
+        ACTOR,
+        &release,
+    );
+    assert_eq!(done["ok"], true, "{done}");
+    let head = history(&events).len();
+    let refused = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-after-release",
+        "task.heartbeat",
+        ACTOR,
+        &heartbeat,
+    );
+    assert_eq!(refused["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID");
+    assert_eq!(history(&events).len(), head);
+}
+
+#[test]
+fn another_task_does_not_end_the_claim_or_reset_its_cooldown() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let claim = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-main-claim",
+        "task.claimed",
+        ACTOR,
+        &as_actor(package_fixture("claimed")),
+    );
+    assert_eq!(claim["ok"], true, "{claim}");
+    let mut other_claim = as_actor(package_fixture("claimed"));
+    other_claim["taskId"] = json!("other-task");
+    let other = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-other-claim",
+        "task.claimed",
+        ACTOR,
+        &other_claim,
+    );
+    assert_eq!(other["ok"], true, "{other}");
+    let mut other_pr = as_actor(package_fixture("pr-opened"));
+    other_pr["taskId"] = json!("other-task");
+    let pr = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-other-pr",
+        "task.pr_opened",
+        ACTOR,
+        &other_pr,
+    );
+    assert_eq!(pr["ok"], true, "{pr}");
+    let mut heartbeat = as_actor(package_fixture("claimed"));
+    heartbeat.as_object_mut().unwrap().retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "schema" | "taskId" | "revision" | "at" | "lane"
+        )
+    });
+    let first = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-main-first",
+        "task.heartbeat",
+        ACTOR,
+        &heartbeat,
+    );
+    assert_eq!(first["ok"], true, "{first}");
+    let renewed = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-main-renewed",
+        "task.claimed",
+        ACTOR,
+        &as_actor(package_fixture("claimed")),
+    );
+    assert_eq!(renewed["ok"], true, "{renewed}");
+    let head = history(&events).len();
+    let repeated = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-main-repeat",
+        "task.heartbeat",
+        ACTOR,
+        &heartbeat,
+    );
+    assert_eq!(
+        repeated["diagnostics"][0]["code"],
+        "GHCLI003_SIGNAL_INVALID"
+    );
+    assert_eq!(history(&events).len(), head);
+}
+
+/// Two submissions may both read the same eligible claim; the journal must admit only one.
+#[test]
+fn concurrent_heartbeats_append_at_most_once() {
+    use std::sync::Barrier;
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let claim = signal(
+        scratch.path(),
+        &events,
+        "race-claim",
+        "task.claimed",
+        ACTOR,
+        &as_actor(package_fixture("claimed")),
+    );
+    assert_eq!(claim["ok"], true, "{claim}");
+    let before = history(&events).len();
+    let mut heartbeat = as_actor(package_fixture("claimed"));
+    heartbeat.as_object_mut().unwrap().retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "schema" | "taskId" | "revision" | "at" | "lane"
+        )
+    });
+    let barrier = Arc::new(Barrier::new(3));
+    let replies: Vec<_> = ["race-left", "race-right"]
+        .into_iter()
+        .map(|id| {
+            let barrier = Arc::clone(&barrier);
+            let events = events.clone();
+            let scratch = scratch.path().to_path_buf();
+            let heartbeat = heartbeat.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                signal(&scratch, &events, id, "task.heartbeat", ACTOR, &heartbeat)
+            })
+        })
+        .collect();
+    barrier.wait();
+    let replies: Vec<_> = replies
+        .into_iter()
+        .map(|thread| thread.join().unwrap())
+        .collect();
+    assert_eq!(
+        replies.iter().filter(|reply| reply["ok"] == true).count(),
+        1,
+        "{replies:?}"
+    );
+    assert_eq!(history(&events).len(), before + 1);
+    assert_eq!(
+        history(&events)
+            .iter()
+            .filter(
+                |event| matches!(&event.kind, EventKind::SignalRecorded(recorded)
+                if recorded.kind == "task.heartbeat")
+            )
+            .count(),
+        1
+    );
+}
+
 #[test]
 fn a_task_signal_naming_another_actor_is_refused_and_records_nothing() {
     let scratch = tempfile::tempdir().unwrap();

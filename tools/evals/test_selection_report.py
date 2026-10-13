@@ -209,6 +209,10 @@ class SelectionReport(unittest.TestCase):
             report = json.loads(matched.stdout)
             self.assertEqual(report["by_partition"]["tuning"]["selection"]["no_skill"]["correct_abstain"], 1)
             self.assertEqual(report["by_partition"]["tuning"]["selection"]["no_skill"]["incomplete"], 1)
+            reordered_text = json.dumps(manifest_a, indent=2, sort_keys=False)
+            reordered = self.run_partitioned_text(script, rows, reordered_text)
+            self.assertEqual(reordered.returncode, 0, reordered.stderr)
+            self.assertEqual(matched.stdout, reordered.stdout)
 
             for row, binding, message in [
                 ({key: value for key, value in rows[0].items()
@@ -240,15 +244,22 @@ class SelectionReport(unittest.TestCase):
             self.assertIn("manifest", drift.stderr)
             self.assertEqual(drift.stdout, "")
 
-            legacy_bad = self.run_report()
-            self.assertNotEqual(legacy_bad.returncode, 0)
-            self.input_path.write_text(json.dumps([{**rows[0],
-                "partition_manifest_sha256": "A" * 64}]), encoding="utf-8")
+            legacy_row = {key: value for key, value in rows[0].items()
+                          if key != "partition_manifest_sha256"}
+            self.input_path.write_text(json.dumps([{**legacy_row,
+                "partition_manifest_sha256": "a" * 64}]), encoding="utf-8")
             legacy = subprocess.run([sys.executable, str(REPORT), str(self.input_path)],
                                     cwd=ROOT, capture_output=True, text=True,
                                     creationflags=NO_WINDOW)
-            self.assertEqual(legacy.returncode, 2)
-            self.assertIn("partition_manifest_sha256", legacy.stderr)
+            self.assertEqual(legacy.returncode, 0, legacy.stderr)
+            self.assertEqual(json.loads(legacy.stdout)["partitioning"]["status"], "unobserved")
+            self.input_path.write_text(json.dumps([{**legacy_row,
+                "partition_manifest_sha256": "A" * 64}]), encoding="utf-8")
+            malformed = subprocess.run([sys.executable, str(REPORT), str(self.input_path)],
+                                       cwd=ROOT, capture_output=True, text=True,
+                                       creationflags=NO_WINDOW)
+            self.assertEqual(malformed.returncode, 2)
+            self.assertIn("partition_manifest_sha256", malformed.stderr)
 
     def test_legacy_report_marks_partitioning_unobserved(self):
         result = self.run_report()

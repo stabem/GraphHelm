@@ -44,7 +44,7 @@ def case_catalog():
 
 def load_observations(path):
     try:
-        value = json.loads(Path(path).read_text(encoding="utf-8"))
+        value = parse_json_no_duplicates(Path(path).read_text(encoding="utf-8"), "observation")
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise InputError(f"cannot read observations JSON: {error}") from error
     if not isinstance(value, list):
@@ -57,6 +57,10 @@ def load_observations(path):
         case_id = item.get("case_id")
         if not isinstance(case_id, str) or not case_id:
             raise InputError(f"{label} has no case_id")
+        if "partition_manifest_sha256" in item:
+            identity = item["partition_manifest_sha256"]
+            if not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{64}", identity):
+                raise InputError(f"{label} ({case_id}) partition_manifest_sha256 must be 64 lowercase hexadecimal characters")
         if case_id not in catalog:
             raise InputError(f"unknown eval case: {case_id}")
         status = item.get("status")
@@ -246,6 +250,16 @@ def partition_report(observations, catalog, partitions, identity):
     }
 
 
+def validate_observation_manifest_bindings(observations, identity):
+    for index, item in enumerate(observations):
+        label = f"observation {index} ({item['case_id']})"
+        declared = item.get("partition_manifest_sha256")
+        if declared is None:
+            raise InputError(f"{label} is missing partition_manifest_sha256")
+        if declared != identity:
+            raise InputError(f"{label} partition_manifest_sha256 does not match the partition manifest")
+
+
 def main(argv=None):
     args = sys.argv[1:] if argv is None else argv
     if len(args) not in (1, 3) or (len(args) == 3 and args[1] != "--partition-manifest"):
@@ -255,6 +269,7 @@ def main(argv=None):
         observations, catalog = load_observations(args[0])
         if len(args) == 3:
             partitions, identity = validate_partition_manifest(args[2], catalog)
+            validate_observation_manifest_bindings(observations, identity)
             report = partition_report(observations, catalog, partitions, identity)
         else:
             report = {**build_report(observations, catalog),

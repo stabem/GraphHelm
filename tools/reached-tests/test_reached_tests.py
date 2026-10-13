@@ -35,6 +35,56 @@ def reach(*changed, repo=None):
 
 class Reach(unittest.TestCase):
 
+    def test_task_handoff_fixture_selects_its_offline_scenario_once(self):
+        """Reach the real isolated handoff observer for fixture-only diffs.
+
+        Cost: temporary files only; milliseconds, no Cargo, network, browser or Runtime.
+        """
+        scenario = ".graphhelm/fixtures/keel-task-handoff/scenario.py"
+        readme = ".graphhelm/fixtures/keel-task-handoff/README.md"
+        expected = f"python {scenario}"
+        with tempfile.TemporaryDirectory() as repo:
+            scenario_path = Path(repo, scenario)
+            scenario_path.parent.mkdir(parents=True)
+            scenario_path.write_text("", encoding="utf-8")
+            Path(repo, readme).write_text("", encoding="utf-8")
+
+            with patch.dict("os.environ", {"GRAPHHELM_HANDOFF_WRONG_STORE": ""}):
+                *_, tools, _, other = reach(scenario, repo=repo)
+            self.assertEqual(tools, [expected])
+            self.assertEqual(other, [])
+
+            # Exercise the selector's executable plan as well as its legacy display mapping.
+            self.assertEqual(rt.steps(set(), set(), [], tools, repo=Path(repo)), [
+                {"argv": ["python", scenario], "cwd": ".", "slot": False},
+            ])
+
+            with patch.dict("os.environ", {"GRAPHHELM_HANDOFF_WRONG_STORE": "1"}):
+                *_, wrong_store_tools, _, wrong_store_other = reach(scenario, repo=repo)
+            self.assertEqual(wrong_store_tools, [expected + " --wrong-store"])
+            self.assertEqual(wrong_store_other, [])
+            self.assertEqual(rt.steps(set(), set(), [], wrong_store_tools, repo=Path(repo)), [
+                {"argv": ["python", scenario, "--wrong-store"], "cwd": ".", "slot": False},
+            ])
+
+            *_, readme_tools, _, readme_other = reach(readme, repo=repo)
+            self.assertEqual(readme_tools, [expected])
+            self.assertEqual(readme_other, [])
+
+            with patch.dict("os.environ", {"GRAPHHELM_HANDOFF_WRONG_STORE": ""}):
+                *_, missing_root_tools, _, missing_root_other = reach(scenario)
+            self.assertEqual(missing_root_tools, [])
+            self.assertEqual(missing_root_other, [scenario])
+
+            *_, combined_tools, _, combined_other = reach(scenario, readme, repo=repo)
+            self.assertEqual(combined_tools, [expected])
+            self.assertEqual(combined_other, [])
+
+            scenario_path.unlink()
+            *_, missing_tools, _, missing_other = reach(scenario, repo=repo)
+            self.assertEqual(missing_tools, [])
+            self.assertEqual(missing_other, [scenario])
+
     def test_shipped_plugin_diff_selects_executable_version_guard(self):
         """A shipped plugin edit must run the version guard for the selected refs.
 

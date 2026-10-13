@@ -20,10 +20,10 @@ class SelectionReport(unittest.TestCase):
         self.observations = [
             {"case_id": "keel-green-on-parent-unprompted", "status": "completed",
              "invoked_skills": ["keel"], "completion": "pass", "rubric": "keel",
-             "judge": "pass", "human_label": "fail"},
-            {"case_id": "keel-observer-missing-unprompted", "status": "completed",
+             "judge": "pass", "human_label": "fail", "response_sha256": "a" * 64, "judge_id": "judge-v1"},
+            {"case_id": "keel-green-on-parent-unprompted", "status": "completed",
              "invoked_skills": ["test-audit"], "completion": "fail", "rubric": "keel",
-             "judge": "fail", "human_label": "pass"},
+             "judge": "fail", "human_label": "pass", "response_sha256": "b" * 64, "judge_id": "judge-v1"},
             {"case_id": "no-skill-arithmetic", "status": "completed",
              "invoked_skills": ["keel"], "completion": "fail", "rubric": "arithmetic",
              "judge": "fail"},
@@ -69,7 +69,7 @@ class SelectionReport(unittest.TestCase):
         })
         self.assertEqual(report["judges"]["by_rubric"]["keel"]["false_pass"], 1)
         self.assertEqual(report["judges"]["by_rubric"]["keel"]["false_fail"], 1)
-        self.assertEqual(report["judges"]["by_rubric"]["keel"]["repeat_disagreement"], 1)
+        self.assertEqual(report["judges"]["by_rubric"]["keel"]["repeat_disagreement"], 0)
         again = self.run_report()
         self.assertEqual(result.stdout, again.stdout)
 

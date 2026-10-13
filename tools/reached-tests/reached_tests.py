@@ -141,16 +141,21 @@ def workspace(repo):
                             "requiredFeatures": list(t.get("required-features", []))})
         tests = [{"name": t["name"], "src": t["src"]} for t in targets if t["kind"] == "test"]
         bundles = {}
+        bundle_paths = {}
         for t in tests:
             text = t["src"].read_text(encoding="utf-8", errors="replace") if t["src"].is_file() else ""
             for path, module in BUNDLE_MOD.findall(text):
                 bundles[module] = t["name"]
+                source = (t["src"].parent / (path + ".rs")).resolve()
+                if source.is_relative_to(root):
+                    bundle_paths.setdefault(source.relative_to(root).as_posix(), set()).add((t["name"], module))
         packages.append({
             "name": p["name"],
             "dir": pdir.relative_to(root).as_posix(),
             "deps": sorted(d["name"] for d in p["dependencies"] if d.get("path")),
             "tests": [{"name": t["name"], "src": t["src"].relative_to(root).as_posix()} for t in tests],
             "bundles": bundles,
+            "bundle_paths": bundle_paths,
             "targets": [{**t, "src": t["src"].relative_to(root).as_posix()} for t in targets],
         })
     return packages
@@ -498,8 +503,12 @@ def reach(changed, packages, embedded, repo=None):
             rel = path[len(p["dir"]) + 1:] if p["dir"] else path
             stem = Path(rel).stem
             test = next((t for t in p["tests"] if t["src"] == path), None)
-            if rel.startswith("tests/") and rel.count("/") == 1 and rel.endswith(".rs"):
-                if stem in p["bundles"]:
+            registered = p.get("bundle_paths", {}).get(path, set())
+            if registered:
+                single |= {(p["name"], target, module) for target, module in registered}
+                hit = True
+            elif rel.startswith("tests/") and rel.count("/") == 1 and rel.endswith(".rs"):
+                if stem in p["bundles"] and not p.get("bundle_paths"):
                     single.add((p["name"], p["bundles"][stem], stem))
                 elif test is not None:
                     single.add((p["name"], test["name"], None))

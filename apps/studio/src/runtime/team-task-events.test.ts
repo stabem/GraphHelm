@@ -147,6 +147,27 @@ describe("foldTaskEvents", () => {
     expect(foldTaskEvents([opened, block, otherApproval, ownApproval])[0]).toMatchObject({ step: "merge", blockedBy: null });
   });
 
+  it("keeps every reviewer's unanswered BLOCK on the current head (#1002)", () => {
+    const taskId = "issue-1002";
+    const urlOne = "https://github.com/stabem/GraphHelm/pull/1002#c1";
+    const urlTwo = "https://github.com/stabem/GraphHelm/pull/1002#c2";
+    const opened = record(1, "task.pr_opened", "codex-1", { taskId, pr: 1002, headSha: "aaaaaaaa", journeys: [], lane: "codex-1" });
+    const blockOne = record(2, "task.review_verdict", "reviewer-one", { taskId, pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-one", verdict: "BLOCK", commentUrl: urlOne });
+    const blockTwo = record(3, "task.review_verdict", "reviewer-two", { taskId, pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-two", verdict: "BLOCK", commentUrl: urlTwo });
+    const approveTwo = record(4, "task.review_verdict", "reviewer-two", { taskId, pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-two", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c3" });
+    const approveOne = record(5, "task.review_verdict", "reviewer-one", { taskId, pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-one", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c4" });
+
+    expect(foldTaskEvents([opened, blockOne, blockTwo, approveTwo])[0]).toMatchObject({
+      step: "review", blockedBy: { reviewer: "reviewer-one", commentUrl: urlOne }, blockedSequence: 2,
+    });
+    expect(foldTaskEvents([opened, blockOne, blockTwo, approveOne])[0]).toMatchObject({
+      step: "review", blockedBy: { reviewer: "reviewer-two", commentUrl: urlTwo }, blockedSequence: 3,
+    });
+    expect(foldTaskEvents([opened, blockOne, blockTwo, approveTwo, approveOne])[0]).toMatchObject({
+      step: "merge", blockedBy: null, blockedSequence: null,
+    });
+  });
+
   it("records APPROVE-WITH-RISK and preserves it after a plain approval (#1002)", () => {
     const opened = record(1, "task.pr_opened", "codex-1", { taskId: "issue-1002", pr: 1002, headSha: "aaaaaaaa", journeys: [], lane: "codex-1" });
     const riskApproval = record(2, "task.review_verdict", "reviewer-two", { taskId: "issue-1002", pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-two", verdict: "APPROVE-WITH-RISK", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c4" });

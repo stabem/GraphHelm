@@ -117,6 +117,10 @@ class TaskRecordTest(unittest.TestCase):
             doc.update(pr=pr, headSha=HEAD_A, journeys=[])
         elif kind == "task.released":
             doc.update(claimSequence=claim_sequence or 1, reason="reassigned")
+        elif kind == "task.closed":
+            doc.update(pr=pr, reason="abandoned", by=1)
+        elif kind == "task.merged":
+            doc.update(pr=pr, mergeSha=HEAD_A, closes=[], merger=lane)
         evidence_id = f"evidence-{sequence}"
         FakeRuntime.evidence[evidence_id] = {"type": kind, "source": {"id": lane},
                                              "description": json.dumps(doc)}
@@ -175,6 +179,13 @@ class TaskRecordTest(unittest.TestCase):
         FakeRuntime.history_head = None
         FakeRuntime.history = [{**self.history_event("task.claimed", 1), "sequence": 2}]
         self.assert_refused_without_post()
+
+    def test_heartbeat_refuses_claim_ended_by_merge_or_closed_pr(self):
+        for terminal_kind in ("task.merged", "task.closed"):
+            with self.subTest(terminal_kind=terminal_kind):
+                FakeRuntime.history = [self.history_event("task.claimed", 1),
+                                       self.history_event(terminal_kind, 2)]
+                self.assert_refused_without_post()
 
     def test_heartbeat_cooldown_uses_event_time_at_299_and_300_seconds(self):
         FakeRuntime.history = [self.history_event("task.claimed", 1),

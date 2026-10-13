@@ -518,7 +518,8 @@ def read_execution_history(args):
         if event.get("actor", {}).get("id") != args.lane:
             continue
         kind = event["kind"].get("data", {}).get("kind") if event["kind"].get("type") == "signal_recorded" else None
-        if kind in ("task.claimed", "task.pr_opened", "task.released", "task.heartbeat"):
+        if kind in ("task.claimed", "task.pr_opened", "task.released", "task.heartbeat",
+                    "task.merged", "task.closed"):
             relevant.append((event, kind))
     if len(relevant) > MAX_HEARTBEAT_EVIDENCE_READS:
         sys.exit("task_record: heartbeat history requires too many evidence reads; no record sent")
@@ -596,6 +597,18 @@ def heartbeat_document(args, history, now):
             if not isinstance(sequence, int) or isinstance(sequence, bool):
                 sys.exit("task_record: heartbeat release history is invalid; no record sent")
             open_claims = [claim for claim in open_claims if claim != sequence]
+        elif kind in ("task.merged", "task.closed"):
+            pr = record.get("pr")
+            if not isinstance(pr, int) or isinstance(pr, bool) or pr < 1:
+                sys.exit("task_record: heartbeat terminal PR history is invalid; no record sent")
+            if opened_prs:
+                if pr not in opened_prs:
+                    continue
+                opened_prs.remove(pr)
+            if open_claims:
+                # A terminal record names the task's PR. If PR-open history is incomplete,
+                # still fail closed for this task rather than heartbeat a terminal claim.
+                open_claims.pop(0)
         elif kind == "task.heartbeat":
             occurred_at = _event_time(event.get("occurredAt"))
             if occurred_at is None:

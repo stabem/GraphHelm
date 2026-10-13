@@ -266,7 +266,7 @@ describe("MissionView", () => {
     expect(frames.compareDocumentPosition(canvas.querySelector(".tc-main")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     } finally {
       if (priorScrollIntoView) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", priorScrollIntoView);
-      else delete (HTMLElement.prototype as HTMLElement & { scrollIntoView?: () => void }).scrollIntoView;
+      else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     }
   });
 

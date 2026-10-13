@@ -594,6 +594,14 @@ Initial taxonomy:
 - output_contract_mismatch;
 - documentation_impact;
 - deploy_risk;
+- keel.blocked;
+- keel.passed.
+
+Keel check signals may carry an explicit Graph Draft proposal through the existing Governor
+admission path. Admission records a sealed pending proposal; it does not publish a Graph Version.
+The existing Governor policy applies: supervised mode requires owner approval, manual mode rejects
+the mutation, and autopilot follows the ordinary Governor decision and mutation budget. A Keel
+signal without a proposal remains a historical check record and does not create a draft.
 
 ## 20. Graph Governor
 

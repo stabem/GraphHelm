@@ -821,7 +821,12 @@ fn run_slot_with_batch_payload(
 
 #[cfg(test)]
 fn run_admitted_slot(request: &SlotRequest<'_>) -> Outcome {
-    run_admitted_slot_with_batch(request, None)
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(_) => return refuse("the current directory could not be read", "/target"),
+    };
+    let admission = request.root.join("test-admission");
+    run_admitted_slot_core(request, &cwd, None, &admission)
 }
 
 struct BatchSpec {
@@ -938,11 +943,7 @@ fn run_admitted_slot_with_batch(request: &SlotRequest<'_>, batch: Option<BatchRu
 
 #[cfg(test)]
 fn run_admitted_slot_in(request: &SlotRequest<'_>, cwd: &Path) -> Outcome {
-    let admission = request
-        .root
-        .parent()
-        .unwrap_or(request.root)
-        .join("test-admission");
+    let admission = request.root.join("test-admission");
     run_admitted_slot_core(request, cwd, None, &admission)
 }
 
@@ -952,11 +953,7 @@ fn run_admitted_slot_in_with_batch(
     cwd: &Path,
     batch: Option<BatchRun>,
 ) -> Outcome {
-    let admission = request
-        .root
-        .parent()
-        .unwrap_or(request.root)
-        .join("test-admission");
+    let admission = request.root.join("test-admission");
     run_admitted_slot_core(request, cwd, batch, &admission)
 }
 
@@ -1102,7 +1099,10 @@ fn run_admitted_slot_core(
                     drop(admission);
                     drop(ticket);
                     remove_ticket(&mine);
-                    return refuse("the build admission lock could not be checked", "/admission");
+                    return refuse(
+                        "the build admission lock could not be checked",
+                        "/admission",
+                    );
                 }
             }
         }

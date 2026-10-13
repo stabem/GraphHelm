@@ -407,23 +407,6 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
         Ok(path) => path,
         Err(message) => return refused_as(UPDATE, message, "/admission"),
     };
-    let admission = match super::workspace_slot::open_build_admission(&admission_path) {
-        Ok(lock) => lock,
-        Err(message) => return refused_as(UPDATE, message, "/admission"),
-    };
-    Progress::say(&progress.info("waiting for the shared build admission lock"));
-    if let Err(message) = super::workspace_slot::lock_build_admission(&admission) {
-        return refused_as(UPDATE, message, "/admission");
-    }
-    let moved_aside = if cfg!(windows) {
-        std::env::current_exe().ok().and_then(|exe| {
-            let old = exe.with_file_name("graphhelm.old.exe");
-            let _ = std::fs::remove_file(&old);
-            std::fs::rename(&exe, &old).ok().map(|()| (exe, old))
-        })
-    } else {
-        None
-    };
     // Install over THIS binary, wherever it lives: a graphhelm run from a versioned directory
     // (`~/.graphhelm/versions/<sha>/bin`) updated into `~/.cargo/bin` would leave PATH on the old
     // one, and on Windows with nothing at all once it was moved aside (2026-10-05).
@@ -458,11 +441,14 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
         // versioned directory's binary was placed there by another installer (#281 review).
         install.arg("--root").arg(root).arg("--force");
     }
-    let installed = run_install(&mut install, &source, progress);
+    let installed = run_install(
+        &mut install,
+        &source,
+        progress,
+        &admission_path,
+        std::env::current_exe().ok().as_deref(),
+    );
     if !installed {
-        if let Some((exe, old)) = &moved_aside {
-            let _ = std::fs::rename(old, exe);
-        }
         return refused_as(
             UPDATE,
             "cargo install failed; its output is above, and the old graphhelm is unchanged",
@@ -522,14 +508,46 @@ pub(super) fn compiled_crate(line: &str) -> Option<String> {
 /// owner's terminal: a 53-minute build showed nothing at all. Cargo's JSON messages on stdout now
 /// drive a progress bar; its stderr is kept, a lock wait is said at once, and on failure the
 /// whole of it is printed. In plain mode (not a terminal) stderr is forwarded line by line.
-fn run_install(install: &mut std::process::Command, source: &Path, progress: Progress) -> bool {
+pub(super) fn run_install(
+    install: &mut std::process::Command,
+    source: &Path,
+    progress: Progress,
+    admission_path: &Path,
+    current_exe: Option<&Path>,
+) -> bool {
     use std::io::{BufRead, BufReader, Write};
+    let admission = match super::workspace_slot::open_build_admission(admission_path) {
+        Ok(lock) => lock,
+        Err(message) => {
+            Progress::say(&progress.warn(&message));
+            return false;
+        }
+    };
+    Progress::say(&progress.info("waiting for the shared build admission lock"));
+    if let Err(message) = super::workspace_slot::lock_build_admission(&admission) {
+        Progress::say(&progress.warn(&message));
+        return false;
+    }
+    let moved_aside = if cfg!(windows) {
+        current_exe.and_then(|exe| {
+            let old = exe.with_file_name("graphhelm.old.exe");
+            let _ = std::fs::remove_file(&old);
+            std::fs::rename(exe, &old)
+                .ok()
+                .map(|()| (exe.to_owned(), old))
+        })
+    } else {
+        None
+    };
     install
         .arg("--message-format")
         .arg("json-render-diagnostics")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     let Ok(mut child) = install.spawn() else {
+        if let Some((exe, old)) = &moved_aside {
+            let _ = std::fs::rename(old, exe);
+        }
         Progress::say(&progress.warn("cargo could not be started; is it installed?"));
         return false;
     };
@@ -578,6 +596,11 @@ fn run_install(install: &mut std::process::Command, source: &Path, progress: Pro
             for line in &kept {
                 eprintln!("{line}");
             }
+        }
+    }
+    if !ok {
+        if let Some((exe, old)) = &moved_aside {
+            let _ = std::fs::rename(old, exe);
         }
     }
     ok

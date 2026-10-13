@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{
-    BatchRun, BatchSpec, SlotRequest, batch_boundary, parse_slot_batch, run_admitted_slot,
-    open_build_admission, run_admitted_slot_in, run_admitted_slot_in_with_batch,
+    BatchRun, BatchSpec, SlotRequest, batch_boundary, open_build_admission, parse_slot_batch,
+    run_admitted_slot, run_admitted_slot_in, run_admitted_slot_in_with_batch,
     run_slot_with_batch_payload, run_status, slot_dir,
 };
 
@@ -146,7 +146,11 @@ fn batch_child_failure_keeps_prefix_and_stops_children() {
     let retry = marker_command(&log, "retry", 0);
     let retry_request = request(&root, "lane", "retry", &retry);
     let retry_outcome = run_admitted_slot_in(&retry_request, dir.path());
-    assert!(retry_outcome.output.ok, "retry child failed: {:?}", retry_outcome.output);
+    assert!(
+        retry_outcome.output.ok,
+        "retry child failed: {:?}",
+        retry_outcome.output
+    );
     assert_eq!(tags(&log), ["first", "retry"]);
 }
 
@@ -501,6 +505,7 @@ fn shared_admission_serializes_children_across_slot_roots() {
     let command_a = marker_command(&log, "a", 700);
     let command_b = marker_command(&log, "b", 700);
     let cwd = dir.path().to_owned();
+    let admission = dir.path().join("shared-test-admission");
     let barrier = Arc::new(std::sync::Barrier::new(2));
     let first_barrier = Arc::clone(&barrier);
     let first = std::thread::spawn({
@@ -508,7 +513,7 @@ fn shared_admission_serializes_children_across_slot_roots() {
         move || {
             first_barrier.wait();
             let request = request(&root_a, "lane-a", "cross-root-a", &command_a);
-            run_admitted_slot_in(&request, &cwd)
+            super::run_admitted_slot_core(&request, &cwd, None, &admission)
         }
     });
     let second_barrier = Arc::clone(&barrier);
@@ -517,7 +522,7 @@ fn shared_admission_serializes_children_across_slot_roots() {
         move || {
             second_barrier.wait();
             let request = request(&root_b, "lane-b", "cross-root-b", &command_b);
-            run_admitted_slot_in(&request, &cwd)
+            super::run_admitted_slot_core(&request, &cwd, None, &admission)
         }
     });
     let first = first.join().unwrap();
@@ -527,12 +532,117 @@ fn shared_admission_serializes_children_across_slot_roots() {
     let lines = std::fs::read_to_string(log).unwrap();
     let lines = lines
         .lines()
-        .map(|line| line.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
+        .map(|line| {
+            line.split_whitespace()
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
         .collect::<Vec<_>>();
     assert!(
         lines == vec!["a start", "a end", "b start", "b end"]
             || lines == vec!["b start", "b end", "a start", "a end"],
         "cross-root children entered the build section together: {lines:?}"
+    );
+}
+
+#[test]
+fn update_installer_waits_for_slot_admission_before_starting_child() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let log = dir.path().join("update-v-slot.log");
+    let admission = dir.path().join("shared-test-admission");
+    let slot_command = marker_command(&log, "slot", 900);
+    let slot_root = root.clone();
+    let slot_cwd = dir.path().to_owned();
+    let slot_admission = admission.clone();
+    let slot = std::thread::spawn(move || {
+        let request = request(&slot_root, "lane", "slot", &slot_command);
+        super::run_admitted_slot_core(&request, &slot_cwd, None, &slot_admission)
+    });
+
+    let started = std::time::Instant::now();
+    while started.elapsed() < Duration::from_secs(3) {
+        if std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .contains("slot start")
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .contains("slot start"),
+        "slot child did not enter the build section"
+    );
+
+    let update_command = if cfg!(windows) {
+        vec![
+            "powershell".into(),
+            "-NoProfile".into(),
+            "-Command".into(),
+            format!(
+                "Add-Content -LiteralPath '{}' 'update start'; Add-Content -LiteralPath '{}' 'update end'",
+                log.display(),
+                log.display()
+            ),
+        ]
+    } else {
+        vec![
+            "sh".into(),
+            "-c".into(),
+            format!(
+                "echo 'update start' >> '{}'; echo 'update end' >> '{}'",
+                log.display(),
+                log.display()
+            ),
+        ]
+    };
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let fake_exe = dir.path().join(if cfg!(windows) {
+        "graphhelm.exe"
+    } else {
+        "graphhelm"
+    });
+    std::fs::write(&fake_exe, b"fixture executable").unwrap();
+    let update_admission = admission.clone();
+    let update_log = log.clone();
+    let update = std::thread::spawn(move || {
+        let mut command = graphhelm_process::command(&update_command[0]);
+        command.args(&update_command[1..]);
+        super::super::studio::run_install(
+            &mut command,
+            source,
+            crate::progress::Progress::decide("update-test"),
+            &update_admission,
+            Some(&fake_exe),
+        )
+    });
+
+    assert!(
+        !std::fs::read_to_string(&update_log)
+            .unwrap_or_default()
+            .contains("update start"),
+        "update child entered while slot child held admission"
+    );
+    let slot = slot.join().unwrap();
+    assert!(slot.output.ok, "slot child failed: {:?}", slot.output);
+    assert!(update.join().unwrap());
+    let lines = std::fs::read_to_string(&log).unwrap();
+    let tags = lines
+        .lines()
+        .map(|line| {
+            line.split_whitespace()
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tags,
+        vec!["slot start", "slot end", "update start", "update end"]
     );
 }
 

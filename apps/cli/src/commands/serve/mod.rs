@@ -3301,7 +3301,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// Promise: an authenticated status read identifies its admitted actor without advancing the
+    /// Promise: a scoped agent status read identifies its admitted actor without advancing the
     /// event head, and that observation expires after the 15-minute liveness window. Regression:
     /// omitting actor tracking or appending a heartbeat would make one of these assertions fail.
     /// The isolated route fixture owns a temporary event store; no live Runtime is contacted.
@@ -3312,6 +3312,18 @@ mod tests {
 
         let (_directory, mut state) = routes::tests::known_execution_state();
         state.token = Arc::<[u8]>::from(b"test-token".to_vec());
+        state.agent_session_token = Arc::<[u8]>::from(b"shared-token".to_vec());
+        state.agent_credentials = Arc::new(BTreeMap::from([(
+            "scoped-token".to_owned(),
+            ScopedAgentCredential {
+                actor: PersistedActor::new(
+                    PersistedActorType::Agent,
+                    ActorId::parse("lane-a").unwrap(),
+                ),
+                project: execution::PROJECT.to_owned(),
+                execution: "execution-known".to_owned(),
+            },
+        )]));
         let state_for_expiry = state.clone();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -3330,6 +3342,17 @@ mod tests {
             + 4;
         let body: serde_json::Value = serde_json::from_slice(&response[body_start..]).unwrap();
         assert!(body["data"].get("seenActors").is_none());
+        assert!(state_for_expiry.seen_actors().is_empty());
+        let mut shared = tokio::net::TcpStream::connect(address).await.unwrap();
+        shared.write_all(b"GET /v1/executions/execution-known HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer shared-token\r\nX-GraphHelm-Actor: lane-a\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut shared_response = Vec::new();
+        shared.read_to_end(&mut shared_response).await.unwrap();
+        assert!(state_for_expiry.seen_actors().is_empty());
+        let mut scoped = tokio::net::TcpStream::connect(address).await.unwrap();
+        scoped.write_all(b"GET /v1/executions/execution-known HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer scoped-token\r\nX-GraphHelm-Actor: forged-lane\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut scoped_response = Vec::new();
+        scoped.read_to_end(&mut scoped_response).await.unwrap();
+        assert_eq!(state_for_expiry.seen_actors(), vec!["lane-a"]);
         let mut liveness = tokio::net::TcpStream::connect(address).await.unwrap();
         liveness.write_all(b"GET /v1/seen-actors HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer test-token\r\nConnection: close\r\n\r\n").await.unwrap();
         let mut liveness_response = Vec::new();

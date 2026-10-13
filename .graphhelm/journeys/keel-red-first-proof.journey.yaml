@@ -1,0 +1,31 @@
+schema: graphhelm.journey-flow/1
+id: keel-red-first-proof
+title: Prove a regression test against its parent
+status: draft
+approved: null
+base: http://127.0.0.1:1
+actors: [owner]
+secrets: []
+risks: []
+screens:
+  - id: defective-parent
+    title: The specimen drops the first value
+    url: /specimen
+    state: stable
+    expect: [{role: text, name: "total([2, 3]) returns 3"}]
+    scope: [.graphhelm/fixtures/keel-red-first-proof/scenario.py]
+  - id: proof-report
+    title: The CLI distinguishes an earned test from a vacuous test
+    url: /report
+    state: stable
+    expect: [{role: text, name: "failed, passed, earned"}, {role: text, name: "green_on_parent"}]
+    scope: [.graphhelm/fixtures/keel-red-first-proof/scenario.py]
+edges:
+  - id: prove-regression
+    from: defective-parent
+    to: proof-report
+    acts:
+      - {kind: cli, role: exec, name: "python .graphhelm/fixtures/keel-red-first-proof/scenario.py"}
+paths:
+  main: [prove-regression]
+drift: []

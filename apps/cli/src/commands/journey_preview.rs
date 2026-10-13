@@ -1274,17 +1274,16 @@ mod tests {
         std::fs::create_dir_all(super::dir_of(project, id)).unwrap();
         std::fs::write(
             project.join(".graphhelm/journeys/studio-answer-node.journey.yaml"),
-            include_bytes!("../../../../.graphhelm/journeys/studio-answer-node.journey.yaml"),
+            include_bytes!("testdata/studio-answer-node.journey.yaml"),
         )
         .unwrap();
         let repo = std::path::PathBuf::from(
             std::env::var_os("GRAPHHELM_PREVIEW_OBSERVER_REPO")
                 .expect("OBSERVER_MISSING: Studio checkout"),
         );
-        let flow: Value = serde_yaml_ng::from_slice(include_bytes!(
-            "../../../../.graphhelm/journeys/studio-answer-node.journey.yaml"
-        ))
-        .unwrap();
+        let flow: Value =
+            serde_yaml_ng::from_slice(include_bytes!("testdata/studio-answer-node.journey.yaml"))
+                .unwrap();
         for screen in flow["screens"].as_array().unwrap() {
             for scope in screen["scope"].as_array().unwrap() {
                 let scope = scope.as_str().unwrap();

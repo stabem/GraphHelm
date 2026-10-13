@@ -3,21 +3,27 @@ id: keel-task-handoff
 title: "A Codex session recovers a Claude handoff from Runtime history"
 status: draft
 approved: null
-base: http://127.0.0.1:0
+base: http://127.0.0.1:8794
 actors: [claude, codex]
 secrets: []
 risks: [recovery]
 screens:
   - id: start
     title: The isolated handoff observer starts
-    url: /
+    url: /start
     state: stable
     expect: [{role: exit, name: "0"}, {role: stdout, name: '"verdict": "passed"'}, {role: stdout, name: '"recoveredExecutionId": "keel-handoff-fixture"'}, {role: stdout, name: '"kind": "resume_held"'}]
-    scope: [graphhelm/fixtures/keel-task-handoff/scenario.py]
+    scope: [".graphhelm/fixtures/keel-task-handoff/scenario.py"]
+  - id: result
+    title: The receiver recovers the persisted handoff
+    url: /result
+    state: stable
+    expect: [{role: exit, name: "0"}, {role: stdout, name: '"verdict": "passed"'}, {role: stdout, name: '"recoveredExecutionId": "keel-handoff-fixture"'}, {role: stdout, name: '"kind": "resume_held"'}]
+    scope: [".graphhelm/fixtures/keel-task-handoff/scenario.py"]
 edges:
   - id: observe.handoff
     from: start
-    to: start
+    to: result
     acts:
       - {kind: cli, role: exec, name: "python .graphhelm/fixtures/keel-task-handoff/scenario.py"}
 paths:

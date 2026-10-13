@@ -594,7 +594,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
           {sub === "graph" && group && <IssueGraph group={group} stepFor={stepFor} selectedTaskKey={shownTask} selectedCol={stageCol}
             onSelectTask={(key) => { setTaskKey(key); setStageCol(null); }} onSelectCol={(c) => { setStageCol(c); setTaskKey(null); }} onOpenTest={openTest} health={health} pace={pace}
             {...(inspectorActions ? { inspectorActions } : {})} />}
-          {sub === "graph" && !group && mission && !historyLoading && <MissionGraph mission={mission} selectedStepId={stepId} selectedTaskKey={taskKey ?? null}
+          {sub === "graph" && !group && mission && (!historyLoading || partial) && <MissionGraph mission={mission} selectedStepId={stepId} selectedTaskKey={taskKey ?? null}
             onSelectStep={(id) => { setStepId(id); setTaskKey(null); }} onSelectTask={pickTask} onOpenTest={openTest} />}
           {sub === "proof" && (mission && contractId ? <ProofTable key={contractId} mission={mission} flow={flow} onOpenTest={openTest} frameUrl={(id) => frameUrl(id, contractId)}
             run={run} onApprove={onApprove} onWatch={onWatch} busy={flowBusy} onBusy={setFlowBusy} error={flowError} onActionError={setFlowError}

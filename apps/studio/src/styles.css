@@ -434,6 +434,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
      they scroll with their rows instead of escaping it (#325). */
   position: relative;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   align-content: start;
   overflow-y: auto;
@@ -488,6 +489,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 
 .project-runs {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 3px;
   margin: 3px 0 10px 20px;
 }

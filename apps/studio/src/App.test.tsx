@@ -3274,11 +3274,16 @@ describe("round-3: the rail is live and the screen belongs to one run", () => {
     });
     await open(client, null, true, 40);
 
-    railPending = true;
+    // Let the initial list load and one ordinary poll finish before holding a rail read.
+    // Otherwise a startup list request is mistaken for a second poll refresh.
     await waitFor(() => expect(railReads).toBeGreaterThan(1));
+    const readsBeforeHold = railReads;
+    railPending = true;
+    await waitFor(() => expect(railReads).toBeGreaterThan(readsBeforeHold));
     const readsWhileHeld = railReads;
+    const statusReadsWhileHeld = statusReads;
     await waitFor(() => expect(screen.getByText(/^Execution \/ paused$/)).toBeInTheDocument());
-    await waitFor(() => expect(statusReads).toBeGreaterThan(2));
+    await waitFor(() => expect(statusReads).toBeGreaterThan(statusReadsWhileHeld));
     expect(railReads).toBe(readsWhileHeld);
 
     releaseRail();

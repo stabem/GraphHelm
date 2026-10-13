@@ -374,6 +374,39 @@ class Reach(unittest.TestCase):
             self.assertFalse(packages[0]["targets"][0]["harness"])
             self.assertTrue(packages[0]["targets"][0]["harnessKnown"])
 
+    def test_registered_bundle_paths_select_declared_modules(self):
+        """An alias or nested registered file reaches its declared module, not its stem."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "fixture"
+            root.mkdir()
+            manifest = root / "Cargo.toml"
+            bundle = root / "tests" / "bundle.rs"
+            bundle.parent.mkdir()
+            manifest.write_text('[package]\nname = "fixture"\nversion = "0.0.0"\n', encoding="utf-8")
+            bundle.write_text('#[path = "first.rs"] mod second;\n'
+                              '#[path = "second.rs"] mod first;\n'
+                              '#[path = "cases/renamed.rs"] mod nested;\n', encoding="utf-8")
+            for name in ("first.rs", "second.rs", "cases/renamed.rs"):
+                source = root / "tests" / name
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text("", encoding="utf-8")
+            metadata = {"workspace_root": str(root.parent), "packages": [{
+                "name": "fixture", "manifest_path": str(manifest), "dependencies": [],
+                "targets": [{"name": "bundle", "kind": ["test"], "src_path": str(bundle),
+                             "test": True, "doctest": False, "required-features": []}],
+            }]}
+            with patch.object(rt, "run", return_value=json.dumps(metadata)):
+                packages = rt.workspace(root)
+            for changed, expected in (("fixture/tests/first.rs", "second"),
+                                      ("fixture/tests/second.rs", "first"),
+                                      ("fixture/tests/cases/renamed.rs", "nested")):
+                with self.subTest(changed=changed):
+                    whole, single, studio, tools, validate, other = rt.reach(
+                        [changed], packages, {}, root.parent)
+                    self.assertEqual((whole, single), (set(), {("fixture", "bundle", expected)}))
+                    selected = rt.steps(whole, single, studio, tools, validate, repo=root.parent)
+                    self.assertTrue(any(step["argv"][-1] == expected + "::" for step in selected))
+
     def test_library_doctest_without_library_tests_emits_only_doc_step(self):
         packages = [{"name": "graphhelm-cli", "targets": [
             {"name": "graphhelm_cli", "kind": "lib", "test": False, "doctest": True,

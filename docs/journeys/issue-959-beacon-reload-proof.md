@@ -4,7 +4,7 @@
 
 For the bus-only `gh-team` fixture run, a fresh Studio load must never show a lit owner-decision beacon or a phantom decision card. The accepted initial state is `Checking recorded agent work`; after the first WORK rail appears, the beacon should become `Nothing needs you` within about five seconds. A real owner question and a non-fixture wait must remain visible. Three independent read-only fresh loads of an identified build and store are required before recommending closure of #959.
 
-This record separates prior observations from that outstanding three-load check. It contains no new browser observation.
+This record separates prior observations from the three-load check reported by the [#1022 visual observer](https://github.com/stabem/GraphHelm/pull/1022#issuecomment-6136270370).
 
 ## Earlier RED and failed attempts
 
@@ -25,14 +25,14 @@ The [#996 reviewer](https://github.com/stabem/GraphHelm/pull/996#issuecomment-61
 
 The [#996 visual observer](https://github.com/stabem/GraphHelm/pull/996#issuecomment-6134912707) saw a connect screen at 1.8 seconds, then `Nothing needs you` at 8.8 seconds on a build of `a90ac5a9` against the live store. Desktop and mobile layouts were checked. The comment does not report three independent fresh-load timelines, the first WORK-rail time, screenshot hashes, or the served source of the owner's `:5197` instance. It also says no live owner question was available and the conversation action was not exercised.
 
-## Pending visual observation on the PR head
+## Three fresh loads of the owner's Studio
 
-The coordinator-assigned Claude visual observer should perform exactly three independent read-only fresh loads. Record the URL, served source SHA, `gh-team` store head, fixture identity, first WORK-rail time, every beacon transition and CSS state, whether any phantom card appeared, and screenshot/DOM artifacts with hashes. Preserve failed attempts. A lane build against the live store is distinct from the owner's `:5197` instance; identify which was observed. Do not send, answer, approve, seed, stop, or otherwise mutate the Runtime.
+The [#1022 visual observer](https://github.com/stabem/GraphHelm/pull/1022#issuecomment-6136270370) made three independent read-only navigations on the owner's `:5197` Studio at 1280 px, polling every 200 ms for 42 seconds from navigation start. The served `wt-studio` main source was clean at `0f510bfe`; the `gh-team` store head was 6635 on the first load and at least 6635 on the later loads. The observer did not send, answer, approve, or seed anything. Screenshot files and a separate CSS-state trace were not supplied in the comment; the screenshot observations for loads 2 and 3 remain in the observer's session.
 
 | Fresh load | URL / served SHA / store head | WORK rail | Beacon transitions and dark-minus-rail time | Phantom card | Screenshot / DOM hashes | Result |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Pending | Pending | Pending | Pending | Pending | Unobserved |
-| 2 | Pending | Pending | Pending | Pending | Pending | Unobserved |
-| 3 | Pending | Pending | Pending | Pending | Pending | Unobserved |
+| 1 | Owner's `:5197`, `?session=2de63856…` / `0f510bfe` / 6635 | 4.5 s | First and only state `Nothing needs you` at 2.8 s; never lit; dark − rail = −1.7 s | None; `Answer in chat` never appeared | No hash recorded | Pass |
+| 2 | Same URL and source / store head ≥6635 | 3.7 s | `Nothing needs you` at 2.0 s; never lit; dark − rail = −1.7 s | None | DOM text SHA-256 prefix `f880a8a5e74da48b`; screenshot in observer session | Pass |
+| 3 | Same URL and source / store head ≥6635 | 3.4 s | `Nothing needs you` at 2.5 s; never lit; dark − rail = −0.9 s | None | DOM text SHA-256 prefix `ebd719bcb6fdee9b`; screenshot in observer session | Pass |
 
-The browser result is **OBSERVER_MISSING** until these rows have real, linked observations. A load that lights a phantom decision or misses the approximately five-second dark-after-rail bound must be recorded as failed. Do not recommend closing #959 from the historical tests or the single #996 visual sample alone. The `Open run conversation` action and unopened-question behavior are separate from this reload claim.
+**Result: PASS for the three fresh-load reload criterion** on the identified owner's instance and store. The checking state did not appear: the first beacon text in all three loads was already `Nothing needs you`, before the WORK rail. No load lit a phantom decision or showed an `Answer in chat` card; all became dark within the approximately five-second after-rail bound. This supports recommending closure of the reload claim in #959. The `Open run conversation` action and unopened-question behavior remain separate from this reload result and were not exercised by these three loads.

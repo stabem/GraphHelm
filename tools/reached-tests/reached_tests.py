@@ -364,6 +364,11 @@ def reach(changed, packages, embedded, repo=None):
             js = sorted(f.relative_to(root).as_posix() for f in tool.glob("*.test.mjs") if ".browser." not in f.name)
             tools |= {python_test_tool(root, f) for f in py} | ({f"node --test {' '.join(js)}"} if js else set())
             hit = hit or bool(py or js)
+        if path.endswith(".py") and root is not None:
+            observer = "tools/reached-tests/test_no_console_window.py"
+            if (root / observer).is_file():
+                tools.add(python_test_tool(root, observer))
+                hit = True
         plugin_parts = path.split("/")
         plugin_path = path.startswith("plugins/")
         hook_index = next((index for index, part in enumerate(plugin_parts)

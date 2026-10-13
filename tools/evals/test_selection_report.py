@@ -97,6 +97,55 @@ class SelectionReport(unittest.TestCase):
         self.assertIsNone(rubric["false_pass"])
         self.assertIsNone(rubric["false_fail"])
 
+    def test_human_comparisons_require_paired_completed_verdicts(self):
+        base = {"case_id": "no-skill-arithmetic", "status": "completed",
+                "invoked_skills": [], "completion": "pass", "rubric": "paired"}
+        self.observations = [{**base, "human_label": "pass"}]
+        result = self.run_report()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rubric = json.loads(result.stdout)["judges"]["by_rubric"]["paired"]
+        self.assertEqual(rubric["human_labeled"], 1)
+        self.assertEqual(rubric["observed"], 0)
+        self.assertEqual(rubric["compared"], 0)
+        self.assertEqual(rubric["status"], "unqualified")
+        self.assertIsNone(rubric["false_pass"])
+        self.assertIsNone(rubric["false_fail"])
+
+        self.observations = [{**base, "human_label": "pass"},
+                             {**base, "judge": "fail"}]
+        result = self.run_report()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rubric = json.loads(result.stdout)["judges"]["by_rubric"]["paired"]
+        self.assertEqual(rubric["human_labeled"], 1)
+        self.assertEqual(rubric["observed"], 1)
+        self.assertEqual(rubric["compared"], 0)
+        self.assertEqual(rubric["status"], "unqualified")
+        self.assertIsNone(rubric["false_pass"])
+        self.assertIsNone(rubric["false_fail"])
+
+        self.observations = [{**base, "human_label": "fail", "judge": "pass"},
+                             {**base, "human_label": "pass", "judge": "fail"},
+                             {**base, "human_label": "pass", "judge": "pass"}]
+        result = self.run_report()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rubric = json.loads(result.stdout)["judges"]["by_rubric"]["paired"]
+        self.assertEqual(rubric["human_labeled"], 3)
+        self.assertEqual(rubric["observed"], 3)
+        self.assertEqual(rubric["compared"], 3)
+        self.assertEqual(rubric["status"], "comparisons_available")
+        self.assertEqual(rubric["false_pass"], 1)
+        self.assertEqual(rubric["false_fail"], 1)
+
+        self.observations.append({**base, "status": "timeout", "judge": "pass",
+                                  "human_label": "fail"})
+        result = self.run_report()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rubric = json.loads(result.stdout)["judges"]["by_rubric"]["paired"]
+        self.assertEqual(rubric["human_labeled"], 3)
+        self.assertEqual(rubric["compared"], 3)
+        self.assertEqual(rubric["false_pass"], 1)
+        self.assertEqual(rubric["false_fail"], 1)
+
     def test_repeat_identity_groups_only_same_response_and_judge(self):
         base = {"case_id": "keel-green-on-parent-unprompted", "status": "completed",
                 "invoked_skills": ["keel"], "completion": "pass", "rubric": "keel",

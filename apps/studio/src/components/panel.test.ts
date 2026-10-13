@@ -80,6 +80,7 @@ it("shows the newest sealed report while an older evidence read is still pending
   const newer = event(2, "signal_recorded");
   older.evidenceRefs = ["old"];
   newer.evidenceRefs = ["new"];
+  const events = [older, newer];
   const never = new Promise<EvidenceContent>(() => {});
   const open = vi.fn(async (_run: string, id: string): Promise<EvidenceContent> => id === "old" ? never : {
     evidenceId: "new",
@@ -88,7 +89,7 @@ it("shows the newest sealed report while an older evidence read is still pending
     mediaType: "application/json",
     sensitivity: "confidential",
   });
-  const { result } = renderHook(() => useEnvelopes([older, newer], "run", open));
+  const { result } = renderHook(() => useEnvelopes(events, "run", open));
   await waitFor(() => expect(result.current[2]?.text).toBe("Checking the branch"));
   expect(result.current[1]).toBeUndefined();
   expect(open.mock.calls[0][1]).toBe("new");
@@ -119,9 +120,10 @@ it("keeps unread question envelopes pending until their evidence read settles", 
   const candidate = event(5, "signal_recorded", { kind: "operator_note", signalId: "sig-q" });
   candidate.actorId = "kit-3";
   candidate.evidenceRefs = ["question"];
+  const events = [candidate];
   let finishRead!: (content: EvidenceContent) => void;
   const open = vi.fn(() => new Promise<EvidenceContent>((resolve) => { finishRead = resolve; }));
-  const { result } = renderHook(() => useEnvelopes([candidate], "run", open));
+  const { result } = renderHook(() => useEnvelopes(events, "run", open));
   await waitFor(() => expect(open).toHaveBeenCalledOnce());
   expect(result.current[5]).toBeUndefined();
   expect(result.current.__pendingEnvelopeSequences).toEqual([5]);

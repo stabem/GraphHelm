@@ -10,6 +10,8 @@ export type TimedStep = "plan" | "critic" | "implement" | "review" | "merge";
 export interface StepClock {
   /** When the slice entered its current step (ISO), or null when no record carried a time. */
   since: string | null;
+  /** Time of the most recent record in the current step; idle time starts after this point. */
+  lastAt?: string | null;
   /** Milliseconds spent in each step the slice has left, summed over every visit. */
   spent: Partial<Record<TimedStep, number>>;
 }
@@ -18,7 +20,7 @@ export interface StepClock {
 export const ACTIVE_GAP_MS = 30 * 60_000;
 
 export function emptyClock(): StepClock {
-  return { since: null, spent: {} };
+  return { since: null, lastAt: null, spent: {} };
 }
 
 function millis(at: string | null | undefined): number | null {
@@ -32,18 +34,25 @@ function millis(at: string | null | undefined): number | null {
 export function clockStep(clock: StepClock, before: string, after: string, at: string | null | undefined, resumeAfterGap = false): void {
   const now = millis(at);
   const since = millis(clock.since);
-  if (resumeAfterGap && since !== null && now !== null && now >= since && now - since >= ACTIVE_GAP_MS) {
-    clock.since = at!;
+  const lastAt = millis(clock.lastAt ?? clock.since);
+  if (resumeAfterGap && since !== null && lastAt !== null && now !== null && now >= lastAt && now - lastAt >= ACTIVE_GAP_MS) {
+    if (lastAt >= since && (before === "plan" || before === "critic" || before === "implement" || before === "review" || before === "merge")) {
+      clock.spent[before] = (clock.spent[before] ?? 0) + (lastAt - since);
+    }
+    clock.since = now === null ? null : at!;
+    clock.lastAt = now === null ? null : at!;
     return;
   }
   if (before === after) {
     if (clock.since === null && now !== null) clock.since = at!;
+    if (now !== null) clock.lastAt = at!;
     return;
   }
   if (since !== null && now !== null && now >= since && (before === "plan" || before === "critic" || before === "implement" || before === "review" || before === "merge")) {
     clock.spent[before] = (clock.spent[before] ?? 0) + (now - since);
   }
   clock.since = now === null ? null : at!;
+  clock.lastAt = now === null ? null : at!;
 }
 
 /** The typical time of a step: the median over the slices that already left it in this run (the

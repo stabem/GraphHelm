@@ -290,7 +290,7 @@ describe("LanesTimeline", () => {
     expect(document.querySelector('[data-kind="free"]')).toHaveTextContent("none right now");
   });
 
-  it("agent row: one-line pill and rectangular chips that wrap only between parts, full name, labels unchanged", () => {
+  it("agent row: one-line pill and rectangular chips that wrap only between parts, full name, labels unchanged", async () => {
     const H = 3_600_000, T = 10 * H;
     const stale = { lane: "gh-claude-11", silent: false, lastEventAt: T - 3 * H, bars: [{ kind: "implement" as const, label: "issue 549", issue: 549, start: T - 3 * H, end: T, open: true }] };
     render(<LanesTimeline lanes={[stale]} now={T} windowMs={4 * H} />);

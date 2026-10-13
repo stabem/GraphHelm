@@ -668,9 +668,9 @@ mod tests {
     use super::{OwnLease, WaitEnd, read_budget, validate_same_lease, wait_validated};
     use graphhelm_events::{LocalEventRepository, PreparedAppend};
     use graphhelm_protocols::{
-        ActorId, Clock, EventKind, ExecutionId, ExecutionMode, ExecutionStarted, IdGenerator,
-        NewEvent, OpaqueId, PersistedActor, PersistedActorType, ProjectId, RepositoryScope,
-        Sensitivity, WakeConsumeReason, WakeLease, WakeLeaseConsumed, WireHash, WorkspaceId,
+        ActorId, Clock, EventKind, ExecutionMode, ExecutionStarted, IdGenerator, NewEvent,
+        OpaqueId, PersistedActor, PersistedActorType, RepositoryScope, Sensitivity,
+        WakeConsumeReason, WakeLease, WakeLeaseConsumed, WireHash,
     };
     use std::sync::{
         Arc,
@@ -732,7 +732,8 @@ mod tests {
 
     fn wake_fixture(path: &std::path::Path, suffix: &str) -> (OpaqueId, RepositoryScope) {
         let execution = OpaqueId::parse(format!("exec-wake-{suffix}")).unwrap();
-        let scope = super::super::execution::addressable_scope(execution.as_str()).unwrap();
+        let scope = super::super::execution::addressable_scope(execution.as_str())
+            .unwrap_or_else(|_| panic!("the fixture execution id has a valid addressable scope"));
         let store = test_store(path);
         append_test_event(
             &store,

@@ -551,8 +551,28 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("root");
     let log = dir.path().join("update-v-slot.log");
+    let release = dir.path().join("release");
     let admission = dir.path().join("shared-test-admission");
-    let slot_command = marker_command(&log, "slot", 900);
+    let log_text = log.to_string_lossy().replace('\'', "''");
+    let release_text = release.to_string_lossy().replace('\'', "''");
+    let slot_command = if cfg!(windows) {
+        vec![
+            "powershell".into(),
+            "-NoProfile".into(),
+            "-Command".into(),
+            format!(
+                "Add-Content -LiteralPath '{log_text}' 'slot start'; while (!(Test-Path -LiteralPath '{release_text}')) {{ Start-Sleep -Milliseconds 20 }}; Add-Content -LiteralPath '{log_text}' 'slot end'"
+            ),
+        ]
+    } else {
+        vec![
+            "sh".into(),
+            "-c".into(),
+            format!(
+                "echo 'slot start' >> '{log_text}'; while [ ! -f '{release_text}' ]; do sleep 0.02; done; echo 'slot end' >> '{log_text}'"
+            ),
+        ]
+    };
     let slot_root = root.clone();
     let slot_cwd = dir.path().to_owned();
     let slot_admission = admission.clone();
@@ -571,23 +591,24 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert!(
-        std::fs::read_to_string(&log)
-            .unwrap_or_default()
-            .contains("slot start"),
-        "slot child did not enter the build section"
-    );
+    let slot_started = std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .contains("slot start");
 
     let update_command = if cfg!(windows) {
+        let script = dir.path().join("update-fixture.ps1");
+        std::fs::write(
+            &script,
+            format!(
+                "Add-Content -LiteralPath '{log_text}' 'update start'\nAdd-Content -LiteralPath '{log_text}' 'update end'\n"
+            ),
+        )
+        .unwrap();
         vec![
             "powershell".into(),
             "-NoProfile".into(),
-            "-Command".into(),
-            format!(
-                "Add-Content -LiteralPath '{}' 'update start'; Add-Content -LiteralPath '{}' 'update end'",
-                log.display(),
-                log.display()
-            ),
+            "-File".into(),
+            script.to_string_lossy().into_owned(),
         ]
     } else {
         vec![
@@ -608,8 +629,9 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
     });
     std::fs::write(&fake_exe, b"fixture executable").unwrap();
     let update_admission = admission.clone();
-    let update_log = log.clone();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
     let update = std::thread::spawn(move || {
+        ready_tx.send(()).unwrap();
         let mut command = graphhelm_process::command(&update_command[0]);
         command.args(&update_command[1..]);
         super::super::studio::run_install(
@@ -620,16 +642,21 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
             Some(&fake_exe),
         )
     });
-
-    assert!(
-        !std::fs::read_to_string(&update_log)
-            .unwrap_or_default()
-            .contains("update start"),
-        "update child entered while slot child held admission"
-    );
+    let update_started = ready_rx.recv_timeout(Duration::from_secs(3)).is_ok();
+    let original_present_while_held = fake_exe.exists();
+    let old_absent_while_held = !fake_exe
+        .with_file_name(if cfg!(windows) {
+            "graphhelm.old.exe"
+        } else {
+            "graphhelm.old"
+        })
+        .exists();
+    let update_not_started_while_held = !std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .contains("update start");
+    std::fs::write(&release, b"release").unwrap();
     let slot = slot.join().unwrap();
-    assert!(slot.output.ok, "slot child failed: {:?}", slot.output);
-    assert!(update.join().unwrap());
+    let update_ok = update.join().unwrap();
     let lines = std::fs::read_to_string(&log).unwrap();
     let tags = lines
         .lines()
@@ -640,6 +667,22 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
                 .join(" ")
         })
         .collect::<Vec<_>>();
+    assert!(slot_started, "slot child did not enter the build section");
+    assert!(update_started, "update fixture thread did not start");
+    assert!(slot.output.ok, "slot child failed: {:?}", slot.output);
+    assert!(update_ok);
+    assert!(
+        original_present_while_held,
+        "update renamed the running executable before admission"
+    );
+    assert!(
+        old_absent_while_held,
+        "update moved the running executable before admission"
+    );
+    assert!(
+        update_not_started_while_held,
+        "update child entered while slot held admission"
+    );
     assert_eq!(
         tags,
         vec!["slot start", "slot end", "update start", "update end"]

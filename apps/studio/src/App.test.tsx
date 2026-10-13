@@ -3277,7 +3277,7 @@ describe("round-3: the rail is live and the screen belongs to one run", () => {
     railPending = true;
     await waitFor(() => expect(railReads).toBeGreaterThan(1));
     const readsWhileHeld = railReads;
-    await waitFor(() => expect(screen.getByText(/paused/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/^Execution \/ paused$/)).toBeInTheDocument());
     await waitFor(() => expect(statusReads).toBeGreaterThan(2));
     expect(railReads).toBe(readsWhileHeld);
 

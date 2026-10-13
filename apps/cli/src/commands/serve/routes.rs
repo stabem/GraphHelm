@@ -6415,19 +6415,31 @@ pub(super) async fn evidence_batch(
         if history.is_empty() {
             return Err(execution::not_found());
         }
+        let referenced = history
+            .iter()
+            .flat_map(|event| event.evidence_refs.iter())
+            .map(|reference| reference.evidence_id().clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        let eligible = ids_for_lookup
+            .iter()
+            .filter(|(_, id)| referenced.contains(id))
+            .map(|(_, id)| id.clone())
+            .collect::<Vec<_>>();
+        let mut fetched = if eligible.is_empty() {
+            Vec::new().into_iter()
+        } else {
+            store
+                .sealed_evidence_batch(&scope, &eligible)
+                .map_err(|error| execution::repository_failure(&error))?
+                .into_iter()
+        };
         let mut reads = Vec::with_capacity(ids_for_lookup.len());
         for (value, id) in ids_for_lookup {
-            let referenced = history.iter().any(|event| {
-                event
-                    .evidence_refs
-                    .iter()
-                    .any(|reference| reference.evidence_id() == &id)
-            });
-            if !referenced {
+            if !referenced.contains(&id) {
                 reads.push((value, None));
                 continue;
             }
-            match store.sealed_evidence(&scope, &id) {
+            match fetched.next().ok_or_else(execution::not_found)? {
                 Ok(read) => reads.push((value, Some(read))),
                 Err(EventRepositoryError::Invalid) => reads.push((value, None)),
                 Err(error) => return Err(execution::repository_failure(&error)),

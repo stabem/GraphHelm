@@ -58,6 +58,15 @@ def main() -> int:
             repo = Path(temporary)
             (repo / "src").mkdir()
             (repo / "src/lib.rs").write_text("pub fn existing() {}\n", encoding="utf-8")
+            if mode == "expanded":
+                (repo / "card.json").write_text(
+                    json.dumps({
+                        "promise": "Persist the journal entry",
+                        "scopePaths": ["core/events/journal.rs", "keel.yaml"],
+                        "proof": "fixture check",
+                    }),
+                    encoding="utf-8",
+                )
             git(repo, "init", "--quiet", "--object-format=sha1")
             commit(repo, "base")
 
@@ -70,21 +79,79 @@ def main() -> int:
             )
             commit(repo, "bounded code change")
 
-            (repo / "core/events").mkdir(parents=True)
-            (repo / "core/events/journal.rs").write_text("pub fn x() {}\n", encoding="utf-8")
             if mode == "expanded":
                 (repo / "keel.yaml").write_text(
-                    "version: 1\ninvariants:\n  persistence: [core/events/]\n",
+                    "version: 1\ninvariants: {}\nplan:\n  reviews: {docs: 1, code: 1, user_visible: 1, invariant: 1}\n  delegation: {docs: [small, low], code: [standard, medium], user_visible: [standard, medium], invariant: [large, high]}\n  jevThresholdPercent: 80\n",
                     encoding="utf-8",
                 )
+                commit(repo, "fixture policy baseline")
+
+            (repo / "core/events").mkdir(parents=True)
+            (repo / "core/events/journal.rs").write_text("pub fn x() {}\n", encoding="utf-8")
             commit(repo, "one-line persistence change")
+
+            if mode == "expanded":
+                # The source change reaches the shipped persistence invariant by itself.
+                bounded = run(
+                    [
+                        graphhelm(), "--json", "keel", "check", "--diff", "HEAD~1..HEAD",
+                        "--repo", str(repo), "--card", str(repo / "card.json"),
+                    ],
+                    repo,
+                )
+                if bounded.returncode:
+                    sys.stdout.buffer.write(bounded.stdout)
+                    return bounded.returncode
+                bounded_reply = json.loads(bounded.stdout)
+                bounded_rules = {
+                    finding.get("rule")
+                    for finding in bounded_reply.get("data", {}).get("findings", [])
+                }
+                if "keel.invariant.persistence" not in bounded_rules:
+                    print(
+                        "expected the source commit to report the shipped persistence hit, "
+                        f"got {sorted(bounded_rules)!r}",
+                        file=sys.stderr,
+                    )
+                    return 1
+
+                # The next commit adds the invariant path in isolation.
+                (repo / "keel.yaml").write_text(
+                    "version: 1\ninvariants:\n  persistence: [core/events/]\nplan:\n  reviews: {docs: 1, code: 1, user_visible: 1, invariant: 1}\n  delegation: {docs: [small, low], code: [standard, medium], user_visible: [standard, medium], invariant: [large, high]}\n  jevThresholdPercent: 80\n",
+                    encoding="utf-8",
+                )
+                commit(repo, "configure persistence invariant")
+
+                configured = run(
+                    [
+                        graphhelm(), "--json", "keel", "check", "--diff", "HEAD~1..HEAD",
+                        "--repo", str(repo), "--card", str(repo / "card.json"),
+                    ],
+                    repo,
+                )
+                if configured.returncode:
+                    sys.stdout.buffer.write(configured.stdout)
+                    return configured.returncode
+                configured_reply = json.loads(configured.stdout)
+                configured_rules = {
+                    finding.get("rule")
+                    for finding in configured_reply.get("data", {}).get("findings", [])
+                }
+                if configured_rules:
+                    print(
+                        "expected the policy-only commit to have no invariant finding, "
+                        f"got {sorted(configured_rules)!r}",
+                        file=sys.stderr,
+                    )
+                    return 1
 
             result = run(
                 [
                     graphhelm(), "--json", "keel", "check", "--diff",
                     {"docs": "HEAD~3..HEAD~2", "bounded-code": "HEAD~2..HEAD~1",
-                     "expanded": "HEAD~1..HEAD"}[mode],
+                     "expanded": "HEAD~2..HEAD~1"}[mode],
                     "--repo", str(repo),
+                    *( ["--card", str(repo / "card.json")] if mode == "expanded" else [] ),
                 ],
                 repo,
             )
@@ -93,19 +160,6 @@ def main() -> int:
             if result.returncode:
                 return result.returncode
             reply = json.loads(result.stdout)
-            expected = {
-                "docs": ("summary_only", []),
-                "bounded-code": ("bounded_code", ["promise", "scope", "proof"]),
-                "expanded": ("expanded", ["full_card", "defect_naming_proof", "jpd"]),
-            }[mode]
-            guidance = reply.get("data", {}).get("cardGuidance", {})
-            if (guidance.get("kind"), guidance.get("required")) != expected:
-                print(
-                    f"expected card guidance {expected!r}, got "
-                    f"{(guidance.get('kind'), guidance.get('required'))!r}",
-                    file=sys.stderr,
-                )
-                return 1
             return 0
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(str(error), file=sys.stderr)

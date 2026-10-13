@@ -36,6 +36,7 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
     seen = []
     # #498: a Runtime built before #486 refuses the opening records' title/summary keys.
     old = False
+    reject_heartbeat = False
     history = []
     history_head = None
     evidence = {}
@@ -51,6 +52,9 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
             evidence_id = parsed.path.rsplit("/", 1)[-1]
             content = FakeRuntime.evidence.get(evidence_id)
             reply = {"ok": content is not None, "data": {"content": json.dumps(content)} if content else {}}
+        elif FakeRuntime.reject_heartbeat and body["signal"]["type"] == "task.heartbeat":
+            status, reply = 400, {"ok": False, "diagnostics": [{"code": "GHCLI003_SIGNAL_INVALID", "severity": "error",
+                                                                    "path": "/signal/description", "message": "heartbeat refused"}]}
         else:
             self.send_error(404)
             return
@@ -146,7 +150,8 @@ class TaskRecordTest(unittest.TestCase):
                                        "revision": 1, "at": "2026-10-13T12:00:00Z", "issue": 1024,
                                        "lane": "lane-a", "branch": "issue-1024-heartbeat"}),
         }}
-        code, out = self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024", "--no-github")
+        with patch.object(task_record.subprocess, "run", side_effect=AssertionError("heartbeat called GitHub")):
+            code, out = self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024", "--no-github")
         self.assertEqual(code, 0, out)
         self.assertTrue(out.startswith("recorded "), out)
         signal = FakeRuntime.seen[-1][1]["signal"]
@@ -167,18 +172,25 @@ class TaskRecordTest(unittest.TestCase):
         FakeRuntime.history = [self.history_event("task.claimed", 1)]
         FakeRuntime.history_head = 2
         self.assert_refused_without_post()
+        FakeRuntime.history_head = None
+        FakeRuntime.history = [{**self.history_event("task.claimed", 1), "sequence": 2}]
+        self.assert_refused_without_post()
 
     def test_heartbeat_cooldown_uses_event_time_at_299_and_300_seconds(self):
         FakeRuntime.history = [self.history_event("task.claimed", 1),
                                self.history_event("task.heartbeat", 2, occurred="2026-10-13T11:55:01Z",
                                                   at="2099-01-01T00:00:00Z")]
         self.assert_refused_without_post()
+        FakeRuntime.history = [self.history_event("task.claimed", 1)]
+        first_code, first_out = self.run_heartbeat()
+        self.assertEqual((first_code, first_out.split()[0]), (0, "recorded"), first_out)
         FakeRuntime.history = [self.history_event("task.claimed", 1),
                                self.history_event("task.heartbeat", 2, occurred="2026-10-13T11:55:00Z",
                                                   at="2099-01-01T00:00:00Z")]
         code, out = self.run_heartbeat()
         self.assertEqual((code, out.split()[0]), (0, "recorded"), out)
         self.assertEqual(json.loads(FakeRuntime.seen[-1][1]["signal"]["description"])["revision"], 3)
+        self.assertNotEqual(FakeRuntime.seen[-1][0], FakeRuntime.seen[0][0])
 
     def test_heartbeat_retry_reuses_identity_for_unchanged_history(self):
         FakeRuntime.history = [self.history_event("task.claimed", 1)]
@@ -222,6 +234,24 @@ class TaskRecordTest(unittest.TestCase):
                 self.assert_refused_without_post(*flags)
                 self.assertEqual(FakeRuntime.reads, [])
 
+    def test_authoritative_refusal_and_dry_run_never_report_recorded(self):
+        FakeRuntime.history = [self.history_event("task.claimed", 1)]
+        FakeRuntime.reject_heartbeat = True
+        code, out = self.run_heartbeat()
+        self.assertEqual(code, 1)
+        self.assertTrue(out.startswith("REFUSED "), out)
+        self.assertNotIn("recorded ", out)
+        self.assertEqual(len(FakeRuntime.seen), 1)
+
+        FakeRuntime.seen.clear()
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            code, out = self.run_heartbeat("--dry-run")
+        self.assertEqual(code, 0)
+        self.assertEqual(FakeRuntime.seen, [])
+        self.assertIn("dry-run only", stderr.getvalue())
+        self.assertIn('"type": "task.heartbeat"', out)
+
     def test_release_records_the_exact_claim_sequence_and_reason(self):
         code, out = self.run_step("--lane", "lane-a", "released", "--issue", "86",
                                   "--claim-sequence", "12", "--release-reason", "Work moved elsewhere")
@@ -258,6 +288,7 @@ class TaskRecordTest(unittest.TestCase):
         FakeRuntime.keys.clear()
         FakeRuntime.seen.clear()
         FakeRuntime.old = False
+        FakeRuntime.reject_heartbeat = False
         FakeRuntime.history = []
         FakeRuntime.history_head = None
         FakeRuntime.evidence = {}

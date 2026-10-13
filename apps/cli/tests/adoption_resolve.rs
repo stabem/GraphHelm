@@ -568,7 +568,7 @@ fn enabled_graphhelm_plugin_gets_explicit_duplicate_cleanup_with_freshness_guard
     let plugin = tempfile::tempdir().unwrap();
     std::fs::write(plugin.path().join(".mcp.json"), serde_json::to_vec(&serde_json::json!({
         "mcpServers": {"graphhelm": {"command": assert_cmd::cargo::cargo_bin!("graphhelm"), "args": ["mcp", "--discover", "--project", "${GRAPHHELM_PROJECT:-.}", "--actor", "agent-chat"]}}
-    }))).unwrap();
+    })).unwrap()).unwrap();
     std::fs::write(
         h.path().join(".claude/settings.json"),
         br#"{"enabledPlugins":{"graphhelm@local":true}}"#,
@@ -587,15 +587,15 @@ fn enabled_graphhelm_plugin_gets_explicit_duplicate_cleanup_with_freshness_guard
                 {"installPath": plugin.path(), "scope": "project", "projectPath": "C:/unrelated-worktree"},
                 {"installPath": plugin.path(), "scope": "project", "projectPath": p.path()}
             ]}
-        })),
+        })).unwrap(),
     )
     .unwrap();
     std::fs::write(h.path().join(".claude.json"), serde_json::to_vec(&serde_json::json!({
         "keep": 1, "mcpServers": {"other": {"command":"other"}, "graphhelm": {"command": assert_cmd::cargo::cargo_bin!("graphhelm"), "args": ["mcp", "--discover", "--actor", "agent-chat"]}}
-    }))).unwrap();
+    })).unwrap()).unwrap();
     std::fs::write(p.path().join(".mcp.json"), serde_json::to_vec(&serde_json::json!({
         "keep": true, "mcpServers": {"graphhelm": {"command": assert_cmd::cargo::cargo_bin!("graphhelm"), "args": ["mcp", "--discover", "--project", p.path(), "--actor", "agent-chat"]}}
-    }))).unwrap();
+    })).unwrap()).unwrap();
     let state = private_dir();
     let out = state.path().join("plan.json");
     let (ok, preview) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());

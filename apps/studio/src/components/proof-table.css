@@ -6,6 +6,11 @@
 .proof-draft-note { font-size: 12px; }
 .proof-cap { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #8D929C; overflow-wrap: break-word; }
 .proof-sub { color: #A9AEB8; line-height: 1.45; overflow-wrap: break-word; }
+.proof-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 24px; padding: 14px 16px; border: 1px solid #2A2D34; border-radius: 10px; background: #111216; }
+.proof-summary h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.proof-promise-list, .proof-observer { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.proof-promise-list p, .proof-observer p { margin: 0; color: #A9AEB8; line-height: 1.45; overflow-wrap: anywhere; }
+.proof-observer { grid-column: 2; grid-row: 1; }
 .proof-clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .proof-cols, .proof-row { display: grid; grid-template-columns: 48px minmax(200px, 280px) 220px minmax(0, 1fr) 210px; gap: 20px; }
 .proof-cols { padding: 0 17px; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #8D929C; }
@@ -68,6 +73,8 @@
   .proof-call { grid-column: 3; grid-row: 2; }
 }
 @container proof (max-width: 640px) {
+  .proof-summary { grid-template-columns: minmax(0, 1fr); }
+  .proof-observer { grid-column: 1; grid-row: auto; }
   .proof-row { grid-template-columns: 48px minmax(0, 1fr); }
   .proof-promise, .proof-frame, .proof-chain, .proof-call { grid-column: 2; grid-row: auto; }
   .proof-n { grid-row: 1 / span 4; align-self: start; }

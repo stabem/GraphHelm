@@ -646,7 +646,9 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
       case "task.review_assigned":
         if (event.reviewer && !state.assignedReviewers?.includes(event.reviewer)) (state.assignedReviewers ??= []).push(event.reviewer);
         if (event.reviewer && !state.reviewers.includes(event.reviewer)) state.reviewers.push(event.reviewer);
+        if (state.headSha === null) state.headSha = event.headSha ?? null;
         if (event.headSha === state.headSha) state.currentReviewer = event.reviewer ?? null;
+        if (state.step === "implement" || state.step === "plan") state.step = "review";
         break;
       case "task.review_verdict":
         // A verdict on a head other than the current one says nothing about the current one.

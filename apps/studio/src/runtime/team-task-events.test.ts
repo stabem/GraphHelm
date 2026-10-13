@@ -526,7 +526,7 @@ describe("foldTaskEvents slices (#460)", () => {
     expect(foldTaskEvents([opened, sibling, closed, siblingClosed, reopened]))
       .toMatchObject([{ pr: 1004, headSha: "cccccccc", step: "review" }]);
     expect(foldTaskEvents([opened, sibling, closed, siblingClosed, reopened, approved]))
-      .toMatchObject([{ pr: 1004, headSha: "cccccccc", step: "review", currentReviewer: "codex-review" }]);
+      .toMatchObject([{ pr: 1004, headSha: "cccccccc", step: "merge", reviewers: ["codex-review"] }]);
     expect(foldTaskEvents([opened, sibling, closed, siblingClosed, reopened, approved, merged, repeated]))
       .toMatchObject([{ pr: 1004, headSha: "cccccccc", step: "merged", mergeSha: "dddddddd" }]);
   });

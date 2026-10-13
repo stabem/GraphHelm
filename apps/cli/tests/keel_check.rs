@@ -117,47 +117,60 @@ fn keel_verdict_matches_only_the_requested_head_and_reviewer() {
     let head_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let head_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
-    for (body, requested_head, reviewer, expected) in [
+    for (body, requested_head, reviewer, comment_id, expected) in [
         (
             "APPROVE\n\nSession: codex-review · Head: aaaaaaaa",
             head_a,
             "codex-review",
+            "approval-a",
             serde_json::json!([{"commentId":"approval-a","verdict":"APPROVE"}]),
         ),
         (
             "APPROVE | looks good\n\nSession: codex-review · Head: bbbbbbbb",
             head_b,
             "codex-review",
+            "approval-b",
             serde_json::json!([{"commentId":"approval-b","verdict":"APPROVE"}]),
         ),
         (
             "APPROVE\n\nSession: codex-review · Head: aaaaaaaa",
             head_b,
             "codex-review",
+            "approval-a",
             serde_json::json!([]),
         ),
         (
             "APPROVE\n\nSession: another-reviewer · Head: bbbbbbbb",
             head_b,
             "codex-review",
+            "approval-b",
             serde_json::json!([]),
         ),
         (
             "APPROVE\n\nSession: codex-review Head: bbbbbbbb",
             head_b,
             "codex-review",
+            "approval-b",
             serde_json::json!([]),
         ),
         (
             "BLOCK: stale assumption\n\nSession: codex-review · Head: bbbbbbbb",
             head_b,
             "codex-review",
+            "block-b",
             serde_json::json!([{"commentId":"block-b","verdict":"BLOCK"}]),
+        ),
+        (
+            "Session: codex-review · Head: bbbbbbbb\n\n**BLOCK**\n\nFinding",
+            head_b,
+            "codex-review",
+            "identity-first-block",
+            serde_json::json!([{"commentId":"identity-first-block","verdict":"BLOCK"}]),
         ),
     ] {
         fs::write(
             &comments,
-            serde_json::json!({"comments": [{"id": if body.starts_with("BLOCK") { "block-b" } else if body.contains("Head: aaaaaaaa") { "approval-a" } else { "approval-b" }, "body": body}]}).to_string(),
+            serde_json::json!({"comments": [{"id": comment_id, "body": body}]}).to_string(),
         )
         .unwrap();
         let (exit, reply) = run_verdict(&comments, requested_head, reviewer);

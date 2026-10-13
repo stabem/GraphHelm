@@ -175,16 +175,22 @@ fn verdict_identity_matches(body: &str, reviewer: &str, head: &str) -> bool {
 }
 
 fn comment_verdict(body: &str) -> Option<&'static str> {
-    let first_line = body.lines().find(|line| !line.trim().is_empty())?.trim();
-    ["APPROVE-WITH-RISK", "APPROVE", "BLOCK"]
-        .into_iter()
-        .find(|verdict| {
-            first_line == *verdict
-                || first_line
-                    .strip_prefix(verdict)
-                    .and_then(|suffix| suffix.chars().next())
-                    .is_some_and(|first| first.is_whitespace() || first == ':' || first == '|')
-        })
+    body.lines().find_map(|line| {
+        let line = line.trim();
+        let line = line
+            .strip_prefix("**")
+            .and_then(|line| line.strip_suffix("**"))
+            .unwrap_or(line);
+        ["APPROVE-WITH-RISK", "APPROVE", "BLOCK"]
+            .into_iter()
+            .find(|verdict| {
+                line == *verdict
+                    || line
+                        .strip_prefix(verdict)
+                        .and_then(|suffix| suffix.chars().next())
+                        .is_some_and(|first| first.is_whitespace() || first == ':' || first == '|')
+            })
+    })
 }
 
 /// `--prove-new-tests` and its bounds (#1333).

@@ -51,4 +51,12 @@ describe("keelChain lock refusals", () => {
     expect(chain.blocked).toBe(2);
     expect(chain.gaps).toEqual(["A Keel lock stopped this agent 2 times."]);
   });
+
+  it("counts a recorded check pass without treating it as a block or proof", () => {
+    const chain = keelChain([signal("keel.card"), signal("keel.passed")], "implementation");
+    expect(chain.checks).toEqual([{ kind: "keel.passed", evidenceRefs: [] }]);
+    expect(chain.blocked).toBe(0);
+    expect(chain.steps[3]).toMatchObject({ kind: "keel.proof", state: "missing", count: 0 });
+    expect(chain.gaps).toEqual(["Card has no proof yet."]);
+  });
 });

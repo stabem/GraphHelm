@@ -23,6 +23,8 @@ export interface KeelChain {
   active: boolean;
   /** How many times a Keel lock (Stop or PreToolUse hook) refused this node's agent. */
   blocked: number;
+  /** Recorded check outcomes are informational and never satisfy a proof step. */
+  checks: { kind: "keel.blocked" | "keel.passed"; evidenceRefs: string[] }[];
   /** Steps missing before the last recorded one, plus a missing or red proof once a card exists. */
   gaps: string[];
 }
@@ -41,9 +43,13 @@ export function keelChain(events: RuntimeEvent[], nodeId: string): KeelChain {
   const counts = new Map<KeelStepKind, number>();
   let lastProofSeverity: string | null = null;
   let blocked = 0;
+  const checks: KeelChain["checks"] = [];
   for (const event of events) {
     const payload = event.payload as Record<string, unknown> | null;
-    if (event.kind === "signal_recorded" && payload?.kind === "keel.blocked" && payload.sourceKind === "node" && payload.sourceId === nodeId) blocked += 1;
+    if (event.kind === "signal_recorded" && (payload?.kind === "keel.blocked" || payload?.kind === "keel.passed") && payload.sourceKind === "node" && payload.sourceId === nodeId) {
+      if (payload.kind === "keel.blocked") blocked += 1;
+      checks.push({ kind: payload.kind, evidenceRefs: event.evidenceRefs });
+    }
     const found = keelKind(event, nodeId);
     if (found === null) continue;
     counts.set(found.kind, (counts.get(found.kind) ?? 0) + 1);
@@ -60,7 +66,7 @@ export function keelChain(events: RuntimeEvent[], nodeId: string): KeelChain {
     return { kind, label, state, count };
   });
   const card = counts.has("keel.card");
-  const active = card || counts.has("keel.proof") || blocked > 0;
+  const active = card || counts.has("keel.proof") || checks.length > 0;
   const gaps: string[] = [];
   if (active) {
     const lastIndex = Math.max(...steps.map((step, index) => (step.count > 0 ? index : -1)));
@@ -77,5 +83,5 @@ export function keelChain(events: RuntimeEvent[], nodeId: string): KeelChain {
     if (proof.state === "red") gaps.push("Latest proof failed.");
     if (blocked > 0) gaps.push(`A Keel lock stopped this agent ${blocked === 1 ? "once" : `${blocked} times`}.`);
   }
-  return { steps, active, blocked, gaps };
+  return { steps, active, blocked, checks, gaps };
 }

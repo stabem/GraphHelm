@@ -173,6 +173,7 @@ const DRAFTS = new Map<string, string>();
 export function resetPanelCaches(): void {
   DRAFTS.clear();
   OPENED_EVIDENCE.clear();
+  KEEL_CHECKS.clear();
 }
 
 /** Opened sealed content, shared by every hook instance and panel. An envelope is immutable
@@ -186,6 +187,7 @@ export function resetPanelCaches(): void {
  * this map entirely — every eager envelope fetched twice — so the rule is now a function all
  * three consumers go through. */
 const OPENED_EVIDENCE = new Map<string, Promise<EvidenceContent>>();
+const KEEL_CHECKS = new Map<string, Promise<EvidenceContent>>();
 
 function openSealed(
   executionId: string,
@@ -198,6 +200,20 @@ function openSealed(
   const fetched = open(executionId, evidenceId);
   OPENED_EVIDENCE.set(key, fetched);
   fetched.catch(() => OPENED_EVIDENCE.delete(key));
+  return fetched;
+}
+
+function openKeelCheck(
+  executionId: string,
+  evidenceId: string,
+  open: (executionId: string, evidenceId: string) => Promise<EvidenceContent>,
+): Promise<EvidenceContent> {
+  const key = `${executionId}/${evidenceId}`;
+  const held = KEEL_CHECKS.get(key);
+  if (held !== undefined) return held;
+  const fetched = open(executionId, evidenceId);
+  KEEL_CHECKS.set(key, fetched);
+  fetched.catch(() => KEEL_CHECKS.delete(key));
   return fetched;
 }
 
@@ -1108,9 +1124,41 @@ function SayBox({
 }
 
 /** The node's journey -> obligation -> card -> proof chain, so a skipped step shows without reading the thread. */
-export function KeelChainView({ events, nodeId }: { events: RuntimeEvent[]; nodeId: string }) {
+export function KeelChainView({ events, nodeId, executionId, openEvidence }: {
+  events: RuntimeEvent[];
+  nodeId: string;
+  executionId?: string;
+  openEvidence?: (executionId: string, evidenceId: string) => Promise<EvidenceContent>;
+}) {
   const chain = keelChain(events, nodeId);
+  const [checks, setChecks] = useState<{ executionId?: string; values: Array<{ identity: string; kind: "keel.blocked" | "keel.passed"; state: "ready" | "unavailable"; head?: string; findingIds?: string[]; paths?: string[] }> }>({ values: [] });
+  const checkKey = chain.checks.map((check) => `${check.kind}:${check.evidenceRefs.join(",")}`).join("|");
+  useEffect(() => {
+    let current = true;
+    setChecks({ executionId, values: [] });
+    if (executionId === undefined || openEvidence === undefined) return () => { current = false; };
+    const relevant = chain.checks.filter((check) => check.evidenceRefs.length > 0);
+    void Promise.all(relevant.map(async (check, index) => {
+      const evidenceId = check.evidenceRefs[0];
+      const identity = `${executionId}:${check.kind}:${evidenceId}:${index}`;
+      try {
+        const opened = await openKeelCheck(executionId, evidenceId, openEvidence);
+        const parsed: unknown = JSON.parse(opened.content);
+        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid evidence");
+        const value = parsed as Record<string, unknown>;
+        const head = typeof value.head === "string" ? value.head : undefined;
+        const findingIds = Array.isArray(value.findingIds) && value.findingIds.every((item) => typeof item === "string") ? value.findingIds : undefined;
+        const paths = Array.isArray(value.paths) && value.paths.every((item) => typeof item === "string") ? value.paths : undefined;
+        if (!current) return;
+        setChecks((previous) => ({ executionId, values: [...(previous.executionId === executionId ? previous.values : []), { identity, kind: check.kind, state: "ready", head, findingIds, paths }] }));
+      } catch {
+        if (current) setChecks((previous) => ({ executionId, values: [...(previous.executionId === executionId ? previous.values : []), { identity, kind: check.kind, state: "unavailable" }] }));
+      }
+    }));
+    return () => { current = false; };
+  }, [events, nodeId, executionId, openEvidence, checkKey]);
   if (!chain.active) return null;
+  const visibleChecks = checks.executionId === executionId ? checks.values : [];
   return (
     <section className="node-result-summary keel-chain" aria-label="Keel chain">
       <strong>Keel</strong>
@@ -1120,7 +1168,15 @@ export function KeelChainView({ events, nodeId }: { events: RuntimeEvent[]; node
           return <li key={step.kind} className={`keel-step ${step.state}`} aria-label={`${step.label} ${word}`}><span aria-hidden="true">{step.state === "missing" ? "○" : step.state === "red" ? "✕" : "✓"}</span>{step.label}</li>;
         })}
       </ol>
-      {chain.gaps.length === 0 ? <span>Every step is recorded.</span> : chain.gaps.map((gap) => <span key={gap}>{gap}</span>)}
+      {chain.gaps.length === 0 ? (chain.checks.some((check) => check.kind === "keel.passed") ? null : <span>Every step is recorded.</span>) : chain.gaps.map((gap) => <span key={gap}>{gap}</span>)}
+      {visibleChecks.map((check) => <div key={check.identity}>
+        {check.state === "unavailable" ? <span>Check evidence unavailable.</span> : <>
+          {check.head !== undefined && <span>Check head: {check.head}</span>}
+          {check.kind === "keel.passed" && <span>Recorded check: passed</span>}
+          {check.findingIds?.map((finding) => <span key={finding}>Finding: {finding}</span>)}
+          {check.paths?.map((path) => <span key={path}>Path: {path}</span>)}
+        </>}
+      </div>)}
     </section>
   );
 }
@@ -1244,7 +1300,7 @@ export function NodePanel({
         />
       )}
 
-      <KeelChainView events={events} nodeId={node.id} />
+      <KeelChainView events={events} nodeId={node.id} executionId={executionId} openEvidence={openEvidence} />
       {nativeChats}
       {historyEvents.length > 0 && <section className="node-recent-conversation" aria-label="Recent messages"><h3>Recent messages · newest first</h3><Thread newestFirst events={historyEvents.slice(-20)} executionId={executionId} openEvidence={openEvidence} />{historyEvents.length > 20 && <details><summary>Older history · {historyEvents.length - 20} records</summary><Thread newestFirst events={historyEvents.slice(0, -20)} executionId={executionId} openEvidence={openEvidence} /></details>}</section>}
       {executionId && openEvidence && onOpenDocument && <NodeDeliveries nodeId={node.id} executionId={executionId} events={events} openEvidence={openEvidence} onOpenDocument={onOpenDocument} />}

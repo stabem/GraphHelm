@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORT = ROOT / "tools/evals/selection_report.py"
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 class SelectionReport(unittest.TestCase):
@@ -46,7 +47,8 @@ class SelectionReport(unittest.TestCase):
     def run_report(self):
         self.input_path.write_text(json.dumps(self.observations), encoding="utf-8")
         return subprocess.run([sys.executable, str(REPORT), str(self.input_path)],
-                              cwd=ROOT, capture_output=True, text=True)
+                              cwd=ROOT, capture_output=True, text=True,
+                              creationflags=NO_WINDOW)
 
     def test_reports_separate_counts_incomplete_judges_and_rejects_unknown_case(self):
         result = self.run_report()

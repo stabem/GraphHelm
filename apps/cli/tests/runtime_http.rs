@@ -3479,7 +3479,10 @@ fn eight_sealed_evidence_items_share_one_authenticated_collection_read() {
         );
     }
 
-    let unreferenced = flip_last_character(&batch_ids[0]);
+    let unreferenced = (0..)
+        .map(|index| format!("unreferenced-evidence-{index}"))
+        .find(|candidate| !batch_ids.contains(candidate))
+        .unwrap();
     let mixed_ids = encode_ids(&[batch_ids[0].clone(), unreferenced.clone()]);
     let mixed = get_json(
         &format!("{base}/v1/executions/{execution}/evidence?ids={mixed_ids}"),

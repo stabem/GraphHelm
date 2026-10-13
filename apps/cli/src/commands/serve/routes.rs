@@ -6340,13 +6340,6 @@ pub(super) async fn evidence(
     )
 }
 
-/// Evidence this route will render. The model reply — the reason the route exists — seals as
-/// `application/json` (`core/runtime/src/evidence.rs`), and a tool node's streams seal as
-/// `text/plain`. A structured-syntax `+json` type is JSON too (RFC 6839): the sealed
-/// `context-provenance@1` record (`application/vnd.graphhelm.context-provenance+json`) and the
-/// accounting receipt are documents an operator must be able to open, not only count (#1086).
-/// Anything else is refused rather than guessed at: a surface that base64s unknown bytes into a
-/// JSON string is not showing an operator their content, it is moving it.
 const EVIDENCE_BATCH_MAX_ITEMS: usize = 8;
 const EVIDENCE_BATCH_MAX_PLAINTEXT_BYTES: usize = 1024 * 1024;
 
@@ -6501,6 +6494,13 @@ pub(super) async fn evidence_batch(
     )
 }
 
+/// Evidence this route will render. The model reply — the reason the route exists — seals as
+/// `application/json` (`core/runtime/src/evidence.rs`), and a tool node's streams seal as
+/// `text/plain`. A structured-syntax `+json` type is JSON too (RFC 6839): the sealed
+/// `context-provenance@1` record (`application/vnd.graphhelm.context-provenance+json`) and the
+/// accounting receipt are documents an operator must be able to open, not only count (#1086).
+/// Anything else is refused rather than guessed at: a surface that base64s unknown bytes into a
+/// JSON string is not showing an operator their content, it is moving it.
 fn renders_as_text(media_type: &str) -> bool {
     media_type == "application/json"
         || (media_type.starts_with("application/") && media_type.ends_with("+json"))

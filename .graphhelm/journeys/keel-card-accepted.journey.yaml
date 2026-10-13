@@ -8,12 +8,6 @@ actors: [contributor]
 secrets: []
 risks: []
 screens:
-  - id: start
-    title: A contributor change is ready for its scope check
-    url: /
-    state: stable
-    expect: [{role: exit, name: "0"}]
-    scope: unknown
   - id: accepted
     title: A change inside the card is accepted
     url: /
@@ -25,6 +19,12 @@ screens:
     url: /
     state: success
     expect: [{role: exit, name: "2"}, {role: stdout, name: keel.scope.path_outside_card}, {role: stdout, name: docs/notes.md}]
+    scope: unknown
+  - id: start
+    title: A contributor change is ready for its scope check
+    url: /
+    state: stable
+    expect: [{role: exit, name: "0"}]
     scope: unknown
 edges:
   - id: start.accept-in-scope

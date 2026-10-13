@@ -330,6 +330,15 @@ describe("the Graph WORK rail fits a narrow viewport (#884)", () => {
   });
 });
 
+describe("the selected journey graph stays beside its rail on desktop (#1116)", () => {
+  it("reserves full rows for graph context and two columns for the rail and graph", () => {
+    const mission = STYLESHEETS["./components/mission-view.css"] ?? "";
+    expect(mission).toMatch(/\.mv-body\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*[^;]+\s+minmax\(0,\s*1fr\)/s);
+    expect(mission).toMatch(/\.mv-body\s*>\s*\.mv-summary,\s*\.mv-body\s*>\s*\.mv-run-graph,\s*\.mv-body\s*>\s*\.mv-none\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s);
+    expect(mission).toMatch(/@media\s*\(max-width:\s*700px\)\s*\{\s*\.mv-body\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column/s);
+  });
+});
+
 describe("the task inspector fits its ladder and preserves lane names (#918, #926)", () => {
   it("keeps five equal bars and readable short labels", () => {
     const stylesheet = STYLESHEETS["./styles.css"] ?? "";

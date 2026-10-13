@@ -1,0 +1,53 @@
+schema: graphhelm.journey-flow/1
+id: keel-proportional-rows
+title: Show proportional Keel card guidance
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [contributor]
+secrets: []
+risks: []
+screens:
+  - id: bounded-code
+    title: "Bounded code needs promise, scope, and proof"
+    url: /
+    state: success
+    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"kind\":\"bounded_code\""}, {role: stdout, name: "\"required\":[\"promise\",\"scope\",\"proof\"]"}]
+    scope: unknown
+  - id: docs
+    title: Docs need only a summary
+    url: /
+    state: success
+    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"kind\":\"summary_only\""}, {role: stdout, name: "\"required\":[]"}]
+    scope: unknown
+  - id: expanded
+    title: An invariant change needs expanded proof
+    url: /
+    state: success
+    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"kind\":\"expanded\""}, {role: stdout, name: "\"required\":[\"full_card\",\"defect_naming_proof\",\"jpd\"]"}]
+    scope: unknown
+  - id: start
+    title: Begin proportional guidance checks
+    url: /
+    state: stable
+    expect: [{role: exit, name: "0"}]
+    scope: unknown
+edges:
+  - id: bounded-code.check
+    from: docs
+    to: bounded-code
+    acts:
+      - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-proportional-rows/run.py bounded-code}
+  - id: docs.check
+    from: start
+    to: docs
+    acts:
+      - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-proportional-rows/run.py docs}
+  - id: expanded.check
+    from: bounded-code
+    to: expanded
+    acts:
+      - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-proportional-rows/run.py expanded}
+paths:
+  main: [docs.check, bounded-code.check, expanded.check]
+drift: []

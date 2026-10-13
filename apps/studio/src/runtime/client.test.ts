@@ -1191,7 +1191,7 @@ describe("the gateway writes (#1171)", () => {
 });
 
 // #673: scripted HTTP only; health previously discarded these diagnostic records.
-it("returns only validated previous exit records from the existing health request", async () => {
+it("returns independently validated previous exit and startup records from one health request", async () => {
   const prior = "0123456789abcdef0123456789abcdef";
   for (const [previousExit, expected] of [
     [{ state: "vanished", pid: 1, at: 2, instance: prior }, { state: "vanished", pid: 1, at: 2, instance: prior }],
@@ -1208,9 +1208,23 @@ it("returns only validated previous exit records from the existing health reques
     [{ state: "vanished", pid: 1, at: 2, location: "C:/Users/private/src/main.rs:1", lastPanic: { location: "crate/src/../secret.rs:1" } }, { state: "vanished", pid: 1, at: 2, location: "unknown", lastPanic: { location: "unknown" } }],
     [undefined, null],
   ]) {
-    const { fetchImpl, calls } = scriptedFetch([{ match: c => c.url === "/health", reply: ok({ previousExit }, "health") }]);
+    const { fetchImpl, calls } = scriptedFetch([{ match: c => c.url === "/health", reply: ok({ previousExit, startup: { journalVerifyMs: 121, lifecycleStartMs: 60 } }, "health") }]);
     const client = new RuntimeClient("token", { fetch: fetchImpl });
-    expect(await client.health()).toEqual(expected);
+    expect(await client.health()).toEqual({ previousExit: expected, startup: { journalVerifyMs: 121, lifecycleStartMs: 60 } });
+    expect(calls).toHaveLength(1);
+  }
+  for (const startup of [
+    { journalVerifyMs: 0, lifecycleStartMs: 0 },
+    undefined, null, [], "121", { journalVerifyMs: -1, lifecycleStartMs: 60 },
+    { journalVerifyMs: 1.5, lifecycleStartMs: 60 },
+    { journalVerifyMs: Number.MAX_SAFE_INTEGER + 1, lifecycleStartMs: 60 },
+  ]) {
+    const { fetchImpl, calls } = scriptedFetch([{ match: c => c.url === "/health", reply: ok({ previousExit: null, startup }, "health") }]);
+    const client = new RuntimeClient("token", { fetch: fetchImpl });
+    const valid = startup !== null && typeof startup === "object" && !Array.isArray(startup) &&
+      Number.isSafeInteger((startup as { journalVerifyMs?: unknown }).journalVerifyMs) && (startup as { journalVerifyMs: number }).journalVerifyMs >= 0 &&
+      Number.isSafeInteger((startup as { lifecycleStartMs?: unknown }).lifecycleStartMs) && (startup as { lifecycleStartMs: number }).lifecycleStartMs >= 0;
+    expect(await client.health()).toEqual({ previousExit: null, startup: valid ? startup : null });
     expect(calls).toHaveLength(1);
   }
 });

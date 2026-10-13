@@ -5139,9 +5139,10 @@ describe("execution reads preserve newer observed state", () => {
 });
 
 // #673: DOM + stubbed I/O; observes wiring from the one health read to Runtime status.
-it.each(["vanished", "panicked", "clean", null])("shows Last stop only for an unclean previous exit: %s", async (state) => {
+it.each(["vanished", "panicked", "clean", null])("shows startup timing independently of the previous exit: %s", async (state) => {
   const prior = "0123456789abcdef0123456789abcdef";
-  const client = stubClient({ health: vi.fn(async () => state === null ? null : { state, pid: 1, at: 2, ...(state === "panicked" ? { location: "runtime/src/driver.rs:42", lastPanic: { location: "unknown" } } : {}), ...(state === "vanished" ? { instance: prior } : {}) }) });
+  const previousExit = state === null ? null : { state, pid: 1, at: 2, ...(state === "panicked" ? { location: "runtime/src/driver.rs:42", lastPanic: { location: "unknown" } } : {}), ...(state === "vanished" ? { instance: prior } : {}) };
+  const client = stubClient({ health: vi.fn(async () => ({ previousExit, startup: { journalVerifyMs: 121, lifecycleStartMs: 60 } })) });
   render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null} session={async () => ({ token: "local-token", project: "GraphHelm" })} />);
   await screen.findByText("live");
   if (state === "vanished") {
@@ -5160,5 +5161,8 @@ it.each(["vanished", "panicked", "clean", null])("shows Last stop only for an un
     expect(line).toHaveTextContent("last panic: unknown");
     expect(line).toHaveTextContent("instance unavailable");
   } else expect(screen.queryByText(/Last stop:/)).not.toBeInTheDocument();
+  const timing = screen.getByRole("group", { name: "Runtime startup" });
+  expect(timing).toHaveTextContent("Journal verification: 121 ms");
+  expect(timing).toHaveTextContent("Lifecycle initialization: 60 ms");
   expect(client.health).toHaveBeenCalledTimes(1);
 });

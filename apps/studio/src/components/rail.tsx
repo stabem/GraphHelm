@@ -130,6 +130,7 @@ export function ProjectRail({
   connected,
   stale = false,
   previousExit = null,
+  startupTiming = null,
   hasMore,
   busy,
   onSelect,
@@ -150,6 +151,7 @@ export function ProjectRail({
   selected: string;
   connected: boolean;
   previousExit?: RuntimePreviousExit | null;
+  startupTiming?: { journalVerifyMs: number; lifecycleStartMs: number } | null;
   /** True when background reads have failed repeatedly: the screen may be aging. "live" under
    * a dead Runtime was indistinguishable from a quiet room (round-4, 3am). */
   stale?: boolean;
@@ -210,16 +212,27 @@ export function ProjectRail({
         </span>
       </div>
 
-      {connected && previousExit && previousExit.state !== "clean" && (
-        <p className="hint" aria-label="Previous Runtime exit" style={{ overflowWrap: "anywhere" }}>
-          Runtime restarted · {previousExit.state === "vanished" ? "previous run started" : "last stop"} <time dateTime={new Date(previousExit.at * 1000).toISOString()} title={`PID ${previousExit.pid} · ${new Date(previousExit.at * 1000).toISOString()}`}>
-            {new Date(previousExit.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}
-          </time> ({({ vanished: "exit cause unknown", serve_error: "failed", panicked: "crashed" })[previousExit.state] ?? "stopped"})
-          <> · {previousExit.instance ? `instance: ${previousExit.instance}` : "instance unavailable"}</>
-          {previousExit.location !== undefined && <> · location: {previousExit.location}</>}
-          {previousExit.lastPanic && <> · last panic: {previousExit.lastPanic.location}</>}
-        </p>
-      )}
+      <div className="rail-runtime-status">
+        {connected && previousExit && previousExit.state !== "clean" && (
+          <p className="hint" aria-label="Previous Runtime exit" style={{ overflowWrap: "anywhere" }}>
+            Runtime restarted · {previousExit.state === "vanished" ? "previous run started" : "last stop"} <time dateTime={new Date(previousExit.at * 1000).toISOString()} title={`PID ${previousExit.pid} · ${new Date(previousExit.at * 1000).toISOString()}`}>
+              {new Date(previousExit.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}
+            </time> ({({ vanished: "exit cause unknown", serve_error: "failed", panicked: "crashed" })[previousExit.state] ?? "stopped"})
+            <> · {previousExit.instance ? `instance: ${previousExit.instance}` : "instance unavailable"}</>
+            {previousExit.location !== undefined && <> · location: {previousExit.location}</>}
+            {previousExit.lastPanic && <> · last panic: {previousExit.lastPanic.location}</>}
+          </p>
+        )}
+        {connected && (
+          <details aria-label="Runtime startup">
+            <summary>Runtime startup</summary>
+            {startupTiming ? <div>
+              <p>Journal verification: {startupTiming.journalVerifyMs} ms</p>
+              <p>Lifecycle initialization: {startupTiming.lifecycleStartMs} ms</p>
+            </div> : <p>Startup timing unavailable</p>}
+          </details>
+        )}
+      </div>
       <p className="lbl rail-section">Projects</p>
 
       <div className="projects">

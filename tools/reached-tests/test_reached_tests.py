@@ -314,6 +314,21 @@ class Reach(unittest.TestCase):
             self.assertEqual(whole, {"graphhelm-fixture"})
             self.assertEqual(single, set())
 
+    def test_manifest_root_join_reaches_owning_crate(self):
+        """A manifest-rooted literal resolves from the crate, not the Rust source.
+
+        Cost: temporary fixture files and selector work; milliseconds, no Cargo or services.
+        """
+        with tempfile.TemporaryDirectory() as repo:
+            source = Path(repo, "crates/fixture/src/lib.rs")
+            source.parent.mkdir(parents=True)
+            source.write_text('std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/changed.yaml"));', encoding="utf-8")
+            packages = [{"name": "graphhelm-fixture", "dir": "crates/fixture", "tests": [], "deps": []}]
+            whole, single, *_ = rt.reach(["crates/fixture/fixtures/changed.yaml"], packages, {}, repo)
+            self.assertEqual(whole, {"graphhelm-fixture"})
+            self.assertEqual(single, set())
+            self.assertIn("crates/fixture/fixtures/changed.yaml", rt.rust_path_readers(repo, packages))
+
     def test_changed_non_rust_path_without_rust_reference_adds_no_compile(self):
         """Do not broaden compile plans for non-Rust files without a source reference.
 

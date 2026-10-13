@@ -12,7 +12,7 @@ screens:
     title: The specimen drops the first value
     url: /specimen
     state: stable
-    expect: [{role: stdout, name: defective parent drops the first value}]
+    expect: [{role: stdout, name: "regression=parent-failed,head-passed,earned"}]
     scope: unknown
   - id: proof-report
     title: The CLI distinguishes an earned test from a vacuous test

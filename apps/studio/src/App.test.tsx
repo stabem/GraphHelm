@@ -5219,3 +5219,13 @@ it.each(["vanished", "panicked", "clean", null])("shows startup timing independe
   expect(timing).toHaveTextContent(new Date(currentRun.startedAt * 1000).toISOString());
   expect(client.health).toHaveBeenCalledTimes(1);
 });
+
+it("shows unavailable identity without losing startup timing", async () => {
+  const client = stubClient({ health: vi.fn(async () => ({ previousExit: null, startup: { journalVerifyMs: 0, lifecycleStartMs: 60 }, currentRun: null })) });
+  render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null} session={async () => ({ token: "local-token", project: "GraphHelm" })} />);
+  await screen.findByText("live");
+  const timing = screen.getByRole("group", { name: "Runtime startup" });
+  expect(timing).toHaveTextContent("Runtime identity unavailable");
+  expect(timing).toHaveTextContent("Journal verification: 0 ms");
+  expect(timing).toHaveTextContent("Lifecycle initialization: 60 ms");
+});

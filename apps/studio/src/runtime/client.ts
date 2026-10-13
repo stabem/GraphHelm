@@ -611,7 +611,7 @@ export class RuntimeClient {
   }
 
   /**
-   * `GET /health` - reachability and validated previous-exit metadata, never authentication.
+   * `GET /health` - reachability and validated lifecycle metadata, never authentication.
    *
    * The Runtime exempts this path from its bearer check before it ever looks at the header
    * (`require_token` in `apps/cli/src/commands/serve/mod.rs` returns early on `/health`), so a
@@ -623,8 +623,18 @@ export class RuntimeClient {
    * differently: "could not be reached" and "the token was refused" are separate facts, and a
    * single probe cannot tell them apart.
    */
-  async health(): Promise<{ previousExit: RuntimePreviousExit | null; startup: { journalVerifyMs: number; lifecycleStartMs: number } | null }> {
-    const data = await this.#request<{ previousExit?: unknown; startup?: unknown }>({ method: "GET", path: "/health" });
+  async health(): Promise<{ previousExit: RuntimePreviousExit | null; startup: { journalVerifyMs: number; lifecycleStartMs: number } | null; currentRun: { instance: string; pid: number; startedAt: number } | null }> {
+    const data = await this.#request<{ instance?: unknown; currentRun?: unknown; previousExit?: unknown; startup?: unknown }>({ method: "GET", path: "/health" });
+    const currentRaw = data?.currentRun;
+    let currentRun: { instance: string; pid: number; startedAt: number } | null = null;
+    if (currentRaw !== null && typeof currentRaw === "object" && !Array.isArray(currentRaw)) {
+      const value = currentRaw as Record<string, unknown>;
+      if (typeof data?.instance === "string" && /^[0-9a-f]{32}$/.test(data.instance) && value.instance === data.instance &&
+          typeof value.pid === "number" && Number.isSafeInteger(value.pid) && value.pid >= 1 && value.pid <= 0xffffffff &&
+          typeof value.startedAt === "number" && Number.isSafeInteger(value.startedAt) && value.startedAt >= 0 && value.startedAt <= 8_640_000_000_000) {
+        currentRun = { instance: data.instance, pid: value.pid, startedAt: value.startedAt };
+      }
+    }
     const startupRaw = data?.startup;
     let startup: { journalVerifyMs: number; lifecycleStartMs: number } | null = null;
     if (startupRaw !== null && typeof startupRaw === "object" && !Array.isArray(startupRaw)) {
@@ -635,12 +645,12 @@ export class RuntimeClient {
       }
     }
     const raw = data?.previousExit;
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { previousExit: null, startup };
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { previousExit: null, startup, currentRun };
     const value = raw as Record<string, unknown>;
     const state = value.state;
-    if (state !== "clean" && state !== "vanished" && state !== "serve_error" && state !== "panicked") return { previousExit: null, startup };
+    if (state !== "clean" && state !== "vanished" && state !== "serve_error" && state !== "panicked") return { previousExit: null, startup, currentRun };
     if (typeof value.pid !== "number" || !Number.isSafeInteger(value.pid) || value.pid < 1 || value.pid > 0xffffffff ||
-        typeof value.at !== "number" || !Number.isSafeInteger(value.at) || value.at < 0 || value.at > 8_640_000_000_000) return { previousExit: null, startup };
+        typeof value.at !== "number" || !Number.isSafeInteger(value.at) || value.at < 0 || value.at > 8_640_000_000_000) return { previousExit: null, startup, currentRun };
     // Only Runtime's crate-relative Rust source coordinates are displayable, never free text.
     const location = (input: unknown): string => typeof input === "string" && input.length <= 256 &&
       /^[a-zA-Z0-9_-]+\/src\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+\.rs:[0-9]{1,10}$/.test(input) ? input : "unknown";
@@ -651,7 +661,7 @@ export class RuntimeClient {
       const panic = value.lastPanic;
       result.lastPanic = { location: location(panic !== null && typeof panic === "object" ? (panic as Record<string, unknown>).location : undefined) };
     }
-    return { previousExit: result, startup };
+    return { previousExit: result, startup, currentRun };
   }
 
   async listExecutions(options: { after?: string; limit?: number } = {}): Promise<ExecutionPage> {

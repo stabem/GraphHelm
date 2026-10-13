@@ -196,6 +196,7 @@ export default function App({
   const [connected, setConnected] = useState(false);
   const [previousExit, setPreviousExit] = useState<RuntimePreviousExit | null>(null);
   const [startupTiming, setStartupTiming] = useState<{ journalVerifyMs: number; lifecycleStartMs: number } | null>(null);
+  const [currentRun, setCurrentRun] = useState<Awaited<ReturnType<RuntimeClient["health"]>>["currentRun"]>(null);
   /** What the rail calls this folder. Named by the operator; absent, the rail says what it can. */
   const [project, setProject] = useState<string | null>(null);
   const [projectPath, setProjectPath] = useState<string | null>(null);
@@ -1433,6 +1434,7 @@ export default function App({
       setStale(false);
       setPreviousExit(null);
       setStartupTiming(null);
+      setCurrentRun(null);
       setConnecting(true);
       setError("");
       const client = createClient ? createClient(token) : new RuntimeClient(token);
@@ -1441,6 +1443,7 @@ export default function App({
         if (connectionGeneration.current !== generation) { client.dispose(); return; }
         setPreviousExit(health?.previousExit ?? null);
         setStartupTiming(health?.startup ?? null);
+        setCurrentRun(health?.currentRun ?? null);
         // A manual reconnect must establish its public identity again. A different bearer
         // cannot inherit the previous Runtime's browser preferences merely by sharing a tab.
         let identity = knownProject;
@@ -1546,6 +1549,7 @@ export default function App({
     setConnected(false);
     setPreviousExit(null);
     setStartupTiming(null);
+    setCurrentRun(null);
     setProject(null);
     setProjectPath(null);
     setProjectIdentity(null);
@@ -2712,6 +2716,7 @@ export default function App({
         connected={connected}
         previousExit={previousExit}
         startupTiming={startupTiming}
+        currentRun={currentRun}
         stale={stale}
         hasMore={nextCursor !== null}
         busy={busy}

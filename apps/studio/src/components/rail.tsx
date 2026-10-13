@@ -131,6 +131,7 @@ export function ProjectRail({
   stale = false,
   previousExit = null,
   startupTiming = null,
+  currentRun = null,
   hasMore,
   busy,
   onSelect,
@@ -152,6 +153,7 @@ export function ProjectRail({
   connected: boolean;
   previousExit?: RuntimePreviousExit | null;
   startupTiming?: { journalVerifyMs: number; lifecycleStartMs: number } | null;
+  currentRun?: { instance: string; pid: number; startedAt: number } | null;
   /** True when background reads have failed repeatedly: the screen may be aging. "live" under
    * a dead Runtime was indistinguishable from a quiet room (round-4, 3am). */
   stale?: boolean;
@@ -226,6 +228,12 @@ export function ProjectRail({
         {connected && (
           <details aria-label="Runtime startup">
             <summary>Runtime startup</summary>
+            {currentRun ? <div>
+              <p>Runtime at connection</p>
+              <p>Instance: {currentRun.instance}</p>
+              <p>PID: {currentRun.pid}</p>
+              <p>Started: <time dateTime={new Date(currentRun.startedAt * 1000).toISOString()}>{new Date(currentRun.startedAt * 1000).toISOString()}</time></p>
+            </div> : <p>Runtime identity unavailable</p>}
             {startupTiming ? <div>
               <p>Journal verification: {startupTiming.journalVerifyMs} ms</p>
               <p>Lifecycle initialization: {startupTiming.lifecycleStartMs} ms</p>

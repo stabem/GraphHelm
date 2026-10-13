@@ -1241,14 +1241,21 @@ it("decodes only the current Runtime identity from the same health response", as
     [instance, undefined, null],
     [instance, [], null],
     [instance, { ...currentRun, pid: 0 }, null],
+    [instance, { ...currentRun, instance: "A".repeat(32) }, null],
+    ["A".repeat(32), { ...currentRun, instance: "A".repeat(32) }, null],
+    [instance, { ...currentRun, pid: 1.5 }, null],
+    [instance, { ...currentRun, pid: "42" }, null],
     [instance, { ...currentRun, pid: 0x100000000 }, null],
     [instance, { ...currentRun, startedAt: -1 }, null],
     [instance, { ...currentRun, startedAt: 8_640_000_000_001 }, null],
     [instance, { ...currentRun, startedAt: 1.5 }, null],
+    [instance, { ...currentRun, startedAt: "1700000000" }, null],
   ] as const) {
     const { fetchImpl, calls } = scriptedFetch([{ match: c => c.url === "/health", reply: ok({ instance: topInstance, currentRun: run, previousExit, startup: null }, "health") }]);
     const client = new RuntimeClient("token", { fetch: fetchImpl });
     expect(await client.health()).toEqual({ previousExit, startup: null, currentRun: expected });
     expect(calls).toHaveLength(1);
   }
+  const { fetchImpl } = scriptedFetch([{ match: c => c.url === "/health", reply: ok({ instance, currentRun, previousExit: { state: "bad" }, startup: { journalVerifyMs: -1 } }, "health") }]);
+  expect(await new RuntimeClient("token", { fetch: fetchImpl }).health()).toEqual({ previousExit: null, startup: null, currentRun });
 });

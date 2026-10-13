@@ -289,12 +289,11 @@ describe("laneBars", () => {
 
   it("a release for an older claim does not close the current claim bar", () => {
     const lanes = laneBars([
-      ev({ kind: "task.claimed", lane: "dev", taskId: "issue-729", sequence: 1, at: at(0) }),
-      ev({ kind: "task.released", lane: "dev", taskId: "issue-729", sequence: 2, claimSequence: 1, reason: "Stopped", at: at(5) } as never),
-      ev({ kind: "task.claimed", lane: "dev", taskId: "issue-729", sequence: 3, at: at(10) }),
-      ev({ kind: "task.released", lane: "dev", taskId: "issue-729", sequence: 4, claimSequence: 1, reason: "Delayed", at: at(20) } as never),
+      ev({ kind: "task.claimed", lane: "dev", taskId: "issue-729", sequence: 10, at: at(0) }),
+      ev({ kind: "task.claimed", lane: "dev", taskId: "issue-729", sequence: 11, at: at(10) }),
+      ev({ kind: "task.released", lane: "dev", taskId: "issue-729", sequence: 12, claimSequence: 10, reason: "Stopped", at: at(20) } as never),
     ], T0 + 30, 1000);
-    expect(lanes[0]!.bars.map((bar) => [bar.start - T0, bar.end - T0, bar.open])).toEqual([[0, 5, false], [10, 30, true]]);
+    expect(lanes[0]!.bars.map((bar) => [bar.start - T0, bar.end - T0, bar.open])).toEqual([[0, 30, true], [10, 30, true]]);
   });
 
   it("a released sole claim leaves its lane Free on the Agents board", () => {

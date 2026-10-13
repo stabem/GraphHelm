@@ -15,6 +15,12 @@ graphhelm --json keel check --diff origin/main..HEAD --card card.json [--repo <d
   base after the branch was cut are never charged to it.
 - `--card` is optional. Without it, the scope rule does not run and only the surface counts are
   reported.
+- `data.cardGuidance` gives the proportional card obligation inferred from the changed paths:
+  `summary_only` for docs, `bounded_code` for code and user-visible work, or `expanded` for an
+  invariant. Its `required` list names the expected card parts (`journeys` is also required for
+  user-visible work). `fulfilled` is always `false`: this field is guidance, not evidence that a
+  card, test, or journey proof exists. It is advisory and does not change the exit code or the
+  existing count-only behavior.
 - A card path ending in `.md` is read as prose, for example a saved PR body: the lines
   `Promise:`, `Scope:`, `Proof:` and optionally `Exported:` (list items and bold are fine; list
   fields take the backticked items. A list may continue on following lines when the field value is

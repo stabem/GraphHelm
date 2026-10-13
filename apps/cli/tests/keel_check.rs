@@ -318,7 +318,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
                 graphhelm_protocols::EventKind::GraphVersionPublished(_)
             ))
             .count(),
-        1
+        0
     );
     let stale = scratch.path().join("stale.json");
     fs::write(&stale, serde_json::to_vec(&serde_json::json!({

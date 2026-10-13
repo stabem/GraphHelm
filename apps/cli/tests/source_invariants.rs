@@ -659,19 +659,15 @@ fn every_content_exemption_is_load_bearing_and_bounded() {
     // here: pinning by CONTENT (one exemption, in this file, at the canonical-JSON literal) is the
     // durable shape, and rewriting another lane's guard inside a 59-commit branch is not this
     // fix's job.
-    let mut canonical_json_sites = Vec::new();
-    for (path, text) in sources() {
-        if text.lines().any(|line| {
-            has_run_in_literal(line)
-                && matches!(
-                    exemption(&path, line),
-                    Some(Exemption::CanonicalJsonFixture)
-                )
-        }) {
-            canonical_json_sites.push(path);
-        }
-    }
-    assert_eq!(canonical_json_sites, ["tests/schema_cli.rs"]);
+    assert_eq!(
+        canonical_json.len(),
+        1,
+        "canonical JSON sites: {canonical_json:?}"
+    );
+    assert!(
+        canonical_json[0].starts_with("tests/schema_cli.rs:"),
+        "canonical JSON exemption escaped its owning test file: {canonical_json:?}"
+    );
     assert_eq!(detector_fixtures.len(), 6);
     assert!(
         detector_fixtures

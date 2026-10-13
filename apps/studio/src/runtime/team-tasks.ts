@@ -417,6 +417,8 @@ export interface TaskState {
   /** A BLOCK on the current head that no newer head (#608) or verdict has answered: the red edge
    * into the next step. */
   blockedBy: { reviewer: string; headSha: string; commentUrl: string } | null;
+  /** APPROVE-WITH-RISK on the current head, retained alongside later plain approvals. */
+  approvedWithRisk?: { reviewer: string; commentUrl: string } | null;
   /** Sequence of the current unanswered BLOCK. */
   blockedSequence?: number | null;
   /** Most recent task record written by this slice's author. */
@@ -465,9 +467,14 @@ function applyVerdict(state: TaskState, event: TaskEventRecord): void {
     }
     state.step = "review";
   } else {
-    state.blockedBy = null;
-    state.blockedSequence = null;
-    state.step = "merge";
+    if (event.verdict === "APPROVE-WITH-RISK") {
+      state.approvedWithRisk = { reviewer: event.reviewer ?? "", commentUrl: event.commentUrl ?? "" };
+    }
+    if (state.blockedBy !== null && state.blockedBy.reviewer === event.reviewer) {
+      state.blockedBy = null;
+      state.blockedSequence = null;
+    }
+    state.step = state.blockedBy === null ? "merge" : "review";
   }
 }
 
@@ -485,7 +492,11 @@ export function isUnclaimedCritic(task: TaskState): boolean {
 function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
   // Merge records may use `pr-N` as their task id even when the author claimed `issue-N`.
   // The PR identifies the existing slice across those task ids.
-  const byPr = event.pr === undefined ? undefined : slices.find((slice) => slice.pr === event.pr);
+  const byPr = event.pr === undefined ? undefined : event.headSha !== undefined
+    && (event.kind === "task.review_verdict" || event.kind === "task.review_assigned")
+    ? slices.find((slice) => slice.pr === event.pr && slice.headSha === event.headSha)
+      ?? slices.find((slice) => slice.pr === event.pr)
+    : slices.find((slice) => slice.pr === event.pr);
   // A lane may claim work for a PR another slice already holds. Its pr_opened belongs to
   // that lane's new claim; the PR's eventual merge/close then ends both claims together.
   if (byPr !== undefined && event.kind !== "task.pr_opened") return byPr;
@@ -620,7 +631,10 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
         state.lane = event.lane ?? state.lane;
         state.prTitle = event.title ?? state.prTitle;
         state.prSummary = event.summary ?? state.prSummary;
-        if (event.headSha !== state.headSha) state.currentReviewer = null;
+        if (event.headSha !== state.headSha) {
+          state.currentReviewer = null;
+          state.approvedWithRisk = null;
+        }
         state.headSha = event.headSha ?? state.headSha;
         const pendingReviewer = state.pendingReviewer;
         if (pendingReviewer !== null && pendingReviewer !== undefined && pendingReviewer.headSha === event.headSha) {

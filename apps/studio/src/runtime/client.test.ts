@@ -1210,7 +1210,7 @@ it("returns independently validated previous exit and startup records from one h
   ]) {
     const { fetchImpl, calls } = scriptedFetch([{ match: c => c.url === "/health", reply: ok({ previousExit, startup: { journalVerifyMs: 121, lifecycleStartMs: 60 } }, "health") }]);
     const client = new RuntimeClient("token", { fetch: fetchImpl });
-    expect(await client.health()).toEqual({ previousExit: expected, startup: { journalVerifyMs: 121, lifecycleStartMs: 60 } });
+    expect(await client.health()).toEqual({ previousExit: expected, startup: { journalVerifyMs: 121, lifecycleStartMs: 60 }, currentRun: null });
     expect(calls).toHaveLength(1);
   }
   for (const startup of [
@@ -1224,7 +1224,31 @@ it("returns independently validated previous exit and startup records from one h
     const valid = startup !== null && typeof startup === "object" && !Array.isArray(startup) &&
       Number.isSafeInteger((startup as { journalVerifyMs?: unknown }).journalVerifyMs) && (startup as { journalVerifyMs: number }).journalVerifyMs >= 0 &&
       Number.isSafeInteger((startup as { lifecycleStartMs?: unknown }).lifecycleStartMs) && (startup as { lifecycleStartMs: number }).lifecycleStartMs >= 0;
-    expect(await client.health()).toEqual({ previousExit: null, startup: valid ? startup : null });
+    expect(await client.health()).toEqual({ previousExit: null, startup: valid ? startup : null, currentRun: null });
+    expect(calls).toHaveLength(1);
+  }
+});
+
+it("decodes only the current Runtime identity from the same health response", async () => {
+  const instance = "abcdef0123456789abcdef0123456789";
+  const previousExit = { state: "clean", pid: 9, at: 8, instance: "0123456789abcdef0123456789abcdef" };
+  const currentRun = { instance, pid: 42, startedAt: 1_700_000_000 };
+  for (const [topInstance, run, expected] of [
+    [instance, currentRun, currentRun],
+    [instance, { ...currentRun, pid: 1, startedAt: 0 }, { ...currentRun, pid: 1, startedAt: 0 }],
+    [undefined, currentRun, null],
+    ["0123456789abcdef0123456789abcdef", currentRun, null],
+    [instance, undefined, null],
+    [instance, [], null],
+    [instance, { ...currentRun, pid: 0 }, null],
+    [instance, { ...currentRun, pid: 0x100000000 }, null],
+    [instance, { ...currentRun, startedAt: -1 }, null],
+    [instance, { ...currentRun, startedAt: 8_640_000_000_001 }, null],
+    [instance, { ...currentRun, startedAt: 1.5 }, null],
+  ] as const) {
+    const { fetchImpl, calls } = scriptedFetch([{ match: c => c.url === "/health", reply: ok({ instance: topInstance, currentRun: run, previousExit, startup: null }, "health") }]);
+    const client = new RuntimeClient("token", { fetch: fetchImpl });
+    expect(await client.health()).toEqual({ previousExit, startup: null, currentRun: expected });
     expect(calls).toHaveLength(1);
   }
 });

@@ -18,7 +18,7 @@ ids=("$@")
 # Default order respects the fixture's state: flows that only read, then flows that record,
 # then flows that change the run's state. A flow
 # listed here that has no file is skipped; a file not listed here runs after them.
-ORDER="studio-see-team studio-journey-tab studio-chat-send studio-answer-question studio-refuse-question studio-handover studio-connect-existing-chat studio-new-task studio-run-actions studio-connect"
+ORDER="studio-journey-tab studio-chat-send studio-answer-question studio-handover studio-connect-existing-chat studio-new-task studio-connect"
 if [ ${#ids[@]} -eq 0 ]; then
   approved() { grep -q '^status: approved$' "$repo/.graphhelm/journeys/$1.journey.yaml" 2>/dev/null; }
   for id in $ORDER; do approved "$id" && ids+=("$id"); done

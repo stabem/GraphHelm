@@ -135,7 +135,7 @@ up)
     done
   fi
   flow=${GRAPHHELM_JOURNEY_FLOW:-}
-  if [ "$flow" = studio-work-graph ] || [ "$flow" = studio-work-graph-mobile ]; then
+  if [ "$flow" = studio-work-graph ]; then
     # #721 task records use the existing planner actor, so these rows do not create fake agents.
     # Every refusal stops the seed; the fixture token's permissions are never widened.
     node - "$dir" "$now" "http://127.0.0.1:$rport" "$dir/.graphhelm/events.token" <<'NODE'

@@ -83,6 +83,140 @@ fn run(repo: &Path, card: Option<&Path>) -> (i32, Value) {
     (output.status.code().unwrap(), reply)
 }
 
+/// Contract: an explicit binding turns a blocked verdict into a pending, sealed proposal.
+/// Regression: the check prints advice but never submits it, or submits the review draft.
+/// Existing check tests stop at recommendation; the HTTP admission test supplies its own signal.
+/// Cost: short local CLI processes, one temporary git repo and event store; no network.
+#[test]
+fn routed_blocked_check_records_the_selected_pending_draft() {
+    let repo = repository(&[("docs/notes.md", "outside scope\n")]);
+    let scratch = tempfile::tempdir().unwrap();
+    let card = card(scratch.path(), &["src/lib.rs"]);
+    let events = scratch.path().join("events");
+    let keyring = scratch.path().join("keyring");
+    fs::create_dir(&keyring).unwrap();
+    let key = "0101010101010101010101010101010101010101010101010101010101010101";
+    let minted = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["gateway", "keyring", "init", "--keyring"])
+        .arg(&keyring)
+        .args(["--key-id", "route-key"])
+        .env("GRAPHHELM_EVENTS_KEY", key)
+        .output()
+        .unwrap();
+    assert!(
+        minted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&minted.stdout)
+    );
+    let graph =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/graphs/software-feature.yaml");
+    let fixtures = scratch.path().join("fixtures.json");
+    fs::write(&fixtures, br#"{"nodeOutcomes":{}}"#).unwrap();
+    let start = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "execution", "start", "--file"])
+        .arg(&graph)
+        .args(["--events"])
+        .arg(&events)
+        .args(["--fixtures"])
+        .arg(&fixtures)
+        .args([
+            "--mode",
+            "supervised",
+            "--execution",
+            "exec-keel-route",
+            "--held",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        start.status.success(),
+        "{}",
+        String::from_utf8_lossy(&start.stdout)
+    );
+    let started: Value = serde_json::from_slice(&start.stdout).unwrap();
+    let graph_hash = started["data"]["graphHash"].as_str().unwrap();
+    let head = graphhelm_process::command("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let head = String::from_utf8(head.stdout).unwrap().trim().to_owned();
+    let draft = |id: &str| {
+        serde_json::json!({
+            "id": id, "expectedVersion": 1, "expectedHash": graph_hash,
+            "operations": [{"op": "patchNode", "path": "/spec/nodes/plan", "value": {"name": id}}]
+        })
+    };
+    let binding = scratch.path().join("binding.json");
+    fs::write(
+        &binding,
+        serde_json::to_vec(&serde_json::json!({
+            "expectedHead": head, "execution": "exec-keel-route", "task": "issue-1045",
+            "node": "plan", "implementDraft": draft("draft-implement"),
+            "reviewDraft": draft("draft-review")
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args([
+            "--json",
+            "keel",
+            "check",
+            "--diff",
+            "HEAD~1..HEAD",
+            "--repo",
+        ])
+        .arg(repo.path())
+        .args(["--card"])
+        .arg(&card)
+        .args(["--route-proposal"])
+        .arg(&binding)
+        .args(["--events"])
+        .arg(&events)
+        .args(["--execution", "exec-keel-route", "--keyring"])
+        .arg(&keyring)
+        .args(["--key-id", "route-key"])
+        .env("GRAPHHELM_EVENTS_KEY", key)
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let checked: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(checked["data"]["recommendation"]["step"], "implement");
+    assert_eq!(checked["data"]["routeProposal"]["kind"], "keel.blocked");
+    let status = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "execution", "status", "--events"])
+        .arg(&events)
+        .args(["--execution", "exec-keel-route"])
+        .output()
+        .unwrap();
+    assert!(
+        status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&status.stdout)
+    );
+    let status: Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert!(
+        status["data"]["attentionReasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason["kind"] == "pending_draft"
+                && reason["draft_id"] == "draft-implement"),
+        "{status}"
+    );
+}
+
 fn run_verdict(comments: &Path, head: &str, reviewer: &str) -> (i32, Value) {
     let output = Command::cargo_bin("graphhelm")
         .unwrap()

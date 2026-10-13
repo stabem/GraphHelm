@@ -697,6 +697,9 @@ pub enum KeelCommand {
         keyring: Option<PathBuf>,
         #[arg(long, requires = "events")]
         key_id: Option<String>,
+        /// Explicit graph-specific drafts to propose after a valid check; requires sealed records.
+        #[arg(long, requires_all = ["events", "execution", "keyring", "key_id"])]
+        route_proposal: Option<PathBuf>,
     },
     /// Plan one task (#382 phase B): classify the paths it names under the shipped `keel.yaml`
     /// (invariant class, user-visible screen, code, docs), and print the `graphhelm-task-plan-v1`

@@ -39,6 +39,13 @@ describe("buildMission", () => {
     expect(m.summary.proven).toBe(1);
   });
 
+  it("a replay from a different approved flow digest is stale, not proven", () => {
+    const run: JourneyRunView = { state: "ready", kind: "replay", digest: "old", screens: { watch: { frame: true, result: "pass" } } };
+    const m = buildMission(journey, run, [], [], "current");
+    expect(m.steps[1]).toMatchObject({ status: "stale", reason: null });
+    expect(m.summary.proven).toBe(0);
+  });
+
   it("preview is not proof", () => {
     const run: JourneyRunView = { state: "ready", kind: "preview", screens: { watch: { frame: true, result: "pass" } } };
     expect(buildMission(journey, run, []).steps[1].status).toBe("preview_only");

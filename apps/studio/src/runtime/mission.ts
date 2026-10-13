@@ -2,7 +2,7 @@ import type { JourneyRunView, JourneyView } from "./types";
 import type { TaskEventRecord, TaskState } from "./team-tasks";
 import { realName, realNames, type Lane } from "./lane-bars";
 
-export type StepStatus = "proven" | "failed" | "needs_you" | "preview_only" | "not_run";
+export type StepStatus = "proven" | "stale" | "failed" | "needs_you" | "preview_only" | "not_run";
 export type TrustLevel = 0 | 1 | 2 | 3 | 4 | 5;
 export const TRUST_LABELS = ["Written", "Reviewed", "Merged", "Proven", "Seen by you"] as const;
 
@@ -39,13 +39,14 @@ export function skippedEdgeInto(run: JourneyRunView | null, stepId: string, step
   return Object.entries(run?.edges ?? {}).find(([id, e]) => e.result === "skipped" && keys.has(id));
 }
 
-function stepStatus(stepId: string, run: JourneyRunView | null, stepIds: string[]): { status: StepStatus; reason: string | null } {
+function stepStatus(stepId: string, run: JourneyRunView | null, stepIds: string[], currentDigest?: string | null): { status: StepStatus; reason: string | null } {
   if (!run || run.state === "none") return { status: "not_run", reason: null };
   const skipped = skippedEdgeInto(run, stepId, stepIds);
   if (skipped) return { status: "needs_you", reason: skipped[1].reason ?? null };
   const screen = run.screens?.[stepId];
   if (!screen?.result) return { status: "not_run", reason: null };
   if (run.kind !== "replay") return { status: "preview_only", reason: screen.reason ?? null };
+  if (currentDigest !== undefined && (currentDigest === null || run.digest !== currentDigest)) return { status: "stale", reason: null };
   return screen.result === "pass" ? { status: "proven", reason: null } : { status: "failed", reason: screen.reason ?? null };
 }
 
@@ -81,9 +82,9 @@ export function toMissionTask(raw: TaskState): MissionTask {
   };
 }
 
-export function buildMission(journey: JourneyView, run: JourneyRunView | null, tasks: TaskState[], records: TaskEventRecord[] = []): Mission {
+export function buildMission(journey: JourneyView, run: JourneyRunView | null, tasks: TaskState[], records: TaskEventRecord[] = [], currentDigest?: string | null): Mission {
   const steps = journey.steps.map((s, index) => ({
-    stepId: s.stepId, index, title: s.screen?.title ?? s.stepId, promise: s.promises?.[0] ?? null, ...stepStatus(s.stepId, run, journey.steps.map((x) => x.stepId)),
+    stepId: s.stepId, index, title: s.screen?.title ?? s.stepId, promise: s.promises?.[0] ?? null, ...stepStatus(s.stepId, run, journey.steps.map((x) => x.stepId), currentDigest),
   }));
   const closedIssues = new Set(records.filter((record) => record.kind === "task.merged").flatMap((record) => record.closes ?? []));
   const linked = tasks

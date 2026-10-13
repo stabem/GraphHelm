@@ -36,7 +36,14 @@ function setup(over: Partial<Parameters<typeof MissionGraph>[0]> = {}) {
 describe("MissionGraph", () => {
   it("shows the quiet summary line", () => {
     const { container } = setup();
-    expect(container.querySelector(".mg-summary")).toHaveTextContent("0/2 proven · 0 in flight · 0 ready, unclaimed · 1 need you");
+    expect(container.querySelector(".mg-summary")).toHaveTextContent("0/2 proven · 0 in flight · 0 Ready · unclaimed · 1 need you");
+  });
+
+  it("uses the same Ready · unclaimed state for task nodes and the summary", () => {
+    const unclaimed = { ...merged, key: "unclaimed", lane: null, step: "implement" as const };
+    const { container } = setup({ mission: { ...mission, tasks: [unclaimed], summary: { ...mission.summary, readyUnclaimed: 1 } } });
+    expect(container.querySelector(".mg-summary")).toHaveTextContent("Ready · unclaimed");
+    expect(screen.getByRole("button", { name: /#564/ })).toHaveTextContent("Ready · unclaimed");
   });
 
   it("a column head click selects its step; the selected column is marked", async () => {

@@ -112,6 +112,15 @@ class PluginVersionGuard(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("bump the plugin version", message)
 
+    def test_move_from_shipped_content_to_plugin_docs_needs_no_bump(self):
+        source = self.repo / "plugins/graphhelm/skills/guide/SKILL.md"
+        destination = self.repo / "plugins/graphhelm/docs/SKILL.md"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.rename(destination)
+        passed, message = self.check(self.commit("move guide into docs"))
+        self.assertTrue(passed, message)
+        self.assertIn("version bump not required", message)
+
     def test_deleted_or_renamed_shipped_content_cannot_evade_guard(self):
         (self.repo / "plugins/graphhelm/skills/guide/SKILL.md").unlink()
         self.write("moved-outside-plugin.md", "# Guide\n")

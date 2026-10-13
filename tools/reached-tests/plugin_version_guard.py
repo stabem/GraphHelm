@@ -43,9 +43,15 @@ def _changed_paths(repo, base, head):
     while index < len(fields) and fields[index]:
         status = fields[index]
         index += 1
-        count = 2 if status.startswith(("R", "C")) else 1
-        paths.extend(fields[index:index + count])
-        index += count
+        if status.startswith(("R", "C")):
+            source, destination = fields[index:index + 2]
+            paths.append(destination)
+            if status.startswith("R") and not destination.startswith(PLUGIN_ROOTS):
+                paths.append(source)
+            index += 2
+        else:
+            paths.append(fields[index])
+            index += 1
     return paths
 
 

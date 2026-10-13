@@ -6,12 +6,12 @@ import html
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 
-PINNED_CLI = Path("C:/Users/gabri/.graphhelm/versions/d8751570-dev/bin/graphhelm.exe")
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 TIMEOUT_SECONDS = 180
 
@@ -140,12 +140,11 @@ def diagnostic_ids(envelope: dict) -> set[str]:
 
 
 def run_scenario() -> dict:
-    cli_value = os.environ.get("GRAPHHELM_CLI")
-    if not cli_value:
-        raise RuntimeError("GRAPHHELM_CLI must name the pinned prebuilt graphhelm executable")
-    cli = Path(cli_value).resolve()
-    if cli != PINNED_CLI.resolve() or not cli.is_file():
-        raise RuntimeError(f"GRAPHHELM_CLI must be the pinned executable: {PINNED_CLI}")
+    cli_value = os.environ.get("GRAPHHELM_CLI") or "graphhelm"
+    cli_path = shutil.which(cli_value)
+    if cli_path is None:
+        raise RuntimeError(f"GraphHelm CLI not found: {cli_value}")
+    cli = Path(cli_path).resolve()
 
     scratch_parent = Path(__file__).resolve().parent
     scratch_parent.mkdir(parents=True, exist_ok=True)
@@ -186,7 +185,7 @@ def run_scenario() -> dict:
             "status": "passed",
             "summary": "regression=parent-failed,head-passed,earned; "
                        "vacuous=parent-passed,head-passed,green_on_parent",
-            "pinnedCli": str(cli),
+            "cli": str(cli),
             "vacuousControl": {"head": vacuous_head, "proof": list(vacuous_tuple),
                                "diagnostics": sorted(vacuous_ids)},
             "regression": {"head": real_head, "proof": list(real_tuple),

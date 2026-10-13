@@ -16,10 +16,9 @@ Runtime, or creates a symlink. The specimen Git repository and prover worktrees 
 temporary directory under this fixture and are removed on exit. Child processes are hidden on
 Windows and have bounded deadlines.
 
-Set `GRAPHHELM_CLI` to the pinned prebuilt CLI and run from the repository root:
+Set `GRAPHHELM_CLI` to a compatible CLI, or place `graphhelm` on `PATH`, then run from the repository root:
 
 ```powershell
-$env:GRAPHHELM_CLI = 'C:/Users/gabri/.graphhelm/versions/d8751570-dev/bin/graphhelm.exe'
 python .graphhelm/fixtures/keel-red-first-proof/scenario.py
 ```
 

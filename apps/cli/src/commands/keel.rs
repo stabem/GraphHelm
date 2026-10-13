@@ -264,10 +264,36 @@ pub(super) fn check(
     }
     let base = if base.is_empty() { "HEAD" } else { base };
     let head = if head.is_empty() { "HEAD" } else { head };
+    // Pin both revisions before evaluating any part of the report. The later signal must cite
+    // exactly the commit whose diff and journey captures this check evaluated.
+    let resolve = |revision: &str| match graphhelm_process::command("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", "--end-of-options"])
+        .arg(format!("{revision}^{{commit}}"))
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        }
+        Ok(_) => Err(input_error(
+            "git could not resolve the range revision",
+            "/diff",
+        )),
+        Err(_) => Err(input_error("git did not start", "/repo")),
+    };
+    let base = match resolve(base) {
+        Ok(base) => base,
+        Err(outcome) => return outcome,
+    };
+    let head = match resolve(head) {
+        Ok(head) => head,
+        Err(outcome) => return outcome,
+    };
     let merge_base = match graphhelm_process::command("git")
         .arg("-C")
         .arg(repo)
-        .args(["merge-base", base, head])
+        .args(["merge-base", &base, &head])
         .output()
     {
         Ok(output) if output.status.success() => {
@@ -347,7 +373,7 @@ pub(super) fn check(
             .extend(journey_reader_findings(&journeys, &changed));
     }
     if let Some((card, _)) = card.as_ref().filter(|(card, _)| !card.journeys.is_empty()) {
-        match journey_findings(repo, head, card, &journeys, records.as_ref(), &changed) {
+        match journey_findings(repo, &head, card, &journeys, records.as_ref(), &changed) {
             Ok(findings) => report.findings.extend(findings),
             Err(outcome) => return *outcome,
         }
@@ -363,7 +389,7 @@ pub(super) fn check(
             let options = ProveOptions {
                 repo: repo.to_path_buf(),
                 base: merge_base.clone(),
-                head: head.to_owned(),
+                head: head.clone(),
                 target_dir,
                 scratch_root,
                 timeout: Duration::from_secs(args.timeout_secs),
@@ -393,27 +419,6 @@ pub(super) fn check(
         })
         .collect();
     let refused = report.refused;
-    let head = match graphhelm_process::command("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["rev-parse", "--verify", "--end-of-options"])
-        .arg(format!("{head}^{{commit}}"))
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout).trim().to_owned()
-        }
-        Ok(output) => {
-            return input_error(
-                format!(
-                    "git could not resolve the range head: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ),
-                "/diff",
-            );
-        }
-        Err(error) => return input_error(format!("git did not start: {error}"), "/repo"),
-    };
     let recommendation = if refused {
         serde_json::json!({
             "step": "implement",

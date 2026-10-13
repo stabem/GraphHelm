@@ -5,6 +5,7 @@
 //! function. The oracle for each case is a literal: the rule id, the exit code, the counts.
 
 use assert_cmd::Command;
+use graphhelm_events::EvidenceOpener;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -230,6 +231,95 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         "{status}"
     );
     assert_eq!(status["data"]["signalsRecorded"], 1);
+    // Read the persisted event and decrypt its sealed envelope. A response alone could claim
+    // admission while dropping the checked head or the precise scope finding.
+    struct Clock;
+    impl graphhelm_protocols::Clock for Clock {
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::Utc::now()
+        }
+    }
+    struct Ids;
+    impl graphhelm_protocols::IdGenerator for Ids {
+        fn next_id(&self, prefix: &'static str) -> String {
+            format!("{prefix}-test")
+        }
+    }
+    let store = graphhelm_events::LocalEventRepository::open(
+        &events,
+        std::sync::Arc::new(Clock),
+        std::sync::Arc::new(Ids),
+    )
+    .unwrap();
+    let (stream, history) = store.read_unique_replay_stream().unwrap();
+    let recorded = history
+        .iter()
+        .find(|event| {
+            matches!(
+                event.kind,
+                graphhelm_protocols::EventKind::SignalRecorded(_)
+            )
+        })
+        .unwrap();
+    let reference = recorded
+        .evidence_refs
+        .first()
+        .expect("signal has sealed evidence");
+    let sealed = match store
+        .sealed_evidence(&stream.scope, reference.evidence_id())
+        .unwrap()
+    {
+        graphhelm_events::EvidenceRead::Available(sealed) => sealed,
+        other => panic!("signal evidence unavailable: {other:?}"),
+    };
+    let provider = graphhelm_sealed_key_provider::SealedKeyProvider::open(
+        &keyring,
+        "route-key",
+        graphhelm_events::SecretBytes::new(vec![1; 32]),
+    )
+    .unwrap();
+    let protector = graphhelm_events::EvidenceProtector::new(provider);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let envelope = runtime
+        .block_on(protector.open(stream.scope.clone(), &sealed))
+        .unwrap();
+    let signal: Value = envelope.expose(|bytes| serde_json::from_slice(bytes).unwrap());
+    assert_eq!(signal["type"], "keel.blocked");
+    assert_eq!(signal["source"]["id"], "plan");
+    assert_eq!(signal["proposal"]["id"], "draft-implement");
+    let evidence = signal["evidence"].as_array().unwrap();
+    for exact in [
+        format!("head:{head}"),
+        "task:issue-1045".into(),
+        "node:plan".into(),
+        "finding:keel.scope.path_outside_card".into(),
+        "path:docs/notes.md".into(),
+    ] {
+        assert!(
+            evidence.iter().any(|value| value == &exact),
+            "missing {exact}: {signal}"
+        );
+    }
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| matches!(event.kind, graphhelm_protocols::EventKind::DraftProposed(_)))
+            .count(),
+        1
+    );
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| matches!(
+                event.kind,
+                graphhelm_protocols::EventKind::GraphVersionPublished(_)
+            ))
+            .count(),
+        1
+    );
     let stale = scratch.path().join("stale.json");
     fs::write(&stale, serde_json::to_vec(&serde_json::json!({
         "expectedHead": "0000000000000000000000000000000000000000",

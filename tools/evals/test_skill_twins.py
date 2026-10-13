@@ -160,6 +160,28 @@ class SkillTwinsTest(unittest.TestCase):
             self.assertIn(incomplete, criteria)
         self.assertIn("INCOMPLETE", criteria)
 
+    def test_no_skill_arithmetic_keeps_skill_available_and_marks_execution_failures_incomplete(self):
+        case = ROOT / "evals/graphhelm-development-contracts/no-skill-arithmetic"
+        prompt = (case / "prompt.md").read_text(encoding="utf-8")
+        criteria = (case / "graders/criteria.md").read_text(encoding="utf-8")
+        self.assertTrue(prompt.startswith("---\nmax_turns: 4\nallowed_tools: [Skill]\n---\n\n"))
+        request = prompt.split("---", 2)[2]
+        self.assertIn("17 plus 25", request)
+        self.assertIn("only the number", request)
+        for skill_name in ("keel", "test-audit", "graphhelm-"):
+            self.assertNotIn(skill_name, request)
+        for obligation in (
+            "completed transcript", "final answer is 42", "no Skill invocation",
+            "missing transcript", "truncated transcript", "tool failure",
+            "infrastructure failure", "INCOMPLETE", "never a pass",
+        ):
+            self.assertIn(obligation, criteria)
+        readme = (ROOT / "evals/graphhelm-development-contracts/README.md").read_text(encoding="utf-8")
+        section = readme.split("`no-skill-arithmetic`", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("corpus preparation", section)
+        self.assertIn("external runner", section)
+        self.assertIn("INCOMPLETE", section)
+
     def test_unprompted_twins_preserve_scenarios_without_skill_hints(self):
         skill_names = set()
         skill_paths = list(ROOT.glob("plugins/*/skills/*/SKILL.md"))

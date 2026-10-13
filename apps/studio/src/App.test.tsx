@@ -5332,3 +5332,64 @@ it("shows unavailable identity without losing startup timing", async () => {
   expect(timing).toHaveTextContent("Journal verification: 0 ms");
   expect(timing).toHaveTextContent("Lifecycle initialization: 60 ms");
 });
+
+it("refreshes the Runtime details snapshot once and keeps the live view intact", async () => {
+  const initial = {
+    previousExit: { state: "vanished" as const, pid: 11, at: 1_700_000_001, instance: "11111111111111111111111111111111" },
+    startup: { journalVerifyMs: 10, lifecycleStartMs: 20 },
+    currentRun: { instance: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", pid: 21, startedAt: 1_700_000_010 },
+  };
+  let finishRefresh!: (value: unknown) => void;
+  const refreshed = new Promise<unknown>((resolve) => { finishRefresh = resolve; });
+  const client = stubClient({ health: vi.fn().mockResolvedValueOnce(initial).mockReturnValueOnce(refreshed) });
+  render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null} session={async () => ({ token: "local-token", project: "GraphHelm" })} />);
+  await screen.findByText("live");
+  const disclosure = screen.getByRole("group", { name: "Runtime startup" });
+  expect(disclosure).toHaveTextContent("Runtime at connection");
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh Runtime details" }));
+  await waitFor(() => expect(client.health).toHaveBeenCalledTimes(2));
+  const refreshButton = screen.getByRole("button", { name: "Refresh Runtime details" });
+  expect(refreshButton).toBeDisabled();
+  fireEvent.click(refreshButton);
+  expect(client.health).toHaveBeenCalledTimes(2);
+
+  await act(async () => finishRefresh({
+    previousExit: { state: "panicked", pid: 33, at: 1_700_000_033, instance: "33333333333333333333333333333333" },
+    startup: { journalVerifyMs: 310, lifecycleStartMs: 420 },
+    currentRun: { instance: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", pid: 42, startedAt: 1_700_000_042 },
+  }));
+  expect(disclosure).toHaveTextContent("Runtime at last successful read");
+  expect(disclosure).toHaveTextContent("Instance: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+  expect(disclosure).toHaveTextContent("PID: 42");
+  expect(disclosure).toHaveTextContent(new Date(1_700_000_042 * 1000).toISOString());
+  expect(disclosure).toHaveTextContent("Journal verification: 310 ms");
+  expect(disclosure).toHaveTextContent("Lifecycle initialization: 420 ms");
+  expect(screen.getByLabelText("Previous Runtime exit")).toHaveTextContent("instance: 33333333333333333333333333333333");
+  expect(screen.getByText("live")).toBeInTheDocument();
+  expect(client.listExecutions).toHaveBeenCalledTimes(1);
+});
+
+it("keeps the last Runtime details on a failed refresh and clears them for a legacy reply", async () => {
+  const initial = {
+    previousExit: { state: "vanished" as const, pid: 1, at: 1_700_000_001, instance: "11111111111111111111111111111111" },
+    startup: { journalVerifyMs: 10, lifecycleStartMs: 20 },
+    currentRun: { instance: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", pid: 21, startedAt: 1_700_000_010 },
+  };
+  const client = stubClient({ health: vi.fn().mockResolvedValueOnce(initial).mockRejectedValueOnce(new Error("secret provider detail")).mockResolvedValueOnce({}) });
+  render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null} session={async () => ({ token: "local-token", project: "GraphHelm" })} />);
+  await screen.findByText("live");
+  const clickRefresh = () => fireEvent.click(screen.getByRole("button", { name: "Refresh Runtime details" }));
+  clickRefresh();
+  expect(await screen.findByText("Runtime details refresh failed. Details shown above were not updated.")).toBeInTheDocument();
+  const disclosure = screen.getByRole("group", { name: "Runtime startup" });
+  expect(disclosure).toHaveTextContent("Instance: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  expect(screen.queryByText("secret provider detail")).not.toBeInTheDocument();
+
+  clickRefresh();
+  await waitFor(() => expect(client.health).toHaveBeenCalledTimes(3));
+  expect(disclosure).toHaveTextContent("Runtime identity unavailable");
+  expect(disclosure).toHaveTextContent("Startup timing unavailable");
+  expect(disclosure).not.toHaveTextContent("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  expect(screen.queryByLabelText("Previous Runtime exit")).not.toBeInTheDocument();
+});

@@ -51,7 +51,9 @@
 .mv-nav .mv-tab[aria-pressed="true"] { background: #22252D; color: #E9E7E2; font-weight: 500; }
 .mv-back { padding: 6px 12px; border: 1px solid #2A2D34; border-radius: 8px; background: transparent; color: #E9E7E2; font: inherit; cursor: pointer; }
 
-.mv-body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 20px; min-width: 0; }
+.mv-body { display: grid; grid-template-columns: 300px minmax(0, 1fr); align-items: start; gap: 20px; min-width: 0; }
+.mv-body > .mv-summary, .mv-body > .mv-run-graph, .mv-body > .mv-none { grid-column: 1 / -1; }
+.mv-body:not(:has(> .mv-journeys)) > .mv-content { grid-column: 1 / -1; }
 
 /* Journey rail */
 .mv-journeys { flex: 0 0 300px; max-width: 300px; display: flex; flex-direction: column; gap: 6px; min-width: 0;
@@ -95,12 +97,13 @@
 
 /* #706, #716: under 1600px the rail gives 60px back so the graph's five columns stay >= 150px at 1440. */
 @media (max-width: 1600px) and (min-width: 701px) {
+  .mv-body { grid-template-columns: 240px minmax(0, 1fr); }
   .mv-journeys { flex-basis: 240px; max-width: 240px; }
 }
 
 /* Phone width (design: Glance): the rail stacks on top, the graph scrolls, the inspector goes below. */
 @media (max-width: 700px) {
-  .mv-body { flex-direction: column; align-items: stretch; min-width: 0; }
+  .mv-body { display: flex; flex-direction: column; align-items: stretch; min-width: 0; }
   .mv-journeys { max-width: 100%; flex: none; max-height: none; overflow: visible; padding-bottom: 0; }
   .mv-content { flex: none; width: 100%; max-height: none; overflow: visible; padding-bottom: 0; }
   .mv .mg-body { flex-direction: column; align-items: stretch; }

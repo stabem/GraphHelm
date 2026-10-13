@@ -192,6 +192,16 @@ export default function App({
   const toolsRef = useRef<RegisteredTools | null>(null);
 
   const [runActionsOpen, setRunActionsOpen] = useState(false);
+  /** #1156: resume was pressed without a graph file; the field says what it is waiting for. */
+  const [resumeNeedsFile, setResumeNeedsFile] = useState(false);
+  // #1156: Escape closes the Run actions popover. A click elsewhere does not: a pending proposal
+  // opens the menu on purpose, and selecting the run must not shut it again.
+  useEffect(() => {
+    if (!runActionsOpen) return undefined;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setRunActionsOpen(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [runActionsOpen]);
   /** #585: the step whose chat picker Main chat's "Connect existing chat" opened. */
   const [connected, setConnected] = useState(false);
   const [previousExit, setPreviousExit] = useState<RuntimePreviousExit | null>(null);
@@ -262,6 +272,8 @@ export default function App({
   }, [executions]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selected, setSelected] = useState("");
+  // #1156: the resume prompt belongs to the run it was asked for.
+  useEffect(() => { setResumeNeedsFile(false); }, [selected]);
   const [governedActorByNode, setGovernedActorByNode] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<ExecutionStatus | null>(null);
   // Loads, polls and verified mutations can settle out of order within one selection. A later
@@ -3145,7 +3157,9 @@ export default function App({
                 graphFileOpen={graphFileOpen} onGraphFileOpenChange={setGraphFileOpen}
                 graphFileRow={<><GraphFileRow graphFile={graphFile} onGraphFileChange={onGraphFileChange} onDrawConnections={() => void drawConnections()} busy={busy}
                   demonstration={status.executor === "fixture"} fixtureFile={fixtureFile} onFixtureFileChange={setFixtureFile} inputRef={graphFileInput} />
-                  <p className={`connection-note ${connectionTone}`} role="status">{connectionNote}</p></>} />
+                  <p className={`connection-note ${resumeNeedsFile && graphFile.trim().length === 0 ? "none" : connectionTone}`} role="status">{resumeNeedsFile && graphFile.trim().length === 0
+                    ? "Resume needs this run's graph file. Type its path on the Runtime host in the Graph file field, then press resume again."
+                    : connectionNote}</p></>} />
             )}
             </div>
             {(canvasTab === "graph" || canvasTab === "journey") && (
@@ -3336,6 +3350,8 @@ export default function App({
                     // no path, resume walks the person to the box instead of sitting disabled
                     // with its excuse in a tooltip a disabled button never shows.
                     if (graphFile.trim().length === 0 && resumeGraph === null && !snapshotResumeAvailable) {
+                      setRunActionsOpen(false);
+                      setResumeNeedsFile(true);
                       setCanvasTab("team");
                       setGraphFileOpen(true);
                       setFileFocusNonce((nonce) => nonce + 1);

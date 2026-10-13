@@ -642,6 +642,18 @@ describe("live team layout", () => {
     await userEvent.click(screen.getByRole("button", { name: "resume" }));
     expect(screen.getByRole("tab", { name: "Team (live)" })).toHaveAttribute("aria-selected", "true");
     await waitFor(() => expect(screen.getByLabelText("Graph file path on the Runtime host")).toHaveFocus());
+    // #1156: the menu closes off the field, and the field says what resume waits for.
+    expect(screen.getByRole("button", { name: "Run actions" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText(/Resume needs this run's graph file/)).toBeInTheDocument();
+  });
+
+  it("#1156: Escape closes Run actions", async () => {
+    await open(stubClient());
+    const summary = screen.getByRole("button", { name: "Run actions" });
+    if (summary.getAttribute("aria-expanded") !== "true") await userEvent.click(summary);
+    await waitFor(() => expect(summary).toHaveAttribute("aria-expanded", "true"));
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(summary).toHaveAttribute("aria-expanded", "false"));
   });
 
 

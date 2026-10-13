@@ -351,6 +351,25 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
         )}
       </header>
   );
+  const cardRecords = events.filter((event) => {
+    if (event.kind !== "signal_recorded" || !event.payload || typeof event.payload !== "object") return false;
+    const payload = event.payload as { kind?: unknown; sourceKind?: unknown };
+    return payload.kind === "keel.card" && payload.sourceKind === "node";
+  });
+  const keelCards = <section className="mv-pad" aria-label="Keel cards">
+    <h2>Keel cards</h2>
+    {historyLoading && <p>Card history: still reading the history</p>}
+    {cardRecords.length > 0 && !historyLoading && partial && <p>Showing partial history</p>}
+    {cardRecords.length === 0 && <p>No Keel card in the loaded history</p>}
+    {cardRecords.map((event) => {
+      const source = (event.payload as { sourceId?: unknown }).sourceId;
+      const text = envelopes[event.sequence]?.text;
+      return <article key={event.sequence}>
+        <h3>{`${typeof source === "string" && source ? source : "Unknown node"} · record #${event.sequence}`}</h3>
+        <p style={{ whiteSpace: "pre-wrap" }}>{text?.trim() || "Keel card recorded; content unavailable"}</p>
+      </article>;
+    })}
+  </section>;
   const page = onTeam ? "full" : undefined;
   // #668: every open PR as its Graph node, by stage, above the Agents board; a click opens it on the Graph.
   const kanbanItems: KanbanItem[] = groups.flatMap((g) => {
@@ -385,7 +404,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   if (sel === null) return <div className="mv" data-wide="true" data-page={page}>
     {routeFailed}{historyFailedCount > 0 && <div role="alert">History partly loaded · {historyFailedCount} records could not be read · <button type="button" onClick={onRetryHistory}>Retry</button></div>}{header}
     {sub === "lanes" ? <div className="mv-pad">{lanesView}</div>
-      : <>{sub === "graph" && runGraph}{tasksRouteMissing ? routeMissing : <p className="mv-none mv-pad" role={historyLoading ? "status" : undefined}>{historyLoading ? "Showing recent work · still reading the history" : "No journeys in this project yet"}</p>}</>}</div>;
+      : <>{sub === "graph" && <>{runGraph}{keelCards}</>}{tasksRouteMissing ? routeMissing : <p className="mv-none mv-pad" role={historyLoading ? "status" : undefined}>{historyLoading ? "Showing recent work ? still reading the history" : "No journeys in this project yet"}</p>}</>}</div>;
   const rawGroup: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
   // #591: the live Review row names only the current reviewer (latest assignment on the current head).
   const group: WorkGroup | null = rawGroup ? { ...rawGroup, rows: rawGroup.graphRows.map((r) => ({ ...r, task: withCurrentReviewer(r.task, lanes) })) } : null;
@@ -644,6 +663,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
         )}
         <div className="mv-content" ref={contentRef}>
           {page !== "full" && sub === "graph" && runGraph}
+          {sub === "graph" && keelCards}
           {sub === "graph" && group && <IssueGraph group={group} stepFor={stepFor} selectedTaskKey={shownTask} selectedCol={stageCol}
             onSelectTask={(key) => { setTaskKey(key); setStageCol(null); }} onSelectCol={(c) => { setStageCol(c); setTaskKey(null); }} onOpenTest={openTest} health={health} pace={pace}
             {...(inspectorActions ? { inspectorActions } : {})} />}

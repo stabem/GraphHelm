@@ -4829,6 +4829,14 @@ describe("the run it just started", () => {
     return firstCall(client.startTask)[0] as string;
   }
 
+  it("shows no recorded Keel card after starting a task without a card signal", async () => {
+    const client = withStarted();
+    await startOne(client);
+    await userEvent.click(await screen.findByRole("tab", { name: "Graph" }));
+    expect(await screen.findByRole("region", { name: "Keel cards" })).toHaveTextContent("No Keel card in the loaded history");
+    expect(screen.getByRole("region", { name: "Keel cards" })).not.toHaveTextContent("accepted");
+  });
+
   it("opens a durably listed run while the start response is still waiting for the model", async () => {
     let committed: string | null = null;
     let finish!: (value: MutationEvidence) => void;

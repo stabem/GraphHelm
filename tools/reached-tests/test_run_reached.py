@@ -1,5 +1,6 @@
 """Focused contract tests for run_reached.py; no Cargo, Runtime, browser, or shell."""
 import json
+import importlib.util
 import os
 import sys
 import tempfile
@@ -28,6 +29,30 @@ class RunnerContracts(unittest.TestCase):
             patcher = patch.object(rr, name, side_effect=value)
             patcher.start()
             self.addCleanup(patcher.stop)
+
+    def test_external_runner_uses_target_repository_selector(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            external = root / "external" / "tools" / "reached-tests"
+            target = root / "target" / "tools" / "reached-tests"
+            external.mkdir(parents=True)
+            target.mkdir(parents=True)
+            (external / "run_reached.py").write_bytes(Path(rr.__file__).read_bytes())
+            for directory, filters in ((external, ["unrelated::"]),
+                                       (target, ["keel_check::", "journey_scope_guard::"])):
+                plan = {"steps": [{"argv": ["cargo", "test", "--test", "cli", value],
+                                    "cwd": ".", "slot": True} for value in filters]}
+                (directory / "reached_tests.py").write_text(
+                    "import json\nprint(json.dumps(" + repr(plan) + "))\n", encoding="utf-8")
+            spec = importlib.util.spec_from_file_location("external_runner", external / "run_reached.py")
+            runner = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(runner)
+            selected = runner._selector(root / "target", "base", "HEAD", root / "selector.log")
+            filters = [step["argv"][-1] for step in selected["steps"]]
+            self.assertEqual(filters, ["keel_check::", "journey_scope_guard::"])
+            (target / "reached_tests.py").unlink()
+            with self.assertRaisesRegex(RuntimeError, "selector"):
+                runner._selector(root / "target", "base", "HEAD", root / "missing.log")
 
     def test_batch_cli_defaults_on_and_supports_explicit_opt_out(self):
         with patch.object(rr, "run", return_value=0) as run:

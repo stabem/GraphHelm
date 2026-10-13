@@ -26,7 +26,6 @@ from typing import Any
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
-SELECTOR = Path(__file__).with_name("reached_tests.py")
 MAX_CAPTURE = 4000
 MAX_VITEST_REPORT = 2 * 1024 * 1024
 _SHELL_MARKERS = ("&&", "||", "|", ">", "<", "`", "$(")
@@ -73,12 +72,15 @@ def _resolve_graphhelm(args: argparse.Namespace) -> Path:
 
 
 def _selector(repo: Path, base: str, head: str, log: Path, graphhelm: Path | None = None) -> dict[str, Any]:
+    selector = repo / "tools" / "reached-tests" / "reached_tests.py"
+    if not selector.is_file():
+        raise RuntimeError(f"selector missing in target repository: {selector}")
     env = os.environ.copy()
     if graphhelm is not None:
         env["GRAPHHELM_CLI"] = str(graphhelm)
         env["PATH"] = str(graphhelm.parent) + os.pathsep + env.get("PATH", "")
     proc = subprocess.run(
-        [sys.executable, str(SELECTOR), "--repo", str(repo), "--base", base, "--head", head, "--json"],
+        [sys.executable, str(selector), "--repo", str(repo), "--base", base, "--head", head, "--json"],
         cwd=repo, capture_output=True, text=True, env=env, creationflags=NO_WINDOW
     )
     log.write_text(proc.stdout + ("\n[selector stderr]\n" + proc.stderr if proc.stderr else ""), encoding="utf-8")

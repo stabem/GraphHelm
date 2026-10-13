@@ -161,9 +161,7 @@ class Reach(unittest.TestCase):
 
             *_, missing_tools, _, missing_other = reach(test)
             self.assertEqual(missing_tools, [])
-            self.assertEqual(missing_other, [{
-                "path": test, "reason": "required fixture observer is missing",
-            }])
+            self.assertEqual(missing_other, [test])
 
     def test_shipped_plugin_diff_selects_executable_version_guard(self):
         """A shipped plugin edit must run the version guard for the selected refs.

@@ -16,9 +16,9 @@ export GRAPHHELM_EVENTS_KEY="$(cat "$dir/.graphhelm/serve.key")"
 export GRAPHHELM_SECRET_STUDIO_TOKEN="$(head -1 "$dir/.graphhelm/events.token")"
 ids=("$@")
 # Default order respects the fixture's state: flows that only read, then flows that record,
-# then flows that change the run's state, destructive ones last (cancel, disconnect). A flow
+# then flows that change the run's state. A flow
 # listed here that has no file is skipped; a file not listed here runs after them.
-ORDER="studio-see-team studio-journey-tab studio-mobile studio-node-window studio-models studio-chat-send studio-rename-project studio-answer-question studio-refuse-question studio-name-bot studio-handover studio-answer-node studio-edit-delivery-document studio-connect-existing-chat studio-new-task studio-run-actions studio-connect studio-disconnect"
+ORDER="studio-see-team studio-journey-tab studio-mobile studio-node-window studio-models studio-chat-send studio-rename-project studio-answer-question studio-refuse-question studio-name-bot studio-handover studio-edit-delivery-document studio-connect-existing-chat studio-new-task studio-run-actions studio-connect"
 if [ ${#ids[@]} -eq 0 ]; then
   approved() { grep -q '^status: approved$' "$repo/.graphhelm/journeys/$1.journey.yaml" 2>/dev/null; }
   for id in $ORDER; do approved "$id" && ids+=("$id"); done

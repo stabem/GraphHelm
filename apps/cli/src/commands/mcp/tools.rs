@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 44] = [
+const TOOLS: [ToolSpec; 45] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start). Minimal \
@@ -1677,13 +1677,15 @@ pub(crate) fn call(
             None,
             None,
         )),
-        "tasks" => Ok(api.request(
-            "GET",
-            &url::segment_path(&["v1", "executions", require(arguments, "executionId")?, "tasks"]),
-            None,
-            None,
-            None,
-        )),
+        "tasks" => require(arguments, "executionId").map(|id| {
+            api.request(
+                "GET",
+                &url::segment_path(&["v1", "executions", id, "tasks"]),
+                None,
+                None,
+                None,
+            )
+        }),
         "journeys" => {
             let path = match str_arg(arguments, "executionId") {
                 Some(id) => url::segment_path(&["v1", "executions", id, "journeys"]),

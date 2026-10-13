@@ -11,7 +11,7 @@
 
 use std::path::Path;
 
-use graphhelm_events::EvidenceRead;
+use graphhelm_events::{EvidenceOpener, EvidenceRead};
 use graphhelm_execution::tasks::{TaskEventRecord, TaskState, fold_task_events, parse_task_event};
 use graphhelm_protocols::{EventKind, EvidenceId};
 use serde::Serialize;

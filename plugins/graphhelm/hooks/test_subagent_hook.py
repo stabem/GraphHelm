@@ -22,6 +22,7 @@ class Handler(BaseHTTPRequestHandler):
     events = []
     ambiguous = False
     wrong_actor = False
+    refuse = False
     pause_post = False
     post_entered = threading.Event()
     duplicate_post_entered = threading.Event()
@@ -41,6 +42,15 @@ class Handler(BaseHTTPRequestHandler):
         if sum(item[0] == "POST" for item in self.__class__.requests) > 1:
             self.__class__.duplicate_post_entered.set()
         signal = body["signal"]
+        if self.__class__.refuse:
+            encoded = json.dumps({"ok": False, "diagnostics": [{"code": "GHCLI003_SIGNAL_INVALID",
+                                  "severity": "error", "message": "refused by test"}]}).encode()
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+            return
         actor_id = "other-agent" if self.__class__.wrong_actor else signal["source"]["id"]
         self.__class__.events.append({"sequence": len(self.__class__.events) + 1,
                                       "actor": {"type": "agent", "id": actor_id},
@@ -82,6 +92,7 @@ class SubagentHookTests(unittest.TestCase):
         Handler.events = []
         Handler.ambiguous = False
         Handler.wrong_actor = False
+        Handler.refuse = False
         Handler.pause_post = False
         Handler.post_entered = threading.Event()
         Handler.duplicate_post_entered = threading.Event()
@@ -103,6 +114,40 @@ class SubagentHookTests(unittest.TestCase):
                             "session_id": "parent-1", "agent_id": "child-1", "agent_type": "worker"}
         return subprocess.run([sys.executable, str(SCRIPT), phase, "--host", host], input=json.dumps(value),
                               text=True, capture_output=True, env=self.env, timeout=8, creationflags=NO_WINDOW)
+
+    def test_team_json_bound_lane_without_env_records_the_subagent(self):
+        # #1181: the same payload-less binding() as task_hook; a Claude Desktop lane emitted no
+        # subagent telemetry. On the parent: no POST. Cost: one local POST.
+        root = Path(self.temp.name)
+        home = root / "home"
+        (home / ".graphhelm/lane-sessions").mkdir(parents=True)
+        (home / ".graphhelm/lane-sessions/parent-1.json").write_text(json.dumps({"actor": "codex-4"}), encoding="utf-8")
+        repo = root / "repo"
+        (repo / ".graphhelm").mkdir(parents=True)
+        (repo / ".graphhelm/team.json").write_text(json.dumps({
+            "executionId": "run-test", "runtimeUrl": self.env["GRAPHHELM_RUNTIME_URL"],
+            "tokenFile": self.env["GRAPHHELM_TOKEN_FILE"]}), encoding="utf-8")
+        for key in ("GRAPHHELM_EXECUTION_ID", "GRAPHHELM_RUNTIME_URL", "GRAPHHELM_TOKEN_FILE", "GRAPHHELM_ACTOR"):
+            self.env.pop(key, None)
+        self.env["HOME"] = str(home)
+        self.env["USERPROFILE"] = str(home)
+        result = self.run_hook("stop", {"hook_event_name": "SubagentStop", "session_id": "parent-1",
+                                        "agent_id": "child-1", "agent_type": "worker", "cwd": str(repo)},
+                               host="claude")
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        posts = [item[2]["signal"] for item in Handler.requests if item[0] == "POST"]
+        self.assertEqual([signal["type"] for signal in posts], ["agent_subagent_stopped"])
+
+    def test_bound_hook_that_cannot_deliver_exits_1_with_the_same_line(self):
+        # #1181: a refused POST was exit 0. Cost: one local POST.
+        Handler.refuse = True
+        result = self.run_hook("stop")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(result.stderr.strip(), "graphhelm-subagent-hook: stop unobserved (HTTPError)")
+        for key in ("GRAPHHELM_EXECUTION_ID", "GRAPHHELM_RUNTIME_URL", "GRAPHHELM_TOKEN_FILE"):
+            self.env.pop(key, None)
+        unbound = self.run_hook("stop")
+        self.assertEqual((unbound.returncode, unbound.stderr), (0, ""))
 
     def test_request_contains_protocol_identity_and_phase(self):
         result = self.run_hook("start")

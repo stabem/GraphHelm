@@ -58,6 +58,33 @@ class RecordBlockTest(unittest.TestCase):
         self.assertEqual(passed_signal["type"], "keel.passed")
         self.assertIn("head: def456", passed_signal["evidence"])
 
+    def test_team_json_bound_lane_without_env_records_the_block(self):
+        # #1181: keel_record called binding() without the payload, so a Claude Desktop lane's
+        # refusals were never recorded. On the parent record_block returns False and posts nothing.
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        before = len(Handler.seen)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            token = root / "events.agent.token"
+            token.write_text("tok")
+            home = root / "home"
+            (home / ".graphhelm/lane-sessions").mkdir(parents=True)
+            (home / ".graphhelm/lane-sessions/s-desktop.json").write_text(json.dumps({"actor": "codex-4"}))
+            repo = root / "repo"
+            (repo / ".graphhelm").mkdir(parents=True)
+            (repo / ".graphhelm/team.json").write_text(json.dumps({
+                "executionId": "demo", "runtimeUrl": f"http://127.0.0.1:{server.server_port}",
+                "tokenFile": str(token)}))
+            with mock.patch.dict(os.environ, {"HOME": str(home), "USERPROFILE": str(home)}):
+                for key in ("GRAPHHELM_EXECUTION_ID", "GRAPHHELM_TOKEN_FILE", "GRAPHHELM_RUNTIME_URL",
+                            "GRAPHHELM_NODE_ID", "GRAPHHELM_ACTOR"):
+                    os.environ.pop(key, None)  # a Desktop lane has none of these; patch.dict restores them
+                self.assertTrue(keel_record.record_block("stop", "no card", {"session_id": "s-desktop", "cwd": str(repo)}))
+        server.shutdown()
+        self.assertEqual(len(Handler.seen), before + 1)
+        self.assertEqual(Handler.seen[-1][1]["signal"]["type"], "keel.blocked")
+
     def test_outside_an_execution_nothing_is_sent(self):
         with mock.patch.dict(os.environ, {"GRAPHHELM_EXECUTION_ID": ""}):
             self.assertFalse(keel_record.record_block("stop", "no card", {}))

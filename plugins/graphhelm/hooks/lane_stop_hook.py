@@ -5,6 +5,8 @@ with replyTo. Re-entry and unreadable state allow Stop without acknowledging not
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -86,6 +88,24 @@ def pending(payload: dict | None = None) -> bool:
     raise ValueError("note scan exceeded bound")
 
 
+def record_reconciled(bound: tuple, lane: str, data: dict) -> None:
+    """#1181: the reconciler's reply is a record, not noise. One `tasks.reconciled` signal by the
+    lane per distinct reply (the key is the reply's content, so an unchanged reply is not re-sent)."""
+    execution, token_file, url, _origin, _node = bound
+    content = json.dumps(data, sort_keys=True, separators=(",", ":"))
+    if len(content) > 4096:
+        raise ValueError("reconcile reply too large to record")
+    digest = hashlib.sha256(f"{execution}\0{lane}\0{content}".encode()).hexdigest()[:24]
+    signal_id = f"tasks-reconciled-{digest}"
+    signal = {"id": signal_id, "source": {"type": "tool", "id": lane}, "type": "tasks.reconciled",
+              "severity": "low", "description": content, "evidence": [execution],
+              "emittedAt": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    request(f"{url}/v1/executions/{quote(execution, safe='')}/signal", token_from_file(token_file),
+            "POST", {"signal": signal},
+            {"X-GraphHelm-Actor": lane, "X-GraphHelm-Actor-Type": "agent", "Idempotency-Key": signal_id},
+            timeout=2.0)
+
+
 def main() -> int:
     if sys.argv[1:] == ["--scan"]:
         try:
@@ -113,10 +133,15 @@ def main() -> int:
                 match = re.fullmatch(r"(?:git@github\.com:|https://github\.com/)([^/\s]+/[^/\s]+?)(?:\.git)?", remote)
                 if match is not None:
                     cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
-                    subprocess.run([cli, "tasks", "reconcile", "--execution", execution,
-                                    "--token-file", token_file, "--url", url, "--lane", lane,
-                                    "--repo", match.group(1)],
-                                   capture_output=True, timeout=5, creationflags=NO_WINDOW)
+                    result = subprocess.run([cli, "tasks", "reconcile", "--execution", execution,
+                                             "--token-file", token_file, "--url", url, "--lane", lane,
+                                             "--repo", match.group(1)],
+                                            capture_output=True, timeout=5, creationflags=NO_WINDOW)
+                    if result.returncode == 0:
+                        reply = json.loads(result.stdout or b"{}")
+                        data = reply.get("data") if isinstance(reply, dict) and reply.get("ok") is True else None
+                        if isinstance(data, dict):
+                            record_reconciled(bound, lane, data)
     except (OSError, ValueError, subprocess.SubprocessError):
         pass
     # The host sets this on the continuation caused by a Stop block. One reminder

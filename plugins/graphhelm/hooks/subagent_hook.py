@@ -197,13 +197,16 @@ def _reconcile(url: str, token: str, execution: str, signal: dict) -> bool:
     return False
 
 
-def _run(payload: dict, host: str, event: str) -> None:
+def _run(payload: dict, host: str, event: str, outcome: dict | None = None) -> None:
     if payload.get("hook_event_name") != event:
         raise ValueError("wrong hook event")
     parent, child, agent_type = _identity(payload)
-    bound = binding()
+    # #1181: bind from the payload so title- and team.json-bound lanes emit, not only env-bound ones.
+    bound = binding(payload)
     if bound is None:
         return
+    if outcome is not None:
+        outcome["bound"] = True
     if event == "SubagentStart":
         # Static guidance reaches the child even when telemetry is already delivered.
         # No provider, source retrieval, additional Runtime read or access-policy change.
@@ -266,10 +269,13 @@ def main() -> int:
     parser.add_argument("--host", type=_host, required=True)
     args = parser.parse_args()
     event = "SubagentStart" if args.phase == "start" else "SubagentStop"
+    outcome = {"bound": False}
     try:
-        _run(hook_input(), args.host, event)
+        _run(hook_input(), args.host, event, outcome)
     except (OSError, ValueError, KeyError, RecursionError) as error:
         print(f"graphhelm-subagent-hook: {args.phase} unobserved ({type(error).__name__})", file=sys.stderr)
+        # #1181: bound and undelivered fails loud; unbound stays silent.
+        return 1 if outcome["bound"] else 0
     return 0
 
 

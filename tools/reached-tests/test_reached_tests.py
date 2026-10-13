@@ -34,6 +34,22 @@ def reach(*changed, repo=None):
 
 
 class Reach(unittest.TestCase):
+
+    def test_selection_report_test_selects_offline_report_observer(self):
+        """Map the report CLI regression to its unittest target.
+
+        Cost: temporary files only, milliseconds; no Cargo or external services.
+        """
+        observer = "tools/evals/test_selection_report.py"
+        expected = "python -m unittest tools/evals/test_selection_report.py"
+        with tempfile.TemporaryDirectory() as repo:
+            path = Path(repo, observer)
+            path.parent.mkdir(parents=True)
+            path.write_text("import unittest\n", encoding="utf-8")
+            *_, tools, _, other = reach(observer, repo=repo)
+            self.assertEqual(tools, [expected])
+            self.assertEqual(other, [])
+
     def test_qualification_packet_selects_only_its_integrity_observer(self):
         """Keep the judge packet on its offline integrity path, not as unmapped JSON.
 

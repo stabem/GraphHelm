@@ -490,6 +490,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
                         <span className="mv-journey-title">{g.label}</span>
                       </button>
                       <GroupProgress states={visibleTasks.map((t) => stageState(g.stages[t.key]!, t))} />
+                      {g.contested.length > 0 && <span className="mv-journey-meta mv-contested" data-tone="stalled" title="Two lanes hold open claims on this issue: one of them is duplicate work">{`${g.contested.length} claims: ${g.contested.join(", ")}`}</span>}
                       {visibleTasks.length === 0 && g.releasedKeys.length > 0 && <span className="mv-journey-meta">released</span>}
                     </div>
                   );
@@ -499,6 +500,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
                         <span className="mv-journey-title">{g.label}</span>
                       </button>
                       <GroupProgress states={visibleTasks.map((t) => stageState(g.stages[t.key]!, t))} />
+                      {g.contested.length > 0 && <span className="mv-journey-meta mv-contested" data-tone="stalled" title="Two lanes hold open claims on this issue: one of them is duplicate work">{`${g.contested.length} claims: ${g.contested.join(", ")}`}</span>}
                       {visibleTasks.length === 0 && g.releasedKeys.length > 0 && <span className="mv-journey-meta">released</span>}
                       <span className="mv-journey-meta">{`${g.issue !== null ? `issue #${g.issue}` : partial ? "issue not read yet" : "no issue"} · ${prs} ${prs === 1 ? "PR" : "PRs"}`}</span>
                       <div className="mv-chips">

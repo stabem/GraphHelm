@@ -364,6 +364,19 @@ describe("MissionView", () => {
     expect([chip(50), chip(51), chip(52)].map((c) => c.getAttribute("data-alert"))).toEqual(["false", "true", "false"]);
   });
 
+  it("#1151: an issue with two lanes on open claims says so on its card; one lane says nothing", () => {
+    const tasks = [wt("a", { issue: 1148, lane: "gh-claude-opt-3", step: "implement" }), wt("b", { issue: 1148, lane: "codex-4", step: "implement" }),
+      wt("c", { issue: 1147, lane: "gh-claude-opt-2", step: "implement" })] as unknown as TaskState[];
+    render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    const region = screen.getByRole("region", { name: "Work by issue" });
+    const cards = Array.from(region.querySelectorAll<HTMLElement>(".mv-jcard"));
+    const contested = (c: HTMLElement) => c.querySelector<HTMLElement>(".mv-contested");
+    const card = (issue: number) => cards.find((c) => c.textContent!.includes(`Issue #${issue}`))!;
+    expect(contested(card(1148))!.textContent).toBe("2 claims: gh-claude-opt-3, codex-4");
+    expect(contested(card(1148))!.getAttribute("data-tone")).toBe("stalled");
+    expect(contested(card(1147))).toBeNull();
+  });
+
   it("#824: each Proof rail count stays with its label while the line can wrap", () => {
     const { container } = render(<JourneyProgress statuses={["ready", "ready"]} />);
     const line = container.querySelector(".mv-progress-text")!;

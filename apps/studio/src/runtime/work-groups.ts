@@ -39,6 +39,9 @@ export interface WorkGroup {
   rows: PrRow[];
   /** Graph rows exclude released pre-PR history while Kanban can still inspect all rows. */
   graphRows: PrRow[];
+  /** #1151: lanes holding an open, PR-less, unreleased claim on this issue when two or more do, in
+   * claim order; empty otherwise. Two lanes writing one ticket is the duplicate work the owner must see. */
+  contested: string[];
 }
 
 /** #591: where a cell sits on its PR's own path. */
@@ -120,6 +123,7 @@ export function buildWorkGroups(tasks: TaskState[], journeys: JourneyView[], run
     const paths = orderRows(rows).map((t) => ({ ...prPath(t, proven.has(t.key)), open: t.step !== "merged" && t.releasedBy === undefined, task: toMissionTask(t) }));
     const visibleKeys = new Set(visible.map((t) => t.key));
     const named = rows.find((r) => r.title);
+    const claimants = [...new Set(visible.filter((r) => r.pr === null && r.step !== "merged" && r.lane !== null).map((r) => r.lane!))];
     return {
       key, issue,
       title: named?.title ?? null,
@@ -134,6 +138,7 @@ export function buildWorkGroups(tasks: TaskState[], journeys: JourneyView[], run
       focus: focusTask(visible),
       rows: paths,
       graphRows: paths.filter((r) => visibleKeys.has(r.key)),
+      contested: claimants.length >= 2 ? claimants : [],
     };
   });
   return groups.sort((a, b) => Number(b.open) - Number(a.open) || b.latest - a.latest);

@@ -182,6 +182,41 @@ def embeds(repo, packages):
     return out
 
 
+def rust_path_readers(repo, packages):
+    """{repo path or basename: {package names}} for Rust embedded and literal paths."""
+    readers = {}
+    root = Path(repo).resolve()
+    for package in packages:
+        package_root = root / package["dir"]
+        for source in package_root.rglob("*.rs"):
+            if "target" in source.relative_to(root).parts:
+                continue
+            text = source.read_text(encoding="utf-8", errors="replace")
+            references = [(reference, source.parent) for reference in INCLUDE.findall(text)]
+            references.extend(
+                (match.group(2), source.parent)
+                for match in re.finditer(r'''\b(?:read|read_to_string|File::open|open)\s*\(\s*(r#*)?["']([^"']+)["']''', text)
+            )
+            references.extend(
+                (match.group(1), package_root if 'CARGO_MANIFEST_DIR' in match.group(0) else root)
+                for match in re.finditer(
+                    r'''\b(?:read|read_to_string|File::open|open)\s*\(\s*.*?\.join\s*\(\s*(?:r#*)?["']([^"']+)["']''',
+                    text,
+                )
+            )
+            for reference, base in references:
+                if "{" in reference or reference.startswith("/"):
+                    continue
+                target = (base / reference).resolve()
+                try:
+                    path = target.relative_to(root).as_posix()
+                except ValueError:
+                    continue
+                readers.setdefault(path, set()).add(package["name"])
+                readers.setdefault(Path(path).name, set()).add(package["name"])
+    return readers
+
+
 def dependents(packages, names):
     """`names` and every package that depends on one of them, transitively."""
     reached, frontier = set(names), set(names)
@@ -330,11 +365,21 @@ def reach(changed, packages, embedded, repo=None):
     tests, extension packages to validate, and what no rule maps."""
     whole, single, studio, tools, validate, other = set(), set(), [], set(), set(), []
     root = Path(repo).resolve() if repo else None
+    path_readers = rust_path_readers(root, packages) if root is not None else {}
     for path in changed:
+        if root is not None and not path.endswith(".rs"):
+            readers = path_readers.get(path, set()) | path_readers.get(Path(path).name, set())
+            whole |= readers
+            if readers:
+                # The path itself may be deleted, so derive package ownership from source refs.
+                hit = True
+            else:
+                hit = False
+        else:
+            hit = False
         if path.startswith("apps/studio/"):
             studio.append(path)
             continue
-        hit = False
         for prefix, readers in RUNTIME_READERS.items():
             if path.startswith(prefix):
                 single |= {t for t in (target_of(packages, pkg, stem) for pkg, stem in readers) if t}

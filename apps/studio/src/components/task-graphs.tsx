@@ -1,7 +1,7 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { duration, pace, typicalStep, type TimedStep } from "../runtime/step-timing";
-import { isUnclaimedCritic, type CriticRound, type TaskState } from "../runtime/team-tasks";
+import { isUnclaimedCritic, timingSamples, type CriticRound, type TaskState } from "../runtime/team-tasks";
 
 /* #391 (journey-first spec §7, Rule 5): one small graph per task, folded from the `task.*` records
  * alone. GitHub is linked, never polled: the view works offline and the records are the audit
@@ -345,7 +345,7 @@ export function TaskGraphs({ tasks, onOpenJourney, now: fixedNow }: TaskGraphsPr
   // #562: a critic round for a task nobody claimed is not a task card.
   const unclaimed = tasks.filter(isUnclaimedCritic);
   const { open, released, delivered } = orderedCards(tasks.filter((task) => !isUnclaimedCritic(task)));
-  const clocks = tasks.filter((task) => task.step === "merged").map((task) => task.clock);
+  const clocks = timingSamples(tasks);
   const steps: TimedStep[] = ["plan", "critic", "implement", "review", "merge"];
   const timing: Timing = {
     now,

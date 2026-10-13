@@ -64,6 +64,13 @@ describe("step clock in the fold (#502)", () => {
     const task = foldTaskEvents([opened, pushed])[0];
     expect(task.clock).toEqual({ since: at(13 * 60 * 60), spent: {} });
   });
+  it("starts a fresh interval when a step resumes after a stall-sized gap", () => {
+    const claim = record(1, 0, "task.claimed", "l1", { issue: 9, lane: "l1", branch: "b" });
+    const resumed = record(2, 13 * 60 * 60, "task.planned", "l1", { lane: "l1", classes: ["code"],
+      reviews: 1, proof: "tests", critic: { mode: "none", passScore: 8, maxRounds: 3 }, summary: "s" });
+    expect(foldTaskEvents([claim, resumed])[0].clock).toEqual({ since: at(13 * 60 * 60), spent: {} });
+  });
+
   it("keeps a BLOCK and a new head inside Review instead of restarting the clock", () => {
     const tasks = foldTaskEvents([
       record(1, 0, "task.pr_opened", "l1", { pr: 19, headSha: head, journeys: [], lane: "l1" }),
@@ -87,6 +94,12 @@ describe("typical step time and pace (#502)", () => {
     expect(typicalStep(spent([10, 40, 20]), "review")).toEqual({ ms: 20 * 60_000, samples: 3 });
     expect(typicalStep(spent([10, 40, 20, 30]), "review")).toEqual({ ms: 25 * 60_000, samples: 4 });
     expect(typicalStep(spent([10, 40, 20]), "merge")).toBeNull();
+  });
+
+  it("banks completed time when a resumed step follows a 30 minute gap", () => {
+    const clock = { since: at(0), spent: {} as Record<string, number> };
+    clockStep(clock, "implement", "implement", at(60), true);
+    expect(clock).toEqual({ since: at(60), spent: {} });
   });
 
   it("is green under the typical time, amber past it and red past twice it", () => {

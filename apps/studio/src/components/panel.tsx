@@ -843,6 +843,7 @@ export function useEnvelopes(
     failed: Set<number>;
     pending: Set<number>;
   }>({ forId: undefined, map: {}, failed: new Set(), pending: new Set() });
+  const eventSequence = events.map((event) => event.sequence).join(",");
   // The shared OPENED_EVIDENCE cache is what lets the live tail exist: without it, every pass
   // re-fetched ~20 envelopes, and a pass slower than the poll interval was cancelled before it
   // could commit — bubbles, ledger and agent filters permanently blind (found live, round 2).
@@ -899,7 +900,7 @@ export function useEnvelopes(
     return () => {
       live = false;
     };
-  }, [events, executionId, openEvidence]);
+  }, [eventSequence, executionId, openEvidence]);
   // A stable empty answer, not a fresh literal: downstream memos key off this identity.
   return envelopes.forId === executionId
     ? Object.assign({ ...envelopes.map }, { __pendingEnvelopeSequences: [...new Set([...envelopes.failed, ...envelopes.pending])] })

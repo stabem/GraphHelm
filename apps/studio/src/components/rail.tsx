@@ -130,6 +130,7 @@ export function ProjectRail({
   connected,
   stale = false,
   previousExit = null,
+  startupTiming = null,
   hasMore,
   busy,
   onSelect,
@@ -150,6 +151,7 @@ export function ProjectRail({
   selected: string;
   connected: boolean;
   previousExit?: RuntimePreviousExit | null;
+  startupTiming?: { journalVerifyMs: number; lifecycleStartMs: number } | null;
   /** True when background reads have failed repeatedly: the screen may be aging. "live" under
    * a dead Runtime was indistinguishable from a quiet room (round-4, 3am). */
   stale?: boolean;
@@ -219,6 +221,15 @@ export function ProjectRail({
           {previousExit.location !== undefined && <> · location: {previousExit.location}</>}
           {previousExit.lastPanic && <> · last panic: {previousExit.lastPanic.location}</>}
         </p>
+      )}
+      {connected && (
+        <details aria-label="Runtime startup">
+          <summary>Runtime startup</summary>
+          {startupTiming ? <div>
+            <p>Journal verification: {startupTiming.journalVerifyMs} ms</p>
+            <p>Lifecycle initialization: {startupTiming.lifecycleStartMs} ms</p>
+          </div> : <p>Startup timing unavailable</p>}
+        </details>
       )}
       <p className="lbl rail-section">Projects</p>
 

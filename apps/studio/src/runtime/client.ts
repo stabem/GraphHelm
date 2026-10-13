@@ -623,15 +623,24 @@ export class RuntimeClient {
    * differently: "could not be reached" and "the token was refused" are separate facts, and a
    * single probe cannot tell them apart.
    */
-  async health(): Promise<RuntimePreviousExit | null> {
-    const data = await this.#request<{ previousExit?: unknown }>({ method: "GET", path: "/health" });
+  async health(): Promise<{ previousExit: RuntimePreviousExit | null; startup: { journalVerifyMs: number; lifecycleStartMs: number } | null }> {
+    const data = await this.#request<{ previousExit?: unknown; startup?: unknown }>({ method: "GET", path: "/health" });
+    const startupRaw = data?.startup;
+    let startup: { journalVerifyMs: number; lifecycleStartMs: number } | null = null;
+    if (startupRaw !== null && typeof startupRaw === "object" && !Array.isArray(startupRaw)) {
+      const value = startupRaw as Record<string, unknown>;
+      if (typeof value.journalVerifyMs === "number" && Number.isSafeInteger(value.journalVerifyMs) && value.journalVerifyMs >= 0 &&
+          typeof value.lifecycleStartMs === "number" && Number.isSafeInteger(value.lifecycleStartMs) && value.lifecycleStartMs >= 0) {
+        startup = { journalVerifyMs: value.journalVerifyMs, lifecycleStartMs: value.lifecycleStartMs };
+      }
+    }
     const raw = data?.previousExit;
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { previousExit: null, startup };
     const value = raw as Record<string, unknown>;
     const state = value.state;
-    if (state !== "clean" && state !== "vanished" && state !== "serve_error" && state !== "panicked") return null;
+    if (state !== "clean" && state !== "vanished" && state !== "serve_error" && state !== "panicked") return { previousExit: null, startup };
     if (typeof value.pid !== "number" || !Number.isSafeInteger(value.pid) || value.pid < 1 || value.pid > 0xffffffff ||
-        typeof value.at !== "number" || !Number.isSafeInteger(value.at) || value.at < 0 || value.at > 8_640_000_000_000) return null;
+        typeof value.at !== "number" || !Number.isSafeInteger(value.at) || value.at < 0 || value.at > 8_640_000_000_000) return { previousExit: null, startup };
     // Only Runtime's crate-relative Rust source coordinates are displayable, never free text.
     const location = (input: unknown): string => typeof input === "string" && input.length <= 256 &&
       /^[a-zA-Z0-9_-]+\/src\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+\.rs:[0-9]{1,10}$/.test(input) ? input : "unknown";
@@ -642,7 +651,7 @@ export class RuntimeClient {
       const panic = value.lastPanic;
       result.lastPanic = { location: location(panic !== null && typeof panic === "object" ? (panic as Record<string, unknown>).location : undefined) };
     }
-    return result;
+    return { previousExit: result, startup };
   }
 
   async listExecutions(options: { after?: string; limit?: number } = {}): Promise<ExecutionPage> {

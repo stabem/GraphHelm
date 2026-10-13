@@ -281,6 +281,94 @@ fn heartbeat_on_an_open_claim_is_recorded_without_changing_the_claim() {
         matches!(&after.last().unwrap().kind, EventKind::SignalRecorded(recorded)
         if recorded.kind == "task.heartbeat")
     );
+    for (id, patch, code) in [
+        ("heartbeat-repeat", None, "GHCLI003_SIGNAL_INVALID"),
+        (
+            "heartbeat-forbidden-pr",
+            Some(("pr", json!(42))),
+            "GHCLI003_SIGNAL_INVALID",
+        ),
+        (
+            "heartbeat-forbidden-head",
+            Some(("headSha", json!("abcdef0"))),
+            "GHCLI003_SIGNAL_INVALID",
+        ),
+        (
+            "heartbeat-wrong-lane",
+            Some(("lane", json!("other-lane"))),
+            "GHCLI038_ACTOR_MISMATCH",
+        ),
+    ] {
+        let mut candidate = heartbeat.clone();
+        if let Some((key, value)) = patch {
+            candidate[key] = value;
+        }
+        candidate["at"] = json!("1900-01-01T00:00:00Z");
+        let head = history(&events).len();
+        let refused = signal(
+            scratch.path(),
+            &events,
+            id,
+            "task.heartbeat",
+            ACTOR,
+            &candidate,
+        );
+        assert_eq!(refused["diagnostics"][0]["code"], code, "{id}: {refused}");
+        assert_eq!(history(&events).len(), head, "{id} moved journal head");
+    }
+}
+
+#[test]
+fn heartbeat_needs_an_open_claim_and_a_pr_ends_it() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let mut heartbeat = as_actor(package_fixture("claimed"));
+    heartbeat.as_object_mut().unwrap().retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "schema" | "taskId" | "revision" | "at" | "lane"
+        )
+    });
+    let head = history(&events).len();
+    let absent = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-absent",
+        "task.heartbeat",
+        ACTOR,
+        &heartbeat,
+    );
+    assert_eq!(absent["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID");
+    assert_eq!(history(&events).len(), head);
+    let claim = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-claim-2",
+        "task.claimed",
+        ACTOR,
+        &as_actor(package_fixture("claimed")),
+    );
+    assert_eq!(claim["ok"], true, "{claim}");
+    let pr = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-pr",
+        "task.pr_opened",
+        ACTOR,
+        &as_actor(package_fixture("pr-opened")),
+    );
+    assert_eq!(pr["ok"], true, "{pr}");
+    let head = history(&events).len();
+    let ended = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-ended",
+        "task.heartbeat",
+        ACTOR,
+        &heartbeat,
+    );
+    assert_eq!(ended["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID");
+    assert_eq!(history(&events).len(), head);
 }
 
 #[test]

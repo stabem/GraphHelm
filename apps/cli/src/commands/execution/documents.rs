@@ -677,15 +677,20 @@ fn validate_heartbeat(
             pointer,
         ));
     }
-    if last_heartbeat
-        .is_some_and(|previous| now.signed_duration_since(previous).num_seconds() < 300)
-    {
+    if last_heartbeat.is_some_and(|previous| !heartbeat_cooldown_elapsed(previous, now)) {
         return Err(super::signal_invalid(
             "heartbeat is limited to one per 300 seconds",
             pointer,
         ));
     }
     Ok(())
+}
+
+fn heartbeat_cooldown_elapsed(
+    previous: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    now.signed_duration_since(previous) >= chrono::Duration::seconds(300)
 }
 
 /// `owner/name` of a GitHub repository (#420): an owner of 1-39 ASCII letters, digits or `-` not
@@ -1571,6 +1576,28 @@ pub(crate) fn save_with_protected(
         serde_json::json!({"contentSha256":after,"changeId":change_id,"target":"main_project",
         "notification":{"status":if pending.is_empty(){"recorded"}else{"pending"},"notifiedRuns":notified,"pendingRuns":pending}}),
     )
+}
+
+#[cfg(test)]
+mod heartbeat_tests {
+    #[test]
+    fn trusted_cooldown_opens_at_300_seconds() {
+        let start = chrono::DateTime::parse_from_rfc3339("2026-10-13T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert!(!super::heartbeat_cooldown_elapsed(
+            start,
+            start + chrono::Duration::seconds(299)
+        ));
+        assert!(super::heartbeat_cooldown_elapsed(
+            start,
+            start + chrono::Duration::seconds(300)
+        ));
+        assert!(!super::heartbeat_cooldown_elapsed(
+            start,
+            start - chrono::Duration::seconds(1)
+        ));
+    }
 }
 
 #[cfg(test)]

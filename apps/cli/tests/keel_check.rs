@@ -375,7 +375,11 @@ fn check_guidance_keeps_one_line_persistence_change_on_expanded_route() {
         serde_json::json!(["full_card", "defect_naming_proof", "jpd"])
     );
     assert_eq!(reply["data"]["cardGuidance"]["fulfilled"], false);
-    assert!(codes(&reply).iter().any(|code| code == "keel.invariant.persistence"));
+    assert!(
+        codes(&reply)
+            .iter()
+            .any(|code| code == "keel.invariant.persistence")
+    );
 }
 
 #[test]

@@ -27,9 +27,14 @@ describe("agentBoard", () => {
     const old = { ...lane("idle", []), lastEventAt: now - 10 * 3_600_000,
       lastRecord: { kind: "merged", at: now - 10 * 3_600_000 } };
     const live = agentBoard([], [old], [], now, [], [], ["idle"])[0]!;
-    expect(live).toMatchObject({ status: "free", latest: "live now" });
+    expect(live).toMatchObject({ status: "free", latest: "live now · wake listener" });
     const closed = agentBoard([], [old], [], now)[0]!;
     expect(closed.status).toBe("offline");
+  });
+  it("names authenticated request as the source of a recently seen idle actor", () => {
+    const old = { ...lane("idle", []), lastEventAt: now - 10 * 3_600_000 };
+    const seen = agentBoard([], [old], [], now, [], [], [], ["idle"])[0]!;
+    expect(seen).toMatchObject({ status: "free", latest: "seen within 15m · authenticated request" });
   });
   it("uses the slot's PR label, never an older review assignment", () => {
     const old = { ...lane("rev", []), lastRecord: { kind: "review_assigned", pr: 720, at: now - M } };

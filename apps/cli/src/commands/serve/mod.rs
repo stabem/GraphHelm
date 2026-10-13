@@ -194,7 +194,7 @@ impl ServeState {
         let Some(actor) = headers
             .get("x-graphhelm-actor")
             .and_then(|value| value.to_str().ok())
-            .filter(|value| ActorId::parse(value).is_ok())
+            .filter(|value| ActorId::parse(*value).is_ok())
         else {
             return;
         };

@@ -55,7 +55,7 @@ function hasVerdictOnHead(t: MissionTask, names: string[]): boolean {
 
 /** One row per bot, plus a row per lane no bot claims; silent first, then working (longest
  * first), then waiting, then free. Silent is the lane-bars STALL rule (`Lane.silent`). */
-export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now: number, slots: SlotView[] = [], onDemand: readonly string[] = [], live: readonly string[] = []): AgentRow[] {
+export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now: number, slots: SlotView[] = [], onDemand: readonly string[] = [], live: readonly string[] = [], seenActors: readonly string[] = []): AgentRow[] {
   bots = bots.filter((b) => !blank(b.name));
   lanes = lanes.filter((l) => !blank(l.lane));
   const used = new Set<Lane>();
@@ -65,7 +65,7 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
     return { name: b.name, lane };
   });
   for (const l of lanes) if (!used.has(l)) pairs.push({ name: l.lane, lane: l });
-  for (const name of onDemand) if (!blank(name) && !pairs.some((p) => p.name === name || p.lane?.lane === name
+  for (const name of [...onDemand, ...seenActors]) if (!blank(name) && !pairs.some((p) => p.name === name || p.lane?.lane === name
     || bots.some((b) => b.name === p.name && (b.key === name || b.actorId === name)))) pairs.push({ name, lane: undefined });
   const delivered = new Map<string, string>();
   for (const t of tasks) if (t.step === "merged" && t.lane) delivered.set(t.lane, `${t.pr ? `#${t.pr} ` : ""}${t.title}`);
@@ -130,7 +130,8 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
     const slot = ids.map((n) => slotStatus(n, slots)).find((x) => x !== null) ?? null;
     if (!slot) {
       if (r.status !== "free" || onDemand.some((name) => ids.includes(name))) return r;
-      if (live.some((name) => ids.includes(name))) return { ...r, latest: "live now", forMs: 0 };
+      if (seenActors.some((name) => ids.includes(name))) return { ...r, latest: "seen within 15m · authenticated request", forMs: null };
+      if (live.some((name) => ids.includes(name))) return { ...r, latest: "live now · wake listener", forMs: 0 };
       const seen = Math.max(pairs[i]!.lane?.lastEventAt ?? 0,
         ...bots.filter((b) => ids.includes(b.name) || (b.actorId !== null && ids.includes(b.actorId)))
           .map((b) => b.lastRecordAt === null ? 0 : Date.parse(b.lastRecordAt)).filter(Number.isFinite));

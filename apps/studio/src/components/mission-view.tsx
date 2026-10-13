@@ -88,6 +88,7 @@ interface Props {
   slots?: SlotView[];
   /** Actors with an armed, unconsumed wake lease; absent on older Runtimes. */
   wakeListeners?: string[];
+  seenActors?: string[];
   onDemandLanes?: string[];
   /** #647: the run's graph nodes for the Run graph strip; empty, the strip is omitted. */
   runNodes?: GraphNode[];
@@ -236,7 +237,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, seenActors, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
   const journeys = useMemo(() => {
     const known = new Set(compiledJourneys.map((journey) => journey.contractId));
     return [...compiledJourneys, ...(flows?.flows ?? []).filter((flow) => !known.has(flow.id)).map((flow): JourneyView => ({
@@ -330,7 +331,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   };
   const lanesView = <>
     <WorkKanban items={kanbanItems} onOpen={openOnGraph} historyLoading={lanesHistoryLoading} />
-    <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} onDemandLanes={onDemandLanes} liveLanes={wakeListeners} historyLoading={lanesHistoryLoading}
+    <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} onDemandLanes={onDemandLanes} liveLanes={wakeListeners} seenActors={seenActors} historyLoading={lanesHistoryLoading}
       {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
   </>;
   const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} {...(onOpenNode ? { onOpenNode } : {})} />;

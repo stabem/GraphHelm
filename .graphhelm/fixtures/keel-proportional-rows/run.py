@@ -179,6 +179,20 @@ def main() -> int:
             if result.returncode:
                 return result.returncode
             reply = json.loads(result.stdout)
+            expected = {
+                "docs": ("summary_only", []),
+                "bounded-code": ("bounded_code", ["promise", "scope", "proof"]),
+                "expanded": ("expanded", ["full_card", "defect_naming_proof", "jpd"]),
+            }
+            kind, required = expected[mode]
+            guidance = reply.get("data", {}).get("cardGuidance")
+            if not isinstance(guidance, dict) or guidance.get("kind") != kind or guidance.get("required") != required:
+                print(
+                    f"cardGuidance mismatch for {mode}: expected kind={kind!r}, required={required!r}; "
+                    f"got {guidance!r}",
+                    file=sys.stderr,
+                )
+                return 1
             return 0
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(str(error), file=sys.stderr)

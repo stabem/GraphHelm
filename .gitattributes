@@ -81,6 +81,9 @@ docs/acceptance/demos/** -text
 *.ps1 text eol=lf
 *.py text eol=lf
 
+# This journey projection is compared byte for byte with compiler output.
+.graphhelm/journeys/keel-red-first-proof.json text eol=lf
+
 # The process documents every session reads are pinned to LF so a fresh clone materialises them
 # the same way on every platform instead of asking the cloner's `core.autocrlf` (#1010). An
 # attributes-only change does not heal an existing CRLF working copy; it only fixes fresh checkouts.

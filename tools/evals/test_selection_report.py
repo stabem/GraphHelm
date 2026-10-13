@@ -395,6 +395,45 @@ class SelectionReport(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("must occur together", result.stderr)
 
+    def test_malformed_verdicts_are_named_input_errors(self):
+        base = {"case_id": "no-skill-arithmetic", "status": "completed",
+                "invoked_skills": [], "completion": "pass", "rubric": "r"}
+        cases = [(field, value) for field in ("judge", "human_label")
+                 for value in ([], {}, None, True, 7, "unknown")]
+        for field, value in cases:
+            with self.subTest(field=field, value=value):
+                self.observations = [{**base, field: value}]
+                result = self.run_report()
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                for expected in ("observation 0", "no-skill-arithmetic", field):
+                    self.assertIn(expected, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+
+        self.observations = [{**base, "status": "timeout", "judge": []}]
+        incomplete = self.run_report()
+        self.assertEqual(incomplete.returncode, 2, incomplete.stderr)
+        self.assertEqual(incomplete.stdout, "")
+        self.assertIn("judge", incomplete.stderr)
+        self.assertNotIn("Traceback", incomplete.stderr)
+
+        with tempfile.TemporaryDirectory() as directory:
+            script, evals = self.copied_report(Path(directory))
+            case_ids = [case.name for case in evals.iterdir() if case.is_dir()]
+            manifest = self.make_manifest(evals, case_ids, [])
+            row = {**base, "judge": []}
+            bound = self.bind_observations([row], manifest)
+            partitioned = self.run_partitioned(script, bound, manifest)
+            self.assertEqual(partitioned.returncode, 2, partitioned.stderr)
+            self.assertEqual(partitioned.stdout, "")
+            for expected in ("observation 0", "no-skill-arithmetic", "judge"):
+                self.assertIn(expected, partitioned.stderr)
+            self.assertNotIn("Traceback", partitioned.stderr)
+
+        self.observations = [{**base}, {**base, "judge": "pass", "human_label": "fail"}]
+        controls = self.run_report()
+        self.assertEqual(controls.returncode, 0, controls.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

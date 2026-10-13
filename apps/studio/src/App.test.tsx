@@ -5393,3 +5393,37 @@ it("keeps the last Runtime details on a failed refresh and clears them for a leg
   expect(disclosure).not.toHaveTextContent("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   expect(screen.queryByLabelText("Previous Runtime exit")).not.toBeInTheDocument();
 });
+
+it.each(["late success", "late failure"] as const)("ignores a Runtime details refresh that completes after reconnect (%s)", async (outcome) => {
+  let finishOldRefresh!: (value: unknown) => void;
+  let failOldRefresh!: (reason: Error) => void;
+  const oldRefresh = new Promise<unknown>((resolve, reject) => { finishOldRefresh = resolve; failOldRefresh = reject; });
+  const oldClient = stubClient({ health: vi.fn().mockResolvedValueOnce({ currentRun: { instance: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", pid: 1, startedAt: 1_700_000_001 } }).mockReturnValueOnce(oldRefresh) });
+  const newClient = stubClient({ health: vi.fn(async () => ({ currentRun: { instance: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", pid: 2, startedAt: 1_700_000_002 } })) });
+  const createClient = vi.fn().mockReturnValueOnce(oldClient).mockReturnValueOnce(newClient);
+  render(<App createClient={createClient} modelContext={null} session={async () => ({ token: "local-token", project: "GraphHelm" })} />);
+  await screen.findByText("live");
+  fireEvent.click(screen.getByRole("button", { name: "Refresh Runtime details" }));
+  await waitFor(() => expect(oldClient.health).toHaveBeenCalledTimes(2));
+
+  await userEvent.click(screen.getByRole("button", { name: /^disconnect$/i }));
+  await userEvent.click(screen.getByRole("button", { name: /click again to disconnect/i }));
+  await userEvent.type(await screen.findByLabelText(/bearer token/i), "runtime-b-token");
+  await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+  await screen.findByRole("navigation", { name: "Projects" });
+  const disclosure = screen.getByRole("group", { name: "Runtime startup" });
+  expect(disclosure).toHaveTextContent("Instance: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+
+  await act(async () => {
+    if (outcome === "late success") finishOldRefresh({
+      currentRun: { instance: "cccccccccccccccccccccccccccccccc", pid: 3, startedAt: 1_700_000_003 },
+      startup: { journalVerifyMs: 999, lifecycleStartMs: 999 },
+    });
+    else failOldRefresh(new Error("old Runtime failure"));
+  });
+  expect(disclosure).toHaveTextContent("Instance: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+  expect(disclosure).not.toHaveTextContent("cccccccccccccccccccccccccccccccc");
+  expect(screen.queryByText("Runtime details refresh failed. Details shown above were not updated.")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Refresh Runtime details" })).toBeEnabled();
+  expect(newClient.health).toHaveBeenCalledTimes(1);
+});

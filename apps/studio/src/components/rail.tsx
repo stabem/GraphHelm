@@ -132,6 +132,9 @@ export function ProjectRail({
   previousExit = null,
   startupTiming = null,
   currentRun = null,
+  runtimeDetailsRefreshed = false,
+  runtimeDetailsRefreshing = false,
+  runtimeDetailsRefreshError = "",
   hasMore,
   busy,
   onSelect,
@@ -144,6 +147,7 @@ export function ProjectRail({
   removedRuns = [],
   onRemoveRun,
   onRestoreRun,
+  onRefreshRuntimeDetails,
   briefings = {},
   selectedPresentation = null,
   onClose,
@@ -154,6 +158,9 @@ export function ProjectRail({
   previousExit?: RuntimePreviousExit | null;
   startupTiming?: { journalVerifyMs: number; lifecycleStartMs: number } | null;
   currentRun?: { instance: string; pid: number; startedAt: number } | null;
+  runtimeDetailsRefreshed?: boolean;
+  runtimeDetailsRefreshing?: boolean;
+  runtimeDetailsRefreshError?: string;
   /** True when background reads have failed repeatedly: the screen may be aging. "live" under
    * a dead Runtime was indistinguishable from a quiet room (round-4, 3am). */
   stale?: boolean;
@@ -171,6 +178,7 @@ export function ProjectRail({
   removedRuns?: string[];
   onRemoveRun?: (id: string) => void;
   onRestoreRun?: (id: string) => void;
+  onRefreshRuntimeDetails?: () => void;
   /** What each run is ABOUT, by id, read from its briefing (#1077). A generated `run-<uuid>`
    * wears its objective as its name; the id stays visible below it. Absent
    * (older Runtime, not read yet) the row says the id, which is what it always said. */
@@ -229,7 +237,7 @@ export function ProjectRail({
           <details aria-label="Runtime startup">
             <summary>Runtime startup</summary>
             {currentRun ? <div>
-              <p>Runtime at connection</p>
+              <p>{runtimeDetailsRefreshed ? "Runtime at last successful read" : "Runtime at connection"}</p>
               <p>Instance: {currentRun.instance}</p>
               <p>PID: {currentRun.pid}</p>
               <p>Started: <time dateTime={new Date(currentRun.startedAt * 1000).toISOString()}>{new Date(currentRun.startedAt * 1000).toISOString()}</time></p>
@@ -238,6 +246,10 @@ export function ProjectRail({
               <p>Journal verification: {startupTiming.journalVerifyMs} ms</p>
               <p>Lifecycle initialization: {startupTiming.lifecycleStartMs} ms</p>
             </div> : <p>Startup timing unavailable</p>}
+            <button type="button" onClick={onRefreshRuntimeDetails} disabled={runtimeDetailsRefreshing}>
+              Refresh Runtime details
+            </button>
+            {runtimeDetailsRefreshError && <p role="status">{runtimeDetailsRefreshError}</p>}
           </details>
         )}
       </div>

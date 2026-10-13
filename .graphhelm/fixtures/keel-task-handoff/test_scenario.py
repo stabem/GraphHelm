@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -101,7 +102,79 @@ class ScenarioAdapterSelection(unittest.TestCase):
         if not os.environ.get("GRAPHHELM_CLI"):
             self.fail("OBSERVER_MISSING: set GRAPHHELM_CLI to the pinned executable")
 
-        result = load_scenario().run()
+        scenario = load_scenario()
+        starts = []
+        source_exited_before_replacement = []
+        started_urls = {}
+        recovery_reads = []
+        real_popen = scenario.subprocess.Popen
+        real_wait_started = scenario._wait_started
+        real_run_adapter = scenario._run_adapter
+        real_prior_reader = scenario._run_prior_task_evidence_reader
+
+        def observing_popen(args, *positional, **kwargs):
+            command = [str(part) for part in args]
+            events = Path(command[command.index("--events") + 1]).resolve()
+            keyring = Path(command[command.index("--keyring") + 1]).resolve()
+            if events.name == "store" and len([item for item in starts if item["events"].name == "store"]) == 1:
+                source_exited_before_replacement.append(starts[0]["process"].poll() is not None)
+            process = real_popen(args, *positional, **kwargs)
+            if len(command) > 2 and command[1] == "serve":
+                starts.append({
+                    "process": process,
+                    "events": events,
+                    "keyring": keyring,
+                })
+            return process
+
+        def observing_wait_started(log_path, child):
+            url = real_wait_started(log_path, child)
+            if Path(log_path).name == "runtime-restarted.log":
+                started_urls[id(child)] = url
+            return url
+
+        def observing_run_adapter(phase, host, session, token_file, base_url, *args, **kwargs):
+            recovery_reads.append(("adapter", phase, base_url))
+            return real_run_adapter(phase, host, session, token_file, base_url, *args, **kwargs)
+
+        def observing_prior_reader(base_url, *args, **kwargs):
+            recovery_reads.append(("prior-evidence", base_url))
+            return real_prior_reader(base_url, *args, **kwargs)
+
+        scenario.subprocess.Popen = observing_popen
+        scenario._wait_started = observing_wait_started
+        scenario._run_adapter = observing_run_adapter
+        scenario._run_prior_task_evidence_reader = observing_prior_reader
+        try:
+            result = scenario.run()
+        finally:
+            scenario.subprocess.Popen = real_popen
+            scenario._wait_started = real_wait_started
+            scenario._run_adapter = real_run_adapter
+            scenario._run_prior_task_evidence_reader = real_prior_reader
+        source_starts = [item for item in starts if item["events"].name == "store"]
+        self.assertEqual(len(source_starts), 2, "expected exactly two source Runtime process starts")
+        self.assertEqual(source_exited_before_replacement, [True],
+                         "first source Runtime had not exited before the replacement started")
+        self.assertEqual(source_starts[0]["events"], source_starts[1]["events"],
+                         "replacement Runtime did not use the original event store")
+        self.assertEqual(source_starts[0]["keyring"], source_starts[1]["keyring"],
+                         "replacement Runtime did not use the original keyring")
+        self.assertIsNotNone(source_starts[0]["process"].poll(),
+                             "first source Runtime was still alive after the scenario")
+        self.assertTrue(all(item["process"].poll() is not None for item in starts),
+                        "scenario left a fixture-owned Runtime process alive")
+        replacement_url = started_urls.get(id(source_starts[1]["process"]))
+        self.assertTrue(replacement_url, "replacement Runtime did not report its serving endpoint")
+        self.assertIn(("adapter", "receive", replacement_url), recovery_reads,
+                      "Codex companion did not receive through the replacement Runtime")
+        self.assertIn(("prior-evidence", replacement_url), recovery_reads,
+                      "prior task evidence was not read through the replacement Runtime")
+        self.assertTrue(result.get("journalStableAcrossRestart"),
+                        "restart recovery appended or changed Runtime journal records")
+        self.assertEqual(result.get("restartReceiptId"), result.get("receiptId"),
+                         "replacement Runtime did not recover the original receipt")
+        self.assertEqual(result.get("restartReceiptState"), "already_recorded")
         recovered = result.get("priorTaskEvidence")
         self.assertIsInstance(recovered, dict, "fresh receiver returned no prior task evidence")
         self.assertEqual(recovered.get("objective"),

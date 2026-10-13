@@ -372,6 +372,52 @@ fn heartbeat_needs_an_open_claim_and_a_pr_ends_it() {
 }
 
 #[test]
+fn release_ends_heartbeat_eligibility_for_its_claim() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let claim = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-release-claim",
+        "task.claimed",
+        ACTOR,
+        &as_actor(package_fixture("claimed")),
+    );
+    assert_eq!(claim["ok"], true, "{claim}");
+    let claim_sequence = history(&events).last().unwrap().sequence;
+    let mut heartbeat = as_actor(package_fixture("claimed"));
+    heartbeat.as_object_mut().unwrap().retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "schema" | "taskId" | "revision" | "at" | "lane"
+        )
+    });
+    let mut release = heartbeat.clone();
+    release["claimSequence"] = json!(claim_sequence);
+    release["reason"] = json!("Stopped working on this claim");
+    let done = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-release",
+        "task.released",
+        ACTOR,
+        &release,
+    );
+    assert_eq!(done["ok"], true, "{done}");
+    let head = history(&events).len();
+    let refused = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-after-release",
+        "task.heartbeat",
+        ACTOR,
+        &heartbeat,
+    );
+    assert_eq!(refused["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID");
+    assert_eq!(history(&events).len(), head);
+}
+
+#[test]
 fn a_task_signal_naming_another_actor_is_refused_and_records_nothing() {
     let scratch = tempfile::tempdir().unwrap();
     let events = start(scratch.path());

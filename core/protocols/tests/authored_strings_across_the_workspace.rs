@@ -97,7 +97,7 @@ fn offends(line: &str) -> bool {
 /// their own crate's per-crate guard still scans — which is the first thing making the twelve
 /// load-bearing rather than redundant, and a reason not to delete them without replacing that
 /// coverage. The exceptions are named in their entries, and each entry states its own gap.
-const EXEMPT: [(&str, &str); 9] = [
+const EXEMPT: [(&str, &str); 10] = [
     // ---- Species A: a guard quoting the defect on purpose. -------------------------------------
     // These files exist to hold examples of collapsed runs. Rewriting them to satisfy this sweep
     // would delete the samples the predicate is tested against, which is the one edit a guard must
@@ -155,6 +155,13 @@ const EXEMPT: [(&str, &str); 9] = [
          this file: its exemption is per-LITERAL and by ROLE -- a literal naming \
          `CapturedProcess` or `tree_kill` is census input -- so authored prose here is covered \
          there. What is exempt is this sweep, no longer every sweep",
+    ),
+    (
+        "apps/cli/src/progress.rs",
+        "the `graphhelm update` terminal face: the ASCII-art banner, the fixed indentation that \
+         aligns details under each step, and the padded build-bar frame whose width lets each \
+         `\\r` frame overwrite the last; the spaces are the layout the owner sees. NOTE: a `src/` \
+         file, so an authored-string defect elsewhere in it is outside this sweep",
     ),
 ];
 

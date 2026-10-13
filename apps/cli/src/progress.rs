@@ -106,6 +106,29 @@ impl Progress {
         }
     }
 
+    /// Whether this face redraws one line in place (a terminal).
+    pub const fn redraws(self) -> bool {
+        self.fancy
+    }
+
+    /// One frame of the build bar: `[########------------]  57/412 crates  serde_json`. A frame
+    /// starts with `\r` and pads to a fixed width, so each one overwrites the last. The count is
+    /// capped below the total until the build reports it finished.
+    pub fn bar(self, done: usize, total: usize, current: &str) -> String {
+        const WIDTH: usize = 30;
+        let total = total.max(1);
+        let shown = done.min(total);
+        let filled = shown * WIDTH / total;
+        let bar = format!("{}{}", "#".repeat(filled), "-".repeat(WIDTH - filled));
+        let name: String = current.chars().take(28).collect();
+        format!(
+            "\r      {} {:>4}/{total} crates  {:<28}",
+            self.palette.command(&format!("[{bar}]")),
+            shown,
+            name
+        )
+    }
+
     fn plain(self, text: &str) -> String {
         format!("[{}] {text}", self.tag)
     }
@@ -121,6 +144,28 @@ impl Progress {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The build bar fills in proportion and never runs past its width.
+    #[test]
+    fn the_build_bar_fills_in_proportion() {
+        let progress = Progress::new("update", true, Palette::plain());
+        assert!(
+            progress
+                .bar(0, 10, "a")
+                .contains("[------------------------------]")
+        );
+        assert!(
+            progress
+                .bar(5, 10, "a")
+                .contains("[###############---------------]")
+        );
+        assert!(
+            progress
+                .bar(99, 10, "a")
+                .contains("[##############################]   10/10")
+        );
+        assert!(progress.bar(1, 0, "a").starts_with('\r'));
+    }
 
     #[test]
     fn plain_mode_keeps_the_tagged_lines_and_writes_no_escape() {

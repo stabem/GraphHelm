@@ -59,6 +59,10 @@ class Reach(unittest.TestCase):
             self.assertEqual(wrong_store_tools, [expected + " --wrong-store"])
             self.assertEqual(wrong_store_other, [])
 
+            *_, readme_tools, _, readme_other = reach(readme, repo=repo)
+            self.assertEqual(readme_tools, [expected])
+            self.assertEqual(readme_other, [])
+
             with patch.dict("os.environ", {"GRAPHHELM_HANDOFF_WRONG_STORE": ""}):
                 *_, missing_root_tools, _, missing_root_other = reach(scenario)
             self.assertEqual(missing_root_tools, [])

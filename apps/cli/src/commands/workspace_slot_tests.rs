@@ -551,7 +551,7 @@ fn shared_admission_serializes_children_across_slot_roots() {
     let second_cwd = cwd.clone();
     let second_admission = admission.clone();
     let mut timed = request(&second_root, "lane-b", "cross-root-b", &command_b);
-    timed.max_wait = Some(Duration::from_secs_f64(0.02));
+    timed.max_wait = Some(0.02);
     let timed = super::run_admitted_slot_core(&timed, &second_cwd, None, &second_admission);
     let timed_marker = std::fs::read_to_string(&log).unwrap_or_default();
     std::fs::write(&release_a, b"release").unwrap();
@@ -759,7 +759,7 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
     );
     assert!(slot.output.ok, "slot child failed: {:?}", slot.output);
     assert!(
-        update_status.status.success(),
+        update_status.success(),
         "update observer failed: {update_status:?}"
     );
     assert!(

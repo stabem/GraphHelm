@@ -625,7 +625,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
         // #514: a newer head after a BLOCK is the author's fix; its review is the re-review.
         {
           const round = state.rounds.at(-1);
-          if (round !== undefined && round.fixHead === null && event.headSha !== undefined && event.headSha !== round.headSha) {
+          if (round !== undefined && event.headSha !== undefined && event.headSha !== round.headSha) {
             round.fixHead = event.headSha;
             round.fixedAt = event.occurredAt ?? null;
           }

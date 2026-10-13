@@ -114,6 +114,19 @@ describe("foldTaskEvents", () => {
     expect(pushed.rounds[0]).toMatchObject({ reviewer: "gh-claude-5", headSha: "aaaaaaaa", fixHead: "bbbbbbbb" });
   });
 
+  it("tracks the newest pushed head as the fix before the next verdict (#990)", () => {
+    const records = [
+      record(1, "task.pr_opened", "codex-1", { pr: 990, headSha: "cccccccc", journeys: [], lane: "codex-1" }),
+      record(2, "task.review_verdict", "codex-review", { pr: 990, headSha: "cccccccc", reviewer: "codex-review", verdict: "BLOCK", commentUrl: "https://github.com/stabem/GraphHelm/pull/990#c1" }),
+      record(3, "task.pr_opened", "codex-1", { pr: 990, headSha: "dddddddd", journeys: [], lane: "codex-1" }),
+      record(4, "task.pr_opened", "codex-1", { pr: 990, headSha: "eeeeeeee", journeys: [], lane: "codex-1" }),
+    ];
+
+    const state = foldTaskEvents(records)[0];
+    expect(state.rounds.at(-1)?.fixHead).toBe("eeeeeeee");
+    expect(state.headSha).toBe("eeeeeeee");
+  });
+
   it("links the task to the journeys its claim names, and an empty pr_opened list keeps them (#577)", () => {
     const claimed = record(1, "task.claimed", "gh-claude-4", { issue: 577, lane: "gh-claude-4", branch: "issue-577-x", journeys: ["studio-graph-tab"] });
     expect(foldTaskEvents([claimed])[0].journeys).toEqual(["studio-graph-tab"]);

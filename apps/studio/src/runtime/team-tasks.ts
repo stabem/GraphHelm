@@ -406,6 +406,8 @@ export interface TaskState {
   assignedReviewers?: string[];
   /** Assignment on the current head only; older reviewers remain in `reviewers`. */
   currentReviewer?: string | null;
+  /** Assignment for an unseen head, waiting for the author's matching PR opening. */
+  pendingReviewer?: { headSha: string; reviewer: string } | null;
   headSha: string | null;
   journeys: string[];
   /** #480: the lane's recorded keel plan; `null` (or absent, before #480) when none was recorded. */
@@ -619,6 +621,10 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
         state.prSummary = event.summary ?? state.prSummary;
         if (event.headSha !== state.headSha) state.currentReviewer = null;
         state.headSha = event.headSha ?? state.headSha;
+        if (state.pendingReviewer?.headSha === event.headSha) {
+          state.currentReviewer = state.pendingReviewer.reviewer;
+          state.pendingReviewer = null;
+        }
         // #577: an empty list on pr_opened does not erase the journeys named at claim.
         state.journeys = event.journeys?.length ? event.journeys : state.journeys;
         state.step = "review";
@@ -648,6 +654,9 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
         if (event.reviewer && !state.reviewers.includes(event.reviewer)) state.reviewers.push(event.reviewer);
         if (state.headSha === null) state.headSha = event.headSha ?? null;
         if (event.headSha === state.headSha) state.currentReviewer = event.reviewer ?? null;
+        else if (event.headSha !== undefined && event.reviewer && !state.recordedHeads.includes(event.headSha)) {
+          state.pendingReviewer = { headSha: event.headSha, reviewer: event.reviewer };
+        }
         if (state.step === "implement" || state.step === "plan") state.step = "review";
         break;
       case "task.review_verdict":

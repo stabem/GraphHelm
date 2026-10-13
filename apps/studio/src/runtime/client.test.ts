@@ -8,6 +8,7 @@ import {
   RUNTIME_REQUEST_TIMEOUT_MS,
   RUNTIME_READ_TIMEOUT_MS,
   WEBMCP_ACTOR,
+  RUNTIME_UNREACHABLE_HEADER,
 } from "./client";
 import { digestOf } from "./customs";
 import { foldTaskEvents, readTaskEventRecords } from "./team-tasks";
@@ -701,6 +702,23 @@ describe("verified mutations", () => {
       await expect(client.signal("demo", "{}", { kind, actor: { id: "agent-1", type: "agent" } })).rejects.toThrow(/must be recorded by the owner/i);
     }
     expect(scripted.calls).toHaveLength(0);
+  });
+
+  /** #1170: a connection the Runtime refused was never delivered, so it is a refusal, not "maybe applied". */
+  it("reports a mutation as not sent when the dev proxy says the Runtime refused the connection", async () => {
+    let up = true;
+    const down = () => new Response("", { status: 503, headers: { [RUNTIME_UNREACHABLE_HEADER]: "connection-refused" } });
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit = {}) => {
+      if (up && (init.method ?? "GET") === "GET") {
+        up = false;
+        return new Response(JSON.stringify(ok(statusData()).envelope), { status: 200 });
+      }
+      return down();
+    }) as unknown as typeof fetch;
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    const evidence = await client.approve("demo", "implementation", { idempotencyKey: "fixed-key-1" });
+    expect(evidence.result).toBe("refused");
+    expect(evidence.diagnostics[0]?.message).toMatch(/not answering, so nothing was sent/);
   });
 
   /** The full happy path: read the head, mutate against it, read back, report the delta. */

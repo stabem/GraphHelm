@@ -134,7 +134,6 @@ up)
         --data-binary @"$dir/.graphhelm/note.json" > /dev/null
     done
   fi
-  # Seed a governed wait for the answer-node flow only.
   flow=${GRAPHHELM_JOURNEY_FLOW:-}
   if [ "$flow" = studio-work-graph ] || [ "$flow" = studio-work-graph-mobile ]; then
     # #721 task records use the existing planner actor, so these rows do not create fake agents.

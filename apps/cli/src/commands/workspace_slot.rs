@@ -75,7 +75,10 @@ pub(crate) fn build_admission_dir() -> Result<PathBuf, String> {
             .then_some(path)
             .ok_or_else(|| format!("{BUILD_ADMISSION_ENV} must be an absolute path"));
     }
-    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"));
+    #[cfg(windows)]
+    let home = std::env::var_os("USERPROFILE");
+    #[cfg(not(windows))]
+    let home = std::env::var_os("HOME");
     let home = home.ok_or("the user home directory is unavailable")?;
     let home = PathBuf::from(home);
     if !home.is_absolute() {
@@ -86,13 +89,13 @@ pub(crate) fn build_admission_dir() -> Result<PathBuf, String> {
 
 pub(crate) fn open_build_admission(path: &Path) -> Result<File, String> {
     std::fs::create_dir_all(path)
-        .map_err(|_| format!("the build admission directory could not be created: {}", path.display()))?;
+        .map_err(|_| "the build admission directory could not be created".to_owned())?;
     OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(false)
         .open(path.join("build.lock"))
-        .map_err(|_| format!("the build admission lock could not be opened: {}", path.display()))
+        .map_err(|_| "the build admission lock could not be opened".to_owned())
 }
 
 pub(crate) fn lock_build_admission(lock: &File) -> Result<(), String> {
@@ -926,36 +929,42 @@ fn run_admitted_slot_with_batch(request: &SlotRequest<'_>, batch: Option<BatchRu
     let Ok(cwd) = std::env::current_dir() else {
         return refuse("the current directory could not be read", "/target");
     };
-    run_admitted_slot_in_with_batch(request, &cwd, batch)
+    let admission = match build_admission_dir() {
+        Ok(path) => path,
+        Err(message) => return refuse(&message, "/admission"),
+    };
+    run_admitted_slot_core(request, &cwd, batch, &admission)
 }
 
 #[cfg(test)]
 fn run_admitted_slot_in(request: &SlotRequest<'_>, cwd: &Path) -> Outcome {
-    run_admitted_slot_in_with_batch(request, cwd, None)
+    let admission = request
+        .root
+        .parent()
+        .unwrap_or(request.root)
+        .join("test-admission");
+    run_admitted_slot_core(request, cwd, None, &admission)
 }
 
 #[cfg(test)]
-fn run_admitted_slot_in_with_admission(
-    request: &SlotRequest<'_>,
-    cwd: &Path,
-    admission: &Path,
-) -> Outcome {
-    run_admitted_slot_in_with_batch_and_admission(request, cwd, None, Some(admission))
-}
-
 fn run_admitted_slot_in_with_batch(
     request: &SlotRequest<'_>,
     cwd: &Path,
     batch: Option<BatchRun>,
 ) -> Outcome {
-    run_admitted_slot_in_with_batch_and_admission(request, cwd, batch, None)
+    let admission = request
+        .root
+        .parent()
+        .unwrap_or(request.root)
+        .join("test-admission");
+    run_admitted_slot_core(request, cwd, batch, &admission)
 }
 
-fn run_admitted_slot_in_with_batch_and_admission(
+fn run_admitted_slot_core(
     request: &SlotRequest<'_>,
     cwd: &Path,
     batch: Option<BatchRun>,
-    admission_path: Option<&Path>,
+    admission: &Path,
 ) -> Outcome {
     let (root, lane, label) = (request.root, request.lane, request.label);
     if !super::workspace::valid_id(lane) {
@@ -1012,14 +1021,7 @@ fn run_admitted_slot_in_with_batch_and_admission(
     {
         return refuse(&message, "/target");
     }
-    let admission_path = match admission_path {
-        Some(path) => path.to_owned(),
-        None => match build_admission_dir() {
-            Ok(path) => path,
-            Err(message) => return refuse(&message, "/admission"),
-        },
-    };
-    let admission = match open_build_admission(&admission_path) {
+    let admission = match open_build_admission(admission) {
         Ok(lock) => lock,
         Err(message) => return refuse(&message, "/admission"),
     };

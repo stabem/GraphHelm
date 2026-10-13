@@ -411,6 +411,7 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
         Ok(lock) => lock,
         Err(message) => return refused_as(UPDATE, message, "/admission"),
     };
+    Progress::say(&progress.info("waiting for the shared build admission lock"));
     if let Err(message) = super::workspace_slot::lock_build_admission(&admission) {
         return refused_as(UPDATE, message, "/admission");
     }

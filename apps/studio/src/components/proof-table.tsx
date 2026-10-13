@@ -22,6 +22,15 @@ const EV: Record<StepStatus, [string, string, string]> = {
 };
 const TONE: Record<StepStatus, string> = { proven: "proven", stale: "stalled", failed: "stalled", needs_you: "stalled", preview_only: "work", not_run: "ready" };
 
+/** #1157: a finished run that failed is said, not left reading "not replayed yet". */
+function runFailure(run: JourneyRunView): string {
+  if (run.reason === "driver.observer_missing" || run.detail?.code === "replay.observer_missing") {
+    return "Couldn't run this journey: no browser observer is installed. Run `graphhelm setup --install-observer playwright` in this project, then Run again.";
+  }
+  const detail = run.detail ? ` (${run.detail.code} at ${run.detail.pointer})` : "";
+  return `Couldn't run this journey: ${run.reason ?? "the Runtime refused the run"}${detail}`;
+}
+
 interface Props {
   mission: Mission;
   onOpenTest(stepId: string): void;
@@ -75,7 +84,9 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
         {onWatch && <button type="button" disabled={busy} onClick={() => act(() => onWatch(flow.id))}>Watch</button>}
         {run && <button type="button" disabled={preview.launching || preview.run?.state === "running"} onClick={preview.again}>Run again</button>}
         {preview.run?.state === "ready" && <span>{preview.run.kind === "preview" ? "Preview only — not proof" : "Replay recorded"}</span>}
+        {preview.run?.state === "running" && <span role="status">Running…</span>}
         {(error || preview.failure || preview.busyReason) && <p role="alert">{error ?? preview.failure ?? preview.busyReason}</p>}
+        {!error && !preview.failure && !preview.busyReason && preview.run?.state === "failed" && <p role="alert">{runFailure(preview.run)}</p>}
       </div>}
       <div className="proof-summary">
         <section className="proof-promise-list" aria-labelledby="proof-promise-heading">

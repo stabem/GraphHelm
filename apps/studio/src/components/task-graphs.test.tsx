@@ -136,7 +136,7 @@ describe("TaskGraphs", () => {
       record(3, "issue-439", "task.review_verdict", "gh-claude-5", { pr: 449, headSha: "a09b9aa343ba80f78b437b7b38e873950ede2b37", reviewer: "gh-claude-5", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/449#issuecomment-6059525901" }),
     ]);
     render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} />);
-    const graph = screen.getByRole("group", { name: /PR #449/i });
+    const graph = screen.getByRole("group", { name: /Issue #439/i });
     expect(within(graph).getByText(/APPROVE by gh-claude-5 on a09b9aa3, a head with no pr_opened record/)).toBeInTheDocument();
   });
 
@@ -554,13 +554,13 @@ describe("TaskGraphs critic rounds without a task (#562)", () => {
     const { rerender } = render(<TaskGraphs tasks={foldTaskEvents([round])} onOpenJourney={vi.fn()} />);
     const groups = screen.getAllByRole("group");
     expect(groups).toHaveLength(1);
-    expect(groups[0]).toHaveAttribute("aria-label", "issue #900");
+    expect(groups[0]).toHaveAttribute("aria-label", "No task");
     expect(within(groups[0]).getByText("issue-900 · gh-claude-3 · design approved in round 1, 9/10")).toBeInTheDocument();
     expect(screen.queryByText("Implement")).toBeNull();
 
     const claimed = record(2, "issue-900", "task.claimed", "gh-claude-3", { issue: 900, lane: "gh-claude-3", branch: "issue-900-x" });
     rerender(<TaskGraphs tasks={foldTaskEvents([round, claimed])} onOpenJourney={vi.fn()} />);
-    expect(screen.queryByRole("group", { name: "issue #900" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "No task" })).toBeNull();
     expect(screen.getByText("design approved in round 1, 9/10")).toBeInTheDocument();
     expect(screen.getAllByRole("group").some((group) => /#900$/.test(group.getAttribute("aria-label") ?? ""))).toBe(true);
   });

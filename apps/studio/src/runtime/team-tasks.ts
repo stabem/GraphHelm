@@ -713,7 +713,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
   slices.forEach((slice, index) => {
     // A slice opened by a PR record (no claim seen) still belongs to its issue.
     slice.issue ??= slices.find((other) => other.taskId === slice.taskId && other.issue !== null)?.issue ?? null;
-    if (slice.issue === null) {
+    if (slice.issue === null && !isUnclaimedCritic(slice)) {
       const issueId = /^issue-(\d+)$/.exec(slice.taskId)?.[1];
       const issue = issueId === undefined ? null : Number(issueId);
       if (issue !== null && Number.isSafeInteger(issue) && issue > 0) slice.issue = issue;

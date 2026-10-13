@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
+use graphhelm_protocols::PersistedTimestamp;
 use serde::{Deserialize, Serialize};
 
 /// The schema every `task.*` description must name.
@@ -223,7 +223,7 @@ pub struct TaskEventRecord {
     pub reason: Option<String>,
     /// #502: when the Runtime appended the record (its own clock, not the lane's `at`).
     #[serde(default)]
-    pub occurred_at: Option<DateTime<Utc>>,
+    pub occurred_at: Option<PersistedTimestamp>,
     /// #467: the round a `task.critic_verdict` states.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub critic: Option<CriticRound>,
@@ -454,7 +454,7 @@ pub fn parse_task_event(
     actor_id: &str,
     description: &str,
     sequence: u64,
-    occurred_at: Option<DateTime<Utc>>,
+    occurred_at: Option<PersistedTimestamp>,
 ) -> Option<TaskEventRecord> {
     if description.len() > MAX_ENVELOPE_BYTES {
         return None;
@@ -645,7 +645,7 @@ pub fn parse_task_event(
 
 /// #480: a claimed task is planning until its `task.planned`; a `design` plan then waits on its
 /// critic (#467) before implementation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskStep {
     Plan,
@@ -677,9 +677,9 @@ impl TaskStep {
 #[serde(rename_all = "camelCase")]
 pub struct StepClock {
     /// When the slice entered its current step, or `None` when no record carried a time.
-    pub since: Option<DateTime<Utc>>,
+    pub since: Option<PersistedTimestamp>,
     /// Time of the most recent record in the current step; idle time starts after this point.
-    pub last_at: Option<DateTime<Utc>>,
+    pub last_at: Option<PersistedTimestamp>,
     /// Milliseconds spent in each step the slice has left, summed over every visit.
     pub spent: BTreeMap<String, i64>,
 }
@@ -697,12 +697,13 @@ pub fn clock_step(
     clock: &mut StepClock,
     before: &str,
     after: &str,
-    at: Option<DateTime<Utc>>,
+    at: Option<PersistedTimestamp>,
     resume_after_gap: bool,
 ) {
-    let now = at.map(|t| t.timestamp_millis());
-    let since = clock.since.map(|t| t.timestamp_millis());
-    let last_at = clock.last_at.or(clock.since).map(|t| t.timestamp_millis());
+    let millis = |t: &PersistedTimestamp| t.as_datetime().timestamp_millis();
+    let now = at.as_ref().map(millis);
+    let since = clock.since.as_ref().map(millis);
+    let last_at = clock.last_at.as_ref().or(clock.since.as_ref()).map(millis);
     if resume_after_gap
         && let (Some(since_ms), Some(last_ms), Some(now_ms)) = (since, last_at, now)
         && now_ms >= last_ms
@@ -711,13 +712,13 @@ pub fn clock_step(
         if last_ms > since_ms && timed_step(before) {
             *clock.spent.entry(before.to_owned()).or_insert(0) += last_ms - since_ms;
         }
-        clock.since = at;
+        clock.since = at.clone();
         clock.last_at = at;
         return;
     }
     if before == after {
         if clock.since.is_none() && at.is_some() {
-            clock.since = at;
+            clock.since = at.clone();
         }
         if at.is_some() {
             clock.last_at = at;
@@ -730,7 +731,7 @@ pub fn clock_step(
     {
         *clock.spent.entry(before.to_owned()).or_insert(0) += now_ms - since_ms;
     }
-    clock.since = at;
+    clock.since = at.clone();
     clock.last_at = at;
 }
 
@@ -742,8 +743,8 @@ pub struct ReviewRound {
     pub head_sha: String,
     pub comment_url: String,
     pub fix_head: Option<String>,
-    pub blocked_at: Option<DateTime<Utc>>,
-    pub fixed_at: Option<DateTime<Utc>>,
+    pub blocked_at: Option<PersistedTimestamp>,
+    pub fixed_at: Option<PersistedTimestamp>,
 }
 
 /// A BLOCK on the current head that no newer head or verdict has answered.
@@ -825,7 +826,7 @@ pub struct TaskState {
     /// Most recent task record written by this slice's author.
     pub author_last_sequence: Option<u64>,
     /// Trusted Runtime time of this open claim's newest heartbeat; never a lifecycle step.
-    pub last_heartbeat_at: Option<DateTime<Utc>>,
+    pub last_heartbeat_at: Option<PersistedTimestamp>,
     pub reviewers: Vec<String>,
     pub merge_sha: Option<String>,
     /// True only when this slice's own PR was merged, not when a sibling merge cascaded over it.
@@ -979,7 +980,7 @@ fn apply_verdict(
                 head_sha,
                 comment_url,
                 fix_head: None,
-                blocked_at: event.occurred_at,
+                blocked_at: event.occurred_at.clone(),
                 fixed_at: None,
             });
         }
@@ -1186,7 +1187,7 @@ pub fn fold_task_events(records: &[TaskEventRecord]) -> Vec<TaskState> {
             if let Some(claim) = claim
                 && claim.state.lane.as_deref() == Some(event.actor_id.as_str())
             {
-                claim.state.last_heartbeat_at = event.occurred_at;
+                claim.state.last_heartbeat_at = event.occurred_at.clone();
             }
             continue;
         }
@@ -1414,7 +1415,7 @@ pub fn fold_task_events(records: &[TaskEventRecord]) -> Vec<TaskState> {
                     && *head != round.head_sha
                 {
                     round.fix_head = Some(head.clone());
-                    round.fixed_at = event.occurred_at;
+                    round.fixed_at = event.occurred_at.clone();
                 }
                 // #608: the author answered the BLOCK with a newer head, so nothing is blocked now.
                 if let Some(blocked) = &state.blocked_by
@@ -1555,7 +1556,7 @@ pub fn fold_task_events(records: &[TaskEventRecord]) -> Vec<TaskState> {
             &mut state.clock,
             timed(before),
             timed(after),
-            event.occurred_at,
+            event.occurred_at.clone(),
             resumes_after_gap,
         );
         if event.kind == TaskEventKind::Closed {
@@ -1584,7 +1585,7 @@ pub fn fold_task_events(records: &[TaskEventRecord]) -> Vec<TaskState> {
                     &mut claim.state.clock,
                     timed(claim_before),
                     timed(claim_after),
-                    event.occurred_at,
+                    event.occurred_at.clone(),
                     false,
                 );
             }
@@ -1611,7 +1612,7 @@ pub fn fold_task_events(records: &[TaskEventRecord]) -> Vec<TaskState> {
                         &mut claim.state.clock,
                         timed(claim_before),
                         "merged",
-                        event.occurred_at,
+                        event.occurred_at.clone(),
                         false,
                     );
                 }

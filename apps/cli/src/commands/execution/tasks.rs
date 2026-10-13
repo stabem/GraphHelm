@@ -91,7 +91,7 @@ pub(crate) fn read(
                 actor_id,
                 description,
                 event.sequence,
-                Some(*event.occurred_at.as_datetime()),
+                Some(event.occurred_at.clone()),
             )
         })();
         match verified {

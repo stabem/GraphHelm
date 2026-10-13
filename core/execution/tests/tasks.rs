@@ -5,11 +5,12 @@
 //! a plan before its claim (#880), heartbeats that move no step, releases that end one claim.
 //! Cost: pure functions, no I/O, milliseconds.
 
-use chrono::{DateTime, Duration, TimeZone, Utc};
+use chrono::{DateTime, Duration, Utc};
 use graphhelm_execution::tasks::{
     CriticOutcome, TaskEventRecord, TaskState, TaskStep, Verdict, fold_task_events,
     parse_task_event,
 };
+use graphhelm_protocols::PersistedTimestamp;
 use serde_json::{Value, json};
 
 fn record(sequence: u64, kind: &str, actor: &str, document: Value) -> TaskEventRecord {
@@ -25,14 +26,15 @@ fn parse(kind: &str, actor: &str, document: Value) -> Option<TaskEventRecord> {
     parse_task_event(kind, actor, &document.to_string(), 1, None)
 }
 
-fn at(base: &str, minutes: i64) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(base)
+fn at(base: &str, minutes: i64) -> PersistedTimestamp {
+    let when = DateTime::parse_from_rfc3339(base)
         .unwrap()
         .with_timezone(&Utc)
-        + Duration::minutes(minutes)
+        + Duration::minutes(minutes);
+    PersistedTimestamp::from_datetime(when).unwrap()
 }
 
-fn with_time(mut record: TaskEventRecord, when: DateTime<Utc>) -> TaskEventRecord {
+fn with_time(mut record: TaskEventRecord, when: PersistedTimestamp) -> TaskEventRecord {
     record.occurred_at = Some(when);
     record
 }
@@ -602,7 +604,7 @@ fn routes_a_shared_pr_review_by_the_head_named_in_the_event_1002() {
 
 #[test]
 fn keeps_an_approved_same_head_repeat_in_merge_and_preserves_its_review_clock_1002() {
-    let t = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc);
+    let t = |s: &str| PersistedTimestamp::parse(s).unwrap();
     let first = with_time(
         record(
             1,
@@ -636,7 +638,10 @@ fn keeps_an_approved_same_head_repeat_in_merge_and_preserves_its_review_clock_10
     let s = &fold_task_events(&[first.clone(), approve.clone(), repeat])[0];
     assert_eq!(s.step, TaskStep::Merge);
     assert_eq!(s.clock.since, Some(t("2026-10-10T00:01:00Z")));
-    assert!(s.clock.spent.is_empty());
+    // The one minute in Review is booked; the same-head repeat books nothing more.
+    assert_eq!(s.clock.spent.get("review"), Some(&60_000));
+    assert_eq!(s.clock.spent.len(), 1);
+    assert_eq!(s.clock.last_at, Some(t("2026-10-10T01:00:00Z")));
     assert_eq!(s.pr_title.as_deref(), Some("After"));
     assert_eq!(s.pr_summary.as_deref(), Some("Updated summary"));
     let new_head = with_time(
@@ -1542,7 +1547,7 @@ fn serializes_a_slice_with_the_studio_field_names() {
         serde_json::to_value(Verdict::ApproveWithRisk).unwrap(),
         "APPROVE-WITH-RISK"
     );
-    let occurred = Utc.with_ymd_and_hms(2026, 10, 13, 12, 0, 0).unwrap();
+    let occurred = PersistedTimestamp::parse("2026-10-13T12:00:00Z").unwrap();
     let timed = with_time(claimed(1, "lane-a", "issue-7", 7, "b"), occurred);
     assert_eq!(
         serde_json::to_value(&fold_task_events(&[timed])[0]).unwrap()["clock"]["since"],

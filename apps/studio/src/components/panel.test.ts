@@ -130,6 +130,23 @@ it("keeps unread question envelopes pending until their evidence read settles", 
   expect(result.current.__pendingEnvelopeSequences).toEqual([]);
 });
 
+it("settles cached envelopes after a poll adds another carrier", async () => {
+  resetPanelCaches();
+  const first = event(5, "signal_recorded", { kind: "operator_note", signalId: "sig-q" });
+  first.evidenceRefs = ["question"];
+  const next = event(6, "signal_recorded", { kind: "operator_note", signalId: "sig-next" });
+  next.evidenceRefs = ["unrelated"];
+  const open = vi.fn(async (_run: string, id: string): Promise<EvidenceContent> => ({
+    evidenceId: id, content: JSON.stringify({ type: "operator_note", description: id }),
+    contentSha256: "hash", mediaType: "application/json", sensitivity: "confidential",
+  }));
+  const { result, rerender } = renderHook(({ rows }) => useEnvelopes(rows, "run", open), { initialProps: { rows: [first] } });
+  await waitFor(() => expect(result.current.__pendingEnvelopeSequences).toEqual([]));
+  rerender({ rows: [first, next] });
+  await waitFor(() => expect(result.current[6]?.text).toBe("unrelated"));
+  expect(result.current.__pendingEnvelopeSequences).toEqual([]);
+});
+
 it("does not reuse a previously opened envelope when execution sequence numbers repeat", async () => {
   resetPanelCaches();
   const first = event(5, "signal_recorded", { kind: "operator_note", signalId: "sig-a" });

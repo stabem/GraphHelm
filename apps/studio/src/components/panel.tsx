@@ -835,15 +835,13 @@ export function useEnvelopes(
     const carriers = events.filter(
       (event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && event.evidenceRefs.length > 0,
     ).reverse();
-    const failed = new Set<number>(envelopes.forId === executionId ? envelopes.failed : []);
-    const pending = new Set<number>(carriers
-      .filter((carrier) => envelopes.forId !== executionId || envelopes.map[carrier.sequence] === undefined)
-      .map((carrier) => carrier.sequence));
     setEnvelopes((previous) => ({
       forId: executionId,
       map: previous.forId === executionId ? previous.map : {},
-      failed,
-      pending,
+      failed: new Set(previous.forId === executionId ? previous.failed : []),
+      pending: new Set(carriers
+        .filter((carrier) => previous.forId !== executionId || previous.map[carrier.sequence] === undefined)
+        .map((carrier) => carrier.sequence)),
     }));
     let live = true;
     void (async () => {
@@ -861,19 +859,24 @@ export function useEnvelopes(
           };
           setEnvelopes((previous) => {
             const before = previous.forId === executionId ? previous.map[carrier.sequence] : undefined;
-            if (before?.to === opened.to && before.replyTo === opened.replyTo && before.text === opened.text
-              && (before.recommendations ?? []).join("\u0000") === (opened.recommendations ?? []).join("\u0000")) return previous;
+            const unchanged = before?.to === opened.to && before.replyTo === opened.replyTo && before.text === opened.text
+              && (before.recommendations ?? []).join("\u0000") === (opened.recommendations ?? []).join("\u0000");
             const nextFailed = new Set(previous.forId === executionId ? previous.failed : []);
             nextFailed.delete(carrier.sequence);
             const nextPending = new Set(previous.forId === executionId ? previous.pending : []);
             nextPending.delete(carrier.sequence);
-            return { forId: executionId, map: { ...(previous.forId === executionId ? previous.map : {}), [carrier.sequence]: opened }, failed: nextFailed, pending: nextPending };
+            return { forId: executionId, map: unchanged ? previous.map : { ...(previous.forId === executionId ? previous.map : {}), [carrier.sequence]: opened }, failed: nextFailed, pending: nextPending };
           });
         } catch {
           // Keep the failure observable as an unopened candidate and retry it on the next event
           // page update. It must not turn a failed evidence read into a dark beacon.
-          failed.add(carrier.sequence);
-          if (live) setEnvelopes((previous) => ({ forId: executionId, map: previous.forId === executionId ? previous.map : {}, failed: new Set(failed), pending: new Set([...pending].filter((sequence) => sequence !== carrier.sequence)) }));
+          if (live) setEnvelopes((previous) => {
+            const nextFailed = new Set(previous.forId === executionId ? previous.failed : []);
+            nextFailed.add(carrier.sequence);
+            const nextPending = new Set(previous.forId === executionId ? previous.pending : []);
+            nextPending.delete(carrier.sequence);
+            return { forId: executionId, map: previous.forId === executionId ? previous.map : {}, failed: nextFailed, pending: nextPending };
+          });
         }
       }
     })();

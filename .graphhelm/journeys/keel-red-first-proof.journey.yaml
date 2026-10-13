@@ -12,7 +12,7 @@ screens:
     title: The specimen drops the first value
     url: /specimen
     state: stable
-    expect: [{role: stdout, name: "total([2, 3]) returns 3"}]
+    expect: [{role: stdout, name: "defective parent drops the first value"}]
     scope: [.graphhelm/fixtures/keel-red-first-proof/scenario.py]
   - id: proof-report
     title: The CLI distinguishes an earned test from a vacuous test

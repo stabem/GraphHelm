@@ -138,6 +138,26 @@ describe("foldTaskEvents", () => {
     expect(state.headSha).toBe("eeeeeeee");
   });
 
+  it("keeps an approved same-head repeat in Merge and preserves its review clock (#1002)", () => {
+    const at = (sequence: number, kind: string, actor: string, document: Record<string, unknown>, occurredAt: string) => ({
+      ...record(sequence, kind, actor, document), occurredAt,
+    });
+    const records = [
+      at(1, "task.pr_opened", "codex-3", { pr: 1002, headSha: "aaaaaaaa", journeys: [], lane: "codex-3", title: "Before", summary: "Before summary" }, "2026-10-10T00:00:00Z"),
+      at(2, "task.review_verdict", "codex-review", { pr: 1002, headSha: "aaaaaaaa", reviewer: "codex-review", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c1" }, "2026-10-10T00:01:00Z"),
+      at(3, "task.pr_opened", "codex-3", { pr: 1002, headSha: "aaaaaaaa", journeys: [], lane: "codex-3", title: "After", summary: "Updated summary" }, "2026-10-10T01:00:00Z"),
+    ];
+
+    expect(foldTaskEvents(records)[0]).toMatchObject({
+      step: "merge",
+      clock: { since: "2026-10-10T00:01:00Z", spent: {} },
+      prTitle: "After",
+      prSummary: "Updated summary",
+    });
+    expect(foldTaskEvents([...records.slice(0, 2), at(3, "task.pr_opened", "codex-3",
+      { pr: 1002, headSha: "bbbbbbbb", journeys: [], lane: "codex-3", title: "After", summary: "Updated summary" }, "2026-10-10T01:00:00Z")])[0].step).toBe("review");
+  });
+
   it("keeps an early assignment for an unseen fix head until that head opens (#983)", () => {
     const common = { taskId: "issue-983", pr: 1004 };
     const records = [

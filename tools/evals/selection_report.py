@@ -1,6 +1,7 @@
 """Summarize recorded skill-selection and completion observations offline."""
 
 import json
+import hashlib
 import re
 import sys
 from collections import defaultdict
@@ -165,14 +166,99 @@ def build_report(observations, catalog):
     }
 
 
+def parse_json_no_duplicates(text, label):
+    def object_pairs(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise InputError(f"duplicate {label} key: {key}")
+            value[key] = item
+        return value
+    try:
+        return json.loads(text, object_pairs_hook=object_pairs)
+    except json.JSONDecodeError as error:
+        raise InputError(f"cannot read {label} JSON: {error}") from error
+
+
+def normalized_file_digest(path):
+    try:
+        content = path.read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8")
+    except (OSError, UnicodeError) as error:
+        raise InputError(f"cannot read case file: {error}") from error
+    return hashlib.sha256(content).hexdigest()
+
+
+def validate_partition_manifest(path, catalog):
+    try:
+        value = parse_json_no_duplicates(Path(path).read_text(encoding="utf-8"), "partition manifest")
+    except (OSError, UnicodeError) as error:
+        raise InputError(f"cannot read partition manifest: {error}") from error
+    if (not isinstance(value, dict) or set(value) != {"version", "cases"}
+            or type(value["version"]) is not int or value["version"] != 1):
+        raise InputError("partition manifest must contain version 1 and cases")
+    cases = value["cases"]
+    if not isinstance(cases, dict):
+        raise InputError("partition manifest cases must be an object")
+    for case_id in sorted(set(cases) - set(catalog)):
+        raise InputError(f"unknown partition case: {case_id}")
+    for case_id in sorted(set(catalog) - set(cases)):
+        raise InputError(f"missing partition case: {case_id}")
+    normalized = {}
+    for case_id, entry in cases.items():
+        if not isinstance(entry, dict) or set(entry) != {"partition", "promptSha256", "criteriaSha256"}:
+            raise InputError(f"invalid partition entry: {case_id}")
+        partition = entry["partition"]
+        if partition not in ("tuning", "held_out"):
+            raise InputError(f"invalid partition for case: {case_id}")
+        for field, relative in (("promptSha256", "prompt.md"),
+                                ("criteriaSha256", "graders/criteria.md")):
+            digest = entry[field]
+            if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                raise InputError(f"invalid {field} for case: {case_id}")
+            try:
+                actual = normalized_file_digest(CASES / case_id / relative)
+            except InputError as error:
+                raise InputError(f"cannot verify case {case_id}: {error}") from error
+            if actual != digest:
+                raise InputError(f"content digest mismatch for case: {case_id}")
+        normalized[case_id] = partition
+    for case_id, (kind, _) in catalog.items():
+        if kind == "unprompted":
+            original = case_id.removesuffix("-unprompted")
+            if normalized[case_id] != normalized[original]:
+                raise InputError(f"prompted and unprompted cases use different partitions: {original}")
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    identity = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return normalized, identity
+
+
+def partition_report(observations, catalog, partitions, identity):
+    grouped = {"tuning": [], "held_out": []}
+    for item in observations:
+        grouped[partitions[item["case_id"]]].append(item)
+    return {
+        "partitioning": {"status": "declared", "manifestSha256": identity,
+                         "optimizer_isolation": "unobserved"},
+        "by_partition": {
+            partition: build_report(grouped[partition], catalog)
+            for partition in ("tuning", "held_out")
+        },
+    }
+
+
 def main(argv=None):
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 1:
-        print("usage: python tools/evals/selection_report.py <observations.json>", file=sys.stderr)
+    if len(args) not in (1, 3) or (len(args) == 3 and args[1] != "--partition-manifest"):
+        print("usage: python tools/evals/selection_report.py <observations.json> [--partition-manifest <file>]", file=sys.stderr)
         return 2
     try:
         observations, catalog = load_observations(args[0])
-        report = build_report(observations, catalog)
+        if len(args) == 3:
+            partitions, identity = validate_partition_manifest(args[2], catalog)
+            report = partition_report(observations, catalog, partitions, identity)
+        else:
+            report = {**build_report(observations, catalog),
+                      "partitioning": {"status": "unobserved", "optimizer_isolation": "unobserved"}}
     except InputError as error:
         print(str(error), file=sys.stderr)
         return 2

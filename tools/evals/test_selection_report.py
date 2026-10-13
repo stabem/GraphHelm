@@ -1,6 +1,8 @@
 """Offline accounting contract for recorded development-contracts eval outcomes."""
 
 import json
+import hashlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -49,6 +51,134 @@ class SelectionReport(unittest.TestCase):
         return subprocess.run([sys.executable, str(REPORT), str(self.input_path)],
                               cwd=ROOT, capture_output=True, text=True,
                               creationflags=NO_WINDOW)
+
+    def copied_report(self, root):
+        tools = root / "tools/evals"
+        evals = root / "evals/graphhelm-development-contracts"
+        tools.mkdir(parents=True)
+        shutil.copy2(REPORT, tools / "selection_report.py")
+        shutil.copytree(ROOT / "evals/graphhelm-development-contracts", evals)
+        return tools / "selection_report.py", evals
+
+    @staticmethod
+    def digest(path):
+        content = path.read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8")
+        return hashlib.sha256(content).hexdigest()
+
+    def run_partitioned(self, script, observations, manifest):
+        observations_path = Path(self.temp.name) / "partition-observations.json"
+        manifest_path = Path(self.temp.name) / "partitions.json"
+        observations_path.write_text(json.dumps(observations), encoding="utf-8")
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        return subprocess.run([sys.executable, str(script), str(observations_path),
+                               "--partition-manifest", str(manifest_path)],
+                              capture_output=True, text=True, creationflags=NO_WINDOW)
+
+    def run_partitioned_text(self, script, observations, manifest_text):
+        observations_path = Path(self.temp.name) / "partition-observations.json"
+        manifest_path = Path(self.temp.name) / "partitions.json"
+        observations_path.write_text(json.dumps(observations), encoding="utf-8")
+        manifest_path.write_text(manifest_text, encoding="utf-8")
+        return subprocess.run([sys.executable, str(script), str(observations_path),
+                               "--partition-manifest", str(manifest_path)],
+                              capture_output=True, text=True, creationflags=NO_WINDOW)
+
+    def make_manifest(self, evals, tuning, held_out):
+        cases = {}
+        for case_id, partition in [(case_id, "tuning") for case_id in tuning] + [
+                (case_id, "held_out") for case_id in held_out]:
+            case_dir = evals / case_id
+            cases[case_id] = {"partition": partition,
+                              "promptSha256": self.digest(case_dir / "prompt.md"),
+                              "criteriaSha256": self.digest(case_dir / "graders/criteria.md")}
+        return {"version": 1, "cases": cases}
+
+    def test_partition_manifest_separates_counts_and_binds_case_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script, evals = self.copied_report(Path(directory))
+            manifest = self.make_manifest(evals,
+                [case.name for case in evals.iterdir() if case.is_dir() and not case.name.startswith("no-skill-")],
+                ["no-skill-arithmetic", "no-skill-audit-grammar"])
+            observations = [
+                {"case_id": "keel-green-on-parent-unprompted", "status": "completed",
+                 "invoked_skills": ["keel"], "completion": "pass", "rubric": "r", "judge": "pass"},
+                {"case_id": "no-skill-arithmetic", "status": "completed",
+                 "invoked_skills": [], "completion": "fail", "rubric": "r", "judge": "fail"},
+                {"case_id": "no-skill-audit-grammar", "status": "timeout",
+                 "invoked_skills": [], "completion": "pass", "rubric": "r", "judge": "pass"},
+            ]
+            result = self.run_partitioned(script, observations, manifest)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            self.assertEqual(report["by_partition"]["tuning"]["selection"]["unprompted"]["correct_trigger"], 1)
+            self.assertEqual(report["by_partition"]["held_out"]["selection"]["no_skill"]["incomplete"], 1)
+            self.assertEqual(report["by_partition"]["held_out"]["judges"]["by_rubric"]["r"]["observed"], 1)
+            self.assertNotIn("selection", report)
+            self.assertEqual(report["partitioning"]["optimizer_isolation"], "unobserved")
+            again = self.run_partitioned(script, observations, manifest)
+            self.assertEqual(result.stdout, again.stdout)
+
+            changed = evals / "no-skill-arithmetic/prompt.md"
+            changed.write_text(changed.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+            drift = self.run_partitioned(script, observations, manifest)
+            self.assertNotEqual(drift.returncode, 0)
+            self.assertIn("no-skill-arithmetic", drift.stderr)
+            self.assertEqual(drift.stdout, "")
+
+            empty = self.make_manifest(evals,
+                [case.name for case in evals.iterdir() if case.is_dir()], [])
+            result = self.run_partitioned(script, [], empty)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            empty_report = json.loads(result.stdout)
+            self.assertEqual(empty_report["by_partition"]["held_out"]["selection"], {})
+            self.assertEqual(empty_report["by_partition"]["held_out"]["completion"], {})
+
+    def test_partition_manifest_rejects_missing_unknown_invalid_and_split_twins(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script, evals = self.copied_report(Path(directory))
+            manifest = self.make_manifest(evals,
+                [case.name for case in evals.iterdir() if case.is_dir() and not case.name.startswith("no-skill-")],
+                [case.name for case in evals.iterdir() if case.is_dir() and case.name.startswith("no-skill-")])
+            observation = [{"case_id": "no-skill-arithmetic", "status": "completed",
+                            "invoked_skills": [], "completion": "pass", "rubric": "r"}]
+            missing = dict(manifest["cases"])
+            missing.pop("no-skill-arithmetic")
+            for invalid, expected in [
+                ({"version": 1, "cases": missing}, "no-skill-arithmetic"),
+                ({"version": 1, "cases": {**manifest["cases"], "unknown": {}}}, "unknown"),
+                ({"version": 1, "cases": {**manifest["cases"],
+                    "no-skill-arithmetic": {"partition": "other", "promptSha256": "0"*64,
+                                             "criteriaSha256": "0"*64}}}, "no-skill-arithmetic"),
+                ({"version": 1, "cases": {**manifest["cases"],
+                    "no-skill-arithmetic": {"partition": "tuning", "promptSha256": "bad",
+                                             "criteriaSha256": "0"*64}}}, "no-skill-arithmetic"),
+            ]:
+                result = self.run_partitioned(script, observation, invalid)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, result.stderr)
+
+            duplicate_text = json.dumps(manifest)
+            duplicate_text = duplicate_text[:-1] + ',"cases":{}}'
+            result = self.run_partitioned_text(script, observation, duplicate_text)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("duplicate partition manifest key: cases", result.stderr)
+
+            split = self.make_manifest(evals,
+                [case.name for case in evals.iterdir() if case.is_dir() and not case.name.startswith("no-skill-")],
+                ["no-skill-arithmetic", "no-skill-audit-grammar"])
+            split["cases"]["keel-green-on-parent-unprompted"]["partition"] = "held_out"
+            result = self.run_partitioned(script, observation, split)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("keel-green-on-parent", result.stderr)
+
+    def test_legacy_report_marks_partitioning_unobserved(self):
+        result = self.run_report()
+        self.assertNotEqual(result.returncode, 0)  # default fixture still has its unknown-case guard
+        self.observations = self.observations[:-1]
+        result = self.run_report()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["partitioning"]["status"], "unobserved")
 
     def test_reports_separate_counts_incomplete_judges_and_rejects_unknown_case(self):
         result = self.run_report()

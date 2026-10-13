@@ -3287,7 +3287,7 @@ describe("round-3: the rail is live and the screen belongs to one run", () => {
     vi.mocked(client.listExecutions).mockRejectedValueOnce(new Error("rail unavailable"));
     const beforeRejectedRefresh = statusReads;
     await waitFor(() => expect(statusReads).toBeGreaterThan(beforeRejectedRefresh));
-    expect(screen.getByText(/paused/i)).toBeInTheDocument();
+    expect(screen.getByText(/^Execution \/ paused$/)).toBeInTheDocument();
   });
 
   /** The 4s poll tailed only the selected run; another run flipping to needs-you stayed

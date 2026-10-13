@@ -287,13 +287,13 @@ describe("laneBars", () => {
     expect(lanes[0]!.bars.map((bar) => [bar.start - T0, bar.end - T0, bar.open])).toEqual([[0, 30, true], [10, 20, false]]);
   });
 
-  it("release bars agree with the fold when an older claim remains open", () => {
+  it("a release for an older claim keeps the latest claim bar open", () => {
     const lanes = laneBars([
       ev({ kind: "task.claimed", lane: "dev", taskId: "issue-729", sequence: 10, at: at(0) }),
       ev({ kind: "task.claimed", lane: "dev", taskId: "issue-729", sequence: 11, at: at(10) }),
-      ev({ kind: "task.released", lane: "dev", taskId: "issue-729", sequence: 12, claimSequence: 11, reason: "Stopped", at: at(20) } as never),
+      ev({ kind: "task.released", lane: "dev", taskId: "issue-729", sequence: 12, claimSequence: 10, reason: "Stopped", at: at(20) } as never),
     ], T0 + 30, 1000);
-    expect(lanes[0]!.bars.map((bar) => [bar.start - T0, bar.end - T0, bar.open])).toEqual([[0, 30, true], [10, 20, false]]);
+    expect(lanes[0]!.bars.map((bar) => [bar.start - T0, bar.end - T0, bar.open])).toEqual([[0, 30, true], [10, 30, true]]);
   });
 
   it("a released sole claim leaves its lane Free on the Agents board", () => {

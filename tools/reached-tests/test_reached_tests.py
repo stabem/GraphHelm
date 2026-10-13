@@ -35,6 +35,21 @@ def reach(*changed, repo=None):
 
 class Reach(unittest.TestCase):
 
+    def test_any_changed_python_file_selects_no_console_window_guard(self):
+        """Run the repository-wide Python guard for Python edits outside tools/.
+
+        Cost: selector fixture only; milliseconds, no Cargo, network, browser or Runtime.
+        """
+        observer = "tools/reached-tests/test_no_console_window.py"
+        expected = "python -m unittest tools/reached-tests/test_no_console_window.py"
+        with tempfile.TemporaryDirectory() as repo:
+            Path(repo, observer).parent.mkdir(parents=True)
+            Path(repo, observer).write_text("import unittest\n", encoding="utf-8")
+            changed = ".graphhelm/fixtures/example/scenario.py"
+            *_, tools, _, other = reach(changed, repo=repo)
+        self.assertEqual(tools, [expected])
+        self.assertEqual(other, [])
+
     def test_task_handoff_fixture_selects_its_offline_scenario_once(self):
         """Reach the real isolated handoff observer for fixture-only diffs.
 

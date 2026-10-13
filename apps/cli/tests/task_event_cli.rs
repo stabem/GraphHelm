@@ -493,6 +493,54 @@ fn another_task_does_not_end_the_claim_or_reset_its_cooldown() {
     assert_eq!(history(&events).len(), head);
 }
 
+/// Two submissions may both read the same eligible claim; the journal must admit only one.
+#[test]
+fn concurrent_heartbeats_append_at_most_once() {
+    use std::sync::Barrier;
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let claim = signal(
+        scratch.path(),
+        &events,
+        "race-claim",
+        "task.claimed",
+        ACTOR,
+        &as_actor(package_fixture("claimed")),
+    );
+    assert_eq!(claim["ok"], true, "{claim}");
+    let before = history(&events).len();
+    let mut heartbeat = as_actor(package_fixture("claimed"));
+    heartbeat.as_object_mut().unwrap().retain(|key, _| {
+        matches!(key.as_str(), "schema" | "taskId" | "revision" | "at" | "lane")
+    });
+    let barrier = Arc::new(Barrier::new(3));
+    let replies: Vec<_> = ["race-left", "race-right"]
+        .into_iter()
+        .map(|id| {
+            let barrier = Arc::clone(&barrier);
+            let events = events.clone();
+            let scratch = scratch.path().to_path_buf();
+            let heartbeat = heartbeat.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                signal(&scratch, &events, id, "task.heartbeat", ACTOR, &heartbeat)
+            })
+        })
+        .collect();
+    barrier.wait();
+    let replies: Vec<_> = replies.into_iter().map(|thread| thread.join().unwrap()).collect();
+    assert_eq!(replies.iter().filter(|reply| reply["ok"] == true).count(), 1, "{replies:?}");
+    assert_eq!(history(&events).len(), before + 1);
+    assert_eq!(
+        history(&events)
+            .iter()
+            .filter(|event| matches!(&event.kind, EventKind::SignalRecorded(recorded)
+                if recorded.kind == "task.heartbeat"))
+            .count(),
+        1
+    );
+}
+
 #[test]
 fn a_task_signal_naming_another_actor_is_refused_and_records_nothing() {
     let scratch = tempfile::tempdir().unwrap();

@@ -511,7 +511,7 @@ fn shared_admission_serializes_children_across_slot_roots() {
                 "-NoProfile".into(),
                 "-Command".into(),
                 format!(
-                    "$deadline=(Get-Date).AddSeconds(10); Add-Content -LiteralPath '{log}' '{tag} start'; while (!(Test-Path -LiteralPath '{release}') -and (Get-Date) -lt $deadline) {{ Start-Sleep -Milliseconds 10 }}; if (!(Test-Path -LiteralPath '{release}')) {{ exit 91 }}; Add-Content -LiteralPath '{log}' '{tag} end'"
+                    "$deadline=(Get-Date).AddSeconds(10); Add-Content -LiteralPath '{log}' \"{tag} start $env:CARGO_TARGET_DIR\"; while (!(Test-Path -LiteralPath '{release}') -and (Get-Date) -lt $deadline) {{ Start-Sleep -Milliseconds 10 }}; if (!(Test-Path -LiteralPath '{release}')) {{ exit 91 }}; Add-Content -LiteralPath '{log}' '{tag} end'"
                 ),
             ]
         } else {
@@ -519,7 +519,7 @@ fn shared_admission_serializes_children_across_slot_roots() {
                 "sh".into(),
                 "-c".into(),
                 format!(
-                    "echo '{tag} start' >> '{log}'; i=0; while [ ! -f '{release}' ] && [ $i -lt 1000 ]; do sleep 0.01; i=$((i+1)); done; if [ ! -f '{release}' ]; then exit 91; fi; echo '{tag} end' >> '{log}'"
+                    "echo \"{tag} start $CARGO_TARGET_DIR\" >> '{log}'; i=0; while [ ! -f '{release}' ] && [ $i -lt 1000 ]; do sleep 0.01; i=$((i+1)); done; if [ ! -f '{release}' ]; then exit 91; fi; echo '{tag} end' >> '{log}'"
                 ),
             ]
         }
@@ -547,6 +547,9 @@ fn shared_admission_serializes_children_across_slot_roots() {
     {
         std::thread::sleep(Duration::from_millis(10));
     }
+    let first_started = std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .contains("a start");
     let second_root = root_b.clone();
     let second_cwd = cwd.clone();
     let second_admission = admission.clone();
@@ -565,17 +568,27 @@ fn shared_admission_serializes_children_across_slot_roots() {
         .and_then(|data| data["targetDir"].as_str())
         .unwrap_or_default()
         .to_owned();
-    assert!(first.output.ok, "first child failed: {:?}", first.output);
+    assert!(first_started, "first child did not enter before contender");
+    assert_eq!(first.exit_code, 0, "first child failed: {:?}", first.output);
     assert!(!timed.output.ok);
     assert_eq!(timed.output.diagnostics[0].path, "/slot");
     assert!(!timed_marker.contains("b start"));
-    assert!(retry.output.ok, "retry child failed: {:?}", retry.output);
+    assert_eq!(retry.exit_code, 0, "retry child failed: {:?}", retry.output);
     assert_eq!(first_target, expected_target_a);
     let retry_target = retry.output.data.as_ref().unwrap()["targetDir"]
         .as_str()
         .unwrap_or_default();
     assert_eq!(retry_target, expected_target_b);
     assert_ne!(first_target, retry_target);
+    let child_markers = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        child_markers.contains(&format!("a start {expected_target_a}")),
+        "{child_markers}"
+    );
+    assert!(
+        child_markers.contains(&format!("b start {expected_target_b}")),
+        "{child_markers}"
+    );
 }
 
 #[test]
@@ -685,7 +698,6 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
         "graphhelm"
     });
     std::fs::write(&fake_exe, b"fixture executable").unwrap();
-    let update_exe = fake_exe.clone();
     let stderr = dir.path().join("update.stderr");
     let mut update = graphhelm_process::command(std::env::current_exe().unwrap());
     update

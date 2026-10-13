@@ -500,6 +500,16 @@ def reach(changed, packages, embedded, repo=None):
     return whole, single, studio, sorted(tools), sorted(validate), other
 
 
+def _plugin_release_content(path):
+    """Shipped files need a release bump; dedicated docs and test files do not."""
+    if not path.startswith(("plugins/graphhelm/", "plugins/graphhelm-codex-hooks/")):
+        return False
+    parts = path.split("/")
+    name = parts[-1].lower()
+    return not (any(part.lower() in {"docs", "tests"} for part in parts[2:])
+                or name.startswith("test_") or name.endswith("_test.py") or ".test." in name)
+
+
 def _target_argv(package, target):
     """One explicit Cargo invocation for a target that a package-wide test would cover."""
     kind, name = target["kind"], target["name"]
@@ -641,12 +651,15 @@ def _target_flags(target):
 
 
 def commands(whole, single, studio, tools=(), validate=(), lint_packages=None, package_plans=None,
-             package_metadata=None):
+             package_metadata=None, plugin_version_refs=None):
     if whole and package_plans is not None:
         missing = sorted(set(whole) - set(package_plans))
         if missing:
             raise ValueError("whole-package target metadata missing for: " + ", ".join(missing))
     cmds = list(tools) + [f"graphhelm --json extension validate {v}" for v in validate]
+    if plugin_version_refs is not None:
+        cmds.insert(0, _argv_text(["python", "tools/reached-tests/plugin_version_guard.py",
+                                   "--base", plugin_version_refs[0], "--head", plugin_version_refs[1]]))
     for name in sorted(whole):
         if package_plans is not None and name in package_plans:
             cmds.extend(_argv_text(step["argv"]) for step in package_plans[name])
@@ -700,7 +713,7 @@ def _node_test_paths(command, repo):
 
 
 def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo=None, package_plans=None,
-          package_metadata=None):
+          package_metadata=None, plugin_version_refs=None):
     """Return executable argv records without interpreting the legacy shell command strings."""
     if whole and package_plans is None:
         raise ValueError("whole-package steps require Cargo target metadata")
@@ -709,6 +722,10 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
         if missing:
             raise ValueError("whole-package target metadata missing for: " + ", ".join(missing))
     out = []
+    if plugin_version_refs is not None:
+        out.append({"argv": ["python", "tools/reached-tests/plugin_version_guard.py",
+                              "--base", plugin_version_refs[0], "--head", plugin_version_refs[1]],
+                    "cwd": ".", "slot": False})
     for tool in tools:
         if tool == BROWSER_OBSERVERS:
             out.append({"argv": BROWSER_ARGV[:], "cwd": ".", "slot": True, "observer": "browser"})
@@ -809,7 +826,9 @@ def main(argv):
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
     repo = Path(args.repo).resolve()
-    changed = [line for line in run(["git", "diff", "--name-only", f"{args.base}...{args.head}"], repo).splitlines() if line]
+    changed = [line for line in run(["git", "diff", "--name-only", "--no-renames",
+                                    f"{args.base}...{args.head}"], repo).splitlines() if line]
+    plugin_version_refs = (args.base, args.head) if any(_plugin_release_content(path) for path in changed) else None
     packages = workspace(repo)
     embedded = embeds(repo, packages)
     whole, single, studio, tools, validate, other = reach(changed, packages, embedded, repo)
@@ -820,8 +839,8 @@ def main(argv):
     result = {"changed": changed, "packages": sorted(whole), "broadPackages": sorted(whole),
               "targets": [{"package": p, "test": t, "module": m} for p, t, m in sorted(single, key=lambda s: (s[0], s[1], s[2] or ""))],
               "studio": studio, "tools": tools, "validate": validate, "unmapped": unmapped,
-              "commands": commands(whole, single, studio, tools, validate, lint, package_plans, packages),
-              "steps": steps(whole, single, studio, tools, validate, lint, repo, package_plans, packages),
+              "commands": commands(whole, single, studio, tools, validate, lint, package_plans, packages, plugin_version_refs),
+              "steps": steps(whole, single, studio, tools, validate, lint, repo, package_plans, packages, plugin_version_refs),
               "lintPackages": sorted(lint),
               "unsupported": unsupported + unsupported_hook_observers,
               "keelPlan": keel_plan(repo, changed)}

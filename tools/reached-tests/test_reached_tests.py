@@ -35,6 +35,28 @@ def reach(*changed, repo=None):
 
 class Reach(unittest.TestCase):
 
+    def test_shipped_plugin_diff_selects_executable_version_guard(self):
+        """A shipped plugin edit must run the version guard for the selected refs.
+
+        Cost: selector fixture only; milliseconds, no Cargo, network, browser, or Runtime.
+        """
+        with tempfile.TemporaryDirectory() as repo, \
+                patch.object(rt, "run", return_value="plugins/graphhelm/skills/graphhelm-guide/SKILL.md"), \
+                patch.object(rt, "workspace", return_value=[]), \
+                patch.object(rt, "embeds", return_value={}), \
+                patch.object(rt.shutil, "which", return_value=None):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(rt.main(["--repo", repo, "--base", "selected-base", "--head", "selected-head", "--json"]), 0)
+        plan = json.loads(output.getvalue())
+        guard = [step for step in plan["steps"] if step["argv"][:3] == ["python", "tools/reached-tests/plugin_version_guard.py", "--base"]]
+        self.assertEqual(len(guard), 1)
+        self.assertEqual(guard[0]["argv"], ["python", "tools/reached-tests/plugin_version_guard.py",
+                                             "--base", "selected-base", "--head", "selected-head"])
+        self.assertFalse(guard[0]["slot"])
+        self.assertIn("python tools/reached-tests/plugin_version_guard.py --base selected-base --head selected-head",
+                      plan["commands"])
+
     def test_selection_report_test_selects_offline_report_observer(self):
         """Map the report CLI regression to its unittest target.
 

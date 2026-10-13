@@ -525,14 +525,14 @@ pub(super) fn run_install(
     };
     match admission.try_lock() {
         Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+        Err(std::fs::TryLockError::WouldBlock) => {
             Progress::say(&progress.info("waiting for the shared build admission lock"));
             if admission.lock().is_err() {
                 Progress::say(&progress.warn("the build admission lock could not be acquired"));
                 return false;
             }
         }
-        Err(_) => {
+        Err(std::fs::TryLockError::Error(_)) => {
             Progress::say(&progress.warn("the build admission lock could not be checked"));
             return false;
         }

@@ -774,6 +774,10 @@ fn clean_workspace_that_cannot_clean_refuses_and_never_runs_the_command() {
     std::fs::create_dir_all(&not_a_workspace).unwrap();
     let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .current_dir(&not_a_workspace)
+        .env(
+            "GRAPHHELM_BUILD_ADMISSION_DIR",
+            dir.path().join("private-admission"),
+        )
         .args([
             "--json",
             "workspace",

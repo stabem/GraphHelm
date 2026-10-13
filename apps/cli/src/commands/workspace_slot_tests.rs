@@ -637,6 +637,37 @@ fn shared_admission_serializes_children_across_slot_roots() {
 
 #[test]
 fn update_installer_waits_for_slot_admission_before_starting_child() {
+    if let (Some(admission), Some(log), Some(exe), Some(script), Some(stderr)) = (
+        std::env::var_os("GRAPHHELM_UPDATE_OBSERVER_ADMISSION"),
+        std::env::var_os("GRAPHHELM_UPDATE_OBSERVER_LOG"),
+        std::env::var_os("GRAPHHELM_UPDATE_OBSERVER_EXE"),
+        std::env::var_os("GRAPHHELM_UPDATE_OBSERVER_SCRIPT"),
+        std::env::var_os("GRAPHHELM_UPDATE_OBSERVER_STDERR"),
+    ) {
+        let command = if cfg!(windows) {
+            vec![
+                "powershell".into(),
+                "-NoProfile".into(),
+                "-File".into(),
+                script,
+            ]
+        } else {
+            vec!["sh".into(), script]
+        };
+        let mut install = graphhelm_process::command(&command[0]);
+        install.args(&command[1..]);
+        let _ = std::fs::File::create(stderr);
+        let ok = super::super::studio::run_install(
+            &mut install,
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+            crate::progress::Progress::decide("update-test"),
+            Path::new(&admission),
+            Some(Path::new(&exe)),
+        );
+        assert!(ok);
+        assert!(Path::new(&log).exists());
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("root");
     let log = dir.path().join("update-v-slot.log");
@@ -684,7 +715,7 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
         .unwrap_or_default()
         .contains("slot start");
 
-    let update_command = if cfg!(windows) {
+    let update_script = if cfg!(windows) {
         let script = dir.path().join("update-fixture.ps1");
         std::fs::write(
             &script,
@@ -693,24 +724,20 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
             ),
         )
         .unwrap();
-        vec![
-            "powershell".into(),
-            "-NoProfile".into(),
-            "-File".into(),
-            script.to_string_lossy().into_owned(),
-        ]
+        script
     } else {
-        vec![
-            "sh".into(),
-            "-c".into(),
+        let script = dir.path().join("update-fixture.sh");
+        std::fs::write(
+            &script,
             format!(
-                "echo 'update start' >> '{}'; echo 'update end' >> '{}'",
+                "echo 'update start' >> '{}'; echo 'update end' >> '{}'\n",
                 log.display(),
                 log.display()
             ),
-        ]
+        )
+        .unwrap();
+        script
     };
-    let source = Path::new(env!("CARGO_MANIFEST_DIR"));
     let fake_exe = dir.path().join(if cfg!(windows) {
         "graphhelm.exe"
     } else {
@@ -718,23 +745,34 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
     });
     std::fs::write(&fake_exe, b"fixture executable").unwrap();
     let update_exe = fake_exe.clone();
-    let update_admission = admission.clone();
-    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
-    let update = std::thread::spawn(move || {
-        ready_tx.send(()).unwrap();
-        let mut command = graphhelm_process::command(&update_command[0]);
-        command.args(&update_command[1..]);
-        super::super::studio::run_install(
-            &mut command,
-            source,
-            crate::progress::Progress::decide("update-test"),
-            &update_admission,
-            Some(&update_exe),
-        )
-    });
-    let update_started = ready_rx.recv_timeout(Duration::from_secs(3)).is_ok();
-    // Let the installer reach its real lock call while the slot child still holds admission.
-    std::thread::sleep(Duration::from_millis(100));
+    let stderr = dir.path().join("update.stderr");
+    let mut update = graphhelm_process::command(std::env::current_exe().unwrap());
+    update
+        .args([
+            "--exact",
+            "commands::workspace_slot::workspace_slot_tests::update_installer_waits_for_slot_admission_before_starting_child",
+            "--nocapture",
+        ])
+        .env("GRAPHHELM_UPDATE_OBSERVER_ADMISSION", &admission)
+        .env("GRAPHHELM_UPDATE_OBSERVER_LOG", &log)
+        .env("GRAPHHELM_UPDATE_OBSERVER_EXE", &fake_exe)
+        .env("GRAPHHELM_UPDATE_OBSERVER_SCRIPT", &update_script)
+        .env("GRAPHHELM_UPDATE_OBSERVER_STDERR", &stderr)
+        .stderr(std::process::Stdio::from(std::fs::File::create(&stderr).unwrap()));
+    let update = update.spawn().unwrap();
+    let waited = std::time::Instant::now();
+    let update_waiting = loop {
+        if std::fs::read_to_string(&stderr)
+            .unwrap_or_default()
+            .contains("waiting for the shared build admission lock")
+        {
+            break true;
+        }
+        if waited.elapsed() >= Duration::from_secs(5) {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
     let original_present_while_held = fake_exe.exists();
     let old_absent_while_held = !fake_exe
         .with_file_name(if cfg!(windows) {
@@ -748,7 +786,7 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
         .contains("update start");
     std::fs::write(&release, b"release").unwrap();
     let slot = slot.join().unwrap();
-    let update_ok = update.join().unwrap();
+    let update_status = update.wait_with_output().unwrap();
     let lines = std::fs::read_to_string(&log).unwrap();
     let tags = lines
         .lines()
@@ -760,9 +798,15 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
         })
         .collect::<Vec<_>>();
     assert!(slot_started, "slot child did not enter the build section");
-    assert!(update_started, "update fixture thread did not start");
+    assert!(
+        update_waiting,
+        "update did not report actual lock contention"
+    );
     assert!(slot.output.ok, "slot child failed: {:?}", slot.output);
-    assert!(update_ok);
+    assert!(
+        update_status.status.success(),
+        "update observer failed: {update_status:?}"
+    );
     assert!(
         original_present_while_held,
         "update renamed the running executable before admission"

@@ -12,25 +12,25 @@ screens:
     title: The approval matches head A
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"verdicts\":[\"approval-a\"]"}, {role: stdout, name: "\"matchesExpected\":true"}]
+    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"verdicts\":[\"approval-a\"]"}]
     scope: unknown
   - id: approved-b
     title: A new approval matches head B
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"verdicts\":[\"approval-b\"]"}, {role: stdout, name: "\"matchesExpected\":true"}]
+    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"verdicts\":[\"approval-b\"]"}]
     scope: unknown
   - id: blocked-b
     title: A BLOCK on B is reported
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"matchingBlockIds\":[\"block-b\"]"}, {role: stdout, name: "\"matchesExpected\":true"}]
+    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"matchingBlockIds\":[\"block-b\"]"}]
     scope: unknown
   - id: stale-a
     title: The approval on A is absent at head B
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"verdicts\":[\"approval-a\"]"}, {role: stdout, name: "\"matchesExpected\":true"}]
+    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"verdicts\":[]"}]
     scope: unknown
   - id: start
     title: A local review fixture is ready

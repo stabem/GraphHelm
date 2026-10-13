@@ -15,18 +15,22 @@ import tempfile
 HERE = Path(__file__).resolve().parent
 
 
-def run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[bytes]:
+def run(argv: list[str], cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(
         argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, timeout=30, check=False,
+        env=env,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
 
 
 def git(repo: Path, *args: str) -> str:
+    env = os.environ.copy()
+    env["GIT_AUTHOR_DATE"] = "2001-01-01T00:00:00+0000"
+    env["GIT_COMMITTER_DATE"] = "2001-01-01T00:00:00+0000"
     result = run(["git", "-c", "user.name=Verdict fixture", "-c",
                   "user.email=verdict@example.invalid", "-c", "commit.gpgsign=false",
-                  *args], repo)
+                  *args], repo, env)
     if result.returncode:
         raise RuntimeError(result.stderr.decode("utf-8", errors="replace"))
     return result.stdout.decode("ascii").strip()
@@ -86,8 +90,7 @@ def main() -> int:
             # Keep the real CLI result visible to the journey. The test also checks
             # literal IDs, so a fixture cannot pass by merely printing a claim.
             print(json.dumps({"headA": head_a, "headB": head_b, "mode": mode,
-                              "verdicts": ids, "matchingBlockIds": blocks,
-                              "matchesExpected": (ids, blocks) == expected}, separators=(",", ":")))
+                              "verdicts": ids, "matchingBlockIds": blocks}, separators=(",", ":")))
             return 0 if (ids, blocks) == expected else 1
     except (OSError, RuntimeError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         print(str(error), file=sys.stderr)

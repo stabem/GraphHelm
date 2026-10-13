@@ -1,7 +1,10 @@
 # Isolated task handoff observer
 
-This scenario runs the checked-in Claude and Codex task handoff adapter against a disposable
-GraphHelm Runtime. It needs Python 3 and an explicitly pinned prebuilt GraphHelm CLI. It does not
+This scenario runs the checked-in Claude sender adapter and Codex companion receiver adapter
+against a disposable GraphHelm Runtime. The Codex-labelled receiver loads
+`plugins/graphhelm-codex-hooks/hooks/task_handoff.py`; a missing or broken companion must fail
+the observer instead of silently using the sender package. It needs Python 3 and an explicitly
+pinned prebuilt GraphHelm CLI. It does not
 call a model, use the user's hook cache, or connect to the configured live Runtime.
 
 Run it from the repository root:
@@ -48,3 +51,10 @@ The journey contract is draft and its approval is null. `journey validate` check
 shape and semantics; it does not run this scenario. Running the scenario directly proves the
 bounded offline adapter/Runtime continuity described above. Journey replay remains pending and
 must be observed in an isolated journey-enabled environment before this flow can be called proven.
+
+The package-selection regression test runs without a Runtime and proves that a unique refusal
+from a copied Codex companion reaches the scenario as `ScenarioFailure`:
+
+```powershell
+python .graphhelm/fixtures/keel-task-handoff/test_scenario.py
+```

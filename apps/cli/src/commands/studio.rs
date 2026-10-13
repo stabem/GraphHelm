@@ -403,6 +403,17 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
             }),
         );
     }
+    let admission_path = match super::workspace_slot::build_admission_dir() {
+        Ok(path) => path,
+        Err(message) => return refused_as(UPDATE, message, "/admission"),
+    };
+    let admission = match super::workspace_slot::open_build_admission(&admission_path) {
+        Ok(lock) => lock,
+        Err(message) => return refused_as(UPDATE, message, "/admission"),
+    };
+    if let Err(message) = super::workspace_slot::lock_build_admission(&admission) {
+        return refused_as(UPDATE, message, "/admission");
+    }
     let moved_aside = if cfg!(windows) {
         std::env::current_exe().ok().and_then(|exe| {
             let old = exe.with_file_name("graphhelm.old.exe");

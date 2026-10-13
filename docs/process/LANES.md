@@ -98,6 +98,12 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   `--shared-target`, or run `cargo clean`: shared mutable artifacts can vouch for another worktree's
   code (#361). The outer script may set `GRAPHHELM_TEST_TIME_SCALE=3` before invoking the slot. This
   scales child-test hang catchers, never product budgets; supported values are integers 1 through 20.
+- Every new GraphHelm build and `graphhelm update` also takes the shared OS build-admission lock.
+  Its default is `<user-home>/.graphhelm/build-admission`; `GRAPHHELM_BUILD_ADMISSION_DIR` may
+  override it only with an absolute path. An unavailable, invalid or relative authority refuses
+  the operation. The root-local queue, ticket and target locks remain in place; the shared lock is
+  held from child admission through child exit, and an update acquires it before moving the running
+  executable aside.
 - **Where the owner set a build-directory rule, the slot picks the directory and the script does
   not export one (#360).** The rule is `<root>\.graphhelm-workspaces\slot-targets.json`:
 

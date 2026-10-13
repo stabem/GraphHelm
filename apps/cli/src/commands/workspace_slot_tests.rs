@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use super::{
     BatchRun, BatchSpec, SlotRequest, batch_boundary, parse_slot_batch, run_admitted_slot,
-    run_admitted_slot_in, run_admitted_slot_in_with_batch, run_slot_with_batch_payload, run_status,
-    slot_dir,
+    run_admitted_slot_in, run_admitted_slot_in_with_admission, run_admitted_slot_in_with_batch,
+    run_slot_with_batch_payload, run_status, slot_dir,
 };
 
 fn marker_command(log: &Path, tag: &str, millis: u64) -> Vec<String> {
@@ -479,26 +479,29 @@ fn shared_admission_serializes_children_across_slot_roots() {
     let root_a = dir.path().join("root-a");
     let root_b = dir.path().join("root-b");
     let log = dir.path().join("cross-root.log");
+    let admission = dir.path().join("admission");
     let command_a = marker_command(&log, "a", 700);
     let command_b = marker_command(&log, "b", 700);
     let cwd = dir.path().to_owned();
     let barrier = Arc::new(std::sync::Barrier::new(2));
     let first_barrier = Arc::clone(&barrier);
+    let first_admission = admission.clone();
     let first = std::thread::spawn({
         let cwd = cwd.clone();
         move || {
             first_barrier.wait();
             let request = request(&root_a, "lane-a", "cross-root-a", &command_a);
-            run_admitted_slot_in(&request, &cwd)
+            run_admitted_slot_in_with_admission(&request, &cwd, &first_admission)
         }
     });
     let second_barrier = Arc::clone(&barrier);
+    let second_admission = admission;
     let second = std::thread::spawn({
         let cwd = cwd.clone();
         move || {
             second_barrier.wait();
             let request = request(&root_b, "lane-b", "cross-root-b", &command_b);
-            run_admitted_slot_in(&request, &cwd)
+            run_admitted_slot_in_with_admission(&request, &cwd, &second_admission)
         }
     });
     let first = first.join().unwrap();
@@ -506,13 +509,14 @@ fn shared_admission_serializes_children_across_slot_roots() {
     assert!(first.output.ok, "first child failed: {:?}", first.output);
     assert!(second.output.ok, "second child failed: {:?}", second.output);
     let lines = std::fs::read_to_string(log).unwrap();
-    assert_eq!(
-        lines
-            .lines()
-            .map(|line| line.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
-            .collect::<Vec<_>>(),
-        vec!["a start".to_owned(), "a end".to_owned(), "b start".to_owned(), "b end".to_owned()],
-        "cross-root children entered the build section together"
+    let lines = lines
+        .lines()
+        .map(|line| line.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
+        .collect::<Vec<_>>();
+    assert!(
+        lines == ["a start", "a end", "b start", "b end"]
+            || lines == ["b start", "b end", "a start", "a end"],
+        "cross-root children entered the build section together: {lines:?}"
     );
 }
 

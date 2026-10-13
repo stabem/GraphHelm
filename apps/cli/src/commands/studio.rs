@@ -401,14 +401,13 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
         &progress
             .info("installing the CLI (cargo install --locked --profile update --path apps/cli)"),
     );
-    // The managed clone shares the build cache of the clone this binary came from, so its first
-    // build reuses compiled dependencies instead of starting cold.
-    let cache_root = if managed {
-        resolve_source(&[Some(PathBuf::from(BUILT_FROM))]).unwrap_or_else(|| source.clone())
-    } else {
-        source.clone()
+    // #1140: the managed clone builds into its own cache, `~/.graphhelm/target`. A shared
+    // `CARGO_TARGET_DIR` (the owner's agents build in one) holds cargo's lock while any agent
+    // compiles, and the update then waited there silently (owner run, 2026-10-13).
+    let target = match (managed, managed_target(user_home())) {
+        (true, Some(own)) => own,
+        _ => target_dir(std::env::var_os("CARGO_TARGET_DIR"), &source),
     };
-    let target = target_dir(std::env::var_os("CARGO_TARGET_DIR"), &cache_root);
     Progress::say(&progress.info(&format!("reusing build cache {}", target.display())));
     let mut install = graphhelm_process::command("cargo");
     install
@@ -471,6 +470,11 @@ pub(super) fn already_installed(head: Option<&str>, installed: Option<&str>) -> 
 /// `cargo install` builds in a fresh temporary directory and deletes it, so every update rebuilt
 /// all ~300 crates from zero (over 10 minutes on Windows, 2026-10-12). A persistent target dir
 /// keeps the dependencies compiled between updates; `CARGO_TARGET_DIR` wins when set.
+/// The managed install clone's own build cache, beside it under `~/.graphhelm` (#1140).
+pub(super) fn managed_target(home: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    managed_dir(home).and_then(|dir| dir.parent().map(|parent| parent.join("target")))
+}
+
 pub(super) fn target_dir(environment: Option<std::ffi::OsString>, source: &Path) -> PathBuf {
     environment
         .filter(|value| !value.is_empty())
@@ -604,6 +608,16 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1140: the managed clone never builds in a shared target directory another build locks.
+    #[test]
+    fn the_install_clone_builds_into_its_own_cache() {
+        assert_eq!(
+            managed_target(Some("/home/u".into())),
+            Some(PathBuf::from("/home/u/.graphhelm/target"))
+        );
+        assert_eq!(managed_target(None), None);
+    }
 
     /// #1134: the install clone lives under the user's home, never in a clone agents work in.
     #[test]

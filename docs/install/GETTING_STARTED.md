@@ -274,7 +274,7 @@ To update GraphHelm itself, run `graphhelm update`. It works from GraphHelm's ow
 use from the `origin` of the clone your binary was built from. Nobody else works in that clone,
 so it is always moved to `origin/main`: local changes in your own GraphHelm clone, or edits agents
 make there, never block an update (#1134). Then it runs `cargo install --locked --path apps/cli`
-inside the install clone, reusing your clone's build cache. `graphhelm studio start` runs the
+inside the install clone, into its own build cache `~/.graphhelm/target` (never a shared `CARGO_TARGET_DIR`, whose lock another build can hold, #1140); the first build there compiles from scratch. `graphhelm studio start` runs the
 Studio from the same install clone. To build or run your own clone instead, pass `--source <clone>`
 or set `GRAPHHELM_SOURCE`; that clone is only fast-forwarded when it is clean and on `main`
 (`--keep-local` builds it as it is). On Windows the running `graphhelm.exe` is renamed to

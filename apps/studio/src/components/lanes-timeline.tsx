@@ -72,7 +72,7 @@ const nameable = (b: Bot) => b.actorId !== null && b.role === null && !b.native 
 
 const PILL: Record<AgentStatus, string> = { silent: "Silent", stale: "Stale claim", building: "Building", build_wait: "Waiting for build", working: "Working", waiting: "Waiting", free: "Free", offline: "Offline" };
 const STAGE: Record<string, string> = { implement: "implementing", review: "reviewing", merge: "merging" };
-type Filter = "all" | "working" | "waiting" | "free" | "silent" | "offline";
+type Filter = "all" | "working" | "waiting" | "free" | "silent" | "stale" | "offline";
 
 function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: AgentRow[]; agents?: Bot[] } & BotActions) {
   const [filter, setFilter] = useState<Filter>("all");
@@ -87,7 +87,7 @@ function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: 
       <div className="ab-head">
         <h2>Agents</h2>
         <div className="ab-chips" role="group" aria-label="Filter agents">
-          {(["all", "working", "waiting", "free", "silent", "offline"] as const).map((f) => (
+          {(["all", "working", "waiting", "free", "silent", "stale", "offline"] as const).map((f) => (
             <button key={f} type="button" className="ab-chip" aria-pressed={filter === f} onClick={() => setFilter(f)}>
               {`${f === "all" ? "Available" : f === "waiting" ? "Waiting" : PILL[f]} ${count(f)}`}
             </button>

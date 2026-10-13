@@ -3,6 +3,7 @@ import { act, render, screen } from "@testing-library/react";
 import { SlotPoll } from "./slot-poll";
 import { LanesTimeline } from "./lanes-timeline";
 import { parseSlots } from "../runtime/slots";
+import { fastUserEvent } from "../test/user-event";
 
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
@@ -56,17 +57,19 @@ describe("SlotPoll", () => {
 describe("Lanes build slots", () => {
   const now = Date.parse("2026-10-09T12:00:00Z");
   const lane = (name: string) => ({ lane: name, silent: false, lastEventAt: now, bars: [] });
-  it("shows Building and Waiting Nth, and an unavailable root in amber", () => {
+  it("shows Building and Waiting Nth, and an unavailable root in amber", async () => {
     const slots = parseSlots({ slots: [
       { root: "D:/gh", holder: { lane: "a", heldSeconds: 240 }, waiting: [{ lane: "x", waitedSeconds: 1 }, { lane: "b", waitedSeconds: 720 }] },
       { root: "E:/gh", error: [{ code: "workspace.slot_root_missing" }] },
     ] });
     const { container } = render(<LanesTimeline lanes={[lane("a"), lane("b")]} now={now} windowMs={3_600_000} slots={slots} />);
+    await fastUserEvent().click(screen.getByRole("button", { name: "Working 1" }));
     const building = Array.from(container.querySelectorAll(".ab-row")).find((row) => row.querySelector(".ab-name")?.textContent === "a")!;
     expect(building.querySelector(".ab-pill")).toHaveTextContent("Building");
     expect(building.querySelector(".ab-pill")).toHaveTextContent("4m");
     expect(building.querySelector(".ab-tag")).toBeNull();
     expect(building.querySelector(".ab-doing")).toHaveTextContent("D:/gh");
+    await fastUserEvent().click(screen.getByRole("button", { name: "Waiting 2" }));
     const waiting = Array.from(container.querySelectorAll(".ab-row")).find((row) => row.querySelector(".ab-name")?.textContent === "b")!;
     expect(waiting.querySelector(".ab-pill")).toHaveTextContent("Waiting for build");
     expect(waiting.querySelector(".ab-tag")).toHaveTextContent("2nd · 12m");

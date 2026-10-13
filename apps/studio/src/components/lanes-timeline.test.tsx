@@ -18,7 +18,7 @@ const t = (over: Partial<MissionTask>): MissionTask => ({
 const round = { reviewer: "r", headSha: "h", fixHead: "f", blockedAt: null };
 
 describe("LanesTimeline", () => {
-  it("shows an author awaiting review as waiting in every Lanes status view", () => {
+  it("shows an author awaiting review as waiting in every Lanes status view", async () => {
     const at = 10 * 3_600_000;
     const events = [
       { sequence: 1, actorId: "codex-12", taskId: "issue-945", kind: "task.claimed", lane: "codex-12", issue: 945, at: new Date(at - 1000).toISOString() },
@@ -26,6 +26,7 @@ describe("LanesTimeline", () => {
     ] as TimedTaskEvent[];
     const { container } = render(<LanesTimeline lanes={laneBars(events, at, 3_600_000)} now={at} windowMs={3_600_000} />);
     const board = screen.getByRole("list", { name: "Agent board" });
+    await fastUserEvent().click(screen.getByRole("button", { name: "Waiting 1" }));
     expect(within(board).getByText("codex-12").closest("li")!.querySelector(".ab-pill")).toHaveAttribute("data-status", "waiting");
     const timeline = within(screen.getByRole("list", { name: "Agent lanes" })).getByText("codex-12").closest("li")!;
     expect(timeline.querySelector('.lt-flag[data-flag="waiting"]')).toHaveTextContent("waiting");
@@ -35,7 +36,7 @@ describe("LanesTimeline", () => {
     expect(container.querySelector('[data-kind="free"]')).toHaveTextContent("FREE HANDSnone right now");
   });
 
-  it("counts every available status in exactly one filter", async () => {
+  it("Available count matches free rows while other statuses stay selectable", async () => {
     const H = 3_600_000, at = 10 * H;
     const rows = [
       { lane: "building", silent: true, lastEventAt: at - 5 * H, bars: [{ kind: "implement" as const, label: "#1", start: at - 5 * H, end: at, open: true }] },
@@ -47,7 +48,7 @@ describe("LanesTimeline", () => {
     render(<LanesTimeline lanes={rows} now={at} windowMs={6 * H} slots={[{ root: "D:/gh", ok: true, holder: { lane: "building", label: "#1", pid: 1, worktree: null, heldSeconds: 60 }, waiting: [] }]} />);
     const user = fastUserEvent();
     const board = screen.getByRole("list", { name: "Agent board" });
-    const filters = [["Working", ["building", "working"]], ["Waiting", ["awaiting"]], ["Free", ["free"]], ["Silent", ["stale"]]] as const;
+    const filters = [["Working", ["building", "working"]], ["Waiting", ["awaiting"]], ["Free", ["free"]], ["Stale claim", ["stale"]]] as const;
     expect(screen.getByRole("button", { name: "Available 1" })).toBeInTheDocument();
     for (const [name, expected] of filters) {
       await user.click(screen.getByRole("button", { name: `${name} ${expected.length}` }));
@@ -278,10 +279,11 @@ describe("LanesTimeline", () => {
     expect(bars[0]!.getAttribute("title")).toBe("#600 implement · 1s so far");
   });
 
-  it("#591 the board shows the latest record, and an author awaiting review is not Free", () => {
+  it("#591 the board shows the latest record, and an author awaiting review is not Free", async () => {
     const M = 60_000, T = 10 * 3_600_000;
     const author = { lane: "gh-claude-3", silent: false, lastEventAt: T - 12 * M, bars: [], awaiting: [613], lastRecord: { kind: "pr_opened", pr: 613, at: T - 12 * M } };
     render(<LanesTimeline lanes={[author]} now={T} windowMs={3_600_000} />);
+    await fastUserEvent().click(screen.getByRole("button", { name: "Waiting 1" }));
     const row = within(screen.getByRole("list", { name: "Agent board" })).getByText("gh-claude-3").closest("li")!;
     expect(row.querySelector(".ab-for")).toHaveTextContent("pr_opened #613 · 12m ago");
     expect(row.querySelector(".ab-pill")).toHaveAttribute("data-status", "waiting");
@@ -320,10 +322,11 @@ describe("LanesTimeline", () => {
     expect(name).not.toMatch(/(?:overflow:\s*hidden|text-overflow:\s*ellipsis|white-space:\s*nowrap)/);
   });
 
-  it("shows the build duration in the pill and the build location once", () => {
+  it("shows the build duration in the pill and the build location once", async () => {
     render(<LanesTimeline lanes={[lanes[1]!]} now={now} windowMs={1000} slots={[
       { root: "D:/gh", ok: true, holder: { lane: "gh-claude-6", label: null, pid: 1, worktree: null, heldSeconds: 240 }, waiting: [] },
     ]} />);
+    await fastUserEvent().click(screen.getByRole("button", { name: "Working 1" }));
     const row = within(screen.getByRole("list", { name: "Agent board" })).getByText("gh-claude-6").closest("li")!;
     expect(row.querySelector(".ab-pill")).toHaveTextContent("Building");
     expect(row.querySelector(".ab-pill")).toHaveTextContent("4m");
@@ -332,7 +335,7 @@ describe("LanesTimeline", () => {
     expect(row.querySelector(".ab-doing")).not.toHaveTextContent("building");
   });
 
-  it("shows queued position and wait duration once with the build location", () => {
+  it("shows queued position and wait duration once with the build location", async () => {
     render(<LanesTimeline lanes={[lanes[1]!]} now={now} windowMs={1000} slots={[{
       root: "D:/gh", ok: true, holder: { lane: "gh-claude-5", label: null, pid: 1, worktree: null, heldSeconds: 240 },
       waiting: [
@@ -340,6 +343,7 @@ describe("LanesTimeline", () => {
         { lane: "gh-claude-6", label: null, pid: 2, worktree: null, priority: null, ticket: null, waitedSeconds: 120 },
       ],
     }]} />);
+    await fastUserEvent().click(screen.getByRole("button", { name: "Waiting 1" }));
     const row = within(screen.getByRole("list", { name: "Agent board" })).getByText("gh-claude-6").closest("li")!;
     expect(row.querySelector(".ab-pill")).toHaveTextContent("Waiting for build");
     expect(row.querySelector(".ab-tag")).toHaveTextContent("2nd · 2m");

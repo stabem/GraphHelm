@@ -91,7 +91,7 @@ fn run(repo: &Path, card: Option<&Path>) -> (i32, Value) {
 fn routed_blocked_check_records_the_selected_pending_draft() {
     let repo = repository(&[("docs/notes.md", "outside scope\n")]);
     let scratch = tempfile::tempdir().unwrap();
-    let card = card(scratch.path(), &["src/lib.rs"]);
+    let scope_card = card(scratch.path(), &["src/lib.rs"]);
     let events = scratch.path().join("events");
     let keyring = scratch.path().join("keyring");
     fs::create_dir(&keyring).unwrap();
@@ -185,7 +185,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
             ])
             .arg(repo.path())
             .args(["--card"])
-            .arg(&card)
+            .arg(&scope_card)
             .args(["--events"])
             .arg(&events)
             .args(["--execution", "exec-keel-route", "--keyring"])
@@ -248,7 +248,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         "/routeProposal/expectedHead"
     );
     let passing_card = card(scratch.path(), &["src/lib.rs", "docs/notes.md"]);
-    assert_eq!(passing_card, card);
+    assert_eq!(passing_card, scope_card);
     let (pass_code, passed) = check(Some(&binding));
     assert_eq!(pass_code, Some(0), "{passed}");
     assert_eq!(passed["data"]["routeProposal"]["kind"], "keel.passed");

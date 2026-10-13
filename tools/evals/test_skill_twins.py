@@ -178,7 +178,7 @@ class SkillTwinsTest(unittest.TestCase):
             self.assertIn(obligation, criteria)
         readme = (ROOT / "evals/graphhelm-development-contracts/README.md").read_text(encoding="utf-8")
         section = readme.split("`no-skill-arithmetic`", 1)[1].split("\n\n", 1)[0]
-        self.assertIn("Corpus preparation", section)
+        self.assertIn("corpus preparation", section)
         self.assertIn("external runner", section)
         self.assertIn("INCOMPLETE", section)
 

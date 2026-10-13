@@ -29,8 +29,8 @@ proof that a journey works.
 ## Mutations and effects
 
 Steps (a) to (c) only read the project and write draft flows, and the contracts compiled from
-them, to `.graphhelm/journeys/`. Approving a flow is the owner's decision: never run
-`graphhelm journey approve` yourself and never write `status: approved` or an `approved` object by hand.
+them, to `.graphhelm/journeys/`. A flow is approved by the owner or by a blind reviewer subagent (`graphhelm journey approve <id> --reviewer <its session> --author <the session that wrote the flow> --checked "<what it compared>"`); never approve a flow you wrote,
+and never write `status: approved` or an `approved` object by hand.
 Step (d) installs dev dependencies in the project (`npm`, `npx playwright install`, network).
 Steps (e) and (f) add test files and record sealed signals into a run you name. Ask the owner only
 for what the repository cannot answer: a secret, a login for the test user, or a URL. Never write
@@ -104,8 +104,10 @@ finding, then run `cli:journey compile` with `--include-draft` to write the cont
 
 ### (c2) Owner approval
 
-Tell the owner which flows are ready and ask them to approve each one in the Studio's Journey tab
-or with `graphhelm journey approve <id>`. Approval records the project's revision and a digest of the
+Hand each ready flow to a blind reviewer subagent that did not write it; it approves with
+`graphhelm journey approve <id> --reviewer <its session> --author <yours> --checked "<what it compared>"`
+or returns the gaps. The owner can also approve in the Studio's Journey tab or with
+`graphhelm journey approve <id> --token-file .graphhelm/events.token`. Approval records the project's revision and a digest of the
 flow, sets `status: approved`, clears `drift` and compiles. Until then the flow stays `draft`;
 that is the correct state, not a failure. To change an approved flow, first set `status: draft`
 and `approved: null` (keep its `drift` entries), then edit, validate and compile as in (c), and

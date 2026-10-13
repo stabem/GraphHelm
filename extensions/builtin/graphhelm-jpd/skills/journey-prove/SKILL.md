@@ -120,8 +120,8 @@ replay JSON per flow, the Journey tab screenshot, and the list of flows left red
 ### (g) Keep it honest
 
 - One flow per owner intent; paths for alternatives (`main`, `refuse`, `cancel`).
-- The owner approves; you prove. A replay run under an approval you made yourself is not proof
-  the owner asked for.
+- The owner or a blind reviewer approves; you prove. A replay run under an approval of a flow you
+  wrote is not proof.
 - Secrets by name only, values from the environment of the replay process.
 - A screen name that depends on a count or a time (`2 decisions need you`, `Last event …`) is not
   an `expect` pair; pick the region, heading or control that does not change.

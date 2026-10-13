@@ -164,6 +164,23 @@ graphhelm journey approve checkout --token-file .graphhelm/events.token --json
 It writes `status: approved` plus `approved: {digest, revision}` into the YAML and regenerates
 `checkout.json`. Commit both files.
 
+**A reviewer agent's approval (#1067).** A blind reviewer subagent that did not write the flow
+approves it without the owner token:
+
+```sh
+graphhelm journey approve checkout --reviewer rev-1 --author auth-1 \
+  --checked "docs/PROJECT.md Journeys: checkout screens, buttons and end match"
+```
+
+It refuses a reviewer equal to the author, an empty `--checked`, and `--reviewer` with
+`--token-file`. The record is signal kind `journey_flow_agent_approved` (id
+`journey-agent-approved-<32 hex>`) in the same reserved execution `graphhelm-owner`, appended by
+an agent actor whose id is the reviewer; its description carries `reviewer`, `author` and
+`checked`. The Runtime admits that kind only from an agent actor equal to `reviewer`, never with
+`reviewer` equal to `author`. `validate` and `replay` accept either record. Limit: the author id
+is what the caller declares; the record makes a self-approval a visible, attributable lie, not an
+impossible one.
+
 **The owner's record (#534).** Approving needs the owner's token: `--token-file` with the
 project's `.graphhelm/events.token` (made by `graphhelm init`). Without it, or with another
 store's token, `journey approve` refuses and writes nothing. The Studio's Approve button uses the

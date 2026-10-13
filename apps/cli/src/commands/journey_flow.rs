@@ -469,7 +469,7 @@ fn owner_signature(value: &Value, project: &Path) -> Vec<Finding> {
         Ok(false) => vec![Finding::new(
             "flow.approval_unsigned",
             "/approved",
-            "no owner record approves this flow at this digest; only the owner's approve records one",
+            "no owner or reviewer record approves this flow at this digest; only `graphhelm journey approve` records one",
         )],
         Err(message) => vec![Finding::new(
             "flow.approval_unverifiable",
@@ -1210,10 +1210,21 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
 pub(crate) fn run_approve(args: &crate::args::JourneyApproveArgs) -> Outcome {
     const COMMAND: &str = "journey.approve";
     let project = args.project.clone().unwrap_or_else(|| ".".into());
+    if let Some(reviewer) = &args.reviewer {
+        let approver = match super::journey_owner::Approver::agent(
+            reviewer,
+            args.author.as_deref().unwrap_or_default(),
+            args.checked.as_deref().unwrap_or_default(),
+        ) {
+            Ok(approver) => approver,
+            Err(message) => return input_error(COMMAND, &message),
+        };
+        return approve_as(&args.id, project, &approver);
+    }
     if !owner_token_matches(&project, args.token_file.as_deref()) {
         return input_error(
             COMMAND,
-            "approving is the owner's: give --token-file with the project's owner token (.graphhelm/events.token)",
+            "approving needs the owner's token (--token-file .graphhelm/events.token) or a reviewer agent (--reviewer, --author, --checked)",
         );
     }
     approve_owned(&args.id, project)
@@ -1339,11 +1350,23 @@ fn introduced_by(project: &Path, file: &Path, digest: &str) -> Option<Value> {
 
 /// The approval itself, for a caller that has already authenticated the owner (#534).
 pub(crate) fn approve_owned(id: &str, project: std::path::PathBuf) -> Outcome {
+    approve_as(id, project, &super::journey_owner::Approver::Owner)
+}
+
+/// The approval by `approver`: the owner, or a reviewer agent that is not the author (#1067).
+pub(crate) fn approve_as(
+    id: &str,
+    project: std::path::PathBuf,
+    approver: &super::journey_owner::Approver,
+) -> Outcome {
     const COMMAND: &str = "journey.approve";
     let args = crate::args::JourneyApproveArgs {
         id: id.to_owned(),
         project: Some(project.clone()),
         token_file: None,
+        reviewer: None,
+        author: None,
+        checked: None,
     };
     let Some(files) = files(&project, std::slice::from_ref(&args.id)) else {
         return input_error(COMMAND, "invalid flow id or unsafe journeys directory");
@@ -1437,7 +1460,9 @@ pub(crate) fn approve_owned(id: &str, project: std::path::PathBuf) -> Outcome {
         .as_str()
         .unwrap_or_default()
         .to_owned();
-    if let Err(message) = super::journey_owner::record(&project, &args.id, &digest, &revision) {
+    if let Err(message) =
+        super::journey_owner::record_as(&project, &args.id, &digest, &revision, approver)
+    {
         return report(
             COMMAND,
             vec![],

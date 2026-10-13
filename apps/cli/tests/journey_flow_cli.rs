@@ -1111,3 +1111,60 @@ fn a_safe_mark_needs_the_owner_and_a_copied_mark_is_void() {
     let copied = validate(other.path());
     assert!(finding(&copied, "flow.safe_unsigned"), "{copied}");
 }
+
+/// #1067: a blind reviewer agent approves without the owner token, and its record verifies; the
+/// reviewer can never be the flow's author, and a review must say what it checked.
+#[test]
+fn a_reviewer_agent_approves_but_never_its_own_flow() {
+    let dir = committed(EXAMPLE);
+    owner_token(dir.path());
+    let flow = dir.path().join(".graphhelm/journeys/checkout.journey.yaml");
+    let before = std::fs::read(&flow).unwrap();
+    for refused in [
+        vec![
+            "approve",
+            "checkout",
+            "--reviewer",
+            "rev-1",
+            "--author",
+            "rev-1",
+            "--checked",
+            "doc",
+        ],
+        vec![
+            "approve",
+            "checkout",
+            "--reviewer",
+            "rev-1",
+            "--author",
+            "auth-1",
+            "--checked",
+            " ",
+        ],
+        vec!["approve", "checkout", "--reviewer", "rev-1"],
+    ] {
+        let (out, reply) = run(dir.path(), &refused);
+        assert_ne!(out.status.code(), Some(0), "{refused:?}: {reply}");
+        assert_eq!(std::fs::read(&flow).unwrap(), before, "{refused:?} wrote");
+    }
+    let (out, reply) = run(
+        dir.path(),
+        &[
+            "approve",
+            "checkout",
+            "--reviewer",
+            "rev-1",
+            "--author",
+            "auth-1",
+            "--checked",
+            "docs/PROJECT.md Journeys: checkout screens and buttons match",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    let signed = validate(dir.path());
+    assert!(
+        !finding(&signed, "flow.approval_unsigned")
+            && !finding(&signed, "flow.approval_unverifiable"),
+        "{signed}"
+    );
+}

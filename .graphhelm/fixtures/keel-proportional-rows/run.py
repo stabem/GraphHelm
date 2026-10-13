@@ -62,7 +62,7 @@ def main() -> int:
                 (repo / "card.json").write_text(
                     json.dumps({
                         "promise": "Persist the journal entry",
-                        "scopePaths": ["core/events/journal.rs", "keel.yaml"],
+                        "scopePaths": ["core/events/journal.rs", "core/new-store/journal.rs", "keel.yaml"],
                         "proof": "fixture check",
                     }),
                     encoding="utf-8",
@@ -86,12 +86,36 @@ def main() -> int:
                 )
                 commit(repo, "fixture policy baseline")
 
+            if mode == "expanded":
+                # RED: a persistence-like edit outside the shipped invariant roots
+                # cannot meet the expanded-route screen's invariant obligation.
+                (repo / "core/new-store").mkdir(parents=True)
+                (repo / "core/new-store/journal.rs").write_text(
+                    "pub fn x() {}\n", encoding="utf-8"
+                )
+                commit(repo, "unmapped journal change")
+                missing = run(
+                    [graphhelm(), "--json", "keel", "check", "--diff", "HEAD~1..HEAD",
+                     "--repo", str(repo), "--card", str(repo / "card.json")],
+                    repo,
+                )
+                if missing.returncode:
+                    sys.stdout.buffer.write(missing.stdout)
+                    return missing.returncode
+                missing_rules = {
+                    finding.get("rule")
+                    for finding in json.loads(missing.stdout).get("data", {}).get("findings", [])
+                }
+                if any(str(rule).startswith("keel.invariant.") for rule in missing_rules):
+                    print(f"expected an unmapped invariant path to miss, got {sorted(missing_rules)!r}", file=sys.stderr)
+                    return 1
+
             (repo / "core/events").mkdir(parents=True)
             (repo / "core/events/journal.rs").write_text("pub fn x() {}\n", encoding="utf-8")
             commit(repo, "one-line persistence change")
 
             if mode == "expanded":
-                # The source change reaches the shipped persistence invariant by itself.
+                # GREEN: the source change reaches the shipped persistence invariant.
                 bounded = run(
                     [
                         graphhelm(), "--json", "keel", "check", "--diff", "HEAD~1..HEAD",

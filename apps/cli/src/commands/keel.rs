@@ -320,7 +320,9 @@ pub(super) fn check(
         .iter()
         .map(|entry| entry.path.clone())
         .collect();
-    let journeys = super::journeys::keel_journeys(repo);
+    let journey_data = super::journeys::keel_journeys(repo);
+    let guidance = card_guidance(&changed, &report.findings, &journey_data, &policy);
+    let journeys = journey_data;
     if policy.journey_first {
         report.findings.extend(missing_journeys(
             &journeys,
@@ -415,6 +417,9 @@ pub(super) fn check(
         Err(error) => return Outcome::internal(COMMAND, error.to_string()),
     };
     data["recommendation"] = recommendation;
+    if let Some(object) = data.as_object_mut() {
+        object.insert("cardGuidance".into(), guidance);
+    }
     if let (Some(proof), Some(object)) = (proof, data.as_object_mut()) {
         match serde_json::to_value(proof) {
             Ok(value) => {
@@ -432,6 +437,78 @@ pub(super) fn check(
         },
         exit_code: if refused { 2 } else { 0 },
     }
+}
+
+/// Advice about the card shape that fits this diff. It records an obligation, never proof that
+/// the obligation has been fulfilled; only an explicitly supplied card can satisfy that fact.
+fn card_guidance(
+    changed: &[String],
+    findings: &[Finding],
+    journeys: &super::journeys::KeelJourneys,
+    policy: &KeelPolicy,
+) -> serde_json::Value {
+    let Some(rules) = policy.plan.as_ref() else {
+        return serde_json::json!({
+            "kind": "unknown",
+            "required": [],
+            "fulfilled": false,
+            "note": "Card guidance is unavailable because the shipped plan policy is missing."
+        });
+    };
+    let mut by_name: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for contract in &journeys.contracts {
+        by_name
+            .entry(journeys.name(&contract.contract_id).to_owned())
+            .or_default()
+            .extend(
+                contract
+                    .steps
+                    .iter()
+                    .filter_map(|step| step.screen.as_ref())
+                    .flat_map(|screen| screen.scope_paths.iter().cloned()),
+            );
+    }
+    let input = keel_plan::PlanInput {
+        task_id: "keel-check".to_owned(),
+        revision: String::new(),
+        paths: changed.to_vec(),
+        promise: String::new(),
+        journeys: by_name.into_iter().collect(),
+    };
+    let planned = keel_plan::plan(&input, policy, rules);
+    let invariant = findings
+        .iter()
+        .any(|finding| finding.rule.starts_with("keel.invariant."));
+    let class = if invariant {
+        keel_plan::TaskClass::Invariant
+    } else if !changed.is_empty() && changed.iter().all(|path| keel_plan::is_prose(path)) {
+        keel_plan::TaskClass::Docs
+    } else {
+        planned
+            .classes
+            .last()
+            .copied()
+            .unwrap_or(keel_plan::TaskClass::Docs)
+    };
+    let (kind, required) = if class >= keel_plan::TaskClass::Invariant {
+        ("expanded", vec!["full_card", "defect_naming_proof", "jpd"])
+    } else if class == keel_plan::TaskClass::Docs {
+        ("summary_only", Vec::new())
+    } else {
+        let mut required = vec!["promise", "scope", "proof"];
+        if class == keel_plan::TaskClass::UserVisible {
+            required.push("journeys");
+        }
+        ("bounded_code", required)
+    };
+    serde_json::json!({
+        "kind": kind,
+        "required": required,
+        "journeys": planned.journeys,
+        "fulfilled": false,
+        "note": "Guidance states obligations only; it does not confirm that a card or proof exists."
+    })
 }
 
 /// A history pinned to the range head: the working tree may be checked out elsewhere.

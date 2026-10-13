@@ -343,6 +343,49 @@ fn without_a_card_nothing_about_scope_blocks() {
 }
 
 #[test]
+fn check_guidance_keeps_docs_summary_only() {
+    let repo = repository(&[("docs/notes.md", "documentation update\n")]);
+    fs::write(repo.path().join("src/lib.rs"), "pub fn old() {}\n").unwrap();
+    git(repo.path(), &["add", "src/lib.rs"]);
+    git(repo.path(), &["commit", "--amend", "-q", "--no-edit"]);
+    let (code, reply) = run(repo.path(), None);
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(reply["data"]["cardGuidance"]["kind"], "summary_only");
+    assert_eq!(reply["data"]["cardGuidance"]["fulfilled"], false);
+}
+
+#[test]
+fn check_guidance_names_bounded_code_card_obligations() {
+    let repo = repository(&[]);
+    let (code, reply) = run(repo.path(), None);
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(reply["data"]["cardGuidance"]["kind"], "bounded_code");
+    assert_eq!(
+        reply["data"]["cardGuidance"]["required"],
+        serde_json::json!(["promise", "scope", "proof"])
+    );
+    assert_eq!(reply["data"]["cardGuidance"]["fulfilled"], false);
+}
+
+#[test]
+fn check_guidance_keeps_one_line_persistence_change_on_expanded_route() {
+    let repo = repository(&[("core/events/src/journal.rs", "pub fn x() {}\n")]);
+    let (code, reply) = run(repo.path(), None);
+    assert_eq!(code, 0, "warnings never refuse: {reply}");
+    assert_eq!(reply["data"]["cardGuidance"]["kind"], "expanded");
+    assert_eq!(
+        reply["data"]["cardGuidance"]["required"],
+        serde_json::json!(["full_card", "defect_naming_proof", "jpd"])
+    );
+    assert_eq!(reply["data"]["cardGuidance"]["fulfilled"], false);
+    assert!(
+        codes(&reply)
+            .iter()
+            .any(|code| code == "keel.invariant.persistence")
+    );
+}
+
+#[test]
 fn a_range_that_is_not_a_range_or_a_card_that_is_not_a_card_is_input_error_exit_3() {
     let repo = repository(&[]);
     let output = Command::cargo_bin("graphhelm")
@@ -1158,6 +1201,12 @@ fn a_fresh_clone_plans_and_checks_from_the_committed_flows() {
 
     let (code, reply) = run(root, None);
     assert_eq!(code, 0, "{reply}");
+    assert_eq!(reply["data"]["cardGuidance"]["kind"], "bounded_code");
+    assert_eq!(
+        reply["data"]["cardGuidance"]["journeys"],
+        serde_json::json!(["checkout"]),
+        "guidance names only the touched approved journey: {reply}"
+    );
     let found = codes(&reply);
     assert!(
         found

@@ -611,6 +611,9 @@ class ResumeAndPreflightContracts(unittest.TestCase):
     def test_vitest_exit_zero_without_report_is_incomplete_and_not_reused(self):
         self.steps = [["npx", "vitest", "run", "--maxWorkers=1"]]
         (self.repo / "apps/studio").mkdir(parents=True)
+        stale = self.output.parent / "feedback-steps" / "vitest-0.json"
+        stale.parent.mkdir(parents=True)
+        stale.write_text(json.dumps({"numTotalTests": 1, "numPassedTests": 1}), encoding="utf-8")
         real_run = rr.subprocess.run
         calls = []
 
@@ -629,6 +632,7 @@ class ResumeAndPreflightContracts(unittest.TestCase):
             self.assertNotIn("reusable", report["completed"][0])
             self.run_once()
         self.assertEqual(len(calls), 2)
+        self.assertFalse(stale.exists())
 
     def test_vitest_structured_results_and_resume(self):
         self.steps = [["npx", "vitest", "run", "--maxWorkers=1"]]
@@ -653,6 +657,11 @@ class ResumeAndPreflightContracts(unittest.TestCase):
             self.assertEqual((code, report["status"], report["completed"][0]["vitest"]["passed"]), (0, "passed", 1))
             self.assertTrue(self.run_once()[1]["completed"][0]["reused"])
             self.assertEqual(len(calls), 1)
+            old = json.loads(self.output.read_text(encoding="utf-8"))
+            old["completed"][0].pop("vitest")
+            self.output.write_text(json.dumps(old), encoding="utf-8")
+            self.assertFalse(self.run_once()[1]["completed"][0].get("reused"))
+            self.assertEqual(len(calls), 2)
             sample.update(numPassedTests=0, numFailedTests=1, numFailedTestSuites=1, success=False)
             self.assertEqual(self.run_once(resume=False)[1]["status"], "failed")
             sample.update(numFailedTests=0, numFailedTestSuites=0, numPendingTests=1, success=True)
@@ -744,7 +753,7 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         with patch("sys.stdout", buffer):
             self.run_once()
         text = buffer.getvalue()
-        self.assertTrue(text.startswith("reached-tests: failed | passed 1 (reused 0) | failed 1 | pending 0"))
+        self.assertTrue(text.startswith("reached-tests: failed | passed 1 (reused 0) | failed 1 | unobserved 0 | pending 0"))
         self.assertIn("FAILED step 1", text)
         self.assertIn(str(self.output), text)
         self.assertNotIn('"schema"', text)

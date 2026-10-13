@@ -1017,7 +1017,6 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
         return refused(request, unauthorized_response()).await;
     };
     if constant_time_eq(presented.as_bytes(), &state.token) {
-        state.record_seen_actor(request.headers(), Instant::now());
         return next.run(request).await;
     }
     // #380: the agent session token. The declared actor type is a claim, not a credential, so
@@ -1032,7 +1031,6 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
             .headers_mut()
             .insert("x-graphhelm-actor-type", HeaderValue::from_static("agent"));
         request.headers_mut().remove("x-graphhelm-agent-credential");
-        state.record_seen_actor(request.headers(), Instant::now());
         return next.run(request).await;
     }
     // Agent credentials are bearer principals in their own right. They are never accepted as

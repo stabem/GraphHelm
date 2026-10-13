@@ -41,6 +41,7 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
     history_head = None
     evidence = {}
     reads = []
+    auth = []
 
     def do_GET(self):
         FakeRuntime.reads.append(self.path)
@@ -66,6 +67,7 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         key = self.headers["Idempotency-Key"]
         FakeRuntime.seen.append((key, body))
+        FakeRuntime.auth.append(self.headers.get("Authorization"))
         identity = json.dumps(body, sort_keys=True)  # a retry carries a new emittedAt: a different body
         described = json.loads(body["signal"]["description"])
         if len(key) > 64:
@@ -292,6 +294,9 @@ class TaskRecordTest(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.token = Path(cls.tmp.name) / "events.agent.token"
         cls.token.write_text("agent-token\n", encoding="utf-8")
+        # #1148: each lane these cells record as holds its own credential beside the shared token.
+        for lane in ("lane-a", "lane-b", "test", "l", "gh-claude-1", "gh-claude-2", "gh-claude-3", "gh-claude-6"):
+            task_record.credential_file(cls.token, lane).write_text(f"credential-{lane}\n", encoding="utf-8")
 
     @classmethod
     def tearDownClass(cls):
@@ -370,6 +375,7 @@ class TaskRecordTest(unittest.TestCase):
             ("lane-a", "623", "review_assigned", "lane-b"),
         ]
         for lane, issue, kind, reviewer in cases:
+            task_record.credential_file(self.token, lane).write_text(f"credential-{lane}\n", encoding="utf-8")
             with self.subTest(lane=lane, issue=issue, kind=kind, reviewer=reviewer):
                 step = ("--lane", lane, kind, "--issue", issue, "--pr", "19",
                         "--head", HEAD_A, "--reviewer", reviewer, "--no-github")
@@ -482,6 +488,21 @@ class TaskRecordTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as refused:
             self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", url="http://example.com:8793")
         self.assertIn("loopback", str(refused.exception.code))
+        self.assertEqual(FakeRuntime.seen, [])
+
+    # #1148: the bearer is the lane's own credential beside --token-file, never the shared token.
+    def test_a_record_is_sent_with_the_lanes_credential_not_the_shared_token(self):
+        code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", "--no-github")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(FakeRuntime.auth[-1], "Bearer credential-lane-a")
+        self.assertEqual(task_record.credential_file("x/events.token", "lane-a"), Path("x/events.agent.lane-a.token"))
+        self.assertEqual(task_record.credential_file("x/events.agent.token", "lane-a"), Path("x/events.agent.lane-a.token"))
+
+    def test_a_lane_without_a_credential_is_refused_and_told_the_mint_command(self):
+        with self.assertRaises(SystemExit) as refused:
+            self.run_step("--lane", "lane-none", "claimed", "--issue", "9", "--branch", "b", "--no-github")
+        message = str(refused.exception.code)
+        self.assertIn("graphhelm tasks credential --lane lane-none --execution gh-team", message)
         self.assertEqual(FakeRuntime.seen, [])
 
 

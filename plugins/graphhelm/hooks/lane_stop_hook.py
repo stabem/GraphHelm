@@ -11,12 +11,15 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 from urllib.parse import quote
 
 from session_hook import _lane_actor, binding, hook_input, request, token_from_file, start_lane_waiter, ID
 
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+SCAN_BUDGET_SECONDS = 5.0
+SCAN_CHILD_TIMEOUT_SECONDS = 6.0
 
 
 def pending(payload: dict | None = None) -> bool:
@@ -31,7 +34,9 @@ def pending(payload: dict | None = None) -> bool:
         raise ValueError("lane identity missing")
     token = token_from_file(token_file)
     base = f"{url}/v1/executions/{quote(execution, safe='')}"
-    head = request(f"{base}/events?after=0&limit=1", token, "GET")["data"]["head"]
+    deadline = time.monotonic() + SCAN_BUDGET_SECONDS
+    head = request(f"{base}/events?after=0&limit=1", token, "GET",
+                   timeout=max(0.001, deadline - time.monotonic()))["data"]["head"]
     if type(head) is not int or head < 0:
         raise ValueError("invalid event head")
     # Bound the window, not the execution's lifetime. A reply follows its note,
@@ -41,7 +46,11 @@ def pending(payload: dict | None = None) -> bool:
     # Size bound; the parent process imposes the wall-time bound even if a server
     # trickles bytes. request's timeout alone only bounds socket inactivity.
     for _ in range(8):
-        data = request(f"{base}/events?after={after}&limit=512", token, "GET", max_reply=1024 * 1024)["data"]
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("note scan exceeded time budget")
+        data = request(f"{base}/events?after={after}&limit=512", token, "GET",
+                       timeout=remaining, max_reply=1024 * 1024)["data"]
         page, head = data["events"], data["head"]
         if not isinstance(page, list) or type(head) is not int or head < after or len(page) > 512:
             raise ValueError("invalid event page")
@@ -117,7 +126,7 @@ def main() -> int:
     try:
         result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--scan"],
                                 input=json.dumps(payload), text=True,
-                                capture_output=True, timeout=2, creationflags=NO_WINDOW)
+                                capture_output=True, timeout=SCAN_CHILD_TIMEOUT_SECONDS, creationflags=NO_WINDOW)
         status = result.returncode
     except (OSError, subprocess.SubprocessError):
         status = 2

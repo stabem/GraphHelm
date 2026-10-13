@@ -461,6 +461,39 @@ class LaneStopTests(unittest.TestCase):
                 self.assertIn("read the notes addressed to you", decisions[-1]["reason"])
                 self.assertEqual(self.stop(manifest, active=True), [])
 
+    def test_slow_event_pages_still_remind_at_stop(self):
+        """A 1.5 s head and page read must fit the Stop scan budget."""
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if "/events?" not in self.path:
+                    self.send_error(404)
+                    return
+                time.sleep(1.5)
+                events = [] if "limit=1" in self.path else [{
+                    "sequence": 1, "actor": {"type": "owner", "id": "owner"},
+                    "kind": {"type": "signal_recorded", "data": {
+                        "kind": "operator_note", "executionId": "lane-test",
+                        "signalId": "slow-request", "to": "codex-4"}}}]
+                body = json.dumps({"ok": True, "data": {"head": 1, "events": events}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.env["GRAPHHELM_RUNTIME_URL"] = f"http://127.0.0.1:{server.server_port}"
+        for manifest in (HERE / "codex-hooks.json", MANIFESTS[2]):
+            with self.subTest(manifest=manifest):
+                decisions = self.stop(manifest)
+                self.assertTrue(decisions, "slow addressed note was missed")
+                self.assertEqual(decisions[-1]["decision"], "block")
+
     def test_non_github_origins_still_remind_about_unread_notes(self):
         self.note("origin-note", to="codex-4")
         root = Path(self.tmp.name)

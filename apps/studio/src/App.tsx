@@ -1421,11 +1421,18 @@ export default function App({
         candidate = mostRecentNeedsYou(next.executions);
         cursor = next.hasMore ? next.nextCursor : null;
       }
-      // #1169: a reload reopens the run its address names, unless that run was removed here.
+      // #1169: a reload reopens the run its address names, unless that run was removed here or
+      // the Runtime does not know it; then the ordinary pick stands and the address forgets it.
       const wanted = selectedRunFromUrl();
-      const first = wanted && visible({ executionId: wanted } as ExecutionSummary)
-        ? { executionId: wanted }
-        : candidate ?? firstVisible;
+      let first: { executionId: string } | undefined = candidate ?? firstVisible;
+      if (wanted) {
+        const known = visible({ executionId: wanted } as ExecutionSummary) &&
+          (page.executions.some((row) => row.executionId === wanted) ||
+            (await client.getStatus(wanted).then(() => true, () => false)));
+        if (clientRef.current !== client) return;
+        if (known) first = { executionId: wanted };
+        else rememberSelectedRun("");
+      }
       if (first) {
         selectedRef.current = first.executionId;
         setSelected(first.executionId);

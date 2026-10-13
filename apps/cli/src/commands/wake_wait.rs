@@ -682,7 +682,7 @@ mod tests {
 
     impl Clock for TestClock {
         fn now(&self) -> chrono::DateTime<chrono::Utc> {
-            chrono::Utc::now()
+            chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 9, 3, 12, 0, 0).unwrap()
         }
     }
 
@@ -732,11 +732,7 @@ mod tests {
 
     fn wake_fixture(path: &std::path::Path, suffix: &str) -> (OpaqueId, RepositoryScope) {
         let execution = OpaqueId::parse(format!("exec-wake-{suffix}")).unwrap();
-        let scope = RepositoryScope::new(
-            WorkspaceId::parse("workspace-local").unwrap(),
-            ProjectId::parse("project-local").unwrap(),
-            Some(ExecutionId::parse(execution.as_str()).unwrap()),
-        );
+        let scope = super::super::execution::addressable_scope(execution.as_str()).unwrap();
         let store = test_store(path);
         append_test_event(
             &store,

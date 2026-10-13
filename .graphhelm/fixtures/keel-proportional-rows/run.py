@@ -136,6 +136,7 @@ def main() -> int:
                 configured_rules = {
                     finding.get("rule")
                     for finding in configured_reply.get("data", {}).get("findings", [])
+                    if str(finding.get("rule", "")).startswith("keel.invariant.")
                 }
                 if configured_rules:
                     print(

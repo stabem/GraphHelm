@@ -65,7 +65,9 @@ The reply is the standard CLI envelope. `data` holds the whole report: `policyVe
 symbol), `findings` and `refused`. Each finding is also a diagnostic whose `code` is the rule id:
 `error` when it blocks, `warning` when it is a signal.
 
-The report also carries `recommendation`, bound to the resolved commit named by the range head.
+The report also carries a local `recommendation`, bound to the resolved commit named by the range
+head. It gives the caller a suggested next step; it does not route a task or write a Runtime
+transition.
 When the check is refused, `step` is `implement`, `findingIds` lists the blocking rule ids, and
 `paths` lists their known paths. When the check is valid, including when it has warnings only,
 `step` is `review` and those lists are empty. `applied` is always `false`: this is guidance for the

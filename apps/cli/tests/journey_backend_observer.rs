@@ -87,6 +87,16 @@ fn pinned_verdict_journey_replays_all_four_obligations() {
     assert_eq!(data["failures"], serde_json::json!([]), "{data}");
     assert_eq!(data["paths"][0]["execution"], "completed", "{data}");
     assert_eq!(data["paths"][0]["collection"], "not_applicable", "{data}");
+    let state: Value = serde_json::from_slice(
+        &std::fs::read(
+            Path::new(data["flows"][0]["resultDir"].as_str().unwrap()).join("state.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    for edge in ["review.a", "review.stale", "review.b", "review.block"] {
+        assert_eq!(state["edges"][edge]["result"], "pass", "{edge}: {state}");
+    }
 }
 
 fn git(project: &Path, args: &[&str]) -> Vec<u8> {

@@ -452,30 +452,31 @@ export interface TaskState {
   releasedBy?: string;
 }
 
-function applyVerdict(state: TaskState, event: TaskEventRecord): void {
+function applyVerdict(state: TaskState, event: TaskEventRecord, blockers: Map<string, { reviewer: string; headSha: string; commentUrl: string; sequence: number }>): void {
   if (event.reviewer && !state.reviewers.includes(event.reviewer)) state.reviewers.push(event.reviewer);
   // Old logs carry no `repo`: a verdict's comment URL still names the repository.
   state.repoUrl ??= /^(https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\//.exec(event.commentUrl ?? "")?.[1] ?? state.repoUrl;
   if (event.verdict === "BLOCK") {
-    state.blockedBy = { reviewer: event.reviewer ?? "", headSha: event.headSha ?? "", commentUrl: event.commentUrl ?? "" };
-    state.blockedSequence = event.sequence;
+    const reviewer = event.reviewer ?? "";
+    blockers.set(reviewer, { reviewer, headSha: event.headSha ?? "", commentUrl: event.commentUrl ?? "", sequence: event.sequence });
     // A second BLOCK on the same unanswered head (another reviewer) is the same round.
     const last = state.rounds.at(-1);
     if (last === undefined || last.fixHead !== null || last.headSha !== event.headSha) {
       state.rounds.push({ reviewer: event.reviewer ?? "", headSha: event.headSha ?? "", commentUrl: event.commentUrl ?? "", fixHead: null,
         blockedAt: event.occurredAt ?? null, fixedAt: null });
     }
-    state.step = "review";
   } else {
     if (event.verdict === "APPROVE-WITH-RISK") {
       state.approvedWithRisk = { reviewer: event.reviewer ?? "", commentUrl: event.commentUrl ?? "" };
     }
-    if (state.blockedBy !== null && state.blockedBy.reviewer === event.reviewer) {
-      state.blockedBy = null;
-      state.blockedSequence = null;
-    }
-    state.step = state.blockedBy === null ? "merge" : "review";
+    if (event.reviewer !== undefined) blockers.delete(event.reviewer);
   }
+  const oldestBlock = [...blockers.values()].sort((left, right) => left.sequence - right.sequence)[0];
+  state.blockedBy = oldestBlock === undefined
+    ? null
+    : { reviewer: oldestBlock.reviewer, headSha: oldestBlock.headSha, commentUrl: oldestBlock.commentUrl };
+  state.blockedSequence = oldestBlock?.sequence ?? null;
+  state.step = state.blockedBy === null ? "merge" : "review";
 }
 
 /** #460: the slice of its task a record belongs to. An issue can be worked in several PRs (#356: one
@@ -556,6 +557,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
   const slices: TaskState[] = [];
   const ended = new Set<TaskState>();
   const firstPrOpening = new Map<TaskState, number>();
+  const blockersBySlice = new Map<TaskState, Map<string, { reviewer: string; headSha: string; commentUrl: string; sequence: number }>>();
   for (const event of [...records].sort((a, b) => a.sequence - b.sequence)) {
     if (event.kind === "task.released") {
       const open = slices.filter((slice) => slice.taskId === event.taskId && slice.lane === event.lane
@@ -583,6 +585,12 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
       }
     }
     const state = sliceFor(slices, event);
+    let blockers = blockersBySlice.get(state);
+    if (blockers === undefined) {
+      blockers = new Map();
+      blockersBySlice.set(state, blockers);
+      if (state.blockedBy !== null) blockers.set(state.blockedBy.reviewer, { ...state.blockedBy, sequence: state.blockedSequence ?? 0 });
+    }
     if (event.kind === "task.pr_opened" && !firstPrOpening.has(state) && state.claimSequence !== undefined) {
       for (let index = slices.length - 1; index >= 0; index--) {
         const claim = slices[index];
@@ -634,6 +642,9 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
         if (event.headSha !== state.headSha) {
           state.currentReviewer = null;
           state.approvedWithRisk = null;
+          blockers.clear();
+          state.blockedBy = null;
+          state.blockedSequence = null;
         }
         state.headSha = event.headSha ?? state.headSha;
         const pendingReviewer = state.pendingReviewer;
@@ -662,7 +673,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
         // A verdict that arrived before this head's pr_opened (a back-fill) now speaks for it.
         for (const stray of state.strayVerdicts.filter((entry) => entry.reason === "unrecorded" && entry.headSha === state.headSha)) {
           state.strayVerdicts.splice(state.strayVerdicts.indexOf(stray), 1);
-          if (stray.reason === "unrecorded") applyVerdict(state, stray.record);
+          if (stray.reason === "unrecorded") applyVerdict(state, stray.record, blockers);
         }
         break;
       case "task.review_assigned":
@@ -684,7 +695,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
             : { ...base, reason: "unrecorded", record: event });
           break;
         }
-        applyVerdict(state, event);
+        applyVerdict(state, event, blockers);
         break;
       case "task.critic_verdict":
         state.critic = event.critic ?? state.critic;

@@ -7,6 +7,7 @@ import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
 import { scaled, TEST_TIMEOUT_BASE_MS } from "./src/test/time-scale.ts";
+import { RUNTIME_UNREACHABLE_HEADER } from "./src/runtime/proxy-signal.ts";
 
 /** Where the dev server looks for the bearer token, in order of precedence. */
 function tokenPath(env: Record<string, string>): string | null {
@@ -195,9 +196,6 @@ function devWebMcpShim(): Plugin {
  * public JSON API and nothing else, and a proxy entry for the HTML monitor would quietly make
  * scraping it possible again.
  */
-/** Set by the dev proxy only when the Runtime refused the connection: the request was never delivered. */
-export const RUNTIME_UNREACHABLE_HEADER = "x-graphhelm-runtime-unreachable";
-
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "");
   const target = env.GRAPHHELM_RUNTIME_URL || "http://127.0.0.1:8080";

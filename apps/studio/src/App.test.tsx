@@ -3247,6 +3247,48 @@ describe("round-3: what you typed survives, and what waits is true", () => {
 });
 
 describe("round-3: the rail is live and the screen belongs to one run", () => {
+  it("keeps selected-run polling live while one rail refresh is pending or rejected", async () => {
+    let releaseRail: () => void = () => {};
+    const heldRail = new Promise<void>((resolve) => { releaseRail = resolve; });
+    let statusReads = 0;
+    let railReads = 0;
+    let railPending = false;
+    const client = stubClient({
+      listExecutions: vi.fn(async () => {
+        railReads += 1;
+        if (railPending) await heldRail;
+        return {
+          executions: [{
+            executionId: "demo-deploy", mode: "supervised", status: "running",
+            attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 13,
+          }],
+          hasMore: false,
+          nextCursor: null,
+        };
+      }),
+      getStatus: vi.fn(async (id: string) => {
+        statusReads += 1;
+        return { ...STATUS, executionId: id, status: statusReads > 1 ? "paused" : "running" };
+      }),
+    });
+    await open(client);
+
+    railPending = true;
+    await waitFor(() => expect(railReads).toBeGreaterThan(1));
+    const readsWhileHeld = railReads;
+    await waitFor(() => expect(screen.getByText(/paused/i)).toBeInTheDocument());
+    await waitFor(() => expect(statusReads).toBeGreaterThan(2));
+    expect(railReads).toBe(readsWhileHeld);
+
+    releaseRail();
+    await waitFor(() => expect(railReads).toBeGreaterThan(readsWhileHeld));
+    railPending = false;
+    vi.mocked(client.listExecutions).mockRejectedValueOnce(new Error("rail unavailable"));
+    const beforeRejectedRefresh = statusReads;
+    await waitFor(() => expect(statusReads).toBeGreaterThan(beforeRejectedRefresh));
+    expect(screen.getByText(/paused/i)).toBeInTheDocument();
+  });
+
   /** The 4s poll tailed only the selected run; another run flipping to needs-you stayed
    * invisible until the operator happened to click something. */
   it("the rail's attention marks move without anyone clicking", async () => {

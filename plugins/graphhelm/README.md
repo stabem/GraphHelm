@@ -20,7 +20,7 @@ GraphHelm's Governor owns operational graph publication. Agents send typed signa
 
 ## Install from the repository
 
-The `graphhelm` plugin contains this guide, `graphhelm-setup`, and `graphhelm-resume`. The same marketplace also lists the existing `graphhelm-jpd` and `graphhelm-development-contracts` plugins. Install those companions only when their skill families are needed; both can connect to the same local Runtime and require a separately configured trusted CLI, token file, and per-session actor. Installing any plugin alone does not install the GraphHelm executable.
+The `graphhelm` plugin contains this guide, `graphhelm-setup`, `graphhelm-resume`, and `graphhelm-kickoff`. The same marketplace also lists the existing `graphhelm-jpd` and `graphhelm-development-contracts` plugins. Install those companions only when their skill families are needed; both can connect to the same local Runtime and require a separately configured trusted CLI, token file, and per-session actor. Installing any plugin alone does not install the GraphHelm executable.
 
 In **Claude Code**:
 
@@ -37,7 +37,7 @@ codex plugin add graphhelm@graphhelm
 codex plugin add graphhelm-codex-hooks@graphhelm
 ```
 
-After installation, start a fresh session. In Claude Code, use `/graphhelm:graphhelm-guide`, `/graphhelm:graphhelm-setup`, or `/graphhelm:graphhelm-resume`; Claude namespaces plugin skills, so the installed commands are not bare `/graphhelm-setup` or `/graphhelm-resume`. In Codex, invoke `$graphhelm-guide`, `$graphhelm-setup`, or `$graphhelm-resume`. The setup skill guides the separate `graphhelm setup` CLI through inventory, a reviewed plan, backup, and restore; invoking the skill alone changes no host files. The resume skill reads current evidence and offers exactly two next actions with one recommendation; it does not take either action for you.
+After installation, start a fresh session. In Claude Code, use `/graphhelm:graphhelm-guide`, `/graphhelm:graphhelm-setup`, `/graphhelm:graphhelm-resume`, or `/graphhelm:graphhelm-kickoff`; Claude namespaces plugin skills, so the installed commands are not bare `/graphhelm-setup` or `/graphhelm-resume`. In Codex, invoke `$graphhelm-guide`, `$graphhelm-setup`, `$graphhelm-resume`, or `$graphhelm-kickoff`. The setup skill guides the separate `graphhelm setup` CLI through inventory, a reviewed plan, backup, and restore; invoking the skill alone changes no host files. The resume skill reads current evidence and offers exactly two next actions with one recommendation; it does not take either action for you. The kickoff skill starts a brand-new project: it grills the owner one question at a time, writes `docs/PROJECT.md` and draft journey flows with them, waits for the owner to approve the flows, then runs each issue through the five task steps while the owner follows in the Studio.
 
 ## Session hooks (version 0.1.25)
 

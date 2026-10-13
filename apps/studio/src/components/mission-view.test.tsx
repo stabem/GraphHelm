@@ -60,6 +60,18 @@ describe("MissionView", () => {
     expect(item).toHaveClass("mv-proof-journey");
   });
 
+  it("#1153: an uncompiled draft follows its main path and is not marked out of date", async () => {
+    const flow = { id: "new-task", title: "Start a new task", status: "draft", approved: null, drift: [], findings: [], approvable: true,
+      screens: [{ id: "compose", url: "/", state: "stable" }, { id: "run", url: "/", state: "stable" }, { id: "started", url: "/", state: "success" }],
+      edges: [{ id: "run.open", from: "run", to: "compose" }, { id: "compose.send", from: "compose", to: "started" }],
+      paths: { main: ["run.open", "compose.send"] } } as JourneyFlowView;
+    render(<MissionView journeys={[]} flows={{ flows: [flow] }} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Proof" }));
+    const item = screen.getByRole("navigation", { name: "Journeys" }).querySelector(".mv-proof-journey")!;
+    expect(item).not.toHaveTextContent("contract out of date");
+    expect(screen.queryByText("Contract out of date, regenerate first")).not.toBeInTheDocument();
+  });
+
   it("#830: a real secondary path uses its source flow to mark an old contract", async () => {
     const contract = { ...journeys[0]!, contractId: "studio-answer-question.refuse", title: "Owner answers, or refuses, a question an agent asked",
       steps: ["asked", "refused"].map((id) => ({ stepId: id, screen: { screenId: id, title: id, scopePaths: [] }, promises: [] })) };

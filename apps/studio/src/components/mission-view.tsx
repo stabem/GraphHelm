@@ -163,6 +163,16 @@ function flowForContract(flows: JourneyFlowView[], contractId: string): JourneyF
   return flows.find((flow) => flow.id === contractId)
     ?? flows.filter((flow) => contractId.startsWith(`${flow.id}.`)).sort((a, b) => b.id.length - a.id.length)[0];
 }
+/** #1153: an uncompiled flow's steps in its main path's order. The Runtime lists screens by id, and
+ * the rail's staleness check compares against the path, so id order flagged every draft as stale. */
+function flowStepOrder(flow: JourneyFlowView): JourneyFlowView["screens"] {
+  const edges = flow.paths.main?.map((id) => flow.edges.find((edge) => edge.id === id));
+  if (!edges?.length || edges.some((edge) => edge === undefined)) return flow.screens;
+  const ids = [edges[0]!.from, ...edges.map((edge) => edge!.to)];
+  const ordered = ids.map((id) => flow.screens.find((screen) => screen.id === id));
+  if (ordered.some((screen) => screen === undefined)) return flow.screens;
+  return [...ordered as JourneyFlowView["screens"], ...flow.screens.filter((screen) => !ids.includes(screen.id))];
+}
 function JourneyRailButton({ mission, flow, duplicateTitle, selected, onSelect }: { mission: Mission; flow?: JourneyFlowView; duplicateTitle: boolean; selected: boolean; onSelect(): void }) {
   const { name, note } = splitDraftTitle(mission.title);
   const pathName = flow === undefined ? undefined : mission.contractId === flow.id ? "main" : mission.contractId.slice(flow.id.length + 1);
@@ -241,7 +251,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
     const known = new Set(compiledJourneys.map((journey) => journey.contractId));
     return [...compiledJourneys, ...(flows?.flows ?? []).filter((flow) => !known.has(flow.id)).map((flow): JourneyView => ({
       contractId: flow.id, title: flow.title ?? flow.id, arrows: [],
-      steps: flow.screens.map((screen) => ({ stepId: screen.id, screen: { screenId: screen.id, title: screen.title ?? screen.id, scopePaths: [] }, promises: [] })),
+      steps: flowStepOrder(flow).map((screen) => ({ stepId: screen.id, screen: { screenId: screen.id, title: screen.title ?? screen.id, scopePaths: [] }, promises: [] })),
     }))];
   }, [compiledJourneys, flows]);
 

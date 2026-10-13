@@ -77,6 +77,21 @@ describe("buildWorkGroups", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({ key: "no-issue", issue: null, label: "No issue" });
   });
+  it("#1151: two lanes holding open PR-less claims on one issue make the group contested", () => {
+    const [two, one, prs, released] = buildWorkGroups([
+      task("c1", { issue: 1148, lane: "gh-claude-opt-3", lastSequence: 10 }),
+      task("c2", { issue: 1148, lane: "codex-4", lastSequence: 11 }),
+      task("s", { issue: 1147, lane: "gh-claude-opt-2", lastSequence: 9 }),
+      task("p1", { issue: 5, pr: 50, lane: "gh-claude-1", lastSequence: 8 }),
+      task("p2", { issue: 5, pr: 51, lane: "gh-claude-6", lastSequence: 7 }),
+      task("r1", { issue: 7, lane: "codex-9", releasedBy: "codex-9", lastSequence: 6 }),
+      task("r2", { issue: 7, lane: "gh-claude-2", lastSequence: 5 }),
+    ], []);
+    expect(two!.contested).toEqual(["gh-claude-opt-3", "codex-4"]);
+    expect(one!.contested).toEqual([]);
+    expect(prs!.contested).toEqual([]);
+    expect(released!.contested).toEqual([]);
+  });
   it("open work first, then the most recent", () => {
     const groups = buildWorkGroups([
       task("done", { issue: 1, step: "merged", lastSequence: 99 }),

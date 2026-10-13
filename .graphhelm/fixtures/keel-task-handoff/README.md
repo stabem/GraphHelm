@@ -7,7 +7,10 @@ call a model, use the user's hook cache, or connect to the configured live Runti
 Run it from the repository root:
 
 ```powershell
-$env:GRAPHHELM_CLI = 'C:/Users/gabri/.graphhelm/versions/5fb91a36-dev/bin/graphhelm.exe'
+$env:GRAPHHELM_CLI = 'C:/path/to/prebuilt/graphhelm.exe'
+$env:Path = (Split-Path $env:GRAPHHELM_CLI) + ';' + $env:Path
+where.exe graphhelm
+& $env:GRAPHHELM_CLI --version
 python .graphhelm/fixtures/keel-task-handoff/scenario.py
 ```
 
@@ -40,3 +43,8 @@ server command owns its event directory; the scenario deletes only its fixture-l
 
 Cost: two short local Runtimes and a fixed graph/event set; no build, network access, model call,
 browser or production infrastructure.
+
+The journey contract is draft and its approval is null. `journey validate` checks the flow's
+shape and semantics; it does not run this scenario. Running the scenario directly proves the
+bounded offline adapter/Runtime continuity described above. Journey replay remains pending and
+must be observed in an isolated journey-enabled environment before this flow can be called proven.

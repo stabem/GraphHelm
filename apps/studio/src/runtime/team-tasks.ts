@@ -425,6 +425,8 @@ export interface TaskState {
   authorLastSequence?: number | null;
   reviewers: string[];
   mergeSha: string | null;
+  /** True only when this slice's own PR was merged, not when a sibling merge cascaded over it. */
+  completionRecorded?: boolean;
   /** `https://github.com/<owner>/<repo>`, read off a verdict's comment URL; links need it. */
   repoUrl: string | null;
   /** #457: verdicts that do not speak for the current head, newest last, each with its reason: a head
@@ -711,6 +713,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
       case "task.merged":
         state.pr = event.pr ?? state.pr;
         state.mergeSha = event.mergeSha ?? null;
+        state.completionRecorded = true;
         state.blockedBy = null;
         state.blockedSequence = null;
         state.step = "merged";
@@ -761,6 +764,11 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
     slice.key = slice.pr !== null ? `${slice.taskId}#pr-${slice.pr}` : `${slice.taskId}#claim-${index}`;
   });
   return slices.filter((slice) => !ended.has(slice)).sort((a, b) => a.lastSequence - b.lastSequence);
+}
+
+/** Excludes sibling slices marked merged only as a side effect of another PR's merge. */
+export function timingSamples(tasks: TaskState[]): StepClock[] {
+  return tasks.filter((task) => task.step === "merged" && task.completionRecorded === true).map((task) => task.clock);
 }
 
 export function isTaskEventSignal(event: RuntimeEvent): boolean {

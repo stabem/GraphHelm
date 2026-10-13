@@ -62,7 +62,7 @@ describe("step clock in the fold (#502)", () => {
     const opened = record(1, 0, "task.pr_opened", "l1", { pr: 19, headSha: head, journeys: [], lane: "l1" });
     const pushed = record(2, 13 * 60 * 60, "task.pr_opened", "l1", { pr: 19, headSha: "b".repeat(40), journeys: [], lane: "l1" });
     const task = foldTaskEvents([opened, pushed])[0];
-    expect(task.clock).toEqual({ since: at(13 * 60 * 60), spent: {} });
+    expect(task.clock).toEqual({ since: at(13 * 60 * 60), spent: { implement: ACTIVE_GAP_MS } });
   });
   it("banks completed time when a step resumes after a stall-sized gap", () => {
     const claim = record(1, 0, "task.claimed", "l1", { issue: 9, lane: "l1", branch: "b" });

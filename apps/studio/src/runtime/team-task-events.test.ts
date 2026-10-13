@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { digestOf } from "./customs";
 import { laneBars } from "./lane-bars";
-import { foldTaskEvents, parseTaskEvent, readTaskEventRecords, type TaskEventRecord } from "./team-tasks";
+import { foldTaskEvents, parseTaskEvent, readTaskEventRecords, timingSamples, type TaskEventRecord } from "./team-tasks";
 import type { RuntimeEvent } from "./types";
 
 /* #386 (spec §7, §9 row F): the Team tab's per-task graph is folded from `task.*` records alone.
@@ -684,6 +684,21 @@ describe("foldTaskEvents plan step (#480)", () => {
     expect(tasks.find((task) => task.pr === 481)).toMatchObject({ step: "merged", mergeSha: "bbbbbbbb", plan: null, critic: null });
     expect(tasks.find((task) => task.branch === "foreign")).toMatchObject({ lane: "lane-b", pr: null, plan: null });
     expect(tasks.find((task) => task.lane === "lane-a" && task.pr === null)).toMatchObject({ step: "implement", plan: { summary: "next plan" }, critic: { verdict: "pass" } });
+  });
+
+  it("omits cascade-merged siblings from typical-time samples", () => {
+    const events = [
+      record(1, "task.claimed", "lane-a", { taskId: "issue-1", issue: 1, lane: "lane-a", branch: "first" }),
+      record(2, "task.pr_opened", "lane-a", { taskId: "issue-1", pr: 10, headSha: "aaaaaaaa", journeys: [], lane: "lane-a" }),
+      record(3, "task.claimed", "lane-b", { taskId: "issue-2", issue: 2, lane: "lane-b", branch: "second" }),
+      record(4, "task.pr_opened", "lane-b", { taskId: "issue-2", pr: 11, headSha: "bbbbbbbb", journeys: [], lane: "lane-b" }),
+      record(5, "task.review_verdict", "reviewer", { taskId: "issue-1", pr: 10, headSha: "aaaaaaaa", reviewer: "reviewer", verdict: "APPROVE", commentUrl: "https://github.com/o/r/pull/10#c1" }),
+      record(6, "task.merged", "reviewer", { taskId: "issue-1", pr: 10, mergeSha: "cccccccc", closes: [], merger: "reviewer" }),
+    ];
+    const tasks = foldTaskEvents(events);
+    expect(tasks.filter((task) => task.step === "merged")).toHaveLength(2);
+    expect(timingSamples(tasks)).toHaveLength(1);
+    expect(timingSamples(tasks)[0]).toEqual(tasks.find((task) => task.pr === 10)?.clock);
   });
 
   it("refuses a planned record for another lane or out of the schema's bounds", () => {

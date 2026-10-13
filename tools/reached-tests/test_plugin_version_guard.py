@@ -83,6 +83,29 @@ class PluginVersionGuard(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("bump the plugin version", message)
 
+    def test_longer_prerelease_with_same_prefix_is_higher(self):
+        for before, after in (("0.1.29-rc", "0.1.29-rc.1"),
+                              ("0.1.29-rc", "0.1.29-rc.next")):
+            with self.subTest(before=before, after=after):
+                self.write_manifests(before)
+                self.base = self.commit("base prerelease")
+                self.write("plugins/graphhelm/skills/guide/SKILL.md", f"# {after}\n")
+                self.write_manifests(after)
+                passed, message = self.check(self.commit("longer prerelease"))
+                self.assertTrue(passed, message)
+
+    def test_shorter_prerelease_with_same_prefix_is_lower(self):
+        for before, after in (("0.1.29-rc.1", "0.1.29-rc"),
+                              ("0.1.29-rc.next", "0.1.29-rc")):
+            with self.subTest(before=before, after=after):
+                self.write_manifests(before)
+                self.base = self.commit("base prerelease")
+                self.write("plugins/graphhelm/skills/guide/SKILL.md", f"# {after}\n")
+                self.write_manifests(after)
+                passed, message = self.check(self.commit("shorter prerelease"))
+                self.assertFalse(passed)
+                self.assertIn("bump the plugin version", message)
+
     def test_invalid_numeric_prerelease_identifier_is_rejected(self):
         self.write("plugins/graphhelm/skills/guide/SKILL.md", "# Changed guide\n")
         self.write_manifests("0.1.29-rc.01")

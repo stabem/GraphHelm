@@ -172,38 +172,41 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         .unwrap(),
     )
     .unwrap();
-    let output = Command::cargo_bin("graphhelm")
-        .unwrap()
-        .args([
-            "--json",
-            "keel",
-            "check",
-            "--diff",
-            "HEAD~1..HEAD",
-            "--repo",
-        ])
-        .arg(repo.path())
-        .args(["--card"])
-        .arg(&card)
-        .args(["--route-proposal"])
-        .arg(&binding)
-        .args(["--events"])
-        .arg(&events)
-        .args(["--execution", "exec-keel-route", "--keyring"])
-        .arg(&keyring)
-        .args(["--key-id", "route-key"])
-        .env("GRAPHHELM_EVENTS_KEY", key)
-        .output()
-        .unwrap();
-    assert_eq!(
-        output.status.code(),
-        Some(2),
-        "{}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    let checked: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let check = |binding_path: Option<&Path>| {
+        let mut command = Command::cargo_bin("graphhelm").unwrap();
+        command
+            .args([
+                "--json",
+                "keel",
+                "check",
+                "--diff",
+                "HEAD~1..HEAD",
+                "--repo",
+            ])
+            .arg(repo.path())
+            .args(["--card"])
+            .arg(&card)
+            .args(["--events"])
+            .arg(&events)
+            .args(["--execution", "exec-keel-route", "--keyring"])
+            .arg(&keyring)
+            .args(["--key-id", "route-key"])
+            .env("GRAPHHELM_EVENTS_KEY", key);
+        if let Some(path) = binding_path {
+            command.arg("--route-proposal").arg(path);
+        }
+        let output = command.output().unwrap();
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        (output.status.code(), reply)
+    };
+    let (plain_code, plain) = check(None);
+    assert_eq!(plain_code, Some(2), "{plain}");
+    assert!(plain["data"]["routeProposal"].is_null());
+    let (code, checked) = check(Some(&binding));
+    assert_eq!(code, Some(2), "{checked}");
     assert_eq!(checked["data"]["recommendation"]["step"], "implement");
     assert_eq!(checked["data"]["routeProposal"]["kind"], "keel.blocked");
+    assert_eq!(checked["data"]["recommendation"]["applied"], false);
     let status = Command::cargo_bin("graphhelm")
         .unwrap()
         .args(["--json", "execution", "status", "--events"])
@@ -226,6 +229,40 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
                 && reason["draft_id"] == "draft-implement"),
         "{status}"
     );
+    assert_eq!(status["data"]["signalsRecorded"], 1);
+    let stale = scratch.path().join("stale.json");
+    fs::write(&stale, serde_json::to_vec(&serde_json::json!({
+        "expectedHead": "0000000000000000000000000000000000000000",
+        "execution": "exec-keel-route", "task": "issue-1045", "node": "plan",
+        "implementDraft": draft("draft-stale-implement"), "reviewDraft": draft("draft-stale-review")
+    })).unwrap()).unwrap();
+    let (stale_code, stale_reply) = check(Some(&stale));
+    assert_eq!(stale_code, Some(3), "{stale_reply}");
+    assert_eq!(stale_reply["data"]["recommendation"]["step"], "implement");
+    assert_eq!(
+        stale_reply["diagnostics"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()["path"],
+        "/routeProposal/expectedHead"
+    );
+    let passing_card = card(scratch.path(), &["src/lib.rs", "docs/notes.md"]);
+    assert_eq!(passing_card, card);
+    let (pass_code, passed) = check(Some(&binding));
+    assert_eq!(pass_code, Some(0), "{passed}");
+    assert_eq!(passed["data"]["routeProposal"]["kind"], "keel.passed");
+    let status = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "execution", "status", "--events"])
+        .arg(&events)
+        .args(["--execution", "exec-keel-route"])
+        .output()
+        .unwrap();
+    let status: Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status["data"]["signalsRecorded"], 2, "{status}");
+    assert!(status["data"]["attentionReasons"].as_array().unwrap().iter()
+        .any(|reason| reason["kind"] == "pending_draft" && reason["draft_id"] == "draft-review"), "{status}");
 }
 
 fn run_verdict(comments: &Path, head: &str, reviewer: &str) -> (i32, Value) {

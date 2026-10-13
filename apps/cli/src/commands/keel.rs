@@ -482,11 +482,11 @@ fn submit_route(
 ) -> Result<serde_json::Value, Diagnostic> {
     let invalid =
         |message: &str, pointer: &str| Diagnostic::error(INPUT_INVALID, message, pointer, "keel");
-    let bytes = std::fs::File::open(path)
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
         .map_err(|_| invalid("route binding cannot be read", "/routeProposal"))?
         .take(MAX_ROUTE_BINDING_BYTES + 1)
-        .bytes()
-        .collect::<Result<Vec<_>, _>>()
+        .read_to_end(&mut bytes)
         .map_err(|_| invalid("route binding cannot be read", "/routeProposal"))?;
     if bytes.len() as u64 > MAX_ROUTE_BINDING_BYTES {
         return Err(invalid("route binding exceeds 1 MiB", "/routeProposal"));

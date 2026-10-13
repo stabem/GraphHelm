@@ -136,6 +136,19 @@ fn serve(events: &Path) -> (ServerGuard, String, String) {
     serve_with(events, &ServeExtra::default())
 }
 
+#[test]
+fn startup_health_reports_measured_initial_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_server, base, _) = serve(&dir.path().join("events"));
+    let health = json_body(&raw_request(&format!("{base}/health"), None).unwrap());
+    for field in ["journalVerifyMs", "lifecycleStartMs"] {
+        assert!(
+            health["data"]["startup"][field].as_u64().is_some(),
+            "startup.{field} must be a non-negative integer: {health}"
+        );
+    }
+}
+
 // Lifecycle observers: real isolated processes and ephemeral ports, no model calls.
 // These catch lost exit records and a second writer overwriting a live owner's record;
 // the existing HTTP cells never restart the same store. Cost: a few child starts per cell.

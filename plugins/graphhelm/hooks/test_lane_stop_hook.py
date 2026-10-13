@@ -77,7 +77,17 @@ class LaneStopTests(unittest.TestCase):
         self.env.update(GRAPHHELM_RUNTIME_URL=self.url,
                         GRAPHHELM_TOKEN_FILE=str(root / "events.agent.token"))
         self.owner_token = (root / "events.token").read_text().strip()
+        # #1148: a task.* record is written only with the lane's credential (never the shared
+        # agent token), minted by the owner once per lane; the reconciler writes `merged` as
+        # `graphhelm` and `closed`/`released` as the lane. Requires an upgraded CLI.
+        for lane in ("graphhelm", "codex-4"):
+            self.run_cli("tasks", "credential", "--lane", lane, "--execution", "lane-test",
+                         "--token-file", str(root / "events.token"))
         self.env.pop("GRAPHHELM_SESSION_ID", None)
+
+    def lane_credential(self, lane):
+        return (Path(self.env["GRAPHHELM_TOKEN_FILE"]).with_name(f"events.agent.{lane}.token")
+                .read_text().strip())
 
     def stop_server(self):
         self.server.terminate()
@@ -145,7 +155,7 @@ class LaneStopTests(unittest.TestCase):
         signal = {"id": "pr-9001-opened", "source": {"type": "user", "id": "codex-4"},
                   "type": "task.pr_opened", "severity": "low", "description": json.dumps(document),
                   "evidence": ["https://github.com/stabem/GraphHelm/pull/9001"], "emittedAt": now}
-        token = Path(self.env["GRAPHHELM_TOKEN_FILE"]).read_text().strip()
+        token = self.lane_credential("codex-4")
         request = urllib.request.Request(self.url + "/v1/executions/lane-test/signal",
                   data=json.dumps({"signal": signal}).encode(), headers={"Authorization": "Bearer " + token,
                   "Content-Type": "application/json", "Idempotency-Key": "pr-9001-opened",
@@ -208,7 +218,7 @@ class LaneStopTests(unittest.TestCase):
         signal = {"id": "pr-9001-opened", "source": {"type": "user", "id": "codex-4"},
                   "type": "task.pr_opened", "severity": "low", "description": json.dumps(document),
                   "evidence": ["https://github.com/stabem/GraphHelm/pull/9001"], "emittedAt": now}
-        token = Path(args.token_file).read_text().strip()
+        token = self.lane_credential("codex-4")
         request = urllib.request.Request(self.url + "/v1/executions/lane-test/signal",
                   data=json.dumps({"signal": signal}).encode(), headers={"Authorization": "Bearer " + token,
                   "Content-Type": "application/json", "Idempotency-Key": "pr-9001-opened",
@@ -236,7 +246,7 @@ class LaneStopTests(unittest.TestCase):
         doc = {"schema": "graphhelm-task-event-v1", "taskId": f"issue-{issue}", "revision": 1,
                "at": now, "lane": "codex-4", "branch": f"issue-{issue}-test", "repo": "stabem/GraphHelm",
                "issue": issue}
-        token = Path(self.env["GRAPHHELM_TOKEN_FILE"]).read_text().strip()
+        token = self.lane_credential("codex-4")
         signal = {"id": f"claim-{issue}", "source": {"type": "user", "id": "codex-4"},
                   "type": "task.claimed", "severity": "low", "description": json.dumps(doc),
                   "evidence": [f"https://github.com/stabem/GraphHelm/issues/{issue}"], "emittedAt": now}

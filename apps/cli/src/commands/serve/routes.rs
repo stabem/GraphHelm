@@ -3445,15 +3445,14 @@ pub(super) async fn signal(
         );
     };
     // #1148: a `task.*` record names a lane, and only that lane's credential may write it. The
-    // shared agent session token authenticates "an agent on this machine", so an agent-typed
-    // caller without a verified lane credential is refused as an identity mismatch before the
-    // mutation, and nothing is appended. The owner token keeps its rights (D-058).
-    if identity.actor.actor_type() == PersistedActorType::Agent
-        && signal_value
-            .get("type")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|kind| kind.starts_with("task."))
-        && !super::verify_lane_credential(&state, &headers, &execution_id, &identity.actor)
+    // shared agent session token authenticates "an agent on this machine", not a lane, so a
+    // request it authenticated (marked by the auth layer) is refused as an identity mismatch
+    // before the mutation, and nothing is appended. The owner token keeps its rights (D-058).
+    if signal_value
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|kind| kind.starts_with("task."))
+        && headers.contains_key(super::SHARED_SESSION_HEADER)
     {
         return respond_failure(
             SIGNAL_COMMAND,

@@ -285,6 +285,34 @@ class Reach(unittest.TestCase):
         self.assertIn(("graphhelm-cli", "journeys", "journey_scope_guard"), single)
         self.assertIn("graphhelm --json journey validate --all", tools)
 
+    def test_deleted_non_rust_include_reaches_embedding_crate_compile(self):
+        """Compile crates whose Rust source embeds a changed non-Rust path, including deletions.
+
+        Cost: temporary fixture files and selector work; milliseconds, no Cargo or external services.
+        """
+        fixture = "fixtures/studio-answer-node.journey.yaml"
+        with tempfile.TemporaryDirectory() as repo:
+            source = Path(repo, "crates/fixture/src/lib.rs")
+            source.parent.mkdir(parents=True)
+            source.write_text('const FLOW: &[u8] = include_bytes!("../../../fixtures/studio-answer-node.journey.yaml");', encoding="utf-8")
+            Path(repo, fixture).parent.mkdir(parents=True)
+            whole, single, *_ = rt.reach([fixture], [{"name": "graphhelm-fixture", "dir": "crates/fixture"}], {}, repo)
+            self.assertEqual(whole, {"graphhelm-fixture"})
+            self.assertEqual(single, set())
+
+    def test_changed_non_rust_path_without_rust_reference_adds_no_compile(self):
+        """Do not broaden compile plans for non-Rust files without a source reference.
+
+        Cost: temporary fixture files and selector work; milliseconds, no Cargo or external services.
+        """
+        fixture = "fixtures/unreferenced.journey.yaml"
+        with tempfile.TemporaryDirectory() as repo:
+            Path(repo, "crates/fixture/src/lib.rs").parent.mkdir(parents=True)
+            Path(repo, "crates/fixture/src/lib.rs").write_text("pub fn fixture() {}", encoding="utf-8")
+            whole, single, *_ = rt.reach([fixture], [{"name": "graphhelm-fixture", "dir": "crates/fixture"}], {}, repo)
+            self.assertEqual(whole, set())
+            self.assertEqual(single, set())
+
     def test_a_journey_runtime_change_prints_the_ignored_browser_observers(self):
         # #504 review: the #[ignore] browser cells are the real proof of a driver or replay change.
         for path in ("tools/journey-driver/driver.mjs", "apps/cli/src/commands/journey_replay.rs",

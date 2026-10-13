@@ -348,6 +348,11 @@ def reach(changed, packages, embedded, repo=None):
                 wrong_store = " --wrong-store" if os.environ.get("GRAPHHELM_HANDOFF_WRONG_STORE") == "1" else ""
                 tools.add(f"python {handoff_scenario}{wrong_store}")
                 hit = True
+        if path.startswith(".graphhelm/fixtures/keel-pinned-verdict-merge/"):
+            target = target_of(packages, "graphhelm-cli", "journey_backend_observer")
+            if target:
+                single.add(target)
+            hit = True
         # Fixture behavior is observed by previews of the changed flows. It has no
         # standalone offline test, so keep it mapped without claiming a proxy pass.
         if path.startswith("tools/studio-journey-fixture/"):

@@ -62,7 +62,7 @@ def main() -> int:
                 (repo / "card.json").write_text(
                     json.dumps({
                         "promise": "Persist the journal entry",
-                        "scopePaths": ["core/events/journal.rs", "core/new-store/journal.rs", "keel.yaml"],
+                        "scopePaths": ["src/invariant-cell.rs", "core/events/journal.rs", "keel.yaml"],
                         "proof": "fixture check",
                     }),
                     encoding="utf-8",
@@ -87,12 +87,11 @@ def main() -> int:
                 commit(repo, "fixture policy baseline")
 
             if mode == "expanded-red":
-                # RED: this source edit has no configured invariant hit.
-                (repo / "core/new-store").mkdir(parents=True)
-                (repo / "core/new-store/journal.rs").write_text(
+                # RED: the source edit misses every shipped invariant path.
+                (repo / "src/invariant-cell.rs").write_text(
                     "pub fn x() {}\n", encoding="utf-8"
                 )
-                commit(repo, "unmapped journal change")
+                commit(repo, "unmapped invariant change")
                 missing = run(
                     [graphhelm(), "--json", "keel", "check", "--diff", "HEAD~1..HEAD",
                      "--repo", str(repo), "--card", str(repo / "card.json")],
@@ -105,46 +104,38 @@ def main() -> int:
                     finding.get("rule")
                     for finding in json.loads(missing.stdout).get("data", {}).get("findings", [])
                 }
-                if "keel.invariant.persistence" not in missing_rules:
-                    print(f"missing keel.invariant.persistence: {sorted(missing_rules)!r}", file=sys.stderr)
+                if any(str(rule).startswith("keel.invariant.") for rule in missing_rules):
+                    print(f"unexpected invariant hit: {sorted(missing_rules)!r}", file=sys.stderr)
                     return 1
-                return 0
+                print("missing keel.invariant.persistence", file=sys.stderr)
+                return 1
 
-            (repo / "core/events").mkdir(parents=True)
-            (repo / "core/events/journal.rs").write_text("pub fn x() {}\n", encoding="utf-8")
-            commit(repo, "one-line persistence change")
+            if mode == "expanded":
+                (repo / "core/events").mkdir(parents=True)
+                (repo / "core/events/journal.rs").write_text("pub fn x() {}\n", encoding="utf-8")
+                commit(repo, "mapped persistence change")
 
-            if mode.startswith("expanded"):
-                # GREEN: the source change reaches the shipped persistence invariant.
-                bounded = run(
-                    [
-                        graphhelm(), "--json", "keel", "check", "--diff", "HEAD~1..HEAD",
-                        "--repo", str(repo), "--card", str(repo / "card.json"),
-                    ],
-                    repo,
-                )
-                if bounded.returncode:
-                    sys.stdout.buffer.write(bounded.stdout)
-                    return bounded.returncode
-                bounded_reply = json.loads(bounded.stdout)
-                bounded_rules = {
-                    finding.get("rule")
-                    for finding in bounded_reply.get("data", {}).get("findings", [])
-                }
-                if "keel.invariant.persistence" not in bounded_rules:
-                    print(
-                        "expected the source commit to report the shipped persistence hit, "
-                        f"got {sorted(bounded_rules)!r}",
-                        file=sys.stderr,
-                    )
-                    return 1
-
-                # The next commit adds the invariant path in isolation.
+                # GREEN: the shipped persistence invariant observes this source diff.
                 (repo / "keel.yaml").write_text(
                     "version: 1\ninvariants:\n  persistence: [core/events/]\nplan:\n  reviews: {docs: 1, code: 1, user_visible: 1, invariant: 1}\n  delegation: {docs: [small, low], code: [standard, medium], user_visible: [standard, medium], invariant: [large, high]}\n  jevThresholdPercent: 80\n",
                     encoding="utf-8",
                 )
                 commit(repo, "configure persistence invariant")
+
+                reached = run(
+                    [graphhelm(), "--json", "keel", "check", "--diff", "HEAD~2..HEAD~1",
+                     "--repo", str(repo), "--card", str(repo / "card.json")], repo,
+                )
+                if reached.returncode:
+                    sys.stdout.buffer.write(reached.stdout)
+                    return reached.returncode
+                reached_rules = {
+                    finding.get("rule") for finding in
+                    json.loads(reached.stdout).get("data", {}).get("findings", [])
+                }
+                if "keel.invariant.persistence" not in reached_rules:
+                    print(f"configured invariant missing: {sorted(reached_rules)!r}", file=sys.stderr)
+                    return 1
 
                 configured = run(
                     [
@@ -169,12 +160,15 @@ def main() -> int:
                         file=sys.stderr,
                     )
                     return 1
+            else:
+                (repo / "src/next.rs").write_text("pub fn next() {}\n", encoding="utf-8")
+                commit(repo, "following code change")
 
             result = run(
                 [
                     graphhelm(), "--json", "keel", "check", "--diff",
                     {"docs": "HEAD~3..HEAD~2", "bounded-code": "HEAD~2..HEAD~1",
-                     "expanded": "HEAD~2..HEAD~1"}[mode],
+                "expanded": "HEAD~2..HEAD~1"}[mode],
                     "--repo", str(repo),
                     *( ["--card", str(repo / "card.json")] if mode == "expanded" else [] ),
                 ],

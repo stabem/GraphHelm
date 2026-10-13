@@ -49,11 +49,18 @@ class Reach(unittest.TestCase):
             scenario_path.write_text("", encoding="utf-8")
             Path(repo, readme).write_text("", encoding="utf-8")
 
-            *_, tools, _, other = reach(scenario, repo=repo)
+            with patch.dict("os.environ", {"GRAPHHELM_HANDOFF_WRONG_STORE": ""}):
+                *_, tools, _, other = reach(scenario, repo=repo)
             self.assertEqual(tools, [expected])
             self.assertEqual(other, [])
 
-            *_, missing_root_tools, _, missing_root_other = reach(scenario)
+            with patch.dict("os.environ", {"GRAPHHELM_HANDOFF_WRONG_STORE": "1"}):
+                *_, wrong_store_tools, _, wrong_store_other = reach(scenario, repo=repo)
+            self.assertEqual(wrong_store_tools, [expected + " --wrong-store"])
+            self.assertEqual(wrong_store_other, [])
+
+            with patch.dict("os.environ", {"GRAPHHELM_HANDOFF_WRONG_STORE": ""}):
+                *_, missing_root_tools, _, missing_root_other = reach(scenario)
             self.assertEqual(missing_root_tools, [])
             self.assertEqual(missing_root_other, [scenario])
 

@@ -341,6 +341,13 @@ def reach(changed, packages, embedded, repo=None):
                 hit = True
         if path.startswith(BROWSER_REACHERS):
             tools.add(BROWSER_OBSERVERS)
+        handoff_scenario = ".graphhelm/fixtures/keel-task-handoff/scenario.py"
+        handoff_readme = ".graphhelm/fixtures/keel-task-handoff/README.md"
+        if path in {handoff_scenario, handoff_readme}:
+            if root is not None and (root / handoff_scenario).is_file():
+                wrong_store = " --wrong-store" if os.environ.get("GRAPHHELM_HANDOFF_WRONG_STORE") == "1" else ""
+                tools.add(f"python {handoff_scenario}{wrong_store}")
+                hit = True
         # Fixture behavior is observed by previews of the changed flows. It has no
         # standalone offline test, so keep it mapped without claiming a proxy pass.
         if path.startswith("tools/studio-journey-fixture/"):

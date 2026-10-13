@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import hashlib
 import os
@@ -28,13 +29,32 @@ class ScenarioFailure(RuntimeError):
 
 
 def _runtime_binary() -> Path:
-    raw = os.environ.get("GRAPHHELM_CLI") or shutil.which("graphhelm")
+    raw = os.environ.get("GRAPHHELM_CLI")
     if not raw:
-        raise ScenarioFailure("OBSERVER_MISSING: set GRAPHHELM_RUNTIME_BINARY to a local prebuilt Runtime executable")
+        raise ScenarioFailure("OBSERVER_MISSING: set GRAPHHELM_CLI to a pinned prebuilt GraphHelm executable")
     binary = Path(raw).expanduser().resolve()
     if not binary.is_file():
         raise ScenarioFailure(f"OBSERVER_MISSING: Runtime executable does not exist: {binary}")
     return binary
+
+
+def _runtime_identity(binary: Path) -> dict:
+    identity_env = {key: value for key, value in os.environ.items()
+                    if not key.startswith("GRAPHHELM_")}
+    identity_env["GRAPHHELM_CLI"] = str(binary)
+    try:
+        version = subprocess.run([str(binary), "--version"], cwd=ROOT, capture_output=True,
+                                 text=True, timeout=CHILD_TIMEOUT, creationflags=NO_WINDOW,
+                                 stdin=subprocess.DEVNULL, env=identity_env)
+    except subprocess.TimeoutExpired as error:
+        raise ScenarioFailure("pinned GraphHelm version query timed out") from error
+    if version.returncode != 0 or not version.stdout.strip():
+        raise ScenarioFailure("pinned GraphHelm executable did not report its version")
+    digest = hashlib.sha256()
+    with binary.open("rb") as executable:
+        for block in iter(lambda: executable.read(1024 * 1024), b""):
+            digest.update(block)
+    return {"version": version.stdout.strip(), "sha256": digest.hexdigest()}
 
 
 def _http(url: str, token: str, method: str = "GET", body: dict | None = None) -> dict:
@@ -78,7 +98,10 @@ def _wait_started(log_path: Path, child: subprocess.Popen) -> str:
 def _run_adapter(phase: str, host: str, session: str, token_file: Path, base_url: str,
                  recipient_host: str | None = None, recipient_session: str | None = None,
                  offer_id: str | None = None, owned: Path | None = None) -> dict:
-    env = os.environ.copy()
+    if owned is None:
+        raise ScenarioFailure("fixture-owned adapter directory was not supplied")
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("GRAPHHELM_")}
     env.update({
         "GRAPHHELM_EXECUTION_ID": EXECUTION,
         "GRAPHHELM_RUNTIME_URL": base_url,
@@ -86,6 +109,7 @@ def _run_adapter(phase: str, host: str, session: str, token_file: Path, base_url
         "GRAPHHELM_MCP_HOST": host,
         "GRAPHHELM_SESSION_ID": session,
         "GRAPHHELM_MCP_SESSION_SOURCE": "environment",
+        "GRAPHHELM_HOOK_STATE_DIR": str(owned / "hook-state"),
         "PYTHONPATH": str(SESSION_HOOKS),
     })
     command = [sys.executable, str(ADAPTER), phase, "--host", host,
@@ -154,16 +178,28 @@ def _briefing_references(briefing: dict) -> list[str]:
     return refs
 
 
-def run() -> dict:
+def _discard_fixture_hook_cache(owned: Path) -> None:
+    cache = owned / "hook-state"
+    if cache.is_symlink() or not cache.resolve().is_relative_to(owned.resolve()):
+        raise ScenarioFailure("refusing to remove hook state outside the owned fixture directory")
+    if cache.exists():
+        shutil.rmtree(cache)
+
+
+def run(wrong_store_only: bool = False) -> dict:
     binary = _runtime_binary()
-    with tempfile.TemporaryDirectory(prefix="graphhelm-keel-handoff-") as temp:
+    runtime_identity = _runtime_identity(binary)
+    fixture_dir = Path(__file__).resolve().parent
+    with tempfile.TemporaryDirectory(prefix="graphhelm-keel-handoff-", dir=fixture_dir) as temp:
         owned = Path(temp)
         store = owned / "store"
         keyring = owned / "keyring"
         store.mkdir()
         keyring.mkdir()
-        runtime_env = os.environ.copy()
+        runtime_env = {key: value for key, value in os.environ.items()
+                       if not key.startswith("GRAPHHELM_")}
         runtime_env["GRAPHHELM_EVENTS_KEY"] = "42" * 32
+        runtime_env["GRAPHHELM_CLI"] = str(binary)
         key_setup = subprocess.run([str(binary), "gateway", "keyring", "init", "--keyring",
                                     str(keyring), "--key-id", "handoff-fixture"],
                                    cwd=ROOT, env=runtime_env, capture_output=True, text=True,
@@ -200,7 +236,14 @@ def run() -> dict:
             token_file.chmod(0o600)
             token = agent_token
 
-            # Negative control: the same adapter points at a separate empty event store.
+            offered = _run_adapter("offer", "claude", "claude-fixture", token_file, base_url,
+                                   owned=owned)
+            offer_id = offered.get("offerId")
+            if not isinstance(offer_id, str) or not offer_id.startswith("handoff-offer-"):
+                raise ScenarioFailure(f"Claude adapter did not expose a durable offer id: {offered}")
+            _discard_fixture_hook_cache(owned)
+
+            # Negative control: the actual source offer is absent from this healthy empty store.
             empty = owned / "empty-store"
             empty.mkdir()
             empty_keyring = owned / "empty-keyring"
@@ -230,11 +273,16 @@ def run() -> dict:
                 if empty_history.get("events") != [] or empty_history.get("head") != 0:
                     raise ScenarioFailure("negative-control Runtime store was not empty")
                 negative = _run_adapter("receive", "codex", "codex-empty", isolated_empty_token, empty_url,
-                                        offer_id="handoff-offer-" + "0" * 48, owned=owned)
+                                        offer_id=offer_id, owned=owned)
                 if negative.get("phase") != "receive" or negative.get("activation") != "unobserved":
                     raise ScenarioFailure("empty-store negative control unexpectedly received a handoff")
                 if negative.get("missingOffer") is not True:
-                    raise ScenarioFailure("empty-store rejection did not identify its missing offer")
+                    raise ScenarioFailure("empty-store rejection did not identify the original offer as missing")
+                if wrong_store_only:
+                    raise ScenarioFailure(
+                        f"continuity assertion failed: original offer {offer_id} and its sealed evidence "
+                        "are absent from the healthy empty fixture Runtime"
+                    )
             finally:
                 empty_child.terminate()
                 try:
@@ -244,10 +292,6 @@ def run() -> dict:
                     empty_child.wait(timeout=2)
                 empty_log.close()
 
-            offered = _run_adapter("offer", "claude", "claude-fixture", token_file, base_url)
-            offer_id = offered.get("offerId")
-            if not isinstance(offer_id, str) or not offer_id.startswith("handoff-offer-"):
-                raise ScenarioFailure(f"Claude adapter did not expose a durable offer id: {offered}")
             first = _run_adapter("receive", "codex", "codex-fixture", token_file, base_url,
                                  offer_id=offer_id, owned=owned)
             second = _run_adapter("receive", "codex", "codex-fixture", token_file, base_url,
@@ -258,9 +302,11 @@ def run() -> dict:
                 raise ScenarioFailure("repeat receive did not recover the same receipt identity")
             if not first.get("offeredBriefing", {}).get("asOfSequence", 0):
                 raise ScenarioFailure("offer has no source Runtime briefing reference")
-            status = _run_adapter("status", "codex", "codex-fixture", token_file, base_url, offer_id=offer_id)
+            status = _run_adapter("status", "codex", "codex-fixture", token_file, base_url,
+                                  offer_id=offer_id, owned=owned)
             matching = [item for item in status.get("offers", []) if item.get("offerId") == offer_id]
-            if len(matching) != 1 or first.get("receiptId") not in matching[0].get("receipts", []):
+            receipts = matching[0].get("receipts", []) if len(matching) == 1 else []
+            if len(matching) != 1 or len(receipts) != 1 or receipts[0] != first.get("receiptId"):
                 raise ScenarioFailure("original Runtime event history did not recover the receipt")
 
             owner_token = owner_token_file.read_text(encoding="utf-8").strip()
@@ -321,9 +367,18 @@ def run() -> dict:
 
             wrong = _run_adapter("receive", "codex", "wrong-codex", token_file, base_url,
                                  offer_id=offer_id, owned=owned)
-            if wrong.get("phase") != "receive" or wrong.get("activation") != "unobserved":
+            if (wrong.get("phase") != "receive" or wrong.get("activation") != "unobserved"
+                    or wrong.get("reason") != "handoff offer recipient does not match this adapter"):
                 raise ScenarioFailure("wrong recipient unexpectedly received the offer")
+            after_wrong = _run_adapter("status", "codex", "codex-fixture", token_file, base_url,
+                                       offer_id=offer_id, owned=owned)
+            after_wrong_match = [item for item in after_wrong.get("offers", [])
+                                 if item.get("offerId") == offer_id]
+            if (len(after_wrong_match) != 1
+                    or after_wrong_match[0].get("receipts") != [first.get("receiptId")]):
+                raise ScenarioFailure("wrong recipient changed the original Runtime receipt history")
             return {"verdict": "passed", "offerId": offer_id,
+                    "runtimeCli": runtime_identity,
                     "receiptId": first["receiptId"], "negativeControl": "missing offer rejected",
                     "repeatReceive": second["state"], "wrongRecipient": "rejected",
                     "sourceBriefingSequence": first["offeredBriefing"]["asOfSequence"],
@@ -343,8 +398,13 @@ def run() -> dict:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--wrong-store", action="store_true",
+                        help="RED-only control: require continuity to fail for an empty Runtime")
+    args = parser.parse_args()
     try:
-        print(json.dumps(run(), indent=2))
+        print(json.dumps(run(wrong_store_only=args.wrong_store), indent=2))
     except (OSError, ScenarioFailure, urllib.error.URLError) as error:
-        print(json.dumps({"verdict": "observer_missing", "evidence": [str(error)]}, indent=2))
-        sys.exit(2)
+        verdict = "failed" if args.wrong_store and "continuity assertion failed" in str(error) else "observer_missing"
+        print(json.dumps({"verdict": verdict, "evidence": [str(error)]}, indent=2))
+        sys.exit(1 if verdict == "failed" else 2)

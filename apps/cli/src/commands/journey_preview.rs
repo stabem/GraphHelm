@@ -1452,7 +1452,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         std::fs::create_dir_all(&journeys).unwrap();
         std::fs::write(
             journeys.join("studio-add-project.journey.yaml"),
-            include_bytes!("../../../../.graphhelm/journeys/studio-add-project.journey.yaml"),
+            include_bytes!("testdata/studio-add-project.journey.yaml"),
         )
         .unwrap();
         for path in [

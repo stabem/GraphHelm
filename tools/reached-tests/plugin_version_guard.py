@@ -15,7 +15,11 @@ MANIFESTS = (
     "plugins/graphhelm-codex-hooks/.codex-plugin/plugin.json",
 )
 PLUGIN_ROOTS = ("plugins/graphhelm/", "plugins/graphhelm-codex-hooks/")
-VERSION = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
+VERSION = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-((?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$")
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
@@ -63,9 +67,23 @@ def _manifest_version(repo, commit, path):
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid release manifest {path}: {exc.msg}") from None
     version = manifest.get("version") if isinstance(manifest, dict) else None
-    if not isinstance(version, str) or not VERSION.fullmatch(version):
+    match = VERSION.fullmatch(version) if isinstance(version, str) else None
+    if match is None:
         raise ValueError(f"invalid release version in manifest: {path}")
-    return version, tuple(int(part) for part in version.split("+", 1)[0].split("-", 1)[0].split("."))
+    major, minor, patch = (int(part) for part in match.group(1, 2, 3))
+    prerelease = match.group(4)
+    identifiers = tuple(prerelease.split(".")) if prerelease is not None else None
+    return version, (major, minor, patch, identifiers)
+
+
+def _version_precedence(version):
+    major, minor, patch, prerelease = version
+    if prerelease is None:
+        return major, minor, patch, (1,)
+    return major, minor, patch, (0, *(
+        (0, int(identifier)) if identifier.isdigit() else (1, identifier)
+        for identifier in prerelease
+    ), (2,))
 
 
 def check(repo, base_ref, head_ref):
@@ -90,7 +108,7 @@ def check(repo, base_ref, head_ref):
     if len(set(after_versions)) != 1:
         path = MANIFESTS[next(i for i, version in enumerate(after_versions) if version != after_versions[0])]
         return False, f"mismatched release manifests: {path} has {after_versions[MANIFESTS.index(path)]}"
-    if after[0][1] <= before[0][1]:
+    if _version_precedence(after[0][1]) <= _version_precedence(before[0][1]):
         return False, f"bump the plugin version in {MANIFESTS[0]} (shipped plugin content changed)"
     return True, f"PASS: shipped plugin content changed; release version {after_versions[0]} exceeds {before_versions[0]}"
 

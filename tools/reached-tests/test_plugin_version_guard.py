@@ -68,6 +68,28 @@ class PluginVersionGuard(unittest.TestCase):
         self.assertTrue(passed, message)
         self.assertIn("0.1.29", message)
 
+    def test_prerelease_precedence_allows_release_and_rejects_earlier_versions(self):
+        self.write("plugins/graphhelm/skills/guide/SKILL.md", "# Changed guide\n")
+        self.write_manifests("0.1.29-rc.1")
+        base = self.commit("ship prerelease")
+        self.base = base
+        self.write_manifests("0.1.29")
+        passed, message = self.check(self.commit("ship final release"))
+        self.assertTrue(passed, message)
+
+        self.base = self.git("rev-parse", "HEAD~1")
+        self.write_manifests("0.1.29-beta.2")
+        passed, message = self.check(self.commit("regress prerelease"))
+        self.assertFalse(passed)
+        self.assertIn("bump the plugin version", message)
+
+    def test_invalid_numeric_prerelease_identifier_is_rejected(self):
+        self.write("plugins/graphhelm/skills/guide/SKILL.md", "# Changed guide\n")
+        self.write_manifests("0.1.29-rc.01")
+        passed, message = self.check(self.commit("invalid prerelease"))
+        self.assertFalse(passed)
+        self.assertIn("invalid release version", message)
+
     def test_mismatched_head_manifests_fail_with_the_path(self):
         self.write("plugins/graphhelm/hooks/session_hook.py", "# changed\n")
         self.write_manifests("0.1.29")

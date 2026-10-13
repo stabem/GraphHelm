@@ -20,12 +20,16 @@ export interface Lane {
   lastRecord?: LaneRecord | null;
   /** #591: PRs this lane opened that wait on a review: no verdict on their newest head, not merged. */
   awaiting?: number[];
+  /** Activity observed without a factory task record; this never creates a task bar. */
+  observed?: { label: string; at: number };
 }
+
+export interface ObservedActivity { lane: string; at: number; label: string }
 
 /** #591: a lane with no record of any kind for this long is silent; a step it owns reads Stalled.
  * One rule for the Graph cards, the pace dot and the Lanes agent board. */
 export const LIVENESS_MS = 30 * 60 * 1000;
-export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number): Lane[] {
+export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number, observed: readonly ObservedActivity[] = []): Lane[] {
   const lanes = new Map<string, { bars: LaneBar[]; last: number; record: LaneRecord | null; awaiting: Set<number> }>();
   const open = new Map<string, { lane: string; bar: LaneBar; slice: string }>();
   // The fold's returned slices may be filtered or sorted; keep the routed slice identity.
@@ -212,11 +216,21 @@ export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number
     }
   }
   const from = now - windowMs;
+  for (const activity of observed) {
+    if (placeholderLane(activity.lane) || !Number.isFinite(activity.at) || activity.at < from) continue;
+    const l = laneOf(activity.lane);
+    if (activity.at >= l.last) {
+      l.last = activity.at;
+      l.record = { kind: "observed activity", at: activity.at };
+    }
+  }
   return [...lanes.entries()]
     .map(([lane, l]) => {
       const bars = l.bars.filter((b) => b.end >= from).map((b) => ({ ...b, start: Math.max(b.start, from) }));
       const owes = l.bars.some((b) => b.open);
-      return { lane, bars, lastEventAt: l.last, silent: owes && now - l.last >= LIVENESS_MS, lastRecord: l.record, awaiting: [...l.awaiting] };
+      const activity = observed.find((candidate) => candidate.lane === lane && candidate.at === l.last);
+      return { lane, bars, lastEventAt: l.last, silent: owes && now - l.last >= LIVENESS_MS, lastRecord: l.record,
+        ...(activity ? { observed: { label: activity.label, at: activity.at } } : {}), awaiting: [...l.awaiting] };
     })
     .sort((a, b) => a.lane.localeCompare(b.lane));
 }

@@ -12,6 +12,7 @@ import type { EnvelopeRecord } from "../graph/ledger";
 import type { GraphModel } from "../graph/model";
 import type { ClaudeTaskReadModel, TaskEventRecord, TaskState } from "./team-tasks";
 import type { NativeChatSummary, RuntimeEvent } from "./types";
+import type { ObservedActivity } from "./lane-bars";
 
 export const SHARED_CODEX_ACTOR = "codex";
 export const BOT_RECENT_MS = 2 * 60 * 60 * 1000;
@@ -30,6 +31,16 @@ export interface Bot { key: string; actorId: string | null; name: string; hue: n
 export interface OtherRecorder { actorId: string; count: number; lastRecordAt: string | null }
 export interface TeamModel { bots: Bot[]; otherRecorders: OtherRecorder[] }
 export interface TeamLink { a: string; b: string; count: number; lastAt: string | null; live: boolean }
+
+/** Actors with recent authenticated records, including projects that have no task.* records. */
+export function observedActivity(bots: readonly Bot[], now: number, windowMs: number): ObservedActivity[] {
+  return bots.flatMap((bot) => {
+    if (bot.actorId === null || bot.shared || bot.lastRecordAt === null) return [];
+    const at = Date.parse(bot.lastRecordAt);
+    return Number.isFinite(at) && at >= now - windowMs && at <= now
+      ? [{ lane: bot.actorId, at, label: bot.doingNow }] : [];
+  });
+}
 export interface TeamInput {
   events: RuntimeEvent[];
   envelopes: EnvelopeRecord;

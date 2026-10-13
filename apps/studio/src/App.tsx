@@ -87,7 +87,7 @@ import { approvalBlockReason, beforeAfterPairs, captureDocuments, type BeforeAft
 import type { JourneyFlowsView, JourneyRunView, JourneysView } from "./runtime/types";
 import type { JourneyRunSource } from "./components/journey-flows";
 import { SaidLinks, type SaidLinkContext } from "./components/said";
-import { teamLinks, teamModel } from "./runtime/team";
+import { observedActivity, teamLinks, teamModel } from "./runtime/team";
 import { needsYou, type DraftItem, type QuestionItem, type StepItem } from "./runtime/needs-you";
 import { buildHandover, hiddenThisSession, hideThisSession, readLastSeen, shouldShowHandover, writeLastSeen } from "./runtime/handover";
 import { EVERYONE, describeActivity, namesOf } from "./runtime/threads";
@@ -2356,7 +2356,7 @@ export default function App({
   const missionLanes = useMemo(() => {
     const records = currentTaskGraphs?.records ?? [];
     const timed: TimedTaskEvent[] = records.flatMap((r) => (r.occurredAt ? [{ ...r, at: r.occurredAt }] : []));
-    const lanes = laneBars(timed, clock, 14 * 3_600_000);
+    const lanes = laneBars(timed, clock, 14 * 3_600_000, observedActivity(team.bots, clock, 14 * 3_600_000));
     for (const event of eventList) {
       if (event.kind !== "signal_recorded" || !event.payload || typeof event.payload !== "object"
         || !("kind" in event.payload) || event.payload.kind !== "agent_session_ended" || !event.actorId) continue;
@@ -2365,7 +2365,7 @@ export default function App({
       if (lane && Number.isFinite(at) && (lane.endedAt === undefined || at > lane.endedAt)) lane.endedAt = at;
     }
     return lanes;
-  }, [currentTaskGraphs, clock, eventList]);
+  }, [currentTaskGraphs, clock, eventList, team]);
   const watchFlow = useCallback(async (flowId: string, path?: string) => {
     const client = clientRef.current;
     if (client === null) throw new Error("Not connected.");

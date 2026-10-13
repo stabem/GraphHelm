@@ -9,13 +9,19 @@ const now = 10 * 3_600_000;
 const M = 60_000;
 const bot = (name: string): Bot => ({ key: name, actorId: name, name, hue: 0, role: null, doingNow: "", lastRecordAt: new Date(now).toISOString(), lastSequence: 0,
   state: "working", quietMinutes: null, shared: false, native: false, tasks: [] });
-const lane = (name: string, bars: Lane["bars"], silent = false): Lane => ({ lane: name, bars, silent, lastEventAt: now });
+const lane = (name: string, bars: Lane["bars"], silent = false, observed?: Lane["observed"]): Lane => ({ lane: name, bars, silent, lastEventAt: now, ...(observed ? { observed } : {}) });
 const bar = (kind: "implement" | "review" | "merge", since: number, open = true, end = now, label = "#7") =>
   ({ kind, label, start: since, end, open, since, taskId: "t7" });
 const task = (over: Partial<MissionTask>): MissionTask => ({ key: "t7", pr: 7, issue: null, title: "Add board", lane: "a", reviewers: [],
   step: "implement", blocked: false, trust: 1, blockedBy: null, rounds: [], headSha: null, mergeSha: null, repoUrl: "https://github.com/o/r", ...over });
 
 describe("agentBoard", () => {
+  it("shows observed activity as working without inventing a task bar", () => {
+    const observed = { kind: "observed activity", at: now - M };
+    const [row] = agentBoard([bot("native-1")], [{ ...lane("native-1", []), lastRecord: observed }], [], now);
+    expect(row).toMatchObject({ status: "working", label: "Observed activity", doing: "Observed activity", stage: null });
+  });
+
   it("keeps old idle lanes Offline and roster on-demand lanes Free", () => {
     const old = { ...lane("old", []), lastEventAt: now - 20 * 3_600_000 };
     const recent = { ...lane("live", []), lastEventAt: now - M };

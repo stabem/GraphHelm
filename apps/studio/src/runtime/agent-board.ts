@@ -112,6 +112,11 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
         const ref = stale.issue !== undefined ? `#${stale.issue}` : stale.label;
         return { name, status: "stale", stage: null, pr: null, title: null, label: `stale claim · ${ref}`, doing: `stale claim · ${ref}`, href: null, lastDelivered: last, ...when };
       }
+      if ((lane?.observed || lane?.lastRecord?.kind === "observed activity")
+        && lane.lastRecord && now - lane.lastRecord.at < FREE_LIVENESS_MS) {
+        return { name, status: "working", stage: null, pr: null, title: null, href: null,
+          label: "Observed activity", doing: lane.observed?.label ?? "Observed activity", lastDelivered: last, ...when };
+      }
       return { name, status: "free", stage: null, pr: null, title: null, href: null, lastDelivered: last, ...when };
     }
     const task = tasks.find((t) => (bar.taskId !== undefined && t.key === bar.taskId) || (t.pr !== null && bar.label === `#${t.pr}`)) ?? null;

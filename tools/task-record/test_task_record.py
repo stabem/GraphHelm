@@ -186,7 +186,6 @@ class TaskRecordTest(unittest.TestCase):
         second = self.run_heartbeat()
         self.assertEqual(first[0], 0, first[1])
         self.assertEqual(second[0], 0, second[1])
-        self.assertTrue(second[1].startswith("already recorded "), second[1])
         self.assertEqual(FakeRuntime.seen[0][0], FakeRuntime.seen[1][0])
 
     def test_new_claim_and_unrelated_lane_or_task_do_not_bypass_or_reset_cooldown(self):

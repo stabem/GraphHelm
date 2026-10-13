@@ -1131,11 +1131,11 @@ export function KeelChainView({ events, nodeId, executionId, openEvidence }: {
   openEvidence?: (executionId: string, evidenceId: string) => Promise<EvidenceContent>;
 }) {
   const chain = keelChain(events, nodeId);
-  const [checks, setChecks] = useState<Array<{ identity: string; kind: "keel.blocked" | "keel.passed"; state: "ready" | "unavailable"; head?: string; findingIds?: string[]; paths?: string[] }>>([]);
+  const [checks, setChecks] = useState<{ executionId?: string; values: Array<{ identity: string; kind: "keel.blocked" | "keel.passed"; state: "ready" | "unavailable"; head?: string; findingIds?: string[]; paths?: string[] }> }>({ values: [] });
   const checkKey = chain.checks.map((check) => `${check.kind}:${check.evidenceRefs.join(",")}`).join("|");
   useEffect(() => {
     let current = true;
-    setChecks([]);
+    setChecks({ executionId, values: [] });
     if (executionId === undefined || openEvidence === undefined) return () => { current = false; };
     const relevant = chain.checks.filter((check) => check.evidenceRefs.length > 0);
     void Promise.all(relevant.map(async (check, index) => {
@@ -1150,14 +1150,15 @@ export function KeelChainView({ events, nodeId, executionId, openEvidence }: {
         const findingIds = Array.isArray(value.findingIds) && value.findingIds.every((item) => typeof item === "string") ? value.findingIds : undefined;
         const paths = Array.isArray(value.paths) && value.paths.every((item) => typeof item === "string") ? value.paths : undefined;
         if (!current) return;
-        setChecks((previous) => [...previous, { identity, kind: check.kind, state: "ready", head, findingIds, paths }]);
+        setChecks((previous) => ({ executionId, values: [...(previous.executionId === executionId ? previous.values : []), { identity, kind: check.kind, state: "ready", head, findingIds, paths }] }));
       } catch {
-        if (current) setChecks((previous) => [...previous, { identity, kind: check.kind, state: "unavailable" }]);
+        if (current) setChecks((previous) => ({ executionId, values: [...(previous.executionId === executionId ? previous.values : []), { identity, kind: check.kind, state: "unavailable" }] }));
       }
     }));
     return () => { current = false; };
   }, [events, nodeId, executionId, openEvidence, checkKey]);
   if (!chain.active) return null;
+  const visibleChecks = checks.executionId === executionId ? checks.values : [];
   return (
     <section className="node-result-summary keel-chain" aria-label="Keel chain">
       <strong>Keel</strong>
@@ -1168,7 +1169,7 @@ export function KeelChainView({ events, nodeId, executionId, openEvidence }: {
         })}
       </ol>
       {chain.gaps.length === 0 ? (chain.checks.some((check) => check.kind === "keel.passed") ? null : <span>Every step is recorded.</span>) : chain.gaps.map((gap) => <span key={gap}>{gap}</span>)}
-      {checks.map((check) => <div key={check.identity}>
+      {visibleChecks.map((check) => <div key={check.identity}>
         {check.state === "unavailable" ? <span>Check evidence unavailable.</span> : <>
           {check.head !== undefined && <span>Check head: {check.head}</span>}
           {check.kind === "keel.passed" && <span>Recorded check: passed</span>}

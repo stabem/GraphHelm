@@ -1,4 +1,4 @@
-import { act, createElement } from "react";
+import { act, createElement, Fragment, useLayoutEffect } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -91,17 +91,27 @@ describe("KeelChainView", () => {
     document.body.append(element);
     const root = createRoot(element);
     roots.push(root);
-    let resolveOld!: (value: EvidenceContent) => void;
-    const openOld = () => new Promise<EvidenceContent>((resolve) => { resolveOld = resolve; });
+    let renderedDuringSwitch = "";
+    function SwitchObserver({ executionId }: { executionId: string }) {
+      useLayoutEffect(() => {
+        if (executionId === "new-run") renderedDuringSwitch = element.textContent ?? "";
+      }, [executionId]);
+      return null;
+    }
+    const openOld = async () => evidence({ head: "oldhead1", findingIds: ["old.finding"], paths: [] }, "old-evidence");
     await act(async () => root.render(createElement(KeelChainView, {
       nodeId: "implementation", executionId: "old-run", events: [signal(1, "keel.blocked", "medium", ["old-evidence"])], openEvidence: openOld,
     })));
-    await act(async () => root.render(createElement(KeelChainView, {
-      nodeId: "implementation", executionId: "new-run", events: [signal(2, "keel.blocked", "medium", ["new-evidence"])],
-      openEvidence: async () => evidence({ head: "newhead1", findingIds: ["new.finding"], paths: [] }, "new-evidence"),
-    })));
-    await vi.waitFor(() => expect(element.textContent).toContain("newhead1"));
-    await act(async () => resolveOld(evidence({ head: "oldhead1", findingIds: ["old.finding"], paths: [] }, "old-evidence")));
+    await vi.waitFor(() => expect(element.textContent).toContain("oldhead1"));
+    await act(async () => root.render(createElement(Fragment, null,
+      createElement(KeelChainView, {
+        nodeId: "implementation", executionId: "new-run", events: [signal(2, "keel.blocked", "medium", ["new-evidence"])],
+        openEvidence: () => new Promise<EvidenceContent>(() => {}),
+      }),
+      createElement(SwitchObserver, { executionId: "new-run" }),
+    )));
+    expect(renderedDuringSwitch).not.toContain("oldhead1");
+    expect(renderedDuringSwitch).not.toContain("old.finding");
     expect(element.textContent).not.toContain("oldhead1");
     expect(element.textContent).not.toContain("old.finding");
   });

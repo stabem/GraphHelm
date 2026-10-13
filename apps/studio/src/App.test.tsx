@@ -2053,15 +2053,19 @@ describe("the shell's own layout", () => {
     await userEvent.type(within(panel).getByLabelText(/^folder$/i), "F:/projects/example/dale-api-base");
     expect(
       within(panel).getByText(
-        /Set-Location -LiteralPath 'F:\/projects\/example\/dale-api-base'; if \(\$\?\) \{ graphhelm serve --events \.graphhelm\/events --bind 127\.0\.0\.1:8791 \}/i,
+        /Set-Location -LiteralPath 'F:\/projects\/example\/dale-api-base'; if \(\$\?\) \{ graphhelm init --bind 127\.0\.0\.1:8792; if \(\$\?\) \{ graphhelm studio start --bind 127\.0\.0\.1:8792 \} \}/i,
       ),
     ).toBeInTheDocument();
     expect(
       within(panel).getByText(
-        /cd 'F:\/projects\/example\/dale-api-base' && graphhelm serve --events \.graphhelm\/events --bind 127\.0\.0\.1:8791/i,
+        /cd 'F:\/projects\/example\/dale-api-base' && graphhelm init --bind 127\.0\.0\.1:8792 && graphhelm studio start --bind 127\.0\.0\.1:8792/i,
       ),
     ).toBeInTheDocument();
     expect(within(panel).getByLabelText(/^folder$/i)).toHaveValue("F:/projects/example/dale-api-base");
+    // #1154: no bare `serve` on the port this page's Runtime already holds, and no promise of a
+    // pickup this Studio cannot make.
+    expect(panel).not.toHaveTextContent("--bind 127.0.0.1:8791");
+    expect(panel).not.toHaveTextContent("picks it up");
   });
 });
 

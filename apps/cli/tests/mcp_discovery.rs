@@ -466,6 +466,97 @@ fn project_discovery_ignores_more_than_sixteen_stale_restart_records() {
     );
 }
 
+/// Delayed candidates must share one health-probing budget instead of stacking one-second waits.
+/// Cost: one disposable Runtime, MCP client and eight local loopback listeners; about six seconds.
+#[test]
+fn project_discovery_refuses_when_health_probe_budget_expires() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = dir.path().join("registry");
+    let project = dir.path().join("project");
+    let events = project.join(".graphhelm").join("events");
+    std::fs::create_dir_all(&events).unwrap();
+    let _runtime = serve_with_project(&events, free_port(), &registry, Some(&project));
+    let project_records = std::fs::read_dir(registry.join("projects"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let project_id = project_records
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let live_path = std::fs::read_dir(&project_records)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&live_path).unwrap()).unwrap();
+
+    let stop_servers = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut servers = Vec::new();
+    for index in 0..8_u32 {
+        let stale_instance = format!("{index:032x}");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let project_id = project_id.clone();
+        let stale_instance_for_server = stale_instance.clone();
+        let stop_server = std::sync::Arc::clone(&stop_servers);
+        servers.push(std::thread::spawn(move || {
+            let deadline = Instant::now() + scaled(Duration::from_secs(30));
+            while !stop_server.load(std::sync::atomic::Ordering::Relaxed)
+                && Instant::now() < deadline
+            {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream
+                            .set_write_timeout(Some(Duration::from_secs(1)))
+                            .unwrap();
+                        std::thread::sleep(Duration::from_millis(900));
+                        let body = format!(
+                            "{{\"data\":{{\"instance\":\"{stale_instance_for_server}\",\"projectId\":\"{project_id}\"}}}}"
+                        );
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        let _ = stream.write_all(response.as_bytes());
+                        return;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => return,
+                }
+            }
+        }));
+        record["instance"] = serde_json::json!(stale_instance);
+        record["url"] = serde_json::json!(format!("http://127.0.0.1:{port}"));
+        std::fs::write(
+            project_records.join(format!("{stale_instance}.json")),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+    }
+
+    let mut bridge = Bridge::start_project(&project, &registry);
+    let reply = bridge.list();
+    stop_servers.store(true, std::sync::atomic::Ordering::Relaxed);
+    for server in servers {
+        server.join().unwrap();
+    }
+    assert!(
+        reply.contains("health probing budget exhausted"),
+        "discovery must refuse an incompletely checked candidate set: {reply}"
+    );
+}
+
 fn authorized(reply: &str) -> bool {
     !reply.contains("GHCLI007")
         && !reply.contains("\"isError\":true")

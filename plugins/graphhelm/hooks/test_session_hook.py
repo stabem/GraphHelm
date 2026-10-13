@@ -165,6 +165,36 @@ class SessionHookTests(unittest.TestCase):
             self.assertEqual(arm.call_args.kwargs["matures_in"], 1)
             wait.assert_not_called()
 
+    def test_stale_burn_rearms_before_an_ask_that_arrived_while_unparked(self):
+        spec = importlib.util.spec_from_file_location("session_hook_stale_burn", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        bound = ("run-test", str(self.token_file),
+                 f"http://127.0.0.1:{self.server.server_port}",
+                 f"http://127.0.0.1:{self.server.server_port}", None)
+        calls = []
+
+        def arm(_payload, _bound, matures_in=60, cursor=None):
+            calls.append(cursor)
+            # Head 21 includes an unrelated append at 20 and the owner ask at 21.
+            # Only a cursor at 19 lets the Runtime ring for that ask.
+            if len(calls) == 1:
+                self.assertEqual(cursor, 19)
+            return 21
+
+        waits = iter((2, 0))
+        def wait(*_args, **_kwargs):
+            return type("Result", (), {"returncode": next(waits)})()
+
+        with patch.object(hook, "binding", return_value=bound), \
+             patch.object(hook, "_heartbeat_fresh", side_effect=(True, True, True, False, True)), \
+             patch.object(hook, "arm_lane_wake", side_effect=arm), \
+             patch.object(hook.subprocess, "run", side_effect=wait), \
+             patch.object(hook.time, "sleep"):
+            hook.wait_for_lane("codex", "session-123", Path(self.temp.name),
+                               Path(self.temp.name) / "alive", 19)
+        self.assertEqual(calls, [19])
+
     def test_start_lane_waiter_arms_when_event_head_takes_one_and_a_half_seconds(self):
         spec = importlib.util.spec_from_file_location("session_hook_delayed_arm", SCRIPT)
         hook = importlib.util.module_from_spec(spec)

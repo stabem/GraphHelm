@@ -242,7 +242,8 @@ def token_from_file(path: str) -> str:
     return token
 
 
-def arm_lane_wake(payload: dict, bound: tuple[str, str, str, str, str | None], matures_in: int = 60) -> None:
+def arm_lane_wake(payload: dict, bound: tuple[str, str, str, str, str | None], matures_in: int = 60,
+                  cursor: int | None = None) -> int:
     """Renew the lane's finite lease from the last observed event head."""
     execution, token_file, url, _origin, _node = bound
     actor = os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload)
@@ -255,17 +256,21 @@ def arm_lane_wake(payload: dict, bound: tuple[str, str, str, str, str | None], m
     head = request(f"{base}/events?after=0&limit=1", token, "GET", timeout=ARM_BUDGET_SECONDS)["data"]["head"]
     if type(head) is not int or head < 0:
         raise ValueError("invalid event head")
+    if cursor is not None and (type(cursor) is not int or cursor < 0 or cursor > head):
+        raise ValueError("invalid wake cursor")
+    armed_cursor = head if cursor is None else cursor
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise TimeoutError("wake lease arm budget exceeded")
     reply = request(f"{base}/wake-lease", token, "POST",
                     {"sessionId": session, "rendezvousId": str(uuid.uuid4()),
-                     "cursor": head, "maturesInSeconds": matures_in},
+                     "cursor": armed_cursor, "maturesInSeconds": matures_in},
                     {"X-GraphHelm-Actor": actor, "X-GraphHelm-Actor-Type": "agent",
                      "Idempotency-Key": str(uuid.uuid4())}, timeout=remaining)
     data = reply.get("data")
-    if not isinstance(data, dict) or data.get("sessionId") != session or data.get("armedCursor") != head:
+    if not isinstance(data, dict) or data.get("sessionId") != session or data.get("armedCursor") != armed_cursor:
         raise ValueError("wake lease acknowledgement mismatch")
+    return head
 
 
 def _waiter_path(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> Path:
@@ -328,19 +333,21 @@ def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None
             return
     except (FileNotFoundError, ValueError, OSError):
         pass
-    arm_lane_wake(payload, bound)
+    cursor = arm_lane_wake(payload, bound)
     pid_path.parent.mkdir(parents=True, exist_ok=True)
     flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS if os.name == "nt" else 0
     child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "wait", "--host", host,
                               "--session-id", _session(payload), "--events", str(events),
-                              "--heartbeat", str(_heartbeat_path(payload, bound, host))],
+                              "--heartbeat", str(_heartbeat_path(payload, bound, host)),
+                              "--cursor", str(cursor)],
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags,
                              start_new_session=os.name != "nt")
     pid_path.write_text(str(child.pid), encoding="ascii")
 
 
-def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path) -> None:
+def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
+                  cursor: int | None = None) -> None:
     payload = {"session_id": session}
     bound = binding(payload)
     if bound is None:
@@ -363,7 +370,7 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path) -> Non
         if result.returncode == 2:
             time.sleep(1)
         try:
-            arm_lane_wake(payload, bound)
+            cursor = arm_lane_wake(payload, bound, cursor=cursor)
         except (OSError, ValueError, KeyError):
             time.sleep(1)
     finally:
@@ -766,6 +773,7 @@ def main() -> int:
     parser.add_argument("--session-id")
     parser.add_argument("--events", type=Path)
     parser.add_argument("--heartbeat", type=Path)
+    parser.add_argument("--cursor", type=int)
     args = parser.parse_args()
     host = args.host
     output_format = args.format or ("native" if host in {"claude", "codex"} else "portable")
@@ -773,7 +781,7 @@ def main() -> int:
         if args.phase == "wait":
             if not args.session_id or args.events is None or args.heartbeat is None:
                 raise ValueError("waiter binding missing")
-            wait_for_lane(host, args.session_id, args.events, args.heartbeat)
+            wait_for_lane(host, args.session_id, args.events, args.heartbeat, args.cursor)
         elif args.phase == "touch":
             payload = hook_input()
             bound = binding(payload)

@@ -358,15 +358,28 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
       while _heartbeat_fresh(heartbeat):
         result = subprocess.run([cli, "wake-wait", "--events", str(events),
                                  "--execution", bound[0], "--session-id", session],
-                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, check=False,
+                                text=True,
                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-        # An append can consume the lease before wake-wait parks its pipe.
-        # Exit 2 then means stale, and exit 3 means the short lease matured.
-        if result.returncode not in (0, 2, 3):
+        # An append can consume the lease before wake-wait parks its pipe. Its timeout
+        # envelope carries the stale-burn receipt, even when an older CLI exits unusually.
+        try:
+            envelope = json.loads(getattr(result, "stdout", None) or "{}")
+            data = envelope.get("data", {}) if isinstance(envelope, dict) else {}
+            consumed = data.get("lastConsumed") if isinstance(data, dict) else None
+            stale = (isinstance(consumed, dict) and
+                     consumed.get("reason") == "stale_rendezvous" and
+                     not data.get("misBurn"))
+        except (TypeError, ValueError):
+            stale = False
+        if result.returncode not in (0, 2, 3) and not stale:
+            print(f"wake-wait exited {result.returncode} for {session}; stopping waiter", file=sys.stderr)
             return
         if not _heartbeat_fresh(heartbeat):
             return
+        if stale:
+            print(f"stale rendezvous consumed for {session}; re-arming waiter", file=sys.stderr)
         if result.returncode == 2:
             time.sleep(1)
         try:

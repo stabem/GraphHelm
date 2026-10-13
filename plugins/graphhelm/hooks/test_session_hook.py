@@ -195,6 +195,44 @@ class SessionHookTests(unittest.TestCase):
                                Path(self.temp.name) / "alive", 19)
         self.assertEqual(calls, [19])
 
+    def test_stale_burn_timeout_rearms_waiter(self):
+        spec = importlib.util.spec_from_file_location("session_hook_stale_timeout", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        bound = ("run-test", str(self.token_file),
+                 f"http://127.0.0.1:{self.server.server_port}",
+                 f"http://127.0.0.1:{self.server.server_port}", None)
+        armed_cursors = []
+
+        def arm(_payload, _bound, matures_in=60, cursor=None):
+            armed_cursors.append(cursor)
+            return 21
+
+        ordinary_timeout = json.dumps({"ok": True, "data": {
+            "timedOut": True, "lastConsumed": None, "misBurn": None,
+        }})
+        stale_burn = json.dumps({"ok": True, "data": {
+            "timedOut": True,
+            "lastConsumed": {"reason": "stale_rendezvous", "atSequence": 20},
+            "misBurn": None,
+        }})
+        waits = iter((type("Result", (), {"returncode": 3, "stdout": ordinary_timeout, "stderr": ""})(),
+                      type("Result", (), {"returncode": 4, "stdout": stale_burn, "stderr": ""})(),
+                      type("Result", (), {"returncode": 0, "stdout": "{}", "stderr": ""})()))
+
+        with patch.object(hook, "binding", return_value=bound), \
+             patch.object(hook, "_heartbeat_fresh", side_effect=(True, True, True, True, False, True)), \
+             patch.object(hook, "arm_lane_wake", side_effect=arm), \
+             patch.object(hook.subprocess, "run", side_effect=lambda *a, **kw: next(waits)), \
+             patch.object(hook.sys, "stderr") as stderr, \
+             patch.object(hook.time, "sleep"):
+            hook.wait_for_lane("codex", "session-123", Path(self.temp.name),
+                               Path(self.temp.name) / "alive", 19)
+
+        self.assertIn("stale rendezvous consumed for session-123; re-arming waiter",
+                      "".join(call.args[0] for call in stderr.write.call_args_list))
+        self.assertEqual(armed_cursors, [19, 21])
+
     def test_start_lane_waiter_arms_when_event_head_takes_one_and_a_half_seconds(self):
         spec = importlib.util.spec_from_file_location("session_hook_delayed_arm", SCRIPT)
         hook = importlib.util.module_from_spec(spec)

@@ -26,6 +26,7 @@ use crate::commands::gateway::keyring::SEALING_KEY_ENVIRONMENT;
 /// The broker passphrase `serve` reads for model routes (`serve/ports.rs::gateway_passphrase`).
 const GATEWAY_KEY_ENVIRONMENT: &str = "GRAPHHELM_GATEWAY_KEY";
 use crate::output::Outcome;
+use crate::progress::Progress;
 
 const COMMAND: &str = "studio";
 const LAUNCHER: &str = "apps/studio/tools/studio-up.ps1";
@@ -126,9 +127,10 @@ fn git(source: &Path, arguments: &[&str]) -> Option<String> {
 
 /// Brings the clone up to `origin/main` when [`freshness`] allows it. Returns what happened, for
 /// the envelope; a clone git cannot read (no git, no remote, offline) is run as it is.
-fn update(source: &Path) -> serde_json::Value {
+fn update(source: &Path, progress: Progress) -> serde_json::Value {
+    let progress = progress.retag("studio");
     if git(source, &["fetch", "--quiet", "origin", "main"]).is_none() {
-        eprintln!("[studio] could not fetch origin/main; running the clone as it is");
+        Progress::say(&progress.warn("could not fetch origin/main; running the clone as it is"));
         return json!({ "state": "unchecked" });
     }
     let branch = git(source, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
@@ -144,22 +146,27 @@ fn update(source: &Path) -> serde_json::Value {
         .map(|n| n.parse::<u64>().unwrap_or(0));
     let (ahead, behind) = (counts.next().unwrap_or(0), counts.next().unwrap_or(0));
     match freshness(&branch, clean, behind, ahead) {
-        Freshness::UpToDate => json!({ "state": "up_to_date" }),
+        Freshness::UpToDate => {
+            Progress::say(&progress.ok("already up to date with origin/main"));
+            json!({ "state": "up_to_date" })
+        }
         Freshness::Stale { behind, reason } => {
-            eprintln!(
-                "[studio] WARNING: this Studio is {behind} commit(s) behind origin/main and was NOT updated: {reason} ({})",
+            Progress::say(&progress.warn(&format!(
+                "this Studio is {behind} commit(s) behind origin/main and was NOT updated: {reason} ({})",
                 source.display()
-            );
+            )));
             json!({ "state": "stale", "behind": behind, "reason": reason })
         }
         Freshness::FastForward(behind) => {
             let before = git(source, &["rev-parse", "HEAD"]).unwrap_or_default();
-            eprintln!(
-                "[studio] updating {} ({behind} new commit(s) on main)",
+            Progress::say(&progress.info(&format!(
+                "updating {} ({behind} new commit(s) on main)",
                 source.display()
-            );
+            )));
             if git(source, &["pull", "--ff-only", "--quiet", "origin", "main"]).is_none() {
-                eprintln!("[studio] WARNING: the fast-forward failed; running the clone as it is");
+                Progress::say(
+                    &progress.warn("the fast-forward failed; running the clone as it is"),
+                );
                 return json!({ "state": "stale", "behind": behind, "reason": "the fast-forward failed" });
             }
             let lock_moved = git(
@@ -168,7 +175,7 @@ fn update(source: &Path) -> serde_json::Value {
             )
             .is_none();
             if lock_moved {
-                eprintln!("[studio] the Studio's dependencies changed; running npm ci");
+                Progress::say(&progress.info("the Studio's dependencies changed; running npm ci"));
                 let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
                 let installed = graphhelm_process::command(npm)
                     .args(["ci", "--prefix"])
@@ -176,9 +183,10 @@ fn update(source: &Path) -> serde_json::Value {
                     .status()
                     .is_ok_and(|status| status.success());
                 if !installed {
-                    eprintln!("[studio] WARNING: npm ci failed; the Studio may not start");
+                    Progress::say(&progress.warn("npm ci failed; the Studio may not start"));
                 }
             }
+            Progress::say(&progress.ok(&format!("pulled {behind} new commit(s)")));
             json!({ "state": "updated", "commits": behind, "dependenciesReinstalled": lock_moved })
         }
     }
@@ -204,8 +212,12 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
             "/source",
         );
     };
-    eprintln!("[update] GraphHelm source: {}", source.display());
-    let clone = update(&source);
+    let started = std::time::Instant::now();
+    let progress = Progress::decide("update");
+    Progress::say(&progress.banner("graphhelm update: sync, build, install"));
+    Progress::say(&progress.step(1, 3, "Syncing the clone"));
+    Progress::say(&progress.info(&format!("GraphHelm source: {}", source.display())));
+    let clone = update(&source, progress);
     // A clone that could not be fast-forwarded would only rebuild the old code: a long compile
     // that installs nothing new (owner run, 2026-10-12: 18 minutes, 28 commits behind).
     if clone["state"] == "stale" && !args.keep_local {
@@ -233,8 +245,11 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
     // Uncommitted edits are not in HEAD, so a matching stamp says nothing about them: build.
     let clean = git(&source, &["status", "--porcelain", "--untracked-files=no"])
         .is_some_and(|status| status.is_empty());
+    Progress::say(&progress.step(2, 3, "Building the CLI"));
     if clean && already_installed(head.as_deref(), installed_head.as_deref()) {
-        eprintln!("[update] graphhelm is already built from this commit; nothing to install");
+        Progress::say(
+            &progress.ok("graphhelm is already built from this commit; nothing to install"),
+        );
         return Outcome::success(
             UPDATE,
             json!({
@@ -257,11 +272,12 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
     // Install over THIS binary, wherever it lives: a graphhelm run from a versioned directory
     // (`~/.graphhelm/versions/<sha>/bin`) updated into `~/.cargo/bin` would leave PATH on the old
     // one, and on Windows with nothing at all once it was moved aside (2026-10-05).
-    eprintln!(
-        "[update] installing the CLI (cargo install --locked --profile update --path apps/cli)"
+    Progress::say(
+        &progress
+            .info("installing the CLI (cargo install --locked --profile update --path apps/cli)"),
     );
     let target = target_dir(std::env::var_os("CARGO_TARGET_DIR"), &source);
-    eprintln!("[update] reusing build cache {}", target.display());
+    Progress::say(&progress.info(&format!("reusing build cache {}", target.display())));
     let mut install = graphhelm_process::command("cargo");
     install
         .current_dir(&source)
@@ -276,7 +292,7 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
         ])
         .arg(&target);
     if let Some(root) = &root {
-        eprintln!("[update] into {}", root.join("bin").display());
+        Progress::say(&progress.info(&format!("into {}", root.join("bin").display())));
         // `--force`: cargo refuses to overwrite a binary it did not install itself, and a
         // versioned directory's binary was placed there by another installer (#281 review).
         install.arg("--root").arg(root).arg("--force");
@@ -295,6 +311,11 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
     if let (Some(stamp), Some(head)) = (&stamp, &head) {
         let _ = std::fs::write(stamp, head);
     }
+    Progress::say(&progress.step(3, 3, "Done"));
+    Progress::say(&progress.ok(&format!(
+        "graphhelm updated in {}s",
+        started.elapsed().as_secs()
+    )));
     Outcome::success(
         UPDATE,
         json!({
@@ -374,7 +395,10 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
     let freshness = if args.no_update {
         json!({ "state": "skipped" })
     } else {
-        update(&source)
+        update(
+            &source,
+            Progress::new("studio", false, crate::palette::Palette::plain()),
+        )
     };
     let head = git(&source, &["rev-parse", "--short", "HEAD"]);
 

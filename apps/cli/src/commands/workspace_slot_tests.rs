@@ -471,6 +471,51 @@ fn admitted_slot_serializes_real_children_in_arrival_order_and_cleans_tickets() 
     }));
 }
 
+/// RED for #1163: two independent slot roots must still serialize their build children through
+/// one shared OS admission authority. Cost: two local marker children, about two seconds.
+#[test]
+fn shared_admission_serializes_children_across_slot_roots() {
+    let dir = tempfile::tempdir().unwrap();
+    let root_a = dir.path().join("root-a");
+    let root_b = dir.path().join("root-b");
+    let log = dir.path().join("cross-root.log");
+    let command_a = marker_command(&log, "a", 700);
+    let command_b = marker_command(&log, "b", 700);
+    let cwd = dir.path().to_owned();
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let first_barrier = Arc::clone(&barrier);
+    let first = std::thread::spawn({
+        let cwd = cwd.clone();
+        move || {
+            first_barrier.wait();
+            let request = request(&root_a, "lane-a", "cross-root-a", &command_a);
+            run_admitted_slot_in(&request, &cwd)
+        }
+    });
+    let second_barrier = Arc::clone(&barrier);
+    let second = std::thread::spawn({
+        let cwd = cwd.clone();
+        move || {
+            second_barrier.wait();
+            let request = request(&root_b, "lane-b", "cross-root-b", &command_b);
+            run_admitted_slot_in(&request, &cwd)
+        }
+    });
+    let first = first.join().unwrap();
+    let second = second.join().unwrap();
+    assert!(first.output.ok, "first child failed: {:?}", first.output);
+    assert!(second.output.ok, "second child failed: {:?}", second.output);
+    let lines = std::fs::read_to_string(log).unwrap();
+    assert_eq!(
+        lines
+            .lines()
+            .map(|line| line.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>(),
+        vec!["a start".to_owned(), "a end".to_owned(), "b start".to_owned(), "b end".to_owned()],
+        "cross-root children entered the build section together"
+    );
+}
+
 #[test]
 fn private_status_reports_holder_and_waiter_order() {
     let dir = tempfile::tempdir().unwrap();

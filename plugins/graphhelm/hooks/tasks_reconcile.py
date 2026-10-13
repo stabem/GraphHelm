@@ -173,10 +173,11 @@ def post_end(base, token, execution, kind, task_id, repo, lane, fields, revision
         raise ValueError("Runtime refused task." + kind)
 
 
-def heartbeat(base, token, execution, task_id, repo, lane):
+def heartbeat(base, token, credential, execution, task_id, repo, lane):
     """One `task.heartbeat` for an open claim. Returns None when it landed (or was already
-    recorded), else the Runtime's refusal message: the cooldown lives there, not here."""
-    answer = post_end(base, token, execution, "heartbeat", task_id, repo, lane, {"lane": lane},
+    recorded), else the Runtime's refusal message: the cooldown lives there, not here.
+    The head is read with the shared token; the record is written with the lane's credential (#1148)."""
+    answer = post_end(base, credential, execution, "heartbeat", task_id, repo, lane, {"lane": lane},
                       revision=head(base, token, execution))
     if answer.get("ok") is True:
         return None
@@ -280,7 +281,7 @@ def reconcile(args):
         reassigned = bool(assignees) and args.lane not in [person.get("login") for person in assignees]
         if result.get("state") != "CLOSED" and not reassigned:
             # The claim stays open and this lane is alive (it is stopping a turn): heartbeat it.
-            refusal = heartbeat(args.url.rstrip("/"), credential(args.lane), args.execution, task_id, args.repo, args.lane)
+            refusal = heartbeat(args.url.rstrip("/"), token, credential(args.lane), args.execution, task_id, args.repo, args.lane)
             if refusal is None:
                 beats["sent"].append(issue)
             else:

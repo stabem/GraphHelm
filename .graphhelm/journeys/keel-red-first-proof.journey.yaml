@@ -13,7 +13,7 @@ screens:
     url: /specimen
     state: stable
     expect: [{role: stdout, name: "defective parent drops the first value"}]
-    scope: [.graphhelm/fixtures/keel-red-first-proof/scenario.py]
+    scope: unknown
   - id: proof-report
     title: The CLI distinguishes an earned test from a vacuous test
     url: /report
@@ -23,7 +23,7 @@ screens:
       - {role: stdout, name: "regression=parent-failed,head-passed,earned"}
       - {role: stdout, name: "vacuous=parent-passed,head-passed,green_on_parent"}
       - {role: stdout, name: "keel.test.green_on_parent"}
-    scope: [.graphhelm/fixtures/keel-red-first-proof/scenario.py]
+    scope: unknown
 edges:
   - id: prove-regression
     from: defective-parent

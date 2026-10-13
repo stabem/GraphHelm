@@ -502,34 +502,101 @@ fn shared_admission_serializes_children_across_slot_roots() {
     let root_a = dir.path().join("root-a");
     let root_b = dir.path().join("root-b");
     let log = dir.path().join("cross-root.log");
-    let command_a = marker_command(&log, "a", 700);
-    let command_b = marker_command(&log, "b", 700);
+    let command_for = |tag: &str, release: &Path| {
+        let log = log.to_string_lossy().replace('\'', "''");
+        let release = release.to_string_lossy().replace('\'', "''");
+        if cfg!(windows) {
+            vec![
+                "powershell".into(),
+                "-NoProfile".into(),
+                "-Command".into(),
+                format!(
+                    "$deadline=(Get-Date).AddSeconds(10); Add-Content -LiteralPath '{log}' '{tag} start'; while (!(Test-Path -LiteralPath '{release}') -and (Get-Date) -lt $deadline) {{ Start-Sleep -Milliseconds 10 }}; if (!(Test-Path -LiteralPath '{release}')) {{ exit 91 }}; Add-Content -LiteralPath '{log}' '{tag} end'"
+                ),
+            ]
+        } else {
+            vec![
+                "sh".into(),
+                "-c".into(),
+                format!(
+                    "echo '{tag} start' >> '{log}'; i=0; while [ ! -f '{release}' ] && [ $i -lt 1000 ]; do sleep 0.01; i=$((i+1)); done; if [ ! -f '{release}' ]; then exit 91; fi; echo '{tag} end' >> '{log}'"
+                ),
+            ]
+        }
+    };
+    let release_a = dir.path().join("release-a");
+    let release_b = dir.path().join("release-b");
+    let command_a = command_for("a", &release_a);
+    let command_b = command_for("b", &release_b);
     let cwd = dir.path().to_owned();
     let admission = dir.path().join("shared-test-admission");
     let barrier = Arc::new(std::sync::Barrier::new(2));
     let first_barrier = Arc::clone(&barrier);
+    let first_admission = admission.clone();
     let first = std::thread::spawn({
         let cwd = cwd.clone();
         move || {
             first_barrier.wait();
             let request = request(&root_a, "lane-a", "cross-root-a", &command_a);
-            super::run_admitted_slot_core(&request, &cwd, None, &admission)
+            super::run_admitted_slot_core(&request, &cwd, None, &first_admission)
         }
     });
     let second_barrier = Arc::clone(&barrier);
     let second = std::thread::spawn({
         let cwd = cwd.clone();
+        let second_admission = admission;
         move || {
             second_barrier.wait();
             let request = request(&root_b, "lane-b", "cross-root-b", &command_b);
-            super::run_admitted_slot_core(&request, &cwd, None, &admission)
+            super::run_admitted_slot_core(&request, &cwd, None, &second_admission)
         }
     });
+    let started = std::time::Instant::now();
+    while started.elapsed() < Duration::from_secs(3)
+        && !std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .contains(" start")
+    {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let first_tag = std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().next());
+    match first_tag {
+        Some("a") => std::fs::write(&release_a, b"release").unwrap(),
+        Some("b") => std::fs::write(&release_b, b"release").unwrap(),
+        _ => {
+            std::fs::write(&release_a, b"release").unwrap();
+            std::fs::write(&release_b, b"release").unwrap();
+        }
+    }
+    let second_tag = match first_tag {
+        Some("a") => "b",
+        Some("b") => "a",
+        _ => "",
+    };
+    let first_end = first_tag.map(|tag| format!("{tag} end"));
+    let ended = std::time::Instant::now();
+    while ended.elapsed() < Duration::from_secs(3)
+        && first_end.as_deref().is_some_and(|line| {
+            !std::fs::read_to_string(&log)
+                .unwrap_or_default()
+                .lines()
+                .any(|entry| entry == line)
+        })
+    {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if second_tag == "a" {
+        std::fs::write(&release_a, b"release").unwrap();
+    } else if second_tag == "b" {
+        std::fs::write(&release_b, b"release").unwrap();
+    }
     let first = first.join().unwrap();
     let second = second.join().unwrap();
-    assert!(first.output.ok, "first child failed: {:?}", first.output);
-    assert!(second.output.ok, "second child failed: {:?}", second.output);
-    let lines = std::fs::read_to_string(log).unwrap();
+    let lines = std::fs::read_to_string(log).unwrap_or_default();
     let lines = lines
         .lines()
         .map(|line| {
@@ -539,6 +606,8 @@ fn shared_admission_serializes_children_across_slot_roots() {
                 .join(" ")
         })
         .collect::<Vec<_>>();
+    assert!(first.output.ok, "first child failed: {:?}", first.output);
+    assert!(second.output.ok, "second child failed: {:?}", second.output);
     assert!(
         lines == vec!["a start", "a end", "b start", "b end"]
             || lines == vec!["b start", "b end", "a start", "a end"],
@@ -644,6 +713,8 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
         )
     });
     let update_started = ready_rx.recv_timeout(Duration::from_secs(3)).is_ok();
+    // Let the installer reach its real lock call while the slot child still holds admission.
+    std::thread::sleep(Duration::from_millis(100));
     let original_present_while_held = fake_exe.exists();
     let old_absent_while_held = !fake_exe
         .with_file_name(if cfg!(windows) {

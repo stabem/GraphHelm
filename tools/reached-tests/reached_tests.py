@@ -192,15 +192,22 @@ def rust_path_readers(repo, packages):
             if "target" in source.relative_to(root).parts:
                 continue
             text = source.read_text(encoding="utf-8", errors="replace")
-            references = INCLUDE.findall(text)
+            references = [(reference, False) for reference in INCLUDE.findall(text)]
             references.extend(
-                match.group(2)
+                (match.group(2), False)
                 for match in re.finditer(r'''\b(?:read|read_to_string|File::open|open)\s*\(\s*(r#*)?["']([^"']+)["']''', text)
             )
-            for reference in references:
+            references.extend(
+                (match.group(1), True)
+                for match in re.finditer(
+                    r'''\b(?:read|read_to_string|File::open|open)\s*\(\s*.*?\.join\s*\(\s*(?:r#*)?["']([^"']+)["']''',
+                    text,
+                )
+            )
+            for reference, repo_relative in references:
                 if "{" in reference or reference.startswith("/"):
                     continue
-                target = (source.parent / reference).resolve()
+                target = ((root if repo_relative else source.parent) / reference).resolve()
                 try:
                     path = target.relative_to(root).as_posix()
                 except ValueError:

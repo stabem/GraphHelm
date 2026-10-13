@@ -105,7 +105,8 @@ it("retries a failed candidate envelope read and exposes it once it opens", asyn
   const { result, rerender } = renderHook(({ rows }) => useEnvelopes(rows, "run", open), { initialProps: { rows: [candidate] } });
   await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
   expect(result.current[5]).toBeUndefined();
-  rerender({ rows: [...[candidate]] });
+  const retryTrigger = event(6, "signal_recorded", { kind: "operator_note", signalId: "sig-r" });
+  rerender({ rows: [candidate, retryTrigger] });
   await waitFor(() => expect(result.current[5]?.to).toBe("studio-operator"));
 });
 

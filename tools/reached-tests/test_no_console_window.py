@@ -49,9 +49,12 @@ def offenders(root: Path) -> list[str]:
     for path in sorted(root.rglob("*.py")):
         if SKIP & set(path.relative_to(root).parts):
             continue
+        source = path.read_bytes()
+        if source.startswith(b"\xef\xbb\xbf"):
+            found.append(f"{path.relative_to(root)}:1 UTF-8 BOM is not allowed")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+            tree = ast.parse(source.decode("utf-8-sig"), filename=str(path))
         modules, functions = _aliases(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
@@ -73,6 +76,14 @@ class NoConsoleWindow(unittest.TestCase):
     def test_every_tool_spawn_site_hides_its_console_window(self):
         self.assertEqual(offenders(REPO), [])
 
+    def test_the_guard_reports_a_utf8_bom_without_crashing(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "bom.py").write_bytes(b"\xef\xbb\xbfprint('ok')\n")
+            self.assertEqual(offenders(root), [
+                "bom.py:1 UTF-8 BOM is not allowed",
+            ])
     def test_the_guard_catches_a_bare_spawn(self):
         import tempfile
         with tempfile.TemporaryDirectory() as raw:

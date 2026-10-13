@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Package a prebuilt Windows x86_64 GraphHelm executable for local review."""
 import argparse
 import hashlib

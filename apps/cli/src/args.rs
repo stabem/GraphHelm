@@ -564,8 +564,8 @@ pub struct JourneyWalkedArgs {
 
 #[derive(Debug, Args)]
 pub struct UpdateArgs {
-    /// The GraphHelm clone. Defaults to `GRAPHHELM_SOURCE`, then to the clone this binary was
-    /// built from.
+    /// The GraphHelm clone. Defaults to `GRAPHHELM_SOURCE`, then to GraphHelm's own install clone
+    /// `~/.graphhelm/source` (#1134), created from the origin of the clone this binary was built from.
     #[arg(long)]
     pub source: Option<PathBuf>,
     /// Build the clone even when it could not be brought up to origin/main (local changes, another
@@ -593,7 +593,7 @@ pub struct StudioStartArgs {
     #[arg(long)]
     pub project: Option<PathBuf>,
     /// The GraphHelm clone holding `apps/studio`. Defaults to `GRAPHHELM_SOURCE`, then to the
-    /// clone this binary was built from.
+    /// install clone `~/.graphhelm/source` (#1134).
     #[arg(long)]
     pub source: Option<PathBuf>,
     /// The loopback address of the Runtime.

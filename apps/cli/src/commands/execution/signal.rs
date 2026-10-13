@@ -250,6 +250,31 @@ pub(crate) fn execute_authenticated(
     )
 }
 
+/// #1130: the journey-review doors' path. Their actor is the one the Runtime authenticated (a
+/// scoped agent credential) or the owner, so reserved kinds the public transport refuses pass.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn execute_reserved(
+    events: &Path,
+    execution: &str,
+    signal: &[u8],
+    evidence_out: Option<&Path>,
+    actor: PersistedActor,
+    key: OpaqueId,
+) -> Result<serde_json::Value, Failure> {
+    execute_authenticated_inner(
+        events,
+        Some(execution),
+        signal,
+        evidence_out,
+        actor,
+        key,
+        None,
+        false,
+        true,
+        &[],
+    )
+}
+
 /// Runtime-only observer path for native chat receipts. It uses the same sealing and append
 /// implementation as generic signals while keeping the reserved kinds out of the public signal
 /// transport.
@@ -391,6 +416,20 @@ fn record_on(
     {
         return Err(signal_invalid(
             "native chat receipts are reserved for the Runtime bridge",
+            "/signal/type",
+        ));
+    }
+    if !allow_native
+        && envelope
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|kind| {
+                kind == crate::commands::journey_owner::AGENT_APPROVED_KIND
+                    || kind == crate::commands::journey_owner::DRAFTED_KIND
+            })
+    {
+        return Err(signal_invalid(
+            "journey review records are written only by the Runtime's journey-review routes",
             "/signal/type",
         ));
     }

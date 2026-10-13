@@ -469,7 +469,7 @@ fn owner_signature(value: &Value, project: &Path) -> Vec<Finding> {
         Ok(false) => vec![Finding::new(
             "flow.approval_unsigned",
             "/approved",
-            "no owner record approves this flow at this digest; only the owner's approve records one",
+            "no owner or reviewer record approves this flow at this digest; only `graphhelm journey approve` records one",
         )],
         Err(message) => vec![Finding::new(
             "flow.approval_unverifiable",
@@ -1213,7 +1213,7 @@ pub(crate) fn run_approve(args: &crate::args::JourneyApproveArgs) -> Outcome {
     if !owner_token_matches(&project, args.token_file.as_deref()) {
         return input_error(
             COMMAND,
-            "approving is the owner's: give --token-file with the project's owner token (.graphhelm/events.token)",
+            "approving is the owner's here: give --token-file with the project's owner token (.graphhelm/events.token); a reviewer agent approves through the Runtime (POST /v1/journey-flows/{id}/review)",
         );
     }
     approve_owned(&args.id, project)
@@ -1339,6 +1339,95 @@ fn introduced_by(project: &Path, file: &Path, digest: &str) -> Option<Value> {
 
 /// The approval itself, for a caller that has already authenticated the owner (#534).
 pub(crate) fn approve_owned(id: &str, project: std::path::PathBuf) -> Outcome {
+    approve_as(id, project, &super::journey_owner::Approver::Owner)
+}
+
+/// The digest `flow` will carry once approved: what an approval and a `drafted` record bind.
+fn approval_digest_of(flow: &Value) -> String {
+    let mut flow = flow.clone();
+    flow["status"] = json!("approved");
+    flow["drift"] = json!([]);
+    if let Some(edges) = flow["edges"].as_array_mut() {
+        for edge in edges {
+            if let Some(edge) = edge.as_object_mut() {
+                edge.remove("safe");
+            }
+        }
+    }
+    flow["approved"] = Value::Null;
+    approval_digest(&flow)
+}
+
+/// The current draft of `id` and the digest an approval would bind, or the refusal.
+fn draft_digest(command: &'static str, id: &str, project: &Path) -> Result<String, Outcome> {
+    let Some(files) = files(project, &[id.to_owned()]) else {
+        return Err(input_error(
+            command,
+            "invalid flow id or unsafe journeys directory",
+        ));
+    };
+    let (_, flow) =
+        read(&files[0]).map_err(|findings| report(command, vec![], findings, json!({})))?;
+    if flow["status"] == "approved" {
+        return Err(input_error(command, "the flow is already approved"));
+    }
+    Ok(approval_digest_of(&flow))
+}
+
+/// `POST /v1/journey-flows/{id}/drafted` (#1130): `author` (an authenticated scoped agent) wrote
+/// this draft. The first author recorded for a digest stays; the reply names it.
+pub(crate) fn record_drafted(id: &str, project: std::path::PathBuf, author: &str) -> Outcome {
+    const COMMAND: &str = "journey.drafted";
+    let digest = match draft_digest(COMMAND, id, &project) {
+        Ok(digest) => digest,
+        Err(outcome) => return outcome,
+    };
+    match super::journey_owner::record_drafted(&project, id, &digest, author) {
+        Ok(author) => Outcome::success(
+            COMMAND,
+            json!({"id": id, "digest": digest, "author": author}),
+        ),
+        Err(message) => input_error(COMMAND, &message),
+    }
+}
+
+/// `POST /v1/journey-flows/{id}/review` (#1130): `reviewer` (an authenticated scoped agent)
+/// approves the draft. Fails closed: no `drafted` record for this exact digest, or the reviewer
+/// is that author, refuses and writes nothing.
+pub(crate) fn review_approve(
+    id: &str,
+    project: std::path::PathBuf,
+    reviewer: &str,
+    checked: &str,
+) -> Outcome {
+    const COMMAND: &str = "journey.review";
+    let digest = match draft_digest(COMMAND, id, &project) {
+        Ok(digest) => digest,
+        Err(outcome) => return outcome,
+    };
+    let author = match super::journey_owner::drafted_by(&project, id, &digest) {
+        Ok(Some(author)) => author,
+        Ok(None) => {
+            return input_error(
+                COMMAND,
+                "no author is recorded for this draft: its author records it first (POST /v1/journey-flows/{id}/drafted)",
+            );
+        }
+        Err(message) => return input_error(COMMAND, &message),
+    };
+    let approver = match super::journey_owner::Approver::agent(reviewer, &author, checked) {
+        Ok(approver) => approver,
+        Err(message) => return input_error(COMMAND, &message),
+    };
+    approve_as(id, project, &approver)
+}
+
+/// The approval by `approver`: the owner, or a reviewer agent that is not the author (#1130).
+pub(crate) fn approve_as(
+    id: &str,
+    project: std::path::PathBuf,
+    approver: &super::journey_owner::Approver,
+) -> Outcome {
     const COMMAND: &str = "journey.approve";
     let args = crate::args::JourneyApproveArgs {
         id: id.to_owned(),
@@ -1437,7 +1526,9 @@ pub(crate) fn approve_owned(id: &str, project: std::path::PathBuf) -> Outcome {
         .as_str()
         .unwrap_or_default()
         .to_owned();
-    if let Err(message) = super::journey_owner::record(&project, &args.id, &digest, &revision) {
+    if let Err(message) =
+        super::journey_owner::record_as(&project, &args.id, &digest, &revision, approver)
+    {
         return report(
             COMMAND,
             vec![],

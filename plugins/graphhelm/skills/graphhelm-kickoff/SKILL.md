@@ -7,6 +7,11 @@ description: Use when the owner wants to start a brand-new project from zero on 
 
 Take a new project from an idea to a running, journey-first build. Three phases, in order:
 **grill**, **document**, **build**. Never write product code before the owner accepts the doc.
+
+**You are the orchestrator.** The session that runs this skill grills, writes the doc and then
+directs; it never implements, reviews or approves itself. Every piece of work goes to an agent
+spawned with the `graphhelm-team` skill, so it is born inside the Studio and the owner watches it
+there.
 For a project that already has code and no journeys, use `journey-map` instead.
 
 ## Phase 1: Grill
@@ -32,6 +37,9 @@ Cover, in this order:
 6. **Out of scope.** What the first version will not do.
 7. **Stack and hosting.** Recommend one; accept the owner's.
 8. **Done for v1.** Which journeys must pass for the first release.
+9. **The team.** Ask once: which model for authors, which for reviewers, and how many agents may
+   work at the same time. Offer a default (for example authors `sonnet`, reviewers `opus`, 3 at
+   once) and take the answer as the roster for the whole project.
 
 ## Phase 2: Document
 
@@ -46,23 +54,38 @@ Write the results into the project (create the repository folder if needed):
    that do not exist yet take `scope: unknown`; set real `scopePaths` once the code exists.
 4. `graphhelm journey validate --all`, fix every finding, then
    `graphhelm journey compile --include-draft`.
-5. Ask the owner to read `docs/PROJECT.md` and approve each flow in the Studio's Journey tab
-   (`graphhelm studio start` opens it) or with `graphhelm journey approve <id>`. Never approve a
-   flow yourself. Edits after approval follow `journey-map` (c2).
+5. **Review and approve with blind reviewers, not the owner.** For each flow, spawn one reviewer
+   lane with `graphhelm-team` (the roster's reviewer model) that did not write it. Its brief carries only the flow id, `docs/PROJECT.md` and the
+   journey format; never your reasoning or the verdict you expect. It checks the flow against the
+   doc: every screen, button and heading the doc names is there, nothing the doc puts out of scope
+   is, the risks match, and the path ends where the doc says. Before the review, the author lane
+   records that it wrote the draft: `POST /v1/journey-flows/<id>/drafted` with its own scoped
+   agent credential. The reviewer then either approves with
+   `POST /v1/journey-flows/<id>/review` with body `{"checked": "<what it compared>"}`, authenticated with its own scoped agent credential,
+   or returns the gaps, you fix them, and a reviewer runs again. The Runtime takes the reviewer
+   from the credential and the author from the `drafted` record, refuses when either is missing
+   or they are the same lane, and records who approved and what was checked. Ask the owner only
+   when the doc and the flow disagree on the product itself (two ways the product could work);
+   then ask one short question with your recommendation, update the doc, and review again. The
+   owner can still approve or reopen any flow in the Studio's Journey tab. Edits after approval
+   follow `journey-map` (c2).
 
 ## Phase 3: Build
 
-When the doc is accepted and the v1 flows are approved:
+When the v1 flows are approved:
 
 1. **Backlog.** Split the work into issues, smallest user-visible slice first, one journey (or one
    screen of it) per issue. Title and `Summary:` line follow the repository's naming rule if it
    has one (GraphHelm's `docs/process/DELIVERY.md` §1). Put the scaffold (repo, CI script,
    Playwright observer: `graphhelm setup --project <root> --home <home> --install-observer
    playwright`) in the first issue.
-2. **Orchestrate.** Start one GraphHelm execution for the project (`mcp__graphhelm__start` or the
-   CLI) so the Studio shows it. Run every issue through the five steps: `task-plan`, `implement`
-   (under `keel`), `journey-prove`, `blind-review`, `merge`. Independent issues may run in
-   parallel sessions; issues on the same screen run in order.
+2. **Orchestrate from the Studio.** Run `graphhelm studio start` in the project and keep it open
+   for the owner. Start one team execution (`mcp__graphhelm__start` or the CLI). For each issue,
+   spawn an author lane with `graphhelm-team` (the roster's author model); it runs `task-plan`,
+   `implement` (under `keel`) and `journey-prove`. Then spawn a different reviewer lane for
+   `blind-review`; the approving reviewer runs `merge`. Run at most as many lanes at once as the
+   roster says; independent issues in parallel, issues on the same screen in order. You only
+   assign, unblock and report.
 3. **Follow along.** The owner watches the Studio: Team tab for tasks and PRs, Journey tab for
    each screen's capture and freshness. A journey with no observer stays `OBSERVER_MISSING`;
    never report it as passing.

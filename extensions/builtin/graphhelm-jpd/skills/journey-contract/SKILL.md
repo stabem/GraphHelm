@@ -65,7 +65,7 @@ promise (`docs/keel/RECORDS.md` in the GraphHelm repository).
    flow that is `status: approved`, set `status: draft` and `approved: null` (keep its `drift`
    entries); otherwise `validate` reports `flow.approval_stale` and `compile` refuses to run.
    After the edit, `flow.contract_stale` is expected until you compile.
-   The changed flow then goes back to the owner for approval; never approve it yourself. Only a journey with no flow is saved as a hand-written
+   The changed flow then goes back for approval (the owner, or a blind reviewer lane through `POST /v1/journey-flows/<id>/review` after you record the draft with `.../drafted`); never approve a flow you changed. Only a journey with no flow is saved as a hand-written
    `.graphhelm/journeys/<contractId>.json`; then run `cli:journey validate` on it and fix every
    finding. The prose fields this method asks for (failure contracts, recovery, out of scope)
    stay in the request record when the contract is generated, because the compiler fills them

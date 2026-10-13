@@ -55,10 +55,149 @@ pub(crate) fn mark_signal_id(flow: &str, edge: &str, digest: &str) -> String {
     format!("journey-safe-{}", &hex::encode(hash)[..32])
 }
 
-/// Whether the project's owner store holds an owner's approval of `flow` at exactly `digest`.
-/// `Err` when the store is absent or unreadable: the approval cannot be verified.
+/// #1130: the signal kind of a blind reviewer agent's journey approval.
+pub(crate) const AGENT_APPROVED_KIND: &str = "journey_flow_agent_approved";
+/// The description protocol of that signal.
+pub(crate) const AGENT_APPROVED_PROTOCOL: &str = "graphhelm-journey-agent-approval-v1";
+/// The longest `checked` note an agent approval carries.
+pub(crate) const CHECKED_MAX: usize = 4096;
+
+/// `journey-agent-approved-<32 hex>`, like `signal_id`, for a reviewer agent's approval.
+pub(crate) fn agent_signal_id(flow: &str, digest: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(format!("agent\n{flow}\n{digest}").as_bytes());
+    format!("journey-agent-approved-{}", &hex::encode(hash)[..32])
+}
+
+/// #1130: the signal kind that names a draft's author, bound to the draft's digest.
+pub(crate) const DRAFTED_KIND: &str = "journey_flow_drafted";
+/// The description protocol of that signal.
+pub(crate) const DRAFTED_PROTOCOL: &str = "graphhelm-journey-drafted-v1";
+
+/// `journey-drafted-<32 hex>`: one id per flow and digest, so the first author recorded stays.
+pub(crate) fn drafted_signal_id(flow: &str, digest: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(format!("drafted\n{flow}\n{digest}").as_bytes());
+    format!("journey-drafted-{}", &hex::encode(hash)[..32])
+}
+
+/// The author recorded for `flow` at `digest`: the agent actor of its `drafted` record.
+pub(crate) fn drafted_by(
+    project: &Path,
+    flow: &str,
+    digest: &str,
+) -> Result<Option<String>, String> {
+    let wanted = drafted_signal_id(flow, digest);
+    Ok(owner_history(project)?.iter().find_map(|event| {
+        (event.actor.actor_type() == PersistedActorType::Agent
+            && matches!(&event.kind, EventKind::SignalRecorded(signal)
+                if signal.signal_id.as_str() == wanted && signal.kind.as_str() == DRAFTED_KIND))
+        .then(|| event.actor.id().as_str().to_owned())
+    }))
+}
+
+/// Records `author` (an authenticated agent) as the author of `flow` at `digest`, unless an
+/// author is already recorded; returns the recorded author.
+pub(crate) fn record_drafted(
+    project: &Path,
+    flow: &str,
+    digest: &str,
+    author: &str,
+) -> Result<String, String> {
+    if let Some(existing) = drafted_by(project, flow, digest)? {
+        return Ok(existing);
+    }
+    let actor = graphhelm_protocols::PersistedActor::new(
+        PersistedActorType::Agent,
+        graphhelm_protocols::ActorId::parse(author)
+            .map_err(|_| "the author is not a valid actor id".to_string())?,
+    );
+    let description = serde_json::json!({
+        "protocol": DRAFTED_PROTOCOL, "flowId": flow, "digest": digest,
+    });
+    append_as(
+        project,
+        &drafted_signal_id(flow, digest),
+        DRAFTED_KIND,
+        &description,
+        flow,
+        actor,
+        author,
+    )?;
+    Ok(author.to_owned())
+}
+
+fn owner_history(project: &Path) -> Result<Vec<graphhelm_protocols::EventEnvelope>, String> {
+    let events = store(project);
+    if !events.exists() {
+        return Err("the project's owner record store (.graphhelm/events) is missing".into());
+    }
+    let repository = super::event_store(&events)
+        .map_err(|_| "the owner record store could not be opened".to_string())?;
+    Ok(
+        execution::resolve_stream(&repository, Some(OWNER_EXECUTION))
+            .map(|(_, _, history)| history)
+            .unwrap_or_default(),
+    )
+}
+
+/// Who approved a flow (#1130): the owner, or a reviewer agent that is not the flow's author.
+#[derive(Debug, Clone)]
+pub(crate) enum Approver {
+    Owner,
+    Agent {
+        reviewer: String,
+        author: String,
+        checked: String,
+    },
+}
+
+impl Approver {
+    /// The agent approver, refused when it names itself as the author, an id that is not an
+    /// actor id, or no note of what it checked.
+    pub(crate) fn agent(reviewer: &str, author: &str, checked: &str) -> Result<Self, String> {
+        let (reviewer, author, checked) = (reviewer.trim(), author.trim(), checked.trim());
+        if graphhelm_protocols::ActorId::parse(reviewer).is_err()
+            || graphhelm_protocols::ActorId::parse(author).is_err()
+        {
+            return Err(
+                "--reviewer and --author must be session ids (letters, digits, `-`, `_`, `.`)"
+                    .into(),
+            );
+        }
+        if reviewer.eq_ignore_ascii_case(author) {
+            return Err(
+                "the reviewer is the flow's author: a journey is approved by someone else".into(),
+            );
+        }
+        if checked.is_empty() || checked.len() > CHECKED_MAX {
+            return Err(format!(
+                "--checked must say what was checked (1 to {CHECKED_MAX} bytes)"
+            ));
+        }
+        Ok(Self::Agent {
+            reviewer: reviewer.into(),
+            author: author.into(),
+            checked: checked.into(),
+        })
+    }
+}
+
+/// Whether the project's owner store holds an approval of `flow` at exactly `digest`: the
+/// owner's, or a reviewer agent's (#1130). `Err` when the store is absent or unreadable: the
+/// approval cannot be verified.
 pub(crate) fn approved(project: &Path, flow: &str, digest: &str) -> Result<bool, String> {
-    has(project, &signal_id(flow, digest), APPROVED_KIND)
+    Ok(has(project, &signal_id(flow, digest), APPROVED_KIND)?
+        || has_agent(project, &agent_signal_id(flow, digest))?)
+}
+
+fn has_agent(project: &Path, wanted: &str) -> Result<bool, String> {
+    Ok(owner_history(project)?.iter().any(|event| {
+        event.actor.actor_type() == PersistedActorType::Agent
+            && matches!(&event.kind, EventKind::SignalRecorded(signal)
+                if signal.signal_id.as_str() == wanted
+                    && signal.kind.as_str() == AGENT_APPROVED_KIND)
+    }))
 }
 
 /// Whether the owner marked `edge` of `flow` safe at exactly `digest`. `Err` as for `approved`.
@@ -94,8 +233,45 @@ pub(crate) fn record(
     digest: &str,
     revision: &str,
 ) -> Result<(), String> {
+    record_as(project, flow, digest, revision, &Approver::Owner)
+}
+
+/// Appends `approver`'s approval of `flow` at `digest`. An agent's record names the reviewer, the
+/// flow's author and what the reviewer checked, and is appended as that reviewer (#1130).
+pub(crate) fn record_as(
+    project: &Path,
+    flow: &str,
+    digest: &str,
+    revision: &str,
+    approver: &Approver,
+) -> Result<(), String> {
     if store(project).exists() && approved(project, flow, digest)? {
         return Ok(());
+    }
+    if let Approver::Agent {
+        reviewer,
+        author,
+        checked,
+    } = approver
+    {
+        let description = serde_json::json!({
+            "protocol": AGENT_APPROVED_PROTOCOL, "flowId": flow, "digest": digest,
+            "revision": revision, "reviewer": reviewer, "author": author, "checked": checked,
+        });
+        let actor = graphhelm_protocols::PersistedActor::new(
+            PersistedActorType::Agent,
+            graphhelm_protocols::ActorId::parse(reviewer.as_str())
+                .map_err(|_| "the reviewer is not a valid actor id".to_string())?,
+        );
+        return append_as(
+            project,
+            &agent_signal_id(flow, digest),
+            AGENT_APPROVED_KIND,
+            &description,
+            flow,
+            actor,
+            reviewer,
+        );
     }
     let description = serde_json::json!({
         "protocol": APPROVED_PROTOCOL, "flowId": flow, "digest": digest, "revision": revision,
@@ -139,6 +315,27 @@ fn append(
     description: &serde_json::Value,
     flow: &str,
 ) -> Result<(), String> {
+    append_as(
+        project,
+        id,
+        kind,
+        description,
+        flow,
+        execution::owner_actor(),
+        "owner",
+    )
+}
+
+fn append_as(
+    project: &Path,
+    id: &str,
+    kind: &str,
+    description: &serde_json::Value,
+    flow: &str,
+    actor: graphhelm_protocols::PersistedActor,
+    source: &str,
+) -> Result<(), String> {
+    let source_type = if source == "owner" { "user" } else { "node" };
     let events = store(project);
     if !events.exists() {
         return Err("the project's owner record store (.graphhelm/events) is missing; run `graphhelm init` first".into());
@@ -149,7 +346,7 @@ fn append(
     ensure_owner_execution(&events, &records)?;
     let envelope = serde_json::json!({
         "id": id, "type": kind, "severity": "low",
-        "source": {"type": "user", "id": "owner"},
+        "source": {"type": source_type, "id": source},
         "description": description.to_string(),
         "evidence": [format!("journey-flow:{flow}")],
         "emittedAt": chrono_now(),
@@ -162,15 +359,15 @@ fn append(
         &uuid::Uuid::new_v4().simple().to_string()[..8]
     ))
     .map_err(|_| "the record id is not a valid identifier".to_string())?;
-    execution::signal::execute(
+    // #1130: the reviewer and draft records are reserved for these internal doors, whose actor
+    // the Runtime authenticated; the generic signal route refuses both kinds.
+    execution::signal::execute_reserved(
         &events,
-        Some(OWNER_EXECUTION),
+        OWNER_EXECUTION,
         envelope.to_string().as_bytes(),
         Some(&records.join(format!("{id}.json"))),
-        execution::owner_actor(),
+        actor,
         key,
-        None,
-        &[],
     )
     .map(|_| ())
     .map_err(|failure| format!("the owner record was not appended: {}", failure.message))

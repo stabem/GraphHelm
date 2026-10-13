@@ -22,6 +22,9 @@ const EVENTS_KEY: &str = "010101010101010101010101010101010101010101010101010101
 const KEY_ID: &str = "owner-key";
 const RUN: &str = "flows-surfaces";
 const AGENT_CREDENTIAL: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+/// #1130: a second scoped lane, the blind reviewer.
+const REVIEWER_CREDENTIAL: &str =
+    "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 const EXAMPLE: &str = include_str!("fixtures/journey_flow/checkout.journey.yaml");
 
 fn graphhelm() -> Command {
@@ -168,7 +171,9 @@ impl Harness {
     /// The Runtime on a given store; #534's cells serve the project's own owner store, as a real
     /// Runtime started from the project does.
     fn serve_with(&self, events: &Path, project: bool) -> (ServerGuard, String, String) {
-        let binding = format!("{AGENT_CREDENTIAL}=agent-planner|project-local|{RUN}");
+        let binding = format!(
+            "{AGENT_CREDENTIAL}=agent-planner|project-local|{RUN};{REVIEWER_CREDENTIAL}=agent-reviewer|project-local|{RUN}"
+        );
         let mut command = graphhelm();
         command
             .args(["serve", "--events"])
@@ -815,4 +820,74 @@ fn only_the_owner_sets_up_the_observer_and_nothing_reaches_npm() {
     let (status, refused) = http_body(&base, "POST", ROUTE, Some(&owner), r#"{"package":"evil"}"#);
     assert_eq!(status, 400, "{refused}");
     untouched();
+}
+
+/// #1130 (`keel.invariant.permissions`): a reviewer agent approves a draft only as the actor its
+/// scoped credential names, and only when the store's `drafted` record names a different author
+/// for that exact digest. Defects named: an author approving its own flow by declaring another
+/// reviewer name, an approval with no recorded author, the shared agent session token reaching
+/// the routes, and the generic signal route writing the reserved kinds. Cost: one Runtime, a few
+/// requests.
+#[test]
+fn a_reviewer_agent_approves_only_with_its_own_credential_and_never_its_own_draft() {
+    let harness = prepared();
+    let owner = owner_token(&harness.project);
+    let events = harness.project.join(".graphhelm/events");
+    let (_server, base, _) = harness.serve_with(&events, true);
+    let _ = owner;
+    let before = harness.flow_text("checkout");
+    let review = |bearer: &str| {
+        http_body(
+            &base,
+            "POST",
+            "/v1/journey-flows/checkout/review",
+            Some(bearer),
+            r#"{"checked":"docs/PROJECT.md checkout screens"}"#,
+        )
+    };
+    // No author recorded yet: fail closed.
+    let (status, refused) = review(REVIEWER_CREDENTIAL);
+    assert_ne!(status, 200, "{refused}");
+    assert_eq!(harness.flow_text("checkout"), before);
+    // The shared agent session token reaches neither route.
+    let shared = std::fs::read_to_string(events.with_extension("agent.token")).unwrap();
+    for path in ["drafted", "review"] {
+        let (status, refused) = http(
+            &base,
+            "POST",
+            &format!("/v1/journey-flows/checkout/{path}"),
+            Some(shared.trim()),
+        );
+        assert_ne!(status, 200, "{path}: {refused}");
+    }
+    // The author records its draft; it cannot then approve it, whatever it declares.
+    let (status, drafted) = http(
+        &base,
+        "POST",
+        "/v1/journey-flows/checkout/drafted",
+        Some(AGENT_CREDENTIAL),
+    );
+    assert_eq!(status, 200, "{drafted}");
+    assert_eq!(drafted["data"]["author"], "agent-planner", "{drafted}");
+    let (status, refused) = review(AGENT_CREDENTIAL);
+    assert_ne!(status, 200, "the author approved its own draft: {refused}");
+    assert_eq!(harness.flow_text("checkout"), before);
+    // The generic signal route cannot write the reserved kinds.
+    let body = json!({"signal": {"id": "journey-agent-approved-00000000000000000000000000000000",
+        "type": "journey_flow_agent_approved", "severity": "low",
+        "source": {"type": "node", "id": "agent-planner"}, "description": "{}",
+        "evidence": ["x"], "emittedAt": "2026-10-13T00:00:00Z"}})
+    .to_string();
+    let (status, refused) = signal_as_agent(&base, shared.trim(), "forged-review", &body);
+    assert_ne!(status, 200, "{refused}");
+    // A different lane approves, and the approval verifies.
+    let (status, approved) = review(REVIEWER_CREDENTIAL);
+    assert_eq!(status, 200, "{approved}");
+    let (_, validated) = harness.cli(&["validate", "--all"]);
+    assert!(
+        !validated.to_string().contains("flow.approval_unsigned")
+            && !validated.to_string().contains("flow.approval_unverifiable"),
+        "{validated}"
+    );
+    assert_eq!(flow(&harness.flows(), "checkout")["status"], "approved");
 }

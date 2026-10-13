@@ -55,7 +55,7 @@ The installable `graphhelm` plugin adds [GraphHelm guide](../../plugins/graphhel
 for an overview of the method, [GraphHelm setup](../../plugins/graphhelm/skills/graphhelm-setup/SKILL.md)
 for reviewed host adoption, [GraphHelm resume](../../plugins/graphhelm/skills/graphhelm-resume/SKILL.md)
 for exactly two evidence-based next actions, and [GraphHelm kickoff](../../plugins/graphhelm/skills/graphhelm-kickoff/SKILL.md)
-to start a brand-new project: grill the owner, write the doc and draft journeys, then orchestrate the build. These are separate from the entry skills in the
+to start a brand-new project: grill the owner, write the doc and draft journeys, then orchestrate the build, and [GraphHelm team](../../plugins/graphhelm/skills/graphhelm-team/SKILL.md) to spawn each agent as a lane the Studio shows from its first step. These are separate from the entry skills in the
 two built-in extension manifests. Its [installation guide](../../plugins/graphhelm/README.md)
 lists the Codex and Claude commands and the host-specific invocation names.
 

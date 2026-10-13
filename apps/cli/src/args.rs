@@ -490,7 +490,7 @@ pub struct JourneyApproveArgs {
     pub id: String,
     #[arg(long)]
     pub project: Option<PathBuf>,
-    /// The project's owner token (`.graphhelm/events.token`): approving is the owner's (#534).
+    /// The project's owner token (`.graphhelm/events.token`): the owner's approval (#534).
     #[arg(long = "token-file")]
     pub token_file: Option<PathBuf>,
 }

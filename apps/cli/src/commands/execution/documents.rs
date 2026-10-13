@@ -724,15 +724,32 @@ pub(crate) fn validate_owner_execution(
     value: &serde_json::Value,
     actor: &PersistedActor,
 ) -> Result<(), Failure> {
-    use crate::commands::journey_owner::{APPROVED_KIND, MARK_KIND, OWNER_EXECUTION};
+    use crate::commands::journey_owner::{
+        AGENT_APPROVED_KIND, APPROVED_KIND, MARK_KIND, OWNER_EXECUTION,
+    };
     let reserved = execution == Some(OWNER_EXECUTION);
     let kind = value["type"].as_str().unwrap_or("");
     let id = value["id"].as_str().unwrap_or("");
     // Each owner record kind owns its id prefix (#534: approvals; slice 2: safe marks).
     let squats = |prefix: &str, owner_kind: &str| id.starts_with(prefix) && kind != owner_kind;
-    let owner_kind = kind == APPROVED_KIND || kind == MARK_KIND;
-    if (reserved && actor.actor_type() != graphhelm_protocols::PersistedActorType::Owner)
+    let owner_kind = kind == APPROVED_KIND
+        || kind == MARK_KIND
+        || kind == AGENT_APPROVED_KIND
+        || kind == crate::commands::journey_owner::DRAFTED_KIND;
+    // #1130: the one record an agent may add here is a reviewer's journey approval, whose own
+    // validator binds it to its reviewer and refuses the flow's author.
+    let agent_review = (kind == AGENT_APPROVED_KIND
+        || kind == crate::commands::journey_owner::DRAFTED_KIND)
+        && actor.actor_type() == graphhelm_protocols::PersistedActorType::Agent;
+    if (reserved
+        && actor.actor_type() != graphhelm_protocols::PersistedActorType::Owner
+        && !agent_review)
         || squats("journey-approved-", APPROVED_KIND)
+        || squats("journey-agent-approved-", AGENT_APPROVED_KIND)
+        || squats(
+            "journey-drafted-",
+            crate::commands::journey_owner::DRAFTED_KIND,
+        )
         || squats("journey-safe-", MARK_KIND)
         || (owner_kind && !reserved)
     {
@@ -840,6 +857,62 @@ fn validate_journey_approval(
     Ok(())
 }
 
+/// #1130: a reviewer agent's journey approval. Recorded by an agent actor that is the named
+/// reviewer, never the flow's author, with a bounded note of what it checked.
+fn validate_journey_agent_approval(
+    value: &serde_json::Value,
+    actor: &PersistedActor,
+) -> Result<(), Failure> {
+    use crate::commands::journey_owner::{AGENT_APPROVED_PROTOCOL, CHECKED_MAX, agent_signal_id};
+    let invalid = || {
+        super::signal_invalid(
+            "an agent journey approval names one flow, its digest, a reviewer that recorded it and an author that is someone else",
+            "/signal",
+        )
+    };
+    if actor.actor_type() != graphhelm_protocols::PersistedActorType::Agent
+        || value
+            .pointer("/source/type")
+            .and_then(serde_json::Value::as_str)
+            != Some("node")
+    {
+        return Err(invalid());
+    }
+    let description: serde_json::Value = value["description"]
+        .as_str()
+        .and_then(|text| serde_json::from_str(text).ok())
+        .ok_or_else(invalid)?;
+    let field = |name: &str| description[name].as_str().unwrap_or("");
+    let (flow, digest, revision) = (field("flowId"), field("digest"), field("revision"));
+    let (reviewer, author, checked) = (field("reviewer"), field("author"), field("checked"));
+    let hex = |s: &str, n: usize| {
+        s.len() == n && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    };
+    let known = description.as_object().is_some_and(|object| {
+        object.keys().all(|key| {
+            matches!(
+                key.as_str(),
+                "protocol" | "flowId" | "digest" | "revision" | "reviewer" | "author" | "checked"
+            )
+        })
+    });
+    if description["protocol"] != AGENT_APPROVED_PROTOCOL
+        || !known
+        || OpaqueId::parse(flow).is_err()
+        || !digest.strip_prefix("sha256:").is_some_and(|h| hex(h, 64))
+        || !(hex(revision, 40) || hex(revision, 64))
+        || reviewer != actor.id().as_str()
+        || author.is_empty()
+        || reviewer.eq_ignore_ascii_case(author)
+        || checked.trim().is_empty()
+        || checked.len() > CHECKED_MAX
+        || value["id"].as_str() != Some(agent_signal_id(flow, digest).as_str())
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
 /// Reserved notice contracts cannot accept arbitrary prose through the generic signal command.
 pub(crate) fn validate_owner_signal(
     value: &serde_json::Value,
@@ -852,6 +925,9 @@ pub(crate) fn validate_owner_signal(
     }
     if kind == crate::commands::journey_owner::MARK_KIND {
         return validate_journey_mark(value, actor);
+    }
+    if kind == crate::commands::journey_owner::AGENT_APPROVED_KIND {
+        return validate_journey_agent_approval(value, actor);
     }
     if !matches!(
         kind,
@@ -1742,6 +1818,41 @@ mod journey_approval_tests {
     }
     fn actor(kind: PersistedActorType, id: &str) -> PersistedActor {
         PersistedActor::new(kind, ActorId::parse(id).unwrap())
+    }
+
+    /// #1130: a reviewer agent's approval is admitted only from that reviewer, never when it names
+    /// itself as the author, and only with a note of what it checked.
+    #[test]
+    fn a_reviewer_agent_approval_binds_its_reviewer_and_refuses_the_author() {
+        use crate::commands::journey_owner::{
+            AGENT_APPROVED_KIND, AGENT_APPROVED_PROTOCOL, agent_signal_id,
+        };
+        let digest = format!("sha256:{}", "b".repeat(64));
+        let review = |reviewer: &str, author: &str, checked: &str| {
+            serde_json::json!({
+                "id": agent_signal_id("checkout", &digest), "type": AGENT_APPROVED_KIND,
+                "severity": "low", "source": {"type": "node", "id": reviewer},
+                "description": serde_json::json!({"protocol": AGENT_APPROVED_PROTOCOL,
+                    "flowId": "checkout", "digest": digest, "revision": "a".repeat(40),
+                    "reviewer": reviewer, "author": author, "checked": checked}).to_string(),
+            })
+        };
+        let reviewer = actor(PersistedActorType::Agent, "rev-1");
+        let good = review("rev-1", "auth-1", "docs/PROJECT.md Journeys");
+        assert!(super::validate_owner_signal(&good, &reviewer, false).is_ok());
+        let reserved = Some(crate::commands::journey_owner::OWNER_EXECUTION);
+        assert!(super::validate_owner_execution(reserved, &good, &reviewer).is_ok());
+        for (value, by) in [
+            (review("rev-1", "rev-1", "doc"), &reviewer),
+            (review("rev-1", "auth-1", "  "), &reviewer),
+            (good.clone(), &actor(PersistedActorType::Agent, "auth-1")),
+            (good.clone(), &actor(PersistedActorType::Owner, "owner-cli")),
+        ] {
+            assert!(
+                super::validate_owner_signal(&value, by, false).is_err(),
+                "{value} by {by:?}"
+            );
+        }
     }
 
     #[test]

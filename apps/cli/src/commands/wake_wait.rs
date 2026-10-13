@@ -96,18 +96,32 @@ pub fn run(args: &WakeWaitArgs) -> Outcome {
         return matured(args, &lease, true);
     }
 
-    match wait(
-        &lease.rendezvous_id,
-        u64::try_from(remaining.num_seconds()).unwrap_or(0).max(1),
-    ) {
-        WaitEnd::Rung => Outcome::success(
+    let wait_started = std::time::Instant::now();
+    let wait_budget = std::time::Duration::from_millis(
+        u64::try_from(remaining.num_milliseconds())
+            .unwrap_or(1)
+            .max(1),
+    );
+    let deadline = wait_started
+        .checked_add(wait_budget)
+        .unwrap_or(wait_started);
+    match wait_validated(&lease.rendezvous_id, deadline, || {
+        validate_same_lease(
+            &args.events,
+            args.execution.as_deref(),
+            &args.session_id,
+            lease.armed_at_sequence,
+        )
+    }) {
+        Err(outcome) => outcome,
+        Ok(WaitEnd::Rung) => Outcome::success(
             COMMAND,
             serde_json::json!({"rung": true, "maturesAt": lease.matures_at.to_rfc3339()}),
         ),
         // The only bound there is now is the DECLARED one, so this exit stopped being
         // ambiguous by construction: it cannot mean "the number I happened to type ran out".
-        WaitEnd::TimedOut => matured(args, &lease, false),
-        WaitEnd::Unusable(message) => refuse(&message, "/sessionId"),
+        Ok(WaitEnd::TimedOut) => matured(args, &lease, false),
+        Ok(WaitEnd::Unusable(message)) => refuse(&message, "/sessionId"),
     }
 }
 
@@ -438,21 +452,64 @@ fn read_own_lease(
     })
 }
 
+/// Replays the same session again after the platform rendezvous exists. The sequence check
+/// distinguishes the captured lease from a replacement even when its session and rendezvous
+/// id are reused. This read completes before the blocking wait and drops its store handle.
+fn validate_same_lease(
+    events: &std::path::Path,
+    execution: Option<&str>,
+    session_id: &str,
+    armed_at_sequence: u64,
+) -> Result<(), Outcome> {
+    let current = read_own_lease(events, execution, session_id)?;
+    if current.armed_at_sequence != armed_at_sequence {
+        return Err(refuse(
+            &format!(
+                "{session_id} no longer owns arming {armed_at_sequence}: re-arm and wait on the current lease"
+            ),
+            "/sessionId",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) enum WaitEnd {
     Rung,
     TimedOut,
     Unusable(String),
 }
 
-#[cfg(windows)]
+/// Existing MCP callers provide a duration and do not own a lease snapshot to revalidate.
+/// Keep that API and outcome contract; only the CLI sidecar uses the validated startup path.
 pub(crate) fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
+    let started = std::time::Instant::now();
+    let deadline = started
+        .checked_add(std::time::Duration::from_secs(timeout_seconds))
+        .unwrap_or(started);
+    match wait_validated(rendezvous_id, deadline, || Ok(())) {
+        Ok(end) => end,
+        Err(outcome) => WaitEnd::Unusable(outcome.output.diagnostics.first().map_or_else(
+            || "the lease could not be validated".to_owned(),
+            |d| d.message.clone(),
+        )),
+    }
+}
+
+#[cfg(windows)]
+fn wait_validated(
+    rendezvous_id: &str,
+    deadline: std::time::Instant,
+    validate: impl FnOnce() -> Result<(), Outcome>,
+) -> Result<WaitEnd, Outcome> {
     use tokio::io::AsyncReadExt;
     let name = format!(r"\\.\pipe\graphhelm-wake-{rendezvous_id}");
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     else {
-        return WaitEnd::Unusable("the wait runtime could not start".to_owned());
+        return Ok(WaitEnd::Unusable(
+            "the wait runtime could not start".to_owned(),
+        ));
     };
     runtime.block_on(async move {
         // The sleeper CREATES, first-instance (a squatter on the name is refused by the
@@ -464,13 +521,18 @@ pub(crate) fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
         {
             Ok(server) => server,
             Err(_) => {
-                return WaitEnd::Unusable(
+                return Ok(WaitEnd::Unusable(
                     "the rendezvous could not be created (already armed elsewhere?)".to_owned(),
-                );
+                ));
             }
         };
-        let deadline = std::time::Duration::from_secs(timeout_seconds);
-        let waited = tokio::time::timeout(deadline, async {
+        validate()?;
+        record_test_causal_mark("startup-lease-validated");
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Ok(WaitEnd::TimedOut);
+        }
+        let waited = tokio::time::timeout(remaining, async {
             if server.connect().await.is_err() {
                 return false;
             }
@@ -480,11 +542,11 @@ pub(crate) fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
             matches!(server.read(&mut sink).await, Ok(read) if read > 0)
         })
         .await;
-        match waited {
+        Ok(match waited {
             Ok(true) => WaitEnd::Rung,
             Ok(false) => WaitEnd::TimedOut,
             Err(_) => WaitEnd::TimedOut,
-        }
+        })
     })
 }
 
@@ -519,7 +581,11 @@ fn read_budget(
 }
 
 #[cfg(not(windows))]
-pub(crate) fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
+fn wait_validated(
+    rendezvous_id: &str,
+    deadline: std::time::Instant,
+    validate: impl FnOnce() -> Result<(), Outcome>,
+) -> Result<WaitEnd, Outcome> {
     use std::io::Read;
     let runtime = match std::env::var("XDG_RUNTIME_DIR") {
         Ok(dir) => dir,
@@ -527,16 +593,26 @@ pub(crate) fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
     };
     let directory = std::path::Path::new(&runtime).join("graphhelm");
     if std::fs::create_dir_all(&directory).is_err() {
-        return WaitEnd::Unusable("the rendezvous directory could not be created".to_owned());
+        return Ok(WaitEnd::Unusable(
+            "the rendezvous directory could not be created".to_owned(),
+        ));
     }
     let path = directory.join(format!("wake-{rendezvous_id}.sock"));
     let _ = std::fs::remove_file(&path);
     let listener = match std::os::unix::net::UnixListener::bind(&path) {
         Ok(listener) => listener,
-        Err(_) => return WaitEnd::Unusable("the rendezvous could not be created".to_owned()),
+        Err(_) => {
+            return Ok(WaitEnd::Unusable(
+                "the rendezvous could not be created".to_owned(),
+            ));
+        }
     };
+    if let Err(outcome) = validate() {
+        drop(listener);
+        let _ = std::fs::remove_file(&path);
+        return Err(outcome);
+    }
     let _ = listener.set_nonblocking(false);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_seconds);
     listener
         .set_nonblocking(true)
         .expect("nonblocking accept is available");
@@ -555,34 +631,34 @@ pub(crate) fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
                 // `tokio::time::timeout` around both the connect and the read. This is that shape,
                 // spelled for a blocking socket.
                 let Some(budget) = read_budget(deadline, std::time::Instant::now()) else {
-                    return WaitEnd::TimedOut;
+                    return Ok(WaitEnd::TimedOut);
                 };
                 // NOT `let _ =`. Arming is what bounds the read, so an arming failure must not fall
                 // through into the unbounded read it exists to prevent -- that would be the defect
                 // again, reached through the error path of its own fix.
                 if stream.set_read_timeout(Some(budget)).is_err() {
-                    return WaitEnd::Unusable(
+                    return Ok(WaitEnd::Unusable(
                         "the rendezvous read could not be bounded".to_owned(),
-                    );
+                    ));
                 }
                 let mut sink = [0_u8; 64];
                 let rung = matches!(stream.read(&mut sink), Ok(read) if read > 0);
                 return if rung {
-                    WaitEnd::Rung
+                    Ok(WaitEnd::Rung)
                 } else {
-                    WaitEnd::TimedOut
+                    Ok(WaitEnd::TimedOut)
                 };
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 if std::time::Instant::now() >= deadline {
                     let _ = std::fs::remove_file(&path);
-                    return WaitEnd::TimedOut;
+                    return Ok(WaitEnd::TimedOut);
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
             Err(_) => {
                 let _ = std::fs::remove_file(&path);
-                return WaitEnd::Unusable("the rendezvous accept failed".to_owned());
+                return Ok(WaitEnd::Unusable("the rendezvous accept failed".to_owned()));
             }
         }
     }
@@ -590,8 +666,262 @@ pub(crate) fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
 
 #[cfg(test)]
 mod tests {
-    use super::read_budget;
+    use super::{OwnLease, WaitEnd, read_budget, validate_same_lease, wait_validated};
+    use graphhelm_events::{LocalEventRepository, PreparedAppend};
+    use graphhelm_protocols::{
+        ActorId, Clock, EventKind, ExecutionMode, ExecutionStarted, IdGenerator, NewEvent,
+        OpaqueId, PersistedActor, PersistedActorType, RepositoryScope, Sensitivity,
+        WakeConsumeReason, WakeLease, WakeLeaseConsumed, WireHash,
+    };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    };
     use std::time::{Duration, Instant};
+
+    struct TestClock;
+
+    impl Clock for TestClock {
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 9, 3, 12, 0, 0).unwrap()
+        }
+    }
+
+    #[derive(Default)]
+    struct TestIds(AtomicU64);
+
+    impl IdGenerator for TestIds {
+        fn next_id(&self, prefix: &'static str) -> String {
+            format!("{prefix}-{}", self.0.fetch_add(1, Ordering::SeqCst))
+        }
+    }
+
+    fn test_store(path: &std::path::Path) -> LocalEventRepository {
+        LocalEventRepository::open(path, Arc::new(TestClock), Arc::new(TestIds::default())).unwrap()
+    }
+
+    fn append_test_event(
+        store: &LocalEventRepository,
+        scope: &RepositoryScope,
+        stream: &OpaqueId,
+        key: &str,
+        kind: EventKind,
+    ) -> u64 {
+        let next = store.next_sequence(scope, stream.as_str()).unwrap();
+        let request = PreparedAppend::new(
+            scope.clone(),
+            stream.clone(),
+            next,
+            vec![NewEvent::new(
+                OpaqueId::parse(key).unwrap(),
+                PersistedActor::new(
+                    PersistedActorType::System,
+                    ActorId::parse("system-wake-test").unwrap(),
+                ),
+                Sensitivity::Internal,
+                kind,
+                vec![],
+                vec![],
+            )],
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        store.append_atomic(&request).unwrap();
+        next
+    }
+
+    fn wake_fixture(path: &std::path::Path, suffix: &str) -> (OpaqueId, RepositoryScope) {
+        let execution = OpaqueId::parse(format!("exec-wake-{suffix}")).unwrap();
+        let scope = super::super::execution::addressable_scope(execution.as_str())
+            .unwrap_or_else(|_| panic!("the fixture execution id has a valid addressable scope"));
+        let store = test_store(path);
+        append_test_event(
+            &store,
+            &scope,
+            &execution,
+            &format!("start-{suffix}"),
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: execution.clone(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode: ExecutionMode::Supervised,
+            }),
+        );
+        (execution, scope)
+    }
+
+    fn arm_test_lease(
+        store: &LocalEventRepository,
+        scope: &RepositoryScope,
+        execution: &OpaqueId,
+        session: &str,
+        rendezvous: &str,
+    ) -> u64 {
+        append_test_event(
+            store,
+            scope,
+            execution,
+            &format!("arm-{rendezvous}"),
+            EventKind::WakeLease(WakeLease {
+                execution_id: execution.clone(),
+                session_id: OpaqueId::parse(session).unwrap(),
+                cursor: 1,
+                rendezvous_id: OpaqueId::parse(rendezvous).unwrap(),
+                matures_in_seconds: Some(60),
+            }),
+        )
+    }
+
+    fn consume_test_lease(
+        store: &LocalEventRepository,
+        scope: &RepositoryScope,
+        execution: &OpaqueId,
+        session: &str,
+        armed_at: u64,
+    ) {
+        let next = store.next_sequence(scope, execution.as_str()).unwrap();
+        append_test_event(
+            store,
+            scope,
+            execution,
+            &format!("consume-{next}"),
+            EventKind::WakeLeaseConsumed(WakeLeaseConsumed {
+                execution_id: execution.clone(),
+                session_id: OpaqueId::parse(session).unwrap(),
+                reason: WakeConsumeReason::StaleRendezvous,
+                captured_arming: Some(armed_at),
+            }),
+        );
+    }
+
+    fn assert_post_creation_refusal(
+        events: &std::path::Path,
+        execution: &OpaqueId,
+        session: &str,
+        lease: &OwnLease,
+    ) {
+        let validate = || {
+            validate_same_lease(
+                events,
+                Some(execution.as_str()),
+                session,
+                lease.armed_at_sequence,
+            )
+        };
+        let end = wait_validated(
+            &lease.rendezvous_id,
+            Instant::now() + Duration::from_millis(250),
+            validate,
+        );
+        let outcome = match end {
+            Err(outcome) => outcome,
+            Ok(WaitEnd::Unusable(message)) => {
+                panic!("the real rendezvous was not available: {message}")
+            }
+            Ok(_) => panic!("a stale or replaced arming must refuse before blocking"),
+        };
+        assert_eq!(outcome.exit_code, 2);
+        assert!(
+            outcome.output.diagnostics[0].message.contains(session),
+            "the refusal must name the session whose lease was rechecked: {:?}",
+            outcome.output.diagnostics
+        );
+        // Opening and replaying again proves the validation read did not retain the local store lock.
+        let store = test_store(events);
+        let (_, history) = store.read_unique_replay_stream().unwrap();
+        assert!(!history.is_empty());
+        drop(store);
+
+        // A second first-instance creation with the same opaque id proves the refused path cleaned
+        // up the rendezvous. Its validator refuses again before either call can block.
+        let second = wait_validated(
+            &lease.rendezvous_id,
+            Instant::now() + Duration::from_millis(250),
+            || {
+                validate_same_lease(
+                    events,
+                    Some(execution.as_str()),
+                    session,
+                    lease.armed_at_sequence,
+                )
+            },
+        );
+        assert!(matches!(second, Err(refusal) if refusal.exit_code == 2));
+    }
+
+    #[test]
+    fn stale_consumption_after_the_first_read_refuses_after_rendezvous_creation() {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events");
+        let (execution, scope) = wake_fixture(&events, "stale");
+        let store = test_store(&events);
+        let rendezvous = format!("rvz-wake-{}-stale", std::process::id());
+        let armed_at = arm_test_lease(
+            &store,
+            &scope,
+            &execution,
+            "session-wake-stale",
+            &rendezvous,
+        );
+        drop(store);
+        let lease = super::read_own_lease(&events, Some(execution.as_str()), "session-wake-stale")
+            .unwrap_or_else(|outcome| {
+                panic!(
+                    "the captured session owns its armed lease: {}",
+                    outcome.output.diagnostics[0].message
+                )
+            });
+        assert_eq!(lease.armed_at_sequence, armed_at);
+        let store = test_store(&events);
+        consume_test_lease(&store, &scope, &execution, "session-wake-stale", armed_at);
+        drop(store);
+        assert_post_creation_refusal(&events, &execution, "session-wake-stale", &lease);
+    }
+
+    #[test]
+    fn replacement_arming_is_not_waited_on_by_the_old_rendezvous() {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events");
+        let (execution, scope) = wake_fixture(&events, "replacement");
+        let store = test_store(&events);
+        let first_id = format!("rvz-wake-{}-first", std::process::id());
+        let first_arming = arm_test_lease(
+            &store,
+            &scope,
+            &execution,
+            "session-wake-replace",
+            &first_id,
+        );
+        drop(store);
+        let lease =
+            super::read_own_lease(&events, Some(execution.as_str()), "session-wake-replace")
+                .unwrap_or_else(|outcome| {
+                    panic!(
+                        "the captured session owns its armed lease: {}",
+                        outcome.output.diagnostics[0].message
+                    )
+                });
+        assert_eq!(lease.armed_at_sequence, first_arming);
+        let store = test_store(&events);
+        consume_test_lease(
+            &store,
+            &scope,
+            &execution,
+            "session-wake-replace",
+            first_arming,
+        );
+        let replacement_id = format!("rvz-wake-{}-replacement", std::process::id());
+        arm_test_lease(
+            &store,
+            &scope,
+            &execution,
+            "session-wake-replace",
+            &replacement_id,
+        );
+        drop(store);
+        assert_post_creation_refusal(&events, &execution, "session-wake-replace", &lease);
+    }
 
     /// #798'S OWN RED, and it runs ONLY on Unix -- the platform where the defect is real and the
     /// one this fleet does not run on. On Windows it is not compiled, so a green suite here says
@@ -625,7 +955,11 @@ mod tests {
         let (sender, receiver) = std::sync::mpsc::channel();
         let waiter_id = id.clone();
         std::thread::spawn(move || {
-            let _ = sender.send(super::wait(&waiter_id, 1));
+            let _ = sender.send(super::wait_validated(
+                &waiter_id,
+                Instant::now() + Duration::from_secs(1),
+                || Ok(()),
+            ));
         });
 
         // The rendezvous is created BY `wait`, so wait for it to appear rather than racing it. This
@@ -649,7 +983,7 @@ mod tests {
 
         match receiver.recv_timeout(Duration::from_secs(20)) {
             Ok(end) => assert!(
-                matches!(end, super::WaitEnd::TimedOut),
+                matches!(end, Ok(super::WaitEnd::TimedOut)),
                 "a connector that never wrote must end as TimedOut, and never as a ring"
             ),
             Err(_) => panic!(

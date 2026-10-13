@@ -525,32 +525,18 @@ fn shared_admission_serializes_children_across_slot_roots() {
         }
     };
     let release_a = dir.path().join("release-a");
-    let release_b = dir.path().join("release-b");
     let command_a = command_for("a", &release_a);
-    let command_b = command_for("b", &release_b);
+    let command_b = marker_command(&log, "b", 0);
     let cwd = dir.path().to_owned();
     let admission = dir.path().join("shared-test-admission");
     let expected_target_a = super::shared_target(&root_a).to_string_lossy().into_owned();
     let expected_target_b = super::shared_target(&root_b).to_string_lossy().into_owned();
-    let barrier = Arc::new(std::sync::Barrier::new(2));
-    let first_barrier = Arc::clone(&barrier);
     let first_admission = admission.clone();
     let first = std::thread::spawn({
         let cwd = cwd.clone();
         move || {
-            first_barrier.wait();
             let request = request(&root_a, "lane-a", "cross-root-a", &command_a);
             super::run_admitted_slot_core(&request, &cwd, None, &first_admission)
-        }
-    });
-    let second_barrier = Arc::clone(&barrier);
-    let second = std::thread::spawn({
-        let cwd = cwd.clone();
-        let second_admission = admission;
-        move || {
-            second_barrier.wait();
-            let request = request(&root_b, "lane-b", "cross-root-b", &command_b);
-            super::run_admitted_slot_core(&request, &cwd, None, &second_admission)
         }
     });
     let started = std::time::Instant::now();
@@ -561,54 +547,17 @@ fn shared_admission_serializes_children_across_slot_roots() {
     {
         std::thread::sleep(Duration::from_millis(10));
     }
-    let first_log = std::fs::read_to_string(&log).unwrap_or_default();
-    let first_tag = first_log
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().next())
-        .map(str::to_owned);
-    match first_tag.as_deref() {
-        Some("a") => std::fs::write(&release_a, b"release").unwrap(),
-        Some("b") => std::fs::write(&release_b, b"release").unwrap(),
-        _ => {
-            std::fs::write(&release_a, b"release").unwrap();
-            std::fs::write(&release_b, b"release").unwrap();
-        }
-    }
-    let second_tag = match first_tag.as_deref() {
-        Some("a") => "b",
-        Some("b") => "a",
-        _ => "",
-    };
-    let first_end = first_tag.as_deref().map(|tag| format!("{tag} end"));
-    let ended = std::time::Instant::now();
-    while ended.elapsed() < Duration::from_secs(3)
-        && first_end.as_deref().is_some_and(|line| {
-            !std::fs::read_to_string(&log)
-                .unwrap_or_default()
-                .lines()
-                .any(|entry| entry == line)
-        })
-    {
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    if second_tag == "a" {
-        std::fs::write(&release_a, b"release").unwrap();
-    } else if second_tag == "b" {
-        std::fs::write(&release_b, b"release").unwrap();
-    }
+    let second_root = root_b.clone();
+    let second_cwd = cwd.clone();
+    let second_admission = admission.clone();
+    let mut timed = request(&second_root, "lane-b", "cross-root-b", &command_b);
+    timed.max_wait = Some(Duration::from_secs_f64(0.02));
+    let timed = super::run_admitted_slot_core(&timed, &second_cwd, None, &second_admission);
+    let timed_marker = std::fs::read_to_string(&log).unwrap_or_default();
+    std::fs::write(&release_a, b"release").unwrap();
     let first = first.join().unwrap();
-    let second = second.join().unwrap();
-    let lines = std::fs::read_to_string(log).unwrap_or_default();
-    let lines = lines
-        .lines()
-        .map(|line| {
-            line.split_whitespace()
-                .take(2)
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .collect::<Vec<_>>();
+    let retry_request = request(&root_b, "lane-b", "cross-root-b-retry", &command_b);
+    let retry = super::run_admitted_slot_core(&retry_request, &cwd, None, &admission);
     let first_target = first
         .output
         .data
@@ -616,33 +565,26 @@ fn shared_admission_serializes_children_across_slot_roots() {
         .and_then(|data| data["targetDir"].as_str())
         .unwrap_or_default()
         .to_owned();
-    let second_target = second
-        .output
-        .data
-        .as_ref()
-        .and_then(|data| data["targetDir"].as_str())
-        .unwrap_or_default()
-        .to_owned();
     assert!(first.output.ok, "first child failed: {:?}", first.output);
-    assert!(second.output.ok, "second child failed: {:?}", second.output);
+    assert!(!timed.output.ok);
+    assert_eq!(timed.output.diagnostics[0].path, "/slot");
+    assert!(!timed_marker.contains("b start"));
+    assert!(retry.output.ok, "retry child failed: {:?}", retry.output);
     assert_eq!(first_target, expected_target_a);
-    assert_eq!(second_target, expected_target_b);
-    assert_ne!(first_target, second_target);
-    assert!(
-        lines == vec!["a start", "a end", "b start", "b end"]
-            || lines == vec!["b start", "b end", "a start", "a end"],
-        "cross-root children entered the build section together: {lines:?}"
-    );
+    let retry_target = retry.output.data.as_ref().unwrap()["targetDir"]
+        .as_str()
+        .unwrap_or_default();
+    assert_eq!(retry_target, expected_target_b);
+    assert_ne!(first_target, retry_target);
 }
 
 #[test]
 fn update_installer_waits_for_slot_admission_before_starting_child() {
-    if let (Some(admission), Some(log), Some(exe), Some(script), Some(stderr)) = (
+    if let (Some(admission), Some(log), Some(exe), Some(script)) = (
         std::env::var_os("GRAPHHELM_UPDATE_OBSERVER_ADMISSION"),
         std::env::var_os("GRAPHHELM_UPDATE_OBSERVER_LOG"),
         std::env::var_os("GRAPHHELM_UPDATE_OBSERVER_EXE"),
         std::env::var_os("GRAPHHELM_UPDATE_OBSERVER_SCRIPT"),
-        std::env::var_os("GRAPHHELM_UPDATE_OBSERVER_STDERR"),
     ) {
         let command = if cfg!(windows) {
             vec![
@@ -656,7 +598,6 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
         };
         let mut install = graphhelm_process::command(&command[0]);
         install.args(&command[1..]);
-        let _ = std::fs::File::create(stderr);
         let ok = super::super::studio::run_install(
             &mut install,
             Path::new(env!("CARGO_MANIFEST_DIR")),
@@ -757,9 +698,8 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
         .env("GRAPHHELM_UPDATE_OBSERVER_LOG", &log)
         .env("GRAPHHELM_UPDATE_OBSERVER_EXE", &fake_exe)
         .env("GRAPHHELM_UPDATE_OBSERVER_SCRIPT", &update_script)
-        .env("GRAPHHELM_UPDATE_OBSERVER_STDERR", &stderr)
         .stderr(std::process::Stdio::from(std::fs::File::create(&stderr).unwrap()));
-    let update = update.spawn().unwrap();
+    let mut update = update.spawn().unwrap();
     let waited = std::time::Instant::now();
     let update_waiting = loop {
         if std::fs::read_to_string(&stderr)
@@ -786,7 +726,18 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
         .contains("update start");
     std::fs::write(&release, b"release").unwrap();
     let slot = slot.join().unwrap();
-    let update_status = update.wait_with_output().unwrap();
+    let mut forced_update_termination = false;
+    let update_status = loop {
+        if let Some(status) = update.try_wait().unwrap() {
+            break status;
+        }
+        if waited.elapsed() >= Duration::from_secs(5) {
+            forced_update_termination = true;
+            let _ = update.kill();
+            break update.wait().unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
     let lines = std::fs::read_to_string(&log).unwrap();
     let tags = lines
         .lines()
@@ -801,6 +752,10 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
     assert!(
         update_waiting,
         "update did not report actual lock contention"
+    );
+    assert!(
+        !forced_update_termination,
+        "update observer exceeded its cleanup bound"
     );
     assert!(slot.output.ok, "slot child failed: {:?}", slot.output);
     assert!(

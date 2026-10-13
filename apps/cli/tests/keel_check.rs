@@ -135,8 +135,19 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         "{}",
         String::from_utf8_lossy(&start.stdout)
     );
-    let started: Value = serde_json::from_slice(&start.stdout).unwrap();
-    let graph_hash = started["data"]["graphHash"].as_str().unwrap();
+    let hashed = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "graph", "hash"])
+        .arg(&graph)
+        .output()
+        .unwrap();
+    assert!(
+        hashed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&hashed.stdout)
+    );
+    let hashed: Value = serde_json::from_slice(&hashed.stdout).unwrap();
+    let graph_hash = hashed["data"]["hash"].as_str().unwrap();
     let head = graphhelm_process::command("git")
         .arg("-C")
         .arg(repo.path())

@@ -3444,6 +3444,26 @@ pub(super) async fn signal(
             "/signal",
         );
     };
+    // #1148: a `task.*` record names a lane, and only that lane's credential may write it. The
+    // shared agent session token authenticates "an agent on this machine", so an agent-typed
+    // caller without a verified lane credential is refused as an identity mismatch before the
+    // mutation, and nothing is appended. The owner token keeps its rights (D-058).
+    if identity.actor.actor_type() == PersistedActorType::Agent
+        && signal_value
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|kind| kind.starts_with("task."))
+        && !super::verify_lane_credential(&state, &headers, &execution_id, &identity.actor)
+    {
+        return respond_failure(
+            SIGNAL_COMMAND,
+            execution::Failure {
+                code: crate::error_codes::GHCLI038_ACTOR_MISMATCH,
+                message: "a task.* record needs the credential of the lane it names; the shared agent session token proves no lane (graphhelm tasks credential --lane <lane>)".to_owned(),
+                pointer: "/actor".to_owned(),
+            },
+        );
+    }
     if signal_value.get("proposal").is_some()
         && (identity.actor.actor_type() != PersistedActorType::Agent
             || !verify_agent_credential(&state, &headers, &identity.actor))

@@ -194,6 +194,29 @@ def reconcile(args):
     token = Path(args.token_file).read_text(encoding="utf-8").strip()
     if not token or "\n" in token:
         raise ValueError("invalid agent token")
+    # #1148: reads use the shared agent token; a task.* record is written only with the credential
+    # of the actor it names (`graphhelm` for merged, the lane for closed/released), read beside
+    # --token-file at <events>.agent.<actor>.token, never the shared token.
+    credentials = {}
+
+    def credential(actor):
+        if actor not in credentials:
+            path = Path(args.token_file)
+            stem = path.name
+            for suffix in (".agent.token", ".token"):
+                if stem.endswith(suffix):
+                    stem = stem[: -len(suffix)]
+                    break
+            path = path.with_name(f"{stem}.agent.{actor}.token")
+            try:
+                value = path.read_text(encoding="utf-8").strip()
+            except OSError:
+                value = ""
+            if not value or "\n" in value:
+                raise ValueError(f"no credential for {actor} at {path}; mint it with: graphhelm tasks credential "
+                                 f"--lane {actor} --execution {args.execution} --token-file <events.token>")
+            credentials[actor] = value
+        return credentials[actor]
     opened = {}
     finished = set()
     claims = {}
@@ -231,7 +254,7 @@ def reconcile(args):
             by = int(match.group(1)) if match else pr
             if args.lane is None:
                 continue
-            post_end(args.url.rstrip("/"), token, args.execution, "closed", task_id, repo,
+            post_end(args.url.rstrip("/"), credential(args.lane), args.execution, "closed", task_id, repo,
                      args.lane, {"pr": pr, "reason": "superseded" if match else "abandoned", "by": by})
             closed.append(pr)
             continue
@@ -241,7 +264,7 @@ def reconcile(args):
             raise ValueError(f"PR {pr} has no confirmed merge commit")
         closes = [issue["number"] for issue in result.get("closingIssuesReferences") or []
                   if issue.get("repository", {}).get("nameWithOwner", repo) == repo]
-        post(args.url.rstrip("/"), token, args.execution, pr, task_id, repo, sha, closes)
+        post(args.url.rstrip("/"), credential("graphhelm"), args.execution, pr, task_id, repo, sha, closes)
         done.append(pr)
     released = []
     beats = {"sent": [], "refused": []}
@@ -263,7 +286,7 @@ def reconcile(args):
             else:
                 beats["refused"].append({"issue": issue, "message": refusal})
             continue
-        post_end(args.url.rstrip("/"), token, args.execution, "released", task_id, args.repo,
+        post_end(args.url.rstrip("/"), credential(args.lane), args.execution, "released", task_id, args.repo,
                  args.lane, {"lane": args.lane, "claimSequence": outstanding[-1],
                              "reason": "Issue closed" if result.get("state") == "CLOSED" else "Issue reassigned"})
         released.append(issue)

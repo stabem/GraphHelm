@@ -126,6 +126,22 @@ pub enum TasksCommand {
         #[arg(long, default_value = "stabem/GraphHelm")]
         repo: String,
     },
+    /// Write a lane's credential (#1148): `<events>.agent.<lane>.token` beside the owner token,
+    /// derived from that token, the execution and the lane. Run by the owner or the orchestrator;
+    /// the Runtime verifies it by recomputation, so no restart is needed.
+    Credential {
+        /// The lane: its `X-GraphHelm-Actor` and the `lane` its task records name.
+        #[arg(long)]
+        lane: String,
+        #[arg(long, default_value = "gh-team")]
+        execution: String,
+        /// The Runtime's OWNER token (`<events>.token`), never the agent session token.
+        #[arg(long)]
+        token_file: PathBuf,
+        /// Where to write; default: `<events>.agent.<lane>.token` beside `--token-file`.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Args)]

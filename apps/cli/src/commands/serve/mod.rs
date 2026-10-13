@@ -400,6 +400,47 @@ fn load_agent_credentials() -> Result<BTreeMap<String, ScopedAgentCredential>, F
     Ok(result)
 }
 
+/// Set by the auth layer on a request authenticated by a per-lane credential (#1148), carrying the
+/// presented value; removed on every other principal. `verify_lane_credential` recomputes the
+/// credential from the actor and execution and compares, so a forged header without the secret
+/// verifies nothing.
+const LANE_CREDENTIAL_HEADER: &str = "x-graphhelm-lane-credential";
+
+/// The execution (path segment 3) and the declared lane (`X-GraphHelm-Actor`) a lane credential
+/// would be derived for; `None` when either is absent.
+fn lane_credential_subject(request: &Request) -> Option<(&str, &str)> {
+    let execution = request
+        .uri()
+        .path()
+        .split('/')
+        .nth(3)
+        .filter(|segment| !segment.is_empty())?;
+    let lane = header_value(request.headers(), "x-graphhelm-actor")?;
+    Some((execution, lane))
+}
+
+/// Whether this request was authenticated by the credential of `actor` on `execution` (#1148).
+/// The signal route asks this for every `task.*` record from an agent: the shared session token
+/// proves that the caller is SOME agent on this machine, not WHICH lane, so it cannot sign one.
+pub(super) fn verify_lane_credential(
+    state: &ServeState,
+    headers: &HeaderMap,
+    execution: &str,
+    actor: &PersistedActor,
+) -> bool {
+    let Some(presented) = header_value(headers, LANE_CREDENTIAL_HEADER) else {
+        return false;
+    };
+    let Ok(owner_token) = std::str::from_utf8(&state.token) else {
+        return false;
+    };
+    actor.actor_type() == PersistedActorType::Agent
+        && constant_time_eq(
+            presented.as_bytes(),
+            secret_file::lane_credential(owner_token, execution, actor.id().as_str()).as_bytes(),
+        )
+}
+
 fn verify_agent_credential(
     state: &ServeState,
     headers: &HeaderMap,
@@ -1039,6 +1080,38 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
             .headers_mut()
             .insert("x-graphhelm-actor-type", HeaderValue::from_static("agent"));
         request.headers_mut().remove("x-graphhelm-agent-credential");
+        request.headers_mut().remove(LANE_CREDENTIAL_HEADER);
+        return next.run(request).await;
+    }
+    // #1148: a per-lane credential, derived from the owner token, the execution in the path and
+    // the lane the caller declares in `X-GraphHelm-Actor`. Recomputed here and compared in
+    // constant time, so the declared lane is VERIFIED, not trusted: a credential derived for
+    // lane A presented under lane B's name is a 401, like any other wrong bearer. It reaches the
+    // same routes a scoped agent credential does, and `verify_lane_credential` lets the signal
+    // route tell this principal from the shared session token when a `task.*` record arrives.
+    if let Some((execution, lane)) = lane_credential_subject(&request)
+        && let Ok(owner_token) = std::str::from_utf8(&state.token)
+        && constant_time_eq(
+            presented.as_bytes(),
+            secret_file::lane_credential(owner_token, execution, lane).as_bytes(),
+        )
+    {
+        // What the shared session token reaches, on this execution only (the derivation binds
+        // the execution, so another execution's path never matches): the lane's reads of its
+        // own run, including evidence, and the signal route.
+        if !agent_session_route_allowed(&request) {
+            return refused(request, owner_required_response()).await;
+        }
+        let mut request = request;
+        request
+            .headers_mut()
+            .insert("x-graphhelm-actor-type", HeaderValue::from_static("agent"));
+        request.headers_mut().remove("x-graphhelm-agent-credential");
+        request.headers_mut().insert(
+            LANE_CREDENTIAL_HEADER,
+            HeaderValue::from_str(&presented)
+                .unwrap_or_else(|_| HeaderValue::from_static("invalid")),
+        );
         return next.run(request).await;
     }
     // Agent credentials are bearer principals in their own right. They are never accepted as
@@ -1065,6 +1138,7 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
         "x-graphhelm-agent-credential",
         HeaderValue::from_str(&presented).unwrap_or_else(|_| HeaderValue::from_static("invalid")),
     );
+    request.headers_mut().remove(LANE_CREDENTIAL_HEADER);
     state.record_seen_actor(request.headers(), Instant::now());
     next.run(request).await
 }

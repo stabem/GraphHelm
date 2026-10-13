@@ -505,6 +505,7 @@ fn card_guidance(
     serde_json::json!({
         "kind": kind,
         "required": required,
+        "journeys": planned.journeys,
         "fulfilled": false,
         "note": "Guidance states obligations only; it does not confirm that a card or proof exists."
     })

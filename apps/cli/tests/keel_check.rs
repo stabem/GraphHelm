@@ -1201,6 +1201,12 @@ fn a_fresh_clone_plans_and_checks_from_the_committed_flows() {
 
     let (code, reply) = run(root, None);
     assert_eq!(code, 0, "{reply}");
+    assert_eq!(reply["data"]["cardGuidance"]["kind"], "bounded_code");
+    assert_eq!(
+        reply["data"]["cardGuidance"]["journeys"],
+        serde_json::json!(["checkout"]),
+        "guidance names only the touched approved journey: {reply}"
+    );
     let found = codes(&reply);
     assert!(
         found

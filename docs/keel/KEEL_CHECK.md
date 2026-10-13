@@ -18,7 +18,9 @@ graphhelm --json keel check --diff origin/main..HEAD --card card.json [--repo <d
 - `data.cardGuidance` gives the proportional card obligation inferred from the changed paths:
   `summary_only` for docs, `bounded_code` for code and user-visible work, or `expanded` for an
   invariant. Its `required` list names the expected card parts (`journeys` is also required for
-  user-visible work). `fulfilled` is always `false`: this field is guidance, not evidence that a
+  user-visible work). Its `journeys` list contains only approved journeys whose screens touch the
+  changed paths, using the flow IDs accepted by `journey replay`. `fulfilled` is always `false`:
+  this field is guidance, not evidence that a
   card, test, or journey proof exists. It is advisory and does not change the exit code or the
   existing count-only behavior.
 - A card path ending in `.md` is read as prose, for example a saved PR body: the lines

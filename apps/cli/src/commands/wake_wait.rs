@@ -665,7 +665,7 @@ fn wait_validated(
 
 #[cfg(test)]
 mod tests {
-    use super::{OwnLease, WaitEnd, read_budget, validate_same_lease, wait};
+    use super::{OwnLease, WaitEnd, read_budget, validate_same_lease, wait_validated};
     use graphhelm_events::{LocalEventRepository, PreparedAppend};
     use graphhelm_protocols::{
         ActorId, Clock, EventKind, ExecutionId, ExecutionMode, ExecutionStarted, IdGenerator,
@@ -867,8 +867,8 @@ mod tests {
             &rendezvous,
         );
         drop(store);
-        let lease =
-            super::read_own_lease(&events, Some(execution.as_str()), "session-wake-stale").unwrap();
+        let lease = super::read_own_lease(&events, Some(execution.as_str()), "session-wake-stale")
+            .unwrap_or_else(|_| panic!("the captured session owns its armed lease"));
         assert_eq!(lease.armed_at_sequence, armed_at);
         let store = test_store(&events);
         consume_test_lease(&store, &scope, &execution, "session-wake-stale", armed_at);
@@ -893,7 +893,7 @@ mod tests {
         drop(store);
         let lease =
             super::read_own_lease(&events, Some(execution.as_str()), "session-wake-replace")
-                .unwrap();
+                .unwrap_or_else(|_| panic!("the captured session owns its armed lease"));
         assert_eq!(lease.armed_at_sequence, first_arming);
         let store = test_store(&events);
         consume_test_lease(

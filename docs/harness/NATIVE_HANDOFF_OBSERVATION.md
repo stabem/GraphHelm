@@ -1,6 +1,6 @@
 # Native handoff observation protocol
 
-This protocol prepares one bounded Claude-to-Codex work transfer. It defines what a future pilot must observe; this document does not run or pass that pilot. A handoff receipt means the adapter retrieved an offer and briefing. It does not mean that a model consumed the task, did the work, or accepted it.
+This protocol implements the current [issue #62 native acceptance observation card](https://github.com/stabem/GraphHelm/issues/62#issuecomment-6151341241). It prepares one bounded Claude-to-Codex work transfer and defines what a future pilot must observe; this document does not run or pass that pilot. A handoff receipt means the adapter retrieved an offer and briefing. It does not mean that a model consumed the task, did the work, or accepted it.
 
 ## Current evidence gap (RED)
 

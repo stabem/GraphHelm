@@ -239,8 +239,9 @@ export default defineConfig(({ mode }) => {
       // host: 21 files, 343 tests, under three minutes. `npx vitest run --maxWorkers=N` still
       // overrides it for a developer on an idle machine.
       maxWorkers: 1,
-      // #1019: Try one fork for the shared host's worker-start hang; the host-level
-      // comparison remains pending. Keep isolation disabled to reuse one worker.
+      // #1019: One-fork trial. On 2026-10-12 both one-thread and one-fork runs
+      // printed the banner but no result for team-tasks.ts within 90 seconds.
+      // This choice has no proven host-level winner yet. Keep isolation disabled.
       pool: "forks",
       isolate: false,
       // #549: the test timeout is a hang catcher scaled by GRAPHHELM_TEST_TIME_SCALE (unset: 1),

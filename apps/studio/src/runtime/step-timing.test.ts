@@ -33,10 +33,10 @@ describe("step clock in the fold (#502)", () => {
       record(5, 55, "task.merged", "l2", { pr: 19, mergeSha: "c".repeat(40), closes: [9], merger: "l2" }),
     ];
     const at = (n: number) => foldTaskEvents(records.slice(0, n))[0].clock;
-    expect(at(1)).toEqual({ since: "2026-10-08T10:00:00.000Z", spent: {} });
-    expect(at(3)).toEqual({ since: "2026-10-08T10:30:00.000Z", spent: { implement: 30 * 60_000 } });
-    expect(at(4)).toEqual({ since: "2026-10-08T10:50:00.000Z", spent: { implement: 30 * 60_000, review: 20 * 60_000 } });
-    expect(at(5)).toEqual({ since: "2026-10-08T10:55:00.000Z", spent: { implement: 30 * 60_000, review: 20 * 60_000, merge: 5 * 60_000 } });
+    expect(at(1)).toEqual({ since: "2026-10-08T10:00:00.000Z", lastAt: "2026-10-08T10:00:00.000Z", spent: {} });
+    expect(at(3)).toEqual({ since: "2026-10-08T10:30:00.000Z", lastAt: "2026-10-08T10:35:00.000Z", spent: { implement: 30 * 60_000 } });
+    expect(at(4)).toEqual({ since: "2026-10-08T10:50:00.000Z", lastAt: "2026-10-08T10:50:00.000Z", spent: { implement: 30 * 60_000, review: 20 * 60_000 } });
+    expect(at(5)).toEqual({ since: "2026-10-08T10:55:00.000Z", lastAt: "2026-10-08T10:55:00.000Z", spent: { implement: 30 * 60_000, review: 20 * 60_000, merge: 5 * 60_000 } });
   });
 
   // #480: once the lane records its plan, the claim's time is Plan's, a design plan's critic gets
@@ -56,19 +56,26 @@ describe("step clock in the fold (#502)", () => {
     const resumed = record(2, 13 * 60 * 60, "task.planned", "l1", { lane: "l1", classes: ["code"],
       reviews: 1, proof: "tests", critic: { mode: "none", passScore: 8, maxRounds: 3 }, summary: "s" });
     const task = foldTaskEvents([claim, resumed])[0];
-    expect(task.clock).toEqual({ since: at(13 * 60 * 60), spent: {} });
+    expect(task.clock).toEqual({ since: at(13 * 60 * 60), lastAt: at(13 * 60 * 60), spent: {} });
   });
   it("starts a fresh active run when the same lane pushes after a silent gap", () => {
     const opened = record(1, 0, "task.pr_opened", "l1", { pr: 19, headSha: head, journeys: [], lane: "l1" });
     const pushed = record(2, 13 * 60 * 60, "task.pr_opened", "l1", { pr: 19, headSha: "b".repeat(40), journeys: [], lane: "l1" });
     const task = foldTaskEvents([opened, pushed])[0];
-    expect(task.clock).toEqual({ since: at(13 * 60 * 60), spent: {} });
+    expect(task.clock).toEqual({ since: at(13 * 60 * 60), lastAt: at(13 * 60 * 60), spent: {} });
   });
   it("starts a fresh interval when a step resumes after a stall-sized gap", () => {
     const claim = record(1, 0, "task.claimed", "l1", { issue: 9, lane: "l1", branch: "b" });
     const resumed = record(2, 13 * 60 * 60, "task.planned", "l1", { lane: "l1", classes: ["code"],
       reviews: 1, proof: "tests", critic: { mode: "none", passScore: 8, maxRounds: 3 }, summary: "s" });
-    expect(foldTaskEvents([claim, resumed])[0].clock).toEqual({ since: at(13 * 60 * 60), spent: {} });
+    expect(foldTaskEvents([claim, resumed])[0].clock).toEqual({ since: at(13 * 60 * 60), lastAt: at(13 * 60 * 60), spent: {} });
+  });
+  it("banks active step time through the last record before a stall", () => {
+    const clock = emptyClock();
+    clockStep(clock, "plan", "plan", at(0));
+    clockStep(clock, "plan", "plan", at(20));
+    clockStep(clock, "plan", "plan", at(13 * 60), true);
+    expect(clock).toEqual({ since: at(13 * 60), lastAt: at(13 * 60), spent: { plan: 20 * 60_000 } });
   });
 
   it("keeps a BLOCK and a new head inside Review instead of restarting the clock", () => {
@@ -77,7 +84,7 @@ describe("step clock in the fold (#502)", () => {
       record(2, 10, "task.review_verdict", "l2", { pr: 19, headSha: head, reviewer: "l2", verdict: "BLOCK", commentUrl: url }),
       record(3, 20, "task.pr_opened", "l1", { pr: 19, headSha: "b".repeat(40), journeys: [], lane: "l1" }),
     ]);
-    expect(tasks[0].clock).toEqual({ since: "2026-10-08T10:00:00.000Z", spent: {} });
+    expect(tasks[0].clock).toEqual({ since: "2026-10-08T10:00:00.000Z", lastAt: "2026-10-08T10:20:00.000Z", spent: {} });
   });
 
   it("has no start when the records carry no append time", () => {
@@ -99,7 +106,7 @@ describe("typical step time and pace (#502)", () => {
   it("banks completed time when a resumed step follows a 30 minute gap", () => {
     const clock = { since: at(0), spent: {} as Record<string, number> };
     clockStep(clock, "implement", "implement", at(60), true);
-    expect(clock).toEqual({ since: at(60), spent: {} });
+    expect(clock).toEqual({ since: at(60), lastAt: at(60), spent: {} });
   });
 
   it("is green under the typical time, amber past it and red past twice it", () => {
@@ -116,12 +123,12 @@ describe("typical step time and pace (#502)", () => {
   it("resets a lane clock after a stall-sized gap", () => {
     const clock = { since: at(0), spent: {} as Record<string, number> };
     clockStep(clock, "implement", "implement", at(30), true);
-    expect(clock).toEqual({ since: at(30), spent: {} });
+    expect(clock).toEqual({ since: at(30), lastAt: at(30), spent: {} });
   });
 
   it("ignores a clock that goes backwards", () => {
     const clock = { since: at(10), spent: {} };
     clockStep(clock, "implement", "review", at(5));
-    expect(clock).toEqual({ since: at(5), spent: {} });
+    expect(clock).toEqual({ since: at(5), lastAt: at(5), spent: {} });
   });
 });

@@ -25,7 +25,7 @@ edges:
     from: defective-parent
     to: proof-report
     acts:
-      - {kind: activate, role: button, name: python .graphhelm/fixtures/keel-red-first-proof/scenario.py}
+      - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-red-first-proof/scenario.py}
 paths:
   main: [prove-regression]
 drift: []

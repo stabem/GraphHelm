@@ -83,6 +83,15 @@ class SelectionReport(unittest.TestCase):
                                "--partition-manifest", str(manifest_path)],
                               capture_output=True, text=True, creationflags=NO_WINDOW)
 
+    def run_partitioned_observation_text(self, script, observations_text, manifest):
+        observations_path = Path(self.temp.name) / "partition-observations.json"
+        manifest_path = Path(self.temp.name) / "partitions.json"
+        observations_path.write_text(observations_text, encoding="utf-8")
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        return subprocess.run([sys.executable, str(script), str(observations_path),
+                               "--partition-manifest", str(manifest_path)],
+                              capture_output=True, text=True, creationflags=NO_WINDOW)
+
     def make_manifest(self, evals, tuning, held_out):
         cases = {}
         for case_id, partition in [(case_id, "tuning") for case_id in tuning] + [
@@ -92,6 +101,13 @@ class SelectionReport(unittest.TestCase):
                               "promptSha256": self.digest(case_dir / "prompt.md"),
                               "criteriaSha256": self.digest(case_dir / "graders/criteria.md")}
         return {"version": 1, "cases": cases}
+
+    @staticmethod
+    def bind_observations(observations, manifest):
+        canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=False).encode("utf-8")
+        identity = hashlib.sha256(canonical).hexdigest()
+        return [{**item, "partition_manifest_sha256": identity} for item in observations]
 
     def test_partition_manifest_separates_counts_and_binds_case_content(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -107,6 +123,7 @@ class SelectionReport(unittest.TestCase):
                 {"case_id": "no-skill-audit-grammar", "status": "timeout",
                  "invoked_skills": [], "completion": "pass", "rubric": "r", "judge": "pass"},
             ]
+            observations = self.bind_observations(observations, manifest)
             result = self.run_partitioned(script, observations, manifest)
             self.assertEqual(result.returncode, 0, result.stderr)
             report = json.loads(result.stdout)
@@ -141,6 +158,7 @@ class SelectionReport(unittest.TestCase):
                 [case.name for case in evals.iterdir() if case.is_dir() and case.name.startswith("no-skill-")])
             observation = [{"case_id": "no-skill-arithmetic", "status": "completed",
                             "invoked_skills": [], "completion": "pass", "rubric": "r"}]
+            observation = self.bind_observations(observation, manifest)
             missing = dict(manifest["cases"])
             missing.pop("no-skill-arithmetic")
             for invalid, expected in [
@@ -170,6 +188,87 @@ class SelectionReport(unittest.TestCase):
             result = self.run_partitioned(script, observation, split)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("keel-green-on-parent", result.stderr)
+
+    def test_partitioned_observations_are_bound_to_manifest_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script, evals = self.copied_report(Path(directory))
+            case_ids = [case.name for case in evals.iterdir() if case.is_dir()]
+            manifest_a = self.make_manifest(evals, case_ids, [])
+            manifest_b = self.make_manifest(evals, [], case_ids)
+            canonical_a = json.dumps(manifest_a, sort_keys=True, separators=(",", ":"),
+                                     ensure_ascii=False).encode("utf-8")
+            identity_a = hashlib.sha256(canonical_a).hexdigest()
+            rows = [
+                {"case_id": "no-skill-arithmetic", "status": "completed",
+                 "invoked_skills": [], "completion": "pass", "rubric": "r",
+                 "partition_manifest_sha256": identity_a},
+                {"case_id": "no-skill-audit-grammar", "status": "timeout",
+                 "invoked_skills": [], "completion": "pass", "rubric": "r",
+                 "partition_manifest_sha256": identity_a},
+            ]
+
+            mismatch = self.run_partitioned(script, rows, manifest_b)
+            self.assertEqual(mismatch.returncode, 2)
+            self.assertIn("observation 0", mismatch.stderr)
+            self.assertIn("no-skill-arithmetic", mismatch.stderr)
+            self.assertEqual(mismatch.stdout, "")
+
+            matched = self.run_partitioned(script, rows, manifest_a)
+            self.assertEqual(matched.returncode, 0, matched.stderr)
+            report = json.loads(matched.stdout)
+            self.assertEqual(report["by_partition"]["tuning"]["selection"]["no_skill"]["correct_abstain"], 1)
+            self.assertEqual(report["by_partition"]["tuning"]["selection"]["no_skill"]["incomplete"], 1)
+            reordered_text = json.dumps(manifest_a, indent=2, sort_keys=False)
+            reordered = self.run_partitioned_text(script, rows, reordered_text)
+            self.assertEqual(reordered.returncode, 0, reordered.stderr)
+            self.assertEqual(matched.stdout, reordered.stdout)
+
+            for row, binding, message in [
+                ({key: value for key, value in rows[0].items()
+                  if key != "partition_manifest_sha256"}, None, "missing"),
+                ({**rows[0], "partition_manifest_sha256": "A" * 64}, None, "64 lowercase"),
+                ({**rows[1], "partition_manifest_sha256": "0" * 64}, None, "manifest"),
+            ]:
+                candidate = row if binding is None else {**row, "partition_manifest_sha256": binding}
+                result = self.run_partitioned(script, [candidate], manifest_a)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("observation 0", result.stderr)
+                self.assertIn("no-skill", result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(result.stdout, "")
+
+            duplicate_row = json.dumps(rows[0])[:-1] + ',"partition_manifest_sha256":"' + identity_a + '"}'
+            duplicate = self.run_partitioned_observation_text(script, "[" + duplicate_row + "]", manifest_a)
+            self.assertEqual(duplicate.returncode, 2)
+            self.assertIn("duplicate observation key: partition_manifest_sha256", duplicate.stderr)
+            self.assertEqual(duplicate.stdout, "")
+
+            changed = evals / "no-skill-arithmetic/prompt.md"
+            changed.write_text(changed.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+            updated_manifest = self.make_manifest(evals, case_ids, [])
+            drift = self.run_partitioned(script, rows, updated_manifest)
+            self.assertEqual(drift.returncode, 2)
+            self.assertIn("observation 0", drift.stderr)
+            self.assertIn("no-skill-arithmetic", drift.stderr)
+            self.assertIn("manifest", drift.stderr)
+            self.assertEqual(drift.stdout, "")
+
+            legacy_row = {key: value for key, value in rows[0].items()
+                          if key != "partition_manifest_sha256"}
+            self.input_path.write_text(json.dumps([{**legacy_row,
+                "partition_manifest_sha256": "a" * 64}]), encoding="utf-8")
+            legacy = subprocess.run([sys.executable, str(REPORT), str(self.input_path)],
+                                    cwd=ROOT, capture_output=True, text=True,
+                                    creationflags=NO_WINDOW)
+            self.assertEqual(legacy.returncode, 0, legacy.stderr)
+            self.assertEqual(json.loads(legacy.stdout)["partitioning"]["status"], "unobserved")
+            self.input_path.write_text(json.dumps([{**legacy_row,
+                "partition_manifest_sha256": "A" * 64}]), encoding="utf-8")
+            malformed = subprocess.run([sys.executable, str(REPORT), str(self.input_path)],
+                                       cwd=ROOT, capture_output=True, text=True,
+                                       creationflags=NO_WINDOW)
+            self.assertEqual(malformed.returncode, 2)
+            self.assertIn("partition_manifest_sha256", malformed.stderr)
 
     def test_legacy_report_marks_partitioning_unobserved(self):
         result = self.run_report()

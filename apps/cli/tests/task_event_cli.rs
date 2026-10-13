@@ -244,6 +244,45 @@ fn as_actor(mut document: Value) -> Value {
     document
 }
 
+/// A heartbeat is admitted through the real sealed signal door only while this lane owns a claim.
+#[test]
+fn heartbeat_on_an_open_claim_is_recorded_without_changing_the_claim() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let claim = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-claim",
+        "task.claimed",
+        ACTOR,
+        &as_actor(package_fixture("claimed")),
+    );
+    assert_eq!(claim["ok"], json!(true), "{claim}");
+    let before = history(&events);
+    let mut heartbeat = as_actor(package_fixture("claimed"));
+    heartbeat.as_object_mut().unwrap().retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "schema" | "taskId" | "revision" | "at" | "lane"
+        )
+    });
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-first",
+        "task.heartbeat",
+        ACTOR,
+        &heartbeat,
+    );
+    assert_eq!(reply["ok"], json!(true), "{reply}");
+    let after = history(&events);
+    assert_eq!(after.len(), before.len() + 1);
+    assert!(
+        matches!(&after.last().unwrap().kind, EventKind::SignalRecorded(recorded)
+        if recorded.kind == "task.heartbeat")
+    );
+}
+
 #[test]
 fn a_task_signal_naming_another_actor_is_refused_and_records_nothing() {
     let scratch = tempfile::tempdir().unwrap();

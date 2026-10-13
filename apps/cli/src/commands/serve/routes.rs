@@ -2086,29 +2086,37 @@ fn scoped_agent(state: &ServeState, headers: &HeaderMap) -> Option<String> {
     super::verify_agent_credential(state, headers, &actor).then(|| id.to_owned())
 }
 
-/// `POST /v1/journey-flows/{id}/drafted` (#1130): the flow's author records that it wrote the
-/// flow at its current digest. Scoped agent credential only; the first author of a digest stays.
-pub(super) async fn journey_flow_drafted(
+/// `POST /v1/journey-flows/{id}/draft` (#1130): a lane writes a draft's YAML through the Runtime
+/// (body `{"yaml": "..."}`) and is recorded as a writer of that digest. Scoped agent credential
+/// only: the writer is the credential's actor.
+pub(super) async fn journey_flow_draft(
     State(state): State<ServeState>,
     UrlPath(id): UrlPath<String>,
     headers: HeaderMap,
+    body: Bytes,
 ) -> Response {
-    let Some(author) = scoped_agent(&state, &headers) else {
+    let Some(writer) = scoped_agent(&state, &headers) else {
         return bad_request(
-            "journey.drafted",
-            "recording a flow's author requires a registered scoped agent credential",
+            "journey.draft",
+            "writing a draft requires a registered scoped agent credential",
             "/actor",
         );
     };
-    flow_command(state, "journey.drafted", move |project| {
-        crate::commands::journey_flow::record_drafted(&id, project.to_path_buf(), &author)
+    let Some(yaml) = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|value| value["yaml"].as_str().map(str::to_owned))
+    else {
+        return bad_request("journey.draft", "the body must carry \"yaml\"", "/yaml");
+    };
+    flow_command(state, "journey.draft", move |project| {
+        crate::commands::journey_flow::write_draft(&id, project.to_path_buf(), &writer, &yaml)
     })
     .await
 }
 
 /// `POST /v1/journey-flows/{id}/review` (#1130): a blind reviewer approves a flow. The reviewer is
-/// the scoped credential's actor and the author is the store's `drafted` record for the flow's
-/// current digest; either missing, or the two equal, refuses and writes nothing. Body
+/// the scoped credential's actor and the author is the lane that wrote the current digest through
+/// the draft route; no such lane, or a reviewer that ever wrote the flow, refuses and writes nothing. Body
 /// `{"checked": "<what was compared>"}`.
 pub(super) async fn journey_flow_review(
     State(state): State<ServeState>,

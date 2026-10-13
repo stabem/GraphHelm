@@ -69,62 +69,96 @@ pub(crate) fn agent_signal_id(flow: &str, digest: &str) -> String {
     format!("journey-agent-approved-{}", &hex::encode(hash)[..32])
 }
 
-/// #1130: the signal kind that names a draft's author, bound to the draft's digest.
+/// #1130: the signal kind that names a lane that wrote a draft, bound to that draft's digest.
 pub(crate) const DRAFTED_KIND: &str = "journey_flow_drafted";
 /// The description protocol of that signal.
 pub(crate) const DRAFTED_PROTOCOL: &str = "graphhelm-journey-drafted-v1";
 
-/// `journey-drafted-<32 hex>`: one id per flow and digest, so the first author recorded stays.
-pub(crate) fn drafted_signal_id(flow: &str, digest: &str) -> String {
+/// `journey-drafted-<16 hex flow>-<16 hex digest and writer>`: one record per writer of each
+/// digest, under a prefix that names the flow, so every lane that ever wrote a flow is found.
+fn drafted_prefix(flow: &str) -> String {
     use sha2::{Digest, Sha256};
-    let hash = Sha256::digest(format!("drafted\n{flow}\n{digest}").as_bytes());
-    format!("journey-drafted-{}", &hex::encode(hash)[..32])
+    let hash = Sha256::digest(format!("drafted\n{flow}").as_bytes());
+    format!("journey-drafted-{}-", &hex::encode(hash)[..16])
 }
 
-/// The author recorded for `flow` at `digest`: the agent actor of its `drafted` record.
+pub(crate) fn drafted_signal_id(flow: &str, digest: &str, writer: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(format!("{digest}\n{writer}").as_bytes());
+    format!("{}{}", drafted_prefix(flow), &hex::encode(hash)[..16])
+}
+
+/// Every `drafted` record of `flow`: (signal id, writer).
+fn drafted_records(project: &Path, flow: &str) -> Result<Vec<(String, String)>, String> {
+    let prefix = drafted_prefix(flow);
+    Ok(owner_history(project)?
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::SignalRecorded(signal)
+                if event.actor.actor_type() == PersistedActorType::Agent
+                    && signal.kind.as_str() == DRAFTED_KIND
+                    && signal.signal_id.as_str().starts_with(&prefix) =>
+            {
+                Some((
+                    signal.signal_id.as_str().to_owned(),
+                    event.actor.id().as_str().to_owned(),
+                ))
+            }
+            _ => None,
+        })
+        .collect())
+}
+
+/// The lane that wrote `flow` at exactly `digest` through the Runtime's draft route, if any.
 pub(crate) fn drafted_by(
     project: &Path,
     flow: &str,
     digest: &str,
 ) -> Result<Option<String>, String> {
-    let wanted = drafted_signal_id(flow, digest);
-    Ok(owner_history(project)?.iter().find_map(|event| {
-        (event.actor.actor_type() == PersistedActorType::Agent
-            && matches!(&event.kind, EventKind::SignalRecorded(signal)
-                if signal.signal_id.as_str() == wanted && signal.kind.as_str() == DRAFTED_KIND))
-        .then(|| event.actor.id().as_str().to_owned())
-    }))
+    Ok(drafted_records(project, flow)?
+        .into_iter()
+        .find(|(id, writer)| *id == drafted_signal_id(flow, digest, writer))
+        .map(|(_, writer)| writer))
 }
 
-/// Records `author` (an authenticated agent) as the author of `flow` at `digest`, unless an
-/// author is already recorded; returns the recorded author.
+/// Whether `lane` ever wrote any version of `flow` through the draft route.
+pub(crate) fn ever_wrote(project: &Path, flow: &str, lane: &str) -> Result<bool, String> {
+    Ok(drafted_records(project, flow)?
+        .iter()
+        .any(|(_, writer)| writer.eq_ignore_ascii_case(lane)))
+}
+
+/// Records that `writer` (an authenticated agent) wrote `flow` at `digest`.
 pub(crate) fn record_drafted(
     project: &Path,
     flow: &str,
     digest: &str,
-    author: &str,
-) -> Result<String, String> {
-    if let Some(existing) = drafted_by(project, flow, digest)? {
-        return Ok(existing);
+    writer: &str,
+) -> Result<(), String> {
+    let id = drafted_signal_id(flow, digest, writer);
+    if drafted_records(project, flow)?
+        .iter()
+        .any(|(known, _)| *known == id)
+    {
+        return Ok(());
     }
     let actor = graphhelm_protocols::PersistedActor::new(
         PersistedActorType::Agent,
-        graphhelm_protocols::ActorId::parse(author)
-            .map_err(|_| "the author is not a valid actor id".to_string())?,
+        graphhelm_protocols::ActorId::parse(writer)
+            .map_err(|_| "the writer is not a valid actor id".to_string())?,
     );
     let description = serde_json::json!({
         "protocol": DRAFTED_PROTOCOL, "flowId": flow, "digest": digest,
     });
     append_as(
         project,
-        &drafted_signal_id(flow, digest),
+        &id,
         DRAFTED_KIND,
         &description,
         flow,
         actor,
-        author,
-    )?;
-    Ok(author.to_owned())
+        writer,
+    )
 }
 
 fn owner_history(project: &Path) -> Result<Vec<graphhelm_protocols::EventEnvelope>, String> {

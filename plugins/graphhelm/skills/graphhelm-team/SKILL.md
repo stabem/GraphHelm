@@ -19,7 +19,7 @@ orchestrator calls this once per agent. The orchestrator itself never takes a la
 3. One scoped agent credential per lane: a fresh 64-hex secret bound to the lane name in
    `GRAPHHELM_AGENT_CREDENTIALS` (`<secret>=<lane>|project-local|<exec>`, `;`-separated) in the
    Runtime's environment when it starts. It is the only way a lane records a journey draft or
-   approves one as a reviewer (`POST /v1/journey-flows/<id>/drafted` and `.../review`). Hand each
+   approves one as a reviewer (`POST /v1/journey-flows/<id>/draft` and `.../review`). Hand each
    lane only its own secret, in a file, never in a prompt or a log.
 4. The owner's roster: which model for each role and how many agents at once (the kickoff skill
    asks it once). Map each model to what the host can start: in Claude Code the subagent's

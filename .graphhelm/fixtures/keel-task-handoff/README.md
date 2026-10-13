@@ -26,12 +26,18 @@ traceable.
 
 Before the offer, the scenario records one synthetic task-evidence signal with a literal objective,
 bounded Keel card and synthetic prior proof. After the Codex companion receives the offer and the
-fixture hook cache is discarded, a fresh bounded Codex-bound process discovers that earlier signal
-through the Runtime events endpoint and opens its sealed evidence through the public evidence
-endpoint. That process receives only fixture Runtime binding and execution identity; it is not
-given expected signal/evidence IDs or sender-cached content. The observer checks the recovered
-literal content, actor/type/execution, evidence ID and digest, and that its event precedes the offer.
-It also checks the read against a healthy empty store and a valid but different synthetic record.
+fixture hook cache is discarded, the scenario stops the exact source Runtime process and waits for
+it to exit. It starts the same pinned executable against the same event store and keyring on a new
+ephemeral loopback port, without reinitializing or reseeding the store. After clearing only fixture
+hook state, the actual Codex companion must recover the same receipt as `already_recorded`; a fresh
+bounded Codex-bound process must discover the earlier signal through the replacement Runtime's
+events endpoint and open its sealed evidence through the public evidence endpoint. That process
+receives only fixture Runtime binding and execution identity; it is not given expected
+signal/evidence IDs or sender-cached content. The observer checks literal content, actor,
+execution, evidence identity and digest, and that the event precedes the offer. It compares the
+complete bounded event snapshot immediately before shutdown and after recovery to ensure reads did
+not append or alter journal records. It also checks the read against a healthy empty store and a
+valid but different synthetic record.
 
 The RED-only command below asks the receiver to recover the original offer from a separate healthy
 but empty Runtime. It must exit 1 with `continuity assertion failed`; setup or authentication
@@ -52,7 +58,8 @@ Child processes are hidden on Windows and have bounded startup/request/cleanup w
 server command owns its event directory; the scenario deletes only its fixture-local
 `TemporaryDirectory` after the process exits. No process search or unrelated cleanup is used.
 
-Cost: two short local Runtimes, one fixed graph/event set, and bounded hidden child processes; no
+Cost: three sequential short local Runtime starts (source, empty-store control, source restart),
+one fixed graph/event set, and bounded hidden child processes; no
 build, network access, model call, browser or production infrastructure.
 
 The journey contract is draft and its approval is null. `journey validate` checks the flow's

@@ -264,6 +264,26 @@ def _wait_started(log_path: Path, child: subprocess.Popen) -> str:
     raise ScenarioFailure("isolated Runtime did not report serve.started")
 
 
+def _stop_owned_runtime(child: subprocess.Popen, log) -> None:
+    if child.poll() is None:
+        child.terminate()
+    try:
+        child.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait(timeout=2)
+    log.close()
+
+
+def _event_snapshot(base_url: str, token: str) -> dict:
+    data = _http(f"{base_url}/v1/executions/{EXECUTION}/events?after=0&limit=256", token).get("data", {})
+    events = data.get("events")
+    head = data.get("head")
+    if not isinstance(events, list) or not isinstance(head, int):
+        raise ScenarioFailure("Runtime returned an incomplete event snapshot")
+    return {"head": head, "events": events}
+
+
 def _run_adapter(phase: str, host: str, session: str, token_file: Path, base_url: str,
                  recipient_host: str | None = None, recipient_session: str | None = None,
                  offer_id: str | None = None, owned: Path | None = None) -> dict:
@@ -386,6 +406,7 @@ def run(wrong_store_only: bool = False) -> dict:
         child = subprocess.Popen(command, cwd=owned, env=runtime_env, stdin=subprocess.DEVNULL,
                                  stdout=log, stderr=subprocess.STDOUT,
                                  creationflags=NO_WINDOW)
+        source_processes = [(child, store.resolve(), keyring.resolve())]
         try:
             base_url = _wait_started(log_path, child)
             log.flush()
@@ -582,26 +603,53 @@ def run(wrong_store_only: bool = False) -> dict:
                     f"execution={second.get('executionId')!r}, briefing={recovered_briefing!r}"
                 )
 
-            # The receiver process is fresh, bound only to this fixture Runtime and execution,
-            # and runs after the companion receive has completed and its cache was discarded.
-            _discard_fixture_hook_cache(owned)
-            recovered_prior = _run_prior_task_evidence_reader(
-                base_url, token_file, "codex", "codex-fixture", owned)
-            prior_task_evidence = recovered_prior.get("priorTaskEvidence")
-            if not isinstance(prior_task_evidence, dict):
-                raise ScenarioFailure("fresh Codex receiver did not discover prior task evidence")
-            if (prior_task_evidence.get("objective") != objective
-                    or prior_task_evidence.get("keelCard") != keel_card
-                    or prior_task_evidence.get("priorProof") != prior_proof
-                    or prior_task_evidence.get("actor") != {"type": "agent", "id": prior_actor}
-                    or prior_task_evidence.get("executionId") != EXECUTION
-                    or prior_task_evidence.get("sequence", 0) >= _signal_event(base_url, token, offer_id).get("sequence", 0)):
-                raise ScenarioFailure("fresh Codex receiver did not recover literal pre-offer task evidence")
-            if (prior_task_evidence.get("evidenceId") != prior_task_evidence.get("eventEvidenceId")
-                    or prior_task_evidence.get("contentSha256") != prior_task_evidence.get("envelopeSha256")
-                    or hashlib.sha256(prior_task_evidence.get("sealedContent", "").encode("utf-8")).hexdigest()
-                    != prior_task_evidence.get("envelopeSha256")):
-                raise ScenarioFailure("fresh Codex receiver returned task evidence with mismatched identity or digest")
+            # Preserve the exact journal before replacing the source Runtime process.
+            owner_token = owner_token_file.read_text(encoding="utf-8").strip()
+            before_restart = _event_snapshot(base_url, owner_token)
+            _stop_owned_runtime(child, log)
+            if child.poll() is None:
+                raise ScenarioFailure("owned source Runtime did not exit before restart")
+            restart_log_path = owned / "runtime-restarted.log"
+            restart_log = restart_log_path.open("w+", encoding="utf-8")
+            restarted_child = subprocess.Popen(command, cwd=owned, env=runtime_env,
+                                               stdin=subprocess.DEVNULL, stdout=restart_log,
+                                               stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+            source_processes.append((restarted_child, store.resolve(), keyring.resolve()))
+            try:
+                restarted_url = _wait_started(restart_log_path, restarted_child)
+                if restarted_url == base_url:
+                    raise ScenarioFailure("replacement Runtime unexpectedly reused the old loopback address")
+                _discard_fixture_hook_cache(owned)
+                restart_receive = _run_adapter("receive", "codex", "codex-fixture", token_file,
+                                               restarted_url, offer_id=offer_id, owned=owned)
+                if (restart_receive.get("receiptId") != first.get("receiptId")
+                        or restart_receive.get("state") != "already_recorded"):
+                    raise ScenarioFailure("replacement Runtime did not recover the same recorded receipt")
+                restart_prior = _run_prior_task_evidence_reader(
+                    restarted_url, token_file, "codex", "codex-fixture", owned)
+                restart_evidence = restart_prior.get("priorTaskEvidence")
+                if (not isinstance(restart_evidence, dict)
+                        or restart_evidence.get("signalId") != prior_signal_id
+                        or restart_evidence.get("objective") != objective
+                        or restart_evidence.get("keelCard") != keel_card
+                        or restart_evidence.get("priorProof") != prior_proof
+                        or restart_evidence.get("actor") != {"type": "agent", "id": prior_actor}
+                        or restart_evidence.get("executionId") != EXECUTION
+                        or restart_evidence.get("evidenceId") != restart_evidence.get("eventEvidenceId")
+                        or restart_evidence.get("contentSha256") != restart_evidence.get("envelopeSha256")
+                        or hashlib.sha256(restart_evidence.get("sealedContent", "").encode("utf-8")).hexdigest()
+                        != restart_evidence.get("envelopeSha256")):
+                    raise ScenarioFailure("replacement Runtime did not recover the original prior task evidence")
+                if (restart_evidence.get("sequence", 0)
+                        >= _signal_event(restarted_url, token, offer_id).get("sequence", 0)):
+                    raise ScenarioFailure("replacement Runtime recovered task evidence without its pre-offer ordering")
+                prior_task_evidence = restart_evidence
+                after_restart = _event_snapshot(restarted_url, owner_token)
+                if before_restart != after_restart:
+                    raise ScenarioFailure("Runtime journal changed during restart recovery reads")
+                base_url = restarted_url
+            finally:
+                _stop_owned_runtime(restarted_child, restart_log)
 
             wrong = _run_adapter("receive", "codex", "wrong-codex", token_file, base_url,
                                  offer_id=offer_id, owned=owned)
@@ -627,19 +675,25 @@ def run(wrong_store_only: bool = False) -> dict:
                     "pendingEvidenceReferences": _briefing_references(offered_briefing),
                     "sealedEvidenceReferences": evidence_refs,
                     "priorTaskEvidence": prior_task_evidence,
+                    "journalStableAcrossRestart": before_restart == after_restart,
+                    "restartReceiptId": restart_receive.get("receiptId"),
+                    "restartReceiptState": restart_receive.get("state"),
                     "priorTaskActor": prior_actor,
                     "priorTaskEvidenceNegativeControls": {
                         "healthyEmpty": "no matching record discovered",
                         "differentSynthetic": "different record and literal content rejected as the original",
                     }}
         finally:
-            child.terminate()
-            try:
-                child.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                child.kill()
-                child.wait(timeout=2)
-            log.close()
+            for owned_child, _, _ in reversed(source_processes):
+                if owned_child.poll() is None:
+                    owned_child.terminate()
+                try:
+                    owned_child.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    owned_child.kill()
+                    owned_child.wait(timeout=2)
+            if not log.closed:
+                log.close()
 
 
 if __name__ == "__main__":

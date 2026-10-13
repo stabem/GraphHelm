@@ -83,6 +83,46 @@ fn run(repo: &Path, card: Option<&Path>) -> (i32, Value) {
     (output.status.code().unwrap(), reply)
 }
 
+/// The offline verdict reader must reject an approval whose identity line names a different
+/// head. The parent has no `keel verdict` command; that missing-command result is recorded as
+/// the public-surface baseline, not as proof of stale-verdict filtering.
+#[test]
+fn keel_verdict_does_not_match_an_approval_from_another_head() {
+    let snapshot = tempfile::tempdir().unwrap();
+    let comments = snapshot.path().join("comments.json");
+    fs::write(
+        &comments,
+        serde_json::json!({"comments": [{
+            "id": "comment-1",
+            "body": "APPROVE\n\nSession: codex-review · Head: aaaaaaaa"
+        }]})
+        .to_string(),
+    )
+    .unwrap();
+
+    let output = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args([
+            "--json",
+            "keel",
+            "verdict",
+            "--head",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "--reviewer",
+            "codex-review",
+            "--comments",
+        ])
+        .arg(&comments)
+        .output()
+        .unwrap();
+    let reply: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("expected a structured verdict result, got: {}", String::from_utf8_lossy(&output.stdout)));
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(reply["command"], "keel.verdict");
+    assert_eq!(reply["data"]["verdicts"], serde_json::json!([]));
+    assert_eq!(reply["data"]["matchingBlockIds"], serde_json::json!([]));
+}
+
 /// Validation must expose an invalid discovered flow as a failure, rather than treating a
 /// non-executed journey as clean coverage. This protects the user-visible negative-evidence
 /// boundary; existing keel check tests do not invoke the validation supervisor.

@@ -117,7 +117,7 @@ up)
     "$bin" --json execution delivery --events "$dir/.graphhelm/events" --execution demo --node deploy \
       --delivery "$dir/.graphhelm/delivery.json" --project-directory "$dir/project" \
       --keyring "$dir/.graphhelm/keyring" --key-id studio > "$dir/.graphhelm/delivery.out"
-    # One unanswered question from the bot `planner` to the owner (studio-answer-question, studio-name-bot).
+    # One unanswered question from the bot `planner` to the owner (studio-answer-question).
     token=$(head -1 "$dir/.graphhelm/events.token"); id=$(node -e 'console.log(require("crypto").randomUUID())')
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     printf '{"signal":{"id":"planner-question-%s","source":{"type":"tool","id":"planner"},"type":"operator_note","severity":"low","description":"Should the deploy go to staging first, or straight to production?","recommendations":["Staging first","Straight to production"],"evidence":["demo"],"emittedAt":"%s","to":"studio-operator"}}' "$id" "$now" > "$dir/.graphhelm/question.json"

@@ -31,10 +31,13 @@ class RuntimeHandler(BaseHTTPRequestHandler):
     get_release = None
     post_started = None
     post_release = None
+    events_delay = 0
 
     def do_GET(self):
         self.requests.append(("GET", self.path, dict(self.headers), None))
         if "/events?" in self.path:
+            if self.events_delay:
+                threading.Event().wait(self.events_delay)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -125,6 +128,24 @@ class SessionHookTests(unittest.TestCase):
             arm.assert_called_once()
             self.assertEqual(arm.call_args.kwargs["matures_in"], 1)
             wait.assert_not_called()
+
+    def test_start_lane_waiter_arms_when_event_head_takes_one_and_a_half_seconds(self):
+        spec = importlib.util.spec_from_file_location("session_hook_delayed_arm", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        events = Path(self.temp.name) / "events"
+        events.mkdir()
+        self.env["GRAPHHELM_EVENTS_DIR"] = str(events)
+        self.env["GRAPHHELM_ACTOR"] = "gh-lane-1"
+        bound = ("run-test", str(self.token_file),
+                 f"http://127.0.0.1:{self.server.server_port}",
+                 f"http://127.0.0.1:{self.server.server_port}", None)
+        RuntimeHandler.events_delay = 1.5
+        child = type("Child", (), {"pid": 424242})()
+        with patch.dict(os.environ, self.env), patch.object(hook.subprocess, "Popen", return_value=child):
+            hook.start_lane_waiter({"session_id": "session-123"}, bound, "codex")
+            self.assertTrue(hook._waiter_path({"session_id": "session-123"}, bound, "codex").is_file())
+        self.assertEqual([request[0] for request in RuntimeHandler.requests], ["GET", "POST"])
     @classmethod
     def setUpClass(cls):
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), RuntimeHandler)
@@ -153,6 +174,7 @@ class SessionHookTests(unittest.TestCase):
         RuntimeHandler.get_release = None
         RuntimeHandler.post_started = None
         RuntimeHandler.post_release = None
+        RuntimeHandler.events_delay = 0
         self.temp = tempfile.TemporaryDirectory()
         self.token_file = Path(self.temp.name) / "events.token"
         self.token_file.write_text("test-token", encoding="utf-8")

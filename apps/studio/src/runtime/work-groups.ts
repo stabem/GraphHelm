@@ -105,11 +105,11 @@ function provenKeys(tasks: TaskState[], journeys: JourneyView[], runFor?: (contr
 }
 
 /** #583: one group per issue, the grouping the Team view draws; groups with open work first, then newest. */
-export function buildWorkGroups(tasks: TaskState[], journeys: JourneyView[], runFor?: (contractId: string) => JourneyRunView | null): WorkGroup[] {
+export function buildWorkGroups(tasks: TaskState[], journeys: JourneyView[], runFor?: (contractId: string) => JourneyRunView | null, partial = false): WorkGroup[] {
   const proven = provenKeys(tasks, journeys, runFor);
   const byIssue = new Map<string, TaskState[]>();
   for (const t of tasks) {
-    const key = t.issue !== null ? `issue-${t.issue}` : "no-issue";
+    const key = t.issue !== null ? `issue-${t.issue}` : partial ? "not-read-yet" : "no-issue";
     byIssue.set(key, [...(byIssue.get(key) ?? []), t]);
   }
   const groups = [...byIssue.entries()].map(([key, rows]): WorkGroup => {
@@ -123,7 +123,7 @@ export function buildWorkGroups(tasks: TaskState[], journeys: JourneyView[], run
     return {
       key, issue,
       title: named?.title ?? null,
-      label: issue === null ? "No issue" : named?.title ? `#${issue} ${named.title}` : `Issue #${issue}`,
+      label: issue === null ? (partial ? "Not read yet" : "No issue") : named?.title ? `#${issue} ${named.title}` : `Issue #${issue}`,
       tasks: sorted.map(toMissionTask),
       stages: Object.fromEntries(sorted.map((t) => [t.key, workStage(t, proven.has(t.key))])),
       journeyIds: [...new Set(sorted.flatMap((t) => t.journeys))],

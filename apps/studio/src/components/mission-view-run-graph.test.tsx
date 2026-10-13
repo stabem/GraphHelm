@@ -20,7 +20,7 @@ describe("#647 MissionView: the Team canvas controls on the Graph page", () => {
     const { rerender } = render(<MissionView {...base} lanes={[]} historyLoading journeys={[{
       contractId: "watch", title: "Watch", arrows: [], steps: [{ stepId: "open", screen: { screenId: "open", title: "Open", scopePaths: [] }, promises: [] }],
     }]} />);
-    expect(screen.getByRole("status")).toHaveTextContent("Loading work");
+    expect(screen.getByRole("status")).toHaveTextContent("Showing recent work · still reading the history");
     expect(screen.queryByText("No work linked to this journey yet")).toBeNull();
     expect(screen.queryByText("0 in flight")).toBeNull();
 

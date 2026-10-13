@@ -180,7 +180,11 @@ class SessionHookTests(unittest.TestCase):
         child = type("Child", (), {"pid": 424242})()
         with patch.dict(os.environ, self.env), patch.object(hook.subprocess, "Popen", return_value=child):
             hook.start_lane_waiter({"session_id": "session-123"}, bound, "codex")
-            self.assertTrue(hook._waiter_path({"session_id": "session-123"}, bound, "codex").is_file())
+            marker = hook._waiter_path({"session_id": "session-123"}, bound, "codex")
+            try:
+                self.assertTrue(marker.is_file())
+            finally:
+                marker.unlink(missing_ok=True)
         self.assertEqual([request[0] for request in RuntimeHandler.requests], ["GET", "POST"])
     @classmethod
     def setUpClass(cls):

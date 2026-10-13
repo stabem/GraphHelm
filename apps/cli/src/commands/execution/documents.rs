@@ -169,6 +169,7 @@ pub(crate) fn validate_task_event(
         "task.claimed"
         | "task.planned"
         | "task.released"
+        | "task.heartbeat"
         | "task.pr_opened"
         | "task.critic_verdict" => Some("lane"),
         "task.review_verdict" => Some("reviewer"),
@@ -307,6 +308,7 @@ pub(crate) fn validate_task_event(
                 }),
             &["lane", "claimSequence", "reason"],
         ),
+        "task.heartbeat" => (is_actor("lane"), &["lane"]),
         "task.planned" => (
             is_actor("lane")
                 && classes()
@@ -424,6 +426,9 @@ pub(crate) fn validate_task_event(
         })
     });
     if common && fields && known {
+        if kind == "task.heartbeat" {
+            validate_heartbeat(&document, actor_id, history, evidence, chrono::Utc::now())?;
+        }
         if kind == "task.released" {
             let claim_sequence = document["claimSequence"].as_u64().expect("shape checked");
             let lane = document["lane"].as_str().expect("shape checked");
@@ -584,6 +589,103 @@ pub(crate) fn validate_task_event(
     } else {
         Err(invalid())
     }
+}
+
+fn validate_heartbeat(
+    document: &serde_json::Value,
+    lane: &str,
+    history: &[graphhelm_protocols::EventEnvelope],
+    evidence: Option<(
+        &graphhelm_events::LocalEventRepository,
+        &graphhelm_protocols::RepositoryScope,
+        &signal::SignalKeyring,
+    )>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(), Failure> {
+    let pointer = "/signal/description";
+    let invalid_history =
+        || super::signal_invalid("task history cannot be read; heartbeat refused", pointer);
+    let Some((store, scope, keyring)) = evidence else {
+        return Err(invalid_history());
+    };
+    let opener = signal::open_sealer(keyring)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| invalid_history())?;
+    let mut open_claims = Vec::new();
+    let mut opened_prs = Vec::new();
+    let mut last_heartbeat = None;
+    for event in history
+        .iter()
+        .filter(|event| event.actor.id().as_str() == lane)
+    {
+        let EventKind::SignalRecorded(recorded) = &event.kind else {
+            continue;
+        };
+        if !matches!(
+            recorded.kind.as_str(),
+            "task.claimed" | "task.pr_opened" | "task.released" | "task.heartbeat"
+        ) {
+            continue;
+        }
+        let reference = event.evidence_refs.first().ok_or_else(invalid_history)?;
+        let EvidenceRead::Available(sealed) = store
+            .sealed_evidence(scope, reference.evidence_id())
+            .map_err(|_| invalid_history())?
+        else {
+            return Err(invalid_history());
+        };
+        let plaintext = runtime
+            .block_on(opener.open(scope.clone(), &sealed))
+            .map_err(|_| invalid_history())?;
+        let envelope: serde_json::Value = plaintext
+            .expose(|bytes| serde_json::from_slice(bytes))
+            .map_err(|_| invalid_history())?;
+        if envelope["type"] != recorded.kind || envelope["source"]["id"] != lane {
+            return Err(invalid_history());
+        }
+        let record: serde_json::Value = envelope["description"]
+            .as_str()
+            .and_then(|text| serde_json::from_str(text).ok())
+            .ok_or_else(invalid_history)?;
+        if record["taskId"] != document["taskId"] {
+            continue;
+        }
+        match recorded.kind.as_str() {
+            "task.claimed" => open_claims.push(event.sequence),
+            "task.pr_opened" => {
+                if let Some(pr) = record["pr"].as_u64().filter(|pr| !opened_prs.contains(pr)) {
+                    opened_prs.push(pr);
+                    if !open_claims.is_empty() {
+                        open_claims.remove(0);
+                    }
+                }
+            }
+            "task.released" => {
+                if let Some(sequence) = record["claimSequence"].as_u64() {
+                    open_claims.retain(|claim| *claim != sequence);
+                }
+            }
+            "task.heartbeat" => last_heartbeat = Some(*event.occurred_at.as_datetime()),
+            _ => unreachable!(),
+        }
+    }
+    if open_claims.is_empty() {
+        return Err(super::signal_invalid(
+            "heartbeat requires an open pre-PR claim",
+            pointer,
+        ));
+    }
+    if last_heartbeat
+        .is_some_and(|previous| now.signed_duration_since(previous).num_seconds() < 300)
+    {
+        return Err(super::signal_invalid(
+            "heartbeat is limited to one per 300 seconds",
+            pointer,
+        ));
+    }
+    Ok(())
 }
 
 /// `owner/name` of a GitHub repository (#420): an owner of 1-39 ASCII letters, digits or `-` not

@@ -399,7 +399,7 @@ fn record_on(
     let task_history = if envelope
         .get("type")
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|kind| kind == "task.released")
+        .is_some_and(|kind| matches!(kind, "task.released" | "task.heartbeat"))
     {
         Some(super::resolve_stream(store, execution)?.2)
     } else {

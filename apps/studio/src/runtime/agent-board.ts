@@ -55,7 +55,7 @@ function hasVerdictOnHead(t: MissionTask, names: string[]): boolean {
 
 /** One row per bot, plus a row per lane no bot claims; silent first, then working (longest
  * first), then waiting, then free. Silent is the lane-bars STALL rule (`Lane.silent`). */
-export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now: number, slots: SlotView[] = [], onDemand: readonly string[] = [], live: readonly string[] = [], seenActors: readonly string[] = []): AgentRow[] {
+export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now: number, slots: SlotView[] = [], onDemand: readonly string[] = [], live: readonly string[] = [], seenActors: readonly string[] = [], seenActorAgesMs: Readonly<Record<string, number>> = {}): AgentRow[] {
   bots = bots.filter((b) => !blank(b.name));
   lanes = lanes.filter((l) => !blank(l.lane));
   const used = new Set<Lane>();
@@ -130,7 +130,11 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
     const slot = ids.map((n) => slotStatus(n, slots)).find((x) => x !== null) ?? null;
     if (!slot) {
       if (r.status !== "free" || onDemand.some((name) => ids.includes(name))) return r;
-      if (seenActors.some((name) => ids.includes(name))) return { ...r, latest: "seen within 15m · authenticated request", forMs: null };
+      const actor = seenActors.find((name) => ids.includes(name));
+      if (actor) {
+        const age = seenActorAgesMs[actor];
+        return { ...r, latest: Number.isFinite(age) && age >= 0 ? `last seen ${span(age)} ago · authenticated request` : "seen within 15m · authenticated request", forMs: Number.isFinite(age) && age >= 0 ? age : null };
+      }
       if (live.some((name) => ids.includes(name))) return { ...r, latest: "live now · wake listener", forMs: 0 };
       const seen = Math.max(pairs[i]!.lane?.lastEventAt ?? 0,
         ...bots.filter((b) => ids.includes(b.name) || (b.actorId !== null && ids.includes(b.actorId)))

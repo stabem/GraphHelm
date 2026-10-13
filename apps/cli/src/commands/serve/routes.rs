@@ -798,6 +798,7 @@ pub(super) async fn status(
     match result {
         Ok(mut value) => {
             value["seenActors"] = serde_json::json!(state.seen_actors());
+            value["seenActorAgesMs"] = serde_json::json!(state.seen_actor_ages_ms());
             respond(
                 StatusCode::OK,
                 Outcome::success(STATUS_COMMAND, value).output,

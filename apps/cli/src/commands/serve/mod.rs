@@ -226,6 +226,13 @@ impl ServeState {
     fn seen_actors(&self) -> Vec<String> {
         self.seen_actors_at(Instant::now())
     }
+
+    fn seen_actor_ages_ms(&self) -> BTreeMap<String, u64> {
+        let now = Instant::now();
+        self.seen_actors_at(now);
+        self.seen_actors.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter().map(|(actor, at)| (actor.clone(), now.saturating_duration_since(*at).as_millis().min(u128::from(u64::MAX)) as u64)).collect()
+    }
 }
 
 /// `graphhelm serve --events <dir> --bind <addr>`: creates or loads the bearer token, binds
@@ -3313,6 +3320,7 @@ mod tests {
             + 4;
         let body: serde_json::Value = serde_json::from_slice(&response[body_start..]).unwrap();
         assert_eq!(body["data"]["seenActors"], serde_json::json!(["lane-a"]));
+        assert!(body["data"]["seenActorAgesMs"]["lane-a"].as_u64().unwrap() < 60_000);
         assert_eq!(body["data"]["headSequence"], 1);
         assert!(
             state_for_expiry

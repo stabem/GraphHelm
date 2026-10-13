@@ -105,6 +105,7 @@ export interface ExecutionStatus {
   wakeListeners?: string[];
   /** Actors authenticated by this Runtime in the last 15 minutes. Missing on older Runtimes. */
   seenActors?: string[];
+  seenActorAgesMs?: Record<string, number>;
   /** Who produced this run's outcomes, as declared at start (#1064). `"fixture"` means every
    * outcome came from a fixture file and no model or tool was consulted - a demonstration, and
    * the panel says so in words. `"gateway"` means a real executor was wired. Absent or `null`

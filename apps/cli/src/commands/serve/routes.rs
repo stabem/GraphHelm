@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::body::Bytes;
-use axum::extract::{Path as UrlPath, RawQuery, State};
+use axum::extract::{Path as UrlPath, Query, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use graphhelm_architect::{
@@ -6337,6 +6337,172 @@ pub(super) async fn evidence(
             }),
         )
         .output,
+    )
+}
+
+const EVIDENCE_BATCH_MAX_ITEMS: usize = 8;
+const EVIDENCE_BATCH_MAX_PLAINTEXT_BYTES: usize = 1024 * 1024;
+
+/// `GET /v1/executions/{id}/evidence?ids=<JSON array>` opens a bounded set of referenced items.
+/// The execution replay and membership scan are shared, while each item still goes through the
+/// same sealed repository and opener checks as the single-item route.
+pub(super) async fn evidence_batch(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+    Query(query): Query<BTreeMap<String, String>>,
+) -> Response {
+    if query.len() != 1 {
+        return bad_request(
+            EVIDENCE_COMMAND,
+            "the collection read requires only an ids query parameter",
+            "/ids",
+        );
+    }
+    let Some(encoded_ids) = query.get("ids") else {
+        return bad_request(
+            EVIDENCE_COMMAND,
+            "the collection read requires an ids query parameter",
+            "/ids",
+        );
+    };
+    let evidence_ids: Vec<String> = match serde_json::from_str(encoded_ids) {
+        Ok(ids) => ids,
+        Err(_) => {
+            return bad_request(
+                EVIDENCE_COMMAND,
+                "ids must be a JSON array of evidence identifiers",
+                "/ids",
+            );
+        }
+    };
+    if evidence_ids.is_empty() || evidence_ids.len() > EVIDENCE_BATCH_MAX_ITEMS {
+        return bad_request(
+            EVIDENCE_COMMAND,
+            "ids must contain between one and eight evidence identifiers",
+            "/ids",
+        );
+    }
+    let mut unique = std::collections::BTreeSet::new();
+    let mut parsed_ids = Vec::with_capacity(evidence_ids.len());
+    for value in evidence_ids {
+        let Ok(id) = EvidenceId::parse(value.clone()) else {
+            return bad_request(
+                EVIDENCE_COMMAND,
+                "an evidence id is not a valid identifier",
+                "/ids",
+            );
+        };
+        if !unique.insert(value.clone()) {
+            return bad_request(
+                EVIDENCE_COMMAND,
+                "ids must contain unique evidence identifiers",
+                "/ids",
+            );
+        }
+        parsed_ids.push((value, id));
+    }
+
+    let opener = match build_opener(state.sealing.as_deref()) {
+        Ok(opener) => opener,
+        Err(message) => return evidence_refusal(&message),
+    };
+    let events = state.events.clone();
+    let requested_execution = execution_id.clone();
+    let ids_for_lookup = parsed_ids.clone();
+    let lookup = tokio::task::spawn_blocking(move || {
+        let store = event_store(&events).map_err(|error| execution::repository_failure(&error))?;
+        let (scope, _, history) = execution::resolve_stream(&store, Some(&requested_execution))?;
+        if history.is_empty() {
+            return Err(execution::not_found());
+        }
+        let referenced = history
+            .iter()
+            .flat_map(|event| event.evidence_refs.iter())
+            .map(|reference| reference.evidence_id().clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        let eligible = ids_for_lookup
+            .iter()
+            .filter(|(_, id)| referenced.contains(id))
+            .map(|(_, id)| id.clone())
+            .collect::<Vec<_>>();
+        let mut fetched = if eligible.is_empty() {
+            Vec::new().into_iter()
+        } else {
+            store
+                .sealed_evidence_batch(&scope, &eligible)
+                .map_err(|error| execution::repository_failure(&error))?
+                .into_iter()
+        };
+        let mut reads = Vec::with_capacity(ids_for_lookup.len());
+        for (value, id) in ids_for_lookup {
+            if !referenced.contains(&id) {
+                reads.push((value, None));
+                continue;
+            }
+            match fetched.next().ok_or_else(execution::not_found)? {
+                Ok(read) => reads.push((value, Some(read))),
+                Err(EventRepositoryError::Invalid) => reads.push((value, None)),
+                Err(error) => return Err(execution::repository_failure(&error)),
+            }
+        }
+        Ok::<_, execution::Failure>((scope, reads))
+    })
+    .await;
+    let (scope, reads) = match lookup {
+        Ok(Ok(found)) => found,
+        Ok(Err(failure)) => return respond_failure(EVIDENCE_COMMAND, failure),
+        Err(_) => {
+            return respond(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Outcome::internal(EVIDENCE_COMMAND, "the evidence read task failed").output,
+            );
+        }
+    };
+
+    let mut plaintext_bytes = 0usize;
+    let mut results = Vec::with_capacity(reads.len());
+    for (evidence_id, read) in reads {
+        let Some(read) = read else {
+            results.push(serde_json::json!({ "evidenceId": evidence_id, "status": "refused", "message": "no evidence with that id is referenced by this execution's events" }));
+            continue;
+        };
+        let sealed = match read {
+            EvidenceRead::Available(sealed) => sealed,
+            EvidenceRead::Unavailable(reason) => {
+                results.push(serde_json::json!({ "evidenceId": evidence_id, "status": "refused", "message": format!("the evidence is unavailable: {reason:?}") }));
+                continue;
+            }
+        };
+        let media_type = sealed.media_type().as_str().to_owned();
+        if !renders_as_text(&media_type) {
+            results.push(serde_json::json!({ "evidenceId": evidence_id, "status": "refused", "message": "this evidence is not text or JSON; use the matching single-item reader" }));
+            continue;
+        }
+        let sensitivity = sealed.sensitivity();
+        let content_sha256 = sealed.reference().content_sha256().to_owned();
+        let plaintext = match opener.open(scope.clone(), &sealed).await {
+            Ok(plaintext) => plaintext,
+            Err(_) => return evidence_refusal("one or more evidence items could not be opened"),
+        };
+        let text = plaintext.expose(|bytes| String::from_utf8(bytes.to_vec()));
+        let Ok(text) = text else {
+            results.push(serde_json::json!({ "evidenceId": evidence_id, "status": "refused", "message": "this evidence is not valid UTF-8, so it cannot be rendered as text" }));
+            continue;
+        };
+        let item_bytes = text.len();
+        if plaintext_bytes.saturating_add(item_bytes) > EVIDENCE_BATCH_MAX_PLAINTEXT_BYTES {
+            results.push(serde_json::json!({ "evidenceId": evidence_id, "status": "single_read_required", "message": "this evidence would exceed the collection read byte limit" }));
+            continue;
+        }
+        plaintext_bytes += item_bytes;
+        results.push(serde_json::json!({
+            "evidenceId": evidence_id, "status": "available", "mediaType": media_type,
+            "sensitivity": sensitivity, "contentSha256": content_sha256, "content": text,
+        }));
+    }
+    respond(
+        StatusCode::OK,
+        Outcome::success(EVIDENCE_COMMAND, serde_json::json!({ "results": results })).output,
     )
 }
 

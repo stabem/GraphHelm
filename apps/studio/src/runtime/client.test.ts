@@ -9,6 +9,9 @@ import {
   RUNTIME_READ_TIMEOUT_MS,
   WEBMCP_ACTOR,
 } from "./client";
+import { digestOf } from "./customs";
+import { foldTaskEvents, readTaskEventRecords } from "./team-tasks";
+import type { RuntimeEvent } from "./types";
 
 /** One recorded request, so a test can assert on the exact headers a mutation sent. */
 interface Call {
@@ -247,6 +250,214 @@ describe("RuntimeClient reads", () => {
       await expect(client.readEvidence("demo", id)).rejects.toBeInstanceOf(RuntimeError);
     }
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("coalesces two waves of eight evidence reads and keeps each result bound to its ID", async () => {
+    const calls: Call[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit = {}) => {
+      const call: Call = {
+        url,
+        method: init.method ?? "GET",
+        headers: (init.headers ?? {}) as Record<string, string>,
+        body: init.body,
+      };
+      calls.push(call);
+      const parsed = new URL(url, "http://runtime");
+      const ids = JSON.parse(parsed.searchParams.get("ids") ?? "[]") as string[];
+      const results = ids.map((id) => ({
+        status: "available",
+        evidenceId: id,
+        mediaType: "text/plain",
+        sensitivity: "internal",
+        contentSha256: `hash-${id}`,
+        content: `content-${id}`,
+      }));
+      return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: { results }, diagnostics: [] }), { status: 200 });
+    }) as typeof fetch;
+    const client = new RuntimeClient("token", { fetch: fetchImpl });
+
+    for (const wave of [0, 1]) {
+      const ids = Array.from({ length: 8 }, (_, index) => `wave-${wave}-${index}`);
+      const values = await Promise.all(ids.map((id) => client.readEvidence("demo", id)));
+      expect(values.map((value) => [value.evidenceId, value.content])).toEqual(ids.map((id) => [id, `content-${id}`]));
+    }
+
+    expect(calls).toHaveLength(2);
+    expect(calls.map((call) => new URL(call.url, "http://runtime").pathname)).toEqual([
+      "/v1/executions/demo/evidence",
+      "/v1/executions/demo/evidence",
+    ]);
+  });
+
+  it("maps reordered collection results by ID and keeps an item refusal local", async () => {
+    const fetchImpl = (async (url: string) => {
+      const parsed = new URL(url, "http://runtime");
+      const ids = JSON.parse(parsed.searchParams.get("ids") ?? "[]") as string[];
+      const result = (id: string) => ({ status: "available", evidenceId: id, mediaType: "text/plain", sensitivity: "internal", contentSha256: id, content: `content-${id}` });
+      return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: { results: [
+        { evidenceId: ids[1], status: "refused", message: "not referenced" },
+        result(ids[0]),
+      ] }, diagnostics: [] }), { status: 200 });
+    }) as typeof fetch;
+    const client = new RuntimeClient("token", { fetch: fetchImpl });
+    const first = client.readEvidence("demo", "wanted-a");
+    const second = client.readEvidence("demo", "wanted-b");
+    await expect(first).resolves.toMatchObject({ evidenceId: "wanted-a", content: "content-wanted-a" });
+    await expect(second).rejects.toMatchObject({ httpStatus: 409, message: "not referenced" });
+  });
+
+  it("keeps collection queues isolated by execution and client", async () => {
+    const dispatched: Array<{ authorization: string; execution: string; ids: string[] }> = [];
+    const fetchImpl = (async (url: string, init: RequestInit = {}) => {
+      const parsed = new URL(url, "http://runtime");
+      const parts = parsed.pathname.split("/");
+      const execution = parts[3];
+      const ids = JSON.parse(parsed.searchParams.get("ids") ?? "[]") as string[];
+      dispatched.push({ authorization: new Headers(init.headers).get("Authorization") ?? "", execution, ids });
+      const results = ids.map((id) => ({ status: "available", evidenceId: id, mediaType: "text/plain", sensitivity: "internal", contentSha256: id, content: `${execution}:${id}` }));
+      return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: { results }, diagnostics: [] }), { status: 200 });
+    }) as typeof fetch;
+    const firstClient = new RuntimeClient("first-token", { fetch: fetchImpl });
+    const secondClient = new RuntimeClient("second-token", { fetch: fetchImpl });
+    const values = await Promise.all([
+      firstClient.readEvidence("run-a", "a1"), firstClient.readEvidence("run-a", "a2"),
+      firstClient.readEvidence("run-b", "b1"), firstClient.readEvidence("run-b", "b2"),
+      secondClient.readEvidence("run-a", "c1"), secondClient.readEvidence("run-a", "c2"),
+    ]);
+    expect(values.map((item) => item.content)).toEqual([
+      "run-a:a1", "run-a:a2", "run-b:b1", "run-b:b2", "run-a:c1", "run-a:c2",
+    ]);
+    expect(dispatched).toHaveLength(3);
+    expect(dispatched.map(({ authorization, execution, ids }) => `${authorization}:${execution}:${ids.length}`).sort()).toEqual([
+      "Bearer first-token:run-a:2", "Bearer first-token:run-b:2", "Bearer second-token:run-a:2",
+    ]);
+  });
+
+  it("rejects duplicate, missing and unrequested collection entries", async () => {
+    for (const results of [
+      (ids: string[]) => [
+        { status: "available", evidenceId: ids[0], mediaType: "text/plain", sensitivity: "internal", contentSha256: "a", content: "a" },
+        { status: "available", evidenceId: ids[0], mediaType: "text/plain", sensitivity: "internal", contentSha256: "a", content: "a" },
+      ],
+      (ids: string[]) => [
+        { status: "available", evidenceId: ids[0], mediaType: "text/plain", sensitivity: "internal", contentSha256: "a", content: "a" },
+      ],
+      (ids: string[]) => [
+        { status: "available", evidenceId: "unrequested", mediaType: "text/plain", sensitivity: "internal", contentSha256: "a", content: "a" },
+        { status: "available", evidenceId: ids[1], mediaType: "text/plain", sensitivity: "internal", contentSha256: "b", content: "b" },
+      ],
+    ]) {
+      const fetchImpl = (async (url: string) => {
+        const ids = JSON.parse(new URL(url, "http://runtime").searchParams.get("ids") ?? "[]") as string[];
+        return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: { results: results(ids) }, diagnostics: [] }), { status: 200 });
+      }) as typeof fetch;
+      const client = new RuntimeClient("token", { fetch: fetchImpl });
+      const reads = [client.readEvidence("demo", "first"), client.readEvidence("demo", "second")];
+      await expect(Promise.all(reads)).rejects.toBeInstanceOf(RuntimeError);
+    }
+  });
+
+  it("uses single reads only for a confirmed unsupported route or an oversized batch item", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      const parsed = new URL(url, "http://runtime");
+      calls.push(parsed.pathname);
+      const ids = parsed.searchParams.get("ids");
+      if (ids !== null) {
+        return new Response(JSON.stringify({ ok: false, command: "serve.not_found", data: null, diagnostics: [
+          { code: "GHCLI008_SERVE_NOT_FOUND", severity: "error", message: "no route matches this request", path: "/", source: "serve-cli" },
+        ] }), { status: 404 });
+      }
+      const evidenceId = decodeURIComponent(parsed.pathname.split("/").at(-1)!);
+      return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: {
+        evidenceId, mediaType: "text/plain", sensitivity: "internal", contentSha256: evidenceId, content: `single-${evidenceId}`,
+      }, diagnostics: [] }), { status: 200 });
+    }) as typeof fetch;
+    const client = new RuntimeClient("token", { fetch: fetchImpl });
+    const oldServerValues = await Promise.all([client.readEvidence("old", "old-a"), client.readEvidence("old", "old-b")]);
+    expect(oldServerValues.map((item) => item.content)).toEqual(["single-old-a", "single-old-b"]);
+    expect(calls.filter((path) => path.endsWith("/evidence"))).toHaveLength(1);
+    expect(calls.filter((path) => path.includes("/evidence/")).length).toBe(2);
+
+    const refusalFetch = (async (url: string) => {
+      const parsed = new URL(url, "http://runtime");
+      if (parsed.searchParams.has("ids")) {
+        const ids = JSON.parse(parsed.searchParams.get("ids")!) as string[];
+        return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: { results: [
+          { evidenceId: ids[0], status: "available", mediaType: "text/plain", sensitivity: "internal", contentSha256: "a", content: "a" },
+          { evidenceId: ids[1], status: "single_read_required", message: "bounded item" },
+        ] }, diagnostics: [] }), { status: 200 });
+      }
+      const evidenceId = decodeURIComponent(parsed.pathname.split("/").at(-1)!);
+      return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: {
+        evidenceId, mediaType: "text/plain", sensitivity: "internal", contentSha256: evidenceId, content: "single-large-item",
+      }, diagnostics: [] }), { status: 200 });
+    }) as typeof fetch;
+    const boundedClient = new RuntimeClient("token", { fetch: refusalFetch });
+    const bounded = await Promise.all([boundedClient.readEvidence("demo", "small"), boundedClient.readEvidence("demo", "large")]);
+    expect(bounded.map((item) => item.content)).toEqual(["a", "single-large-item"]);
+  });
+
+  it("does not use an execution 404 as proof that collection reads are unsupported", async () => {
+    const paths: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      const parsed = new URL(url, "http://runtime");
+      paths.push(parsed.pathname);
+      return new Response(JSON.stringify({ ok: false, command: "execution.not_found", data: null, diagnostics: [
+        { code: "GHE008_EXECUTION_NOT_FOUND", severity: "error", message: "execution was not found", path: "/executionId", source: "runtime" },
+      ] }), { status: 404 });
+    }) as typeof fetch;
+    const client = new RuntimeClient("token", { fetch: fetchImpl });
+    const reads = [client.readEvidence("missing", "item-a"), client.readEvidence("missing", "item-b")];
+    await expect(Promise.all(reads)).rejects.toMatchObject({ httpStatus: 404 });
+    expect(paths).toEqual(["/v1/executions/missing/evidence"]);
+  });
+
+  it("folds only task envelopes whose sealed content hash and actor match the event", async () => {
+    async function sealed(evidenceId: string, actorId: string, kind: string, issue: number) {
+      const content = JSON.stringify({
+        id: `signal-${evidenceId}`,
+        source: { type: "user", id: actorId },
+        type: kind,
+        description: JSON.stringify({
+          schema: "graphhelm-task-event-v1", taskId: `issue-${issue}`, revision: 1,
+          at: "2026-10-07T20:00:00Z", issue, lane: actorId, branch: `issue-${issue}-x`,
+        }),
+      });
+      const contentSha256 = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
+      return { evidenceId, mediaType: "application/json", sensitivity: "internal", contentSha256, content };
+    }
+    function event(sequence: number, actorId: string, evidence: Awaited<ReturnType<typeof sealed>>): RuntimeEvent {
+      return {
+        sequence, kind: "signal_recorded",
+        payload: { kind: "task.claimed", sourceId: actorId, sourceKind: "user", signalId: `signal-${evidence.evidenceId}`, envelopeSha256: evidence.contentSha256 },
+        occurredAt: null, actorId, actorType: "agent", idempotencyKey: null, eventId: `event-${sequence}`,
+        evidenceRefs: [evidence.evidenceId],
+      };
+    }
+    const valid = await sealed("valid-task", "lane-a", "task.claimed", 41);
+    const forgedActor = await sealed("forged-task", "lane-a", "task.claimed", 42);
+    const forgedHash = await sealed("bad-hash-task", "lane-a", "task.claimed", 43);
+    const fixtures = new Map([[valid.evidenceId, valid], [forgedActor.evidenceId, forgedActor], [forgedHash.evidenceId, { ...forgedHash, contentSha256: "0".repeat(64) }]]);
+    const client = new RuntimeClient("token", {
+      fetch: (async (url: string) => {
+        const parsed = new URL(url, "http://runtime");
+        const requested = parsed.searchParams.get("ids");
+        if (requested !== null) {
+          const results = (JSON.parse(requested) as string[]).map((id) => ({ status: "available", ...fixtures.get(id)! }));
+          return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: { results }, diagnostics: [] }), { status: 200 });
+        }
+        const id = decodeURIComponent(parsed.pathname.split("/").at(-1)!);
+        return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: fixtures.get(id), diagnostics: [] }), { status: 200 });
+      }) as typeof fetch,
+    });
+    const tasks = foldTaskEvents(await readTaskEventRecords({
+      executionId: "demo",
+      events: [event(1, "lane-a", valid), event(2, "other-actor", forgedActor), event(3, "lane-a", forgedHash)],
+      readEvidence: (executionId, evidenceId) => client.readEvidence(executionId, evidenceId),
+    }));
+
+    expect(tasks.map(({ issue, step }) => ({ issue, step }))).toEqual([{ issue: 41, step: "plan" }]);
   });
 
   it("reports a refused token without echoing the token", async () => {

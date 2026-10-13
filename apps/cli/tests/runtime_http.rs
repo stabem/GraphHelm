@@ -3351,6 +3351,268 @@ fn a_signal_needs_no_path_when_the_runtime_can_seal_it_and_reads_back() {
     );
 }
 
+#[test]
+fn eight_sealed_evidence_items_share_one_authenticated_collection_read() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let broker = directory.path().join("broker");
+    let key_id = "runtime-http-evidence-collection-key";
+    credential_set(&broker, &keyring, key_id, "cred_collection", "unused_route");
+    let audit = directory.path().join("read-audit.jsonl");
+    let extra = ServeExtra {
+        args: vec![
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+            "--read-audit".into(),
+            audit.to_str().unwrap().into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+    let execution = "exec-evidence-collection";
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = all_success_fixtures(directory.path());
+    let (started, start_reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "collection-start"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({ "file": graph.to_str().unwrap(), "fixtures": fixtures.to_str().unwrap(), "mode": "supervised" }),
+    );
+    assert_eq!(started, 200, "{start_reply}");
+
+    let mut expected = std::collections::BTreeMap::new();
+    for index in 0..8 {
+        let marker = format!("collection-plaintext-marker-{index}");
+        let (status, reply) = post_json(
+            &format!("{base}/v1/executions/{execution}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", &format!("collection-signal-{index}")),
+                ("X-GraphHelm-Actor", "owner-local"),
+                ("X-GraphHelm-Actor-Type", "owner"),
+            ],
+            &serde_json::json!({ "signal": {
+                "id": format!("collection-signal-{index}"),
+                "source": { "type": "node", "id": "implementation" },
+                "type": "risk_identified", "severity": "high", "description": marker,
+                "evidence": [execution], "emittedAt": "2026-08-28T00:00:00Z"
+            }}),
+        );
+        assert_eq!(status, 200, "{reply}");
+        expected.insert(format!("collection-signal-{index}"), marker);
+    }
+
+    let events_url = format!("{base}/v1/executions/{execution}/events?limit=1000");
+    let event_reply = get_json(&events_url, Some(&token));
+    let mut refs = Vec::new();
+    for event in envelope_array(&event_reply, "events", &events_url) {
+        if event["kind"]["type"] != "signal_recorded" {
+            continue;
+        }
+        let signal = &event["kind"]["data"];
+        let signal_id = signal["signalId"].as_str().unwrap_or_default();
+        let marker = expected.get(signal_id).cloned().unwrap_or_default();
+        let hash = signal["envelopeSha256"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        for reference in event["evidenceRefs"].as_array().into_iter().flatten() {
+            if let Some(evidence_id) = reference["evidenceId"].as_str() {
+                refs.push((evidence_id.to_owned(), marker.clone(), hash.clone()));
+            }
+        }
+    }
+    assert_eq!(
+        refs.len(),
+        8,
+        "every sealed signal must be referenced exactly once"
+    );
+    let encode_ids = |ids: &[String]| {
+        serde_json::to_string(ids)
+            .unwrap()
+            .bytes()
+            .map(|byte| {
+                if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') {
+                    (byte as char).to_string()
+                } else {
+                    format!("%{byte:02X}")
+                }
+            })
+            .collect::<String>()
+    };
+    let batch_ids = refs.iter().map(|(id, _, _)| id.clone()).collect::<Vec<_>>();
+    let encoded_ids = encode_ids(&batch_ids);
+    let url = format!("{base}/v1/executions/{execution}/evidence?ids={encoded_ids}");
+    let response = get_json(&url, Some(&token));
+    assert_eq!(
+        response["ok"], true,
+        "collection read must be authenticated and succeed: {response}"
+    );
+    let results = response["data"]["results"]
+        .as_array()
+        .unwrap_or_else(|| panic!("collection results are not an array: {response}"));
+    for (evidence_id, marker, hash) in refs {
+        let item = results
+            .iter()
+            .find(|item| item["evidenceId"] == evidence_id)
+            .unwrap_or_else(|| panic!("missing result for {evidence_id}: {response}"));
+        assert_eq!(item["status"], "available", "{evidence_id}: {item}");
+        let content = item["content"].as_str().unwrap_or_default();
+        assert!(
+            content.contains(&marker),
+            "content must remain bound to its event: {item}"
+        );
+        assert_eq!(
+            item["contentSha256"], hash,
+            "known sealed hash must survive: {item}"
+        );
+    }
+
+    let unreferenced = (0..)
+        .map(|index| format!("unreferenced-evidence-{index}"))
+        .find(|candidate| !batch_ids.contains(candidate))
+        .unwrap();
+    let mixed_ids = encode_ids(&[batch_ids[0].clone(), unreferenced.clone()]);
+    let mixed = get_json(
+        &format!("{base}/v1/executions/{execution}/evidence?ids={mixed_ids}"),
+        Some(&token),
+    );
+    let mixed_results = mixed["data"]["results"]
+        .as_array()
+        .unwrap_or_else(|| panic!("mixed results are not an array: {mixed}"));
+    assert_eq!(mixed_results[0]["status"], "available", "{mixed}");
+    assert_eq!(mixed_results[1]["evidenceId"], unreferenced, "{mixed}");
+    assert_eq!(
+        mixed_results[1]["status"], "refused",
+        "unreferenced evidence has an item refusal: {mixed}"
+    );
+
+    let invalid = raw_request(
+        &format!("{base}/v1/executions/{execution}/evidence?ids=%5B%22bad%2Fid%22%5D"),
+        Some(&token),
+    )
+    .unwrap();
+    assert_eq!(
+        invalid.status, 400,
+        "invalid evidence IDs are rejected before lookup: {}",
+        invalid.body
+    );
+    let nine = (0..9)
+        .map(|index| format!("item-{index}"))
+        .collect::<Vec<_>>();
+    let nine_response = raw_request(
+        &format!(
+            "{base}/v1/executions/{execution}/evidence?ids={}",
+            encode_ids(&nine)
+        ),
+        Some(&token),
+    )
+    .unwrap();
+    assert_eq!(
+        nine_response.status, 400,
+        "the request cap is eight: {}",
+        nine_response.body
+    );
+    let unauthorized = raw_request(
+        &format!(
+            "{base}/v1/executions/{execution}/evidence?ids={}",
+            encode_ids(&[batch_ids[0].clone()])
+        ),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        unauthorized.status, 401,
+        "collection reads preserve the single-route credential policy"
+    );
+
+    let other_execution = "exec-evidence-collection-other";
+    let (other_status, other_start) = post_json(
+        &format!("{base}/v1/executions/{other_execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "collection-other-start"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({ "file": graph.to_str().unwrap(), "fixtures": fixtures.to_str().unwrap(), "mode": "supervised" }),
+    );
+    assert_eq!(other_status, 200, "{other_start}");
+    let cross_execution = get_json(
+        &format!(
+            "{base}/v1/executions/{other_execution}/evidence?ids={}",
+            encode_ids(&[batch_ids[0].clone()])
+        ),
+        Some(&token),
+    );
+    assert_eq!(
+        cross_execution["data"]["results"][0]["status"], "refused",
+        "another execution's reference cannot be opened: {cross_execution}"
+    );
+
+    let large_description = "x".repeat(1_048_577);
+    let (large_status, large_signal) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        &token,
+        &[
+            ("Idempotency-Key", "collection-large-signal"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({ "signal": {
+            "id": "collection-large", "source": { "type": "node", "id": "implementation" },
+            "type": "risk_identified", "severity": "high", "description": large_description,
+            "evidence": [execution], "emittedAt": "2026-08-28T00:00:00Z"
+        }}),
+    );
+    assert_eq!(
+        large_status, 200,
+        "bounded large fixture setup failed: {large_signal}"
+    );
+    let after_large = get_json(&events_url, Some(&token));
+    let large_event = envelope_array(&after_large, "events", &events_url)
+        .iter()
+        .find(|event| event["kind"]["data"]["signalId"] == "collection-large")
+        .unwrap_or_else(|| panic!("large signal was not recorded: {after_large}"));
+    let large_id = large_event["evidenceRefs"][0]["evidenceId"]
+        .as_str()
+        .unwrap();
+    let cap = get_json(
+        &format!(
+            "{base}/v1/executions/{execution}/evidence?ids={}",
+            encode_ids(&[large_id.to_owned()])
+        ),
+        Some(&token),
+    );
+    assert_eq!(
+        cap["data"]["results"][0]["status"], "single_read_required",
+        "plaintext beyond one MiB is never truncated: {cap}"
+    );
+    assert!(
+        cap["data"]["results"][0].get("content").is_none(),
+        "oversized content must not be included: {cap}"
+    );
+
+    let audit_text = std::fs::read_to_string(audit).unwrap();
+    for marker in expected.values() {
+        assert!(
+            !audit_text.contains(marker),
+            "opened batch plaintext reached the read audit"
+        );
+    }
+}
+
 /// No new bespoke `["data"][k].as_x().unwrap()` can be added to this file silently (#760).
 ///
 /// **Two exclusions, and each of them is a false positive somebody already hit.**

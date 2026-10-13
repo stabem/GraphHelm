@@ -877,6 +877,30 @@ impl LocalEventRepository {
         self.read_sealed_evidence(scope, evidence_id)
     }
 
+    /// Read a bounded set under one store lock and one verified journal state.
+    pub fn sealed_evidence_batch(
+        &self,
+        scope: &RepositoryScope,
+        evidence_ids: &[EvidenceId],
+    ) -> Result<Vec<Result<EvidenceRead, EventRepositoryError>>, EventRepositoryError> {
+        if evidence_ids.is_empty() || evidence_ids.len() > 8 {
+            return Err(EventRepositoryError::LimitExceeded);
+        }
+        self.with_shared_lock(|| {
+            let state = self.load_state("sealed_evidence_batch")?;
+            evidence_ids
+                .iter()
+                .map(|id| {
+                    let path = self.blob_path(scope, id)?;
+                    if !state.reachable_evidence.contains(&path) {
+                        return Ok(Err(EventRepositoryError::Invalid));
+                    }
+                    Ok(self.read_sealed_evidence_reachable(scope, id))
+                })
+                .collect()
+        })
+    }
+
     pub fn active_version(
         &self,
         scope: &RepositoryScope,
@@ -2572,6 +2596,14 @@ impl LocalEventRepository {
             // ordinary wrong id would make a real corruption report unreadable.
             return Err(EventRepositoryError::Invalid);
         }
+        self.read_sealed_evidence_reachable(scope, evidence_id)
+    }
+
+    fn read_sealed_evidence_reachable(
+        &self,
+        scope: &RepositoryScope,
+        evidence_id: &EvidenceId,
+    ) -> Result<EvidenceRead, EventRepositoryError> {
         let path = self.blob_path(scope, evidence_id)?;
         let name = path
             .file_name()

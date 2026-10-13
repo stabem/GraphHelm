@@ -787,6 +787,7 @@ fn build_router(state: ServeState) -> Router {
             get(routes::journey_screen_frame),
         )
         .route("/v1/executions/{id}/events", get(routes::events))
+        .route("/v1/executions/{id}/evidence", get(routes::evidence_batch))
         .route(
             "/v1/executions/{id}/evidence/{evidenceId}",
             get(routes::evidence),
@@ -3161,18 +3162,14 @@ async fn record_read(
     // for anyone who turns --read-audit on (PR #467 review: the route is new, the middleware is
     // old, and the defect is the composition). The `content` field is replaced by its byte count;
     // the envelope's own `contentSha256` stays, so the audit still proves WHAT was served.
-    if uri.path().contains("/evidence/") {
-        if let Some(content) = recorded_body
-            .get_mut("data")
-            .and_then(|data| data.get_mut("content"))
-        {
-            let served = content.as_str().map(str::len).unwrap_or(0);
-            *content = serde_json::json!({ "redacted": "evidence plaintext", "bytes": served });
-        } else if recorded_body.is_string() {
+    if uri.path().contains("/evidence") {
+        if recorded_body.is_string() {
             // A body that did not parse as JSON is recorded as one string - which on this route
             // could still be the plaintext. Replace it wholesale rather than trusting the shape.
             recorded_body =
                 serde_json::json!({ "redacted": "evidence response", "bytes": bytes.len() });
+        } else if let Some(data) = recorded_body.get_mut("data") {
+            redact_evidence_content(data);
         }
     }
     let line = serde_json::json!({
@@ -3199,6 +3196,27 @@ async fn record_read(
         );
     }
     Response::from_parts(parts, axum::body::Body::from(bytes))
+}
+
+/// Redacts plaintext at any nesting depth under an evidence response before it reaches disk.
+fn redact_evidence_content(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(object) => {
+            if let Some(content) = object.get_mut("content") {
+                let served = content.as_str().map(str::len).unwrap_or(0);
+                *content = serde_json::json!({ "redacted": "evidence plaintext", "bytes": served });
+            }
+            for child in object.values_mut() {
+                redact_evidence_content(child);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                redact_evidence_content(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn append_audit_line(path: &Path, line: &serde_json::Value) -> std::io::Result<()> {

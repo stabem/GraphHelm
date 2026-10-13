@@ -338,6 +338,16 @@ interface RequestOptions {
   timeoutMs?: number;
 }
 
+interface PendingEvidenceRead {
+  resolve: (value: EvidenceContent) => void;
+  reject: (reason: unknown) => void;
+}
+
+interface EvidenceReadQueue {
+  entries: Map<string, PendingEvidenceRead[]>;
+  active: boolean;
+}
+
 /** A caller-minted correlation id. `crypto.randomUUID` where available; a bounded random string
  * otherwise, because a Studio served over plain http on some browsers has no `randomUUID`. This
  * is NOT a security value - it correlates a retry with its first attempt - so a weaker source is
@@ -493,6 +503,7 @@ export class RuntimeClient {
   readonly #baseUrl: string;
   readonly #fetch: typeof fetch;
   #activeRequests = new Set<AbortController>();
+  #evidenceQueues = new Map<string, EvidenceReadQueue>();
   /** Set once this Runtime has refused the route listing as fixture-only. See `listRoutes`. */
   #fixtureOnly = false;
 
@@ -2096,9 +2107,134 @@ export class RuntimeClient {
     if (typeof evidenceId !== "string" || !/^[\x21-\x2e\x30-\x39\x3b-\x5b\x5d-\x7e]{1,128}$/.test(evidenceId)) {
       throw new RuntimeError("evidenceId is not a valid Runtime evidence identifier.", 0, []);
     }
+    return new Promise<EvidenceContent>((resolve, reject) => {
+      let queue = this.#evidenceQueues.get(id);
+      if (queue === undefined) {
+        queue = { entries: new Map(), active: false };
+        this.#evidenceQueues.set(id, queue);
+      }
+      const waiters = queue.entries.get(evidenceId) ?? [];
+      waiters.push({ resolve, reject });
+      queue.entries.set(evidenceId, waiters);
+      if (!queue.active) {
+        queue.active = true;
+        queueMicrotask(() => { void this.#flushEvidenceQueue(id, queue!); });
+      }
+    });
+  }
+
+  async #flushEvidenceQueue(executionId: string, queue: EvidenceReadQueue): Promise<void> {
+    const selected = [...queue.entries.entries()].slice(0, 8);
+    for (const [id] of selected) queue.entries.delete(id);
+    const ids = selected.map(([id]) => id);
+    try {
+      let values: Map<string, EvidenceContent>;
+      const itemErrors = new Map<string, unknown>();
+      if (ids.length === 1) {
+        values = new Map([[ids[0], await this.#readEvidenceSingle(executionId, ids[0])]]);
+      } else {
+        let response: { results?: unknown };
+        try {
+          response = await this.#request<{ results?: unknown }>({
+            method: "GET",
+            path: `/v1/executions/${encodeURIComponent(executionId)}/evidence?ids=${encodeURIComponent(JSON.stringify(ids))}`,
+            timeoutMs: RUNTIME_READ_TIMEOUT_MS,
+          });
+        } catch (error) {
+          const unsupported = error instanceof RuntimeError
+            && error.httpStatus === 404
+            && error.code === "GHCLI008_SERVE_NOT_FOUND"
+            && error.diagnostics[0]?.message === "no route matches this request";
+          if (!unsupported) throw error;
+          values = new Map();
+          const legacy = await Promise.allSettled(ids.map((id) => this.#readEvidenceSingle(executionId, id)));
+          legacy.forEach((result, index) => {
+            if (result.status === "fulfilled") values.set(ids[index], result.value);
+            else itemErrors.set(ids[index], result.reason);
+          });
+          this.#resolveEvidenceReads(selected, values, itemErrors);
+          return;
+        }
+        if (!Array.isArray(response.results)) {
+          throw new RuntimeError("The Runtime returned an invalid evidence collection.", 200, []);
+        }
+        const requested = new Set(ids);
+        const received = new Map<string, EvidenceContent>();
+        for (const raw of response.results) {
+          if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+            throw new RuntimeError("The Runtime returned an invalid evidence collection.", 200, []);
+          }
+          const item = raw as Record<string, unknown>;
+          const evidenceId = item.evidenceId;
+          if (typeof evidenceId !== "string" || !requested.has(evidenceId) || received.has(evidenceId)) {
+            throw new RuntimeError("The Runtime returned duplicate or unrequested evidence.", 200, []);
+          }
+          if (item.status === "available") {
+            if (typeof item.mediaType !== "string" || typeof item.sensitivity !== "string"
+              || typeof item.contentSha256 !== "string" || typeof item.content !== "string") {
+              throw new RuntimeError("The Runtime returned malformed evidence content.", 200, []);
+            }
+            received.set(evidenceId, {
+              evidenceId,
+              mediaType: item.mediaType,
+              sensitivity: item.sensitivity,
+              contentSha256: item.contentSha256,
+              content: item.content,
+            });
+          } else if (item.status === "single_read_required") {
+            try {
+              received.set(evidenceId, await this.#readEvidenceSingle(executionId, evidenceId));
+            } catch (error) {
+              itemErrors.set(evidenceId, error);
+            }
+          } else if (item.status === "refused") {
+            const message = typeof item.message === "string" ? item.message : "The Runtime refused this evidence item.";
+            itemErrors.set(evidenceId, new RuntimeError(message, 409, [{
+              code: "GHCLI023_EVIDENCE_UNREADABLE", severity: "error", message, path: "/ids", source: "runtime",
+            }]));
+          } else {
+            throw new RuntimeError("The Runtime returned an unknown evidence result status.", 200, []);
+          }
+        }
+        if (received.size + itemErrors.size !== requested.size) {
+          throw new RuntimeError("The Runtime omitted one or more evidence results.", 200, []);
+        }
+        values = received;
+      }
+      this.#resolveEvidenceReads(selected, values, itemErrors);
+    } catch (error) {
+      for (const [, waiters] of selected) for (const waiter of waiters) waiter.reject(error);
+    } finally {
+      if (queue.entries.size > 0) {
+        queueMicrotask(() => { void this.#flushEvidenceQueue(executionId, queue); });
+      } else if (this.#evidenceQueues.get(executionId) === queue) {
+        queue.active = false;
+        this.#evidenceQueues.delete(executionId);
+      }
+    }
+  }
+
+  #resolveEvidenceReads(selected: Array<[string, PendingEvidenceRead[]]>, values: Map<string, EvidenceContent>, errors = new Map<string, unknown>()): void {
+    for (const [id, waiters] of selected) {
+      const error = errors.get(id);
+      if (error !== undefined) {
+        for (const waiter of waiters) waiter.reject(error);
+        continue;
+      }
+      const value = values.get(id);
+      if (value === undefined) {
+        const error = new RuntimeError("The Runtime omitted one or more evidence results.", 200, []);
+        for (const waiter of waiters) waiter.reject(error);
+      } else {
+        for (const waiter of waiters) waiter.resolve(value);
+      }
+    }
+  }
+
+  #readEvidenceSingle(executionId: string, evidenceId: string): Promise<EvidenceContent> {
     return this.#request<EvidenceContent>({
       method: "GET",
-      path: `/v1/executions/${encodeURIComponent(id)}/evidence/${encodeURIComponent(evidenceId)}`,
+      path: `/v1/executions/${encodeURIComponent(executionId)}/evidence/${encodeURIComponent(evidenceId)}`,
     });
   }
 

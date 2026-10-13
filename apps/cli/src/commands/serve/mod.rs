@@ -1088,6 +1088,7 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
             .insert("x-graphhelm-actor-type", HeaderValue::from_static("agent"));
         request.headers_mut().remove("x-graphhelm-agent-credential");
         request.headers_mut().remove(SHARED_SESSION_HEADER);
+        state.record_seen_actor(request.headers(), Instant::now());
         return next.run(request).await;
     }
     // Agent credentials are bearer principals in their own right. They are never accepted as

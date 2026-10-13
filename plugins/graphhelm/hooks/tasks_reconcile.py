@@ -280,7 +280,7 @@ def reconcile(args):
         reassigned = bool(assignees) and args.lane not in [person.get("login") for person in assignees]
         if result.get("state") != "CLOSED" and not reassigned:
             # The claim stays open and this lane is alive (it is stopping a turn): heartbeat it.
-            refusal = heartbeat(args.url.rstrip("/"), token, args.execution, task_id, args.repo, args.lane)
+            refusal = heartbeat(args.url.rstrip("/"), credential(args.lane), args.execution, task_id, args.repo, args.lane)
             if refusal is None:
                 beats["sent"].append(issue)
             else:

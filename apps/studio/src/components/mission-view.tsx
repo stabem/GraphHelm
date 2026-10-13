@@ -169,6 +169,9 @@ function flowStepOrder(flow: JourneyFlowView): JourneyFlowView["screens"] {
   const edges = flow.paths.main?.map((id) => flow.edges.find((edge) => edge.id === id));
   if (!edges?.length || edges.some((edge) => edge === undefined)) return flow.screens;
   const ids = [edges[0]!.from, ...edges.map((edge) => edge!.to)];
+  // A path that revisits a screen is a validation finding (flow.path_revisits_screen); id order
+  // keeps each step once instead of repeating one.
+  if (new Set(ids).size !== ids.length) return flow.screens;
   const ordered = ids.map((id) => flow.screens.find((screen) => screen.id === id));
   if (ordered.some((screen) => screen === undefined)) return flow.screens;
   return [...ordered as JourneyFlowView["screens"], ...flow.screens.filter((screen) => !ids.includes(screen.id))];

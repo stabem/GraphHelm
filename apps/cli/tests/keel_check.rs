@@ -90,9 +90,15 @@ fn run(repo: &Path, card: Option<&Path>) -> (i32, Value) {
 /// Cost: short local CLI processes, one temporary git repo and event store; no network.
 #[test]
 fn routed_blocked_check_records_the_selected_pending_draft() {
-    let repo = repository(&[("docs/notes.md", "outside scope\n")]);
+    let repo = repository(&[
+        ("docs/notes.md", "outside scope\n"),
+        ("core/events/src/journal.rs", "pub fn changed() {}\n"),
+    ]);
     let scratch = tempfile::tempdir().unwrap();
-    let scope_card = card(scratch.path(), &["src/lib.rs"]);
+    let scope_card = card(
+        scratch.path(),
+        &["src/lib.rs", "core/events/src/journal.rs"],
+    );
     let events = scratch.path().join("events");
     let keyring = scratch.path().join("keyring");
     fs::create_dir(&keyring).unwrap();
@@ -337,7 +343,10 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
             .unwrap()["path"],
         "/routeProposal/expectedHead"
     );
-    let passing_card = card(scratch.path(), &["src/lib.rs", "docs/notes.md"]);
+    let passing_card = card(
+        scratch.path(),
+        &["src/lib.rs", "docs/notes.md", "core/events/src/journal.rs"],
+    );
     assert_eq!(passing_card, scope_card);
     let (pass_code, passed) = check(Some(&binding));
     assert_eq!(pass_code, Some(0), "{passed}");
@@ -353,6 +362,47 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
     assert_eq!(status["data"]["signalsRecorded"], 2, "{status}");
     assert!(status["data"]["attentionReasons"].as_array().unwrap().iter()
         .any(|reason| reason["kind"] == "pending_draft" && reason["draft_id"] == "draft-review"), "{status}");
+
+    let (_, history) = store.read_unique_replay_stream().unwrap();
+    let recorded = history
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.kind,
+                graphhelm_protocols::EventKind::SignalRecorded(_)
+            )
+        })
+        .nth(1)
+        .unwrap();
+    let reference = recorded.evidence_refs.first().unwrap();
+    let sealed = match store
+        .sealed_evidence(&stream.scope, reference.evidence_id())
+        .unwrap()
+    {
+        graphhelm_events::EvidenceRead::Available(sealed) => sealed,
+        other => panic!("signal evidence unavailable: {other:?}"),
+    };
+    let envelope = runtime
+        .block_on(protector.open(stream.scope.clone(), &sealed))
+        .unwrap();
+    let signal: Value = envelope.expose(|bytes| serde_json::from_slice(bytes).unwrap());
+    assert_eq!(signal["type"], "keel.passed");
+    assert!(
+        signal["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| { value == "finding:keel.invariant.persistence" }),
+        "warning finding ID missing from evidence: {signal}"
+    );
+    assert!(
+        signal["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| { value == "path:core/events/src/journal.rs" }),
+        "warning finding path missing from evidence: {signal}"
+    );
 }
 
 fn run_verdict(comments: &Path, head: &str, reviewer: &str) -> (i32, Value) {

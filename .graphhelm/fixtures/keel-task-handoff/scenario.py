@@ -21,9 +21,15 @@ ADAPTERS = {
     "codex": ROOT / "plugins" / "graphhelm-codex-hooks" / "hooks" / "task_handoff.py",
 }
 EXECUTION = "keel-handoff-fixture"
+HANDOFF_PROTOCOL = "graphhelm-task-handoff-v1"
 CHILD_TIMEOUT = 10
 RUNTIME_TIMEOUT = 30
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
+
+def _handoff_actor_identity(host: str, session: str) -> str:
+    identity = f"{HANDOFF_PROTOCOL}\0actor\0{len(host)}\0{host}\0{len(session)}\0{session}"
+    return "handoff-agent-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:48]
 
 
 class ScenarioFailure(RuntimeError):
@@ -68,8 +74,12 @@ def _http(url: str, token: str, method: str = "GET", body: dict | None = None,
     }
     headers.update(extra_headers or {})
     request = urllib.request.Request(url, data=data, method=method, headers=headers)
-    with urllib.request.urlopen(request, timeout=2) as response:
-        raw = response.read(256 * 1024 + 1)
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            raw = response.read(256 * 1024 + 1)
+    except urllib.error.HTTPError as error:
+        detail = error.read(2048).decode("utf-8", errors="replace")
+        raise ScenarioFailure(f"Runtime HTTP {error.code}: {detail[:1000]}") from error
     if len(raw) > 256 * 1024:
         raise ScenarioFailure("Runtime response exceeded fixture bound")
     try:
@@ -84,13 +94,24 @@ def _http(url: str, token: str, method: str = "GET", body: dict | None = None,
 def _record_synthetic_task_evidence(base_url: str, token: str, actor: str, session: str,
                                     signal_id: str, objective: str, keel_card: str,
                                     prior_proof: str) -> dict:
+    task_document = {
+        "schema": "graphhelm-task-event-v1",
+        "taskId": signal_id,
+        "revision": 1,
+        "at": "2026-10-01T00:00:00Z",
+        "issue": 999999,
+        "lane": actor,
+        "branch": f"fixture-{actor}-synthetic-prior-work",
+        "plan": {"keelCard": keel_card, "priorProof": prior_proof},
+        "summary": objective,
+    }
     signal = {
         "id": signal_id,
-        "source": {"type": "tool", "id": actor},
-        "type": "no_progress",
+        "source": {"type": "user", "id": actor},
+        "type": "task.claimed",
         "severity": "low",
-        "description": objective,
-        "evidence": [keel_card, prior_proof],
+        "description": json.dumps(task_document, separators=(",", ":")),
+        "evidence": [prior_proof],
         "emittedAt": "2026-10-01T00:00:00Z",
     }
     return _http(
@@ -149,7 +170,7 @@ def _run_prior_task_evidence_reader(base_url: str, token_file: Path, host: str,
         "for event in events:\n"
         " kind = event.get('kind', {})\n"
         " record = kind.get('data', {}) if kind.get('type') == 'signal_recorded' else {}\n"
-        " if record.get('kind') == 'no_progress' and record.get('sourceKind') == 'tool':\n"
+        " if record.get('kind') == 'task.claimed' and record.get('sourceKind') == 'user':\n"
         "  matches.append((event, record))\n"
         "if len(matches) > 1:\n"
         " raise ValueError('Runtime contains ambiguous synthetic task evidence')\n"
@@ -178,16 +199,19 @@ def _run_prior_task_evidence_reader(base_url: str, token_file: Path, host: str,
         "envelope = json.loads(content)\n"
         "source = envelope.get('source', {})\n"
         "if (envelope.get('id') != record.get('signalId') or envelope.get('type') != record.get('kind')\n"
-        "    or source.get('type') != 'tool' or source.get('id') != record.get('sourceId')\n"
-        "    or not isinstance(envelope.get('evidence'), list) or len(envelope['evidence']) != 2):\n"
+        "    or source.get('type') != 'user' or source.get('id') != record.get('sourceId')):\n"
         " raise ValueError('sealed task evidence envelope did not match its Runtime event')\n"
-        "print(json.dumps({'priorTaskEvidence': {'recordType': kind['type'], 'signalType': record['kind'],\n"
+        "task = json.loads(envelope.get('description', '{}'))\n"
+        "if (task.get('schema') != 'graphhelm-task-event-v1' or task.get('taskId') != record.get('signalId')\n"
+        "    or task.get('lane') != actor.get('id') or not isinstance(task.get('plan'), dict)):\n"
+        " raise ValueError('sealed task record did not match its Runtime actor')\n"
+        "print(json.dumps({'priorTaskEvidence': {'recordType': event.get('kind', {}).get('type'), 'signalType': record['kind'],\n"
         " 'executionId': record['executionId'], 'signalId': record['signalId'], 'sourceKind': record['sourceKind'],\n"
         " 'sourceId': record['sourceId'], 'actor': actor, 'sequence': event['sequence'],\n"
         " 'eventEvidenceId': reference['evidenceId'], 'evidenceId': evidence['evidenceId'],\n"
         " 'envelopeSha256': record['envelopeSha256'], 'contentSha256': evidence['contentSha256'],\n"
-        " 'sealedContent': content, 'objective': envelope['description'],\n"
-        " 'keelCard': envelope['evidence'][0], 'priorProof': envelope['evidence'][1]},\n"
+        " 'sealedContent': content, 'objective': task['summary'],\n"
+        " 'keelCard': task['plan']['keelCard'], 'priorProof': task['plan']['priorProof']},\n"
         " 'executionId': execution, 'receiver': host}))\n",
         encoding="utf-8")
     env = {key: value for key, value in os.environ.items()
@@ -389,8 +413,9 @@ def run(wrong_store_only: bool = False) -> dict:
             keel_card = ("Scope: fixture-only. Promise: prior evidence remains readable after handoff. "
                          "Proof: recover this record from Runtime history.")
             prior_proof = "Synthetic prior proof: the isolated dry-run observed the fixture search path."
-            prior_signal_id = "synthetic-task-evidence-1"
-            _record_synthetic_task_evidence(base_url, token, "claude-fixture", "claude-fixture",
+            prior_signal_id = "handoff-prior-evidence-1"
+            prior_actor = _handoff_actor_identity("claude", "claude-fixture")
+            _record_synthetic_task_evidence(base_url, token, prior_actor, "claude-fixture",
                                             prior_signal_id, objective, keel_card, prior_proof)
             prior_event = _signal_event(base_url, token, prior_signal_id)
 
@@ -448,9 +473,18 @@ def run(wrong_store_only: bool = False) -> dict:
                         f"continuity assertion failed: original offer {offer_id} and its sealed evidence "
                         "are absent from the healthy empty fixture Runtime"
                     )
-                different_signal_id = "synthetic-task-evidence-different"
+                empty_setup = subprocess.run(
+                    [str(binary), "execution", "start", "--file",
+                     str(ROOT / "examples/graphs/software-feature.yaml"), "--events", str(empty),
+                     "--execution", EXECUTION, "--mode", "manual", "--held"],
+                    cwd=ROOT, env=runtime_env, capture_output=True, text=True,
+                    timeout=CHILD_TIMEOUT, creationflags=NO_WINDOW)
+                if empty_setup.returncode != 0:
+                    raise ScenarioFailure("could not initialize the different-record fixture execution")
+                different_signal_id = "handoff-other-prior-evidence-1"
                 _record_synthetic_task_evidence(
-                    empty_url, empty_token, "different-fixture", "different-fixture",
+                    empty_url, empty_token,
+                    _handoff_actor_identity("claude", "different-fixture"), "different-fixture",
                     different_signal_id,
                     "Synthetic objective: update a different fixture document.",
                     "Scope: fixture-only. Promise: a different record cannot impersonate prior work. "
@@ -559,7 +593,7 @@ def run(wrong_store_only: bool = False) -> dict:
             if (prior_task_evidence.get("objective") != objective
                     or prior_task_evidence.get("keelCard") != keel_card
                     or prior_task_evidence.get("priorProof") != prior_proof
-                    or prior_task_evidence.get("actor") != {"type": "agent", "id": "claude-fixture"}
+                    or prior_task_evidence.get("actor") != {"type": "agent", "id": prior_actor}
                     or prior_task_evidence.get("executionId") != EXECUTION
                     or prior_task_evidence.get("sequence", 0) >= _signal_event(base_url, token, offer_id).get("sequence", 0)):
                 raise ScenarioFailure("fresh Codex receiver did not recover literal pre-offer task evidence")
@@ -593,6 +627,7 @@ def run(wrong_store_only: bool = False) -> dict:
                     "pendingEvidenceReferences": _briefing_references(offered_briefing),
                     "sealedEvidenceReferences": evidence_refs,
                     "priorTaskEvidence": prior_task_evidence,
+                    "priorTaskActor": prior_actor,
                     "priorTaskEvidenceNegativeControls": {
                         "healthyEmpty": "no matching record discovered",
                         "differentSynthetic": "different record and literal content rejected as the original",

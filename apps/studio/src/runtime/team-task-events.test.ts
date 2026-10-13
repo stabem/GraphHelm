@@ -143,11 +143,15 @@ describe("foldTaskEvents", () => {
     const block = record(2, "task.review_verdict", "reviewer-one", { taskId: "issue-1002", pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-one", verdict: "BLOCK", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c1" });
     const otherApproval = record(3, "task.review_verdict", "reviewer-two", { taskId: "issue-1002", pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-two", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c2" });
     const ownApproval = record(4, "task.review_verdict", "reviewer-one", { taskId: "issue-1002", pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-one", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c3" });
-    const riskApproval = record(5, "task.review_verdict", "reviewer-two", { taskId: "issue-1002", pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-two", verdict: "APPROVE-WITH-RISK", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c4" });
-    const plainApproval = record(6, "task.review_verdict", "reviewer-one", { taskId: "issue-1002", pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-one", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c5" });
-
     expect(foldTaskEvents([opened, block, otherApproval])[0]).toMatchObject({ step: "review", blockedBy: { reviewer: "reviewer-one" } });
     expect(foldTaskEvents([opened, block, otherApproval, ownApproval])[0]).toMatchObject({ step: "merge", blockedBy: null });
+  });
+
+  it("records APPROVE-WITH-RISK and preserves it after a plain approval (#1002)", () => {
+    const opened = record(1, "task.pr_opened", "codex-1", { taskId: "issue-1002", pr: 1002, headSha: "aaaaaaaa", journeys: [], lane: "codex-1" });
+    const riskApproval = record(2, "task.review_verdict", "reviewer-two", { taskId: "issue-1002", pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-two", verdict: "APPROVE-WITH-RISK", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c4" });
+    const plainApproval = record(3, "task.review_verdict", "reviewer-one", { taskId: "issue-1002", pr: 1002, headSha: "aaaaaaaa", reviewer: "reviewer-one", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c5" });
+
     expect(foldTaskEvents([opened, riskApproval])[0]).toMatchObject({
       step: "merge", approvedWithRisk: { reviewer: "reviewer-two", commentUrl: "https://github.com/stabem/GraphHelm/pull/1002#c4" },
     });

@@ -23,7 +23,10 @@ fn graphhelm(args: &[&str], project: &Path, extra: &[&Path]) -> (i32, Value) {
     // CLI acts inherit PATH from the replay worker. Resolve this test's built CLI there,
     // so the fixture never depends on a machine-installed version.
     let mut path = std::ffi::OsString::from(
-        assert_cmd::cargo::cargo_bin!("graphhelm").parent().unwrap().as_os_str(),
+        assert_cmd::cargo::cargo_bin!("graphhelm")
+            .parent()
+            .unwrap()
+            .as_os_str(),
     );
     path.push(if cfg!(windows) { ";" } else { ":" });
     path.push(std::env::var_os("PATH").unwrap_or_default());
@@ -58,7 +61,8 @@ fn graphhelm(args: &[&str], project: &Path, extra: &[&Path]) -> (i32, Value) {
 /// Cost: four short Python/CLI/Git processes; no network, Runtime or browser.
 #[test]
 fn pinned_verdict_journey_replays_all_four_obligations() {
-    const VERDICT_FLOW: &str = include_str!("../../../.graphhelm/journeys/keel-pinned-verdict-merge.journey.yaml");
+    const VERDICT_FLOW: &str =
+        include_str!("../../../.graphhelm/journeys/keel-pinned-verdict-merge.journey.yaml");
     let dir = project("keel-pinned-verdict-merge", VERDICT_FLOW);
     let root = dir.path();
     let fixture = root.join(".graphhelm/fixtures/keel-pinned-verdict-merge");
@@ -66,9 +70,11 @@ fn pinned_verdict_journey_replays_all_four_obligations() {
     for name in ["run.py", "approval-a.json", "review-b.json"] {
         std::fs::write(
             fixture.join(name),
-            std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../.graphhelm/fixtures/keel-pinned-verdict-merge")
-                .join(name))
+            std::fs::read(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../.graphhelm/fixtures/keel-pinned-verdict-merge")
+                    .join(name),
+            )
             .unwrap(),
         )
         .unwrap();

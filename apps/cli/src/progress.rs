@@ -123,9 +123,11 @@ impl Progress {
         let bar = format!("{}{}", "#".repeat(filled), "-".repeat(WIDTH - filled));
         let name: String = current.chars().take(28).collect();
         format!(
-            "\r      {} {:>4}/{total} crates  {:<28}",
+            "\r{}{} {:>4}/{total} crates{}{:<28}",
+            " ".repeat(6),
             self.palette.command(&format!("[{bar}]")),
             shown,
+            " ".repeat(2),
             name
         )
     }
@@ -160,11 +162,11 @@ mod tests {
                 .bar(5, 10, "a")
                 .contains("[###############---------------]")
         );
-        assert!(
-            progress
-                .bar(99, 10, "a")
-                .contains("[##############################]   10/10")
-        );
+        assert!(progress.bar(99, 10, "a").contains(&format!(
+            "[{}]{}10/10",
+            "#".repeat(30),
+            " ".repeat(3)
+        )));
         assert!(progress.bar(1, 0, "a").starts_with('\r'));
     }
 

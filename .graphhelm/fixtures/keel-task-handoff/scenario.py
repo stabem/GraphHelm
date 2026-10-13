@@ -1,4 +1,4 @@
-﻿"""Exercise the Claude-to-Codex handoff adapter against an isolated Runtime."""
+"""Exercise the Claude-to-Codex handoff adapter against an isolated Runtime."""
 
 from __future__ import annotations
 

@@ -12,7 +12,7 @@ screens:
     title: A change inside the card is accepted
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: '"ok":true'}]
+    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"ok\":true"}]
     scope: unknown
   - id: refused
     title: A change outside the card is refused with its path

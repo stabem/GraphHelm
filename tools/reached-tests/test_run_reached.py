@@ -596,7 +596,7 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         self.git("commit", "-qm", text)
 
     def run_once(self, **extra):
-        plan = {"steps": [{"argv": argv, "cwd": ".", "slot": False} for argv in self.steps]}
+        plan = {"steps": [{"argv": argv, "cwd": "apps/studio" if argv[:2] == ["npx", "vitest"] else ".", "slot": False} for argv in self.steps]}
         fields = {"repo": str(self.repo), "output": str(self.output), "base": "HEAD", "head": "HEAD",
                   "root": "D:/gh", "lane": "test", "budget_seconds": 180, "allow_whole_package": None,
                   "plan": False, "min_free_gb": 0.0}
@@ -610,6 +610,7 @@ class ResumeAndPreflightContracts(unittest.TestCase):
 
     def test_vitest_exit_zero_without_report_is_incomplete_and_not_reused(self):
         self.steps = [["npx", "vitest", "run", "--maxWorkers=1"]]
+        (self.repo / "apps/studio").mkdir(parents=True)
         real_run = rr.subprocess.run
         calls = []
 
@@ -628,6 +629,36 @@ class ResumeAndPreflightContracts(unittest.TestCase):
             self.assertNotIn("reusable", report["completed"][0])
             self.run_once()
         self.assertEqual(len(calls), 2)
+
+    def test_vitest_structured_results_and_resume(self):
+        self.steps = [["npx", "vitest", "run", "--maxWorkers=1"]]
+        (self.repo / "apps/studio").mkdir(parents=True)
+        real_run = rr.subprocess.run
+        calls = []
+        sample = {"numTotalTests": 1, "numPassedTests": 1, "numFailedTests": 0,
+                  "numPendingTests": 0, "numTodoTests": 0, "numFailedTestSuites": 0,
+                  "success": True, "testResults": [{"name": "proof.test.ts", "status": "passed"}]}
+
+        def child(command, **kwargs):
+            if command[0] != "node" or "stdout" not in kwargs:
+                return real_run(command, **kwargs)
+            calls.append(command)
+            target = Path(next(arg.split("=", 1)[1] for arg in command if arg.startswith("--outputFile.json=")))
+            target.write_text(json.dumps(sample), encoding="utf-8")
+            kwargs["stdout"].write("Tests 1 passed\n")
+            return __import__("subprocess").CompletedProcess(command, 0)
+
+        with patch.object(rr, "_resolve_argv", side_effect=lambda repo, cwd, argv: ["node", "vitest", *argv[2:]]), patch.object(rr.subprocess, "run", side_effect=child):
+            code, report = self.run_once()
+            self.assertEqual((code, report["status"], report["completed"][0]["vitest"]["passed"]), (0, "passed", 1))
+            self.assertTrue(self.run_once()[1]["completed"][0]["reused"])
+            self.assertEqual(len(calls), 1)
+            sample.update(numPassedTests=0, numFailedTests=1, numFailedTestSuites=1, success=False)
+            self.assertEqual(self.run_once(resume=False)[1]["status"], "failed")
+            sample.update(numFailedTests=0, numFailedTestSuites=0, numPendingTests=1, success=True)
+            self.assertEqual(self.run_once(resume=False)[1]["status"], "incomplete")
+            sample.clear()
+            self.assertEqual(self.run_once(resume=False)[1]["status"], "incomplete")
 
     def test_matching_pass_is_reused_without_running_the_child(self):
         self.assertEqual(self.run_once()[0], 0)

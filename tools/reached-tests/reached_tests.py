@@ -343,11 +343,17 @@ def reach(changed, packages, embedded, repo=None):
             tools.add(BROWSER_OBSERVERS)
         handoff_scenario = ".graphhelm/fixtures/keel-task-handoff/scenario.py"
         handoff_readme = ".graphhelm/fixtures/keel-task-handoff/README.md"
-        if path in {handoff_scenario, handoff_readme}:
+        handoff_test = ".graphhelm/fixtures/keel-task-handoff/test_scenario.py"
+        if path in {handoff_scenario, handoff_readme, handoff_test}:
             if root is not None and (root / handoff_scenario).is_file():
                 wrong_store = " --wrong-store" if os.environ.get("GRAPHHELM_HANDOFF_WRONG_STORE") == "1" else ""
                 tools.add(f"python {handoff_scenario}{wrong_store}")
                 hit = True
+            if root is not None and (root / handoff_test).is_file():
+                tools.add(f"python {handoff_test}")
+                hit = True
+            elif root is not None and (root / handoff_scenario).is_file():
+                other.append({"path": handoff_test, "reason": "handoff adapter-selection observer is missing"})
         if path.startswith(".graphhelm/fixtures/keel-pinned-verdict-merge/"):
             target = target_of(packages, "graphhelm-cli", "journey_backend_observer")
             if target:
@@ -759,7 +765,11 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
             script, args = parts[0], parts[1:]
             if repo is None or not (Path(repo) / script).is_file():
                 raise ValueError(f"python observer script is missing: {script}")
-            if args and (script != ".graphhelm/fixtures/keel-task-handoff/scenario.py" or args != ["--wrong-store"]):
+            allowed = {
+                ".graphhelm/fixtures/keel-task-handoff/scenario.py": {(), ("--wrong-store",)},
+                ".graphhelm/fixtures/keel-task-handoff/test_scenario.py": {()},
+            }
+            if script not in allowed or tuple(args) not in allowed[script]:
                 raise ValueError(f"unrecognised python observer arguments: {tool}")
             out.append({"argv": ["python", script, *args], "cwd": ".", "slot": False})
         elif tool.startswith("node --test "):

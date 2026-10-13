@@ -16,8 +16,10 @@ import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[3]
-ADAPTER = ROOT / "plugins" / "graphhelm" / "hooks" / "task_handoff.py"
-SESSION_HOOKS = ROOT / "plugins" / "graphhelm" / "hooks"
+ADAPTERS = {
+    "claude": ROOT / "plugins" / "graphhelm" / "hooks" / "task_handoff.py",
+    "codex": ROOT / "plugins" / "graphhelm-codex-hooks" / "hooks" / "task_handoff.py",
+}
 EXECUTION = "keel-handoff-fixture"
 CHILD_TIMEOUT = 10
 RUNTIME_TIMEOUT = 30
@@ -100,6 +102,10 @@ def _run_adapter(phase: str, host: str, session: str, token_file: Path, base_url
                  offer_id: str | None = None, owned: Path | None = None) -> dict:
     if owned is None:
         raise ScenarioFailure("fixture-owned adapter directory was not supplied")
+    adapter = ADAPTERS.get(host)
+    if adapter is None:
+        raise ScenarioFailure(f"unsupported adapter host: {host}")
+    session_hooks = adapter.parent
     env = {key: value for key, value in os.environ.items()
            if not key.startswith("GRAPHHELM_")}
     env.update({
@@ -110,9 +116,9 @@ def _run_adapter(phase: str, host: str, session: str, token_file: Path, base_url
         "GRAPHHELM_SESSION_ID": session,
         "GRAPHHELM_MCP_SESSION_SOURCE": "environment",
         "GRAPHHELM_HOOK_STATE_DIR": str(owned / "hook-state"),
-        "PYTHONPATH": str(SESSION_HOOKS),
+        "PYTHONPATH": str(session_hooks),
     })
-    command = [sys.executable, str(ADAPTER), phase, "--host", host,
+    command = [sys.executable, str(adapter), phase, "--host", host,
                "--session-id", session]
     if phase == "offer":
         command.extend(["--recipient-host", recipient_host or "codex",

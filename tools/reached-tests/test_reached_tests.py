@@ -57,33 +57,36 @@ class Reach(unittest.TestCase):
         """
         scenario = ".graphhelm/fixtures/keel-task-handoff/scenario.py"
         readme = ".graphhelm/fixtures/keel-task-handoff/README.md"
+        observer = ".graphhelm/fixtures/keel-task-handoff/test_scenario.py"
         expected = f"python {scenario}"
+        expected_test = f"python {observer}"
         with tempfile.TemporaryDirectory() as repo:
             scenario_path = Path(repo, scenario)
             scenario_path.parent.mkdir(parents=True)
             scenario_path.write_text("", encoding="utf-8")
             Path(repo, readme).write_text("", encoding="utf-8")
+            Path(repo, observer).write_text("import unittest\n", encoding="utf-8")
 
             with patch.dict("os.environ", {"GRAPHHELM_HANDOFF_WRONG_STORE": ""}):
                 *_, tools, _, other = reach(scenario, repo=repo)
-            self.assertEqual(tools, [expected])
+            self.assertEqual(set(tools), {expected, expected_test})
             self.assertEqual(other, [])
 
             # Exercise the selector's executable plan as well as its legacy display mapping.
-            self.assertEqual(rt.steps(set(), set(), [], tools, repo=Path(repo)), [
-                {"argv": ["python", scenario], "cwd": ".", "slot": False},
-            ])
+            self.assertEqual({tuple(step["argv"]) for step in rt.steps(set(), set(), [], tools, repo=Path(repo))}, {
+                ("python", scenario), ("python", observer),
+            })
 
             with patch.dict("os.environ", {"GRAPHHELM_HANDOFF_WRONG_STORE": "1"}):
                 *_, wrong_store_tools, _, wrong_store_other = reach(scenario, repo=repo)
-            self.assertEqual(wrong_store_tools, [expected + " --wrong-store"])
+            self.assertEqual(set(wrong_store_tools), {expected + " --wrong-store", expected_test})
             self.assertEqual(wrong_store_other, [])
-            self.assertEqual(rt.steps(set(), set(), [], wrong_store_tools, repo=Path(repo)), [
-                {"argv": ["python", scenario, "--wrong-store"], "cwd": ".", "slot": False},
-            ])
+            self.assertEqual({tuple(step["argv"]) for step in rt.steps(set(), set(), [], wrong_store_tools, repo=Path(repo))}, {
+                ("python", scenario, "--wrong-store"), ("python", observer),
+            })
 
             *_, readme_tools, _, readme_other = reach(readme, repo=repo)
-            self.assertEqual(readme_tools, [expected])
+            self.assertEqual(set(readme_tools), {expected, expected_test})
             self.assertEqual(readme_other, [])
 
             with patch.dict("os.environ", {"GRAPHHELM_HANDOFF_WRONG_STORE": ""}):
@@ -92,13 +95,41 @@ class Reach(unittest.TestCase):
             self.assertEqual(missing_root_other, [scenario])
 
             *_, combined_tools, _, combined_other = reach(scenario, readme, repo=repo)
-            self.assertEqual(combined_tools, [expected])
+            self.assertEqual(set(combined_tools), {expected, expected_test})
             self.assertEqual(combined_other, [])
 
             scenario_path.unlink()
             *_, missing_tools, _, missing_other = reach(scenario, repo=repo)
-            self.assertEqual(missing_tools, [])
-            self.assertEqual(missing_other, [scenario])
+            self.assertNotIn(expected, missing_tools)
+            self.assertIn(expected_test, missing_tools)
+            self.assertEqual(missing_other, [])
+
+    def test_task_handoff_adapter_selection_test_is_executable_and_required(self):
+        """Select the receiver-package regression once and refuse a missing observer.
+
+        Cost: temporary files only; milliseconds, no Cargo, network, browser or Runtime.
+        """
+        fixture = ".graphhelm/fixtures/keel-task-handoff"
+        scenario = f"{fixture}/scenario.py"
+        observer = f"{fixture}/test_scenario.py"
+        readme = f"{fixture}/README.md"
+        expected = f"python {observer}"
+        with tempfile.TemporaryDirectory() as repo:
+            for relative in (scenario, observer, readme):
+                path = Path(repo, relative)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("import unittest\n", encoding="utf-8")
+
+            *_, tools, _, other = reach(scenario, observer, observer, repo=repo)
+            self.assertEqual(tools.count(expected), 1)
+            self.assertIn({"argv": ["python", observer], "cwd": ".", "slot": False},
+                          rt.steps(set(), set(), [], tools, repo=Path(repo)))
+            self.assertEqual(other, [])
+
+            Path(repo, observer).unlink()
+            *_, missing_tools, _, missing = reach(scenario, repo=repo)
+            self.assertNotIn(expected, missing_tools)
+            self.assertIn({"path": observer, "reason": "handoff adapter-selection observer is missing"}, missing)
 
     def test_shipped_plugin_diff_selects_executable_version_guard(self):
         """A shipped plugin edit must run the version guard for the selected refs.

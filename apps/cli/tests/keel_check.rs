@@ -115,8 +115,12 @@ fn keel_verdict_does_not_match_an_approval_from_another_head() {
         .arg(&comments)
         .output()
         .unwrap();
-    let reply: Value = serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|_| panic!("expected a structured verdict result, got: {}", String::from_utf8_lossy(&output.stdout)));
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
+        panic!(
+            "expected a structured verdict result, got: {}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    });
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(reply["command"], "keel.verdict");
     assert_eq!(reply["data"]["verdicts"], serde_json::json!([]));

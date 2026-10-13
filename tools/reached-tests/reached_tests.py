@@ -183,7 +183,7 @@ def embeds(repo, packages):
 
 
 def rust_path_readers(repo, packages):
-    """{repo path or basename: {package names}} for Rust embedded and literal paths."""
+    """{repo path or basename: {(package name, Rust source path)}} for file references."""
     readers = {}
     root = Path(repo).resolve()
     for package in packages:
@@ -212,9 +212,38 @@ def rust_path_readers(repo, packages):
                     path = target.relative_to(root).as_posix()
                 except ValueError:
                     continue
-                readers.setdefault(path, set()).add(package["name"])
-                readers.setdefault(Path(path).name, set()).add(package["name"])
+                reader = (package["name"], source.relative_to(root).as_posix())
+                readers.setdefault(path, set()).add(reader)
+                readers.setdefault(Path(path).name, set()).add(reader)
     return readers
+
+
+def rust_reader_target(packages, package_name, source_path):
+    """Select the executable that owns a Rust file reference, if metadata identifies it."""
+    package = next((p for p in packages if p["name"] == package_name), None)
+    if package is None:
+        return None
+    rel = source_path[len(package["dir"]) + 1:]
+    if rel.startswith("tests/"):
+        registered = package.get("bundle_paths", {}).get(source_path, set())
+        if registered:
+            target, module = sorted(registered)[0]
+            return (package_name, target, module)
+        stem = Path(rel).stem
+        return target_of(packages, package_name, stem)
+    if rel.startswith("src/"):
+        targets = package.get("targets", [])
+        owning = [t for t in targets if t["kind"] in ("lib", "bin")]
+        exact = [t for t in owning if t.get("src") == source_path]
+        if len(exact) == 1:
+            target = exact[0]
+        elif len(owning) == 1:
+            target = owning[0]
+        else:
+            return None
+        return (package_name, "lib:" + target["name"] if target["kind"] == "lib"
+                else "bin:" + target["name"], None)
+    return None
 
 
 def dependents(packages, names):
@@ -367,9 +396,15 @@ def reach(changed, packages, embedded, repo=None):
     root = Path(repo).resolve() if repo else None
     path_readers = rust_path_readers(root, packages) if root is not None else {}
     for path in changed:
+        readers = set()
         if root is not None and not path.endswith(".rs"):
             readers = path_readers.get(path, set()) | path_readers.get(Path(path).name, set())
-            whole |= readers
+            for package_name, source_path in readers:
+                target = rust_reader_target(packages, package_name, source_path)
+                if target is None:
+                    whole.add(package_name)
+                else:
+                    single.add(target)
             if readers:
                 # The path itself may be deleted, so derive package ownership from source refs.
                 hit = True
@@ -380,9 +415,9 @@ def reach(changed, packages, embedded, repo=None):
         if path.startswith("apps/studio/"):
             studio.append(path)
             continue
-        for prefix, readers in RUNTIME_READERS.items():
+        for prefix, runtime_readers in RUNTIME_READERS.items():
             if path.startswith(prefix):
-                single |= {t for t in (target_of(packages, pkg, stem) for pkg, stem in readers) if t}
+                single |= {t for t in (target_of(packages, pkg, stem) for pkg, stem in runtime_readers) if t}
                 parts = path.split("/")
                 if prefix == "extensions/" and len(parts) > 2 and parts[1] in ("builtin",):
                     validate.add("/".join(parts[:3]))
@@ -541,7 +576,8 @@ def reach(changed, packages, embedded, repo=None):
                 tools |= {python_test_tool(root, test) for test in tests}
                 hit = hit or bool(tests)
         if path in embedded:
-            whole |= embedded[path]
+            if not readers:
+                whole |= embedded[path]
             hit = True
         p = owner(packages, path)
         if p is not None:
@@ -724,6 +760,8 @@ def _group_single(single):
 def _target_flags(target):
     if isinstance(target, tuple):
         return ["--bin", target[0][4:], "--test", target[1]]
+    if target.startswith("lib:"):
+        return ["--lib"]
     return ["--bin", target[4:]] if target.startswith("bin:") else ["--test", target]
 
 

@@ -156,7 +156,7 @@ const TASK_EVENT_SCHEMA = "graphhelm-task-event-v1";
 const VERDICTS = ["APPROVE", "APPROVE-WITH-RISK", "BLOCK"] as const;
 type Verdict = typeof VERDICTS[number];
 
-export type TaskEventKind = "task.claimed" | "task.planned" | "task.released" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged" | "task.closed" | "task.critic_verdict";
+export type TaskEventKind = "task.claimed" | "task.planned" | "task.released" | "task.heartbeat" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged" | "task.closed" | "task.critic_verdict";
 
 /** #467: one round of the blind design critic, as its `task.critic_verdict` record states it. */
 export interface CriticRound { round: number; score: number; passScore: number; maxRounds: number; verdict: "pass" | "revise" | "exhausted" }
@@ -312,6 +312,10 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
       return document.lane === actorId && claimSequence !== null && reason !== null
         ? { ...base, kind, lane: actorId, claimSequence, reason } : null;
     }
+    case "task.heartbeat":
+      return document.lane === actorId && Object.keys(document).every((key) =>
+        ["schema", "taskId", "revision", "at", "lane"].includes(key))
+        ? { ...base, kind, lane: actorId } : null;
     case "task.pr_opened": {
       const repo = repository(document.repo);
       if (repo === false) return null;
@@ -423,6 +427,8 @@ export interface TaskState {
   blockedSequence?: number | null;
   /** Most recent task record written by this slice's author. */
   authorLastSequence?: number | null;
+  /** Trusted Runtime time of this open claim's newest heartbeat; never a lifecycle step. */
+  lastHeartbeatAt?: string | null;
   reviewers: string[];
   mergeSha: string | null;
   /** True only when this slice's own PR was merged, not when a sibling merge cascaded over it. */
@@ -513,7 +519,7 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
       key: "", taskId: event.taskId, branch: null, issue: null, pr: event.kind === "task.claimed" ? null : event.pr ?? null,
       lane: null, assignedBy: null, assignedReviewers: [], currentReviewer: null, headSha: null, journeys: [], plan: null,
       step: event.kind === "task.claimed" || event.kind === "task.planned" ? "plan" : "implement", blockedBy: null, reviewers: [], mergeSha: null,
-      repoUrl: null, title: null, summary: null, prTitle: null, prSummary: null, strayVerdicts: [], critic: null, recordedHeads: [], parent: null, rounds: [], clock: emptyClock(), lastSequence: 0, blockedSequence: null, authorLastSequence: null,
+      repoUrl: null, title: null, summary: null, prTitle: null, prSummary: null, strayVerdicts: [], critic: null, recordedHeads: [], parent: null, rounds: [], clock: emptyClock(), lastSequence: 0, blockedSequence: null, authorLastSequence: null, lastHeartbeatAt: null,
     };
     slices.push(slice);
     return slice;
@@ -563,6 +569,16 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
   const firstPrOpening = new Map<TaskState, number>();
   const blockersBySlice = new Map<TaskState, Map<string, { reviewer: string; headSha: string; commentUrl: string; sequence: number }>>();
   for (const event of [...records].sort((a, b) => a.sequence - b.sequence)) {
+    if (event.kind === "task.heartbeat") {
+      const claim = slices.filter((slice) => slice.taskId === event.taskId && slice.lane === event.lane
+        && slice.pr === null && slice.releasedBy === undefined && slice.claimSequence !== undefined
+        && slice.claimSequence < event.sequence && !ended.has(slice)).at(-1);
+      if (claim !== undefined && event.actorId === claim.lane) {
+        claim.lastHeartbeatAt = event.occurredAt ?? null;
+        onRoute?.(event, claim);
+      }
+      continue;
+    }
     if (event.kind === "task.released") {
       const open = slices.filter((slice) => slice.taskId === event.taskId && slice.lane === event.lane
         && slice.pr === null && slice.releasedBy === undefined && slice.claimSequence !== undefined

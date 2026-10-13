@@ -35,6 +35,7 @@ describe("foldTaskEvents", () => {
 
     const foreign = event(4, "task.heartbeat", "codex-2", { lane: "codex-2" }, 50);
     expect(foldTaskEvents([claim, first, second, foreign])[0]).toMatchObject({ lastHeartbeatAt: at(40), lastSequence: 1 });
+    expect(foldTaskEvents([foreign])).toEqual([]);
 
     const opened = event(5, "task.pr_opened", "codex-1", { pr: 1120, headSha: "aaaaaaaa", journeys: [], lane: "codex-1" }, 60);
     const block = event(6, "task.review_verdict", "codex-review", { pr: 1120, headSha: "aaaaaaaa", reviewer: "codex-review", verdict: "BLOCK", commentUrl: "https://github.com/stabem/GraphHelm/pull/1120#c1" }, 70);

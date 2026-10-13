@@ -122,9 +122,9 @@ fn batch_child_failure_keeps_prefix_and_stops_children() {
     let mut first = marker_command(&log, "first", 0);
     first.last_mut().unwrap().push_str("; exit 7");
     let second = marker_command(&log, "second", 1);
-    let request = request(&root, "lane", "batch", &first);
+    let batch_request = request(&root, "lane", "batch", &first);
     let outcome = run_admitted_slot_in_with_batch(
-        &request,
+        &batch_request,
         dir.path(),
         Some(BatchRun {
             spec: BatchSpec {
@@ -147,7 +147,7 @@ fn batch_child_failure_keeps_prefix_and_stops_children() {
     let retry_request = request(&root, "lane", "retry", &retry);
     let retry_outcome = run_admitted_slot_in(&retry_request, dir.path());
     assert!(
-        retry_outcome.output.ok,
+        retry_outcome.output.ok && retry_outcome.exit_code == 0,
         "retry child failed: {:?}",
         retry_outcome.output
     );

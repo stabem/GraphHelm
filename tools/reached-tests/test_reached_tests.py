@@ -140,7 +140,7 @@ class Reach(unittest.TestCase):
         readme = ".graphhelm/fixtures/keel-task-handoff/README.md"
         test = ".graphhelm/fixtures/keel-task-handoff/test_scenario.py"
         positive = f"python {scenario}"
-        unit = f"python -m unittest discover -s .graphhelm/fixtures/keel-task-handoff -p test_scenario.py"
+        unit = f"python {test}"
         with tempfile.TemporaryDirectory() as repo:
             for path in (scenario, readme, test):
                 target = Path(repo, path)
@@ -148,17 +148,15 @@ class Reach(unittest.TestCase):
                 target.write_text("", encoding="utf-8")
 
             *_, tools, _, other = reach(scenario, test, repo=repo)
-            self.assertEqual(tools, [unit, positive])
+            self.assertEqual(tools, [positive, unit])
             self.assertEqual(other, [])
             self.assertEqual(rt.steps(set(), set(), [], tools, repo=Path(repo)), [
-                {"argv": ["python", "-m", "unittest", "discover", "-s",
-                          ".graphhelm/fixtures/keel-task-handoff", "-p", "test_scenario.py"],
-                 "cwd": ".", "slot": False},
                 {"argv": ["python", scenario], "cwd": ".", "slot": False},
+                {"argv": ["python", test], "cwd": ".", "slot": False},
             ])
 
             *_, combined_tools, _, combined_other = reach(scenario, readme, test, repo=repo)
-            self.assertEqual(combined_tools, [unit, positive])
+            self.assertEqual(combined_tools, [positive, unit])
             self.assertEqual(combined_other, [])
 
             *_, missing_tools, _, missing_other = reach(test)

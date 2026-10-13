@@ -348,6 +348,23 @@ mod tests {
             admitted(ExecutionMode::Manual),
             MutationDecision::Rejected(RejectionReason::ManualMode)
         );
+
+        for kind in ["keel.blocked", "keel.passed"] {
+            let admitted = |mode| {
+                let projection = projection(mode, 0, 0);
+                let admitted = admit_signal(&projection, &signal(kind)).unwrap();
+                decide_mutation(&projection, &admitted)
+            };
+            assert_eq!(admitted(ExecutionMode::Autopilot), MutationDecision::Accept);
+            assert_eq!(
+                admitted(ExecutionMode::Supervised),
+                MutationDecision::RequiresApproval
+            );
+            assert_eq!(
+                admitted(ExecutionMode::Manual),
+                MutationDecision::Rejected(RejectionReason::ManualMode)
+            );
+        }
     }
 
     /// Decision 5.1/5.7: the 65th acceptance blocks for an owner decision, in every mode.

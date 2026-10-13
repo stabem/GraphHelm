@@ -2680,16 +2680,25 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
             {"op": "addEdge", "value": {"id": "z-step-to-docs", "from": "z-step", "to": "docs", "type": "evidence"}}
         ]
     });
-    let signal = serde_json::json!({
+    let mut signal = serde_json::json!({
         "id": "signal-http-governed",
         "source": {"type": "node", "id": "implement"},
-        "type": "unexpected_dependency",
+        "type": "keel.blocked",
         "severity": "high",
         "description": "the reviewed graph needs approval",
         "evidence": ["exec_feature"],
         "emittedAt": "2026-08-13T00:00:00Z",
         "proposal": draft
     });
+    let graph_version_before_proposal = get_json(
+        &format!("{base}/v1/executions/exec_feature/events?limit=1000"),
+        Some(&owner_token),
+    )["data"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["kind"]["type"] == "graph_version_published")
+        .count();
     let (signal_status, signal_reply) = post_json(
         &format!("{base}/v1/executions/exec_feature/signal"),
         credential,
@@ -2697,6 +2706,16 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
         &serde_json::json!({"signal": signal}),
     );
     assert_eq!(signal_status, 200, "{signal_reply}");
+    signal["id"] = serde_json::json!("signal-http-keel-passed");
+    signal["type"] = serde_json::json!("keel.passed");
+    signal["proposal"]["id"] = serde_json::json!("draft-http-keel-passed");
+    let (passed_status, passed_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/signal"),
+        credential,
+        &[("Idempotency-Key", "governed-signal-passed-1")],
+        &serde_json::json!({"signal": signal}),
+    );
+    assert_eq!(passed_status, 200, "{passed_reply}");
     let tail = get_json(
         &format!("{base}/v1/executions/exec_feature/events?limit=1000"),
         Some(&owner_token),
@@ -2707,6 +2726,17 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
         .iter()
         .find(|event| event["kind"]["type"] == "draft_proposed")
         .unwrap_or_else(|| panic!("no sealed draft proposal in tail: {tail}"));
+    let proposals: Vec<_> = tail["data"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["kind"]["type"] == "draft_proposed")
+        .collect();
+    assert_eq!(
+        proposals.len(),
+        2,
+        "both Keel kinds must use governed admission: {tail}"
+    );
     let proposal_digest = proposed["kind"]["data"]["proposalSha256"].as_str().unwrap();
     let draft_id = proposed["kind"]["data"]["draftId"].as_str().unwrap();
     let body = serde_json::json!({
@@ -2727,16 +2757,35 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
         pending_status["data"]["attention"], "needs_you",
         "{pending_status}"
     );
-    assert!(
-        pending_status["data"]["attentionReasons"]
-            .as_array()
-            .is_some_and(|reasons| {
-                reasons.iter().any(|reason| {
-                    reason["kind"] == "pending_draft" && reason["draft_id"] == draft_id
-                })
+    let pending_reasons = pending_status["data"]["attentionReasons"]
+        .as_array()
+        .expect("status must return attention reasons");
+    for expected_draft_id in [draft_id, "draft-http-keel-passed"] {
+        assert!(
+            pending_reasons.iter().any(|reason| {
+                reason["kind"] == "pending_draft" && reason["draft_id"] == expected_draft_id
             }),
-        "status must publish the sealed draft's real identity: {pending_status}"
+            "status must publish the sealed draft identity {expected_draft_id}: {pending_status}"
+        );
+    }
+    assert_eq!(
+        tail["data"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["kind"]["type"] == "graph_version_published")
+            .count(),
+        graph_version_before_proposal,
+        "signal admission must leave the active graph unpublished"
     );
+    for expected_draft_id in [draft_id, "draft-http-keel-passed"] {
+        assert!(
+            proposals
+                .iter()
+                .any(|event| { event["kind"]["data"]["draftId"] == expected_draft_id }),
+            "both Keel kinds must retain their pending draft identity: {tail}"
+        );
+    }
     let pending_briefing = get_json(
         &format!("{base}/v1/executions/exec_feature/briefing"),
         Some(&owner_token),

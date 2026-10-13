@@ -17,6 +17,8 @@ pub enum SignalKind {
     QuotaExhausted,
     StaleDraft,
     NoProgress,
+    KeelBlocked,
+    KeelPassed,
     /// A type outside the recognized set. Recorded as evidence, never actionable.
     Unrecognized,
 }
@@ -30,6 +32,8 @@ impl SignalKind {
             "quota_exhausted" => Self::QuotaExhausted,
             "stale_draft" => Self::StaleDraft,
             "no_progress" => Self::NoProgress,
+            "keel.blocked" => Self::KeelBlocked,
+            "keel.passed" => Self::KeelPassed,
             _ => Self::Unrecognized,
         }
     }
@@ -252,6 +256,20 @@ mod tests {
         assert_eq!(signal.severity(), SignalSeverity::High);
         assert_eq!(signal.source().kind(), SignalSourceKind::Node);
         assert!(signal.can_propose_mutation());
+    }
+
+    #[test]
+    fn keel_check_kinds_are_recognized_without_synthesizing_proposals() {
+        for (raw, expected) in [
+            ("keel.blocked", SignalKind::KeelBlocked),
+            ("keel.passed", SignalKind::KeelPassed),
+        ] {
+            let signal_envelope = envelope(raw);
+            let signal = TypedSignal::parse(&signal_envelope).expect("Keel signal is valid");
+            assert_eq!(signal.kind(), expected);
+            assert!(signal.can_propose_mutation());
+            assert!(signal.proposal().is_none());
+        }
     }
 
     /// An unrecognized type is kept as evidence, because the emitting agent is not authoritative

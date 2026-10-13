@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { digestOf } from "./customs";
 import { laneBars } from "./lane-bars";
+import { stageHealth } from "./stage-health";
 import { foldTaskEvents, parseTaskEvent, readTaskEventRecords, timingSamples, type TaskEventRecord } from "./team-tasks";
 import type { RuntimeEvent } from "./types";
 
@@ -17,6 +18,30 @@ function record(sequence: number, kind: string, actorId: string, document: Recor
 }
 
 describe("foldTaskEvents", () => {
+  it("uses claim heartbeats for activity without changing the step or starting a blocked fix", () => {
+    const taskId = "issue-1024";
+    const at = (minutes: number) => new Date(Date.parse("2026-10-13T12:00:00Z") + minutes * 60_000).toISOString();
+    const event = (sequence: number, kind: string, actor: string, fields: Record<string, unknown>, minutes: number) => ({
+      ...record(sequence, kind, actor, { taskId, ...fields }), occurredAt: at(minutes),
+    });
+    const claim = event(1, "task.claimed", "codex-1", { issue: 1024, lane: "codex-1", branch: "issue-1024-heartbeat" }, 0);
+    const first = event(2, "task.heartbeat", "codex-1", { lane: "codex-1" }, 20);
+    const second = event(3, "task.heartbeat", "codex-1", { lane: "codex-1" }, 40);
+    const state = foldTaskEvents([claim, first, second])[0];
+    expect(state).toMatchObject({ step: "implement", claimSequence: 1, authorLastSequence: 1, lastSequence: 1, lastHeartbeatAt: at(40) });
+    const lanes = laneBars([claim, first, second].map((entry) => ({ ...entry, at: entry.occurredAt })), Date.parse(at(41)), 60 * 60_000);
+    expect(stageHealth(state, lanes, [state], Date.parse(at(41)))?.flag).toBe("moving");
+    expect(lanes.find((lane) => lane.lane === "codex-1")?.lastEventAt).toBe(Date.parse(at(40)));
+
+    const foreign = event(4, "task.heartbeat", "codex-2", { lane: "codex-2" }, 50);
+    expect(foldTaskEvents([claim, first, second, foreign])[0]).toMatchObject({ lastHeartbeatAt: at(40), lastSequence: 1 });
+
+    const opened = event(5, "task.pr_opened", "codex-1", { pr: 1120, headSha: "aaaaaaaa", journeys: [], lane: "codex-1" }, 60);
+    const block = event(6, "task.review_verdict", "codex-review", { pr: 1120, headSha: "aaaaaaaa", reviewer: "codex-review", verdict: "BLOCK", commentUrl: "https://github.com/stabem/GraphHelm/pull/1120#c1" }, 70);
+    const afterBlock = event(7, "task.heartbeat", "codex-1", { lane: "codex-1" }, 80);
+    const blocked = foldTaskEvents([claim, opened, block, afterBlock])[0];
+    expect(blocked).toMatchObject({ step: "review", blockedSequence: 6, authorLastSequence: 5, lastHeartbeatAt: null });
+  });
   // Cost: a pure fold with no I/O, completed in milliseconds.
   it("recovers an issue from taskId when the claim is outside the recent page (#993)", () => {
     const tasks = foldTaskEvents([

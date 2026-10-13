@@ -756,6 +756,14 @@ fn build_router(state: ServeState) -> Router {
             post(routes::approve_journey_flow),
         )
         .route(
+            "/v1/journey-flows/{id}/drafted",
+            post(routes::journey_flow_drafted),
+        )
+        .route(
+            "/v1/journey-flows/{id}/review",
+            post(routes::journey_flow_review),
+        )
+        .route(
             "/v1/journey-flows/{id}/edges/{edge}/safe",
             post(routes::mark_journey_edge_safe),
         )
@@ -975,8 +983,9 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
     let Some((_, scoped)) = state.agent_credentials.iter().find(|(credential, scoped)| {
         constant_time_eq(presented.as_bytes(), credential.as_bytes())
             && scoped.project == execution::PROJECT
-            && request.uri().path().split('/').nth(3) == Some(scoped.execution.as_str())
-            && agent_route_allowed(&request)
+            && ((request.uri().path().split('/').nth(3) == Some(scoped.execution.as_str())
+                && agent_route_allowed(&request))
+                || journey_review_route(&request))
     }) else {
         return refused(request, unauthorized_response()).await;
     };
@@ -1091,6 +1100,18 @@ fn owner_required_response() -> Response {
         )
         .output,
     )
+}
+
+/// #1067: the two journey-review routes a scoped agent credential reaches. They are not scoped to
+/// an execution: the record goes to the project's reserved owner store, and the actor is the
+/// credential's, never a header.
+fn journey_review_route(request: &Request) -> bool {
+    let segments: Vec<_> = request.uri().path().split('/').collect();
+    request.method() == axum::http::Method::POST
+        && matches!(
+            segments.as_slice(),
+            ["", "v1", "journey-flows", _, "drafted" | "review"]
+        )
 }
 
 fn agent_route_allowed(request: &Request) -> bool {

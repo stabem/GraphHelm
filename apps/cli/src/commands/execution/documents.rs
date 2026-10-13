@@ -732,16 +732,24 @@ pub(crate) fn validate_owner_execution(
     let id = value["id"].as_str().unwrap_or("");
     // Each owner record kind owns its id prefix (#534: approvals; slice 2: safe marks).
     let squats = |prefix: &str, owner_kind: &str| id.starts_with(prefix) && kind != owner_kind;
-    let owner_kind = kind == APPROVED_KIND || kind == MARK_KIND || kind == AGENT_APPROVED_KIND;
+    let owner_kind = kind == APPROVED_KIND
+        || kind == MARK_KIND
+        || kind == AGENT_APPROVED_KIND
+        || kind == crate::commands::journey_owner::DRAFTED_KIND;
     // #1067: the one record an agent may add here is a reviewer's journey approval, whose own
     // validator binds it to its reviewer and refuses the flow's author.
-    let agent_review = kind == AGENT_APPROVED_KIND
+    let agent_review = (kind == AGENT_APPROVED_KIND
+        || kind == crate::commands::journey_owner::DRAFTED_KIND)
         && actor.actor_type() == graphhelm_protocols::PersistedActorType::Agent;
     if (reserved
         && actor.actor_type() != graphhelm_protocols::PersistedActorType::Owner
         && !agent_review)
         || squats("journey-approved-", APPROVED_KIND)
         || squats("journey-agent-approved-", AGENT_APPROVED_KIND)
+        || squats(
+            "journey-drafted-",
+            crate::commands::journey_owner::DRAFTED_KIND,
+        )
         || squats("journey-safe-", MARK_KIND)
         || (owner_kind && !reserved)
     {

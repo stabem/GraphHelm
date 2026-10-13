@@ -16,7 +16,12 @@ orchestrator calls this once per agent. The orchestrator itself never takes a la
 2. The recorder is `tools/task-record/task_record.py` in the GraphHelm clone that
    `graphhelm studio start` keeps up to date. It needs the agent session token
    `<project>/.graphhelm/events.agent.token`; never the owner's `events.token`.
-3. The owner's roster: which model for each role and how many agents at once (the kickoff skill
+3. One scoped agent credential per lane: a fresh 64-hex secret bound to the lane name in
+   `GRAPHHELM_AGENT_CREDENTIALS` (`<secret>=<lane>|project-local|<exec>`, `;`-separated) in the
+   Runtime's environment when it starts. It is the only way a lane records a journey draft or
+   approves one as a reviewer (`POST /v1/journey-flows/<id>/drafted` and `.../review`). Hand each
+   lane only its own secret, in a file, never in a prompt or a log.
+4. The owner's roster: which model for each role and how many agents at once (the kickoff skill
    asks it once). Map each model to what the host can start: in Claude Code the subagent's
    `model` (for example `opus`, `sonnet`, `haiku`); for Runtime-driven nodes the gateway route of
    that tier (`mcp__graphhelm__routes`; tier-to-route binding is ADR-041). Never start more

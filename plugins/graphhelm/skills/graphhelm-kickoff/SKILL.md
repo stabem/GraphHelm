@@ -58,10 +58,13 @@ Write the results into the project (create the repository folder if needed):
    lane with `graphhelm-team` (the roster's reviewer model) that did not write it. Its brief carries only the flow id, `docs/PROJECT.md` and the
    journey format; never your reasoning or the verdict you expect. It checks the flow against the
    doc: every screen, button and heading the doc names is there, nothing the doc puts out of scope
-   is, the risks match, and the path ends where the doc says. Then it either approves:
-   `graphhelm journey approve <id> --reviewer <its session id> --author <your session id> --checked "<the doc sections and what matched>"`,
-   or returns the gaps, you fix them, and a reviewer runs again. The CLI refuses a reviewer that
-   names itself as the author and records who approved and what was checked. Ask the owner only
+   is, the risks match, and the path ends where the doc says. Before the review, the author lane
+   records that it wrote the draft: `POST /v1/journey-flows/<id>/drafted` with its own scoped
+   agent credential. The reviewer then either approves with
+   `POST /v1/journey-flows/<id>/review` with body `{"checked": "<what it compared>"}`, authenticated with its own scoped agent credential,
+   or returns the gaps, you fix them, and a reviewer runs again. The Runtime takes the reviewer
+   from the credential and the author from the `drafted` record, refuses when either is missing
+   or they are the same lane, and records who approved and what was checked. Ask the owner only
    when the doc and the flow disagree on the product itself (two ways the product could work);
    then ask one short question with your recommendation, update the doc, and review again. The
    owner can still approve or reopen any flow in the Studio's Journey tab. Edits after approval

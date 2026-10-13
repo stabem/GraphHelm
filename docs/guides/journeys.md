@@ -164,22 +164,25 @@ graphhelm journey approve checkout --token-file .graphhelm/events.token --json
 It writes `status: approved` plus `approved: {digest, revision}` into the YAML and regenerates
 `checkout.json`. Commit both files.
 
-**A reviewer agent's approval (#1067).** A blind reviewer subagent that did not write the flow
-approves it without the owner token:
+**A reviewer agent's approval (#1067).** A blind reviewer lane approves without the owner
+token, through the Runtime, and both identities come from the store, never from an argument:
 
-```sh
-graphhelm journey approve checkout --reviewer rev-1 --author auth-1 \
-  --checked "docs/PROJECT.md Journeys: checkout screens, buttons and end match"
-```
+1. The author lane records its draft: `POST /v1/journey-flows/checkout/drafted`, authenticated
+   with its own scoped agent credential (`GRAPHHELM_AGENT_CREDENTIALS`, one per lane). The record
+   (`journey_flow_drafted`, id `journey-drafted-<32 hex>`) binds that lane to the digest the flow
+   will carry once approved; the first author recorded for a digest stays.
+2. The reviewer lane approves: `POST /v1/journey-flows/checkout/review` with body
+   `{"checked": "docs/PROJECT.md Journeys: checkout screens, buttons and end match"}`, under its
+   own scoped credential.
 
-It refuses a reviewer equal to the author, an empty `--checked`, and `--reviewer` with
-`--token-file`. The record is signal kind `journey_flow_agent_approved` (id
-`journey-agent-approved-<32 hex>`) in the same reserved execution `graphhelm-owner`, appended by
-an agent actor whose id is the reviewer; its description carries `reviewer`, `author` and
-`checked`. The Runtime admits that kind only from an agent actor equal to `reviewer`, never with
-`reviewer` equal to `author`. `validate` and `replay` accept either record. Limit: the author id
-is what the caller declares; the record makes a self-approval a visible, attributable lie, not an
-impossible one.
+The Runtime takes the reviewer from the credential and the author from the `drafted` record of
+the current digest. It refuses, writing nothing, when no author is recorded, when the reviewer is
+that author, when `checked` is empty, and for the owner token or the shared agent session token.
+The approval record is `journey_flow_agent_approved` (id `journey-agent-approved-<32 hex>`) in
+`graphhelm-owner`, appended as the reviewer, carrying `reviewer`, `author` and `checked`. The
+generic signal route refuses both reserved kinds. `validate` and `replay` accept an owner record
+or a reviewer record. Any edit after the draft record changes the digest, so the author records
+again and the review runs on what was actually reviewed.
 
 **The owner's record (#534).** Approving needs the owner's token: `--token-file` with the
 project's `.graphhelm/events.token` (made by `graphhelm init`). Without it, or with another

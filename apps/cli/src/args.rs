@@ -491,18 +491,8 @@ pub struct JourneyApproveArgs {
     #[arg(long)]
     pub project: Option<PathBuf>,
     /// The project's owner token (`.graphhelm/events.token`): the owner's approval (#534).
-    #[arg(long = "token-file", conflicts_with = "reviewer")]
+    #[arg(long = "token-file")]
     pub token_file: Option<PathBuf>,
-    /// #1067: approve as a blind reviewer agent instead of the owner. The reviewer's session id;
-    /// it must differ from `--author`. Needs `--author` and `--checked`.
-    #[arg(long, requires_all = ["author", "checked"])]
-    pub reviewer: Option<String>,
-    /// The session id that wrote the flow (never the reviewer).
-    #[arg(long, requires = "reviewer")]
-    pub author: Option<String>,
-    /// What the reviewer checked the flow against (for example `docs/PROJECT.md` sections).
-    #[arg(long, requires = "reviewer")]
-    pub checked: Option<String>,
 }
 
 #[derive(Debug, Args)]

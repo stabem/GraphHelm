@@ -2074,6 +2074,70 @@ pub(super) async fn approve_journey_flow(
     .await
 }
 
+/// #1067: the authenticated agent behind a journey-review request: the actor the scoped agent
+/// credential names (the middleware copies it into the headers) and that credential verified.
+/// `None` for the owner token, the shared agent session token, or anything else.
+fn scoped_agent(state: &ServeState, headers: &HeaderMap) -> Option<String> {
+    let id = headers.get("x-graphhelm-actor")?.to_str().ok()?;
+    let actor = PersistedActor::new(
+        PersistedActorType::Agent,
+        graphhelm_protocols::ActorId::parse(id).ok()?,
+    );
+    super::verify_agent_credential(state, headers, &actor).then(|| id.to_owned())
+}
+
+/// `POST /v1/journey-flows/{id}/drafted` (#1067): the flow's author records that it wrote the
+/// flow at its current digest. Scoped agent credential only; the first author of a digest stays.
+pub(super) async fn journey_flow_drafted(
+    State(state): State<ServeState>,
+    UrlPath(id): UrlPath<String>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(author) = scoped_agent(&state, &headers) else {
+        return bad_request(
+            "journey.drafted",
+            "recording a flow's author requires a registered scoped agent credential",
+            "/actor",
+        );
+    };
+    flow_command(state, "journey.drafted", move |project| {
+        crate::commands::journey_flow::record_drafted(&id, project.to_path_buf(), &author)
+    })
+    .await
+}
+
+/// `POST /v1/journey-flows/{id}/review` (#1067): a blind reviewer approves a flow. The reviewer is
+/// the scoped credential's actor and the author is the store's `drafted` record for the flow's
+/// current digest; either missing, or the two equal, refuses and writes nothing. Body
+/// `{"checked": "<what was compared>"}`.
+pub(super) async fn journey_flow_review(
+    State(state): State<ServeState>,
+    UrlPath(id): UrlPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let Some(reviewer) = scoped_agent(&state, &headers) else {
+        return bad_request(
+            "journey.review",
+            "a reviewer approval requires a registered scoped agent credential",
+            "/actor",
+        );
+    };
+    let checked = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|value| value["checked"].as_str().map(str::to_owned))
+        .unwrap_or_default();
+    flow_command(state, "journey.review", move |project| {
+        crate::commands::journey_flow::review_approve(
+            &id,
+            project.to_path_buf(),
+            &reviewer,
+            &checked,
+        )
+    })
+    .await
+}
+
 /// `POST /v1/journey-flows/{id}/edges/{edge}/safe` (#518): exactly `graphhelm journey mark-safe
 /// <id> <edge>` on the Runtime's `--project` - the Studio's "Mark safe" on a skipped step.
 /// Findings refuse with 400 and write nothing. Owner credential only: the agent session token's

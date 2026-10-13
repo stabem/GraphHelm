@@ -69,6 +69,78 @@ pub(crate) fn agent_signal_id(flow: &str, digest: &str) -> String {
     format!("journey-agent-approved-{}", &hex::encode(hash)[..32])
 }
 
+/// #1067: the signal kind that names a draft's author, bound to the draft's digest.
+pub(crate) const DRAFTED_KIND: &str = "journey_flow_drafted";
+/// The description protocol of that signal.
+pub(crate) const DRAFTED_PROTOCOL: &str = "graphhelm-journey-drafted-v1";
+
+/// `journey-drafted-<32 hex>`: one id per flow and digest, so the first author recorded stays.
+pub(crate) fn drafted_signal_id(flow: &str, digest: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(format!("drafted\n{flow}\n{digest}").as_bytes());
+    format!("journey-drafted-{}", &hex::encode(hash)[..32])
+}
+
+/// The author recorded for `flow` at `digest`: the agent actor of its `drafted` record.
+pub(crate) fn drafted_by(
+    project: &Path,
+    flow: &str,
+    digest: &str,
+) -> Result<Option<String>, String> {
+    let wanted = drafted_signal_id(flow, digest);
+    Ok(owner_history(project)?.iter().find_map(|event| {
+        (event.actor.actor_type() == PersistedActorType::Agent
+            && matches!(&event.kind, EventKind::SignalRecorded(signal)
+                if signal.signal_id.as_str() == wanted && signal.kind.as_str() == DRAFTED_KIND))
+        .then(|| event.actor.id().as_str().to_owned())
+    }))
+}
+
+/// Records `author` (an authenticated agent) as the author of `flow` at `digest`, unless an
+/// author is already recorded; returns the recorded author.
+pub(crate) fn record_drafted(
+    project: &Path,
+    flow: &str,
+    digest: &str,
+    author: &str,
+) -> Result<String, String> {
+    if let Some(existing) = drafted_by(project, flow, digest)? {
+        return Ok(existing);
+    }
+    let actor = graphhelm_protocols::PersistedActor::new(
+        PersistedActorType::Agent,
+        graphhelm_protocols::ActorId::parse(author)
+            .map_err(|_| "the author is not a valid actor id".to_string())?,
+    );
+    let description = serde_json::json!({
+        "protocol": DRAFTED_PROTOCOL, "flowId": flow, "digest": digest,
+    });
+    append_as(
+        project,
+        &drafted_signal_id(flow, digest),
+        DRAFTED_KIND,
+        &description,
+        flow,
+        actor,
+        author,
+    )?;
+    Ok(author.to_owned())
+}
+
+fn owner_history(project: &Path) -> Result<Vec<graphhelm_protocols::EventEnvelope>, String> {
+    let events = store(project);
+    if !events.exists() {
+        return Err("the project's owner record store (.graphhelm/events) is missing".into());
+    }
+    let repository = super::event_store(&events)
+        .map_err(|_| "the owner record store could not be opened".to_string())?;
+    Ok(
+        execution::resolve_stream(&repository, Some(OWNER_EXECUTION))
+            .map(|(_, _, history)| history)
+            .unwrap_or_default(),
+    )
+}
+
 /// Who approved a flow (#1067): the owner, or a reviewer agent that is not the flow's author.
 #[derive(Debug, Clone)]
 pub(crate) enum Approver {
@@ -120,17 +192,7 @@ pub(crate) fn approved(project: &Path, flow: &str, digest: &str) -> Result<bool,
 }
 
 fn has_agent(project: &Path, wanted: &str) -> Result<bool, String> {
-    let events = store(project);
-    if !events.exists() {
-        return Err("the project's owner record store (.graphhelm/events) is missing".into());
-    }
-    let repository = super::event_store(&events)
-        .map_err(|_| "the owner record store could not be opened".to_string())?;
-    let history = match execution::resolve_stream(&repository, Some(OWNER_EXECUTION)) {
-        Ok((_, _, history)) => history,
-        Err(_) => return Ok(false),
-    };
-    Ok(history.iter().any(|event| {
+    Ok(owner_history(project)?.iter().any(|event| {
         event.actor.actor_type() == PersistedActorType::Agent
             && matches!(&event.kind, EventKind::SignalRecorded(signal)
                 if signal.signal_id.as_str() == wanted
@@ -297,15 +359,15 @@ fn append_as(
         &uuid::Uuid::new_v4().simple().to_string()[..8]
     ))
     .map_err(|_| "the record id is not a valid identifier".to_string())?;
-    execution::signal::execute(
+    // #1067: the reviewer and draft records are reserved for these internal doors, whose actor
+    // the Runtime authenticated; the generic signal route refuses both kinds.
+    execution::signal::execute_reserved(
         &events,
-        Some(OWNER_EXECUTION),
+        OWNER_EXECUTION,
         envelope.to_string().as_bytes(),
         Some(&records.join(format!("{id}.json"))),
         actor,
         key,
-        None,
-        &[],
     )
     .map(|_| ())
     .map_err(|failure| format!("the owner record was not appended: {}", failure.message))

@@ -4169,6 +4169,7 @@ fn a_previous_cycles_receipt_never_claims_a_new_waiting() {
 fn an_unreadable_store_at_the_deadline_stays_a_timeout_and_says_unreadable() {
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
+    let causal_transcript = directory.path().join("wake-wait-startup-transcript");
     let execution = "exec-88-unreadable";
     start_execution(&events, directory.path(), execution);
     let logical_rendezvous_id = "rvz-88-unread";
@@ -4180,13 +4181,36 @@ fn an_unreadable_store_at_the_deadline_stays_a_timeout_and_says_unreadable() {
         head(&events),
         Some(RACING_WAKE_LEASE_SECONDS),
     );
-    let mut child = spawn_wake_wait(
+    let mut child = spawn_wake_wait_with_env(
         &events,
         execution,
         "session-sleeper-1",
         logical_rendezvous_id,
+        &[(
+            TEST_WAKE_CAUSAL_TRANSCRIPT_ENV,
+            causal_transcript.to_str().unwrap(),
+        )],
     );
     wait_for_pipe(&mut child, &rendezvous_id);
+    let deadline = Instant::now() + scaled(Duration::from_secs(PIPE_STARTUP_HANG_CATCHER_SECONDS));
+    loop {
+        let transcript = std::fs::read_to_string(&causal_transcript).unwrap_or_default();
+        if transcript
+            .lines()
+            .any(|mark| mark == "startup-lease-validated")
+        {
+            break;
+        }
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "sidecar exited before lease validation"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "sidecar did not finish lease validation"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
     std::fs::remove_dir_all(&events)
         .expect("the sidecar dropped its handle before blocking, so the store is deletable");
 

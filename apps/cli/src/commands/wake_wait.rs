@@ -527,6 +527,7 @@ fn wait_validated(
             }
         };
         validate()?;
+        record_test_causal_mark("startup-lease-validated");
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
             return Ok(WaitEnd::TimedOut);

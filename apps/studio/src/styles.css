@@ -440,6 +440,9 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   overflow-x: hidden;
   overscroll-behavior: contain;
   min-height: 0;
+  /* #1155: a grid row is as wide as its widest content unless told otherwise; a long path or run
+     title widened the rows past the rail, and selecting a run scrolled the hidden overflow in. */
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .project-head {
@@ -488,6 +491,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 
 .project-runs {
   display: grid;
+  grid-template-columns: minmax(0, 1fr); /* #1155: rows never wider than the rail */
   gap: 3px;
   margin: 3px 0 10px 20px;
 }
@@ -1858,7 +1862,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .run-row.on { background: var(--high); }
 .run-row .run { min-width: 0; border-radius: 10px; padding: 10px 7px; }
 .run-row .run-id { font-size: 12px; }
-.run-row .run-when { font-size: 11px; margin-top: 5px; white-space: nowrap; }
+.run-row .run-when { font-size: 11px; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .run-row .avatar { width: 28px; height: 28px; }
 .run-remove { position: absolute; top: 50%; right: 0; transform: translateY(-50%); background: transparent; color: var(--faint); opacity: 0; }
 .run-row:hover .run-remove, .run-row:focus-within .run-remove { opacity: 1; }

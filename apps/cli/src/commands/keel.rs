@@ -538,12 +538,10 @@ fn submit_route(
         format!("task:{}", binding.task),
         format!("node:{}", binding.node),
     ];
-    if refused {
-        for finding in findings.iter().filter(|finding| finding.blocking) {
-            evidence.push(format!("finding:{}", finding.rule));
-            if let Some(path) = &finding.path {
-                evidence.push(format!("path:{path}"));
-            }
+    for finding in findings {
+        evidence.push(format!("finding:{}", finding.rule));
+        if let Some(path) = &finding.path {
+            evidence.push(format!("path:{path}"));
         }
     }
     let signal = serde_json::json!({

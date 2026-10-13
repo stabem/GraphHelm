@@ -49,13 +49,15 @@ describe("SlotPoll", () => {
   });
   it("retains a known queue when a later read fails", async () => {
     const known = parseSlots({ slots: [{ root: "D:/gh", holder: { lane: "a", heldSeconds: 1 }, waiting: [] }] });
-    const client = { workspaceSlots: vi.fn().mockResolvedValueOnce(known).mockRejectedValueOnce(Object.assign(new Error("offline"), { status: 503 })) };
+    const client = { workspaceSlots: vi.fn().mockResolvedValueOnce(known).mockRejectedValue(Object.assign(new Error("offline"), { status: 503 })) };
     vi.useFakeTimers();
     render(<SlotPoll client={client}>{(s) => <span>{s.some((slot) => slot.ok && slot.holder?.lane === "a") ? "Building" : "clear"}</span>}</SlotPoll>);
     await flush();
     expect(screen.getByText("Building")).toBeTruthy();
     await act(async () => { vi.advanceTimersByTime(10_000); await Promise.resolve(); await Promise.resolve(); });
     expect(screen.getByText("Building")).toBeTruthy();
+    await act(async () => { vi.advanceTimersByTime(20_000); await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByText("clear")).toBeTruthy();
     vi.useRealTimers();
   });
   it("clears old data immediately when the client changes and ignores its late reply", async () => {

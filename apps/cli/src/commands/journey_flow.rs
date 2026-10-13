@@ -1374,7 +1374,7 @@ fn draft_digest(command: &'static str, id: &str, project: &Path) -> Result<Strin
     Ok(approval_digest_of(&flow))
 }
 
-/// `POST /v1/journey-flows/{id}/drafted` (#1067): `author` (an authenticated scoped agent) wrote
+/// `POST /v1/journey-flows/{id}/drafted` (#1130): `author` (an authenticated scoped agent) wrote
 /// this draft. The first author recorded for a digest stays; the reply names it.
 pub(crate) fn record_drafted(id: &str, project: std::path::PathBuf, author: &str) -> Outcome {
     const COMMAND: &str = "journey.drafted";
@@ -1391,7 +1391,7 @@ pub(crate) fn record_drafted(id: &str, project: std::path::PathBuf, author: &str
     }
 }
 
-/// `POST /v1/journey-flows/{id}/review` (#1067): `reviewer` (an authenticated scoped agent)
+/// `POST /v1/journey-flows/{id}/review` (#1130): `reviewer` (an authenticated scoped agent)
 /// approves the draft. Fails closed: no `drafted` record for this exact digest, or the reviewer
 /// is that author, refuses and writes nothing.
 pub(crate) fn review_approve(
@@ -1422,7 +1422,7 @@ pub(crate) fn review_approve(
     approve_as(id, project, &approver)
 }
 
-/// The approval by `approver`: the owner, or a reviewer agent that is not the author (#1067).
+/// The approval by `approver`: the owner, or a reviewer agent that is not the author (#1130).
 pub(crate) fn approve_as(
     id: &str,
     project: std::path::PathBuf,

@@ -55,7 +55,7 @@ pub(crate) fn mark_signal_id(flow: &str, edge: &str, digest: &str) -> String {
     format!("journey-safe-{}", &hex::encode(hash)[..32])
 }
 
-/// #1067: the signal kind of a blind reviewer agent's journey approval.
+/// #1130: the signal kind of a blind reviewer agent's journey approval.
 pub(crate) const AGENT_APPROVED_KIND: &str = "journey_flow_agent_approved";
 /// The description protocol of that signal.
 pub(crate) const AGENT_APPROVED_PROTOCOL: &str = "graphhelm-journey-agent-approval-v1";
@@ -69,7 +69,7 @@ pub(crate) fn agent_signal_id(flow: &str, digest: &str) -> String {
     format!("journey-agent-approved-{}", &hex::encode(hash)[..32])
 }
 
-/// #1067: the signal kind that names a draft's author, bound to the draft's digest.
+/// #1130: the signal kind that names a draft's author, bound to the draft's digest.
 pub(crate) const DRAFTED_KIND: &str = "journey_flow_drafted";
 /// The description protocol of that signal.
 pub(crate) const DRAFTED_PROTOCOL: &str = "graphhelm-journey-drafted-v1";
@@ -141,7 +141,7 @@ fn owner_history(project: &Path) -> Result<Vec<graphhelm_protocols::EventEnvelop
     )
 }
 
-/// Who approved a flow (#1067): the owner, or a reviewer agent that is not the flow's author.
+/// Who approved a flow (#1130): the owner, or a reviewer agent that is not the flow's author.
 #[derive(Debug, Clone)]
 pub(crate) enum Approver {
     Owner,
@@ -184,7 +184,7 @@ impl Approver {
 }
 
 /// Whether the project's owner store holds an approval of `flow` at exactly `digest`: the
-/// owner's, or a reviewer agent's (#1067). `Err` when the store is absent or unreadable: the
+/// owner's, or a reviewer agent's (#1130). `Err` when the store is absent or unreadable: the
 /// approval cannot be verified.
 pub(crate) fn approved(project: &Path, flow: &str, digest: &str) -> Result<bool, String> {
     Ok(has(project, &signal_id(flow, digest), APPROVED_KIND)?
@@ -237,7 +237,7 @@ pub(crate) fn record(
 }
 
 /// Appends `approver`'s approval of `flow` at `digest`. An agent's record names the reviewer, the
-/// flow's author and what the reviewer checked, and is appended as that reviewer (#1067).
+/// flow's author and what the reviewer checked, and is appended as that reviewer (#1130).
 pub(crate) fn record_as(
     project: &Path,
     flow: &str,
@@ -359,7 +359,7 @@ fn append_as(
         &uuid::Uuid::new_v4().simple().to_string()[..8]
     ))
     .map_err(|_| "the record id is not a valid identifier".to_string())?;
-    // #1067: the reviewer and draft records are reserved for these internal doors, whose actor
+    // #1130: the reviewer and draft records are reserved for these internal doors, whose actor
     // the Runtime authenticated; the generic signal route refuses both kinds.
     execution::signal::execute_reserved(
         &events,

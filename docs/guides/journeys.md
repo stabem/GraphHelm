@@ -164,7 +164,7 @@ graphhelm journey approve checkout --token-file .graphhelm/events.token --json
 It writes `status: approved` plus `approved: {digest, revision}` into the YAML and regenerates
 `checkout.json`. Commit both files.
 
-**A reviewer agent's approval (#1067).** A blind reviewer lane approves without the owner
+**A reviewer agent's approval (#1130).** A blind reviewer lane approves without the owner
 token, through the Runtime, and both identities come from the store, never from an argument:
 
 1. The author lane records its draft: `POST /v1/journey-flows/checkout/drafted`, authenticated

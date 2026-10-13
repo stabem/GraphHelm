@@ -736,7 +736,7 @@ pub(crate) fn validate_owner_execution(
         || kind == MARK_KIND
         || kind == AGENT_APPROVED_KIND
         || kind == crate::commands::journey_owner::DRAFTED_KIND;
-    // #1067: the one record an agent may add here is a reviewer's journey approval, whose own
+    // #1130: the one record an agent may add here is a reviewer's journey approval, whose own
     // validator binds it to its reviewer and refuses the flow's author.
     let agent_review = (kind == AGENT_APPROVED_KIND
         || kind == crate::commands::journey_owner::DRAFTED_KIND)
@@ -857,7 +857,7 @@ fn validate_journey_approval(
     Ok(())
 }
 
-/// #1067: a reviewer agent's journey approval. Recorded by an agent actor that is the named
+/// #1130: a reviewer agent's journey approval. Recorded by an agent actor that is the named
 /// reviewer, never the flow's author, with a bounded note of what it checked.
 fn validate_journey_agent_approval(
     value: &serde_json::Value,
@@ -1820,7 +1820,7 @@ mod journey_approval_tests {
         PersistedActor::new(kind, ActorId::parse(id).unwrap())
     }
 
-    /// #1067: a reviewer agent's approval is admitted only from that reviewer, never when it names
+    /// #1130: a reviewer agent's approval is admitted only from that reviewer, never when it names
     /// itself as the author, and only with a note of what it checked.
     #[test]
     fn a_reviewer_agent_approval_binds_its_reviewer_and_refuses_the_author() {

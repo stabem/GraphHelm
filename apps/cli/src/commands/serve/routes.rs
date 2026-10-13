@@ -2074,7 +2074,7 @@ pub(super) async fn approve_journey_flow(
     .await
 }
 
-/// #1067: the authenticated agent behind a journey-review request: the actor the scoped agent
+/// #1130: the authenticated agent behind a journey-review request: the actor the scoped agent
 /// credential names (the middleware copies it into the headers) and that credential verified.
 /// `None` for the owner token, the shared agent session token, or anything else.
 fn scoped_agent(state: &ServeState, headers: &HeaderMap) -> Option<String> {
@@ -2086,7 +2086,7 @@ fn scoped_agent(state: &ServeState, headers: &HeaderMap) -> Option<String> {
     super::verify_agent_credential(state, headers, &actor).then(|| id.to_owned())
 }
 
-/// `POST /v1/journey-flows/{id}/drafted` (#1067): the flow's author records that it wrote the
+/// `POST /v1/journey-flows/{id}/drafted` (#1130): the flow's author records that it wrote the
 /// flow at its current digest. Scoped agent credential only; the first author of a digest stays.
 pub(super) async fn journey_flow_drafted(
     State(state): State<ServeState>,
@@ -2106,7 +2106,7 @@ pub(super) async fn journey_flow_drafted(
     .await
 }
 
-/// `POST /v1/journey-flows/{id}/review` (#1067): a blind reviewer approves a flow. The reviewer is
+/// `POST /v1/journey-flows/{id}/review` (#1130): a blind reviewer approves a flow. The reviewer is
 /// the scoped credential's actor and the author is the store's `drafted` record for the flow's
 /// current digest; either missing, or the two equal, refuses and writes nothing. Body
 /// `{"checked": "<what was compared>"}`.

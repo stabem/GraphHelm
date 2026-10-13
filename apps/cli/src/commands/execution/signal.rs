@@ -250,7 +250,7 @@ pub(crate) fn execute_authenticated(
     )
 }
 
-/// #1067: the journey-review doors' path. Their actor is the one the Runtime authenticated (a
+/// #1130: the journey-review doors' path. Their actor is the one the Runtime authenticated (a
 /// scoped agent credential) or the owner, so reserved kinds the public transport refuses pass.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute_reserved(

@@ -22,7 +22,7 @@ const EVENTS_KEY: &str = "010101010101010101010101010101010101010101010101010101
 const KEY_ID: &str = "owner-key";
 const RUN: &str = "flows-surfaces";
 const AGENT_CREDENTIAL: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-/// #1067: a second scoped lane, the blind reviewer.
+/// #1130: a second scoped lane, the blind reviewer.
 const REVIEWER_CREDENTIAL: &str =
     "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 const EXAMPLE: &str = include_str!("fixtures/journey_flow/checkout.journey.yaml");
@@ -822,7 +822,7 @@ fn only_the_owner_sets_up_the_observer_and_nothing_reaches_npm() {
     untouched();
 }
 
-/// #1067 (`keel.invariant.permissions`): a reviewer agent approves a draft only as the actor its
+/// #1130 (`keel.invariant.permissions`): a reviewer agent approves a draft only as the actor its
 /// scoped credential names, and only when the store's `drafted` record names a different author
 /// for that exact digest. Defects named: an author approving its own flow by declaring another
 /// reviewer name, an approval with no recorded author, the shared agent session token reaching

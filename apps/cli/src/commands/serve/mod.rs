@@ -1102,7 +1102,7 @@ fn owner_required_response() -> Response {
     )
 }
 
-/// #1067: the two journey-review routes a scoped agent credential reaches. They are not scoped to
+/// #1130: the two journey-review routes a scoped agent credential reaches. They are not scoped to
 /// an execution: the record goes to the project's reserved owner store, and the actor is the
 /// credential's, never a header.
 fn journey_review_route(request: &Request) -> bool {

@@ -418,6 +418,82 @@ fn release_ends_heartbeat_eligibility_for_its_claim() {
 }
 
 #[test]
+fn another_task_does_not_end_the_claim_or_reset_its_cooldown() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let claim = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-main-claim",
+        "task.claimed",
+        ACTOR,
+        &as_actor(package_fixture("claimed")),
+    );
+    assert_eq!(claim["ok"], true, "{claim}");
+    let mut other_claim = as_actor(package_fixture("claimed"));
+    other_claim["taskId"] = json!("other-task");
+    let other = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-other-claim",
+        "task.claimed",
+        ACTOR,
+        &other_claim,
+    );
+    assert_eq!(other["ok"], true, "{other}");
+    let mut other_pr = as_actor(package_fixture("pr-opened"));
+    other_pr["taskId"] = json!("other-task");
+    let pr = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-other-pr",
+        "task.pr_opened",
+        ACTOR,
+        &other_pr,
+    );
+    assert_eq!(pr["ok"], true, "{pr}");
+    let mut heartbeat = as_actor(package_fixture("claimed"));
+    heartbeat.as_object_mut().unwrap().retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "schema" | "taskId" | "revision" | "at" | "lane"
+        )
+    });
+    let first = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-main-first",
+        "task.heartbeat",
+        ACTOR,
+        &heartbeat,
+    );
+    assert_eq!(first["ok"], true, "{first}");
+    let renewed = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-main-renewed",
+        "task.claimed",
+        ACTOR,
+        &as_actor(package_fixture("claimed")),
+    );
+    assert_eq!(renewed["ok"], true, "{renewed}");
+    let head = history(&events).len();
+    let repeated = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-main-repeat",
+        "task.heartbeat",
+        ACTOR,
+        &heartbeat,
+    );
+    assert_eq!(
+        repeated["diagnostics"][0]["code"],
+        "GHCLI003_SIGNAL_INVALID"
+    );
+    assert_eq!(history(&events).len(), head);
+}
+
+#[test]
 fn a_task_signal_naming_another_actor_is_refused_and_records_nothing() {
     let scratch = tempfile::tempdir().unwrap();
     let events = start(scratch.path());

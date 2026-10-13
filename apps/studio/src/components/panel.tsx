@@ -867,10 +867,12 @@ export function useEnvelopes(
       };
     };
     let live = true;
+    let publishScheduled = false;
     const ready: Array<{ page: number; sequence: number; value: ReturnType<typeof openedEnvelope> }> = [];
     const failed: number[] = [];
     const publish = () => {
       if (!live) return;
+      publishScheduled = false;
       const byPage = new Map<number, typeof ready>();
       for (const entry of ready.splice(0)) {
         const entries = byPage.get(entry.page) ?? [];
@@ -911,6 +913,11 @@ export function useEnvelopes(
         });
       }
     };
+    const schedulePublish = () => {
+      if (publishScheduled) return;
+      publishScheduled = true;
+      queueMicrotask(publish);
+    };
     const cached: typeof ready = [];
     const uncached: Array<{ carrier: (typeof carriers)[number]; page: number }> = [];
     carriers.forEach((carrier, carrierIndex) => {
@@ -939,6 +946,7 @@ export function useEnvelopes(
       } catch {
         if (live) failed.push(carrier.sequence);
       }
+      schedulePublish();
     };
     void (async () => {
       for (let start = 0; start < uncached.length; start += 50) {

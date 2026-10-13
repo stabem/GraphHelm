@@ -197,6 +197,10 @@ export default function App({
   const [previousExit, setPreviousExit] = useState<RuntimePreviousExit | null>(null);
   const [startupTiming, setStartupTiming] = useState<{ journalVerifyMs: number; lifecycleStartMs: number } | null>(null);
   const [currentRun, setCurrentRun] = useState<Awaited<ReturnType<RuntimeClient["health"]>>["currentRun"]>(null);
+  const [runtimeDetailsRefreshed, setRuntimeDetailsRefreshed] = useState(false);
+  const [runtimeDetailsRefreshing, setRuntimeDetailsRefreshing] = useState(false);
+  const [runtimeDetailsRefreshError, setRuntimeDetailsRefreshError] = useState("");
+  const runtimeDetailsRefreshClient = useRef<RuntimeClient | null>(null);
   /** What the rail calls this folder. Named by the operator; absent, the rail says what it can. */
   const [project, setProject] = useState<string | null>(null);
   const [projectPath, setProjectPath] = useState<string | null>(null);
@@ -1441,6 +1445,10 @@ export default function App({
       setPreviousExit(null);
       setStartupTiming(null);
       setCurrentRun(null);
+      setRuntimeDetailsRefreshed(false);
+      setRuntimeDetailsRefreshing(false);
+      setRuntimeDetailsRefreshError("");
+      runtimeDetailsRefreshClient.current = null;
       setConnecting(true);
       setError("");
       const client = createClient ? createClient(token) : new RuntimeClient(token);
@@ -1556,6 +1564,10 @@ export default function App({
     setPreviousExit(null);
     setStartupTiming(null);
     setCurrentRun(null);
+    setRuntimeDetailsRefreshed(false);
+    setRuntimeDetailsRefreshing(false);
+    setRuntimeDetailsRefreshError("");
+    runtimeDetailsRefreshClient.current = null;
     setProject(null);
     setProjectPath(null);
     setProjectIdentity(null);
@@ -1594,6 +1606,31 @@ export default function App({
     documentSaving.current = false;
     setError("");
   }, [closeProjectDocument]);
+
+  const refreshRuntimeDetails = useCallback(async () => {
+    const client = clientRef.current;
+    const generation = connectionGeneration.current;
+    if (!connected || !client || runtimeDetailsRefreshClient.current === client) return;
+    runtimeDetailsRefreshClient.current = client;
+    setRuntimeDetailsRefreshing(true);
+    setRuntimeDetailsRefreshError("");
+    try {
+      const health = await client.health();
+      if (clientRef.current !== client || connectionGeneration.current !== generation) return;
+      setPreviousExit(health?.previousExit ?? null);
+      setStartupTiming(health?.startup ?? null);
+      setCurrentRun(health?.currentRun ?? null);
+      setRuntimeDetailsRefreshed(true);
+    } catch {
+      if (clientRef.current !== client || connectionGeneration.current !== generation) return;
+      setRuntimeDetailsRefreshError("Runtime details refresh failed. Details shown above were not updated.");
+    } finally {
+      if (clientRef.current === client && connectionGeneration.current === generation) {
+        runtimeDetailsRefreshClient.current = null;
+        setRuntimeDetailsRefreshing(false);
+      }
+    }
+  }, [connected]);
 
   useEffect(
     () => () => {
@@ -2723,6 +2760,10 @@ export default function App({
         previousExit={previousExit}
         startupTiming={startupTiming}
         currentRun={currentRun}
+        runtimeDetailsRefreshed={runtimeDetailsRefreshed}
+        runtimeDetailsRefreshing={runtimeDetailsRefreshing}
+        runtimeDetailsRefreshError={runtimeDetailsRefreshError}
+        onRefreshRuntimeDetails={() => void refreshRuntimeDetails()}
         stale={stale}
         hasMore={nextCursor !== null}
         busy={busy}

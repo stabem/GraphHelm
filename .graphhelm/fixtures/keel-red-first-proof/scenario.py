@@ -11,7 +11,7 @@ import sys
 import tempfile
 import unittest
 
-PINNED_CLI = Path("C:/Users/gabri/.graphhelm/versions/5fb91a36-dev/bin/graphhelm.exe")
+PINNED_CLI = Path("C:/Users/gabri/.graphhelm/versions/d8751570-dev/bin/graphhelm.exe")
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 TIMEOUT_SECONDS = 180
 

@@ -19,7 +19,7 @@ Windows and have bounded deadlines.
 Set `GRAPHHELM_CLI` to the pinned prebuilt CLI and run from the repository root:
 
 ```powershell
-$env:GRAPHHELM_CLI = 'C:/Users/gabri/.graphhelm/versions/5fb91a36-dev/bin/graphhelm.exe'
+$env:GRAPHHELM_CLI = 'C:/Users/gabri/.graphhelm/versions/d8751570-dev/bin/graphhelm.exe'
 python .graphhelm/fixtures/keel-red-first-proof/scenario.py
 ```
 

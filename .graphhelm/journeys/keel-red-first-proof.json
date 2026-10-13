@@ -1,0 +1,93 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Prove a regression test against its parent",
+      "name": "owner"
+    }
+  ],
+  "contractId": "keel-red-first-proof",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "defective-parent.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows stdout \"regression=parent-failed,head-passed,earned\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "defective-parent"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "proof-report.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", stdout \"regression=parent-failed,head-passed,earned\", stdout \"vacuous=parent-passed,head-passed,green_on_parent\", stdout \"keel.test.green_on_parent\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "proof-report"
+    }
+  ],
+  "riskSignals": [],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen defective-parent not reached"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/specimen"
+        }
+      },
+      "stepId": "defective-parent"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen proof-report not reached"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "exec",
+          "strategy": "label",
+          "value": "python .graphhelm/fixtures/keel-red-first-proof/scenario.py"
+        }
+      },
+      "stepId": "proof-report"
+    }
+  ],
+  "taskScope": "journey-flow keel-red-first-proof path main",
+  "title": "Prove a regression test against its parent",
+  "version": 1
+}

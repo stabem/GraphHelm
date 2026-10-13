@@ -1,0 +1,64 @@
+schema: graphhelm.journey-flow/1
+id: keel-pinned-verdict-merge
+title: A reviewer verdict belongs to the exact Git head
+status: draft
+approved: null
+base: http://127.0.0.1:0
+actors: [reviewer]
+secrets: []
+risks: []
+screens:
+  - id: start
+    title: A local review fixture is ready
+    url: /
+    state: stable
+    expect: [{role: exit, name: "0"}]
+    scope: unknown
+  - id: approved-a
+    title: The approval matches head A
+    url: /
+    state: success
+    expect: [{role: exit, name: "0"}, {role: stdout, name: '"verdicts":["approval-a"]'}, {role: stdout, name: '"matchesExpected":true'}]
+    scope: unknown
+  - id: stale-a
+    title: The approval on A is absent at head B
+    url: /
+    state: success
+    expect: [{role: exit, name: "0"}, {role: stdout, name: '"verdicts":["approval-a"]'}, {role: stdout, name: '"matchesExpected":true'}]
+    scope: unknown
+  - id: approved-b
+    title: A new approval matches head B
+    url: /
+    state: success
+    expect: [{role: exit, name: "0"}, {role: stdout, name: '"verdicts":["approval-b"]'}, {role: stdout, name: '"matchesExpected":true'}]
+    scope: unknown
+  - id: blocked-b
+    title: A BLOCK on B is reported
+    url: /
+    state: success
+    expect: [{role: exit, name: "0"}, {role: stdout, name: '"matchingBlockIds":["block-b"]'}, {role: stdout, name: '"matchesExpected":true'}]
+    scope: unknown
+edges:
+  - id: review.a
+    from: start
+    to: approved-a
+    acts:
+      - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-pinned-verdict-merge/run.py a}
+  - id: review.stale
+    from: approved-a
+    to: stale-a
+    acts:
+      - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-pinned-verdict-merge/run.py stale}
+  - id: review.b
+    from: stale-a
+    to: approved-b
+    acts:
+      - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-pinned-verdict-merge/run.py b}
+  - id: review.block
+    from: approved-b
+    to: blocked-b
+    acts:
+      - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-pinned-verdict-merge/run.py block}
+paths:
+  main: [review.a, review.stale, review.b, review.block]
+drift: []

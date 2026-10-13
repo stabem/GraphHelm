@@ -20,18 +20,26 @@ const IGNORE: &str = "deletes.count\n.graphhelm/*\n!.graphhelm/journeys/\n!.grap
 
 fn graphhelm(args: &[&str], project: &Path, extra: &[&Path]) -> (i32, Value) {
     let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    // CLI acts inherit PATH from the replay worker. Resolve this test's built CLI there,
+    // so the fixture never depends on a machine-installed version.
+    let mut path = std::ffi::OsString::from(
+        assert_cmd::cargo::cargo_bin!("graphhelm").parent().unwrap().as_os_str(),
+    );
+    path.push(if cfg!(windows) { ";" } else { ":" });
+    path.push(std::env::var_os("PATH").unwrap_or_default());
     #[cfg(windows)]
     {
         // Git Bash is the shell used by the fixture launcher, but its bin directory is not
         // necessarily on PATH for the backend `sh greet.sh` act.
         let git_bin = Path::new(r"C:\Program Files\Git\bin");
         if git_bin.join("sh.exe").is_file() {
-            let mut path = std::ffi::OsString::from(git_bin.as_os_str());
-            path.push(";");
-            path.push(std::env::var_os("PATH").unwrap_or_default());
-            command.env("PATH", path);
+            let mut with_shell = std::ffi::OsString::from(git_bin.as_os_str());
+            with_shell.push(";");
+            with_shell.push(path);
+            path = with_shell;
         }
     }
+    command.env("PATH", path);
     let out = command
         .arg("--json")
         .args(args)
@@ -43,6 +51,34 @@ fn graphhelm(args: &[&str], project: &Path, extra: &[&Path]) -> (i32, Value) {
         out.status.code().unwrap(),
         serde_json::from_slice(&out.stdout).unwrap_or(Value::Null),
     )
+}
+
+/// #1047: replay four CLI acts against disposable bare Git repositories and literal
+/// comment snapshots. A stale approval must not appear at B; a same-head BLOCK must.
+/// Cost: four short Python/CLI/Git processes; no network, Runtime or browser.
+#[test]
+fn pinned_verdict_journey_replays_all_four_obligations() {
+    const VERDICT_FLOW: &str = include_str!("../../../.graphhelm/journeys/keel-pinned-verdict-merge.journey.yaml");
+    let dir = project("keel-pinned-verdict-merge", VERDICT_FLOW);
+    let root = dir.path();
+    let fixture = root.join(".graphhelm/fixtures/keel-pinned-verdict-merge");
+    std::fs::create_dir_all(&fixture).unwrap();
+    for name in ["run.py", "approval-a.json", "review-b.json"] {
+        std::fs::write(
+            fixture.join(name),
+            std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../.graphhelm/fixtures/keel-pinned-verdict-merge")
+                .join(name))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+    approve(root, "keel-pinned-verdict-merge");
+    let (code, report) = graphhelm(&["keel", "test", "validation", "--repo"], root, &[]);
+    assert_eq!(code, 0, "{report}");
+    let data = &report["data"];
+    assert_eq!(data["failures"], serde_json::json!([]), "{data}");
+    assert_eq!(data["paths"][0]["execution"], "completed", "{data}");
 }
 
 fn git(project: &Path, args: &[&str]) -> Vec<u8> {

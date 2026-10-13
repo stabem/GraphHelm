@@ -621,8 +621,9 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
         state.prSummary = event.summary ?? state.prSummary;
         if (event.headSha !== state.headSha) state.currentReviewer = null;
         state.headSha = event.headSha ?? state.headSha;
-        if (state.pendingReviewer?.headSha === event.headSha) {
-          state.currentReviewer = state.pendingReviewer.reviewer;
+        const pendingReviewer = state.pendingReviewer;
+        if (pendingReviewer !== null && pendingReviewer !== undefined && pendingReviewer.headSha === event.headSha) {
+          state.currentReviewer = pendingReviewer.reviewer;
           state.pendingReviewer = null;
         }
         // #577: an empty list on pr_opened does not erase the journeys named at claim.

@@ -142,18 +142,14 @@ describe("foldTaskEvents", () => {
     const opened = foldTaskEvents(records)[0];
     expect(opened).toMatchObject({ headSha: "bbbbbbbb", currentReviewer: "codexrev-3", step: "review", blockedBy: null });
     expect(opened.rounds.at(-1)?.fixHead).toBe("bbbbbbbb");
-  });
-
-  it("does not make an assignment for an older recorded head current (#983)", () => {
-    const common = { taskId: "issue-983", pr: 1004 };
-    const records = [
+    const stale = [
       record(1, "task.pr_opened", "codex-1", { ...common, headSha: "aaaaaaaa", journeys: [], lane: "codex-1" }),
       record(2, "task.review_verdict", "codex-review", { ...common, headSha: "aaaaaaaa", reviewer: "codex-review", verdict: "BLOCK", commentUrl: "https://github.com/stabem/GraphHelm/pull/1004#c1" }),
       record(3, "task.pr_opened", "codex-1", { ...common, headSha: "bbbbbbbb", journeys: [], lane: "codex-1" }),
       record(4, "task.review_assigned", "codex-1", { ...common, headSha: "aaaaaaaa", reviewer: "old-reviewer" }),
       record(5, "task.pr_opened", "codex-1", { ...common, headSha: "cccccccc", journeys: [], lane: "codex-1" }),
     ];
-    expect(foldTaskEvents(records)[0]).toMatchObject({ headSha: "cccccccc", currentReviewer: null, step: "review", blockedBy: null });
+    expect(foldTaskEvents(stale)[0]).toMatchObject({ headSha: "cccccccc", currentReviewer: null, step: "review", blockedBy: null });
   });
 
   it("links the task to the journeys its claim names, and an empty pr_opened list keeps them (#577)", () => {

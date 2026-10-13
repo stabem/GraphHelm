@@ -65,6 +65,15 @@ The reply is the standard CLI envelope. `data` holds the whole report: `policyVe
 symbol), `findings` and `refused`. Each finding is also a diagnostic whose `code` is the rule id:
 `error` when it blocks, `warning` when it is a signal.
 
+The report also carries a local `recommendation`, bound to the resolved commit named by the range
+head. It gives the caller a suggested next step; it does not route a task or write a Runtime
+transition.
+When the check is refused, `step` is `implement`, `findingIds` lists the blocking rule ids, and
+`paths` lists their known paths. When the check is valid, including when it has warnings only,
+`step` is `review` and those lists are empty. `applied` is always `false`: this is guidance for the
+caller, not a task transition. Input and tool errors return the input error envelope and never
+recommend review.
+
 `surface` puts the counts beside the card: `changedFiles`, `newFiles`, `newTestFiles`, `newTests`,
 `newModules`, `newPublicSymbols`, `newDependencies`, `cardScopePaths`, `cardExportedSymbols`, and
 `undeclaredPublicSymbols` (public symbols the diff adds that the card does not name; reported,

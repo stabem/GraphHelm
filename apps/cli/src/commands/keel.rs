@@ -378,10 +378,43 @@ pub(super) fn check(
         })
         .collect();
     let refused = report.refused;
+    let head = match graphhelm_process::command("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", "--end-of-options"])
+        .arg(format!("{head}^{{commit}}"))
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).trim().to_owned()
+        }
+        Ok(output) => {
+            return input_error(
+                format!(
+                    "git could not resolve the range head: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+                "/diff",
+            );
+        }
+        Err(error) => return input_error(format!("git did not start: {error}"), "/repo"),
+    };
+    let recommendation = if refused {
+        serde_json::json!({
+            "step": "implement",
+            "head": head,
+            "findingIds": report.findings.iter().filter(|finding| finding.blocking).map(|finding| finding.rule.clone()).collect::<std::collections::BTreeSet<_>>(),
+            "paths": report.findings.iter().filter(|finding| finding.blocking).filter_map(|finding| finding.path.clone()).collect::<std::collections::BTreeSet<_>>(),
+            "applied": false,
+        })
+    } else {
+        serde_json::json!({"step": "review", "head": head, "findingIds": [], "paths": [], "applied": false})
+    };
     let mut data = match serde_json::to_value(&report) {
         Ok(data) => data,
         Err(error) => return Outcome::internal(COMMAND, error.to_string()),
     };
+    data["recommendation"] = recommendation;
     if let (Some(proof), Some(object)) = (proof, data.as_object_mut()) {
         match serde_json::to_value(proof) {
             Ok(value) => {

@@ -36,7 +36,7 @@ export function clockStep(clock: StepClock, before: string, after: string, at: s
   const since = millis(clock.since);
   const lastAt = millis(clock.lastAt ?? clock.since);
   if (resumeAfterGap && since !== null && lastAt !== null && now !== null && now >= lastAt && now - lastAt >= ACTIVE_GAP_MS) {
-    if (lastAt >= since && (before === "plan" || before === "critic" || before === "implement" || before === "review" || before === "merge")) {
+    if (lastAt > since && (before === "plan" || before === "critic" || before === "implement" || before === "review" || before === "merge")) {
       clock.spent[before] = (clock.spent[before] ?? 0) + (lastAt - since);
     }
     clock.since = now === null ? null : at!;

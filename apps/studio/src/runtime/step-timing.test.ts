@@ -84,7 +84,7 @@ describe("step clock in the fold (#502)", () => {
       record(2, 10, "task.review_verdict", "l2", { pr: 19, headSha: head, reviewer: "l2", verdict: "BLOCK", commentUrl: url }),
       record(3, 20, "task.pr_opened", "l1", { pr: 19, headSha: "b".repeat(40), journeys: [], lane: "l1" }),
     ]);
-    expect(tasks[0].clock).toEqual({ since: "2026-10-08T10:00:00.000Z", lastAt: "2026-10-08T10:00:00.000Z", spent: {} });
+    expect(tasks[0].clock).toEqual({ since: "2026-10-08T10:00:00.000Z", lastAt: "2026-10-08T10:20:00.000Z", spent: {} });
   });
 
   it("has no start when the records carry no append time", () => {

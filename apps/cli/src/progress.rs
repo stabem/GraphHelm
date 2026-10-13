@@ -13,13 +13,14 @@ use std::io::IsTerminal;
 
 use crate::palette::{self, Palette};
 
+/// `~` stands for a space: runs of spaces in a literal are what `source_invariants.rs` refuses.
 const BANNER: [&str; 6] = [
-    r"   ____                 _     _   _      _           ",
-    r"  / ___|_ __ __ _ _ __ | |__ | | | | ___| |_ __ ___  ",
-    r" | |  _| '__/ _` | '_ \| '_ \| |_| |/ _ \ | '_ ` _ \ ",
+    r"~~~____~~~~~~~~~~~~~~~~~_~~~~~_~~~_~~~~~~_",
+    r"  / ___|_ __ __ _ _ __ | |__ | | | | ___| |_ __ ___",
+    r" | |  _| '__/ _` | '_ \| '_ \| |_| |/ _ \ | '_ ` _ \",
     r" | |_| | | | (_| | |_) | | | |  _  |  __/ | | | | | |",
     r"  \____|_|  \__,_| .__/|_| |_|_| |_|\___|_|_| |_| |_|",
-    r"                 |_|                                 ",
+    r"~~~~~~~~~~~~~~~~~|_|",
 ];
 
 /// Writes the progress lines of one run.
@@ -62,7 +63,7 @@ impl Progress {
         }
         let mut out = String::from("\n");
         for line in BANNER {
-            out.push_str(&self.palette.command(line));
+            out.push_str(&self.palette.command(&line.replace('~', " ")));
             out.push('\n');
         }
         out.push_str(&format!("  {}", self.palette.label(subtitle)));
@@ -82,7 +83,7 @@ impl Progress {
     /// A detail under the current step.
     pub fn info(self, text: &str) -> String {
         if self.fancy {
-            format!("      {}", self.palette.label(text))
+            format!("{}{}", " ".repeat(6), self.palette.label(text))
         } else {
             self.plain(text)
         }

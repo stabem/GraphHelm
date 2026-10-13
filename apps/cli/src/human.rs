@@ -50,12 +50,28 @@ use crate::palette::Palette;
 /// `main` needs the answer before it decides which face to print (`output::face`), and the
 /// decision must not be spelled twice: this function and [`render`] read the same `match`, so a
 /// command added to one is added to the other or the compiler is the one that notices.
+///
+/// Every command has one: a command without a hand-written renderer gets [`generic`], so a new
+/// command cannot reach a person's terminal as raw JSON (owner, 2026-10-13: "every time I use
+/// the CLI, a pretty, standardised output in the project colours").
 #[must_use]
 pub fn has_renderer(command: &str) -> bool {
-    renderer_for(command).is_some()
+    let _ = renderer_for(command);
+    true
 }
 
-fn renderer_for(command: &str) -> Option<fn(&Value, Palette) -> String> {
+/// Whether this command has a hand-written renderer. Only those also print the #1150 summary on
+/// stderr next to `--json` at a terminal; the generic one would only repeat the JSON above it.
+#[must_use]
+pub fn has_specific_renderer(command: &str) -> bool {
+    specific_renderer(command).is_some()
+}
+
+fn renderer_for(command: &str) -> fn(&Value, Palette) -> String {
+    specific_renderer(command).unwrap_or(generic)
+}
+
+fn specific_renderer(command: &str) -> Option<fn(&Value, Palette) -> String> {
     match command {
         "gateway.setup" => Some(setup),
         "gateway.probe" => Some(probe),
@@ -63,6 +79,83 @@ fn renderer_for(command: &str) -> Option<fn(&Value, Palette) -> String> {
         "journey.capture" | "journey.walked" => Some(journey_record),
         "setup" | "restore" => Some(adoption),
         _ => None,
+    }
+}
+
+/// The standard face for any command without its own renderer: the data as an indented tree,
+/// labels dim, values plain, numbers and booleans bold. Nothing is dropped: it is the envelope's
+/// `data`, laid out for a person instead of a parser.
+fn generic(data: &Value, palette: Palette) -> String {
+    let mut out = String::new();
+    match data {
+        Value::Object(map) if map.is_empty() => out.push_str("  (nothing to report)\n"),
+        Value::Object(_) | Value::Array(_) => tree(data, 1, &mut out, palette),
+        scalar => {
+            let _ = writeln!(out, "  {}", scalar_text(scalar, palette));
+        }
+    }
+    out
+}
+
+fn tree(value: &Value, depth: usize, out: &mut String, palette: Palette) {
+    let indent = "  ".repeat(depth);
+    match value {
+        Value::Object(map) => {
+            let width = map.keys().map(|key| key.chars().count()).max().unwrap_or(0);
+            for (key, item) in map {
+                let padding = " ".repeat(width.saturating_sub(key.chars().count()));
+                if is_nested(item) {
+                    let _ = writeln!(out, "{indent}{}", palette.label(key));
+                    tree(item, depth + 1, out, palette);
+                } else {
+                    let _ = writeln!(
+                        out,
+                        "{indent}{}{padding}  {}",
+                        palette.label(key),
+                        scalar_text(item, palette)
+                    );
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                if is_nested(item) {
+                    let _ = writeln!(out, "{indent}{}", palette.command("-"));
+                    tree(item, depth + 1, out, palette);
+                } else {
+                    let _ = writeln!(
+                        out,
+                        "{indent}{} {}",
+                        palette.command("-"),
+                        scalar_text(item, palette)
+                    );
+                }
+            }
+        }
+        scalar => {
+            let _ = writeln!(out, "{indent}{}", scalar_text(scalar, palette));
+        }
+    }
+}
+
+/// An object or array with something in it gets its own block; an empty one is a scalar line.
+fn is_nested(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => !map.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        _ => false,
+    }
+}
+
+fn scalar_text(value: &Value, palette: Palette) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Bool(true) => palette.good("yes"),
+        Value::Bool(false) => palette.bad("no"),
+        Value::Number(number) => palette.name(&number.to_string()),
+        Value::Null => palette.label("-"),
+        Value::Array(_) => palette.label("(none)"),
+        Value::Object(_) => palette.label("(empty)"),
     }
 }
 
@@ -177,16 +270,44 @@ fn adoption(data: &Value, palette: Palette) -> String {
     out
 }
 
-/// The human summary for this envelope, or `None` when this command has no renderer.
+/// The human summary for this envelope. Every command renders (see [`has_renderer`]); the
+/// `Option` is kept for callers that print the machine face when nothing comes back.
 ///
 /// A failed outcome renders its diagnostics as plain lines instead of the success shape: a person
 /// who typed the command wrong must see why, not a blob with `"ok":false` somewhere inside it.
 pub fn render(output: &CommandOutput, palette: Palette) -> Option<String> {
-    let renderer = renderer_for(output.command)?;
+    let renderer = renderer_for(output.command);
     if !output.ok {
         return Some(failure(output, palette));
     }
-    output.data.as_ref().map(|data| renderer(data, palette))
+    let Some(data) = output.data.as_ref() else {
+        return Some(header(output, palette));
+    };
+    if specific_renderer(output.command).is_some() {
+        return Some(renderer(data, palette));
+    }
+    let mut text = header(output, palette);
+    text.push_str(&renderer(data, palette));
+    for diagnostic in &output.diagnostics {
+        let _ = writeln!(
+            text,
+            "\n  {} {} ({})",
+            palette.bad("[!!]"),
+            diagnostic.message,
+            diagnostic.code
+        );
+    }
+    Some(text)
+}
+
+/// The first line of the standard face: which command ran, and that it worked.
+fn header(output: &CommandOutput, palette: Palette) -> String {
+    format!(
+        "{} {} {}\n\n",
+        palette.command("graphhelm >"),
+        palette.name(&output.command.replace('.', " ")),
+        palette.good("[ok]")
+    )
 }
 
 /// A refusal, as the person who typed the command needs it: the command that did not run, then
@@ -506,32 +627,57 @@ mod tests {
         assert!(!rendered.contains('\u{001b}'));
     }
 
+    /// The guard: no command, present or future, reaches a person's terminal as raw JSON. A
+    /// command with no hand-written renderer gets the standard face, and a refusal its failure.
     #[test]
-    fn a_command_without_a_renderer_renders_nothing() {
-        for command in ["schema", "graph.synthesize", "execution.start", "gateway"] {
+    fn every_command_renders_even_one_added_tomorrow() {
+        for command in [
+            "schema",
+            "graph.synthesize",
+            "journey.approve",
+            "a.command.not.yet.written",
+        ] {
+            assert!(has_renderer(command), "{command}");
+            let rendered = render(
+                &success(command, json!({"approved": {"revision": "abc", "count": 2}, "ok": true, "tags": ["a"], "none": []})),
+                Palette::plain(),
+            )
+            .expect("every command renders");
             assert!(
-                render(
-                    &success(command, json!({"anything": true})),
-                    Palette::plain()
-                )
-                .is_none(),
-                "{command}"
+                !rendered.contains('{') && !rendered.contains('"'),
+                "{rendered}"
             );
-        }
-        // The failure shape is scoped the same way: a command with no renderer stays silent even
-        // when it refuses, so adopting this changed nothing outside the three.
-        assert!(
-            render(
+            assert!(
+                !rendered.contains('\u{1b}'),
+                "plain palette writes no escape"
+            );
+            assert!(
+                rendered.contains("[ok]")
+                    && rendered.contains("revision")
+                    && rendered.contains("abc")
+            );
+            assert!(
+                rendered.contains("- a") && rendered.contains("(none)") && rendered.contains("yes")
+            );
+            let refused = render(
                 &CommandOutput {
                     ok: false,
-                    command: "schema",
+                    command,
                     data: None,
                     diagnostics: vec![Diagnostic::error("GHX", "no", "/x", "schema")],
                 },
-                Palette::plain()
+                Palette::plain(),
             )
-            .is_none()
-        );
+            .expect("a refusal renders");
+            assert!(refused.contains("did not run") && refused.contains("GHX"));
+        }
+    }
+
+    /// The #1150 stderr echo next to `--json` stays limited to hand-written renderers.
+    #[test]
+    fn only_hand_written_renderers_count_as_specific() {
+        assert!(has_specific_renderer("init"));
+        assert!(!has_specific_renderer("journey.approve"));
     }
 
     #[test]

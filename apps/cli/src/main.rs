@@ -120,6 +120,9 @@ fn print_human_summary(
     if palette.writes_escapes() {
         palette::prepare_stream();
     }
+    if !human::has_specific_renderer(output.command) {
+        return;
+    }
     if let Some(summary) = human::render(output, palette) {
         let mut stderr = std::io::stderr().lock();
         let _ = stderr.write_all(summary.as_bytes());

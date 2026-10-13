@@ -561,7 +561,7 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
             "-NoProfile".into(),
             "-Command".into(),
             format!(
-                "Add-Content -LiteralPath '{log_text}' 'slot start'; while (!(Test-Path -LiteralPath '{release_text}')) {{ Start-Sleep -Milliseconds 20 }}; Add-Content -LiteralPath '{log_text}' 'slot end'"
+                "$deadline=(Get-Date).AddSeconds(10); Add-Content -LiteralPath '{log_text}' 'slot start'; while (!(Test-Path -LiteralPath '{release_text}') -and (Get-Date) -lt $deadline) {{ Start-Sleep -Milliseconds 10 }}; if (!(Test-Path -LiteralPath '{release_text}')) {{ exit 91 }}; Add-Content -LiteralPath '{log_text}' 'slot end'"
             ),
         ]
     } else {
@@ -569,7 +569,7 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
             "sh".into(),
             "-c".into(),
             format!(
-                "echo 'slot start' >> '{log_text}'; while [ ! -f '{release_text}' ]; do sleep 0.02; done; echo 'slot end' >> '{log_text}'"
+                "echo 'slot start' >> '{log_text}'; i=0; while [ ! -f '{release_text}' ] && [ $i -lt 1000 ]; do sleep 0.01; i=$((i+1)); done; if [ ! -f '{release_text}' ]; then exit 91; fi; echo 'slot end' >> '{log_text}'"
             ),
         ]
     };
@@ -628,6 +628,7 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
         "graphhelm"
     });
     std::fs::write(&fake_exe, b"fixture executable").unwrap();
+    let update_exe = fake_exe.clone();
     let update_admission = admission.clone();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
     let update = std::thread::spawn(move || {
@@ -639,7 +640,7 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
             source,
             crate::progress::Progress::decide("update-test"),
             &update_admission,
-            Some(&fake_exe),
+            Some(&update_exe),
         )
     });
     let update_started = ready_rx.recv_timeout(Duration::from_secs(3)).is_ok();

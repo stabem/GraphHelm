@@ -674,7 +674,7 @@ def commands(whole, single, studio, tools=(), validate=(), lint_packages=None, p
         cmds.append(GUARD)
     if studio:
         files = " ".join(p[len("apps/studio/"):] for p in studio)
-        cmds.append(f"(cd apps/studio && npx vitest related --run --pool=threads --maxWorkers=1 {files} && npx tsc -b)")
+        cmds.append(f"(cd apps/studio && npx vitest related --run --pool=forks --maxWorkers=1 {files} && npx tsc -b)")
     return cmds
 
 
@@ -760,7 +760,7 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
                     "cwd": ".", "slot": True})
     if studio:
         files = [p[len("apps/studio/"):] for p in studio]
-        out.append({"argv": ["npx", "vitest", "related", "--run", "--maxWorkers=1", *files],
+        out.append({"argv": ["npx", "vitest", "related", "--run", "--pool=forks", "--maxWorkers=1", *files],
                     "cwd": "apps/studio", "slot": False})
         out.append({"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio", "slot": False})
     return out

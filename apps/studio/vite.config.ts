@@ -239,11 +239,9 @@ export default defineConfig(({ mode }) => {
       // host: 21 files, 343 tests, under three minutes. `npx vitest run --maxWorkers=N` still
       // overrides it for a developer on an idle machine.
       maxWorkers: 1,
-      // #1095: Vitest 4.1.11 gives a worker 60 seconds to answer its startup handshake. Isolation
-      // creates one worker per file, so a loaded gate gets one chance to miss that fixed wait for
-      // every file. Reuse one thread for the run instead. A worker that cannot start still fails
-      // the suite; this adds no retry and hides no assertion failure.
-      pool: "threads",
+      // #1019: A single fork starts on the shared host where a single thread can hang at startup.
+      // Keep isolation disabled so the run reuses one worker across files.
+      pool: "forks",
       isolate: false,
       // #549: the test timeout is a hang catcher scaled by GRAPHHELM_TEST_TIME_SCALE (unset: 1),
       // the knob the CLI tests already read. The default 5 s failed App cells on a busy host with

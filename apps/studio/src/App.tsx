@@ -593,6 +593,7 @@ export default function App({
   const pollMisses = useRef(0);
   const [stale, setStale] = useState(false);
   const pollGeneration = useRef(0);
+  const railRefreshBusy = useRef(false);
   useEffect(() => {
     if (!connected || selected === "") return;
     const generation = ++pollGeneration.current;
@@ -634,33 +635,14 @@ export default function App({
             }
             return rows;
           };
-          const [nextStatus, fresh, listRows] = await Promise.all([
+          const [nextStatus, fresh] = await Promise.all([
             client.getStatus(selected),
             readEvents(client, selected, lastSeen),
-            readList(),
           ]);
           // The connection too, not just the run: Runtime B can hold the same execution id, and
           // a tick that started against A must not paint B (PR #467 review, P1).
           if (pollGeneration.current !== generation || clientRef.current !== client || selectedRef.current !== selected) return;
-          for (const run of listRows) restoredOutsidePage.current.delete(run.executionId);
           observeStatus(nextStatus);
-          // The refresh covers what it read and prepends what is new; rows beyond the read
-          // range (a store that GREW past the operator's paging mid-poll) are kept, not
-          // truncated.
-          setExecutions((previous) => {
-            const refreshed = new Map(listRows.map((run) => [run.executionId, run]));
-            // #503: an unchanged row keeps its object, so a quiet tick publishes nothing new.
-            const kept = previous.map((run) => {
-              const fresh = refreshed.get(run.executionId);
-              return fresh === undefined || sameValue(fresh, run) ? run : fresh;
-            });
-            const known = new Set(previous.map((run) => run.executionId));
-            const added = listRows.filter((run) => !known.has(run.executionId));
-            return added.length === 0 &&
-              kept.every((run, index) => run === previous[index])
-              ? previous
-              : [...added, ...kept];
-          });
           // The duplicate filter runs INSIDE the updater, against the array it appends to: a
           // full reload landing mid-tick already contains this tick's events, and filtering
           // against the tick-start cursor alone appended them twice (round-3 speedrunner).
@@ -674,6 +656,29 @@ export default function App({
           });
           pollMisses.current = 0;
           setStale(false);
+          if (!railRefreshBusy.current) {
+            railRefreshBusy.current = true;
+            void readList().then((listRows) => {
+              if (pollGeneration.current !== generation || clientRef.current !== client || selectedRef.current !== selected) return;
+              for (const run of listRows) restoredOutsidePage.current.delete(run.executionId);
+              setExecutions((previous) => {
+                const refreshed = new Map(listRows.map((run) => [run.executionId, run]));
+                const kept = previous.map((run) => {
+                  const fresh = refreshed.get(run.executionId);
+                  return fresh === undefined || sameValue(fresh, run) ? run : fresh;
+                });
+                const known = new Set(previous.map((run) => run.executionId));
+                const added = listRows.filter((run) => !known.has(run.executionId));
+                return added.length === 0 && kept.every((run, index) => run === previous[index])
+                  ? previous
+                  : [...added, ...kept];
+              });
+            }).catch(() => {
+              // Rail refresh is best-effort; it must not suppress the selected-run poll.
+            }).finally(() => {
+              railRefreshBusy.current = false;
+            });
+          }
         } catch {
           // A single transient miss stays quiet on purpose - but persistent failure must not:
           // the screen aging under a "live" badge happened for real (server died mid-session).

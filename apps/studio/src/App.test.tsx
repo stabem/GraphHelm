@@ -683,12 +683,13 @@ describe("live team layout", () => {
 });
 
 /** The ordinary loop: the dev server hands the page a token and it opens connected. */
-async function open(client: ReturnType<typeof stubClient>, modelContext: ModelContextLike | null = null, conversation = true) {
+async function open(client: ReturnType<typeof stubClient>, modelContext: ModelContextLike | null = null, conversation = true, pollIntervalMs = 4000) {
   render(
     <App
       createClient={() => client as unknown as RuntimeClient}
       modelContext={modelContext}
       session={async () => ({ token: "local-token", project: "dale-api-base" })}
+      pollIntervalMs={pollIntervalMs}
     />,
   );
   await screen.findByLabelText("Projects");
@@ -3247,6 +3248,53 @@ describe("round-3: what you typed survives, and what waits is true", () => {
 });
 
 describe("round-3: the rail is live and the screen belongs to one run", () => {
+  it("keeps selected-run polling live while one rail refresh is pending or rejected", async () => {
+    let releaseRail: () => void = () => {};
+    const heldRail = new Promise<void>((resolve) => { releaseRail = resolve; });
+    let statusReads = 0;
+    let railReads = 0;
+    let railPending = false;
+    const client = stubClient({
+      listExecutions: vi.fn(async () => {
+        railReads += 1;
+        if (railPending) await heldRail;
+        return {
+          executions: [{
+            executionId: "demo-deploy", mode: "supervised", status: "running",
+            attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 13,
+          }],
+          hasMore: false,
+          nextCursor: null,
+        };
+      }),
+      getStatus: vi.fn(async (id: string) => {
+        statusReads += 1;
+        return { ...STATUS, executionId: id, status: statusReads > 1 ? "paused" : "running" };
+      }),
+    });
+    await open(client, null, true, 40);
+
+    // Let the initial list load and one ordinary poll finish before holding a rail read.
+    // Otherwise a startup list request is mistaken for a second poll refresh.
+    await waitFor(() => expect(railReads).toBeGreaterThan(1));
+    const readsBeforeHold = railReads;
+    railPending = true;
+    await waitFor(() => expect(railReads).toBeGreaterThan(readsBeforeHold));
+    const readsWhileHeld = railReads;
+    const statusReadsWhileHeld = statusReads;
+    await waitFor(() => expect(screen.getByText(/^Execution \/ paused$/)).toBeInTheDocument());
+    await waitFor(() => expect(statusReads).toBeGreaterThan(statusReadsWhileHeld));
+    expect(railReads).toBe(readsWhileHeld);
+
+    releaseRail();
+    await waitFor(() => expect(railReads).toBeGreaterThan(readsWhileHeld));
+    railPending = false;
+    vi.mocked(client.listExecutions).mockRejectedValueOnce(new Error("rail unavailable"));
+    const beforeRejectedRefresh = statusReads;
+    await waitFor(() => expect(statusReads).toBeGreaterThan(beforeRejectedRefresh));
+    expect(screen.getByText(/^Execution \/ paused$/)).toBeInTheDocument();
+  });
+
   /** The 4s poll tailed only the selected run; another run flipping to needs-you stayed
    * invisible until the operator happened to click something. */
   it("the rail's attention marks move without anyone clicking", async () => {

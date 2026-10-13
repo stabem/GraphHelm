@@ -43,6 +43,7 @@ fn graphhelm(args: &[&str], project: &Path, extra: &[&Path]) -> (i32, Value) {
         }
     }
     command.env("PATH", path);
+    command.env("GRAPHHELM_CLI", assert_cmd::cargo::cargo_bin!("graphhelm"));
     let out = command
         .arg("--json")
         .args(args)

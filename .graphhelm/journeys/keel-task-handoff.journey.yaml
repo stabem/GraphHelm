@@ -6,8 +6,20 @@ approved: null
 base: http://127.0.0.1:0
 actors: [claude, codex]
 secrets: []
-risks: [persistence, compatibility]
-screens: []
-edges: []
-paths: {main: []}
+risks: [recovery]
+screens:
+  - id: start
+    title: The isolated handoff observer starts
+    url: /
+    state: stable
+    expect: [{role: exit, name: "0"}, {role: stdout, name: '"verdict": "passed"'}, {role: stdout, name: '"recoveredExecutionId": "keel-handoff-fixture"'}, {role: stdout, name: '"kind": "resume_held"'}]
+    scope: [graphhelm/fixtures/keel-task-handoff/scenario.py]
+edges:
+  - id: observe.handoff
+    from: start
+    to: start
+    acts:
+      - {kind: cli, role: exec, name: "python .graphhelm/fixtures/keel-task-handoff/scenario.py"}
+paths:
+  main: [observe.handoff]
 drift: []

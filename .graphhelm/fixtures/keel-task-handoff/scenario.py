@@ -1,4 +1,4 @@
-"""Exercise the Claude-to-Codex handoff adapter against an isolated Runtime."""
+﻿"""Exercise the Claude-to-Codex handoff adapter against an isolated Runtime."""
 
 from __future__ import annotations
 
@@ -299,6 +299,25 @@ def run() -> dict:
                     or offered_briefing.get("asOfSequence", 0) > original_briefing.get("asOfSequence", -1)):
                 raise ScenarioFailure("the original Runtime briefing duty did not survive the adapter handoff")
             pending_duty = original_briefing["nextStep"]
+            expected_duty = {
+                "kind": "resume_held",
+                "command": pending_duty.get("command"),
+                "nodes": ["docs", "implement", "map_repository", "plan", "review", "tests"],
+            }
+            if (pending_duty.get("kind") != expected_duty["kind"]
+                    or not isinstance(expected_duty["command"], str)
+                    or "execution resume" not in expected_duty["command"]
+                    or EXECUTION not in expected_duty["command"]
+                    or pending_duty.get("nodes") != expected_duty["nodes"]):
+                raise ScenarioFailure(f"the fixture briefing did not identify the expected held task duty: {pending_duty}")
+            recovered_briefing = second.get("briefing", {})
+            recovered_duty = recovered_briefing.get("nextStep", {})
+            if (second.get("executionId") != EXECUTION
+                    or recovered_duty != {"kind": "resume_held", "nodeCount": len(expected_duty["nodes"])}):
+                raise ScenarioFailure(
+                    f"the receiver briefing did not recover the same execution and open duty: "
+                    f"execution={second.get('executionId')!r}, briefing={recovered_briefing!r}"
+                )
 
             wrong = _run_adapter("receive", "codex", "wrong-codex", token_file, base_url,
                                  offer_id=offer_id, owned=owned)
@@ -309,6 +328,8 @@ def run() -> dict:
                     "repeatReceive": second["state"], "wrongRecipient": "rejected",
                     "sourceBriefingSequence": first["offeredBriefing"]["asOfSequence"],
                     "pendingDuty": pending_duty,
+                    "recoveredExecutionId": second["executionId"],
+                    "recoveredDuty": recovered_duty,
                     "pendingEvidenceReferences": _briefing_references(offered_briefing),
                     "sealedEvidenceReferences": evidence_refs}
         finally:

@@ -177,10 +177,7 @@ fn verdict_identity_matches(body: &str, reviewer: &str, head: &str) -> bool {
 fn comment_verdict(body: &str) -> Option<&'static str> {
     body.lines().find_map(|line| {
         let line = line.trim();
-        let line = line
-            .strip_prefix("**")
-            .and_then(|line| line.strip_suffix("**"))
-            .unwrap_or(line);
+        let line = line.strip_prefix("**").unwrap_or(line);
         ["APPROVE-WITH-RISK", "APPROVE", "BLOCK"]
             .into_iter()
             .find(|verdict| {
@@ -188,7 +185,9 @@ fn comment_verdict(body: &str) -> Option<&'static str> {
                     || line
                         .strip_prefix(verdict)
                         .and_then(|suffix| suffix.chars().next())
-                        .is_some_and(|first| first.is_whitespace() || first == ':' || first == '|')
+                        .is_some_and(|first| {
+                            first.is_whitespace() || first == ':' || first == '|' || first == '*'
+                        })
             })
     })
 }

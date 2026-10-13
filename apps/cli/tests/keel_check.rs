@@ -167,6 +167,13 @@ fn keel_verdict_matches_only_the_requested_head_and_reviewer() {
             "identity-first-block",
             serde_json::json!([{"commentId":"identity-first-block","verdict":"BLOCK"}]),
         ),
+        (
+            "Session: codex-review · Head: bbbbbbbb\n\n**BLOCK** (reason)",
+            head_b,
+            "codex-review",
+            "bold-block-with-reason",
+            serde_json::json!([{"commentId":"bold-block-with-reason","verdict":"BLOCK"}]),
+        ),
     ] {
         fs::write(
             &comments,
@@ -179,8 +186,8 @@ fn keel_verdict_matches_only_the_requested_head_and_reviewer() {
         assert_eq!(reply["data"]["verdicts"], expected);
         assert_eq!(
             reply["data"]["matchingBlockIds"],
-            if body.starts_with("BLOCK") {
-                serde_json::json!(["block-b"])
+            if ["block-b", "identity-first-block", "bold-block-with-reason"].contains(&comment_id) {
+                serde_json::json!([comment_id])
             } else {
                 serde_json::json!([])
             }

@@ -94,7 +94,7 @@ The snapshot shape is strict JSON with exactly one top-level `comments` array; e
   "comments": [
     {
       "id": "comment-123",
-      "body": "APPROVE\n\nSession: codex-review · Head: 0123abcd"
+      "body": "Session: codex-review · Head: 0123abcd\n\n**APPROVE** (reviewed checks passed)"
     }
   ]
 }

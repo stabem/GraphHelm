@@ -129,8 +129,7 @@ class ScenarioAdapterSelection(unittest.TestCase):
 
         def observing_wait_started(log_path, child):
             url = real_wait_started(log_path, child)
-            if Path(log_path).name == "runtime-restarted.log":
-                started_urls[id(child)] = url
+            started_urls[id(child)] = url
             return url
 
         def observing_run_adapter(phase, host, session, token_file, base_url, *args, **kwargs):
@@ -166,6 +165,8 @@ class ScenarioAdapterSelection(unittest.TestCase):
                         "scenario left a fixture-owned Runtime process alive")
         replacement_url = started_urls.get(id(source_starts[1]["process"]))
         self.assertTrue(replacement_url, "replacement Runtime did not report its serving endpoint")
+        self.assertEqual(started_urls.get(id(source_starts[0]["process"])), replacement_url,
+                         "replacement Runtime changed origin and could not recover the original receipt identity")
         self.assertIn(("adapter", "receive", replacement_url), recovery_reads,
                       "Codex companion did not receive through the replacement Runtime")
         self.assertIn(("prior-evidence", replacement_url), recovery_reads,

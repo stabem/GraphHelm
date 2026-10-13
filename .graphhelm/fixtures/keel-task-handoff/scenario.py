@@ -407,6 +407,7 @@ def run(wrong_store_only: bool = False) -> dict:
                                  stdout=log, stderr=subprocess.STDOUT,
                                  creationflags=NO_WINDOW)
         source_processes = [(child, store.resolve(), keyring.resolve())]
+        source_logs = [log]
         try:
             base_url = _wait_started(log_path, child)
             log.flush()
@@ -611,45 +612,47 @@ def run(wrong_store_only: bool = False) -> dict:
                 raise ScenarioFailure("owned source Runtime did not exit before restart")
             restart_log_path = owned / "runtime-restarted.log"
             restart_log = restart_log_path.open("w+", encoding="utf-8")
-            restarted_child = subprocess.Popen(command, cwd=owned, env=runtime_env,
+            source_logs.append(restart_log)
+            restart_command = command.copy()
+            restart_command[restart_command.index("--bind") + 1] = base_url.removeprefix("http://")
+            restarted_child = subprocess.Popen(restart_command, cwd=owned, env=runtime_env,
                                                stdin=subprocess.DEVNULL, stdout=restart_log,
                                                stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
             source_processes.append((restarted_child, store.resolve(), keyring.resolve()))
-            try:
-                restarted_url = _wait_started(restart_log_path, restarted_child)
-                if restarted_url == base_url:
-                    raise ScenarioFailure("replacement Runtime unexpectedly reused the old loopback address")
-                _discard_fixture_hook_cache(owned)
-                restart_receive = _run_adapter("receive", "codex", "codex-fixture", token_file,
-                                               restarted_url, offer_id=offer_id, owned=owned)
-                if (restart_receive.get("receiptId") != first.get("receiptId")
-                        or restart_receive.get("state") != "already_recorded"):
-                    raise ScenarioFailure("replacement Runtime did not recover the same recorded receipt")
-                restart_prior = _run_prior_task_evidence_reader(
-                    restarted_url, token_file, "codex", "codex-fixture", owned)
-                restart_evidence = restart_prior.get("priorTaskEvidence")
-                if (not isinstance(restart_evidence, dict)
-                        or restart_evidence.get("signalId") != prior_signal_id
-                        or restart_evidence.get("objective") != objective
-                        or restart_evidence.get("keelCard") != keel_card
-                        or restart_evidence.get("priorProof") != prior_proof
-                        or restart_evidence.get("actor") != {"type": "agent", "id": prior_actor}
-                        or restart_evidence.get("executionId") != EXECUTION
-                        or restart_evidence.get("evidenceId") != restart_evidence.get("eventEvidenceId")
-                        or restart_evidence.get("contentSha256") != restart_evidence.get("envelopeSha256")
-                        or hashlib.sha256(restart_evidence.get("sealedContent", "").encode("utf-8")).hexdigest()
-                        != restart_evidence.get("envelopeSha256")):
-                    raise ScenarioFailure("replacement Runtime did not recover the original prior task evidence")
-                if (restart_evidence.get("sequence", 0)
-                        >= _signal_event(restarted_url, token, offer_id).get("sequence", 0)):
-                    raise ScenarioFailure("replacement Runtime recovered task evidence without its pre-offer ordering")
-                prior_task_evidence = restart_evidence
-                after_restart = _event_snapshot(restarted_url, owner_token)
-                if before_restart != after_restart:
-                    raise ScenarioFailure("Runtime journal changed during restart recovery reads")
-                base_url = restarted_url
-            finally:
-                _stop_owned_runtime(restarted_child, restart_log)
+            restarted_url = _wait_started(restart_log_path, restarted_child)
+            _discard_fixture_hook_cache(owned)
+            restart_receive = _run_adapter("receive", "codex", "codex-fixture", token_file,
+                                           restarted_url, offer_id=offer_id, owned=owned)
+            if (restart_receive.get("receiptId") != first.get("receiptId")
+                    or restart_receive.get("state") != "already_recorded"):
+                raise ScenarioFailure(
+                    "replacement Runtime did not recover the same recorded receipt: "
+                    f"expected id/state={first.get('receiptId')!r}/'already_recorded', "
+                    f"got id/state={restart_receive.get('receiptId')!r}/{restart_receive.get('state')!r}"
+                )
+            restart_prior = _run_prior_task_evidence_reader(
+                restarted_url, token_file, "codex", "codex-fixture", owned)
+            restart_evidence = restart_prior.get("priorTaskEvidence")
+            if (not isinstance(restart_evidence, dict)
+                    or restart_evidence.get("signalId") != prior_signal_id
+                    or restart_evidence.get("objective") != objective
+                    or restart_evidence.get("keelCard") != keel_card
+                    or restart_evidence.get("priorProof") != prior_proof
+                    or restart_evidence.get("actor") != {"type": "agent", "id": prior_actor}
+                    or restart_evidence.get("executionId") != EXECUTION
+                    or restart_evidence.get("evidenceId") != restart_evidence.get("eventEvidenceId")
+                    or restart_evidence.get("contentSha256") != restart_evidence.get("envelopeSha256")
+                    or hashlib.sha256(restart_evidence.get("sealedContent", "").encode("utf-8")).hexdigest()
+                    != restart_evidence.get("envelopeSha256")):
+                raise ScenarioFailure("replacement Runtime did not recover the original prior task evidence")
+            if (restart_evidence.get("sequence", 0)
+                    >= _signal_event(restarted_url, token, offer_id).get("sequence", 0)):
+                raise ScenarioFailure("replacement Runtime recovered task evidence without its pre-offer ordering")
+            prior_task_evidence = restart_evidence
+            after_restart = _event_snapshot(restarted_url, owner_token)
+            if before_restart != after_restart:
+                raise ScenarioFailure("Runtime journal changed during restart recovery reads")
+            base_url = restarted_url
 
             wrong = _run_adapter("receive", "codex", "wrong-codex", token_file, base_url,
                                  offer_id=offer_id, owned=owned)
@@ -692,8 +695,9 @@ def run(wrong_store_only: bool = False) -> dict:
                 except subprocess.TimeoutExpired:
                     owned_child.kill()
                     owned_child.wait(timeout=2)
-            if not log.closed:
-                log.close()
+            for source_log in source_logs:
+                if not source_log.closed:
+                    source_log.close()
 
 
 if __name__ == "__main__":

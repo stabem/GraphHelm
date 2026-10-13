@@ -27,8 +27,9 @@ traceable.
 Before the offer, the scenario records one synthetic task-evidence signal with a literal objective,
 bounded Keel card and synthetic prior proof. After the Codex companion receives the offer and the
 fixture hook cache is discarded, the scenario stops the exact source Runtime process and waits for
-it to exit. It starts the same pinned executable against the same event store and keyring on a new
-ephemeral loopback port, without reinitializing or reseeding the store. After clearing only fixture
+it to exit. It starts the same pinned executable against the same event store and keyring on the
+same ephemeral loopback endpoint, without reinitializing or reseeding the store. The stable origin
+preserves the receipt identity while the Runtime process is replaced. After clearing only fixture
 hook state, the actual Codex companion must recover the same receipt as `already_recorded`; a fresh
 bounded Codex-bound process must discover the earlier signal through the replacement Runtime's
 events endpoint and open its sealed evidence through the public evidence endpoint. That process

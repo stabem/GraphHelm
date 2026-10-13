@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import json
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -292,6 +292,7 @@ def run(wrong_store_only: bool = False) -> dict:
                     empty_child.wait(timeout=2)
                 empty_log.close()
 
+            _discard_fixture_hook_cache(owned)
             first = _run_adapter("receive", "codex", "codex-fixture", token_file, base_url,
                                  offer_id=offer_id, owned=owned)
             second = _run_adapter("receive", "codex", "codex-fixture", token_file, base_url,

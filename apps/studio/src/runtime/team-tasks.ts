@@ -603,6 +603,10 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
     }
     if (event.kind === "task.pr_opened" && !firstPrOpening.has(state)) firstPrOpening.set(state, event.sequence);
     onRoute?.(event, state);
+    // A later opening by the same author revives this PR's closed slice. A merge remains terminal.
+    if (event.kind === "task.pr_opened" && ended.has(state) && state.step !== "merged"
+      && state.pr === event.pr && state.taskId === event.taskId && state.lane === event.lane
+      && event.actorId === event.lane) ended.delete(state);
     if (ended.has(state)) continue;
     if (state.step === "merged") continue;
     state.lastSequence = event.sequence;

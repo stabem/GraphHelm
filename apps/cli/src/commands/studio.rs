@@ -250,6 +250,11 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
         Progress::say(
             &progress.ok("graphhelm is already built from this commit; nothing to install"),
         );
+        Progress::say(&progress.step(3, 3, "Done"));
+        Progress::say(&progress.ok(&format!(
+            "nothing new to install ({}s)",
+            started.elapsed().as_secs()
+        )));
         return Outcome::success(
             UPDATE,
             json!({

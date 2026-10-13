@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -111,10 +113,21 @@ class ScenarioAdapterSelection(unittest.TestCase):
         self.assertEqual(recovered.get("recordType"), "signal_recorded")
         self.assertEqual(recovered.get("signalType"), "no_progress")
         self.assertEqual(recovered.get("executionId"), "keel-handoff-fixture")
+        self.assertEqual(recovered.get("sourceKind"), "tool")
+        self.assertEqual(recovered.get("sourceId"), "claude-fixture")
         self.assertEqual(recovered.get("actor"), {"type": "agent", "id": "claude-fixture"})
+        self.assertTrue(recovered.get("signalId"))
         self.assertTrue(recovered.get("evidenceId"))
+        self.assertEqual(recovered.get("evidenceId"), recovered.get("eventEvidenceId"))
         self.assertEqual(recovered.get("contentSha256"), recovered.get("envelopeSha256"))
+        self.assertEqual(hashlib.sha256(recovered.get("sealedContent", "").encode("utf-8")).hexdigest(),
+                         recovered.get("contentSha256"))
+        self.assertEqual(json.loads(recovered["sealedContent"])["id"], recovered["signalId"])
         self.assertLess(recovered.get("sequence", 0), result.get("offerSequence", 0))
+        self.assertEqual(result.get("priorTaskEvidenceNegativeControls"), {
+            "healthyEmpty": "no matching record discovered",
+            "differentSynthetic": "different record and literal content rejected as the original",
+        })
 
 
 def load_scenario():

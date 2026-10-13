@@ -24,15 +24,23 @@ starting child processes, and only the child Runtimes started by this scenario a
 Successful output includes the CLI version and executable SHA-256 so the observer binary is
 traceable.
 
-The Claude-labelled adapter first offers to the Codex-labelled adapter. The RED-only command below
-then asks the receiver to recover that exact offer from a separate healthy but empty Runtime. It
-must exit 1 with `continuity assertion failed`; setup or authentication failures are not an
-acceptable result. This demonstrates that the continuity observer detects lost source evidence.
-The normal command runs the same missing-offer control, restores the receiver to the source
-Runtime after clearing only fixture-owned hook state, and checks the stable offer and receipt
-identities, sealed references recovered through the Runtime event log, repeat-receive idempotency,
-pending duty references, and rejection of another Codex session without a new receipt. Direct
-scenario output is not a journey replay or proof of Claude/Codex host activation.
+Before the offer, the scenario records one synthetic task-evidence signal with a literal objective,
+bounded Keel card and synthetic prior proof. After the Codex companion receives the offer and the
+fixture hook cache is discarded, a fresh bounded Codex-bound process discovers that earlier signal
+through the Runtime events endpoint and opens its sealed evidence through the public evidence
+endpoint. That process receives only fixture Runtime binding and execution identity; it is not
+given expected signal/evidence IDs or sender-cached content. The observer checks the recovered
+literal content, actor/type/execution, evidence ID and digest, and that its event precedes the offer.
+It also checks the read against a healthy empty store and a valid but different synthetic record.
+
+The RED-only command below asks the receiver to recover the original offer from a separate healthy
+but empty Runtime. It must exit 1 with `continuity assertion failed`; setup or authentication
+failures are not an acceptable result. The normal command runs the same missing-offer control,
+restores the receiver to the source Runtime after clearing only fixture-owned hook state, and checks
+the stable offer and receipt identities, sealed references recovered through the Runtime event log,
+repeat-receive idempotency, pending duty references, prior task-evidence recovery and rejection of
+another Codex session without a new receipt. Direct scenario output is not a journey replay or proof
+of Claude/Codex host activation.
 
 Run the RED-only sensitivity control once during implementation; it is expected to exit 1:
 
@@ -44,8 +52,8 @@ Child processes are hidden on Windows and have bounded startup/request/cleanup w
 server command owns its event directory; the scenario deletes only its fixture-local
 `TemporaryDirectory` after the process exits. No process search or unrelated cleanup is used.
 
-Cost: two short local Runtimes and a fixed graph/event set; no build, network access, model call,
-browser or production infrastructure.
+Cost: two short local Runtimes, one fixed graph/event set, and bounded hidden child processes; no
+build, network access, model call, browser or production infrastructure.
 
 The journey contract is draft and its approval is null. `journey validate` checks the flow's
 shape and semantics; it does not run this scenario. Running the scenario directly proves the

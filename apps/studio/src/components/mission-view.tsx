@@ -88,6 +88,8 @@ interface Props {
   slots?: SlotView[];
   /** Actors with an armed, unconsumed wake lease; absent on older Runtimes. */
   wakeListeners?: string[];
+  seenActors?: string[];
+  seenActorAgesMs?: Record<string, number>;
   onDemandLanes?: string[];
   /** #647: the run's graph nodes for the Run graph strip; empty, the strip is omitted. */
   runNodes?: GraphNode[];
@@ -140,10 +142,10 @@ export const awayText = (a: { minutes: number; shipped: number }) => `${Math.max
 /** #735: one stacked bar per work group, plus the same counts in words, instead of a spinner per item. */
 const PROGRESS_ORDER = ["proven", "merged", "work", "stalled", "ready"] as const;
 const PROGRESS_WORD: Record<(typeof PROGRESS_ORDER)[number], string> = { proven: "proven", merged: "merged", work: "in work", stalled: "blocked", ready: "Ready · unclaimed" };
-export function GroupProgress({ states }: { states: string[] }) {
+/** `prs` is how many of the tasks have a PR (#1166): a claimed task without one is work, not a PR. */
+export function GroupProgress({ states, prs = states.length }: { states: string[]; prs?: number }) {
   const counts = PROGRESS_ORDER.map((k) => [k, states.filter((s) => s === k).length] as const).filter(([, n]) => n > 0);
-  const total = states.length;
-  const words = [`${total} ${total === 1 ? "PR" : "PRs"}`, ...counts.map(([k, n]) => `${n} ${PROGRESS_WORD[k]}`)].join(" · ");
+  const words = [prs === 0 ? "no PR yet" : `${prs} ${prs === 1 ? "PR" : "PRs"}`, ...counts.map(([k, n]) => `${n} ${PROGRESS_WORD[k]}`)].join(" · ");
   return (
     <span className="mv-progress">
       <span className="mv-progress-bar" role="img" aria-label={words}>
@@ -162,6 +164,19 @@ function splitDraftTitle(title: string): { name: string; note: string | null } {
 function flowForContract(flows: JourneyFlowView[], contractId: string): JourneyFlowView | undefined {
   return flows.find((flow) => flow.id === contractId)
     ?? flows.filter((flow) => contractId.startsWith(`${flow.id}.`)).sort((a, b) => b.id.length - a.id.length)[0];
+}
+/** #1153: an uncompiled flow's steps in its main path's order. The Runtime lists screens by id, and
+ * the rail's staleness check compares against the path, so id order flagged every draft as stale. */
+function flowStepOrder(flow: JourneyFlowView): JourneyFlowView["screens"] {
+  const edges = flow.paths.main?.map((id) => flow.edges.find((edge) => edge.id === id));
+  if (!edges?.length || edges.some((edge) => edge === undefined)) return flow.screens;
+  const ids = [edges[0]!.from, ...edges.map((edge) => edge!.to)];
+  // A path that revisits a screen is a validation finding (flow.path_revisits_screen); id order
+  // keeps each step once instead of repeating one.
+  if (new Set(ids).size !== ids.length) return flow.screens;
+  const ordered = ids.map((id) => flow.screens.find((screen) => screen.id === id));
+  if (ordered.some((screen) => screen === undefined)) return flow.screens;
+  return [...ordered as JourneyFlowView["screens"], ...flow.screens.filter((screen) => !ids.includes(screen.id))];
 }
 function JourneyRailButton({ mission, flow, duplicateTitle, selected, onSelect }: { mission: Mission; flow?: JourneyFlowView; duplicateTitle: boolean; selected: boolean; onSelect(): void }) {
   const { name, note } = splitDraftTitle(mission.title);
@@ -236,12 +251,12 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, seenActors, seenActorAgesMs, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
   const journeys = useMemo(() => {
     const known = new Set(compiledJourneys.map((journey) => journey.contractId));
     return [...compiledJourneys, ...(flows?.flows ?? []).filter((flow) => !known.has(flow.id)).map((flow): JourneyView => ({
       contractId: flow.id, title: flow.title ?? flow.id, arrows: [],
-      steps: flow.screens.map((screen) => ({ stepId: screen.id, screen: { screenId: screen.id, title: screen.title ?? screen.id, scopePaths: [] }, promises: [] })),
+      steps: flowStepOrder(flow).map((screen) => ({ stepId: screen.id, screen: { screenId: screen.id, title: screen.title ?? screen.id, scopePaths: [] }, promises: [] })),
     }))];
   }, [compiledJourneys, flows]);
 
@@ -330,7 +345,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   };
   const lanesView = <>
     <WorkKanban items={kanbanItems} onOpen={openOnGraph} historyLoading={lanesHistoryLoading} />
-    <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} onDemandLanes={onDemandLanes} liveLanes={wakeListeners} historyLoading={lanesHistoryLoading}
+    <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} onDemandLanes={onDemandLanes} liveLanes={wakeListeners} seenActors={seenActors} seenActorAgesMs={seenActorAgesMs} historyLoading={lanesHistoryLoading}
       {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
   </>;
   const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} {...(onOpenNode ? { onOpenNode } : {})} />;
@@ -479,7 +494,8 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
                       <button type="button" className="mv-journey mv-group" aria-pressed={false} title={g.label} onClick={() => pickGroup(g.key)}>
                         <span className="mv-journey-title">{g.label}</span>
                       </button>
-                      <GroupProgress states={visibleTasks.map((t) => stageState(g.stages[t.key]!, t))} />
+                      <GroupProgress states={visibleTasks.map((t) => stageState(g.stages[t.key]!, t))} prs={prs} />
+                      {g.contested.length > 0 && <span className="mv-journey-meta mv-contested" data-tone="stalled" title="Two lanes hold open claims on this issue: one of them is duplicate work">{`${g.contested.length} claims: ${g.contested.join(", ")}`}</span>}
                       {visibleTasks.length === 0 && g.releasedKeys.length > 0 && <span className="mv-journey-meta">released</span>}
                     </div>
                   );
@@ -488,7 +504,8 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
                       <button type="button" className="mv-journey mv-group" aria-pressed={true} title={g.label} onClick={() => pickGroup(g.key)}>
                         <span className="mv-journey-title">{g.label}</span>
                       </button>
-                      <GroupProgress states={visibleTasks.map((t) => stageState(g.stages[t.key]!, t))} />
+                      <GroupProgress states={visibleTasks.map((t) => stageState(g.stages[t.key]!, t))} prs={prs} />
+                      {g.contested.length > 0 && <span className="mv-journey-meta mv-contested" data-tone="stalled" title="Two lanes hold open claims on this issue: one of them is duplicate work">{`${g.contested.length} claims: ${g.contested.join(", ")}`}</span>}
                       {visibleTasks.length === 0 && g.releasedKeys.length > 0 && <span className="mv-journey-meta">released</span>}
                       <span className="mv-journey-meta">{`${g.issue !== null ? `issue #${g.issue}` : partial ? "issue not read yet" : "no issue"} · ${prs} ${prs === 1 ? "PR" : "PRs"}`}</span>
                       <div className="mv-chips">

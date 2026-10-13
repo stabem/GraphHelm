@@ -804,6 +804,21 @@ pub(super) async fn status(
     }
 }
 
+/// Process-local request liveness is separate from the event-backed execution status.
+pub(super) async fn seen_actors(State(state): State<ServeState>) -> Response {
+    respond(
+        StatusCode::OK,
+        Outcome::success(
+            "serve.seen_actors",
+            serde_json::json!({
+                "seenActors": state.seen_actors(),
+                "seenActorAgesMs": state.seen_actor_ages_ms(),
+            }),
+        )
+        .output,
+    )
+}
+
 /// `GET /v1/executions/{id}/reply-suggestions`: produce two operator replies for a live
 /// `needs_you` execution. The chat route writes bounded candidates; the explicit Jev route scores
 /// them against the replayed status and briefing. This is deliberately read-only: no suggestion
@@ -6699,7 +6714,7 @@ mod pause_digest_body_tests {
 /// the runs recorded before and after are compared, and the thread the new run happened on must
 /// not be the runtime's own. Serialised through one lock because the witness is process-wide.
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
 
@@ -6751,7 +6766,8 @@ mod tests {
         String::from_utf8(bytes.to_vec()).unwrap()
     }
 
-    fn known_execution_state() -> (tempfile::TempDir, super::ServeState) {
+    pub(in crate::commands::serve) fn known_execution_state()
+    -> (tempfile::TempDir, super::ServeState) {
         let directory = tempfile::tempdir().unwrap();
         let execution_id = OpaqueId::parse("execution-known").unwrap();
         let scope = RepositoryScope::new(
@@ -6804,6 +6820,7 @@ mod tests {
             read_audit: None,
             gateway_manifest: None,
             native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            seen_actors: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
         };
         (directory, state)
     }

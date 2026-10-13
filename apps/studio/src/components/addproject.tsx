@@ -19,18 +19,24 @@ import { Check, Copy, FolderPlus, X } from "lucide-react";
 
 type Shell = "powershell" | "posix";
 
-/** The command that makes a folder into a project. The Runtime needs an explicit loopback bind,
- * and the documented discovery port is 8791. */
+/** The second project's Runtime address. The first project's Runtime keeps 8791 after its Studio
+ * stops (its agents still use it), so another folder needs its own port. */
+const SECOND_BIND = "127.0.0.1:8792";
+
+/** The command that opens a folder as a project (#1154). `init` provisions the token, sealing key
+ * and keyring on that port (idempotent: an existing setup is kept); `studio start` starts that
+ * folder's Runtime with every flag `serve` needs and opens the Studio on it. A bare `serve` on 8791
+ * collided with the Runtime already serving this page and lacked the keyring. */
 function commandFor(folder: string, shell: Shell): string {
   const target = folder.trim().length > 0 ? folder.trim() : "<path to the folder>";
   if (shell === "powershell") {
     const escapedTarget = target.replaceAll("'", "''");
     // PowerShell 5.1 does not support `&&`. Checking `$?` keeps the copied command safe when the
     // folder does not exist, while `-LiteralPath` prevents wildcard expansion in the path.
-    return `Set-Location -LiteralPath '${escapedTarget}'; if ($?) { graphhelm serve --events .graphhelm/events --bind 127.0.0.1:8791 }`;
+    return `Set-Location -LiteralPath '${escapedTarget}'; if ($?) { graphhelm init --bind ${SECOND_BIND}; if ($?) { graphhelm studio start --bind ${SECOND_BIND} } }`;
   }
   const escapedTarget = target.replaceAll("'", "'\\''");
-  return `cd '${escapedTarget}' && graphhelm serve --events .graphhelm/events --bind 127.0.0.1:8791`;
+  return `cd '${escapedTarget}' && graphhelm init --bind ${SECOND_BIND} && graphhelm studio start --bind ${SECOND_BIND}`;
 }
 
 export function AddProject({ onClose }: { onClose: () => void }) {
@@ -66,8 +72,9 @@ export function AddProject({ onClose }: { onClose: () => void }) {
 
       <div className="composer">
         <p className="panel-foot" style={{ padding: 0 }}>
-          A project is a folder with a Runtime serving it. Start one in the folder and the Studio
-          picks it up.
+          This Studio shows one project at a time. To open another folder, stop this Studio (Ctrl+C in
+          the terminal that started it), then run this. The folder gets its own Runtime on port 8792;
+          if that port is taken, change both numbers to a free one.
         </p>
 
         <label className="lbl" htmlFor="add-project-folder">

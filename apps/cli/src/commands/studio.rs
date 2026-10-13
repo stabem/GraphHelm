@@ -30,6 +30,24 @@ use crate::progress::Progress;
 
 const COMMAND: &str = "studio";
 const LAUNCHER: &str = "apps/studio/tools/studio-up.ps1";
+/// The POSIX twin of the launcher (#1152): Linux and macOS start the Studio without PowerShell.
+const POSIX_LAUNCHER: &str = "apps/studio/tools/studio-up.sh";
+
+/// A launcher flag in the running platform's spelling: `-ProjectPath` for the PowerShell
+/// launcher, `--project-path` for the POSIX one. Both launchers take the same flags.
+pub(super) fn launcher_flag(name: &str, posix: bool) -> String {
+    if !posix {
+        return format!("-{name}");
+    }
+    let mut flag = String::from("-");
+    for c in name.chars() {
+        if c.is_ascii_uppercase() {
+            flag.push('-');
+        }
+        flag.push(c.to_ascii_lowercase());
+    }
+    flag
+}
 const LOCKFILE: &str = "apps/studio/package-lock.json";
 /// The clone this binary was built from: `apps/cli` is two levels below the repository root.
 const BUILT_FROM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
@@ -575,10 +593,13 @@ pub(super) fn install_root(exe: Option<&Path>) -> Option<PathBuf> {
 /// path as `-ProjectPath`, which the launcher forwards to `serve --project` (without it the
 /// journeys route refuses, #331).
 pub(super) fn add_project(launch: &mut Command, project: &Path) {
+    let posix = !cfg!(windows);
     if let Some(name) = project.file_name() {
-        launch.arg("-Project").arg(name);
+        launch.arg(launcher_flag("Project", posix)).arg(name);
     }
-    launch.arg("-ProjectPath").arg(plain(project.to_path_buf()));
+    launch
+        .arg(launcher_flag("ProjectPath", posix))
+        .arg(plain(project.to_path_buf()));
 }
 
 pub fn start(args: &StudioStartArgs) -> Outcome {
@@ -612,17 +633,24 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
     };
     let head = git(&source, &["rev-parse", "--short", "HEAD"]);
 
-    let shell = if cfg!(windows) { "powershell" } else { "pwsh" };
+    let posix = !cfg!(windows);
+    let flag = |name: &str| launcher_flag(name, posix);
+    let shell = if posix { "sh" } else { "powershell" };
     let mut launch = graphhelm_process::command(shell);
+    if posix {
+        launch.arg(source.join(POSIX_LAUNCHER));
+    } else {
+        launch
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+            .arg(source.join(LAUNCHER));
+    }
     launch
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
-        .arg(source.join(LAUNCHER))
-        .arg("-Events")
+        .arg(flag("Events"))
         .arg(&events)
-        .args(["-Bind", &args.bind]);
+        .args([flag("Bind"), args.bind.clone()]);
     add_project(&mut launch, &project);
     if let Ok(exe) = std::env::current_exe() {
-        launch.arg("-GraphHelm").arg(exe);
+        launch.arg(flag("GraphHelm")).arg(exe);
     }
     let keyring = state.join(super::init::KEYRING_DIRECTORY);
     let key = std::fs::read_to_string(state.join(super::init::KEY_FILE)).ok();
@@ -632,9 +660,9 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
         // argument, never printed.
         launch
             .env(SEALING_KEY_ENVIRONMENT, key.trim())
-            .arg("-Keyring")
+            .arg(flag("Keyring"))
             .arg(&keyring)
-            .args(["-KeyId", &args.key_id]);
+            .args([flag("KeyId"), args.key_id.clone()]);
     }
     // The model half, when `gateway setup` wired one: without it the Runtime lists no routes and
     // the Studio's suggested replies say no Jev model is set up.
@@ -654,20 +682,20 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
             launch.env(GATEWAY_KEY_ENVIRONMENT, key.trim());
         }
         launch
-            .arg("-Manifest")
+            .arg(flag("Manifest"))
             .arg(&manifest)
-            .arg("-Broker")
+            .arg(flag("Broker"))
             .arg(&broker)
-            .args(["-Route", &route]);
+            .args([flag("Route"), route]);
     }
     if args.no_browser {
-        launch.arg("-NoBrowser");
+        launch.arg(flag("NoBrowser"));
     }
     let launched = match launch.status() {
         Ok(status) => status.success(),
         Err(_) => {
             return refused(
-                format!("{shell} could not be started; the Studio launcher is a PowerShell script"),
+                format!("{shell} could not be started to run the Studio launcher"),
                 "/shell",
             );
         }
@@ -894,10 +922,79 @@ mod tests {
             .collect();
         let at = given
             .iter()
-            .position(|a| a == "-ProjectPath")
-            .expect("-ProjectPath is passed");
+            .position(|a| *a == launcher_flag("ProjectPath", !cfg!(windows)))
+            .expect("the project path is passed");
         assert!(given[at + 1].ends_with("my project"));
-        assert!(given.contains(&"-Project".to_string()));
+        assert!(given.contains(&launcher_flag("Project", !cfg!(windows))));
+    }
+
+    #[test]
+    fn posix_launcher_flags_are_the_kebab_case_twins() {
+        assert_eq!(launcher_flag("ProjectPath", true), "--project-path");
+        assert_eq!(launcher_flag("NoBrowser", true), "--no-browser");
+        assert_eq!(launcher_flag("KeyId", false), "-KeyId");
+    }
+
+    /// #1152: the POSIX launcher hands `serve` every path as one argument and says at once when
+    /// the Runtime it started exits, as the PowerShell launcher does on Windows.
+    #[cfg(unix)]
+    #[test]
+    fn the_posix_launcher_starts_serve_with_the_projects_paths() {
+        use std::net::TcpListener;
+        let first = TcpListener::bind("127.0.0.1:0").unwrap();
+        let second = TcpListener::bind("127.0.0.1:0").unwrap();
+        let bind_port = first.local_addr().unwrap().port();
+        let studio_port = second.local_addr().unwrap().port();
+        drop((first, second));
+        let root = std::env::temp_dir().join(format!("gh studio up sh {}", std::process::id()));
+        let project = root.join("my project");
+        let events = project.join(".graphhelm").join("events");
+        std::fs::create_dir_all(&events).unwrap();
+        let stub = root.join("stub.sh");
+        std::fs::write(
+            &stub,
+            format!(
+                "#!/bin/sh\nfor a in \"$@\"; do echo \"$a\"; done > '{}'\nexit 7\n",
+                root.join("argv.txt").display()
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let launcher = Path::new(env!("CARGO_MANIFEST_DIR")).join("../studio/tools/studio-up.sh");
+        let started = std::time::Instant::now();
+        let mut launch = graphhelm_process::command("sh");
+        launch
+            .arg(&launcher)
+            .arg("--events")
+            .arg(&events)
+            .args(["--bind", &format!("127.0.0.1:{bind_port}")])
+            .args(["--studio-port", &studio_port.to_string(), "--no-browser"])
+            .arg("--graph-helm")
+            .arg(&stub);
+        add_project(&mut launch, &project);
+        let output = launch.output().unwrap();
+        assert!(!output.status.success());
+        assert!(
+            started.elapsed().as_secs() < 30,
+            "a dead Runtime is said at once"
+        );
+        let argv = std::fs::read_to_string(root.join("argv.txt")).expect("the stub was started");
+        let lines: Vec<&str> = argv.lines().collect();
+        let at = lines
+            .iter()
+            .position(|l| *l == "--project")
+            .expect("--project is passed");
+        assert!(lines[at + 1].ends_with("my project"), "{lines:?}");
+        let at = lines
+            .iter()
+            .position(|l| *l == "--events")
+            .expect("--events is passed");
+        assert!(
+            lines[at + 1].ends_with("events") && lines[at + 1].contains("my project"),
+            "{lines:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Runs the real launcher against a stub `graphhelm` that records the argv it receives, in a

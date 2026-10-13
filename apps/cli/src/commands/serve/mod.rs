@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -89,6 +90,8 @@ const STARTED_COMMAND: &str = "serve.started";
 const HEALTH_COMMAND: &str = "serve.health";
 const UNAUTHORIZED_COMMAND: &str = "serve.unauthorized";
 const NOT_FOUND_COMMAND: &str = "serve.not_found";
+const SEEN_ACTOR_TTL: Duration = Duration::from_secs(15 * 60);
+const SEEN_ACTOR_LIMIT: usize = 256;
 
 fn argument(message: &str, pointer: &str) -> Failure {
     Failure {
@@ -181,6 +184,66 @@ struct ServeState {
     /// half is wired (#585). Never read by an executor.
     gateway_manifest: Option<Arc<Path>>,
     native_chat_busy: Arc<tokio::sync::Mutex<std::collections::HashMap<String, String>>>,
+    /// In-memory liveness only: an authenticated actor has contacted this Runtime recently.
+    /// Never persisted; it is display evidence and grants no authority.
+    seen_actors: Arc<std::sync::Mutex<BTreeMap<String, Instant>>>,
+}
+
+impl ServeState {
+    fn record_seen_actor(&self, headers: &HeaderMap, now: Instant) {
+        let Some(actor) = headers
+            .get("x-graphhelm-actor")
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| ActorId::parse(*value).is_ok())
+        else {
+            return;
+        };
+        let mut seen = self
+            .seen_actors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        seen.retain(|_, at| now.saturating_duration_since(*at) <= SEEN_ACTOR_TTL);
+        seen.insert(actor.to_owned(), now);
+        while seen.len() > SEEN_ACTOR_LIMIT {
+            let oldest = seen
+                .iter()
+                .min_by_key(|(actor, at)| (**at, actor.as_str()))
+                .map(|(actor, _)| actor.clone());
+            let Some(oldest) = oldest else { break };
+            seen.remove(&oldest);
+        }
+    }
+
+    fn seen_actors_at(&self, now: Instant) -> Vec<String> {
+        let mut seen = self
+            .seen_actors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        seen.retain(|_, at| now.saturating_duration_since(*at) <= SEEN_ACTOR_TTL);
+        seen.keys().cloned().collect()
+    }
+
+    fn seen_actors(&self) -> Vec<String> {
+        self.seen_actors_at(Instant::now())
+    }
+
+    fn seen_actor_ages_ms(&self) -> BTreeMap<String, u64> {
+        let now = Instant::now();
+        self.seen_actors_at(now);
+        self.seen_actors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|(actor, at)| {
+                (
+                    actor.clone(),
+                    now.saturating_duration_since(*at)
+                        .as_millis()
+                        .min(u128::from(u64::MAX)) as u64,
+                )
+            })
+            .collect()
+    }
 }
 
 /// `graphhelm serve --events <dir> --bind <addr>`: creates or loads the bearer token, binds
@@ -258,6 +321,7 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         gateway_manifest: args.gateway_manifest.as_deref().map(Arc::from),
         sweep_interval: args.sweep_interval,
         native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+        seen_actors: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
     };
 
     let rt =
@@ -739,6 +803,7 @@ fn build_router(state: ServeState) -> Router {
         .route("/v1/executions", get(routes::list_executions))
         .route("/v1/native-chats", get(native_chats::list))
         .route("/v1/executions/{id}", get(routes::status))
+        .route("/v1/seen-actors", get(routes::seen_actors))
         .route(
             "/v1/executions/{id}/reply-suggestions",
             get(routes::reply_suggestions),
@@ -1001,6 +1066,7 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
         "x-graphhelm-agent-credential",
         HeaderValue::from_str(&presented).unwrap_or_else(|_| HeaderValue::from_static("invalid")),
     );
+    state.record_seen_actor(request.headers(), Instant::now());
     next.run(request).await
 }
 
@@ -3254,6 +3320,90 @@ fn append_audit_line(path: &Path, line: &serde_json::Value) -> std::io::Result<(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Promise: a scoped agent status read identifies its admitted actor without advancing the
+    /// event head, and that observation expires after the 15-minute liveness window. Regression:
+    /// omitting actor tracking or appending a heartbeat would make one of these assertions fail.
+    /// The isolated route fixture owns a temporary event store; no live Runtime is contacted.
+    /// Cost: one in-process HTTP request and one temporary store.
+    #[tokio::test]
+    async fn a_served_actor_reads_as_seen_without_a_journal_write() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (_directory, mut state) = routes::tests::known_execution_state();
+        state.token = Arc::<[u8]>::from(b"test-token".to_vec());
+        state.agent_session_token = Arc::<[u8]>::from(b"shared-token".to_vec());
+        state.agent_credentials = Arc::new(BTreeMap::from([(
+            "scoped-token".to_owned(),
+            ScopedAgentCredential {
+                actor: PersistedActor::new(
+                    PersistedActorType::Agent,
+                    ActorId::parse("lane-a").unwrap(),
+                ),
+                project: execution::PROJECT.to_owned(),
+                execution: "execution-known".to_owned(),
+            },
+        )]));
+        let state_for_expiry = state.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, build_router(state)).await.unwrap();
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        stream.write_all(b"GET /v1/executions/execution-known HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer test-token\r\nX-GraphHelm-Actor: lane-a\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        let body_start = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .unwrap()
+            + 4;
+        let body: serde_json::Value = serde_json::from_slice(&response[body_start..]).unwrap();
+        assert!(body["data"].get("seenActors").is_none());
+        assert!(state_for_expiry.seen_actors().is_empty());
+        let mut shared = tokio::net::TcpStream::connect(address).await.unwrap();
+        shared.write_all(b"GET /v1/executions/execution-known HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer shared-token\r\nX-GraphHelm-Actor: lane-a\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut shared_response = Vec::new();
+        shared.read_to_end(&mut shared_response).await.unwrap();
+        assert!(state_for_expiry.seen_actors().is_empty());
+        let mut scoped = tokio::net::TcpStream::connect(address).await.unwrap();
+        scoped.write_all(b"GET /v1/executions/execution-known HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer scoped-token\r\nX-GraphHelm-Actor: forged-lane\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut scoped_response = Vec::new();
+        scoped.read_to_end(&mut scoped_response).await.unwrap();
+        assert_eq!(state_for_expiry.seen_actors(), vec!["lane-a"]);
+        let mut liveness = tokio::net::TcpStream::connect(address).await.unwrap();
+        liveness.write_all(b"GET /v1/seen-actors HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer test-token\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut liveness_response = Vec::new();
+        liveness.read_to_end(&mut liveness_response).await.unwrap();
+        server.abort();
+        let liveness_body_start = liveness_response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .unwrap()
+            + 4;
+        let liveness_body: serde_json::Value =
+            serde_json::from_slice(&liveness_response[liveness_body_start..]).unwrap();
+        assert_eq!(
+            liveness_body["data"]["seenActors"],
+            serde_json::json!(["lane-a"])
+        );
+        assert!(
+            liveness_body["data"]["seenActorAgesMs"]["lane-a"]
+                .as_u64()
+                .unwrap()
+                < 60_000
+        );
+        assert_eq!(state_for_expiry.seen_actors(), vec!["lane-a"]);
+        assert!(state_for_expiry.seen_actor_ages_ms()["lane-a"] < 60_000);
+        assert_eq!(body["data"]["headSequence"], 1);
+        assert!(
+            state_for_expiry
+                .seen_actors_at(Instant::now() + Duration::from_secs(16 * 60))
+                .is_empty()
+        );
+    }
 
     #[test]
     fn a_cancel_retry_does_not_accept_a_successful_completion_with_the_same_execution() {

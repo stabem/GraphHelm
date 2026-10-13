@@ -60,6 +60,18 @@ describe("MissionView", () => {
     expect(item).toHaveClass("mv-proof-journey");
   });
 
+  it("#1153: an uncompiled draft follows its main path and is not marked out of date", async () => {
+    const flow = { id: "new-task", title: "Start a new task", status: "draft", approved: null, drift: [], findings: [], approvable: true,
+      screens: [{ id: "compose", url: "/", state: "stable" }, { id: "run", url: "/", state: "stable" }, { id: "started", url: "/", state: "success" }],
+      edges: [{ id: "run.open", from: "run", to: "compose" }, { id: "compose.send", from: "compose", to: "started" }],
+      paths: { main: ["run.open", "compose.send"] } } as JourneyFlowView;
+    render(<MissionView journeys={[]} flows={{ flows: [flow] }} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Proof" }));
+    const item = screen.getByRole("navigation", { name: "Journeys" }).querySelector(".mv-proof-journey")!;
+    expect(item).not.toHaveTextContent("contract out of date");
+    expect(screen.queryByText("Contract out of date, regenerate first")).not.toBeInTheDocument();
+  });
+
   it("#830: a real secondary path uses its source flow to mark an old contract", async () => {
     const contract = { ...journeys[0]!, contractId: "studio-answer-question.refuse", title: "Owner answers, or refuses, a question an agent asked",
       steps: ["asked", "refused"].map((id) => ({ stepId: id, screen: { screenId: id, title: id, scopePaths: [] }, promises: [] })) };
@@ -336,6 +348,15 @@ describe("MissionView", () => {
     expect(screen.getByText("The owner sees it")).toBeInTheDocument();
   });
 
+  it("#1166: a claimed issue without a PR reads no PR yet, not 1 PR", () => {
+    const tasks = [wt("a", { issue: 5, pr: 50, prTitle: "Moving", step: "review" }), wt("b", { issue: 6, pr: null, step: "implement" })] as unknown as TaskState[];
+    render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    const cards = Array.from(screen.getByRole("region", { name: "Work by issue" }).querySelectorAll<HTMLElement>(".mv-jcard"));
+    const texts = cards.map((c) => c.querySelector(".mv-progress-text")!.textContent);
+    expect(texts).toContain("1 PR · 1 in work");
+    expect(texts.find((t) => t !== "1 PR · 1 in work")).toMatch(/^no PR yet · /);
+  });
+
   it("#735: each work group shows one progress bar with its counts in words; no spinners; a blocked chip is marked", () => {
     const block = { reviewer: "r", headSha: "abcdef0123", commentUrl: "" };
     const tasks = [wt("a", { issue: 5, pr: 50, prTitle: "Moving", step: "review" }), wt("b", { issue: 5, pr: 51, prTitle: "Held", step: "review", blockedBy: block }),
@@ -350,6 +371,19 @@ describe("MissionView", () => {
     expect(within(cards[0]!).getByRole("img", { name: words(cards[0]!)! })).toHaveClass("mv-progress-bar");
     const chip = (pr: number) => Array.from(cards[0]!.querySelectorAll<HTMLElement>(".mv-pr-chip")).find((c) => c.getAttribute("aria-label")!.startsWith(`PR #${pr}`))!;
     expect([chip(50), chip(51), chip(52)].map((c) => c.getAttribute("data-alert"))).toEqual(["false", "true", "false"]);
+  });
+
+  it("#1151: an issue with two lanes on open claims says so on its card; one lane says nothing", () => {
+    const tasks = [wt("a", { issue: 1148, lane: "gh-claude-opt-3", step: "implement" }), wt("b", { issue: 1148, lane: "codex-4", step: "implement" }),
+      wt("c", { issue: 1147, lane: "gh-claude-opt-2", step: "implement" })] as unknown as TaskState[];
+    render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    const region = screen.getByRole("region", { name: "Work by issue" });
+    const cards = Array.from(region.querySelectorAll<HTMLElement>(".mv-jcard"));
+    const contested = (c: HTMLElement) => c.querySelector<HTMLElement>(".mv-contested");
+    const card = (issue: number) => cards.find((c) => c.textContent!.includes(`Issue #${issue}`))!;
+    expect(contested(card(1148))!.textContent).toBe("2 claims: gh-claude-opt-3, codex-4");
+    expect(contested(card(1148))!.getAttribute("data-tone")).toBe("stalled");
+    expect(contested(card(1147))).toBeNull();
   });
 
   it("#824: each Proof rail count stays with its label while the line can wrap", () => {

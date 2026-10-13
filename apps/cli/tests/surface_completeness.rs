@@ -194,7 +194,7 @@ fn read_rust_string(text: &str) -> String {
 /// AN EXCEPTION LIST IS THE HONEST HALF OF A COMPLETENESS GUARD, and it earns its keep only if
 /// adding a row is harder than adding the tool. Each entry names WHY, so a future author who wants
 /// to silence this guard has to write a false sentence rather than paste a path.
-const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 14] = [
+const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 15] = [
     (
         "GET",
         "/v1/journey-observer/setup",
@@ -230,6 +230,11 @@ const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 14] = [
         "GET",
         "/health",
         "a liveness probe for whatever is watching the process, not an operation on an execution",
+    ),
+    (
+        "GET",
+        "/v1/seen-actors",
+        "in-memory authenticated request telemetry for the Studio liveness display; it is process-local UI evidence, not event-backed execution state or an agent operation",
     ),
     (
         "GET",

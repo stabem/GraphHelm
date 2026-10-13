@@ -306,7 +306,7 @@ describe("Studio organization and responsive navigation", () => {
     saveRemovedRuns(`${location.origin}:dale-api-base`, ["demo-deploy"]);
     const client = stubClient();
     await open(client);
-    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("demo-calm"));
+    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("demo-calm", true));
     expect(client.getStatus).not.toHaveBeenCalledWith("demo-deploy");
   });
 
@@ -325,11 +325,11 @@ describe("Studio organization and responsive navigation", () => {
     await screen.findByRole("navigation", { name: "Projects" });
     if (token === "local-token") {
       expect(screen.getByRole("button", { name: "Rename My workspace" })).toBeVisible();
-      await waitFor(() => expect(second.getStatus).toHaveBeenCalledWith("demo-calm"));
+      await waitFor(() => expect(second.getStatus).toHaveBeenCalledWith("demo-calm", true));
       expect(second.getStatus).not.toHaveBeenCalledWith("demo-deploy");
     } else {
       expect(screen.getByRole("button", { name: "Rename this runtime" })).toBeVisible();
-      await waitFor(() => expect(second.getStatus).toHaveBeenCalledWith("demo-deploy"));
+      await waitFor(() => expect(second.getStatus).toHaveBeenCalledWith("demo-deploy", true));
     }
   });
 
@@ -642,6 +642,18 @@ describe("live team layout", () => {
     await userEvent.click(screen.getByRole("button", { name: "resume" }));
     expect(screen.getByRole("tab", { name: "Team (live)" })).toHaveAttribute("aria-selected", "true");
     await waitFor(() => expect(screen.getByLabelText("Graph file path on the Runtime host")).toHaveFocus());
+    // #1156: the menu closes off the field, and the field says what resume waits for.
+    expect(screen.getByRole("button", { name: "Run actions" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText(/Resume needs this run's graph file/)).toBeInTheDocument();
+  });
+
+  it("#1156: Escape closes Run actions", async () => {
+    await open(stubClient());
+    const summary = screen.getByRole("button", { name: "Run actions" });
+    if (summary.getAttribute("aria-expanded") !== "true") await userEvent.click(summary);
+    await waitFor(() => expect(summary).toHaveAttribute("aria-expanded", "true"));
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(summary).toHaveAttribute("aria-expanded", "false"));
   });
 
 
@@ -1021,7 +1033,7 @@ describe("the projects rail", () => {
   it("opens on the run that needs the operator, not merely the first one", async () => {
     const client = stubClient();
     await open(client);
-    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("demo-deploy"));
+    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("demo-deploy", true));
   });
 
   it("opens the most recently active run when several runs need the operator", async () => {
@@ -1036,7 +1048,7 @@ describe("the projects rail", () => {
       })),
     });
     await open(client);
-    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("active-run"));
+    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("active-run", true));
     expect(client.getStatus).not.toHaveBeenCalledWith("quiet-demo");
   });
 });
@@ -2053,15 +2065,19 @@ describe("the shell's own layout", () => {
     await userEvent.type(within(panel).getByLabelText(/^folder$/i), "F:/projects/example/dale-api-base");
     expect(
       within(panel).getByText(
-        /Set-Location -LiteralPath 'F:\/projects\/example\/dale-api-base'; if \(\$\?\) \{ graphhelm serve --events \.graphhelm\/events --bind 127\.0\.0\.1:8791 \}/i,
+        /Set-Location -LiteralPath 'F:\/projects\/example\/dale-api-base'; if \(\$\?\) \{ graphhelm init --bind 127\.0\.0\.1:8792; if \(\$\?\) \{ graphhelm studio start --bind 127\.0\.0\.1:8792 \} \}/i,
       ),
     ).toBeInTheDocument();
     expect(
       within(panel).getByText(
-        /cd 'F:\/projects\/example\/dale-api-base' && graphhelm serve --events \.graphhelm\/events --bind 127\.0\.0\.1:8791/i,
+        /cd 'F:\/projects\/example\/dale-api-base' && graphhelm init --bind 127\.0\.0\.1:8792 && graphhelm studio start --bind 127\.0\.0\.1:8792/i,
       ),
     ).toBeInTheDocument();
     expect(within(panel).getByLabelText(/^folder$/i)).toHaveValue("F:/projects/example/dale-api-base");
+    // #1154: no bare `serve` on the port this page's Runtime already holds, and no promise of a
+    // pickup this Studio cannot make.
+    expect(panel).not.toHaveTextContent("--bind 127.0.0.1:8791");
+    expect(panel).not.toHaveTextContent("picks it up");
   });
 });
 

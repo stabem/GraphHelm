@@ -57,6 +57,21 @@ describe("buildHandover", () => {
   it("lists the questions opened while away", () => {
     expect(handover.needsYou).toEqual([{ text: "kit 3 asked: Merge now?", sequences: [13] }]);
   });
+  it("lists every open question and drops one removed from the authoritative open items", () => {
+    const preGapQuestion = { kind: "question" as const, key: "question:sig-old", asker: "kit-1", text: "Still waiting?", signalId: "sig-old", recommendations: [], at: at(9), sequence: 9 };
+    const inGapQuestion = { kind: "question" as const, key: "question:sig-q", asker: "kit-3", text: "Merge now?", signalId: "sig-q", recommendations: [], at: at(30), sequence: 13 };
+    const build = (openItems: Array<typeof preGapQuestion | typeof inGapQuestion>) => buildHandover({
+      events, bots: [bot("kit-1"), bot("kit-3")], model, claudeTasks: null, fromSeq: 10, toSeq: 40, openItems,
+    });
+
+    expect(build([preGapQuestion, inGapQuestion]).needsYou).toEqual([
+      { text: "kit 1 asked: Still waiting?", sequences: [9] },
+      { text: "kit 3 asked: Merge now?", sequences: [13] },
+    ]);
+    expect(build([preGapQuestion]).needsYou).toEqual([
+      { text: "kit 1 asked: Still waiting?", sequences: [9] },
+    ]);
+  });
   it("also lists every other open item the beacon counts", () => {
     const h = buildHandover({
       events, bots: [], model, claudeTasks: null, fromSeq: 10, toSeq: 40,

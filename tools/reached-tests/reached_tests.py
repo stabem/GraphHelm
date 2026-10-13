@@ -674,7 +674,7 @@ def commands(whole, single, studio, tools=(), validate=(), lint_packages=None, p
         cmds.append(GUARD)
     if studio:
         files = " ".join(p[len("apps/studio/"):] for p in studio)
-        cmds.append(f"(cd apps/studio && npx vitest related --run --maxWorkers=1 {files} && npx tsc -b)")
+        cmds.append(f"(cd apps/studio && npx vitest related --run --pool=threads --maxWorkers=1 {files} && npx tsc -b)")
     return cmds
 
 

@@ -56,7 +56,9 @@ describe("SlotPoll", () => {
     expect(screen.getByText("Building")).toBeTruthy();
     await act(async () => { vi.advanceTimersByTime(10_000); await Promise.resolve(); await Promise.resolve(); });
     expect(screen.getByText("Building")).toBeTruthy();
-    await act(async () => { vi.advanceTimersByTime(20_000); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { vi.advanceTimersByTime(10_000); await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByText("Building")).toBeTruthy();
+    await act(async () => { vi.advanceTimersByTime(10_000); await Promise.resolve(); await Promise.resolve(); });
     expect(screen.getByText("clear")).toBeTruthy();
     vi.useRealTimers();
   });

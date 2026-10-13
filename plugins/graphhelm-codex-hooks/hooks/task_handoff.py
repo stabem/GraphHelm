@@ -385,7 +385,13 @@ def receive(host: str, session: str, offer_id: str) -> dict:
         receipt = _sealed_signal(url, token, execution, existing)
         receipt_briefing = _validate_receipt(receipt, execution, offer_id, actor, offer_signal["source"]["id"])
         state = "already_recorded"
+    observed_sequence = events[-1]["sequence"] if events else 0
+    minimum_sequence = max(observed_sequence, offered_briefing["asOfSequence"])
+    if existing:
+        minimum_sequence = max(minimum_sequence, receipt_briefing["asOfSequence"])
     briefing = _briefing(url, token, execution)
+    if briefing["asOfSequence"] < minimum_sequence:
+        raise ValueError("Runtime briefing is older than observed handoff history")
     if not existing:
         receipt = {"id": receipt_id, "source": {"type": "tool", "id": actor}, "type": RECEIPT_KIND,
                    "severity": "low", "description": json.dumps({"protocol": PROTOCOL,

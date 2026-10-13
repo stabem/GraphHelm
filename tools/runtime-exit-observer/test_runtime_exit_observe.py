@@ -118,7 +118,8 @@ class WindowsProcessObserver(unittest.TestCase):
 
 class RuntimeExitObserverContract(unittest.TestCase):
     def test_help_exposes_bounded_identity_and_receipt_inputs(self):
-        result = subprocess.run([sys.executable, str(TOOL), "--help"], capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(TOOL), "--help"], capture_output=True, text=True,
+                                creationflags=0x08000000)
         self.assertEqual(result.returncode, 0)
         for option in ("--pid", "--creation-filetime", "--timeout-seconds", "--output"):
             self.assertIn(option, result.stdout)
@@ -128,7 +129,8 @@ class RuntimeExitObserverContract(unittest.TestCase):
             self.skipTest("Windows observer behavior is covered by native child tests")
         with tempfile.TemporaryDirectory() as directory:
             receipt = Path(directory) / "receipt.jsonl"
-            result = subprocess.run([sys.executable, str(TOOL), "--pid", "1", "--creation-filetime", "1", "--timeout-seconds", "1", "--output", str(receipt)], capture_output=True, text=True)
+            result = subprocess.run([sys.executable, str(TOOL), "--pid", "1", "--creation-filetime", "1", "--timeout-seconds", "1", "--output", str(receipt)], capture_output=True, text=True,
+                                    creationflags=0x08000000)
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(receipt.exists())
             self.assertNotIn("Traceback", result.stderr)

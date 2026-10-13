@@ -74,7 +74,7 @@ def load_observations(path):
         if not isinstance(item.get("rubric"), str) or not item["rubric"]:
             raise InputError(f"{label} ({case_id}) needs rubric")
         for field in ("judge", "human_label"):
-            if field in item and item[field] not in VERDICTS:
+            if field in item and (not isinstance(item[field], str) or item[field] not in VERDICTS):
                 raise InputError(f"{label} ({case_id}) {field} must be pass or fail")
         has_response = "response_sha256" in item
         has_judge_id = "judge_id" in item

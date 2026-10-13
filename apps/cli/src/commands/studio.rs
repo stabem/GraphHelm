@@ -428,7 +428,7 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
         // versioned directory's binary was placed there by another installer (#281 review).
         install.arg("--root").arg(root).arg("--force");
     }
-    let installed = install.status().is_ok_and(|status| status.success());
+    let installed = run_install(&mut install, &source, progress);
     if !installed {
         if let Some((exe, old)) = &moved_aside {
             let _ = std::fs::rename(old, exe);
@@ -470,6 +470,89 @@ pub(super) fn already_installed(head: Option<&str>, installed: Option<&str>) -> 
 /// `cargo install` builds in a fresh temporary directory and deletes it, so every update rebuilt
 /// all ~300 crates from zero (over 10 minutes on Windows, 2026-10-12). A persistent target dir
 /// keeps the dependencies compiled between updates; `CARGO_TARGET_DIR` wins when set.
+/// How many packages the build may compile: the `[[package]]` entries of the clone's lockfile.
+/// An upper bound (platform-only crates are skipped), so the bar ends at the build's own end.
+pub(super) fn crate_total(lockfile: &str) -> usize {
+    lockfile
+        .lines()
+        .filter(|line| line.trim() == "[[package]]")
+        .count()
+}
+
+/// The crate a cargo JSON line finished compiling, when it is a `compiler-artifact` message.
+pub(super) fn compiled_crate(line: &str) -> Option<String> {
+    let message: serde_json::Value = serde_json::from_str(line).ok()?;
+    (message["reason"] == "compiler-artifact")
+        .then(|| message["target"]["name"].as_str().map(str::to_owned))
+        .flatten()
+}
+
+/// Runs `cargo install` with its output piped (#1143). A child started with `CREATE_NO_WINDOW`
+/// gets its own hidden console, so output it wrote to the inherited console never reached the
+/// owner's terminal: a 53-minute build showed nothing at all. Cargo's JSON messages on stdout now
+/// drive a progress bar; its stderr is kept, a lock wait is said at once, and on failure the
+/// whole of it is printed. In plain mode (not a terminal) stderr is forwarded line by line.
+fn run_install(install: &mut std::process::Command, source: &Path, progress: Progress) -> bool {
+    use std::io::{BufRead, BufReader, Write};
+    install
+        .arg("--message-format")
+        .arg("json-render-diagnostics")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let Ok(mut child) = install.spawn() else {
+        Progress::say(&progress.warn("cargo could not be started; is it installed?"));
+        return false;
+    };
+    let total = std::fs::read_to_string(source.join("Cargo.lock"))
+        .map(|lock| crate_total(&lock))
+        .unwrap_or(0);
+    let stderr = child.stderr.take().map(|stderr| {
+        std::thread::spawn(move || {
+            let mut kept = Vec::new();
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                if !progress.redraws() {
+                    eprintln!("{line}");
+                } else if line.contains("Blocking waiting for file lock") {
+                    eprintln!();
+                    Progress::say(&progress.warn(&format!(
+                        "{} (another build holds this cache; it continues when that one ends)",
+                        line.trim()
+                    )));
+                }
+                kept.push(line);
+            }
+            kept
+        })
+    });
+    let mut done = 0usize;
+    if let Some(stdout) = child.stdout.take() {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if let Some(name) = compiled_crate(&line) {
+                done += 1;
+                if progress.redraws() {
+                    eprint!("{}", progress.bar(done, total.max(done + 1), &name));
+                    let _ = std::io::stderr().flush();
+                }
+            }
+        }
+    }
+    let ok = child.wait().is_ok_and(|status| status.success());
+    let kept = stderr
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default();
+    if progress.redraws() {
+        if ok {
+            eprintln!("{}", progress.bar(done, done.max(1), "done"));
+        } else {
+            eprintln!();
+            for line in &kept {
+                eprintln!("{line}");
+            }
+        }
+    }
+    ok
+}
+
 /// The managed install clone's own build cache, beside it under `~/.graphhelm` (#1140).
 pub(super) fn managed_target(home: Option<std::ffi::OsString>) -> Option<PathBuf> {
     managed_dir(home).and_then(|dir| dir.parent().map(|parent| parent.join("target")))
@@ -608,6 +691,23 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1143: the bar's total counts the lockfile's packages, and only cargo's
+    /// `compiler-artifact` lines advance it.
+    #[test]
+    fn the_build_bar_counts_lockfile_packages_and_compiled_artifacts() {
+        let lock = "version = 4\n\n[[package]]\nname = \"a\"\n\n[[package]]\nname = \"b\"\n";
+        assert_eq!(crate_total(lock), 2);
+        assert_eq!(
+            compiled_crate(r#"{"reason":"compiler-artifact","target":{"name":"serde"}}"#),
+            Some("serde".into())
+        );
+        assert_eq!(
+            compiled_crate(r#"{"reason":"build-script-executed"}"#),
+            None
+        );
+        assert_eq!(compiled_crate("Compiling serde v1"), None);
+    }
 
     /// #1140: the managed clone never builds in a shared target directory another build locks.
     #[test]

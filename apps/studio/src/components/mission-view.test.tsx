@@ -246,9 +246,12 @@ describe("MissionView", () => {
       runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
     await user.click(screen.getByRole("tab", { name: "Proof" }));
     const content = container.querySelector<HTMLElement>(".mv-content")!;
+    const body = container.querySelector<HTMLElement>(".mv-body")!;
     content.scrollTop = 66;
+    body.scrollTop = 2873;
     await user.click(screen.getByRole("button", { name: "Open test for step 1" }));
     expect(content.scrollTop).toBe(0);
+    expect(body.scrollTop).toBe(0);
     const canvas = container.querySelector(".tc")!;
     expect(canvas.querySelector(".tc-head")).toBeInTheDocument();
     const frames = canvas.querySelector(".tc-scrub")!;

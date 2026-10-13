@@ -542,6 +542,7 @@ pub fn run(
     execution: Option<&str>,
     html: Option<&Path>,
     file: Option<&Path>,
+    tasks: Option<&super::signal::SignalKeyring>,
 ) -> Outcome {
     // #134: `--file` is loaded, linted and published the way `resume` does it, so the version
     // whose hash is compared below is the same object `resume` would redispatch from.
@@ -590,6 +591,20 @@ pub fn run(
     // and handed to both, the five seconds bound the command rather than each half of it.
     let budget = crate::commands::status_read_budget();
     let value = execute_within(events, execution, budget.clone(), version.as_ref());
+    // #1149: `--tasks` attaches the task projection (clap requires `--execution` beside it), the
+    // same fold the Runtime serves on `GET /v1/executions/{id}/tasks`. It reads the sealed
+    // envelopes outside the status budget: that budget bounds the replay walk, and this read is
+    // the same one the route performs, refused on its own terms (keyring, unknown run).
+    let value = match (value, tasks, execution) {
+        (Ok(mut value), Some(keyring), Some(execution)) => {
+            super::tasks::read(events, execution, keyring).map(|view| {
+                value["tasks"] = serde_json::to_value(view)
+                    .expect("a view built from serializable fold types serializes");
+                value
+            })
+        }
+        (value, _, _) => value,
+    };
     // `--html` AFTER the status derived, never before (Codex on #1014): the snapshot used to be
     // written first, so a refused `--file` -- missing, lint-invalid, or a graph other than the
     // active one -- left an apparently successful artefact behind a command that exited 2. A

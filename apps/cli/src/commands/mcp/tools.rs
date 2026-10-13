@@ -96,6 +96,15 @@ const TOOLS: [ToolSpec; 44] = [
         schema: optional_execution_schema,
     },
     ToolSpec {
+        name: "tasks",
+        description: "Read the task projection of a run (GET /v1/executions/{executionId}/tasks): \
+                      every task slice with its lit delivery step (plan, critic, implement, \
+                      review, merge, merged), lane, issue, PR, head, open BLOCK, claim sequence \
+                      and last heartbeat, folded by the Runtime from the run's verified task.* \
+                      records. Identical on CLI (execution status --tasks), HTTP and MCP. Read-only.",
+        schema: execution_only_schema,
+    },
+    ToolSpec {
         name: "keel_plan",
         description: "Plan one task under the shipped keel.yaml (POST /v1/keel/plan; \
                       `graphhelm keel plan`): classifies its paths (invariant class, user-visible \
@@ -1664,6 +1673,13 @@ pub(crate) fn call(
         "workspace_sweep" => Ok(api.request(
             "POST",
             &url::segment_path(&["v1", "workspaces", "sweep"]),
+            None,
+            None,
+            None,
+        )),
+        "tasks" => Ok(api.request(
+            "GET",
+            &url::segment_path(&["v1", "executions", require(arguments, "executionId")?, "tasks"]),
             None,
             None,
             None,

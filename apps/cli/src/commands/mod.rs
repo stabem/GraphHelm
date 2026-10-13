@@ -317,11 +317,22 @@ pub fn run(command: TopLevel) -> Outcome {
                 execution,
                 html,
                 file,
+                tasks,
+                keyring,
+                key_id,
             } => execution::status::run(
                 &events,
                 execution.as_deref(),
                 html.as_deref(),
                 file.as_deref(),
+                tasks
+                    .then(|| keyring.zip(key_id))
+                    .flatten()
+                    .map(|(directory, key_id)| execution::signal::SignalKeyring {
+                        directory,
+                        key_id,
+                    })
+                    .as_ref(),
             ),
             ExecutionCommand::Briefing {
                 events,

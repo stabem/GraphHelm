@@ -11,11 +11,11 @@ graphhelm-events = { path = "../events" }
 graphhelm-policy = { path = "../policy" }
 # Spawns journey commands; the shared helper keeps their console windows hidden.
 graphhelm-process = { path = "../process" }
+chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-chrono.workspace = true
 tempfile.workspace = true
 graphhelm-simulation = { path = "../simulation" }

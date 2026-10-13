@@ -2945,6 +2945,104 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
     );
 }
 
+/// #1149: `GET /v1/executions/{id}/tasks` serves the Runtime's own fold of the run's `task.*`
+/// records. Catches a route that folds nothing (an empty `tasks` for a run with a claim and a
+/// PR), one that draws a non-task signal as a task, and one that leaves the step on `plan` after
+/// the PR opened. The records go in through the real sealed signal door with the lane as actor,
+/// so the route verifies the same envelopes a lane writes. Cost: one sealed server, four requests.
+#[test]
+fn the_tasks_route_folds_the_runs_task_records_into_slices() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-tasks";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let (_guard, base, token) = serve_sealed(&events);
+    let url = format!("{base}/v1/executions/{execution}/signal");
+    let record = |id: &str, kind: &str, lane: &str, document: Value| {
+        let envelope = serde_json::json!({
+            "id": id,
+            "source": {"type": "user", "id": lane},
+            "type": kind,
+            "severity": "low",
+            "description": document.to_string(),
+            "evidence": [execution],
+            "emittedAt": "2026-10-13T12:00:00Z"
+        });
+        let (status, reply) = post_json(
+            &url,
+            &token,
+            &[
+                ("Idempotency-Key", id),
+                ("X-GraphHelm-Actor", lane),
+                ("X-GraphHelm-Actor-Type", "agent"),
+            ],
+            &serde_json::json!({"signal": envelope}),
+        );
+        assert_eq!(status, 200, "{kind}: {reply}");
+    };
+    record(
+        "task-claim",
+        "task.claimed",
+        "lane-a",
+        serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1149", "revision": 1,
+            "at": "2026-10-13T12:00:00Z", "issue": 1149, "lane": "lane-a", "branch": "issue-1149-tasks",
+            "repo": "stabem/GraphHelm"}),
+    );
+    record(
+        "not-a-task",
+        "no_progress",
+        "lane-a",
+        serde_json::json!({"note": "a plain signal is not a task record"}),
+    );
+    record(
+        "task-pr",
+        "task.pr_opened",
+        "lane-a",
+        serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1149", "revision": 3,
+            "at": "2026-10-13T12:10:00Z", "pr": 1150, "headSha": "abcdef01", "journeys": [], "lane": "lane-a"}),
+    );
+
+    let reply = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks"),
+        Some(&token),
+    );
+    assert_eq!(reply["ok"], Value::Bool(true), "{reply}");
+    assert_eq!(reply["command"], "execution.tasks");
+    let data = &reply["data"];
+    assert_eq!(data["executionId"], execution);
+    assert_eq!(data["rejected"], 0, "{data}");
+    assert_eq!(data["records"].as_array().map(Vec::len), Some(2), "{data}");
+    let tasks = data["tasks"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no tasks array: {data}"));
+    assert_eq!(tasks.len(), 1, "{data}");
+    let task = &tasks[0];
+    assert_eq!(task["key"], "issue-1149#pr-1150");
+    assert_eq!(task["issue"], 1149);
+    assert_eq!(task["pr"], 1150);
+    assert_eq!(task["lane"], "lane-a");
+    assert_eq!(task["headSha"], "abcdef01");
+    assert_eq!(task["step"], "review");
+    assert_eq!(task["repoUrl"], "https://github.com/stabem/GraphHelm");
+    assert!(
+        task["clock"]["since"].is_string(),
+        "the Runtime's append time drives the clock: {task}"
+    );
+    assert_eq!(
+        data["headSequence"],
+        head_sequence(&base, &token, execution),
+        "the tasks reply names the same head as status"
+    );
+    assert_eq!(
+        get_status(
+            &format!("{base}/v1/executions/no-such-run/tasks"),
+            Some(&token)
+        ),
+        404
+    );
+}
+
 /// The plan's second Task 3 test: an identical retry (same `Idempotency-Key`, same body) is 200,
 /// not 409, and appends nothing — the store's own `GHE003_IDEMPOTENCY_CONFLICT` on the
 /// freshly-recomputed-sequence collision (the checkpoint this task verified empirically) is

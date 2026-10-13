@@ -53,6 +53,10 @@ class Reach(unittest.TestCase):
             self.assertEqual(tools, [expected])
             self.assertEqual(other, [])
 
+            *_, missing_root_tools, _, missing_root_other = reach(scenario)
+            self.assertEqual(missing_root_tools, [])
+            self.assertEqual(missing_root_other, [scenario])
+
             *_, combined_tools, _, combined_other = reach(scenario, readme, repo=repo)
             self.assertEqual(combined_tools, [expected])
             self.assertEqual(combined_other, [])

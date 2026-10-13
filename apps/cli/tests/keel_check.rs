@@ -99,8 +99,12 @@ fn run_verdict(comments: &Path, head: &str, reviewer: &str) -> (i32, Value) {
         .arg(comments)
         .output()
         .unwrap();
-    let reply: Value = serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|_| panic!("expected a structured verdict result, got: {}", String::from_utf8_lossy(&output.stdout)));
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
+        panic!(
+            "expected a structured verdict result, got: {}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    });
     (output.status.code().unwrap_or(1), reply)
 }
 
@@ -172,7 +176,7 @@ fn keel_verdict_matches_only_the_requested_head_and_reviewer() {
 }
 
 /// The offline reader rejects malformed and oversized snapshots before returning evidence.
-/// Cost: two short CLI processes and a 1 MiB local fixture; no server or network.
+/// Cost: three short CLI processes and a local fixture up to 1 MiB; no server or network.
 #[test]
 fn keel_verdict_refuses_malformed_and_oversized_snapshots() {
     let snapshot = tempfile::tempdir().unwrap();
@@ -187,6 +191,12 @@ fn keel_verdict_refuses_malformed_and_oversized_snapshots() {
 
     fs::write(&comments, vec![b' '; 1024 * 1024 + 1]).unwrap();
     let (exit, reply) = run_verdict(&comments, head, "codex-review");
+    assert_eq!(exit, 3);
+    assert_eq!(reply["command"], "keel.verdict");
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI031_KEEL_CHECK_INPUT");
+
+    fs::write(&comments, r#"{"comments":[]}"#).unwrap();
+    let (exit, reply) = run_verdict(&comments, "not-a-full-sha", "codex-review");
     assert_eq!(exit, 3);
     assert_eq!(reply["command"], "keel.verdict");
     assert_eq!(reply["diagnostics"][0]["code"], "GHCLI031_KEEL_CHECK_INPUT");

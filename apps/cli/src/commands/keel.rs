@@ -76,7 +76,10 @@ struct VerdictComment {
 /// not answer a BLOCK, authorize a merge, or claim a merge occurred.
 pub(super) fn verdict(head: &str, reviewer: &str, comments_path: &Path) -> Outcome {
     if head.len() != 40 || !head.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return verdict_input_error("head must be a full 40-character hexadecimal commit SHA", "/head");
+        return verdict_input_error(
+            "head must be a full 40-character hexadecimal commit SHA",
+            "/head",
+        );
     }
     if reviewer.is_empty()
         || reviewer.len() > MAX_VERDICT_ID_BYTES
@@ -111,7 +114,10 @@ pub(super) fn verdict(head: &str, reviewer: &str, comments_path: &Path) -> Outco
         }
     };
     if snapshot.comments.len() > MAX_VERDICT_COMMENTS {
-        return verdict_input_error("comments snapshot exceeds 500 comments", "/comments/comments");
+        return verdict_input_error(
+            "comments snapshot exceeds 500 comments",
+            "/comments/comments",
+        );
     }
     let mut ids = std::collections::BTreeSet::new();
     if snapshot.comments.iter().any(|comment| {
@@ -127,11 +133,11 @@ pub(super) fn verdict(head: &str, reviewer: &str, comments_path: &Path) -> Outco
         );
     }
 
-    let short_head = &head[..8];
+    let short_head = head[..8].to_ascii_lowercase();
     let mut verdicts = Vec::new();
     let mut matching_block_ids = Vec::new();
     for comment in snapshot.comments {
-        if !verdict_identity_matches(&comment.body, reviewer, short_head) {
+        if !verdict_identity_matches(&comment.body, reviewer, &short_head) {
             continue;
         }
         let Some(value) = comment_verdict(&comment.body) else {
@@ -165,8 +171,7 @@ fn verdict_identity_matches(body: &str, reviewer: &str, head: &str) -> bool {
         .lines()
         .filter(|line| line.starts_with("Session:"))
         .collect();
-    identity_lines.len() == 1
-        && identity_lines[0] == format!("Session: {reviewer} · Head: {head}")
+    identity_lines.len() == 1 && identity_lines[0] == format!("Session: {reviewer} · Head: {head}")
 }
 
 fn comment_verdict(body: &str) -> Option<&'static str> {

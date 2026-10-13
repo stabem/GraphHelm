@@ -277,6 +277,15 @@ fn a_diff_inside_its_card_passes_and_reports_its_surface() {
         serde_json::json!([])
     );
     assert!(codes(&reply).is_empty(), "{reply}");
+    assert_eq!(reply["data"]["recommendation"]["step"], "review");
+    assert_eq!(
+        reply["data"]["recommendation"]["head"]
+            .as_str()
+            .unwrap()
+            .len(),
+        40
+    );
+    assert_eq!(reply["data"]["recommendation"]["applied"], false);
 }
 
 #[test]
@@ -291,6 +300,23 @@ fn a_path_outside_the_card_blocks_with_exit_2_and_keeps_the_report() {
     assert_eq!(reply["diagnostics"][0]["path"], "docs/notes.md");
     assert_eq!(reply["data"]["refused"], true);
     assert_eq!(reply["data"]["surface"]["changedFiles"], 2);
+    assert_eq!(reply["data"]["recommendation"]["step"], "implement");
+    assert_eq!(
+        reply["data"]["recommendation"]["head"]
+            .as_str()
+            .unwrap()
+            .len(),
+        40
+    );
+    assert_eq!(
+        reply["data"]["recommendation"]["findingIds"],
+        serde_json::json!(["keel.scope.path_outside_card"])
+    );
+    assert_eq!(
+        reply["data"]["recommendation"]["paths"],
+        serde_json::json!(["docs/notes.md"])
+    );
+    assert_eq!(reply["data"]["recommendation"]["applied"], false);
 }
 
 #[test]
@@ -334,6 +360,7 @@ fn a_range_that_is_not_a_range_or_a_card_that_is_not_a_card_is_input_error_exit_
     let (code, reply) = run(repo.path(), Some(&bad));
     assert_eq!(code, 3, "{reply}");
     assert_eq!(codes(&reply), vec!["GHS002_SCHEMA"]);
+    assert!(reply["data"]["recommendation"].is_null());
 }
 
 #[test]

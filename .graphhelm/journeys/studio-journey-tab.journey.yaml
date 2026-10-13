@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-journey-tab
-title: Review a journey in Proof
+title: "Review the promise and observer evidence (OBSERVER_MISSING: https://github.com/stabem/GraphHelm/issues/1041#issuecomment-6144841351; #1042)"
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -9,10 +9,10 @@ secrets: []
 risks: [critical_ux]
 screens:
   - id: proof
-    title: Proof shows the journey and its review actions
+    title: Review the promise and named observer evidence before deciding
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: tabpanel, name: Proof}, {role: region, name: Proof}, {role: navigation, name: Journeys}, {role: group, name: Journey actions}]
+    expect: [{role: tabpanel, name: Proof}, {role: region, name: Proof}, {role: navigation, name: Journeys}, {role: heading, name: Promise}, {role: heading, name: Observer and evidence}, {role: group, name: Journey actions}, {role: button, name: Approve}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/mission-view.tsx, apps/studio/src/components/proof-table.tsx]
   - id: run
     title: A run is open on its Mission graph

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use super::{
     BatchRun, BatchSpec, SlotRequest, batch_boundary, parse_slot_batch, run_admitted_slot,
-    run_admitted_slot_in, run_admitted_slot_in_with_admission, run_admitted_slot_in_with_batch,
+    open_build_admission, run_admitted_slot_in, run_admitted_slot_in_with_batch,
     run_slot_with_batch_payload, run_status, slot_dir,
 };
 
@@ -141,6 +141,25 @@ fn batch_child_failure_keeps_prefix_and_stops_children() {
     assert_eq!(data["batch"]["completed"].as_array().unwrap().len(), 1);
     assert_eq!(data["batch"]["remaining"], serde_json::json!([1]));
     assert_eq!(tags(&log), ["first"]);
+
+    // A failed child must release the shared authority so a later build can enter.
+    let retry = marker_command(&log, "retry", 0);
+    let retry_request = request(&root, "lane", "retry", &retry);
+    let retry_outcome = run_admitted_slot_in(&retry_request, dir.path());
+    assert!(retry_outcome.output.ok, "retry child failed: {:?}", retry_outcome.output);
+    assert_eq!(tags(&log), ["first", "retry"]);
+}
+
+#[test]
+fn invalid_build_admission_directory_fails_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let invalid = dir.path().join("authority-file");
+    std::fs::write(&invalid, b"not a directory").unwrap();
+
+    // Contract: an unusable authority refuses admission instead of falling back.
+    // This catches a regression that silently permits independent build execution.
+    // Cost: one local filesystem probe; no child process or network.
+    assert!(open_build_admission(&invalid).is_err());
 }
 
 #[test]
@@ -471,37 +490,34 @@ fn admitted_slot_serializes_real_children_in_arrival_order_and_cleans_tickets() 
     }));
 }
 
-/// RED for #1163: two independent slot roots must still serialize their build children through
-/// one shared OS admission authority. Cost: two local marker children, about two seconds.
+/// Two independent slot roots must serialize their build children through one shared OS
+/// admission authority. Cost: two local marker children, about two seconds.
 #[test]
 fn shared_admission_serializes_children_across_slot_roots() {
     let dir = tempfile::tempdir().unwrap();
     let root_a = dir.path().join("root-a");
     let root_b = dir.path().join("root-b");
     let log = dir.path().join("cross-root.log");
-    let admission = dir.path().join("admission");
     let command_a = marker_command(&log, "a", 700);
     let command_b = marker_command(&log, "b", 700);
     let cwd = dir.path().to_owned();
     let barrier = Arc::new(std::sync::Barrier::new(2));
     let first_barrier = Arc::clone(&barrier);
-    let first_admission = admission.clone();
     let first = std::thread::spawn({
         let cwd = cwd.clone();
         move || {
             first_barrier.wait();
             let request = request(&root_a, "lane-a", "cross-root-a", &command_a);
-            run_admitted_slot_in_with_admission(&request, &cwd, &first_admission)
+            run_admitted_slot_in(&request, &cwd)
         }
     });
     let second_barrier = Arc::clone(&barrier);
-    let second_admission = admission;
     let second = std::thread::spawn({
         let cwd = cwd.clone();
         move || {
             second_barrier.wait();
             let request = request(&root_b, "lane-b", "cross-root-b", &command_b);
-            run_admitted_slot_in_with_admission(&request, &cwd, &second_admission)
+            run_admitted_slot_in(&request, &cwd)
         }
     });
     let first = first.join().unwrap();
@@ -514,8 +530,8 @@ fn shared_admission_serializes_children_across_slot_roots() {
         .map(|line| line.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
         .collect::<Vec<_>>();
     assert!(
-        lines == ["a start", "a end", "b start", "b end"]
-            || lines == ["b start", "b end", "a start", "a end"],
+        lines == vec!["a start", "a end", "b start", "b end"]
+            || lines == vec!["b start", "b end", "a start", "a end"],
         "cross-root children entered the build section together: {lines:?}"
     );
 }

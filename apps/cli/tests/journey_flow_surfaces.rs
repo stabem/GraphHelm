@@ -25,6 +25,9 @@ const AGENT_CREDENTIAL: &str = "0123456789abcdef0123456789abcdef0123456789abcdef
 /// #1130: a second scoped lane, the blind reviewer.
 const REVIEWER_CREDENTIAL: &str =
     "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+/// #1130 follow-up: a third lane that tries to claim another lane's draft.
+const SQUATTER_CREDENTIAL: &str =
+    "aaaabbbbccccddddaaaabbbbccccddddaaaabbbbccccddddaaaabbbbccccdddd";
 const EXAMPLE: &str = include_str!("fixtures/journey_flow/checkout.journey.yaml");
 
 fn graphhelm() -> Command {
@@ -172,7 +175,7 @@ impl Harness {
     /// Runtime started from the project does.
     fn serve_with(&self, events: &Path, project: bool) -> (ServerGuard, String, String) {
         let binding = format!(
-            "{AGENT_CREDENTIAL}=agent-planner|project-local|{RUN};{REVIEWER_CREDENTIAL}=agent-reviewer|project-local|{RUN}"
+            "{AGENT_CREDENTIAL}=agent-planner|project-local|{RUN};{REVIEWER_CREDENTIAL}=agent-reviewer|project-local|{RUN};{SQUATTER_CREDENTIAL}=agent-squatter|project-local|{RUN}"
         );
         let mut command = graphhelm();
         command
@@ -845,13 +848,22 @@ fn a_reviewer_agent_approves_only_with_its_own_credential_and_never_its_own_draf
             r#"{"checked":"docs/PROJECT.md checkout screens"}"#,
         )
     };
-    // No author recorded yet: fail closed.
+    let draft = |bearer: &str, yaml: &str| {
+        http_body(
+            &base,
+            "POST",
+            "/v1/journey-flows/checkout/draft",
+            Some(bearer),
+            &json!({"yaml": yaml}).to_string(),
+        )
+    };
+    // A draft no lane wrote through the Runtime has no author: fail closed.
     let (status, refused) = review(REVIEWER_CREDENTIAL);
     assert_ne!(status, 200, "{refused}");
     assert_eq!(harness.flow_text("checkout"), before);
     // The shared agent session token reaches neither route.
     let shared = std::fs::read_to_string(events.with_extension("agent.token")).unwrap();
-    for path in ["drafted", "review"] {
+    for path in ["draft", "review"] {
         let (status, refused) = http(
             &base,
             "POST",
@@ -860,18 +872,42 @@ fn a_reviewer_agent_approves_only_with_its_own_credential_and_never_its_own_draf
         );
         assert_ne!(status, 200, "{path}: {refused}");
     }
-    // The author records its draft; it cannot then approve it, whatever it declares.
-    let (status, drafted) = http(
-        &base,
-        "POST",
-        "/v1/journey-flows/checkout/drafted",
-        Some(AGENT_CREDENTIAL),
+    // The author writes its draft through the Runtime.
+    let authored = before.replace(
+        "title: Shopper pays for the cart",
+        "title: Shopper pays for the whole cart",
     );
-    assert_eq!(status, 200, "{drafted}");
-    assert_eq!(drafted["data"]["author"], "agent-planner", "{drafted}");
+    let (status, written) = draft(AGENT_CREDENTIAL, &authored);
+    assert_eq!(status, 200, "{written}");
+    assert_eq!(written["data"]["writer"], "agent-planner", "{written}");
+    assert_eq!(harness.flow_text("checkout"), authored);
+    // Another lane cannot claim it by re-posting the same bytes ...
+    let (status, refused) = draft(SQUATTER_CREDENTIAL, &authored);
+    assert_ne!(
+        status, 200,
+        "a lane re-claimed another lane's draft: {refused}"
+    );
+    // ... and the author cannot approve its own draft.
     let (status, refused) = review(AGENT_CREDENTIAL);
     assert_ne!(status, 200, "the author approved its own draft: {refused}");
-    assert_eq!(harness.flow_text("checkout"), before);
+    // A lane that changed the flow becomes one of its writers, and no writer of any version
+    // reviews it: not the squatter, and not the first author after the squatter's edit.
+    let squatted = authored.replace("whole cart", "entire cart");
+    let (status, written) = draft(SQUATTER_CREDENTIAL, &squatted);
+    assert_eq!(status, 200, "{written}");
+    for writer in [SQUATTER_CREDENTIAL, AGENT_CREDENTIAL] {
+        let (status, refused) = review(writer);
+        assert_ne!(status, 200, "a writer of the flow approved it: {refused}");
+    }
+    assert_eq!(flow(&harness.flows(), "checkout")["status"], "draft");
+    // A file edited outside the route has no writer at its digest: fail closed.
+    let path = harness
+        .project
+        .join(".graphhelm/journeys/checkout.journey.yaml");
+    std::fs::write(&path, squatted.replace("entire cart", "full cart")).unwrap();
+    let (status, refused) = review(REVIEWER_CREDENTIAL);
+    assert_ne!(status, 200, "an off-route edit was approved: {refused}");
+    std::fs::write(&path, &squatted).unwrap();
     // The generic signal route cannot write the reserved kinds.
     let body = json!({"signal": {"id": "journey-agent-approved-00000000000000000000000000000000",
         "type": "journey_flow_agent_approved", "severity": "low",

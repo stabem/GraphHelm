@@ -1374,26 +1374,75 @@ fn draft_digest(command: &'static str, id: &str, project: &Path) -> Result<Strin
     Ok(approval_digest_of(&flow))
 }
 
-/// `POST /v1/journey-flows/{id}/drafted` (#1130): `author` (an authenticated scoped agent) wrote
-/// this draft. The first author recorded for a digest stays; the reply names it.
-pub(crate) fn record_drafted(id: &str, project: std::path::PathBuf, author: &str) -> Outcome {
-    const COMMAND: &str = "journey.drafted";
-    let digest = match draft_digest(COMMAND, id, &project) {
-        Ok(digest) => digest,
-        Err(outcome) => return outcome,
-    };
-    match super::journey_owner::record_drafted(&project, id, &digest, author) {
-        Ok(author) => Outcome::success(
-            COMMAND,
-            json!({"id": id, "digest": digest, "author": author}),
-        ),
-        Err(message) => input_error(COMMAND, &message),
+/// `POST /v1/journey-flows/{id}/draft` (#1130 follow-up): `writer` (an authenticated scoped agent)
+/// writes the draft's YAML through the Runtime, and the store records that lane as a writer of the
+/// resulting digest. A draft is reviewable only at a digest some lane wrote this way, so a file
+/// edited outside the route has no author and cannot be approved. The new bytes must change the
+/// file: re-posting the current content cannot claim someone else's work.
+pub(crate) fn write_draft(
+    id: &str,
+    project: std::path::PathBuf,
+    writer: &str,
+    yaml: &str,
+) -> Outcome {
+    const COMMAND: &str = "journey.draft";
+    if yaml.len() as u64 > MAX_FLOW_BYTES {
+        return input_error(COMMAND, "flow exceeds 32 KiB");
     }
+    let Some(files) = files(&project, &[id.to_owned()]) else {
+        return input_error(COMMAND, "invalid flow id or unsafe journeys directory");
+    };
+    let Ok(_lock) = write_lock(&project) else {
+        return input_error(COMMAND, "journey-flow write lock unavailable or unsafe");
+    };
+    let file = &files[0];
+    let previous = std::fs::read(file).ok();
+    if previous.as_deref() == Some(yaml.as_bytes()) {
+        return input_error(
+            COMMAND,
+            "the draft is unchanged: only a lane that changes a flow is recorded as its writer",
+        );
+    }
+    let restore = |previous: &Option<Vec<u8>>| match previous {
+        Some(bytes) => std::fs::write(file, bytes).is_ok(),
+        None => std::fs::remove_file(file).is_ok(),
+    };
+    if std::fs::write(file, yaml).is_err() {
+        restore(&previous);
+        return input_error(COMMAND, "the draft could not be written");
+    }
+    let flow = match read(file) {
+        Ok((_, flow))
+            if flow["id"] == id && flow["status"] == "draft" && flow["approved"].is_null() =>
+        {
+            flow
+        }
+        Ok(_) => {
+            restore(&previous);
+            return input_error(
+                COMMAND,
+                "a draft names this id, says `status: draft` and has `approved: null`",
+            );
+        }
+        Err(findings) => {
+            restore(&previous);
+            return report(COMMAND, vec![], findings, json!({}));
+        }
+    };
+    let digest = approval_digest_of(&flow);
+    if let Err(message) = super::journey_owner::record_drafted(&project, id, &digest, writer) {
+        restore(&previous);
+        return input_error(COMMAND, &message);
+    }
+    Outcome::success(
+        COMMAND,
+        json!({"id": id, "digest": digest, "writer": writer}),
+    )
 }
 
 /// `POST /v1/journey-flows/{id}/review` (#1130): `reviewer` (an authenticated scoped agent)
-/// approves the draft. Fails closed: no `drafted` record for this exact digest, or the reviewer
-/// is that author, refuses and writes nothing.
+/// approves the draft. Fails closed: no lane wrote this exact digest through the draft route, or
+/// the reviewer ever wrote any version of the flow, refuses and writes nothing.
 pub(crate) fn review_approve(
     id: &str,
     project: std::path::PathBuf,
@@ -1410,11 +1459,21 @@ pub(crate) fn review_approve(
         Ok(None) => {
             return input_error(
                 COMMAND,
-                "no author is recorded for this draft: its author records it first (POST /v1/journey-flows/{id}/drafted)",
+                "no lane wrote this draft through the Runtime: its author writes it with POST /v1/journey-flows/{id}/draft",
             );
         }
         Err(message) => return input_error(COMMAND, &message),
     };
+    match super::journey_owner::ever_wrote(&project, id, reviewer) {
+        Ok(false) => {}
+        Ok(true) => {
+            return input_error(
+                COMMAND,
+                "the reviewer wrote a version of this flow: a journey is approved by a lane that never wrote it",
+            );
+        }
+        Err(message) => return input_error(COMMAND, &message),
+    }
     let approver = match super::journey_owner::Approver::agent(reviewer, &author, checked) {
         Ok(approver) => approver,
         Err(message) => return input_error(COMMAND, &message),

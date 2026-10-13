@@ -104,8 +104,8 @@ finding, then run `cli:journey compile` with `--include-draft` to write the cont
 
 ### (c2) Owner approval
 
-Record that you wrote each ready flow (`POST /v1/journey-flows/<id>/drafted` with your scoped
-agent credential), then hand it to a blind reviewer lane that did not write it; it approves with
+In a team, write each flow through the Runtime (`POST /v1/journey-flows/<id>/draft`, body
+`{"yaml": ...}`, your scoped agent credential) instead of editing the file, then hand it to a blind reviewer lane that did not write it; it approves with
 `POST /v1/journey-flows/<id>/review` and `{"checked": "<what it compared>"}` under its own
 credential, or returns the gaps. The owner can also approve in the Studio's Journey tab or with
 `graphhelm journey approve <id> --token-file .graphhelm/events.token`. Approval records the project's revision and a digest of the

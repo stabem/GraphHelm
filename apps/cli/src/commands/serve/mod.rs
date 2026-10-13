@@ -756,8 +756,8 @@ fn build_router(state: ServeState) -> Router {
             post(routes::approve_journey_flow),
         )
         .route(
-            "/v1/journey-flows/{id}/drafted",
-            post(routes::journey_flow_drafted),
+            "/v1/journey-flows/{id}/draft",
+            post(routes::journey_flow_draft),
         )
         .route(
             "/v1/journey-flows/{id}/review",
@@ -1110,7 +1110,7 @@ fn journey_review_route(request: &Request) -> bool {
     request.method() == axum::http::Method::POST
         && matches!(
             segments.as_slice(),
-            ["", "v1", "journey-flows", _, "drafted" | "review"]
+            ["", "v1", "journey-flows", _, "draft" | "review"]
         )
 }
 

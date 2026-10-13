@@ -1429,6 +1429,21 @@ pub(crate) fn write_draft(
             return report(COMMAND, vec![], findings, json!({}));
         }
     };
+    // #1178: review approves only canonical bytes, and the digest ignores the difference, so a
+    // non-canonical draft would be accepted here and refused only at the reviewer. Refuse it now.
+    if yaml != canonical(&flow, false) {
+        restore(&previous);
+        return report(
+            COMMAND,
+            vec![],
+            vec![Finding::new(
+                "flow.not_canonical",
+                "",
+                "the draft is not canonical YAML: review approves only canonical bytes (`graphhelm journey compile` formats them)",
+            )],
+            json!({}),
+        );
+    }
     let digest = approval_digest_of(&flow);
     if let Err(message) = super::journey_owner::record_drafted(&project, id, &digest, writer) {
         restore(&previous);

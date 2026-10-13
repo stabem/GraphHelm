@@ -1052,6 +1052,22 @@ describe("the projects rail", () => {
     expect(client.getStatus).not.toHaveBeenCalledWith("quiet-demo");
   });
 
+  /** #1169 review: an address naming a run the Runtime does not know falls back to the default pick. */
+  it("falls back to the default pick when the address names an unknown run", async () => {
+    window.history.replaceState(null, "", "/?session=abc&run=gone-run");
+    const base = stubClient();
+    const getStatus = base.getStatus;
+    const client = stubClient({
+      getStatus: vi.fn(async (id: string, ...rest: unknown[]) => {
+        if (id === "gone-run") throw new Error("not found");
+        return (getStatus as (...args: unknown[]) => unknown)(id, ...rest);
+      }),
+    } as never);
+    await open(client);
+    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("demo-deploy", true));
+    expect(new URLSearchParams(window.location.search).get("run")).toBe("demo-deploy");
+  });
+
   /** #1169: a reload mid-run reopens the run the address names, not the default pick. */
   it("reopens the run named in the address after a reload, and writes the open run there", async () => {
     window.history.replaceState(null, "", "/?session=abc&run=quiet-demo");

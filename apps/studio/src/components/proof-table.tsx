@@ -21,6 +21,7 @@ const EV: Record<StepStatus, [string, string, string]> = {
   proven: ["ok", "✓", "PASS"], stale: ["warn", "!", "STALE"], failed: ["no", "✕", "FAIL"], needs_you: ["warn", "!", "SKIPPED"], preview_only: ["warn", "!", "preview only"], not_run: ["wait", "○", "not replayed yet"],
 };
 const TONE: Record<StepStatus, string> = { proven: "proven", stale: "stalled", failed: "stalled", needs_you: "stalled", preview_only: "work", not_run: "ready" };
+const OBSERVER_MISSING_GUIDANCE = "Install the Playwright observer with `npm install --save-dev @playwright/test` and `npx playwright install chromium`, then run the journey again.";
 
 interface Props {
   mission: Mission;
@@ -57,6 +58,10 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
   const title = draft?.[1] ?? mission.title;
   const draftNote = draft?.[2];
   const approvalReason = flow ? approvalBlockReason(flow, mission, preview.run) : null;
+  const terminalFailure = preview.run?.state === "failed" ? preview.run.reason ?? "Journey run failed." : null;
+  const runFailure = terminalFailure === "driver.observer_missing"
+    ? `${terminalFailure}. ${OBSERVER_MISSING_GUIDANCE}`
+    : terminalFailure;
   return (
     <section className="proof" aria-label="Proof">
       <div className="proof-head">
@@ -75,7 +80,7 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
         {onWatch && <button type="button" disabled={busy} onClick={() => act(() => onWatch(flow.id))}>Watch</button>}
         {run && <button type="button" disabled={preview.launching || preview.run?.state === "running"} onClick={preview.again}>Run again</button>}
         {preview.run?.state === "ready" && <span>{preview.run.kind === "preview" ? "Preview only — not proof" : "Replay recorded"}</span>}
-        {(error || preview.failure || preview.busyReason) && <p role="alert">{error ?? preview.failure ?? preview.busyReason}</p>}
+        {(error || preview.failure || preview.busyReason || runFailure) && <p role="alert">{error ?? preview.failure ?? preview.busyReason ?? runFailure}</p>}
       </div>}
       <div className="proof-summary">
         <section className="proof-promise-list" aria-labelledby="proof-promise-heading">

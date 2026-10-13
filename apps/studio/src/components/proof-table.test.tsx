@@ -82,6 +82,30 @@ describe("ProofTable", () => {
     await userEvent.click(screen.getByRole("button", { name: "Run again" }));
     await waitFor(() => expect(onRun).toHaveBeenCalledWith(expect.objectContaining({ state: "ready", result: "pass" })));
   });
+  it("shows terminal rerun failures and Playwright setup guidance without calling them proof", async () => {
+    const run: JourneyRunSource = {
+      start: vi.fn().mockResolvedValueOnce({ state: "running", screens: {} }).mockResolvedValueOnce({ state: "failed", reason: "driver.observer_missing", screens: {} }),
+      read: vi.fn(async () => ({ state: "none" as const, screens: {} })),
+      screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null),
+    };
+    render(<ProofTable mission={mission} onOpenTest={vi.fn()} run={run}
+      flow={{ id: "j", title: "J", status: "draft", approved: null, drift: [], findings: [], approvable: true, screens: [], edges: [], paths: {} }} />);
+    await userEvent.click(screen.getByRole("button", { name: "Run again" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("driver.observer_missing"));
+    expect(screen.getByRole("alert")).toHaveTextContent("npx playwright install chromium");
+    expect(screen.queryByText("Replay recorded")).not.toBeInTheDocument();
+  });
+  it("shows cached terminal failure reasons after reload, including unknown reasons", async () => {
+    const run: JourneyRunSource = {
+      start: vi.fn(async () => ({ state: "failed" as const, reason: "runtime.execution_failed", screens: {} })),
+      read: vi.fn(async () => ({ state: "failed" as const, reason: "runtime.execution_failed", screens: {} })),
+      screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null),
+    };
+    render(<ProofTable mission={mission} onOpenTest={vi.fn()} run={run}
+      flow={{ id: "j", title: "J", status: "draft", approved: null, drift: [], findings: [], approvable: true, screens: [], edges: [], paths: {} }} />);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("runtime.execution_failed"));
+    expect(screen.getByRole("alert")).toHaveTextContent("Run again");
+  });
   it("#813: draft note is a muted line below the clean question", () => {
     render(<ProofTable mission={{ ...mission, title: "Add a model (draft: the test setup has no model gateway)" }} onOpenTest={vi.fn()} />);
     expect(screen.getByRole("heading", { name: 'Can I trust “Add a model”?' })).toBeInTheDocument();

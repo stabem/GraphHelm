@@ -84,7 +84,7 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
         </section>
         <section className="proof-observer" aria-labelledby="proof-observer-heading">
           <h3 id="proof-observer-heading">Observer and evidence</h3>
-          <p>No observer recorded</p>
+          <p>Observer identity unavailable from this journey response</p>
           {preview.run?.state === "ready" && preview.run.ranAt ? (
             <p>{`${preview.run.kind === "replay" ? "Replay" : "Preview"} recorded ${new Date(preview.run.ranAt).toLocaleString()} (${preview.run.result ?? "result unavailable"})`}</p>
           ) : <p>No evidence yet</p>}

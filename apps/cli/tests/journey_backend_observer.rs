@@ -16,7 +16,7 @@ const LAUNCHER: &str = include_str!("fixtures/journey_backend/fixture.sh");
 const SERVER: &str = include_str!("fixtures/journey_backend/server.py");
 /// `graphhelm init` owns the ignore file; keep the journeys and the launcher declaration tracked
 /// while owner and runtime material stays private.
-const IGNORE: &str = "deletes.count\n.graphhelm/*\n!.graphhelm/journeys/\n!.graphhelm/journeys/**\n!.graphhelm/journey-fixture.json\n";
+const IGNORE: &str = "deletes.count\n.graphhelm/*\n!.graphhelm/journeys/\n!.graphhelm/journeys/**\n!.graphhelm/fixtures/\n!.graphhelm/fixtures/**\n!.graphhelm/journey-fixture.json\n";
 
 fn graphhelm(args: &[&str], project: &Path, extra: &[&Path]) -> (i32, Value) {
     let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));

@@ -114,6 +114,22 @@ it("keeps failed question reads pending and excludes bookkeeping signals", async
   expect(result.current[6]).toBeUndefined();
 });
 
+it("keeps unread question envelopes pending until their evidence read settles", async () => {
+  resetPanelCaches();
+  const candidate = event(5, "signal_recorded", { kind: "operator_note", signalId: "sig-q" });
+  candidate.actorId = "kit-3";
+  candidate.evidenceRefs = ["question"];
+  let finishRead!: (content: EvidenceContent) => void;
+  const open = vi.fn(() => new Promise<EvidenceContent>((resolve) => { finishRead = resolve; }));
+  const { result } = renderHook(() => useEnvelopes([candidate], "run", open));
+  await waitFor(() => expect(open).toHaveBeenCalledOnce());
+  expect(result.current[5]).toBeUndefined();
+  expect(result.current.__pendingEnvelopeSequences).toEqual([5]);
+  finishRead({ evidenceId: "question", content: JSON.stringify({ type: "operator_note", description: "Merge now?", target: { id: "studio-operator", type: "user" } }), contentSha256: "hash", mediaType: "application/json", sensitivity: "confidential" });
+  await waitFor(() => expect(result.current[5]?.text).toBe("Merge now?"));
+  expect(result.current.__pendingEnvelopeSequences).toEqual([]);
+});
+
 it("does not reuse a previously opened envelope when execution sequence numbers repeat", async () => {
   resetPanelCaches();
   const first = event(5, "signal_recorded", { kind: "operator_note", signalId: "sig-a" });

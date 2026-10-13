@@ -825,7 +825,8 @@ export function useEnvelopes(
     forId: string | undefined;
     map: EnvelopeRecord;
     failed: Set<number>;
-  }>({ forId: undefined, map: {}, failed: new Set() });
+    pending: Set<number>;
+  }>({ forId: undefined, map: {}, failed: new Set(), pending: new Set() });
   // The shared OPENED_EVIDENCE cache is what lets the live tail exist: without it, every pass
   // re-fetched ~20 envelopes, and a pass slower than the poll interval was cancelled before it
   // could commit — bubbles, ledger and agent filters permanently blind (found live, round 2).
@@ -835,6 +836,15 @@ export function useEnvelopes(
       (event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && event.evidenceRefs.length > 0,
     ).reverse();
     const failed = new Set<number>(envelopes.forId === executionId ? envelopes.failed : []);
+    const pending = new Set<number>(carriers
+      .filter((carrier) => envelopes.forId !== executionId || envelopes.map[carrier.sequence] === undefined)
+      .map((carrier) => carrier.sequence));
+    setEnvelopes((previous) => ({
+      forId: executionId,
+      map: previous.forId === executionId ? previous.map : {},
+      failed,
+      pending,
+    }));
     let live = true;
     void (async () => {
       for (const carrier of carriers) {
@@ -855,13 +865,15 @@ export function useEnvelopes(
               && (before.recommendations ?? []).join("\u0000") === (opened.recommendations ?? []).join("\u0000")) return previous;
             const nextFailed = new Set(previous.forId === executionId ? previous.failed : []);
             nextFailed.delete(carrier.sequence);
-            return { forId: executionId, map: { ...(previous.forId === executionId ? previous.map : {}), [carrier.sequence]: opened }, failed: nextFailed };
+            const nextPending = new Set(previous.forId === executionId ? previous.pending : []);
+            nextPending.delete(carrier.sequence);
+            return { forId: executionId, map: { ...(previous.forId === executionId ? previous.map : {}), [carrier.sequence]: opened }, failed: nextFailed, pending: nextPending };
           });
         } catch {
           // Keep the failure observable as an unopened candidate and retry it on the next event
           // page update. It must not turn a failed evidence read into a dark beacon.
           failed.add(carrier.sequence);
-          if (live) setEnvelopes((previous) => ({ forId: executionId, map: previous.forId === executionId ? previous.map : {}, failed: new Set(failed) }));
+          if (live) setEnvelopes((previous) => ({ forId: executionId, map: previous.forId === executionId ? previous.map : {}, failed: new Set(failed), pending: new Set([...pending].filter((sequence) => sequence !== carrier.sequence)) }));
         }
       }
     })();
@@ -871,7 +883,7 @@ export function useEnvelopes(
   }, [events, executionId, openEvidence]);
   // A stable empty answer, not a fresh literal: downstream memos key off this identity.
   return envelopes.forId === executionId
-    ? Object.assign({ ...envelopes.map }, { __pendingEnvelopeSequences: [...envelopes.failed] })
+    ? Object.assign({ ...envelopes.map }, { __pendingEnvelopeSequences: [...new Set([...envelopes.failed, ...envelopes.pending])] })
     : Object.assign({}, { __pendingEnvelopeSequences: [] });
 }
 

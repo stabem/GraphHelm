@@ -12,13 +12,17 @@ screens:
     title: The specimen drops the first value
     url: /specimen
     state: stable
-    expect: [{role: text, name: "total([2, 3]) returns 3"}]
+    expect: [{role: stdout, name: "total([2, 3]) returns 3"}]
     scope: [.graphhelm/fixtures/keel-red-first-proof/scenario.py]
   - id: proof-report
     title: The CLI distinguishes an earned test from a vacuous test
     url: /report
     state: stable
-    expect: [{role: text, name: "failed, passed, earned"}, {role: text, name: "green_on_parent"}]
+    expect:
+      - {role: exit, name: "0"}
+      - {role: stdout, name: "regression=parent-failed,head-passed,earned"}
+      - {role: stdout, name: "vacuous=parent-passed,head-passed,green_on_parent"}
+      - {role: stdout, name: "keel.test.green_on_parent"}
     scope: [.graphhelm/fixtures/keel-red-first-proof/scenario.py]
 edges:
   - id: prove-regression

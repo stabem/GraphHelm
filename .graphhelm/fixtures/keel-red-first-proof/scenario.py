@@ -184,6 +184,8 @@ def run_scenario() -> dict:
 
         return {
             "status": "passed",
+            "summary": "regression=parent-failed,head-passed,earned; "
+                       "vacuous=parent-passed,head-passed,green_on_parent",
             "pinnedCli": str(cli),
             "vacuousControl": {"head": vacuous_head, "proof": list(vacuous_tuple),
                                "diagnostics": sorted(vacuous_ids)},

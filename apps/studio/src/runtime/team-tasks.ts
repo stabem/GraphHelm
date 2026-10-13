@@ -594,6 +594,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
     // time as Plan's.
     const timed = (step: TaskStep) => (step === "plan" || step === "critic") && (state.plan ?? null) === null ? "implement" : step;
     const before = state.step;
+    const sameHeadRepeat = event.kind === "task.pr_opened" && event.headSha === state.headSha;
     switch (event.kind) {
       case "task.claimed":
         state.assignedBy = event.assignedBy ?? null;
@@ -628,7 +629,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
         }
         // #577: an empty list on pr_opened does not erase the journeys named at claim.
         state.journeys = event.journeys?.length ? event.journeys : state.journeys;
-        state.step = "review";
+        if (!sameHeadRepeat) state.step = "review";
         // #514: a newer head after a BLOCK is the author's fix; its review is the re-review.
         {
           const round = state.rounds.at(-1);
@@ -689,7 +690,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
         ended.add(state);
         break;
     }
-    const resumesAfterGap = (event.kind === "task.claimed" || event.kind === "task.planned" || (event.kind === "task.pr_opened" && before === state.step)) && event.lane === state.lane;
+    const resumesAfterGap = (event.kind === "task.claimed" || event.kind === "task.planned" || (event.kind === "task.pr_opened" && !sameHeadRepeat && before === state.step)) && event.lane === state.lane;
     clockStep(state.clock, timed(before), timed(state.step), event.occurredAt, resumesAfterGap);
     if (event.kind === "task.merged" || event.kind === "task.closed") {
       for (const claim of slices) {

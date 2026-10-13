@@ -733,8 +733,8 @@ mod tests {
     fn wake_fixture(path: &std::path::Path, suffix: &str) -> (OpaqueId, RepositoryScope) {
         let execution = OpaqueId::parse(format!("exec-wake-{suffix}")).unwrap();
         let scope = RepositoryScope::new(
-            WorkspaceId::parse("workspace-wake-test").unwrap(),
-            ProjectId::parse("project-wake-test").unwrap(),
+            WorkspaceId::parse("workspace-local").unwrap(),
+            ProjectId::parse("project-local").unwrap(),
             Some(ExecutionId::parse(execution.as_str()).unwrap()),
         );
         let store = test_store(path);

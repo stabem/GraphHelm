@@ -49,7 +49,9 @@ token_file="$(dirname -- "$trimmed")/$(basename -- "$trimmed").token"
 # 1 - the Runtime.
 if answers "$runtime_url/health"; then
   [ -f "$token_file" ] || { echo "[up] Something already answers at $runtime_url, and no token exists beside $events to prove it serves this project. Stop that service or pass a different --bind." >&2; exit 1; }
-  if curl -fsS --max-time 5 -o /dev/null -H "Authorization: Bearer $(tr -d '\r\n' < "$token_file")" "$runtime_url/v1/executions?limit=1"; then
+  # The header travels on stdin, never in argv, where `ps` would show the token.
+  if printf 'Authorization: Bearer %s\n' "$(tr -d '\r\n' < "$token_file")" \
+    | curl -fsS --max-time 5 -o /dev/null -H @- "$runtime_url/v1/executions?limit=1"; then
     echo "[up] Runtime already answering at $runtime_url and this project's token opens it - reusing it"
   else
     echo "[up] Something answers at $runtime_url but refuses this project's token - it is a different service or another project's Runtime. Stop it or pass a different --bind." >&2
@@ -106,7 +108,8 @@ if [ "$no_browser" -eq 0 ]; then
     while [ "$tries" -lt 60 ]; do
       if answers "http://127.0.0.1:$studio_port/__studio/session?nonce=$nonce"; then
         url="http://127.0.0.1:$studio_port/?session=$nonce"
-        if command -v open >/dev/null 2>&1; then open "$url"; else xdg-open "$url" >/dev/null 2>&1 || true; fi
+        # `open` is macOS's; on Debian `open` can be openvt, so Linux always uses xdg-open.
+        if [ "$(uname -s)" = Darwin ]; then open "$url"; else xdg-open "$url" >/dev/null 2>&1 || true; fi
         exit 0
       fi
       tries=$((tries + 1)); sleep 0.5

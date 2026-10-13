@@ -378,7 +378,6 @@ def receive(host: str, session: str, offer_id: str) -> dict:
         offered_briefing = _validate_digest(details.get("briefing"))
     except (TypeError, ValueError, KeyError) as error:
         raise ValueError("handoff offer briefing reference is invalid") from error
-    briefing = _briefing(url, token, execution)
     receipt_id = _receipt_id(offer_id, host, session, origin)
     existing = _signal_event(events, receipt_id)
     acknowledgement = None
@@ -386,7 +385,8 @@ def receive(host: str, session: str, offer_id: str) -> dict:
         receipt = _sealed_signal(url, token, execution, existing)
         receipt_briefing = _validate_receipt(receipt, execution, offer_id, actor, offer_signal["source"]["id"])
         state = "already_recorded"
-    else:
+    briefing = _briefing(url, token, execution)
+    if not existing:
         receipt = {"id": receipt_id, "source": {"type": "tool", "id": actor}, "type": RECEIPT_KIND,
                    "severity": "low", "description": json.dumps({"protocol": PROTOCOL,
                    "executionId": execution, "offerId": offer_id, "recipient": actor,

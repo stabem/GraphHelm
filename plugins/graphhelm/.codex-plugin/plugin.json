@@ -1,20 +1,26 @@
 {
-  "name": "graphhelm",
-  "version": "0.1.27",
-  "description": "GraphHelm methodology, host setup guidance, and evidence-based next-step selection.",
-  "author": {
-    "name": "GraphHelm"
-  },
-  "repository": "https://github.com/stabem/GraphHelm",
-  "license": "MIT",
-  "skills": "./skills/",
-  "interface": {
-    "displayName": "GraphHelm",
-    "shortDescription": "Understand the method, review setup, and choose the next move.",
-    "longDescription": "A lightweight entry to GraphHelm. The guide explains how Keel, Journey-Proven Development, and Runtime evidence fit together. Setup guides a reviewed host adoption with backup and restore. Resume reads current evidence and offers exactly two next actions.",
-    "developerName": "GraphHelm",
-    "category": "Developer Tools",
-    "capabilities": ["skills"],
-    "defaultPrompt": ["Explain how GraphHelm should work here.", "Review GraphHelm setup for this host.", "Resume this work and give me two next steps."]
-  }
+    "name":  "graphhelm",
+    "version":  "0.1.28",
+    "description":  "GraphHelm methodology, host setup guidance, and evidence-based next-step selection.",
+    "author":  {
+                   "name":  "GraphHelm"
+               },
+    "repository":  "https://github.com/stabem/GraphHelm",
+    "license":  "MIT",
+    "skills":  "./skills/",
+    "interface":  {
+                      "displayName":  "GraphHelm",
+                      "shortDescription":  "Understand the method, review setup, and choose the next move.",
+                      "longDescription":  "A lightweight entry to GraphHelm. The guide explains how Keel, Journey-Proven Development, and Runtime evidence fit together. Setup guides a reviewed host adoption with backup and restore. Resume reads current evidence and offers exactly two next actions.",
+                      "developerName":  "GraphHelm",
+                      "category":  "Developer Tools",
+                      "capabilities":  [
+                                           "skills"
+                                       ],
+                      "defaultPrompt":  [
+                                            "Explain how GraphHelm should work here.",
+                                            "Review GraphHelm setup for this host.",
+                                            "Resume this work and give me two next steps."
+                                        ]
+                  }
 }

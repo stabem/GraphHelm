@@ -193,7 +193,7 @@ def binding(payload: dict | None = None) -> tuple[str, str, str, str, str | None
     token_file = os.environ.get("GRAPHHELM_TOKEN_FILE", "")
     url = os.environ.get("GRAPHHELM_RUNTIME_URL", "http://127.0.0.1:8791").rstrip("/")
     node_id = os.environ.get("GRAPHHELM_NODE_ID")
-    if execution or token_file:
+    if execution:
         return _binding_values(execution, token_file, url, node_id)
     if payload is None:
         return None
@@ -217,13 +217,16 @@ def binding(payload: dict | None = None) -> tuple[str, str, str, str, str | None
             team = json.loads(team_raw)
             if not isinstance(team, dict):
                 return None
-            candidate = _binding_values(team.get("executionId", ""), team.get("tokenFile", ""),
-                                        str(team.get("runtimeUrl", "")).rstrip("/"), None)
+            candidate = _binding_values(execution or team.get("executionId", ""),
+                                        token_file if os.environ.get("GRAPHHELM_TOKEN_FILE") else team.get("tokenFile", ""),
+                                        (url if os.environ.get("GRAPHHELM_RUNTIME_URL") else
+                                         str(team.get("runtimeUrl", ""))).rstrip("/"),
+                                        node_id)
             if candidate is None or not Path(candidate[1]).is_file():
                 return None
             os.environ["GRAPHHELM_ACTOR"] = actor
             return candidate
-    except (OSError, ValueError, TypeError, json.JSONDecodeError, RecursionError):
+    except (OSError, TypeError, json.JSONDecodeError, RecursionError):
         return None
     return None
 

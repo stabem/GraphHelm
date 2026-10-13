@@ -86,10 +86,11 @@ def _version_precedence(version):
     major, minor, patch, prerelease = version
     if prerelease is None:
         return major, minor, patch, (1,)
+    # A matching shorter prerelease sorts below every possible next identifier.
     return major, minor, patch, (0, *(
         (0, int(identifier)) if identifier.isdigit() else (1, identifier)
         for identifier in prerelease
-    ), (2,))
+    ), (-1,))
 
 
 def check(repo, base_ref, head_ref):

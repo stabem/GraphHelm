@@ -70,6 +70,13 @@ describe("step clock in the fold (#502)", () => {
       reviews: 1, proof: "tests", critic: { mode: "none", passScore: 8, maxRounds: 3 }, summary: "s" });
     expect(foldTaskEvents([claim, resumed])[0].clock).toEqual({ since: at(13 * 60 * 60), spent: {} });
   });
+  it("banks active step time through the last record before a stall", () => {
+    const clock = emptyClock();
+    clockStep(clock, "plan", "plan", at(0));
+    clockStep(clock, "plan", "plan", at(20));
+    clockStep(clock, "plan", "plan", at(13 * 60), true);
+    expect(clock).toEqual({ since: at(13 * 60), spent: { plan: 20 * 60_000 } });
+  });
 
   it("keeps a BLOCK and a new head inside Review instead of restarting the clock", () => {
     const tasks = foldTaskEvents([

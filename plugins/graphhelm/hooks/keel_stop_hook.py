@@ -64,7 +64,7 @@ def code_lines_changed(repo: Path, base: str) -> int:
     return total
 
 
-def decide(repo: Path) -> str | None:
+def decide(repo: Path, payload: dict | None = None) -> str | None:
     """The reason to block, or None to let the turn end."""
     base = _merge_base(repo)
     if base is None or code_lines_changed(repo, base) <= TRIVIAL_LINES:
@@ -80,6 +80,12 @@ def decide(repo: Path) -> str | None:
     result = subprocess.run([cli, "--json", "keel", "check", "--diff", f"{base}..HEAD",
                              "--card", str(card), "--repo", str(repo)],
                             capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW)
+    if result.returncode in (0, 2):
+        try:
+            from keel_record import record_check
+            record_check(json.loads(result.stdout), payload or {})
+        except Exception:  # noqa: BLE001 - recording must not change the gate
+            pass
     if result.returncode != 2:
         return None
     codes = []
@@ -105,7 +111,7 @@ def main() -> int:
     repo = Path(payload.get("cwd") or os.getcwd())
     try:
         top = _git(repo, "rev-parse", "--show-toplevel").strip()
-        reason = decide(Path(top))
+        reason = decide(Path(top), payload)
     except (subprocess.SubprocessError, OSError, ValueError):
         return 0
     if reason:

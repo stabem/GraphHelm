@@ -517,16 +517,19 @@ fn project_discovery_refuses_when_health_probe_budget_expires() {
                         stream
                             .set_write_timeout(Some(Duration::from_secs(1)))
                             .unwrap();
-                        std::thread::sleep(Duration::from_millis(900));
                         let body = format!(
                             "{{\"data\":{{\"instance\":\"{stale_instance_for_server}\",\"projectId\":\"{project_id}\"}}}}"
                         );
-                        let response = format!(
-                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                            body.len(),
-                            body
+                        let headers = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
                         );
-                        let _ = stream.write_all(response.as_bytes());
+                        if stream.write_all(headers.as_bytes()).is_err() || stream.flush().is_err()
+                        {
+                            return;
+                        }
+                        std::thread::sleep(Duration::from_millis(900));
+                        let _ = stream.write_all(body.as_bytes());
                         return;
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -545,15 +548,85 @@ fn project_discovery_refuses_when_health_probe_budget_expires() {
         .unwrap();
     }
 
-    let mut bridge = Bridge::start_project(&project, &registry);
-    let reply = bridge.list();
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    command
+        .args(["mcp", "--discover", "--project"])
+        .arg(&project)
+        .args(["--actor", "project-discovery-budget-test"])
+        .env("GRAPHHELM_RUNTIME_DIR", &registry)
+        .env_remove("GRAPHHELM_API_TOKEN")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = command.spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = BufReader::new(child.stdout.take().unwrap());
+    let guard = Killed(child);
+    let (lines_tx, lines_rx) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let mut stdout = stdout;
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match stdout.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) if lines_tx.send(line.clone()).is_err() => break,
+                Ok(_) => {}
+            }
+        }
+    });
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}})
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    let startup = lines_rx.recv_timeout(scaled(Duration::from_secs(30)));
+    let startup_succeeded = startup.is_ok();
+    let (reply, elapsed) = if startup_succeeded {
+        writeln!(
+            stdin,
+            "{}",
+            serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        )
+        .unwrap();
+        let started = Instant::now();
+        writeln!(
+            stdin,
+            "{}",
+            serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "list", "arguments": {}}})
+        )
+        .unwrap();
+        stdin.flush().unwrap();
+        (
+            lines_rx.recv_timeout(Duration::from_secs(6)),
+            started.elapsed(),
+        )
+    } else {
+        (Err(std::sync::mpsc::RecvTimeoutError::Timeout), Duration::ZERO)
+    };
+    drop(stdin);
+    drop(guard);
+    drop(lines_rx);
+    reader.join().unwrap();
     stop_servers.store(true, std::sync::atomic::Ordering::Relaxed);
     for server in servers {
         server.join().unwrap();
     }
     assert!(
-        reply.contains("health probing budget exhausted"),
-        "discovery must refuse an incompletely checked candidate set: {reply}"
+        startup_succeeded,
+        "MCP initialize did not answer within the startup bound"
+    );
+    assert!(
+        reply
+            .as_ref()
+            .is_ok_and(|line| line.contains("health probing budget exhausted")),
+        "discovery must refuse an incompletely checked candidate set: {reply:?}"
+    );
+    assert!(
+        elapsed <= Duration::from_secs(6),
+        "the tools/call health probing window exceeded its six-second observer allowance: {elapsed:?}"
     );
 }
 

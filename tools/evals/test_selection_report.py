@@ -74,6 +74,15 @@ class SelectionReport(unittest.TestCase):
                                "--partition-manifest", str(manifest_path)],
                               capture_output=True, text=True, creationflags=NO_WINDOW)
 
+    def run_partitioned_text(self, script, observations, manifest_text):
+        observations_path = Path(self.temp.name) / "partition-observations.json"
+        manifest_path = Path(self.temp.name) / "partitions.json"
+        observations_path.write_text(json.dumps(observations), encoding="utf-8")
+        manifest_path.write_text(manifest_text, encoding="utf-8")
+        return subprocess.run([sys.executable, str(script), str(observations_path),
+                               "--partition-manifest", str(manifest_path)],
+                              capture_output=True, text=True, creationflags=NO_WINDOW)
+
     def make_manifest(self, evals, tuning, held_out):
         cases = {}
         for case_id, partition in [(case_id, "tuning") for case_id in tuning] + [
@@ -116,6 +125,14 @@ class SelectionReport(unittest.TestCase):
             self.assertIn("no-skill-arithmetic", drift.stderr)
             self.assertEqual(drift.stdout, "")
 
+            empty = self.make_manifest(evals,
+                [case.name for case in evals.iterdir() if case.is_dir()], [])
+            result = self.run_partitioned(script, [], empty)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            empty_report = json.loads(result.stdout)
+            self.assertEqual(empty_report["by_partition"]["held_out"]["selection"], {})
+            self.assertEqual(empty_report["by_partition"]["held_out"]["completion"], {})
+
     def test_partition_manifest_rejects_missing_unknown_invalid_and_split_twins(self):
         with tempfile.TemporaryDirectory() as directory:
             script, evals = self.copied_report(Path(directory))
@@ -132,10 +149,19 @@ class SelectionReport(unittest.TestCase):
                 ({"version": 1, "cases": {**manifest["cases"],
                     "no-skill-arithmetic": {"partition": "other", "promptSha256": "0"*64,
                                              "criteriaSha256": "0"*64}}}, "no-skill-arithmetic"),
+                ({"version": 1, "cases": {**manifest["cases"],
+                    "no-skill-arithmetic": {"partition": "tuning", "promptSha256": "bad",
+                                             "criteriaSha256": "0"*64}}}, "no-skill-arithmetic"),
             ]:
                 result = self.run_partitioned(script, observation, invalid)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(expected, result.stderr)
+
+            duplicate_text = json.dumps(manifest)
+            duplicate_text = duplicate_text[:-1] + ',"cases":{}}'
+            result = self.run_partitioned_text(script, observation, duplicate_text)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("duplicate partition manifest key: cases", result.stderr)
 
             split = self.make_manifest(evals,
                 [case.name for case in evals.iterdir() if case.is_dir() and not case.name.startswith("no-skill-")],

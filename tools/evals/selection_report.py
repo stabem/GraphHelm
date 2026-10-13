@@ -193,7 +193,8 @@ def validate_partition_manifest(path, catalog):
         value = parse_json_no_duplicates(Path(path).read_text(encoding="utf-8"), "partition manifest")
     except (OSError, UnicodeError) as error:
         raise InputError(f"cannot read partition manifest: {error}") from error
-    if not isinstance(value, dict) or set(value) != {"version", "cases"} or value["version"] != 1:
+    if (not isinstance(value, dict) or set(value) != {"version", "cases"}
+            or type(value["version"]) is not int or value["version"] != 1):
         raise InputError("partition manifest must contain version 1 and cases")
     cases = value["cases"]
     if not isinstance(cases, dict):
@@ -214,7 +215,10 @@ def validate_partition_manifest(path, catalog):
             digest = entry[field]
             if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
                 raise InputError(f"invalid {field} for case: {case_id}")
-            actual = normalized_file_digest(CASES / case_id / relative)
+            try:
+                actual = normalized_file_digest(CASES / case_id / relative)
+            except InputError as error:
+                raise InputError(f"cannot verify case {case_id}: {error}") from error
             if actual != digest:
                 raise InputError(f"content digest mismatch for case: {case_id}")
         normalized[case_id] = partition

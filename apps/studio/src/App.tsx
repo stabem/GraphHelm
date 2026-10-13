@@ -593,12 +593,12 @@ export default function App({
   const pollMisses = useRef(0);
   const [stale, setStale] = useState(false);
   const pollGeneration = useRef(0);
+  const railRefreshBusy = useRef(false);
   useEffect(() => {
     if (!connected || selected === "") return;
     const generation = ++pollGeneration.current;
     let tickBusy = false;
     let hiddenTicks = 0;
-    let railRefreshBusy = false;
     pollMisses.current = 0;
     setStale(false);
     const timer = setInterval(() => {
@@ -656,8 +656,8 @@ export default function App({
           });
           pollMisses.current = 0;
           setStale(false);
-          if (!railRefreshBusy) {
-            railRefreshBusy = true;
+          if (!railRefreshBusy.current) {
+            railRefreshBusy.current = true;
             void readList().then((listRows) => {
               if (pollGeneration.current !== generation || clientRef.current !== client || selectedRef.current !== selected) return;
               for (const run of listRows) restoredOutsidePage.current.delete(run.executionId);
@@ -676,7 +676,7 @@ export default function App({
             }).catch(() => {
               // Rail refresh is best-effort; it must not suppress the selected-run poll.
             }).finally(() => {
-              railRefreshBusy = false;
+              railRefreshBusy.current = false;
             });
           }
         } catch {

@@ -835,8 +835,7 @@ export function useEnvelopes(
     const carriers = events.filter(
       (event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && event.evidenceRefs.length > 0,
     ).reverse();
-    const failed = new Set<number>();
-    setEnvelopes((previous) => ({ forId: executionId, map: previous.forId === executionId ? previous.map : {}, failed }));
+    const failed = new Set<number>(envelopes.forId === executionId ? envelopes.failed : []);
     let live = true;
     void (async () => {
       for (const carrier of carriers) {

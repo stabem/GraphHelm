@@ -604,7 +604,10 @@ fn project_discovery_refuses_when_health_probe_budget_expires() {
             started.elapsed(),
         )
     } else {
-        (Err(std::sync::mpsc::RecvTimeoutError::Timeout), Duration::ZERO)
+        (
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout),
+            Duration::ZERO,
+        )
     };
     drop(stdin);
     drop(guard);

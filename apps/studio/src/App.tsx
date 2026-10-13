@@ -539,7 +539,7 @@ export default function App({
       });
       try {
         const [nextStatus, nextEvents] = await Promise.all([
-          client.getStatus(id),
+          client.getStatus(id, true),
           readEvents(client, id, 0),
         ]);
         // THE CONNECTION IS A GUARD AXIS TOO (PR #467 review, P1): dispose() cannot cancel a
@@ -657,7 +657,7 @@ export default function App({
             return rows;
           };
           const [nextStatus, fresh] = await Promise.all([
-            client.getStatus(selected),
+            client.getStatus(selected, true),
             readEvents(client, selected, lastSeen),
           ]);
           // The connection too, not just the run: Runtime B can hold the same execution id, and
@@ -3164,7 +3164,7 @@ export default function App({
             </div>
             {(canvasTab === "graph" || canvasTab === "journey") && (
               <div id="studio-panel-graph" role="tabpanel" aria-label={canvasTab === "journey" ? "Proof" : "Graph"}>
-                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} events={eventList} envelopes={envelopes} wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} partial={currentTaskGraphs !== null && currentTaskGraphs !== taskGraphs} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && currentTaskGraphs === null} historyFailedCount={historyFailure?.executionId === selected ? historyFailure.count : 0} onRetryHistory={() => setHistoryRetry((value) => value + 1)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
+                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} events={eventList} envelopes={envelopes} wakeListeners={status?.wakeListeners ?? []} seenActors={status?.seenActors ?? []} seenActorAgesMs={status?.seenActorAgesMs ?? {}} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} partial={currentTaskGraphs !== null && currentTaskGraphs !== taskGraphs} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && currentTaskGraphs === null} historyFailedCount={historyFailure?.executionId === selected ? historyFailure.count : 0} onRetryHistory={() => setHistoryRetry((value) => value + 1)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
                   initialView={canvasTab === "journey" ? "proof" : "graph"} focusJourneyId={journeyContract}
                   flows={flowsRead.view} onApprove={approveFlow} onWatch={watchFlow}
 

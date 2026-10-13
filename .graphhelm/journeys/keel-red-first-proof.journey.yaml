@@ -12,24 +12,20 @@ screens:
     title: The specimen drops the first value
     url: /specimen
     state: stable
-    expect: [{role: stdout, name: "defective parent drops the first value"}]
+    expect: [{role: stdout, name: defective parent drops the first value}]
     scope: unknown
   - id: proof-report
     title: The CLI distinguishes an earned test from a vacuous test
     url: /report
     state: stable
-    expect:
-      - {role: exit, name: "0"}
-      - {role: stdout, name: "regression=parent-failed,head-passed,earned"}
-      - {role: stdout, name: "vacuous=parent-passed,head-passed,green_on_parent"}
-      - {role: stdout, name: "keel.test.green_on_parent"}
+    expect: [{role: exit, name: "0"}, {role: stdout, name: "regression=parent-failed,head-passed,earned"}, {role: stdout, name: "vacuous=parent-passed,head-passed,green_on_parent"}, {role: stdout, name: keel.test.green_on_parent}]
     scope: unknown
 edges:
   - id: prove-regression
     from: defective-parent
     to: proof-report
     acts:
-      - {kind: activate, role: button, name: "python .graphhelm/fixtures/keel-red-first-proof/scenario.py"}
+      - {kind: activate, role: button, name: python .graphhelm/fixtures/keel-red-first-proof/scenario.py}
 paths:
   main: [prove-regression]
 drift: []

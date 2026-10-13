@@ -76,7 +76,7 @@ type Filter = "all" | "working" | "waiting" | "free" | "silent" | "offline";
 
 function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: AgentRow[]; agents?: Bot[] } & BotActions) {
   const [filter, setFilter] = useState<Filter>("all");
-  const matches = (r: AgentRow, f: Filter) => f === "all" ? r.status !== "offline"
+  const matches = (r: AgentRow, f: Filter) => f === "all" ? r.status === "free"
     : f === "working" ? r.status === "working" || r.status === "building"
     : f === "waiting" ? r.status === "waiting" || r.status === "build_wait"
     : f === "silent" ? r.status === "silent" : r.status === f;

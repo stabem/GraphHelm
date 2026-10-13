@@ -299,6 +299,7 @@ function Said({
   useEffect(() => {
     if (!eager) return;
     let live = true;
+    const failedReads = new Set<string>();
     setState({ at: "loading" });
     openSealed(executionId, evidenceId, open).then(
       (content) => {
@@ -815,7 +816,7 @@ export function useEnvelopes(
   events: RuntimeEvent[],
   executionId: string | undefined,
   openEvidence: ((executionId: string, evidenceId: string) => Promise<EvidenceContent>) | undefined,
-): EnvelopeRecord {
+): EnvelopeRecord & { __pendingEnvelopeSequences: number[] } {
   // TAGGED BY EXECUTION, not just keyed by sequence: sequences restart in every run, so run B's
   // signal at sequence 5 would wear run A's plaintext envelope from sequence 5 for as long as
   // B's evidence reads take - someone else's words, recipient and replyTo rendered under the
@@ -824,7 +825,8 @@ export function useEnvelopes(
   const [envelopes, setEnvelopes] = useState<{
     forId: string | undefined;
     map: EnvelopeRecord;
-  }>({ forId: undefined, map: {} });
+    failed: Set<number>;
+  }>({ forId: undefined, map: {}, failed: new Set() });
   // The shared OPENED_EVIDENCE cache is what lets the live tail exist: without it, every pass
   // re-fetched ~20 envelopes, and a pass slower than the poll interval was cancelled before it
   // could commit — bubbles, ledger and agent filters permanently blind (found live, round 2).
@@ -833,6 +835,8 @@ export function useEnvelopes(
     const carriers = events.filter(
       (event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && event.evidenceRefs.length > 0,
     ).reverse();
+    const failed = new Set<number>();
+    setEnvelopes((previous) => ({ forId: executionId, map: previous.forId === executionId ? previous.map : {}, failed }));
     let live = true;
     void (async () => {
       for (const carrier of carriers) {
@@ -851,13 +855,15 @@ export function useEnvelopes(
             const before = previous.forId === executionId ? previous.map[carrier.sequence] : undefined;
             if (before?.to === opened.to && before.replyTo === opened.replyTo && before.text === opened.text
               && (before.recommendations ?? []).join("\u0000") === (opened.recommendations ?? []).join("\u0000")) return previous;
-            return {
-              forId: executionId,
-              map: { ...(previous.forId === executionId ? previous.map : {}), [carrier.sequence]: opened },
-            };
+            const nextFailed = new Set(previous.forId === executionId ? previous.failed : []);
+            nextFailed.delete(carrier.sequence);
+            return { forId: executionId, map: { ...(previous.forId === executionId ? previous.map : {}), [carrier.sequence]: opened }, failed: nextFailed };
           });
         } catch {
-          // An unopenable envelope filters as unaddressed, never as an error.
+          // Keep the failure observable as an unopened candidate and retry it on the next event
+          // page update. It must not turn a failed evidence read into a dark beacon.
+          failed.add(carrier.sequence);
+          if (live) setEnvelopes((previous) => ({ forId: executionId, map: previous.forId === executionId ? previous.map : {}, failed: new Set(failed) }));
         }
       }
     })();
@@ -866,7 +872,9 @@ export function useEnvelopes(
     };
   }, [events, executionId, openEvidence]);
   // A stable empty answer, not a fresh literal: downstream memos key off this identity.
-  return envelopes.forId === executionId ? envelopes.map : NO_ENVELOPES;
+  return envelopes.forId === executionId
+    ? Object.assign({ ...envelopes.map }, { __pendingEnvelopeSequences: [...envelopes.failed] })
+    : Object.assign({}, { __pendingEnvelopeSequences: [] });
 }
 
 const NO_ENVELOPES: EnvelopeRecord = {};

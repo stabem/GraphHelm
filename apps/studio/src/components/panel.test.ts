@@ -94,20 +94,24 @@ it("shows the newest sealed report while an older evidence read is still pending
   expect(open.mock.calls[0][1]).toBe("new");
 });
 
-it("retries a failed candidate envelope read and exposes it once it opens", async () => {
+it("keeps failed question reads pending and excludes bookkeeping signals", async () => {
   resetPanelCaches();
   const candidate = event(5, "signal_recorded", { kind: "operator_note", signalId: "sig-q" });
   candidate.actorId = "kit-3";
   candidate.evidenceRefs = ["question"];
-  const open = vi.fn()
-    .mockRejectedValueOnce(new Error("temporarily unavailable"))
-    .mockResolvedValueOnce({ evidenceId: "question", content: JSON.stringify({ type: "operator_note", description: "Merge now?", target: { id: "studio-operator", type: "user" } }), contentSha256: "hash", mediaType: "application/json", sensitivity: "confidential" as const });
+  let questionAttempts = 0;
+  const open = vi.fn(async (_run: string, id: string): Promise<EvidenceContent> => {
+    if (id === "question" && ++questionAttempts === 1) throw new Error("temporarily unavailable");
+    return { evidenceId: id, content: JSON.stringify({ type: "operator_note", description: "Merge now?", target: { id: "studio-operator", type: "user" } }), contentSha256: "hash", mediaType: "application/json", sensitivity: "confidential" };
+  });
   const { result, rerender } = renderHook(({ rows }) => useEnvelopes(rows, "run", open), { initialProps: { rows: [candidate] } });
   await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
   expect(result.current[5]).toBeUndefined();
-  const retryTrigger = event(6, "signal_recorded", { kind: "operator_note", signalId: "sig-r" });
+  const retryTrigger = event(6, "signal_recorded", { kind: "agent_task_created", signalId: "sig-r" });
+  retryTrigger.evidenceRefs = ["retry"];
   rerender({ rows: [candidate, retryTrigger] });
-  await waitFor(() => expect(result.current[5]?.to).toBe("studio-operator"));
+  await waitFor(() => expect(result.current.__pendingEnvelopeSequences).toEqual([5]));
+  expect(result.current[6]).toBeUndefined();
 });
 
 it("does not reuse a previously opened envelope when execution sequence numbers repeat", async () => {

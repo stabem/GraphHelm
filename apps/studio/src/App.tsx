@@ -3531,7 +3531,7 @@ export default function App({
                   ? ` · ${evidence.diagnostics[0].message}`
                   : ""}
                 {evidence.result === "unknown"
-                  ? " · the Runtime accepted it but the verification read failed — do not treat this as done"
+                  ? " · the Studio could not confirm whether the Runtime applied it — check the run before treating it as done"
                   : ""}
               </p>
             )}

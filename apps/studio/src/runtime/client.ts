@@ -61,6 +61,10 @@ export const WEBMCP_ACTOR: Actor = { id: "studio-webmcp-adapter", type: "agent" 
 
 /** The largest event page the Studio will ask for. The API's own ceiling is 1000; this is the
  * Studio's smaller working bound, so a page always fits one render pass. */
+/** #1170: set by the dev proxy (vite.config.ts) only when the Runtime refused the connection. */
+export const RUNTIME_UNREACHABLE_HEADER = "x-graphhelm-runtime-unreachable";
+export const RUNTIME_UNREACHABLE = "GHSTUDIO_RUNTIME_UNREACHABLE";
+
 export const MAX_EVENT_LIMIT = 200;
 /** The Runtime's own ceiling for one events page (`MAX_EVENTS_LIMIT` in `serve/routes.rs`). The
  * client's own loops keep `MAX_EVENT_LIMIT`; a caller may ask for up to this many at once. */
@@ -580,6 +584,13 @@ export class RuntimeClient {
       } catch (error) {
         if (error instanceof RequestDeadlineError || deadlineReached) throw new RequestDeadlineError();
         if (error instanceof DisconnectedError) throw error;
+        // #1170: the dev proxy marks a refused connection; that request was never delivered.
+        if (response.headers?.get?.(RUNTIME_UNREACHABLE_HEADER)) {
+          const message = "The Runtime is not answering, so nothing was sent. Start graphhelm serve, then try again.";
+          throw new RuntimeError(message, response.status, [
+            { code: RUNTIME_UNREACHABLE, severity: "error", message, path: "/", source: "studio" },
+          ]);
+        }
         throw new RuntimeError(
           response.status === 401
             ? "The bearer token was refused."
@@ -970,7 +981,9 @@ export class RuntimeClient {
       // A 4xx response proves the Runtime rejected the request. Transport failures, unreadable
       // responses and server errors may arrive after the mutation committed, so they stay
       // ambiguous even when a later read observes head movement.
-      refused = error.httpStatus >= 400 && error.httpStatus < 500;
+      refused =
+        (error.httpStatus >= 400 && error.httpStatus < 500) ||
+        error.diagnostics.some((diagnostic) => diagnostic.code === RUNTIME_UNREACHABLE);
       postAmbiguous = !refused;
       diagnostics = error.diagnostics.length > 0
         ? error.diagnostics
@@ -1193,7 +1206,9 @@ export class RuntimeClient {
     } catch (error) {
       if (error instanceof DisconnectedError) throw error;
       if (!(error instanceof RuntimeError)) throw error;
-      refused = error.httpStatus >= 400 && error.httpStatus < 500;
+      refused =
+        (error.httpStatus >= 400 && error.httpStatus < 500) ||
+        error.diagnostics.some((diagnostic) => diagnostic.code === RUNTIME_UNREACHABLE);
       diagnostics = error.diagnostics.length > 0
         ? error.diagnostics
         : [{ code: "", severity: "error", message: error.message, path: "/", source: "studio" }];

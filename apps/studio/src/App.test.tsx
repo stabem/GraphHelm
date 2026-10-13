@@ -1296,7 +1296,7 @@ describe("operator actions", () => {
     });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: /pause · finish in-flight/i }));
-    expect(await screen.findByText(/do not treat this as done/i)).toBeInTheDocument();
+    expect(await screen.findByText(/could not confirm whether the Runtime applied it/i)).toBeInTheDocument();
   });
 
   /** Phase 2 (#105): the runtime's TWO pauses are two buttons with two promises, and the

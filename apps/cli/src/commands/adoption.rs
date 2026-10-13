@@ -385,7 +385,7 @@ fn parse_resolution(
             let before = read_bytes(&item_path(item, args).ok_or_else(invalid)?)?;
             let after = remove_registration(&before)?.ok_or_else(invalid)?;
             let mut guard = contribution.clone();
-            guard["targetScope"] = json!(target_scope);
+            guard["targetScope"] = serde_json::json!(target_scope);
             Ok(Some(graphhelm_host_adoption::Resolution {
                 item: item.to_owned(),
                 decision: Decision::Replace,

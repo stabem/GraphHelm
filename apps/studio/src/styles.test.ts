@@ -279,6 +279,14 @@ describe("the stylesheet and the components agree", () => {
     expect(ruleOf(".projects")).toMatch(/position:\s*relative/);
   });
 
+  // #1155: grid rows sized to their widest content pushed the rail 80px past its width, and
+  // selecting a run scrolled the hidden overflow into view, cutting the project name.
+  it("keeps the rail's rows no wider than the rail (#1155)", () => {
+    expect(ruleOf(".projects")).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+    expect(ruleOf(".project-runs")).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+    expect(ruleOf(".run-row .run-when")).toMatch(/text-overflow:\s*ellipsis/);
+  });
+
   it("keeps the Chat column below the top bar at narrow viewport widths (#797)", () => {
     expect(CODE).toMatch(/\.chat-col\s*\{[^}]*grid-row:\s*2\s*\/\s*3/);
   });

@@ -174,6 +174,48 @@ it("settles cached envelopes after a poll adds another carrier", async () => {
   expect(result.current.__pendingEnvelopeSequences).toEqual([]);
 });
 
+it("publishes warm envelopes once per bounded page with complete contents", async () => {
+  resetPanelCaches();
+  const rows = Array.from({ length: 500 }, (_, index) => {
+    const row = event(index + 1, "signal_recorded", { kind: "operator_note", signalId: `sig-${index + 1}` });
+    row.evidenceRefs = [`evidence-${index + 1}`];
+    return row;
+  });
+  const open = vi.fn(async (_run: string, id: string): Promise<EvidenceContent> => ({
+    evidenceId: id,
+    content: JSON.stringify({ type: "operator_note", description: `report ${id}`, target: { id: `agent-${id}`, type: "agent" } }),
+    contentSha256: "hash", mediaType: "application/json", sensitivity: "confidential",
+  }));
+  const first = renderHook(() => useEnvelopes(rows, "run", open));
+  await waitFor(() => expect(first.result.current.__pendingEnvelopeSequences).toEqual([]));
+  first.unmount();
+
+  const submissions: unknown[] = [];
+  const realUseState = React.useState;
+  vi.spyOn(React, "useState").mockImplementation(((initial: unknown) => {
+    const [state, setState] = realUseState(initial);
+    const setter = (next: unknown) => {
+      if (typeof next === "function") submissions.push((next as (previous: unknown) => unknown)(state));
+      else submissions.push(next);
+      setState(next as never);
+    };
+    return [state, setter];
+  }) as typeof React.useState);
+  try {
+    const second = renderHook(() => useEnvelopes(rows, "run", open));
+    await waitFor(() => expect(second.result.current.__pendingEnvelopeSequences).toEqual([]));
+    expect(submissions.length).toBeLessThanOrEqual(1 + Math.ceil(rows.length / 50));
+    expect(open).toHaveBeenCalledTimes(500);
+    for (const row of rows) {
+      expect(second.result.current[row.sequence]).toEqual(expect.objectContaining({
+        to: `agent-evidence-${row.sequence}`, text: `report evidence-${row.sequence}`,
+      }));
+    }
+  } finally {
+    vi.mocked(React.useState).mockRestore();
+  }
+});
+
 it("does not reuse a previously opened envelope when execution sequence numbers repeat", async () => {
   resetPanelCaches();
   const first = event(5, "signal_recorded", { kind: "operator_note", signalId: "sig-a" });

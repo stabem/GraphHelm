@@ -37,15 +37,21 @@ import os
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
-KINDS = ("claimed", "planned", "released", "pr_opened", "review_assigned", "review_verdict", "merged", "closed", "critic_verdict")
+KINDS = ("claimed", "planned", "released", "heartbeat", "pr_opened", "review_assigned", "review_verdict", "merged", "closed", "critic_verdict")
 # The default revision is the step's position in the delivery. `planned` (#480) came later and is
 # the claim's companion, so the older steps keep their numbers (and their records' keys).
-REVISIONS = {"claimed": 1, "planned": 1, "released": 2, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "merged": 5, "closed": 6, "critic_verdict": 1}
+REVISIONS = {"claimed": 1, "planned": 1, "released": 2, "heartbeat": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "merged": 5, "closed": 6, "critic_verdict": 1}
 CLASSES = ("docs", "code", "user_visible", "invariant")
 PROOFS = ("none", "tests", "journey", "both")
 # #477: what the naming standard asks (DELIVERY.md "Naming") and what the Runtime accepts.
 STANDARD = {"claimed": 50, "pr_opened": 60, "summary": 100}
 ACCEPTED = {"title": 200, "summary": 300}
+HEARTBEAT_INTERVAL = datetime.timedelta(seconds=300)
+MAX_HISTORY_EVENTS = 10_000
+MAX_HISTORY_PAGES = MAX_HISTORY_EVENTS // 1000
+MAX_HEARTBEAT_EVIDENCE_READS = 256
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_TOTAL_EVIDENCE_BYTES = 2 * 1024 * 1024
 
 
 def github_words(kind, number, repo):
@@ -326,7 +332,9 @@ def planned_fields(args):
 def document(args, now):
     doc = {"schema": "graphhelm-task-event-v1", "taskId": f"issue-{args.issue}",
            "revision": args.revision or REVISIONS[args.kind], "at": now}
-    if args.kind == "claimed":
+    if args.kind == "heartbeat":
+        doc.update(lane=args.lane)
+    elif args.kind == "claimed":
         need(args, "branch")
         doc.update(issue=args.issue, lane=args.lane, branch=args.branch)
         if args.assigned_by is not None:
@@ -390,7 +398,12 @@ def document(args, now):
 def main(argv):
     args = parse(argv)
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    doc = document(args, now)
+    if args.kind == "heartbeat":
+        reject_heartbeat_overrides(args)
+        history = read_execution_history(args)
+        doc = heartbeat_document(args, history, now)
+    else:
+        doc = document(args, now)
     if args.kind in ("pr_opened", "review_assigned") and not args.no_github:
         refuse_merged_pr_record(args.pr, args.repo)
     if args.kind == "merged" and not args.dry_run:
@@ -402,6 +415,8 @@ def main(argv):
             sys.exit("task_record: --no-github is refused for closed unless --dry-run is set")
         closed_on_github(args.pr, args.repo)
     code, signal_id, reply = send_opening(args, doc, now)
+    if args.kind == "heartbeat" and args.dry_run:
+        print("task_record: dry-run only; Runtime admission and append were not observed", file=sys.stderr)
     outcome = report(code, signal_id, reply)
     if args.kind == "pr_opened" and outcome == 0:
         # #508: the assignment rides on the same call, the same head and PR, recorded as this lane.
@@ -409,6 +424,203 @@ def main(argv):
         code, signal_id, reply = send(assigned, document(assigned, now), now)
         return report(code, signal_id, reply)
     return outcome
+
+
+def reject_heartbeat_overrides(args):
+    """Keep heartbeat payloads to the canonical lane/task activity fields."""
+    forbidden = {
+        "revision": args.revision, "branch": args.branch, "claim-sequence": args.claim_sequence,
+        "release-reason": args.release_reason, "parent": args.parent, "assigned-by": args.assigned_by,
+        "pr": args.pr, "head": args.head, "reviewer": args.reviewer, "ordinal": args.ordinal if args.ordinal != 1 else None,
+        "verdict": args.verdict, "comment-url": args.comment_url, "merge-sha": args.merge_sha,
+        "by": args.by, "closes": args.closes, "journeys": args.journeys, "round": args.round,
+        "score": args.score, "design-ref": args.design_ref, "reason": args.reason,
+        "pass-score": args.pass_score if args.pass_score != 8 else None,
+        "max-rounds": args.max_rounds if args.max_rounds != 3 else None,
+        "classes": args.classes, "reviews": args.reviews, "proof": args.proof,
+        "critic-mode": args.critic_mode, "plan-file": args.plan_file, "promise": args.promise or None,
+        "paths": args.paths, "title": args.title, "summary": args.summary,
+    }
+    supplied = [f"--{name}" for name, value in forbidden.items() if value not in (None, "", [])]
+    if supplied:
+        sys.exit("task_record: heartbeat refuses " + ", ".join(supplied))
+
+
+def _runtime_json(args, path, token, *, max_bytes=MAX_RESPONSE_BYTES):
+    url = f"{args.url.rstrip('/')}/v1/executions/{urllib.parse.quote(args.execution, safe='')}{path}"
+    if urllib.parse.urlsplit(url).hostname not in LOOPBACK:
+        sys.exit(f"task_record: refusing {args.url}: the agent token is sent only to a loopback Runtime")
+    request = urllib.request.Request(url, method="GET", headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            raw = response.read(max_bytes + 1)
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError) as error:
+        sys.exit(f"task_record: heartbeat history is unavailable; no record sent ({error})")
+    if len(raw) > max_bytes:
+        sys.exit("task_record: heartbeat history response exceeded its byte bound; no record sent")
+    try:
+        reply = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        sys.exit("task_record: heartbeat history response is invalid; no record sent")
+    if not isinstance(reply, dict) or reply.get("ok") is not True or not isinstance(reply.get("data"), dict):
+        sys.exit("task_record: heartbeat history response is incomplete; no record sent")
+    return reply["data"], len(raw)
+
+
+def read_execution_history(args):
+    """Read a complete bounded event tail and its referenced task evidence from the Runtime."""
+    try:
+        token = Path(args.token_file).read_text(encoding="utf-8").strip()
+    except OSError as error:
+        sys.exit(f"task_record: cannot read the agent token; heartbeat not sent ({error})")
+    if not token:
+        sys.exit("task_record: agent token is empty; heartbeat not sent")
+
+    events, _ = _runtime_json(args, "/events?after=0&limit=1000", token)
+    head = events.get("head")
+    first_page = events.get("events")
+    if not isinstance(head, int) or isinstance(head, bool) or head < 0 or not isinstance(first_page, list):
+        sys.exit("task_record: heartbeat event history is malformed; no record sent")
+    if head > MAX_HISTORY_EVENTS:
+        sys.exit("task_record: heartbeat event history exceeds its event bound; no record sent")
+    history = list(first_page)
+    after = history[-1].get("sequence") if history and isinstance(history[-1], dict) else 0
+    if len(history) > 1000 or len(history) != min(head, 1000):
+        sys.exit("task_record: heartbeat event history is incomplete; no record sent")
+    if any(not isinstance(event, dict) or event.get("sequence") != expected
+           for expected, event in enumerate(history, start=1)):
+        sys.exit("task_record: heartbeat event history has a sequence gap; no record sent")
+    for _ in range(MAX_HISTORY_PAGES - 1):
+        if after == head:
+            break
+        if not isinstance(after, int) or after <= 0:
+            sys.exit("task_record: heartbeat event history is incomplete; no record sent")
+        page, _ = _runtime_json(args, f"/events?after={after}&limit=1000", token)
+        if page.get("head") != head or not isinstance(page.get("events"), list) or not page["events"]:
+            sys.exit("task_record: heartbeat event history changed or is incomplete; no record sent")
+        next_page = page["events"]
+        if len(history) + len(next_page) > MAX_HISTORY_EVENTS:
+            sys.exit("task_record: heartbeat event history exceeds its event bound; no record sent")
+        for expected, event in enumerate(next_page, start=after + 1):
+            if not isinstance(event, dict) or event.get("sequence") != expected:
+                sys.exit("task_record: heartbeat event history has a sequence gap; no record sent")
+        history.extend(next_page)
+        after = next_page[-1]["sequence"]
+    if after != head or len(history) != head:
+        sys.exit("task_record: heartbeat event history is incomplete; no record sent")
+
+    relevant = []
+    for event in history:
+        if (not isinstance(event, dict) or not isinstance(event.get("kind"), dict)
+                or not isinstance(event.get("actor"), dict)
+                or not isinstance(event["actor"].get("id"), str)):
+            sys.exit("task_record: heartbeat event history is malformed; no record sent")
+        if event.get("actor", {}).get("id") != args.lane:
+            continue
+        kind = event["kind"].get("data", {}).get("kind") if event["kind"].get("type") == "signal_recorded" else None
+        if kind in ("task.claimed", "task.pr_opened", "task.released", "task.heartbeat",
+                    "task.merged", "task.closed"):
+            relevant.append((event, kind))
+    if len(relevant) > MAX_HEARTBEAT_EVIDENCE_READS:
+        sys.exit("task_record: heartbeat history requires too many evidence reads; no record sent")
+    evidence_docs = {}
+    total_bytes = 0
+    for event, kind in relevant:
+        refs = event.get("evidenceRefs")
+        if not isinstance(refs, list) or not refs or not isinstance(refs[0], dict) or not isinstance(refs[0].get("evidenceId"), str):
+            sys.exit("task_record: heartbeat task evidence reference is missing; no record sent")
+        evidence_id = refs[0]["evidenceId"]
+        if evidence_id not in evidence_docs:
+            data, size = _runtime_json(args, f"/evidence/{urllib.parse.quote(evidence_id, safe='')}", token)
+            total_bytes += size
+            if total_bytes > MAX_TOTAL_EVIDENCE_BYTES:
+                sys.exit("task_record: heartbeat evidence exceeds its total byte bound; no record sent")
+            content = data.get("content")
+            try:
+                evidence_docs[evidence_id] = json.loads(content) if isinstance(content, str) else None
+            except json.JSONDecodeError:
+                evidence_docs[evidence_id] = None
+            if not isinstance(evidence_docs[evidence_id], dict):
+                sys.exit("task_record: heartbeat task evidence is unreadable; no record sent")
+    return [(event, kind, evidence_docs[event["evidenceRefs"][0]["evidenceId"]]) for event, kind in relevant]
+
+
+def _event_time(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(datetime.timezone.utc)
+
+
+def heartbeat_document(args, history, now):
+    task_id = f"issue-{args.issue}"
+    open_claims = []
+    opened_prs = []
+    last_heartbeat = None
+    max_revision = 0
+    for event, kind, envelope in history:
+        if envelope.get("type") != kind or envelope.get("source", {}).get("id") != args.lane:
+            sys.exit("task_record: heartbeat task history identity is invalid; no record sent")
+        description = envelope.get("description")
+        try:
+            record = json.loads(description) if isinstance(description, str) else None
+        except json.JSONDecodeError:
+            record = None
+        if not isinstance(record, dict) or record.get("schema") != "graphhelm-task-event-v1":
+            sys.exit("task_record: heartbeat task history description is invalid; no record sent")
+        if (not isinstance(record.get("taskId"), str) or not isinstance(record.get("lane"), str)
+                or record["lane"] != args.lane):
+            sys.exit("task_record: heartbeat task history identity is invalid; no record sent")
+        if record.get("taskId") != task_id:
+            continue
+        revision = record.get("revision")
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+            sys.exit("task_record: heartbeat task history revision is invalid; no record sent")
+        max_revision = max(max_revision, revision)
+        if kind == "task.claimed":
+            open_claims.append(event["sequence"])
+        elif kind == "task.pr_opened":
+            pr = record.get("pr")
+            if not isinstance(pr, int) or isinstance(pr, bool) or pr < 1:
+                sys.exit("task_record: heartbeat PR history is invalid; no record sent")
+            if pr not in opened_prs:
+                opened_prs.append(pr)
+                if open_claims:
+                    open_claims.pop(0)
+        elif kind == "task.released":
+            sequence = record.get("claimSequence")
+            if not isinstance(sequence, int) or isinstance(sequence, bool):
+                sys.exit("task_record: heartbeat release history is invalid; no record sent")
+            open_claims = [claim for claim in open_claims if claim != sequence]
+        elif kind in ("task.merged", "task.closed"):
+            pr = record.get("pr")
+            if not isinstance(pr, int) or isinstance(pr, bool) or pr < 1:
+                sys.exit("task_record: heartbeat terminal PR history is invalid; no record sent")
+            if opened_prs:
+                if pr not in opened_prs:
+                    continue
+                opened_prs.remove(pr)
+            if open_claims:
+                # A terminal record names the task's PR. If PR-open history is incomplete,
+                # still fail closed for this task rather than heartbeat a terminal claim.
+                open_claims.pop(0)
+        elif kind == "task.heartbeat":
+            occurred_at = _event_time(event.get("occurredAt"))
+            if occurred_at is None:
+                sys.exit("task_record: heartbeat event time is invalid; no record sent")
+            last_heartbeat = occurred_at
+    if not open_claims:
+        sys.exit("task_record: no open pre-PR claim for this lane/task; heartbeat not sent")
+    now_dt = datetime.datetime.fromisoformat(now.replace("Z", "+00:00"))
+    if last_heartbeat is not None and now_dt - last_heartbeat < HEARTBEAT_INTERVAL:
+        sys.exit("task_record: heartbeat is limited to one per 300 seconds; no record sent")
+    return {"schema": "graphhelm-task-event-v1", "taskId": task_id,
+            "revision": max_revision + 1, "at": now, "lane": args.lane}
 
 
 def send_opening(args, doc, now):

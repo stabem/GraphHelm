@@ -673,8 +673,12 @@ def commands(whole, single, studio, tools=(), validate=(), lint_packages=None, p
             cmds.append(f"cargo {TOOLCHAIN} clippy --locked " + " ".join(f"-p {n}" for n in lint) + " --all-targets --all-features -- -D warnings")
         cmds.append(GUARD)
     if studio:
-        files = " ".join(p[len("apps/studio/"):] for p in studio)
-        cmds.append(f"(cd apps/studio && npx vitest related --run --maxWorkers=1 {files} && npx tsc -b)")
+        if "apps/studio/vite.config.ts" in studio:
+            vitest = "npx vitest run --maxWorkers=1"
+        else:
+            files = " ".join(p[len("apps/studio/"):] for p in studio)
+            vitest = f"npx vitest related --run --maxWorkers=1 {files}"
+        cmds.append(f"(cd apps/studio && {vitest} && npx tsc -b)")
     return cmds
 
 
@@ -759,8 +763,12 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
                                "--test", "authored_strings_across_the_workspace", *TEST_THREADS.split()],
                     "cwd": ".", "slot": True})
     if studio:
-        files = [p[len("apps/studio/"):] for p in studio]
-        out.append({"argv": ["npx", "vitest", "related", "--run", "--maxWorkers=1", *files],
+        if "apps/studio/vite.config.ts" in studio:
+            vitest = ["npx", "vitest", "run", "--maxWorkers=1"]
+        else:
+            files = [p[len("apps/studio/"):] for p in studio]
+            vitest = ["npx", "vitest", "related", "--run", "--maxWorkers=1", *files]
+        out.append({"argv": vitest,
                     "cwd": "apps/studio", "slot": False})
         out.append({"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio", "slot": False})
     return out

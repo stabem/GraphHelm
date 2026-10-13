@@ -159,7 +159,7 @@ class Reach(unittest.TestCase):
         self.assertEqual(records[0], {"argv": rt.BROWSER_ARGV, "cwd": ".", "slot": True, "observer": "browser"})
         self.assertEqual(records[1]["argv"], ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli",
                                                "--", "--test-threads=2"])
-        self.assertEqual(records[-2], {"argv": ["npx", "vitest", "related", "--run", "--pool=forks", "--maxWorkers=1",
+        self.assertEqual(records[-2], {"argv": ["npx", "vitest", "related", "--run", "--maxWorkers=1",
                                                  "src/runtime/team-tasks.ts"],
                                        "cwd": "apps/studio", "slot": False})
         self.assertEqual(records[-1], {"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio", "slot": False})
@@ -401,7 +401,7 @@ class Reach(unittest.TestCase):
         whole, single, studio, *_ = reach("apps/studio/src/runtime/team-tasks.ts")
         self.assertEqual((whole, single), (set(), set()))
         commands = rt.commands(whole, single, studio)
-        self.assertEqual(commands, ["(cd apps/studio && npx vitest related --run --pool=forks --maxWorkers=1 src/runtime/team-tasks.ts && npx tsc -b)"])
+        self.assertEqual(commands, ["(cd apps/studio && npx vitest related --run --maxWorkers=1 src/runtime/team-tasks.ts && npx tsc -b)"])
 
     def test_docs_reach_nothing_and_are_not_reported_unmapped(self):
         whole, single, studio, tools, validate, other = reach("docs/process/DELIVERY.md", "docs/journeys/x/shot.jpg")

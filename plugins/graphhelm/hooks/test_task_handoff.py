@@ -263,6 +263,86 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(len([row for row in RuntimeHandler.requests if row[0] == "GET" and row[1].endswith("/briefing")]), 1)
         self.assertFalse(any(row[0] == "POST" for row in RuntimeHandler.requests))
 
+    def test_receive_refuses_briefing_behind_observed_handoff_history(self):
+        def briefing(sequence):
+            return {"asOfSequence": sequence, "nextStep": {"kind": "diagnose"},
+                    "pending": [], "unevaluated": [], "decisions": [], "workDone": []}
+
+        with patch.dict(os.environ, self.env, clear=False):
+            RuntimeHandler.briefing_data = briefing(0)
+            offered = MODULE.offer("claude", "sender", "codex", "receiver")
+            offered_event = RuntimeHandler.events[0]
+            offer_evidence_id = offered_event["evidenceRefs"][0]["evidenceId"]
+            original_offer_evidence = RuntimeHandler.evidence[offer_evidence_id]
+            original_offer_ref = offered_event["evidenceRefs"][0]["contentSha256"]
+            original_offer_envelope = offered_event["kind"]["data"]["envelopeSha256"]
+
+            RuntimeHandler.briefing_data = briefing(0)
+            RuntimeHandler.requests = []
+            with self.assertRaisesRegex(ValueError, "briefing.*(behind|older|sequence)|stale"):
+                MODULE.receive("codex", "receiver", offered["offerId"])
+            self.assertEqual(len([row for row in RuntimeHandler.requests
+                                  if row[0] == "GET" and row[1].endswith("/briefing")]), 1)
+            self.assertFalse(any(row[0] == "POST" for row in RuntimeHandler.requests))
+
+            # A current briefing at the observed journal head is accepted.
+            RuntimeHandler.briefing_data = briefing(RuntimeHandler.events[-1]["sequence"])
+            accepted = MODULE.receive("codex", "receiver", offered["offerId"])
+            self.assertEqual(accepted["state"], "recorded")
+
+            # Replay must compare against the newly observed receipt as well as the offer.
+            receipt_sequence = RuntimeHandler.events[-1]["sequence"]
+            RuntimeHandler.briefing_data = briefing(receipt_sequence - 1)
+            RuntimeHandler.requests = []
+            with self.assertRaisesRegex(ValueError, "briefing.*(behind|older|sequence)|stale"):
+                MODULE.receive("codex", "receiver", offered["offerId"])
+            self.assertEqual(len([row for row in RuntimeHandler.requests
+                                  if row[0] == "GET" and row[1].endswith("/briefing")]), 1)
+            self.assertFalse(any(row[0] == "POST" for row in RuntimeHandler.requests))
+
+            # The validated offered digest also raises the bound when ahead of journal.
+            signal = json.loads(original_offer_evidence[0])
+            details = json.loads(signal["description"])
+            details["briefing"]["asOfSequence"] = receipt_sequence + 5
+            signal["description"] = json.dumps(details, separators=(",", ":"), sort_keys=True)
+            content = json.dumps(signal, separators=(",", ":"))
+            digest = hashlib.sha256(content.encode()).hexdigest()
+            RuntimeHandler.evidence[offer_evidence_id] = (content, digest)
+            offered_event["evidenceRefs"][0]["contentSha256"] = digest
+            offered_event["kind"]["data"]["envelopeSha256"] = digest
+            RuntimeHandler.briefing_data = briefing(receipt_sequence + 4)
+            RuntimeHandler.requests = []
+            with self.assertRaisesRegex(ValueError, "briefing.*(behind|older|sequence)|stale"):
+                MODULE.receive("codex", "receiver", offered["offerId"])
+            self.assertEqual(len([row for row in RuntimeHandler.requests
+                                  if row[0] == "GET" and row[1].endswith("/briefing")]), 1)
+            self.assertFalse(any(row[0] == "POST" for row in RuntimeHandler.requests))
+
+            RuntimeHandler.evidence[offer_evidence_id] = original_offer_evidence
+            offered_event["evidenceRefs"][0]["contentSha256"] = original_offer_ref
+            offered_event["kind"]["data"]["envelopeSha256"] = original_offer_envelope
+
+            # The validated receipt digest independently raises the same lower bound.
+            receipt_event = RuntimeHandler.events[-1]
+            receipt_evidence_id = receipt_event["evidenceRefs"][0]["evidenceId"]
+            original_receipt_evidence = RuntimeHandler.evidence[receipt_evidence_id]
+            receipt_signal = json.loads(original_receipt_evidence[0])
+            receipt_details = json.loads(receipt_signal["description"])
+            receipt_details["briefing"]["asOfSequence"] = receipt_sequence + 7
+            receipt_signal["description"] = json.dumps(receipt_details, separators=(",", ":"), sort_keys=True)
+            receipt_content = json.dumps(receipt_signal, separators=(",", ":"))
+            receipt_digest = hashlib.sha256(receipt_content.encode()).hexdigest()
+            RuntimeHandler.evidence[receipt_evidence_id] = (receipt_content, receipt_digest)
+            receipt_event["evidenceRefs"][0]["contentSha256"] = receipt_digest
+            receipt_event["kind"]["data"]["envelopeSha256"] = receipt_digest
+            RuntimeHandler.briefing_data = briefing(receipt_sequence + 6)
+            RuntimeHandler.requests = []
+            with self.assertRaisesRegex(ValueError, "briefing.*(behind|older|sequence)|stale"):
+                MODULE.receive("codex", "receiver", offered["offerId"])
+            self.assertEqual(len([row for row in RuntimeHandler.requests
+                                  if row[0] == "GET" and row[1].endswith("/briefing")]), 1)
+            self.assertFalse(any(row[0] == "POST" for row in RuntimeHandler.requests))
+
     def test_receipt_briefing_rejects_invalid_sealed_digest_without_write(self):
         with patch.dict(os.environ, self.env, clear=False):
             offered = MODULE.offer("claude", "sender", "codex", "receiver")

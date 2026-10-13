@@ -198,6 +198,10 @@ digest is refused before a current briefing request. A valid replay still requir
 if that read fails, no historical digest is returned as current and no receipt is posted. These
 historical digests do not assign current duties or imply task acceptance.
 
+The current briefing must be at least as new as the latest journal sequence already read and the
+validated offered and receipt briefing digests. An older response is refused before a receipt is
+posted; equal or newer sequence numbers are accepted.
+
 Read-only `status` retains the `receipts` ID list and exposes `receiptBriefings`, keyed by
 those IDs, from each validated sealed receipt. An offer without receipts has an empty map.
 This historical receipt context needs no current briefing fetch and does not imply acceptance.

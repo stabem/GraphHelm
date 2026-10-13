@@ -868,7 +868,12 @@ mod tests {
         );
         drop(store);
         let lease = super::read_own_lease(&events, Some(execution.as_str()), "session-wake-stale")
-            .unwrap_or_else(|_| panic!("the captured session owns its armed lease"));
+            .unwrap_or_else(|outcome| {
+                panic!(
+                    "the captured session owns its armed lease: {}",
+                    outcome.output.diagnostics[0].message
+                )
+            });
         assert_eq!(lease.armed_at_sequence, armed_at);
         let store = test_store(&events);
         consume_test_lease(&store, &scope, &execution, "session-wake-stale", armed_at);
@@ -893,7 +898,12 @@ mod tests {
         drop(store);
         let lease =
             super::read_own_lease(&events, Some(execution.as_str()), "session-wake-replace")
-                .unwrap_or_else(|_| panic!("the captured session owns its armed lease"));
+                .unwrap_or_else(|outcome| {
+                    panic!(
+                        "the captured session owns its armed lease: {}",
+                        outcome.output.diagnostics[0].message
+                    )
+                });
         assert_eq!(lease.armed_at_sequence, first_arming);
         let store = test_store(&events);
         consume_test_lease(

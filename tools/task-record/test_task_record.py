@@ -260,6 +260,7 @@ class TaskRecordTest(unittest.TestCase):
         FakeRuntime.seen.clear()
         FakeRuntime.old = False
         FakeRuntime.history = []
+        FakeRuntime.history_head = None
         FakeRuntime.evidence = {}
         FakeRuntime.reads = []
         # #477: opening records read their title from GitHub; these cells are about the wire.

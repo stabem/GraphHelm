@@ -1,11 +1,34 @@
 import { describe, expect, it } from "vitest";
 import { agentBoard } from "./agent-board";
-import { LIVENESS_MS, laneBars, packBars, placeholderLane, type TimedTaskEvent } from "./lane-bars";
+import { LIVENESS_MS, applySessionEnds, laneBars, packBars, placeholderLane, type TimedTaskEvent } from "./lane-bars";
+import type { RuntimeEvent } from "./types";
 
 const T0 = Date.parse("2026-10-09T00:00:00Z");
 const at = (ms: number) => new Date(T0 + ms).toISOString();
 let seq = 0;
 const ev = (e: Partial<TimedTaskEvent>): TimedTaskEvent => ({ actorId: "a", sequence: seq++, taskId: "t1", ...e }) as TimedTaskEvent;
+
+describe("applySessionEnds", () => {
+  const ended = (actorId: string, sequence: number, occurredAt: string): RuntimeEvent => ({
+    sequence, kind: "signal_recorded", payload: { kind: "agent_session_ended", sourceKind: "tool", sourceId: actorId },
+    occurredAt, actorId, actorType: "agent", idempotencyKey: null, eventId: `e-${sequence}`, evidenceRefs: [],
+  });
+  it("Claude Desktop session end sets endedAt when the end is signed as the lane", () => {
+    // #1184: the Graph joins session ends on the lane name. A Desktop lane's hook now signs as the
+    // lane; the old {host}-session-{id} actor matches no lane and leaves endedAt unset.
+    const lanes = applySessionEnds(laneBars([
+      ev({ kind: "task.claimed", lane: "gh-claude-7", taskId: "issue-903", issue: 903, at: at(0) }),
+    ], T0 + 10, 1000), [
+      ended("claude-session-abc123", 1, at(5)),
+      ended("gh-claude-7", 2, at(7)),
+    ]);
+    expect(lanes.find((lane) => lane.lane === "gh-claude-7")!.endedAt).toBe(T0 + 7);
+    const unsigned = applySessionEnds(laneBars([
+      ev({ kind: "task.claimed", lane: "gh-claude-7", taskId: "issue-903", issue: 903, at: at(0) }),
+    ], T0 + 10, 1000), [ended("claude-session-abc123", 1, at(5))]);
+    expect(unsigned[0]!.endedAt).toBeUndefined();
+  });
+});
 
 describe("laneBars", () => {
   it("ends every lane's bars for a PR when it merges or closes", () => {

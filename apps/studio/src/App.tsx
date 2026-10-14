@@ -36,7 +36,7 @@ import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/r
 import { foldTaskEvents, isClaudeTaskSignal, isTaskEventSignal, readClaudeTasks, readTaskEventRecords, type ClaudeTaskReadModel, type TaskEventRecord, type TaskState } from "./runtime/team-tasks";
 import { SlotPoll } from "./components/slot-poll";
 import { MissionView } from "./components/mission-view";
-import { laneBars, type TimedTaskEvent } from "./runtime/lane-bars";
+import { applySessionEnds, laneBars, type TimedTaskEvent } from "./runtime/lane-bars";
 import { skippedEdgeInto } from "./runtime/mission";
 import { TaskGraphs } from "./components/task-graphs";
 import { JEV_ABSENT_NOTE, jevAvailability } from "./runtime/jev";
@@ -2385,15 +2385,7 @@ export default function App({
   const missionLanes = useMemo(() => {
     const records = currentTaskGraphs?.records ?? [];
     const timed: TimedTaskEvent[] = records.flatMap((r) => (r.occurredAt ? [{ ...r, at: r.occurredAt }] : []));
-    const lanes = laneBars(timed, clock, 14 * 3_600_000);
-    for (const event of eventList) {
-      if (event.kind !== "signal_recorded" || !event.payload || typeof event.payload !== "object"
-        || !("kind" in event.payload) || event.payload.kind !== "agent_session_ended" || !event.actorId) continue;
-      const lane = lanes.find((row) => row.lane === event.actorId);
-      const at = event.occurredAt ? Date.parse(event.occurredAt) : NaN;
-      if (lane && Number.isFinite(at) && (lane.endedAt === undefined || at > lane.endedAt)) lane.endedAt = at;
-    }
-    return lanes;
+    return applySessionEnds(laneBars(timed, clock, 14 * 3_600_000), eventList);
   }, [currentTaskGraphs, clock, eventList]);
   const watchFlow = useCallback(async (flowId: string, path?: string) => {
     const client = clientRef.current;

@@ -1,4 +1,5 @@
 import { foldTaskEvents, type TaskEventRecord, type TaskState } from "./team-tasks";
+import type { RuntimeEvent } from "./types";
 
 export type TimedTaskEvent = TaskEventRecord & { at: string };
 export type BarKind = "implement" | "review" | "merge";
@@ -235,6 +236,20 @@ export function packBars(bars: readonly { start: number; end: number }[]): { row
     row[i] = r;
   }
   return { rows: Math.max(1, ends.length), row };
+}
+
+/** #1184: the latest `agent_session_ended` signed as a lane sets that lane's `endedAt`. The hooks
+ * sign a lane's session end as the lane (the same name its task records carry); an end signed as
+ * `{host}-session-{id}` names no lane and is left alone. Mutates and returns `lanes`. */
+export function applySessionEnds(lanes: Lane[], events: readonly RuntimeEvent[]): Lane[] {
+  for (const event of events) {
+    if (event.kind !== "signal_recorded" || !event.payload || typeof event.payload !== "object"
+      || !("kind" in event.payload) || event.payload.kind !== "agent_session_ended" || !event.actorId) continue;
+    const lane = lanes.find((row) => row.lane === event.actorId);
+    const at = event.occurredAt ? Date.parse(event.occurredAt) : NaN;
+    if (lane && Number.isFinite(at) && (lane.endedAt === undefined || at > lane.endedAt)) lane.endedAt = at;
+  }
+  return lanes;
 }
 
 /** A lane named "TBD" (any case) or nothing is a placeholder, not an agent. */

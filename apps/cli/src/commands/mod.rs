@@ -851,6 +851,15 @@ pub(super) fn status_read_budget() -> graphhelm_events::ReadBudget {
     )
 }
 
+/// #1202: the task projection route's own budget (`TASKS_READ_BUDGET_MILLIS`); its cold read
+/// opens every envelope once, which the status budget was never sized for.
+pub(super) fn tasks_read_budget() -> graphhelm_events::ReadBudget {
+    graphhelm_events::ReadBudget::starting_now(
+        Arc::new(SystemClock),
+        chrono::Duration::milliseconds(graphhelm_events::TASKS_READ_BUDGET_MILLIS),
+    )
+}
+
 pub(super) fn publish_loaded(
     loaded: &graphhelm_schema::LoadedGraph,
     actor: Actor,

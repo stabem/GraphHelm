@@ -1874,12 +1874,21 @@ pub(super) async fn tasks(
         );
     };
     let events = state.events.clone();
+    let caches = state.tasks_cache.clone();
     let Some(result) = off_reactor(move || {
-        // The operator-facing read budget (#750), the same one `status` declares: the walk, the
-        // envelope opens and the fold share it.
-        let budget = crate::commands::status_read_budget();
-        execution::tasks::read(&events, &execution_id, &keyring, &budget)
-            .map(|view| serde_json::to_value(view).expect("a view of serializable fold types"))
+        // #1202: read with what this Runtime remembers of the run, outside the lock (a read can
+        // take seconds cold); fold what was learned back in afterwards, refusal included.
+        let mut cache = caches
+            .lock()
+            .map(|map| map.get(&execution_id).cloned().unwrap_or_default())
+            .unwrap_or_default();
+        let budget = crate::commands::tasks_read_budget();
+        let result =
+            execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, &mut cache);
+        if let Ok(mut map) = caches.lock() {
+            map.entry(execution_id).or_default().absorb(cache);
+        }
+        result.map(|view| serde_json::to_value(view).expect("a view of serializable fold types"))
     })
     .await
     else {
@@ -6847,6 +6856,7 @@ pub(super) mod tests {
             gateway_manifest: None,
             native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             seen_actors: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
+            tasks_cache: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         };
         (directory, state)
     }

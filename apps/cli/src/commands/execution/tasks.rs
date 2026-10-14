@@ -9,6 +9,7 @@
 //! that kind naming that actor. Anything else is counted in `rejected` and never drawn, which is
 //! how the Studio read its own fold (`readTaskEventRecords`), so an old log folds the same here.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use graphhelm_events::{EvidenceOpener, EvidenceRead};
@@ -30,6 +31,34 @@ pub struct TasksView {
     pub tasks: Vec<TaskState>,
     pub records: Vec<TaskEventRecord>,
     pub rejected: usize,
+    /// #1202: how many sealed envelopes THIS read opened. A Runtime that remembers the run opens
+    /// none on an unchanged head and one per `task.*` record since the last read.
+    pub opened: usize,
+}
+
+/// #1202: what one Runtime remembers of an execution's `task.*` envelopes it already opened.
+/// Recorded events and sealed envelopes are immutable, so an outcome keyed by sequence never
+/// changes; the head's event id is kept so a store rebuilt under the same path (sequences
+/// restart) is noticed and the memory dropped rather than trusted.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TaskRecordCache {
+    /// Sequence of a `task.*` record → its verified parse, or `None` when it did not verify.
+    outcomes: BTreeMap<u64, Option<TaskEventRecord>>,
+    /// The last walked head: its sequence and event id.
+    head: Option<(u64, String)>,
+}
+
+impl TaskRecordCache {
+    /// Folds a cache that read the same execution (possibly concurrently) into this one: the
+    /// union of outcomes, and the later head.
+    pub(crate) fn absorb(&mut self, other: TaskRecordCache) {
+        self.outcomes.extend(other.outcomes);
+        let later = other.head.as_ref().map(|(sequence, _)| *sequence)
+            >= self.head.as_ref().map(|(sequence, _)| *sequence);
+        if later {
+            self.head = other.head;
+        }
+    }
 }
 
 /// Reads one execution's `task.*` records through the Runtime's keyring and folds them. An
@@ -39,6 +68,25 @@ pub(crate) fn read(
     execution: &str,
     keyring: &SignalKeyring,
     budget: &graphhelm_events::ReadBudget,
+) -> Result<TasksView, Failure> {
+    read_cached(
+        events,
+        execution,
+        keyring,
+        budget,
+        &mut TaskRecordCache::default(),
+    )
+}
+
+/// The same read, remembering across calls (#1202): an envelope whose outcome `cache` holds is
+/// not opened again; the ones it opens are added to `cache`, including on a budget refusal, so
+/// the next read continues where this one stopped.
+pub(crate) fn read_cached(
+    events: &Path,
+    execution: &str,
+    keyring: &SignalKeyring,
+    budget: &graphhelm_events::ReadBudget,
+    cache: &mut TaskRecordCache,
 ) -> Result<TasksView, Failure> {
     // ONE budget for the whole read (the status read's, #750): the store walk, every sealed
     // envelope opened and the fold are all inside it, so `status --tasks` cannot spend a second
@@ -57,12 +105,23 @@ pub(crate) fn read(
     }
     let walked = history.len() as u64;
     budget.check_now(walked).map_err(exceeded)?;
+    // A remembered head whose event is no longer at that sequence is another store's memory.
+    if let Some((sequence, event_id)) = &cache.head
+        && history
+            .iter()
+            .find(|event| event.sequence == *sequence)
+            .is_none_or(|event| event.event_id.as_str() != event_id)
+    {
+        cache.outcomes.clear();
+        cache.head = None;
+    }
     let opener = super::signal::open_sealer(keyring)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .map_err(|_| super::execution_state("the evidence reader could not start", "/keyring"))?;
     let mut records = Vec::new();
     let mut rejected = 0_usize;
+    let mut opened = 0_usize;
     for event in &history {
         let EventKind::SignalRecorded(record) = &event.kind else {
             continue;
@@ -70,6 +129,14 @@ pub(crate) fn read(
         if !record.kind.starts_with("task.") {
             continue;
         }
+        if let Some(outcome) = cache.outcomes.get(&event.sequence) {
+            match outcome {
+                Some(parsed) => records.push(parsed.clone()),
+                None => rejected += 1,
+            }
+            continue;
+        }
+        opened += 1;
         let envelope_id = format!("signal-{}", record.signal_id.as_str());
         let verified = (|| {
             if event.evidence_refs.len() != 1
@@ -107,11 +174,15 @@ pub(crate) fn read(
                 Some(event.occurred_at.clone()),
             )
         })();
+        cache.outcomes.insert(event.sequence, verified.clone());
         match verified {
             Some(parsed) => records.push(parsed),
             None => rejected += 1,
         }
         budget.check_now(walked).map_err(exceeded)?;
+    }
+    if let Some(last) = history.last() {
+        cache.head = Some((last.sequence, last.event_id.as_str().to_owned()));
     }
     let tasks = fold_task_events(&records);
     budget.check_now(walked).map_err(exceeded)?;
@@ -121,5 +192,6 @@ pub(crate) fn read(
         tasks,
         records,
         rejected,
+        opened,
     })
 }

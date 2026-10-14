@@ -252,6 +252,7 @@ it("settles 4,900 simultaneous envelopes within five seconds without beacon flic
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
 
     expect(vi.getTimerCount()).toBe(0);
+    expect(firstBatch.size).toBe(50);
     expect(Date.now() - startedAt).toBeLessThanOrEqual(5_000);
     expect(beaconTransitions).toEqual([false, true, false]);
     expect(result.current.__pendingEnvelopeSequences).toEqual([]);

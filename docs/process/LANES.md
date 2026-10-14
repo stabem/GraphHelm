@@ -297,6 +297,9 @@ the launcher's final `echo done` (with its existing lane, tag, result path and s
 record uses the lane as actor; a retry of the same tag keeps the same signal id. If the Runtime
 is down, the command reports `recorded: false` and exits zero. The launcher retains the original
 `codex exec` exit code.
+After the end lands, the command releases, as the lane, every pre-PR claim the lane still holds
+(reason `run ended (exit N) without a PR`, #1240) and reports them under `claims`: a one-shot run
+that ended without a PR will not open one, so its issue is free at once, not after the lease.
 
 ### Autonomous lane wake loop
 

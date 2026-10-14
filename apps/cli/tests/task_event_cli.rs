@@ -16,11 +16,16 @@ fn run_ended_posts_once_per_logical_run_and_fails_open() {
     let scratch = tempfile::tempdir().unwrap();
     let token = scratch.path().join("agent.token");
     std::fs::write(&token, "a".repeat(64)).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = std::thread::spawn(move || {
         let mut ids = Vec::new();
-        for _ in 0..2 {
+        while ids.len() < 2 {
             let (mut stream, _) = listener.accept().unwrap();
             stream
                 .set_read_timeout(Some(std::time::Duration::from_secs(3)))
@@ -35,6 +40,16 @@ fn run_ended_posts_once_per_logical_run_and_fails_open() {
                 }
             }
             let request = String::from_utf8_lossy(&bytes);
+            // #1240: after the run end lands, the CLI reads the tasks route to release the lane's
+            // open claims; this Runtime has none to serve.
+            if request.starts_with("GET /v1/executions/gh-team/tasks") {
+                write!(
+                    stream,
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+                continue;
+            }
             assert!(request.contains("POST /v1/executions/gh-team/signal"));
             assert!(
                 request

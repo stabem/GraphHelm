@@ -61,6 +61,7 @@ pub(crate) fn run_ended(
     let Ok(token) = super::secret_file::read_existing(&path, "agent token") else {
         return unavailable("agent token file is unavailable");
     };
+    let token_path = path;
     let client = ApiClient::new(
         url,
         TokenSource::Fixed(Zeroizing::new(token)),
@@ -76,18 +77,20 @@ pub(crate) fn run_ended(
         "evidence": [execution], "emittedAt": Utc::now().to_rfc3339(),
     }});
     let path = format!("/v1/executions/{execution}/signal");
-    match client.request_waiting(
+    let result = client.request_waiting(
         "POST",
         &path,
         Some(&body),
         Some(&key),
         None,
         Duration::from_secs(5),
-    ) {
+    );
+    match result {
         Ok((status, reply)) if (200..300).contains(&status) && reply["ok"] == true => {
+            let released = release_open_claims(&client, &token_path, execution, lane, exit);
             Outcome::success(
                 command,
-                serde_json::json!({"recorded": true, "signalId": key}),
+                serde_json::json!({"recorded": true, "signalId": key, "claims": released}),
             )
         }
         Ok((_, reply))
@@ -105,6 +108,107 @@ pub(crate) fn run_ended(
         Ok(_) => unavailable("Runtime refused session end"),
         Err(_) => unavailable("Runtime unavailable"),
     }
+}
+
+/// #1240: a one-shot run that ended still holding a pre-PR claim will never open its PR, so the
+/// lane releases that claim now instead of leaving the issue held until the lease lapses (or, on
+/// an orchestrator that counts only repeated failures, forever). Best effort: each claim that
+/// cannot be released is reported, never fatal, and the run's own exit code is untouched.
+fn release_open_claims(
+    client: &ApiClient,
+    token_path: &Path,
+    execution: &str,
+    lane: &str,
+    exit: Option<i32>,
+) -> Value {
+    let mut released = Vec::new();
+    let mut refused = Vec::new();
+    let Ok((200, view)) = client.request_waiting(
+        "GET",
+        &format!("/v1/executions/{execution}/tasks"),
+        None,
+        None,
+        None,
+        Duration::from_secs(5),
+    ) else {
+        return serde_json::json!({"released": released, "refused": ["tasks route unavailable"]});
+    };
+    let data = &view["data"];
+    let empty = Vec::new();
+    let tasks = data["tasks"].as_array().unwrap_or(&empty);
+    // The lane's own credential when one was minted (#1148), else the token the run was given.
+    let credential = super::secret_file::read_existing(
+        &super::secret_file::lane_credential_beside(token_path, lane),
+        "lane credential",
+    )
+    .or_else(|_| super::secret_file::read_existing(token_path, "agent token"));
+    let Ok(credential) = credential else {
+        return serde_json::json!({"released": released, "refused": ["no credential"]});
+    };
+    let writer = ApiClient::new(
+        client.base_url.clone(),
+        TokenSource::Fixed(Zeroizing::new(credential)),
+        lane.to_owned(),
+        "agent".to_owned(),
+        None,
+        None,
+        format!("run-ended-release-{lane}"),
+    );
+    for lease in data["leases"].as_array().unwrap_or(&empty) {
+        if lease["lane"] != lane {
+            continue;
+        }
+        let (Some(task_id), Some(sequence)) =
+            (lease["taskId"].as_str(), lease["claimSequence"].as_u64())
+        else {
+            continue;
+        };
+        let issue = task_id.strip_prefix("issue-").unwrap_or(task_id);
+        let repo_url = tasks
+            .iter()
+            .find(|task| task["key"] == lease["key"])
+            .and_then(|task| task["repoUrl"].as_str());
+        let Some(repo_url) = repo_url else {
+            refused.push(serde_json::json!({"taskId": task_id, "message": "claim names no repo"}));
+            continue;
+        };
+        let reason = format!(
+            "run ended (exit {}) without a PR",
+            exit.map_or("unknown".to_owned(), |code| code.to_string())
+        );
+        let document = serde_json::json!({
+            "schema": "graphhelm-task-event-v1", "taskId": task_id, "revision": 2,
+            "at": Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            "lane": lane, "claimSequence": sequence, "reason": reason,
+        });
+        let digest = Sha256::digest(format!("{lane}\n{task_id}\n{sequence}").as_bytes());
+        let mut id = format!("{lane}-{task_id}-released-{}", hex::encode(&digest[..8]));
+        if id.len() > 64 {
+            id = format!("{}-{}", &id[..47], hex::encode(&digest[..8]));
+        }
+        let body = serde_json::json!({"signal": {
+            "id": id, "type": "task.released", "source": {"type": "user", "id": lane},
+            "severity": "low", "emittedAt": Utc::now().to_rfc3339(),
+            "evidence": [format!("{repo_url}/issues/{issue}")],
+            "description": document.to_string(),
+        }});
+        match writer.request_waiting(
+            "POST",
+            &format!("/v1/executions/{execution}/signal"),
+            Some(&body),
+            Some(&id),
+            None,
+            Duration::from_secs(5),
+        ) {
+            Ok((status, reply)) if (200..300).contains(&status) && reply["ok"] == true => {
+                released.push(task_id.to_owned());
+            }
+            _ => refused.push(
+                serde_json::json!({"taskId": task_id, "message": "Runtime refused task.released"}),
+            ),
+        }
+    }
+    serde_json::json!({"released": released, "refused": refused})
 }
 
 use graphhelm_protocols::Diagnostic;

@@ -13,7 +13,7 @@ Explicitly out of scope: kernel, Policy Engine, Graph Governor, graph hashes, ev
 ## Decoder contract and threat assessment
 
 The normative adapter behavior is defined in the
-[Runtime milestone](../milestones/runtime.md#native-runtime-adapters-env-isolation-stdin-only-prompts-deadlines).
+Runtime milestone, section "native Runtime adapters" (`docs/milestones/runtime.md`, removed in #1248; `git show 02df519c:docs/milestones/runtime.md`).
 
 - Current replies come from `item.completed` with `item.type = agent_message` and string `item.text`. Only a successfully completed turn may supply the final reply.
 - Top-level `error` notifications before a terminal outcome are provisional: a reconnect notice can precede successful completion. A valid final message plus `turn.completed` still requires process exit zero. `turn.failed` overrides provisional error text; end of stream without a terminal outcome reports the last provisional error. Failed turns, missing completion, malformed current JSONL, and blank current replies remain failures. A prior completed turn or embedded legacy message cannot rescue a failed or incomplete current stream. Current streams are one-shot: events after a completed turn are refused, and a post-completion error retains its failure classification.

@@ -458,6 +458,13 @@ def reach(changed, packages, embedded, repo=None):
         # standalone offline test, so keep it mapped without claiming a proxy pass.
         if path.startswith("tools/studio-journey-fixture/"):
             hit = True
+        # #1248: a Markdown change under docs/ or to an entry point can orphan a document or leave a
+        # dead link; the reachability guard is the observer. Without this rule `.md` maps nothing.
+        if path.endswith(".md") and (path.startswith("docs/") or path in ("README.md", "AGENTS.md")):
+            observer = "tools/docs-guard/test_docs_reachable.py"
+            if root is not None and (root / observer).is_file():
+                tools.add(python_test_tool(root, observer))
+                hit = True
         qualification_packet = "evals/graphhelm-development-contracts/judge-qualification.json"
         if path == qualification_packet:
             observer = "tools/evals/test_skill_twins.py"

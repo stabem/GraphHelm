@@ -1,7 +1,7 @@
 # `graphhelm journey explore`: agent-built journey flows with deterministic replay
 
 Status: design, owner-approved feature, issue #333. Date 2026-10-06.
-Plan for phase 1: [`docs/superpowers/plans/2026-10-06-journey-explore-phase-1.md`](../superpowers/plans/2026-10-06-journey-explore-phase-1.md).
+Plan for phase 1: `docs/superpowers/plans/2026-10-06-journey-explore-phase-1.md` (removed in #1248; `git show 02df519c:docs/superpowers/plans/2026-10-06-journey-explore-phase-1.md`).
 
 ## 1. Promise
 

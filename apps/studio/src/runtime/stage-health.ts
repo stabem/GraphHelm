@@ -3,6 +3,7 @@
 import type { TaskState } from "./team-tasks";
 import type { Lane } from "./lane-bars";
 import { openBlock } from "./mission";
+import { sameHead } from "./heads";
 import type { TimedStep } from "./step-timing";
 import { slotStatus, slotText, type SlotView } from "./slots";
 
@@ -58,7 +59,7 @@ function slotBelongsToTask(t: TaskState, owner: string | null, lanes: Lane[]): b
   const latest = bars.reduce((a, b) => (b.since ?? b.start) >= (a.since ?? a.start) ? b : a);
   const kind = t.step === "review" && !openBlock(t) ? "review" : "implement";
   return latest.kind === kind && (latest.label === `#${t.pr}` || latest.taskId === t.taskId)
-    && (kind !== "review" || !t.headSha || !latest.headSha || latest.headSha === t.headSha);
+    && (kind !== "review" || !t.headSha || !latest.headSha || sameHead(latest.headSha, t.headSha));
 }
 
 export interface Liveness { live: boolean; sinceMs: number | null }

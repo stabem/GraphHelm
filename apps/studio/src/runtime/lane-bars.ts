@@ -1,6 +1,7 @@
 import type { TaskEventRecord } from "./team-tasks";
 import type { LaneFold } from "./tasks-route";
 import type { RuntimeEvent } from "./types";
+import { sameHead } from "./heads";
 
 export type TimedTaskEvent = TaskEventRecord & { at: string };
 export type BarKind = "implement" | "review" | "merge";
@@ -100,7 +101,7 @@ export function laneBars(events: TimedTaskEvent[], fold: LaneFold, now: number, 
   const closePr = (pr: number, t: number, event: TimedTaskEvent, kind?: BarKind, head?: string, onlySlice?: string) => {
     for (const [key, value] of [...open]) {
       if (prOfKey.get(value.slice) !== pr || (onlySlice && value.slice !== onlySlice) || (kind && value.bar.kind !== kind)
-        || (head && value.bar.headSha !== head)) continue;
+        || (head && !sameHead(value.bar.headSha, head))) continue;
       value.bar.end = t; value.bar.open = false; value.bar.endedBy = { kind: event.kind.replace(/^task\./, ""), actor: event.actorId }; open.delete(key);
     }
   };
@@ -150,7 +151,7 @@ export function laneBars(events: TimedTaskEvent[], fold: LaneFold, now: number, 
       for (const v of open.values()) if (v.slice === slice) v.bar.displayLabel = `${e.pr !== undefined ? `#${e.pr}` : e.issue !== undefined ? `#${e.issue}` : e.taskId} ${e.title}`;
     }
     if (e.headSha !== undefined && (e.kind === "task.pr_opened" || e.kind === "task.claimed")) {
-      if (e.kind === "task.pr_opened" && headOf.has(slice) && headOf.get(slice) !== e.headSha) close("review", slice, t, e);
+      if (e.kind === "task.pr_opened" && headOf.has(slice) && !sameHead(headOf.get(slice), e.headSha)) close("review", slice, t, e);
       headOf.set(slice, e.headSha);
     }
     if (e.lane && (e.kind === "task.claimed" || e.kind === "task.pr_opened")) authorOf.set(slice, e.lane);
@@ -180,12 +181,12 @@ export function laneBars(events: TimedTaskEvent[], fold: LaneFold, now: number, 
       case "task.released": close("implement", slice, t, e, e.lane); break;
       case "task.review_assigned":
         close("implement", slice, t, e);
-        if (e.headSha !== undefined && e.headSha === headOf.get(slice)) close("review", slice, t, e);
+        if (e.headSha !== undefined && sameHead(e.headSha, headOf.get(slice))) close("review", slice, t, e);
         if (e.reviewer) start(e.reviewer, "review", e.taskId, slice, t);
         break;
       case "task.review_verdict":
         if (e.pr !== undefined && e.headSha !== undefined) closePr(e.pr, t, e, "review", e.headSha, slice);
-        if (e.headSha !== undefined && headOf.get(slice) !== undefined && e.headSha === headOf.get(slice)) {
+        if (e.headSha !== undefined && headOf.get(slice) !== undefined && sameHead(e.headSha, headOf.get(slice))) {
           if (e.pr === undefined) close("review", slice, t, e, e.reviewer);
           if (author && pr !== undefined) laneOf(author).awaiting.delete(pr);
         }

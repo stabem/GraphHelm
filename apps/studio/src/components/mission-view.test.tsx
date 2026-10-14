@@ -37,7 +37,7 @@ describe("MissionView", () => {
       { ...first!, key: "unrecorded", actorId: "unrecorded", lastRecordAt: null }];
     const node: GraphNode = { id: "step-1", declaredName: "First step", state: "ready", assignedActor: null } as GraphNode;
     const props = { journeys: [], tasks: [], lanes: [], runFor: () => null, frameUrl: () => null,
-      onMarkSafe: vi.fn(), runNodes: [node], unassignedNodeIds: [node.id] } as const;
+      onMarkSafe: vi.fn(), runNodes: [node], unassignedNodeIds: [node.id] };
     const { rerender } = render(<MissionView {...props} now={now} agents={agents} />);
 
     const graph = screen.getByRole("region", { name: "Run graph" });

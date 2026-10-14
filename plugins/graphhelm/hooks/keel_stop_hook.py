@@ -6,10 +6,15 @@ lines) passes. Anything larger needs a card at `.graphhelm/keel-card.json`
 (`schemas/keel-card.schema.json`), and when the `graphhelm` CLI is on PATH the card must pass
 `graphhelm keel check`. The hook blocks once; when the host reports `stop_hook_active` it lets
 the turn end, so an agent can never loop on it. Any failure of the hook itself lets the turn end.
+
+The check result is cached in the git dir under a fingerprint of the change (merge base, HEAD,
+working-tree diff, untracked files, card). A Stop on an unchanged state reuses it: no second CLI
+run and no second signal on the execution (#1228). The decision is the same either way.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -64,6 +69,53 @@ def code_lines_changed(repo: Path, base: str) -> int:
     return total
 
 
+CACHE = "graphhelm-keel-stop.json"
+
+
+def _fingerprint(repo: Path, base: str, card: Path) -> str | None:
+    """A digest of everything the check reads, or None when it cannot be computed."""
+    try:
+        digest = hashlib.sha256()
+        for part in (base, _git(repo, "rev-parse", "HEAD"), _git(repo, "diff", "--binary", base),
+                     _git(repo, "ls-files", "--others", "--exclude-standard")):
+            digest.update(part.encode() + b"\0")
+        for path in _git(repo, "ls-files", "--others", "--exclude-standard").splitlines():
+            digest.update((repo / path).read_bytes() + b"\0")
+        digest.update(card.read_bytes())
+        return digest.hexdigest()
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
+
+
+def _cache_path(repo: Path) -> Path | None:
+    try:
+        path = Path(_git(repo, "rev-parse", "--absolute-git-dir").strip())
+    except (subprocess.SubprocessError, OSError):
+        return None
+    return path / CACHE if path.is_dir() else None
+
+
+def _cached(repo: Path, fingerprint: str | None) -> tuple[int, str] | None:
+    path = _cache_path(repo) if fingerprint else None
+    try:
+        data = json.loads(path.read_text()) if path else None
+        if data and data.get("fingerprint") == fingerprint:
+            return int(data["returncode"]), str(data["stdout"])
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass
+    return None
+
+
+def _store(repo: Path, fingerprint: str | None, returncode: int, stdout: str) -> None:
+    path = _cache_path(repo) if fingerprint else None
+    try:
+        if path:
+            path.write_text(json.dumps({"fingerprint": fingerprint, "returncode": returncode,
+                                        "stdout": stdout}))
+    except OSError:
+        pass
+
+
 def decide(repo: Path, payload: dict | None = None) -> str | None:
     """The reason to block, or None to let the turn end."""
     base = _merge_base(repo)
@@ -77,20 +129,27 @@ def decide(repo: Path, payload: dict | None = None) -> str | None:
     cli = shutil.which("graphhelm")
     if cli is None:
         return None
-    result = subprocess.run([cli, "--json", "keel", "check", "--diff", f"{base}..HEAD",
-                             "--card", str(card), "--repo", str(repo)],
-                            capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW)
-    if result.returncode in (0, 2):
-        try:
-            from keel_record import record_check
-            record_check(json.loads(result.stdout), payload or {})
-        except Exception:  # noqa: BLE001 - recording must not change the gate
-            pass
-    if result.returncode != 2:
+    fingerprint = _fingerprint(repo, base, card)
+    hit = _cached(repo, fingerprint)
+    if hit is None:
+        result = subprocess.run([cli, "--json", "keel", "check", "--diff", f"{base}..HEAD",
+                                 "--card", str(card), "--repo", str(repo)],
+                                capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW)
+        returncode, stdout = result.returncode, result.stdout
+        if returncode in (0, 2):
+            try:
+                from keel_record import record_check
+                record_check(json.loads(stdout), payload or {})
+            except Exception:  # noqa: BLE001 - recording must not change the gate
+                pass
+            _store(repo, fingerprint, returncode, stdout)
+    else:
+        returncode, stdout = hit
+    if returncode != 2:
         return None
     codes = []
     try:
-        for finding in json.loads(result.stdout).get("data", {}).get("findings", []):
+        for finding in json.loads(stdout).get("data", {}).get("findings", []):
             if not finding.get("blocking"):
                 continue
             codes.append(f"{finding.get('rule', '?')} {finding.get('path') or ''}".strip())

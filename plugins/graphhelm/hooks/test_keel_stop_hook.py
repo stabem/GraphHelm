@@ -35,10 +35,38 @@ class KeelStopHook(unittest.TestCase):
         with mock.patch.object(keel_stop_hook, "_merge_base", return_value="base"), \
              mock.patch.object(keel_stop_hook, "code_lines_changed", return_value=20), \
              mock.patch.object(keel_stop_hook.shutil, "which", return_value="graphhelm"), \
+             mock.patch.object(keel_stop_hook, "_fingerprint", return_value=None), \
              mock.patch.object(keel_stop_hook.subprocess, "run", return_value=result), \
              mock.patch.object(keel_record, "record_check") as record:
             self.assertIsNone(keel_stop_hook.decide(self.repo, {"session_id": "s1"}))
         record.assert_called_once_with(envelope, {"session_id": "s1"})
+
+    def test_unchanged_state_reuses_check_and_records_once(self):
+        """#1228: a second Stop on the same diff neither reruns the CLI nor re-posts the signal."""
+        self.code(20)
+        (self.repo / ".graphhelm").mkdir()
+        (self.repo / ".graphhelm" / "keel-card.json").write_text("{}")
+        envelope = {"data": {"findings": [{"blocking": True, "rule": "R1", "path": "a.py"}]}}
+        real_run = subprocess.run
+        calls = []
+
+        def fake_run(cmd, *args, **kwargs):
+            if cmd[0] == "graphhelm":
+                calls.append(cmd)
+                return mock.Mock(returncode=2, stdout=json.dumps(envelope))
+            return real_run(cmd, *args, **kwargs)
+
+        with mock.patch.object(keel_stop_hook.shutil, "which", return_value="graphhelm"), \
+             mock.patch.object(keel_stop_hook.subprocess, "run", side_effect=fake_run), \
+             mock.patch.object(keel_record, "record_check") as record:
+            first = keel_stop_hook.decide(self.repo, {})
+            second = keel_stop_hook.decide(self.repo, {})
+            self.assertEqual(first, second)
+            self.assertIn("R1 a.py", first)
+            self.assertEqual((len(calls), record.call_count), (1, 1))
+            (self.repo / "a.py").write_text("changed\n")
+            self.assertIn("R1 a.py", keel_stop_hook.decide(self.repo, {}))
+            self.assertEqual((len(calls), record.call_count), (2, 2))
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

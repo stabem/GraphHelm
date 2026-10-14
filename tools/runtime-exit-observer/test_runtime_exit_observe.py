@@ -116,6 +116,19 @@ class WindowsProcessObserver(unittest.TestCase):
             self.assertFalse(receipt.exists())
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_out_of_range_pid_refuses_before_opening_receipt(self):
+        process, creation = self.child()
+        for pid in (process.pid + 2**32, 0, -1, 2**32):
+            with self.subTest(pid=pid), tempfile.TemporaryDirectory() as directory:
+                receipt = Path(directory) / "invalid.jsonl"
+                result = subprocess.run([sys.executable, str(TOOL), "--pid", str(pid), "--creation-filetime", str(creation),
+                                         "--timeout-seconds", "0.1", "--output", str(receipt)], capture_output=True,
+                                        text=True, timeout=3, creationflags=0x08000000)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stderr, "invalid_arguments\n")
+                self.assertFalse(receipt.exists())
+                self.assertIsNone(process.poll())
+
 class RuntimeExitObserverContract(unittest.TestCase):
     def test_help_exposes_bounded_identity_and_receipt_inputs(self):
         result = subprocess.run([sys.executable, str(TOOL), "--help"], capture_output=True, text=True,

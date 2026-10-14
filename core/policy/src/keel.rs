@@ -738,7 +738,15 @@ pub(crate) struct DiffFile {
     pub(crate) added_with_context: Vec<String>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// #1259 observer: `parse` calls on this thread, read by a test before and after a call.
+    pub(crate) static PARSE_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 pub(crate) fn parse(diff: &str) -> Vec<DiffFile> {
+    #[cfg(test)]
+    PARSE_CALLS.with(|calls| calls.set(calls.get() + 1));
     let mut files: Vec<DiffFile> = Vec::new();
     let mut pending_new = false;
     let mut in_hunk = false;

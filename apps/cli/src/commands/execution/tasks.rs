@@ -149,42 +149,6 @@ pub fn lease_state(
     (expires_at, overdue)
 }
 
-#[cfg(test)]
-mod lease_tests {
-    use super::*;
-
-    fn at(value: &str) -> PersistedTimestamp {
-        PersistedTimestamp::parse(value).unwrap()
-    }
-
-    /// #1193: the plan's cell. A claim at T with no heartbeat is overdue at T+lease+1s and not at
-    /// T+lease-1s; a heartbeat at T+lease-1s moves expiry to that instant plus the lease.
-    #[test]
-    fn a_claim_goes_overdue_one_second_past_its_lease_and_a_heartbeat_moves_expiry() {
-        let claimed = at("2026-10-14T03:00:00Z");
-        let (expires, overdue) = lease_state(&claimed, None, 1800, &at("2026-10-14T03:29:59Z"));
-        assert_eq!(expires, at("2026-10-14T03:30:00Z"));
-        assert!(!overdue, "one second inside the lease");
-        let (_, overdue) = lease_state(&claimed, None, 1800, &at("2026-10-14T03:30:01Z"));
-        assert!(overdue, "one second past the lease");
-        let heartbeat = at("2026-10-14T03:29:59Z");
-        let (expires, overdue) = lease_state(
-            &claimed,
-            Some(&heartbeat),
-            1800,
-            &at("2026-10-14T03:30:01Z"),
-        );
-        assert_eq!(expires, at("2026-10-14T03:59:59Z"));
-        assert!(!overdue, "the heartbeat moved expiry");
-        // Exactly at expiry is not yet overdue; a heartbeat older than the claim counts for nothing.
-        let (_, overdue) = lease_state(&claimed, None, 1800, &at("2026-10-14T03:30:00Z"));
-        assert!(!overdue);
-        let stale = at("2026-10-14T02:00:00Z");
-        let (expires, _) = lease_state(&claimed, Some(&stale), 60, &at("2026-10-14T03:00:30Z"));
-        assert_eq!(expires, at("2026-10-14T03:01:00Z"));
-    }
-}
-
 /// Reads one execution's `task.*` records through the Runtime's keyring and folds them. An
 /// unknown execution is `not_found`; a keyring that cannot open is the usual `/keyring` failure.
 pub(crate) fn read(
@@ -328,4 +292,40 @@ pub(crate) fn read_cached(
         now,
         leases,
     })
+}
+
+#[cfg(test)]
+mod lease_tests {
+    use super::*;
+
+    fn at(value: &str) -> PersistedTimestamp {
+        PersistedTimestamp::parse(value).unwrap()
+    }
+
+    /// #1193: the plan's cell. A claim at T with no heartbeat is overdue at T+lease+1s and not at
+    /// T+lease-1s; a heartbeat at T+lease-1s moves expiry to that instant plus the lease.
+    #[test]
+    fn a_claim_goes_overdue_one_second_past_its_lease_and_a_heartbeat_moves_expiry() {
+        let claimed = at("2026-10-14T03:00:00Z");
+        let (expires, overdue) = lease_state(&claimed, None, 1800, &at("2026-10-14T03:29:59Z"));
+        assert_eq!(expires, at("2026-10-14T03:30:00Z"));
+        assert!(!overdue, "one second inside the lease");
+        let (_, overdue) = lease_state(&claimed, None, 1800, &at("2026-10-14T03:30:01Z"));
+        assert!(overdue, "one second past the lease");
+        let heartbeat = at("2026-10-14T03:29:59Z");
+        let (expires, overdue) = lease_state(
+            &claimed,
+            Some(&heartbeat),
+            1800,
+            &at("2026-10-14T03:30:01Z"),
+        );
+        assert_eq!(expires, at("2026-10-14T03:59:59Z"));
+        assert!(!overdue, "the heartbeat moved expiry");
+        // Exactly at expiry is not yet overdue; a heartbeat older than the claim counts for nothing.
+        let (_, overdue) = lease_state(&claimed, None, 1800, &at("2026-10-14T03:30:00Z"));
+        assert!(!overdue);
+        let stale = at("2026-10-14T02:00:00Z");
+        let (expires, _) = lease_state(&claimed, Some(&stale), 60, &at("2026-10-14T03:00:30Z"));
+        assert_eq!(expires, at("2026-10-14T03:01:00Z"));
+    }
 }

@@ -4,7 +4,7 @@ import { stageDuration } from "../runtime/stage-health";
 import type { MissionTask } from "../runtime/mission";
 import type { Bot } from "../runtime/team";
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { agentBoard, type AgentRow, type AgentStatus } from "../runtime/agent-board";
+import { agentBoard, FREE_LIVENESS_MS, type AgentRow, type AgentStatus } from "../runtime/agent-board";
 import { slotDuration, type SlotView } from "../runtime/slots";
 
 const pct = (n: number) => `${Math.round(n * 10000) / 100}%`;
@@ -153,6 +153,35 @@ export function SlotStrip({ slots }: { slots: SlotView[] }) {
 export const SUB_H = 18, SUB_GAP = 2, MIN_LABEL_PX = 44;
 const TRACK_PAD = 3;
 
+function recordAge(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+function noteOnlyLanes(lanes: Lane[], agents: Bot[], now: number): Map<string, { name: string; age: string }> {
+  const represented = new Set<string>();
+  for (const lane of lanes) represented.add(lane.lane.trim().toLocaleLowerCase());
+  const rows = new Map<string, { name: string; age: string }>();
+  for (const bot of agents) {
+    if (!bot.actorId || bot.shared || bot.native || bot.actorId === "codex" || bot.actorId === "claude-code" || bot.actorId === "studio-operator") continue;
+    const lastAt = bot.lastRecordAt === null ? NaN : Date.parse(bot.lastRecordAt);
+    const age = now - lastAt;
+    if (!Number.isFinite(lastAt) || age < 0 || age > FREE_LIVENESS_MS) continue;
+    const aliases = [bot.actorId, bot.key, bot.name].map((value) => value.trim().toLocaleLowerCase()).filter(Boolean);
+    if (aliases.some((alias) => represented.has(alias))) continue;
+    const display = bot.name.trim();
+    if (!display || display.toLowerCase() === "tbd") continue;
+    const key = bot.actorId;
+    rows.set(key, { name: display, age: recordAge(age) });
+    represented.add(key.trim().toLocaleLowerCase());
+  }
+  return rows;
+}
+
 /** The drawn width of a lane track, so a bar knows whether its label fits; 1000px until measured. */
 function useTrackWidth(ref: RefObject<HTMLElement | null>): number {
   const [w, setW] = useState(1000);
@@ -175,6 +204,7 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
   lanes = lanes.filter((l) => !placeholderLane(l.lane));
   if (lanes.length === 0 && agents.length === 0 && onDemandLanes.length === 0) return <>{<SlotStrip slots={slots} />}<p className="lt-empty">No agent has recorded work in this window</p></>;
   const board = agentBoard(agents, lanes, tasks, now, slots, onDemandLanes, liveLanes, seenActors, seenActorAgesMs);
+  const noteRows = noteOnlyLanes(lanes, agents, now);
   const rank = new Map<string, number>();
   board.forEach((r, i) => rank.set(r.name, i));
   const botOf = (l: Lane) => agents.find((b) => b.actorId === l.lane || b.key === l.lane)?.name;
@@ -269,6 +299,21 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
                 })}
               </div>
               <span className="lt-last" title={delivered.get(l.lane)}>{delivered.get(l.lane) ?? "—"}</span>
+            </li>
+          );
+        })}
+        {[...noteRows].map(([actorId, { name, age }]) => {
+          return (
+            <li key={`record:${actorId}`} className="lt-row lt-lane lt-record-only" style={{ height: 44 }}>
+              <span className="lt-who">
+                <span className="lt-dot" />
+                <span className="lt-name">{name}</span>
+                <span className="lt-flag">No task work recorded</span>
+              </span>
+              <div className="lt-track" style={{ height: 24 }} data-subrows={0}>
+                <span className="lt-nowline" aria-hidden="true" />
+              </div>
+              <span className="lt-last">Last record {age} ago</span>
             </li>
           );
         })}

@@ -6,6 +6,8 @@ import type { MissionTask } from "../runtime/mission";
 import { fastUserEvent } from "../test/user-event";
 import css from "./lanes-timeline.css?raw";
 import { type TimedTaskEvent } from "../runtime/lane-bars";
+import { teamModel } from "../runtime/team";
+import type { RuntimeEvent } from "../runtime/types";
 
 const now = 1_000_000;
 const lanes = [
@@ -19,6 +21,27 @@ const t = (over: Partial<MissionTask>): MissionTask => ({
 const round = { reviewer: "r", headSha: "h", fixHead: "f", blockedAt: null };
 
 describe("LanesTimeline", () => {
+  it("shows recent note-only actors in the timeline without inventing task work", () => {
+    const at = Date.parse("2026-10-14T12:00:00Z");
+    const events: RuntimeEvent[] = ["codex-one", "claude-two"].map((actorId, index) => ({
+      sequence: index + 1, kind: "signal_recorded", payload: { kind: "operator_note", signalId: `note-${index + 1}` },
+      occurredAt: new Date(at - (index + 2) * 60_000).toISOString(), actorId, actorType: "agent",
+      idempotencyKey: null, eventId: `event-${index + 1}`, evidenceRefs: [],
+    }));
+    const agents = teamModel({ events, envelopes: {}, personas: {}, nativeLinks: {}, aliases: {}, model: null,
+      claudeTasks: null, waitingAskers: new Set(), now: at }).bots;
+
+    render(<LanesTimeline lanes={laneBarsOf([], at, 3_600_000)} agents={agents} now={at} windowMs={3_600_000} />);
+    const timeline = within(screen.getByRole("list", { name: "Agent lanes" }));
+    for (const [name, age] of [["codex-one", "2m ago"], ["claude-two", "3m ago"]]) {
+      const row = timeline.getByText(name).closest("li")!;
+      expect(row).toHaveTextContent("No task work recorded");
+      expect(row).toHaveTextContent(`Last record ${age}`);
+      expect(row.querySelectorAll(".lt-bar")).toHaveLength(0);
+    }
+    expect(timeline.getAllByText(/No task work recorded/)).toHaveLength(2);
+  });
+
   it("shows an author awaiting review as waiting in every Lanes status view", async () => {
     const at = 10 * 3_600_000;
     const events = [

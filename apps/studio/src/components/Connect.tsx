@@ -62,9 +62,10 @@ export function Connect({
           </button>
         </form>
         <p className="gate-note">
-          This page opened without its session link. Open the address{" "}
-          <code>graphhelm studio start</code> printed (it ends in <code>?session=…</code>) and it
-          connects without asking, or paste the token above. The token stays in this tab&apos;s memory either way: never storage,
+          This page opened without its session link. Open the complete link printed by{" "}
+          <code>graphhelm studio start</code> (including its <code>?session=</code> part), or paste
+          the bearer token here. The session link carries a short-lived connection nonce; never put
+          the bearer token in a URL. The token stays in this tab&apos;s memory only: never storage,
           never a cookie, never a URL, never a log line.
         </p>
       </section>

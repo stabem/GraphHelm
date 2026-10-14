@@ -10,5 +10,6 @@ describe("Connect gate note", () => {
     expect(note.textContent).toContain("graphhelm studio start");
     expect(note.textContent).toContain("?session=");
     expect(note.textContent).not.toContain("npm run dev");
+    expect(note.textContent).toContain("never put the bearer token in a URL");
   });
 });

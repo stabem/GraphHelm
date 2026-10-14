@@ -48,6 +48,146 @@ pub struct TasksView {
     /// #1235: every open PR slice with no task record for `STALL_SECONDS`, judged at `now`, with
     /// who owes the next step. A dead fixer behind a BLOCK reads here instead of sitting silent.
     pub stalls: Vec<TaskStall>,
+    /// #1234 (plan A7): lane liveness judged once, here, from the declared budgets and the
+    /// Runtime's own event times at `now`; the Studio reads it instead of keeping thresholds.
+    pub liveness: Liveness,
+}
+
+/// #1234: a lane with an open obligation is `silent` once it has recorded nothing of any kind for
+/// this long. Was the Studio's `LIVENESS_MS` (`lane-bars.ts`); declared here, once.
+pub const SILENT_AFTER_SECONDS: i64 = 30 * 60;
+/// #1234: a lane that recorded something within this long counts as live on the board. Was the
+/// Studio's `FREE_LIVENESS_MS` (`agent-board.ts`). The board's third threshold, a PR-less claim
+/// quiet for 2 h, has no twin here: a claim is stale exactly when its lease is `overdue` (#1193).
+pub const FREE_AFTER_SECONDS: i64 = 15 * 60;
+
+/// #1234: the budgets the verdicts below were judged against, served beside them so a reader
+/// never needs a copy of its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LivenessBudgets {
+    pub silent_after_seconds: i64,
+    pub free_after_seconds: i64,
+    /// #1235's `STALL_SECONDS`, served here too so every threshold a reader needs is in one place.
+    pub stall_after_seconds: i64,
+}
+
+/// #1234: one lane's liveness at the read's `now`. `last_record_at` is the Runtime's time of the
+/// lane actor's newest event of any kind in this run (absent when it has none); `owes` is whether
+/// it holds an open obligation (an unreleased, unmerged slice it authored, or the current review
+/// of an open PR) and `owes_since` when the oldest of those began (the claim, or the review
+/// assignment). `silent` is `owes` and quiet for `silent_after_seconds`, quiet measured from the
+/// LATER of the last record and `owes_since`: a reviewer assigned a minute ago is not silent
+/// because its own last record is old (gh-claude-opt-2 on PR #1249). `free` is a record within
+/// `free_after_seconds`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaneLiveness {
+    pub lane: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_record_at: Option<PersistedTimestamp>,
+    pub owes: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owes_since: Option<PersistedTimestamp>,
+    pub silent: bool,
+    pub free: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Liveness {
+    pub budgets: LivenessBudgets,
+    pub lanes: Vec<LaneLiveness>,
+}
+
+/// #1234: the verdict for one lane, pure (`now` injected), so the edges are a unit cell. Silence
+/// is measured from the later of the lane's last record and when its oldest open obligation began;
+/// with neither, a lane that owes is silent. Freedom reads the record alone.
+pub fn lane_liveness(
+    lane: &str,
+    last_record_at: Option<&PersistedTimestamp>,
+    owes_since: Option<&PersistedTimestamp>,
+    owes: bool,
+    now: &PersistedTimestamp,
+) -> LaneLiveness {
+    let seconds_since =
+        |at: &PersistedTimestamp| (*now.as_datetime() - *at.as_datetime()).num_seconds();
+    let record_quiet = last_record_at.map(seconds_since);
+    let quiet = match (record_quiet, owes_since.map(seconds_since)) {
+        (Some(record), Some(since)) => Some(record.min(since)),
+        (record, since) => record.or(since),
+    };
+    LaneLiveness {
+        lane: lane.to_owned(),
+        last_record_at: last_record_at.cloned(),
+        owes,
+        owes_since: owes_since.cloned(),
+        silent: owes && quiet.is_none_or(|seconds| seconds >= SILENT_AFTER_SECONDS),
+        free: record_quiet.is_some_and(|seconds| seconds < FREE_AFTER_SECONDS),
+    }
+}
+
+/// #1234: every lane that appears in the fold (as a slice's lane or its current reviewer), judged.
+/// An obligation begins at the slice's claim (its author) or at the newest `task.review_assigned`
+/// naming the reviewer on that PR (its current reviewer); `owes_since` is the oldest open one.
+fn liveness(
+    tasks: &[TaskState],
+    records: &[TaskEventRecord],
+    last_by_actor: &BTreeMap<String, PersistedTimestamp>,
+    now: &PersistedTimestamp,
+) -> Liveness {
+    use graphhelm_execution::tasks::TaskEventKind;
+    let open = |slice: &TaskState| {
+        slice.step != graphhelm_execution::tasks::TaskStep::Merged && slice.released_by.is_none()
+    };
+    let assigned_at = |reviewer: &str, pr: u64| {
+        records
+            .iter()
+            .rev()
+            .find(|record| {
+                record.kind == TaskEventKind::ReviewAssigned
+                    && record.pr == Some(pr)
+                    && record.reviewer.as_deref() == Some(reviewer)
+            })
+            .and_then(|record| record.occurred_at.clone())
+    };
+    let mut owes: BTreeMap<String, (bool, Option<PersistedTimestamp>)> = BTreeMap::new();
+    let mut note = |lane: &str, owing: bool, since: Option<PersistedTimestamp>| {
+        let entry = owes.entry(lane.to_owned()).or_default();
+        entry.0 |= owing;
+        if owing && let Some(since) = since {
+            let older = entry
+                .1
+                .as_ref()
+                .is_none_or(|current| since.as_datetime() < current.as_datetime());
+            if older {
+                entry.1 = Some(since);
+            }
+        }
+    };
+    for slice in tasks {
+        if let Some(lane) = &slice.lane {
+            note(lane, open(slice), slice.claimed_at.clone());
+        }
+        if let Some(reviewer) = &slice.current_reviewer {
+            let owing = open(slice) && slice.pr.is_some();
+            let since = slice.pr.and_then(|pr| assigned_at(reviewer, pr));
+            note(reviewer, owing, since);
+        }
+    }
+    Liveness {
+        budgets: LivenessBudgets {
+            silent_after_seconds: SILENT_AFTER_SECONDS,
+            free_after_seconds: FREE_AFTER_SECONDS,
+            stall_after_seconds: STALL_SECONDS,
+        },
+        lanes: owes
+            .into_iter()
+            .map(|(lane, (owing, since))| {
+                lane_liveness(&lane, last_by_actor.get(&lane), since.as_ref(), owing, now)
+            })
+            .collect(),
+    }
 }
 
 /// #1202: what one Runtime remembers of an execution's `task.*` envelopes it already opened.
@@ -353,6 +493,14 @@ pub(crate) fn read_history(
     let now = PersistedTimestamp::from_datetime(chrono::Utc::now())
         .map_err(|_| super::signal_invalid("the Runtime clock is not a persisted instant", "/"))?;
     let leases = claim_leases(&fold.tasks, &now);
+    let mut last_by_actor: BTreeMap<String, PersistedTimestamp> = BTreeMap::new();
+    for event in history {
+        last_by_actor.insert(
+            event.actor.id().as_str().to_owned(),
+            event.occurred_at.clone(),
+        );
+    }
+    let liveness = liveness(&fold.tasks, &records, &last_by_actor, &now);
     let stalls = stalled_tasks(&fold.tasks, &now);
     Ok(TasksView {
         execution_id: execution.to_owned(),
@@ -365,6 +513,7 @@ pub(crate) fn read_history(
         opened,
         now,
         leases,
+        liveness,
         stalls,
     })
 }
@@ -446,6 +595,45 @@ pub fn stalled_tasks(tasks: &[TaskState], now: &PersistedTimestamp) -> Vec<TaskS
 #[cfg(test)]
 mod lease_tests {
     use super::*;
+
+    /// #1234: the verdict at the budget edges. Silent needs an obligation; free needs a record;
+    /// both edges are exact (silent AT the budget, free strictly inside it). Cost: pure calls.
+    #[test]
+    fn lane_liveness_judges_silence_and_freedom_at_the_declared_edges() {
+        let now = at("2026-10-14T12:00:00Z");
+        let fresh = at("2026-10-14T11:50:00Z"); // 10 min
+        let edge_free = at("2026-10-14T11:45:00Z"); // 15 min
+        let edge_silent = at("2026-10-14T11:30:00Z"); // 30 min
+        let quiet = lane_liveness("a", Some(&fresh), None, true, &now);
+        assert!(quiet.free && !quiet.silent, "{quiet:?}");
+        let at_free = lane_liveness("a", Some(&edge_free), None, true, &now);
+        assert!(
+            !at_free.free && !at_free.silent,
+            "free is strictly inside 15 min: {at_free:?}"
+        );
+        let at_silent = lane_liveness("a", Some(&edge_silent), None, true, &now);
+        assert!(at_silent.silent, "silent from 30 min on: {at_silent:?}");
+        let idle = lane_liveness("a", Some(&edge_silent), None, false, &now);
+        assert!(!idle.silent, "no obligation, no silence: {idle:?}");
+        let never = lane_liveness("a", None, None, true, &now);
+        assert!(never.silent && !never.free, "no record at all: {never:?}");
+        // gh-claude-opt-2 on PR #1249: the obligation's start counts. A reviewer assigned a minute
+        // ago whose own last record is two hours old is not silent, and not free either.
+        let two_hours = at("2026-10-14T10:00:00Z");
+        let a_minute_ago = at("2026-10-14T11:59:00Z");
+        let assigned = lane_liveness("r", Some(&two_hours), Some(&a_minute_ago), true, &now);
+        assert!(
+            !assigned.silent && !assigned.free,
+            "assigned 1 min ago: {assigned:?}"
+        );
+        // Assigned 31 minutes ago and never recorded anything: silent.
+        let thirty_one = at("2026-10-14T11:29:00Z");
+        let unanswered = lane_liveness("r", None, Some(&thirty_one), true, &now);
+        assert!(
+            unanswered.silent && !unanswered.free,
+            "assigned 31 min ago, no record: {unanswered:?}"
+        );
+    }
 
     /// #1220 (orchestration session): a claim whose lease has lapsed no longer holds its task, even
     /// before the Stop reconciler releases it, so a dead lane cannot block an issue until someone's

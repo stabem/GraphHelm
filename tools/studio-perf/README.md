@@ -98,3 +98,25 @@ from the initial-load cohort. Missing or ambiguous boundaries, cache-only loads,
 reads, changed event heads and lost timing entries produce `status: "unknown"` and a null gap.
 The gap includes scheduling and rendering time; it is not pure CPU time. This mode does no clicks,
 seeding, messages, model calls or Runtime writes.
+
+## Offline Chromium CPU profile attribution
+
+Profile mode reads one saved `.cpuprofile` and never resolves Playwright or starts a browser:
+
+```bash
+node tools/studio-perf/measure.mjs --mode profile --profile D:/gh/codex-7/capture.cpuprofile \
+  --source-head abc12345 --start-us 120000 --end-us 150000 \
+  --alignment 'same-load profile-clock interval; mapped by the browser observer' \
+  --out D:/gh/codex-7/profile-report.json
+```
+
+`--start-us` and `--end-us` are offsets in the profile's monotonic microsecond clock. Supply an
+explicit same-load mapping from the browser observer; epoch timestamps such as
+`performance.timeOrigin` must not be subtracted directly from these offsets. The reducer clips
+sample-delta weights to the requested interval and attributes each weight to the sampled leaf
+frame, so inclusive parent stacks are not counted again. Idle and program/GC samples and uncovered
+interval time stay in separate totals. Output frame names and relative URL locations are sanitized;
+profile contents, URL query strings and local absolute paths are not emitted. Input is limited to
+20 MiB, 100,000 nodes, 1,000,000 samples and a stack depth of 256. Invalid data or missing alignment
+produces an `unknown` observation. Sample weights are estimates, not exact function durations or
+causal proof.

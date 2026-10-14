@@ -70,6 +70,11 @@ export interface Liveness { live: boolean; sinceMs: number | null }
 export function laneLiveness(name: string | null | undefined, lanes: Lane[], records: TaskState[], now: number, slots: SlotView[] = []): Liveness {
   if (!name) return { live: true, sinceMs: null };
   const lane = lanes.find((l) => l.lane === name);
+  // #1281: a lane the Runtime judged is quiet since the instant it measured from; the newest PR
+  // activity the Studio saw (often another lane's) is not this lane's record.
+  if (lane?.quietSinceAt !== undefined) {
+    return { live: !lane.silent || slotStatus(name, slots) !== null, sinceMs: Math.max(0, now - lane.quietSinceAt) };
+  }
   let last = lane?.lastEventAt ?? 0;
   const at = (iso: string | null | undefined) => { const ms = iso ? Date.parse(iso) : NaN; if (Number.isFinite(ms)) last = Math.max(last, ms); };
   for (const r of records) for (const round of r.rounds ?? []) {

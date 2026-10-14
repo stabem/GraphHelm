@@ -123,7 +123,8 @@ pub fn lane_liveness(
         owes,
         owes_since: owes_since.cloned(),
         silent: owes && quiet.is_none_or(|seconds| seconds >= SILENT_AFTER_SECONDS),
-        free: record_quiet.is_some_and(|seconds| seconds < FREE_AFTER_SECONDS),
+        // #1281: a lane that owes a step is busy with it, never free for new work.
+        free: !owes && record_quiet.is_some_and(|seconds| seconds < FREE_AFTER_SECONDS),
     }
 }
 
@@ -165,13 +166,35 @@ fn liveness(
             }
         }
     };
+    // #1281: an obligation with no claim (a slice born at pr_opened) or no assignment record (a
+    // reviewer named by a verdict) still began somewhere: at the oldest record that bears on it.
+    let first_at = |matches: &dyn Fn(&TaskEventRecord) -> bool| {
+        records
+            .iter()
+            .filter(|record| matches(record))
+            .filter_map(|record| record.occurred_at.clone())
+            .min_by_key(|at| *at.as_datetime())
+    };
     for slice in tasks {
         if let Some(lane) = &slice.lane {
-            note(lane, open(slice), slice.claimed_at.clone());
+            let since = slice.claimed_at.clone().or_else(|| {
+                first_at(&|record| {
+                    record.task_id == slice.task_id || (slice.pr.is_some() && record.pr == slice.pr)
+                })
+            });
+            note(lane, open(slice), since);
         }
         if let Some(reviewer) = &slice.current_reviewer {
             let owing = open(slice) && slice.pr.is_some();
-            let since = slice.pr.and_then(|pr| assigned_at(reviewer, pr));
+            let since = slice.pr.and_then(|pr| {
+                assigned_at(reviewer, pr)
+                    .or_else(|| {
+                        first_at(&|record| {
+                            record.pr == Some(pr) && record.reviewer.as_deref() == Some(reviewer)
+                        })
+                    })
+                    .or_else(|| first_at(&|record| record.pr == Some(pr)))
+            });
             note(reviewer, owing, since);
         }
     }

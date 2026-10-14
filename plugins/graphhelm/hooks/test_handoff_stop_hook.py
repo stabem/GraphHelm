@@ -33,13 +33,17 @@ class HandoffStopHook(unittest.TestCase):
         self.assertIn("observer", verdict["reason"])
 
     def test_portuguese_handoffs_block(self):
-        for text in ("Corrigi. Vai lá e testa no app.", "Pronto, me avisa se funcionou.",
+        for text in ("Corrigi. Vai lá e testa no app.", "Pronto, me avisa se funcionou.", "Testa aí no app.",
                      "Teste você no site."):
             self.assertIsNotNone(hook.decide(text), text)
 
     def test_product_decision_and_proof_pass(self):
         self.assertIsNone(hook.decide("Look at the e-mail design and tell me “aprovado”."))
         self.assertIsNone(hook.decide("Playwright ran the add-item journey on the live site: green."))
+        for text in ("O Codex vai testar a jornada no site.", "O observer vai testar a jornada depois do deploy.",
+                     "Can you check that the new design matches the brief? Approve A or B.",
+                     "Pode conferir o layout e escolher entre A e B?"):
+            self.assertIsNone(hook.decide(text), text)
         self.assertIsNone(hook.decide("OBSERVER_MISSING: no browser here. Try it in the app."))
 
     def test_reentry_and_bad_input_let_turn_end(self):

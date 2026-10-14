@@ -17,14 +17,16 @@ from pathlib import Path
 import re
 import sys
 
-# Phrases that hand a check the agent can run to the user. English and Portuguese.
+# Imperatives aimed at the user that hand over a check the agent can run. English and Portuguese.
+# A bare "vai testar" (the agent or the observer will test) and a request to choose are not handoffs.
 HANDOFF = re.compile(
     r"\b(?:"
     r"try it (?:in|on|from) the (?:app|site|browser|page|ui)"
-    r"|(?:please|can you|could you|go(?: and)?|now) (?:test|try|check|verify) (?:it|this|that|the (?:app|site|fix|page))"
+    r"|(?:please|can you|could you|go(?: and)?|now) (?:test|try|verify) (?:it|this|the (?:app|site|fix|page))\b"
     r"|test it (?:yourself|again|out)"
     r"|let me know (?:if|whether) it works"
-    r"|(?:vai|vá|pode|tenta) (?:l[áa] )?(?:e )?(?:test|tent|verific|confer)\w*"
+    r"|(?:vai|v[áa]|pode ir) l[áa] e (?:test|tent|verific|confer)\w*"
+    r"|(?:testa|tenta|confere|verifica) (?:a[íi]|l[áa]|no app|no site|voc[êe]|vc)\b"
     r"|test[ae] (?:voc[êe]|vc|no app|no site|l[áa]|a[íi])"
     r"|me (?:diz|diga|avisa|avise|fala|fale) se (?:funcion|deu certo)\w*"
     r")",

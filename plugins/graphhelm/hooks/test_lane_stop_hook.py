@@ -32,6 +32,43 @@ MANIFESTS = (HERE / "hooks.json", HERE / "codex-hooks.json",
              REPO / "plugins/graphhelm-codex-hooks/hooks/codex-hooks.json")
 
 
+class ReconciledDigestTests(unittest.TestCase):
+    """#1195: an unchanged reconcile reply is not posted again. Offline: `request` is replaced."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        token = Path(self.tmp.name) / "events.agent.token"
+        token.write_text("tok", encoding="utf-8")
+        self.bound = ("lane-test", str(token), "http://127.0.0.1:1", "http://127.0.0.1:1", None)
+        self.memory = Path(self.tmp.name) / "state" / "session.reconciled"
+
+    def test_unchanged_reply_posts_once_per_session_and_a_changed_reply_posts_again(self):
+        # On the parent every call POSTs (the second one earns a 409 the hook swallows): a refused
+        # request on every quiet Stop. Cost: four in-process calls, no network.
+        if str(HERE) not in sys.path:
+            sys.path.insert(0, str(HERE))  # lane_stop_hook imports its siblings bare, as the hosts run it
+        import lane_stop_hook
+        quiet = {"merged": [], "closed": [], "released": [], "heartbeat": {"sent": [], "refused": []}, "inspected": 0}
+        busy = {**quiet, "merged": [9001]}
+        with mock.patch.object(lane_stop_hook, "request", return_value={"ok": True, "data": {}}) as post:
+            lane_stop_hook.record_reconciled(self.bound, "codex-4", quiet, self.memory)
+            lane_stop_hook.record_reconciled(self.bound, "codex-4", quiet, self.memory)
+            self.assertEqual(post.call_count, 1, "an unchanged reply was posted again")
+            lane_stop_hook.record_reconciled(self.bound, "codex-4", busy, self.memory)
+            self.assertEqual(post.call_count, 2, "a changed reply must be posted")
+            lane_stop_hook.record_reconciled(self.bound, "codex-4", busy, self.memory)
+            self.assertEqual(post.call_count, 2)
+        # A session with no memory of the reply (fresh state) posts it; the Runtime's 409 for a key
+        # it already holds is "recorded", not an error, and is remembered so the next Stop is quiet.
+        fresh = Path(self.tmp.name) / "state" / "other.reconciled"
+        conflict = urllib.error.HTTPError("http://127.0.0.1:1", 409, "conflict", {}, None)
+        with mock.patch.object(lane_stop_hook, "request", side_effect=conflict) as post:
+            lane_stop_hook.record_reconciled(self.bound, "codex-4", busy, fresh)
+            lane_stop_hook.record_reconciled(self.bound, "codex-4", busy, fresh)
+            self.assertEqual(post.call_count, 1)
+
+
 class LaneStopTests(unittest.TestCase):
     def setUp(self):
         self.real_state_root = session_hook._state_root()

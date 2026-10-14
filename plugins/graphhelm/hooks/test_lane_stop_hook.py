@@ -329,8 +329,7 @@ class LaneStopTests(unittest.TestCase):
     def test_reconcile_releases_an_overdue_claim_as_graphhelm_and_skips_live_ones(self):
         # #1193: the tasks route reports each open pre-PR claim's lease; the reconciler releases
         # the overdue ones as graphhelm (releasedBy), with the lane's credential never involved,
-        # and leaves live leases and malformed entries alone. On the parent `release_overdue`
-        # does not exist. Cost: no Runtime, two mocked calls.
+        # and leaves live leases and malformed entries alone. Cost: no Runtime, one mocked call.
         view = {"executionId": "lane-test", "headSequence": 9, "tasks": [], "records": [], "rejected": 0,
                 "leases": [
                     {"key": "issue-766#claim-1", "taskId": "issue-766", "lane": "codex-4", "claimSequence": 7,
@@ -339,11 +338,9 @@ class LaneStopTests(unittest.TestCase):
                      "leaseSeconds": 1800, "expiresAt": "2026-10-14T04:30:00Z", "overdue": False},
                     {"key": "bad", "taskId": "issue-768", "lane": "codex-6", "claimSequence": "9", "overdue": True}]}
         credentials = {}
-        with mock.patch.object(tasks_reconcile, "get", return_value=view) as get, \
-                mock.patch.object(tasks_reconcile, "post_end") as post_end:
-            out = tasks_reconcile.release_overdue("http://127.0.0.1:1", "shared", lambda actor: credentials.setdefault(actor, f"cred-{actor}"),
+        with mock.patch.object(tasks_reconcile, "post_end") as post_end:
+            out = tasks_reconcile.release_overdue(view, "http://127.0.0.1:1", lambda actor: credentials.setdefault(actor, f"cred-{actor}"),
                                                   "lane-test", "stabem/GraphHelm")
-        self.assertEqual(get.call_args.args, ("http://127.0.0.1:1/v1/executions/lane-test/tasks", "shared"))
         self.assertEqual(out, {"released": [{"taskId": "issue-766", "lane": "codex-4", "claimSequence": 7}], "refused": []})
         self.assertEqual(post_end.call_count, 1)
         args = post_end.call_args.args
@@ -354,13 +351,21 @@ class LaneStopTests(unittest.TestCase):
         self.assertEqual(args[7]["releasedBy"], "graphhelm")
         self.assertIn("1800 s lapsed at 2026-10-14T03:30:00Z", args[7]["reason"])
         self.assertEqual(list(credentials), ["graphhelm"])
-        # An older Runtime without leases, or an unreachable route, releases nothing and raises nothing.
-        with mock.patch.object(tasks_reconcile, "get", return_value={"tasks": []}):
-            self.assertEqual(tasks_reconcile.release_overdue("http://127.0.0.1:1", "shared", lambda a: "c", "lane-test", "r"),
+        # An older Runtime without leases, or an unreachable route (no view), releases nothing and raises nothing.
+        for older in ({"tasks": []}, None):
+            self.assertEqual(tasks_reconcile.release_overdue(older, "http://127.0.0.1:1", lambda a: "c", "lane-test", "r"),
                              {"released": [], "refused": []})
-        with mock.patch.object(tasks_reconcile, "get", side_effect=OSError("down")):
-            self.assertEqual(tasks_reconcile.release_overdue("http://127.0.0.1:1", "shared", lambda a: "c", "lane-test", "r"),
-                             {"released": [], "refused": []})
+
+    def test_reconcile_reports_stalled_prs_with_their_owner(self):
+        # #1235: the tasks route's `stalls` (an open PR idle past the budget, with the lane that
+        # owes the next step) ride the reconcile reply, so `tasks.reconciled` records them; an
+        # older Runtime without the field reports none. Cost: no Runtime, no calls.
+        stall = {"key": "issue-1136#pr-1136", "taskId": "issue-1136", "pr": 1136, "reason": "block_unanswered",
+                 "owner": "codex-1", "idleSince": "2026-10-13T14:00:00Z", "idleSeconds": 75600}
+        self.assertEqual(tasks_reconcile.stalled({"stalls": [stall, "junk"]}),
+                         [{key: stall[key] for key in ("taskId", "pr", "reason", "owner", "idleSince", "idleSeconds")}])
+        self.assertEqual(tasks_reconcile.stalled({"tasks": []}), [])
+        self.assertEqual(tasks_reconcile.stalled(None), [])
 
     def test_stop_reconcile_heartbeats_an_open_claim_and_the_runtime_owns_the_cooldown(self):
         # #1147: a live lane heartbeats without being told. The first Stop reconcile lands one

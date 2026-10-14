@@ -45,6 +45,9 @@ pub struct TasksView {
     /// against it; the reconciler releases the `overdue` ones as `graphhelm`.
     pub now: PersistedTimestamp,
     pub leases: Vec<ClaimLease>,
+    /// #1235: every open PR slice with no task record for `STALL_SECONDS`, judged at `now`, with
+    /// who owes the next step. A dead fixer behind a BLOCK reads here instead of sitting silent.
+    pub stalls: Vec<TaskStall>,
 }
 
 /// #1202: what one Runtime remembers of an execution's `task.*` envelopes it already opened.
@@ -350,6 +353,7 @@ pub(crate) fn read_history(
     let now = PersistedTimestamp::from_datetime(chrono::Utc::now())
         .map_err(|_| super::signal_invalid("the Runtime clock is not a persisted instant", "/"))?;
     let leases = claim_leases(&fold.tasks, &now);
+    let stalls = stalled_tasks(&fold.tasks, &now);
     Ok(TasksView {
         execution_id: execution.to_owned(),
         head_sequence: history.last().map_or(0, |event| event.sequence),
@@ -361,7 +365,82 @@ pub(crate) fn read_history(
         opened,
         now,
         leases,
+        stalls,
     })
+}
+
+/// #1235: how long an open PR slice may go without any task record before it reads as stalled.
+/// Two hours: longer than a reached test run plus a review round, far shorter than the 21 h a
+/// BLOCK on #1136 and #1125 sat behind a dead fixer (2026-10-14).
+pub const STALL_SECONDS: i64 = 7200;
+
+/// #1235: what an open PR slice is waiting on, and so who owes the next step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StallReason {
+    /// A BLOCK on the current head that no push answered; the author owes the fix.
+    BlockUnanswered,
+    /// A recorded head with no verdict; the reviewer owes it.
+    AwaitingVerdict,
+    /// An approved head nobody merged; the approving reviewer owes the merge.
+    AwaitingMerge,
+}
+
+/// #1235: one stalled PR slice.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskStall {
+    pub key: String,
+    pub task_id: String,
+    pub pr: u64,
+    pub reason: StallReason,
+    /// The lane that owes the next step, when the records name one.
+    pub owner: Option<String>,
+    /// The newest task record of the slice; idle time counts from here.
+    pub idle_since: PersistedTimestamp,
+    pub idle_seconds: i64,
+}
+
+/// #1235: the open PR slices (a PR, no merge, no release) idle past `STALL_SECONDS` at `now`.
+/// A slice with no record time is never judged: no time, no claim of silence.
+pub fn stalled_tasks(tasks: &[TaskState], now: &PersistedTimestamp) -> Vec<TaskStall> {
+    use graphhelm_execution::tasks::TaskStep;
+    tasks
+        .iter()
+        .filter(|state| state.released_by.is_none() && state.step != TaskStep::Merged)
+        .filter_map(|state| {
+            let pr = state.pr?;
+            let idle_since = state
+                .clock
+                .last_at
+                .as_ref()
+                .or(state.clock.since.as_ref())?;
+            let idle_seconds = (*now.as_datetime() - *idle_since.as_datetime()).num_seconds();
+            if idle_seconds <= STALL_SECONDS {
+                return None;
+            }
+            let (reason, owner) = match (&state.blocked_by, state.step) {
+                (Some(_), _) => (StallReason::BlockUnanswered, state.lane.clone()),
+                (None, TaskStep::Merge) => (
+                    StallReason::AwaitingMerge,
+                    state
+                        .current_reviewer
+                        .clone()
+                        .or_else(|| state.reviewers.last().cloned()),
+                ),
+                (None, _) => (StallReason::AwaitingVerdict, state.current_reviewer.clone()),
+            };
+            Some(TaskStall {
+                key: state.key.clone(),
+                task_id: state.task_id.clone(),
+                pr,
+                reason,
+                owner,
+                idle_since: idle_since.clone(),
+                idle_seconds,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -432,5 +511,100 @@ mod lease_tests {
         let stale = at("2026-10-14T02:00:00Z");
         let (expires, _) = lease_state(&claimed, Some(&stale), 60, &at("2026-10-14T03:00:30Z"));
         assert_eq!(expires, at("2026-10-14T03:01:00Z"));
+    }
+
+    fn record(kind: &str, actor: &str, sequence: u64, time: &str, body: &str) -> TaskEventRecord {
+        let document = format!(
+            r#"{{"schema":"graphhelm-task-event-v1","taskId":"issue-7","at":"{time}","issue":7,{body}}}"#
+        );
+        graphhelm_execution::tasks::parse_task_event(
+            kind,
+            actor,
+            &document,
+            sequence,
+            Some(at(time)),
+        )
+        .unwrap_or_else(|| panic!("a valid {kind}: {document}"))
+    }
+
+    /// #1235: the #1136 shape. A BLOCK that no push answers reads as stalled on the author two
+    /// hours later and not before; a fix push clears it; an approved head nobody merges reads as
+    /// owed by the reviewer; a merged slice is never stalled. Cost: one fold of five records.
+    #[test]
+    fn an_unanswered_block_stalls_on_its_author_and_a_push_clears_it() {
+        let head = "a".repeat(40);
+        let fix = "b".repeat(40);
+        let claimed = record(
+            "task.claimed",
+            "lane-alpha",
+            1,
+            "2026-10-14T00:00:00Z",
+            r#""revision":1,"lane":"lane-alpha","branch":"issue-7-work""#,
+        );
+        let opened = record(
+            "task.pr_opened",
+            "lane-alpha",
+            2,
+            "2026-10-14T00:10:00Z",
+            &format!(
+                r#""revision":2,"lane":"lane-alpha","branch":"issue-7-work","pr":9,"headSha":"{head}","journeys":[]"#
+            ),
+        );
+        let blocked = record(
+            "task.review_verdict",
+            "lane-beta",
+            3,
+            "2026-10-14T01:00:00Z",
+            &format!(
+                r#""revision":4,"pr":9,"headSha":"{head}","reviewer":"lane-beta","verdict":"BLOCK","commentUrl":"https://github.com/o/r/pull/9#c1""#
+            ),
+        );
+        let base = vec![claimed, opened, blocked];
+        let tasks = graphhelm_execution::tasks::fold_task_events(&base);
+        assert!(
+            stalled_tasks(&tasks, &at("2026-10-14T03:00:00Z")).is_empty(),
+            "exactly two hours is not yet stalled"
+        );
+        let stalls = stalled_tasks(&tasks, &at("2026-10-14T22:00:00Z"));
+        assert_eq!(stalls.len(), 1, "{stalls:?}");
+        assert_eq!(stalls[0].reason, StallReason::BlockUnanswered);
+        assert_eq!(stalls[0].owner.as_deref(), Some("lane-alpha"));
+        assert_eq!(stalls[0].pr, 9);
+        assert_eq!(stalls[0].idle_seconds, 21 * 3600);
+
+        let mut fixed = base.clone();
+        fixed.push(record("task.pr_opened", "lane-alpha", 4, "2026-10-14T21:00:00Z",
+            &format!(r#""revision":2,"lane":"lane-alpha","branch":"issue-7-work","pr":9,"headSha":"{fix}","journeys":[]"#)));
+        let tasks = graphhelm_execution::tasks::fold_task_events(&fixed);
+        assert!(
+            stalled_tasks(&tasks, &at("2026-10-14T22:00:00Z")).is_empty(),
+            "the push answered the BLOCK"
+        );
+
+        let mut approved = fixed.clone();
+        approved.push(record("task.review_verdict", "lane-beta", 5, "2026-10-14T21:30:00Z",
+            &format!(r#""revision":4,"pr":9,"headSha":"{fix}","reviewer":"lane-beta","verdict":"APPROVE","commentUrl":"https://github.com/o/r/pull/9#c2""#)));
+        let tasks = graphhelm_execution::tasks::fold_task_events(&approved);
+        let stalls = stalled_tasks(&tasks, &at("2026-10-15T00:00:00Z"));
+        assert_eq!(stalls.len(), 1, "{stalls:?}");
+        assert_eq!(stalls[0].reason, StallReason::AwaitingMerge);
+        assert_eq!(stalls[0].owner.as_deref(), Some("lane-beta"));
+
+        let mut merged = approved;
+        merged.push(record(
+            "task.merged",
+            "lane-beta",
+            6,
+            "2026-10-14T21:40:00Z",
+            &format!(
+                r#""revision":5,"merger":"lane-beta","pr":9,"mergeSha":"{}","closes":[7]"#,
+                "c".repeat(40)
+            ),
+        ));
+        let tasks = graphhelm_execution::tasks::fold_task_events(&merged);
+        assert!(
+            stalled_tasks(&tasks, &at("2026-10-16T00:00:00Z")).is_empty(),
+            "a merged slice is done"
+        );
     }
 }

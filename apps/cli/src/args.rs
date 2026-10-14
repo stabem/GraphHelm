@@ -585,6 +585,10 @@ pub struct UpdateArgs {
     /// branch, a diverged main). Without it such an update stops before compiling.
     #[arg(long)]
     pub keep_local: bool,
+    /// Build nothing: fetch origin/main and exit non-zero when this binary was not built from it
+    /// (#1244), so a check never runs on a CLI older than main.
+    #[arg(long, conflicts_with = "keep_local")]
+    pub check: bool,
 }
 
 #[derive(Debug, Args)]

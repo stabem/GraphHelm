@@ -211,6 +211,8 @@ mod task_event_cli;
 mod test_support_has_no_dead_helpers;
 #[path = "tool_cli.rs"]
 mod tool_cli;
+#[path = "update_check_cli.rs"]
+mod update_check_cli;
 #[path = "wake_http.rs"]
 mod wake_http;
 #[path = "workspace_cli.rs"]

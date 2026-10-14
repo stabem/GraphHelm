@@ -351,6 +351,9 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
         Err(message) => return refused_as(UPDATE, message, "/source"),
     };
     Progress::say(&progress.info(&format!("GraphHelm source: {}", source.display())));
+    if args.check {
+        return check_installed(&source);
+    }
     let clone = if managed {
         sync_managed(&source, progress)
     } else {
@@ -477,6 +480,59 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
 /// Beside `bin`, the commit the installed binary was built from: lets an update with nothing new
 /// return in seconds instead of rebuilding.
 const STAMP: &str = ".graphhelm-installed-head";
+
+/// #1244: what `graphhelm update --check` says about this binary against origin/main. Pure, so
+/// the rule is tested without git: only a stamp naming origin/main's commit is current; a stamp
+/// behind it, or no stamp at all (a dev build, an install older than stamps), is not, because a
+/// validation run on an unknown binary is the false pass this check exists to stop.
+pub(super) fn installed_state(
+    installed: Option<&str>,
+    main: &str,
+    behind: Option<u64>,
+) -> Result<serde_json::Value, String> {
+    let installed = installed.map(str::trim).filter(|head| !head.is_empty());
+    match (installed, behind) {
+        (Some(head), _) if head == main => {
+            Ok(json!({"current": true, "installed": head, "main": main}))
+        }
+        (Some(head), Some(behind)) => Err(format!(
+            "the installed graphhelm was built from {head}, {behind} commit(s) behind origin/main {main}; run graphhelm update"
+        )),
+        (Some(head), None) => Err(format!(
+            "the installed graphhelm was built from {head}, which is not origin/main {main}; run graphhelm update"
+        )),
+        (None, _) => Err(format!(
+            "cannot tell which commit this graphhelm was built from (no {STAMP}); run graphhelm update to build origin/main {main}"
+        )),
+    }
+}
+
+fn check_installed(source: &Path) -> Outcome {
+    const CHECK: &str = "update.check";
+    if git(source, &["fetch", "--quiet", "origin", "main"]).is_none() {
+        return refused_as(CHECK, "could not fetch origin/main", "/source");
+    }
+    let Some(main) = git(source, &["rev-parse", "origin/main"]) else {
+        return refused_as(CHECK, "the clone has no origin/main", "/source");
+    };
+    let installed = install_root(std::env::current_exe().ok().as_deref())
+        .and_then(|root| std::fs::read_to_string(root.join(STAMP)).ok());
+    let behind = installed.as_deref().and_then(|head| {
+        git(
+            source,
+            &[
+                "rev-list",
+                "--count",
+                &format!("{}..origin/main", head.trim()),
+            ],
+        )
+        .and_then(|count| count.parse().ok())
+    });
+    match installed_state(installed.as_deref(), &main, behind) {
+        Ok(data) => Outcome::success(CHECK, data),
+        Err(message) => refused_as(CHECK, message, "/installed"),
+    }
+}
 
 /// True when the clone's HEAD is exactly the commit the installed binary was last built from.
 pub(super) fn already_installed(head: Option<&str>, installed: Option<&str>) -> bool {
@@ -882,6 +938,24 @@ mod tests {
             Some(plain(std::fs::canonicalize(clone.path()).unwrap()))
         );
         assert_eq!(resolve_source(&[Some(empty.path().into())]), None);
+    }
+
+    /// #1244: a binary is current only when its stamp is origin/main's commit; behind, foreign
+    /// and unstamped binaries all fail the check, each saying why.
+    #[test]
+    fn only_a_binary_built_from_main_passes_the_check() {
+        let main = "a".repeat(40);
+        assert_eq!(
+            installed_state(Some(&format!("{main}\n")), &main, Some(0)).unwrap()["current"],
+            true
+        );
+        let behind = installed_state(Some("b"), &main, Some(28)).unwrap_err();
+        assert!(behind.contains("28 commit(s) behind"), "{behind}");
+        let foreign = installed_state(Some("c"), &main, None).unwrap_err();
+        assert!(foreign.contains("not origin/main"), "{foreign}");
+        let unknown = installed_state(None, &main, None).unwrap_err();
+        assert!(unknown.contains("cannot tell"), "{unknown}");
+        assert!(installed_state(Some("  "), &main, None).is_err());
     }
 
     #[test]

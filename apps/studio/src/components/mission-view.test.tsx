@@ -197,7 +197,8 @@ describe("MissionView", () => {
     expect(screen.getByRole("tab", { name: "Graph" })).toHaveAttribute("aria-selected", "false");
     const rail = screen.getByRole("navigation", { name: "Journeys" });
     expect(within(rail).getByRole("button", { name: /Second journey/ })).toHaveAttribute("aria-pressed", "true");
-    expect(within(screen.getByRole("region", { name: "Proof" })).getByText("Second unique proof step")).toBeInTheDocument();
+    const proof = within(screen.getByRole("region", { name: "Proof" }));
+    expect(within(proof.getByRole("list", { name: "Steps" })).getByText("Second unique proof step")).toBeInTheDocument();
     expect(onSelectJourney).toHaveBeenCalledWith("second");
   });
 

@@ -166,16 +166,39 @@ describe("MissionView", () => {
     expect(rows).toHaveLength(2);
     expect(rail.querySelector("button.mv-group")).toHaveAttribute("aria-pressed", "true");
     await userEvent.click(rows[0]);
-    expect(rows[0]).toHaveAttribute("aria-pressed", "true");
-    await userEvent.click(rows[1]);
-    expect(rows[1]).toHaveAttribute("aria-pressed", "true");
-    expect(rows[0]).toHaveAttribute("aria-pressed", "false");
+    let currentRail = screen.getByRole("navigation", { name: "Journeys" });
+    let currentRows = Array.from(currentRail.querySelectorAll<HTMLButtonElement>("button.mv-journey:not(.mv-group)"));
+    expect(currentRows[0]).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(currentRows[1]!);
+    currentRail = screen.getByRole("navigation", { name: "Journeys" });
+    currentRows = Array.from(currentRail.querySelectorAll<HTMLButtonElement>("button.mv-journey:not(.mv-group)"));
+    expect(currentRows[1]).toHaveAttribute("aria-pressed", "true");
+    expect(currentRows[0]).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
     const fold = screen.getByRole("button", { name: "Unlinked work · 1" });
     expect(fold).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("#40 Loose PR")).toBeNull();
     await userEvent.click(fold);
     expect(fold).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("#40 Loose PR")).toBeInTheDocument();
+  });
+
+  it.each([true, false])("opens the selected journey's proof from Graph while historyLoading=%s", async (historyLoading) => {
+    const second: JourneyView = { ...journeys[0]!, contractId: "second", title: "Second journey", steps: [
+      { stepId: "unique-proof-step", screen: { screenId: "unique-proof-step", title: "Second unique proof step", scopePaths: [] }, promises: [] },
+    ] };
+    const onSelectJourney = vi.fn();
+    render(<MissionView journeys={[journeys[0]!, second]} tasks={[]} lanes={[]} now={0} runFor={() => null}
+      frameUrl={() => null} onMarkSafe={vi.fn()} onSelectJourney={onSelectJourney} historyLoading={historyLoading} />);
+
+    await fastUserEvent().click(screen.getByRole("button", { name: /Second journey/ }));
+
+    expect(screen.getByRole("tab", { name: "Proof" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Graph" })).toHaveAttribute("aria-selected", "false");
+    const rail = screen.getByRole("navigation", { name: "Journeys" });
+    expect(within(rail).getByRole("button", { name: /Second journey/ })).toHaveAttribute("aria-pressed", "true");
+    expect(within(screen.getByRole("region", { name: "Proof" })).getByText("Second unique proof step")).toBeInTheDocument();
+    expect(onSelectJourney).toHaveBeenCalledWith("second");
   });
 
   it("#948: keeps the Graph counters and run graph inside the phone scroll body", () => {

@@ -102,11 +102,17 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   build-admission lock. Its per-user default is `<user-home>/.graphhelm/build-admission`;
   `GRAPHHELM_BUILD_ADMISSION_DIR` may
   override it only with an absolute path. An unavailable, invalid or relative authority refuses
-  the operation. The root-local queue, ticket and target locks remain in place; the shared lock is
-  held from child admission through child exit, and an update acquires it before moving the running
-  executable aside. Older binaries and raw Cargo invocations do not acquire this lock. The lock
-  order is root-local queue then shared authority; a waiter releases a root candidate before
-  retrying a busy shared authority.
+  the operation. The root-local queue, ticket and target locks remain in place. **The shared
+  authority grants a jobs budget, not a turn (#1254):** the head of a root's queue is admitted while
+  the `--jobs` of every admitted run plus its own stay within 24 (a positive integer in
+  `jobs-budget` in the authority directory overrides it; an invalid one refuses), and keeps waiting
+  otherwise. The lock is held only to read and rewrite the ledger of grants (`granted`, one
+  `<pid> <jobs> <token>` line per admitted run); a grant whose process is gone is dropped at the next
+  admission, and a request whose `--jobs` alone exceeds the budget refuses before it queues. An
+  update takes the lock only when no live run holds a grant and keeps it through the install, so
+  builds and updates never overlap. Older binaries and raw Cargo invocations take no grant. The
+  lock order is root-local queue then shared authority; a waiter releases a root candidate before
+  retrying.
 - **Build jobs (owner rule, 2026-10-13, #1188).** One slot root may build with up to `--jobs 16`;
   the jobs of every root building at the same time add up to at most 24. `run_reached.py --jobs N`
   carries the choice into every slot command it queues (six when omitted). The dedicated root

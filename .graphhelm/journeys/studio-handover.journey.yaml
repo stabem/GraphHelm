@@ -1,6 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: studio-handover
 title: Read While you were away and dismiss it
+purpose: "The owner returns, reads what happened while away, and dismisses the summary."
 status: draft
 approved: null
 base: http://127.0.0.1:5184

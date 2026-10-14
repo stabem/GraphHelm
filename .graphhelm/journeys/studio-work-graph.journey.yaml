@@ -1,6 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: studio-work-graph
 title: See the work kanban and issue graph
+purpose: The owner sees the project work as a kanban and as an issue graph.
 status: draft
 approved: null
 base: http://127.0.0.1:5184

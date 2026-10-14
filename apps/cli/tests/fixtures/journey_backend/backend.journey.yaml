@@ -1,6 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: backend
 title: Backend journey
+purpose: A client greets the service and then fetches its data over HTTP.
 status: draft
 approved: null
 base: http://127.0.0.1:8765
@@ -9,16 +10,19 @@ secrets: []
 risks: []
 screens:
   - id: fetched
+    title: The data the client fetched
     url: /
     state: success
     expect: [{role: status, name: "200"}, {role: json, name: items.0.name=apple}]
     scope: unknown
   - id: greeted
+    title: The greeting the service answered
     url: /
     state: success
     expect: [{role: exit, name: "0"}, {role: stdout, name: hello}]
     scope: unknown
   - id: start
+    title: The service status before any request
     url: /status.json
     state: stable
     expect: [{role: status, name: "200"}, {role: json, name: status=ok}]

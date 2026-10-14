@@ -1,6 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: studio-journey-tab
 title: "Review the promise and observer evidence (OBSERVER_MISSING: https://github.com/stabem/GraphHelm/issues/1041#issuecomment-6144841351; #1042)"
+purpose: The owner reviews a journey promise next to the observer evidence that proves it.
 status: draft
 approved: null
 base: http://127.0.0.1:5184

@@ -7,8 +7,8 @@ import type { TestFrame } from "../runtime/test-frames";
 const userEvent = fastUserEvent();
 
 const frames: TestFrame[] = [
-  { stepId: "a", n: 1, verb: "SEES", text: "Journey tab", status: "passed", reason: null, expected: ["tab selected"] },
-  { stepId: "b", n: 2, verb: "DOES", text: "Click Mark safe", status: "waits_for_you", reason: "data-changing", expected: [] },
+  { stepId: "a", n: 1, verb: "SEES", text: "Journey tab", status: "passed", reason: null, expected: ["tab selected"], inputs: [], intent: null, checks: [] },
+  { stepId: "b", n: 2, verb: "DOES", text: "Click Mark safe", status: "waits_for_you", reason: "data-changing", expected: [], inputs: [], intent: null, checks: [] },
 ];
 
 function setup(selected = 0, frameUrl = (id: string) => (id === "a" ? "blob:a" : null)) {
@@ -18,6 +18,24 @@ function setup(selected = 0, frameUrl = (id: string) => (id === "a" ? "blob:a" :
 }
 
 describe("TestCanvas", () => {
+  it("says what the journey proves, what the step typed and every check (#1287)", () => {
+    const strong: TestFrame[] = [{ stepId: "salvo", n: 1, verb: "DOES", text: "Submits “Salvar”", status: "passed", reason: null,
+      expected: ["success"], inputs: ["Types “parceiro” into “Tag Amazon”", "Submits “Salvar”"], intent: "Tag Amazon as a partner", checks: ["shows cell “parceiro”"] }];
+    render(<TestCanvas frames={strong} purpose="The owner tags a store and the tag stays after a reload." selected={0}
+      onSelect={vi.fn()} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    expect(screen.getByText("The owner tags a store and the tag stays after a reload.")).toBeInTheDocument();
+    expect(screen.getByText("Tag Amazon as a partner")).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Inputs" })).toHaveTextContent("Types “parceiro” into “Tag Amazon”");
+    const checks = screen.getByRole("list", { name: "Assertions" });
+    expect(checks).toHaveTextContent("shows cell “parceiro”");
+    expect(checks).toHaveTextContent("state is success");
+  });
+
+  it("flags a journey that does not say what it proves (#1287)", () => {
+    setup(0);
+    expect(screen.getByRole("note")).toHaveTextContent("This journey does not say what it proves");
+  });
+
   it("shows the recorded frame in the emulated browser", () => {
     setup(0);
     expect(screen.getByRole("img", { name: "Frame 1: Journey tab" })).toHaveAttribute("src", "blob:a");

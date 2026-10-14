@@ -1,6 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: keel-proportional-rows
 title: Show proportional Keel card guidance
+purpose: "A contributor sees which Keel card row their change needs, sized to what it touches."
 status: draft
 approved: null
 base: http://127.0.0.1:5184

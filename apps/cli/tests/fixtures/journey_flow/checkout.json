@@ -74,7 +74,7 @@
           "app/cart/page.tsx"
         ],
         "screenId": "cart",
-        "title": "cart"
+        "title": "The cart with its items"
       },
       "semanticAction": {
         "kind": "navigate",
@@ -104,7 +104,7 @@
           "app/api/pay/route.ts"
         ],
         "screenId": "pay",
-        "title": "pay"
+        "title": "The payment step that asks for the password"
       },
       "semanticAction": {
         "kind": "activate",

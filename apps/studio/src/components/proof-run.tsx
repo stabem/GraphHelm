@@ -6,13 +6,15 @@
  */
 import { useEffect, useRef, useState } from "react";
 
-import type { JourneyRunView, JourneyView } from "../runtime/types";
+import type { JourneyFlowView, JourneyRunView, JourneyView } from "../runtime/types";
 import { testFrames } from "../runtime/test-frames";
 import { useJourneyRun, type JourneyRunSource } from "./journey-flows";
 import { TestCanvas } from "./test-canvas";
 
 interface Props {
   journey: JourneyView;
+  /** #1287: the flow source, so each frame shows its inputs and checks. */
+  flow?: JourneyFlowView | undefined;
   source: JourneyRunSource;
   selected: number;
   onSelect(n: number): void;
@@ -29,7 +31,7 @@ const clock = (ms: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
 
-export function ProofRun({ journey, source, selected, onSelect, frameUrl, onMarkSafe, onSendBack, onRun }: Props) {
+export function ProofRun({ journey, flow, source, selected, onSelect, frameUrl, onMarkSafe, onSendBack, onRun }: Props) {
   const { run, frames: runFrames, failure, again, confirm, confirming } = useJourneyRun(journey.contractId, source);
   const screenOf = (stepId: string) => journey.steps.find((s) => s.stepId === stepId)?.screen?.screenId ?? stepId;
   const running = run?.state === "running";
@@ -41,7 +43,7 @@ export function ProofRun({ journey, source, selected, onSelect, frameUrl, onMark
   const currentIdx = named >= 0 || !running ? named
     : journey.steps.findIndex((s) => !run?.screens?.[s.screen?.screenId ?? s.stepId]?.result);
   const currentId = currentIdx >= 0 ? journey.steps[currentIdx]!.stepId : null;
-  const frames = testFrames(journey, run, currentId);
+  const frames = testFrames(journey, run, currentId, flow);
   // The selection follows the step being played, until the owner clicks a frame.
   const [pinned, setPinned] = useState(false);
   useEffect(() => { if (!pinned && currentIdx >= 0) onSelect(currentIdx); }, [pinned, currentIdx, onSelect]);
@@ -93,7 +95,7 @@ export function ProofRun({ journey, source, selected, onSelect, frameUrl, onMark
     </div>
   ) : null;
   return (
-    <TestCanvas frames={frames} selected={selected} onSelect={(n) => { setPinned(true); onSelect(n); }}
+    <TestCanvas frames={frames} purpose={flow?.purpose ?? null} selected={selected} onSelect={(n) => { setPinned(true); onSelect(n); }}
       frameUrl={(id) => runFrames[screenOf(id)] ?? frameUrl(id)} onMarkSafe={onMarkSafe}
       {...(onSendBack ? { onSendBack } : {})} runLine={runLine} inspectorTop={held} />
   );

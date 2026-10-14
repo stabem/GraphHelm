@@ -1,6 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: studio-new-task
 title: Start a new task in the project
+purpose: "The owner writes a new task and sees it start with its Keel card (promise, scope, proof)."
 status: draft
 approved: null
 base: http://127.0.0.1:5184

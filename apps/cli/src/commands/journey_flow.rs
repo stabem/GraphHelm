@@ -257,6 +257,7 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
             }
         }
     }
+    findings.extend(weak_journey(value, false));
     let mut reached = BTreeSet::new();
     for (name, path) in value["paths"].as_object().unwrap() {
         let contract_id = if name == "main" {
@@ -391,6 +392,107 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
 /// another URL, or pointing the flow at another app voids the mark: "Send" marked safe on one
 /// page of one app is not "Send" on another. `base_not_local` keeps a flow on this machine, not
 /// on the app the owner was shown, so `base` is bound here.
+/// #1287: a journey must say what it proves. `strict` (the agent's draft writer and approval) refuses
+/// each gap; everywhere else (validate, flows, watch, replay, keel) a flow that already exists keeps
+/// working and carries each gap as a `flow.weak_journey` warning, so it is flagged, never broken.
+fn weak_journey(value: &Value, strict: bool) -> Vec<Finding> {
+    let mut gaps = Vec::new();
+    if value["purpose"]
+        .as_str()
+        .is_none_or(|p| p.trim().is_empty())
+    {
+        gaps.push(Finding::new(
+            "flow.purpose_missing",
+            "/purpose",
+            "say what this journey proves for the user in `purpose`",
+        ));
+    }
+    let screens: BTreeMap<_, _> = value["screens"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["id"].as_str().unwrap(), s))
+        .collect();
+    for (i, screen) in value["screens"].as_array().unwrap().iter().enumerate() {
+        if screen["title"].as_str().is_none_or(|t| t.trim().is_empty()) {
+            gaps.push(Finding::new(
+                "flow.screen_title_missing",
+                format!("/screens/{i}/title"),
+                "say what this screen is for in its `title`",
+            ));
+        }
+    }
+    let edges: BTreeMap<_, _> = value["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e["id"].as_str().unwrap(), (i, e)))
+        .collect();
+    for (name, path) in value["paths"].as_object().unwrap() {
+        let path: Vec<_> = path
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|id| edges.get(id.as_str().unwrap()))
+            .collect();
+        let mut has_input = false;
+        for &&(i, edge) in &path {
+            for (a, act) in edge["acts"].as_array().unwrap().iter().enumerate() {
+                match act["kind"].as_str().unwrap_or_default() {
+                    "enter_text" | "select" | "upload" => has_input = true,
+                    "submit" if !has_input && edge["intent"].is_null() => gaps.push(Finding::new(
+                        "flow.submit_without_input",
+                        format!("/edges/{i}/acts/{a}"),
+                        format!(
+                            "path {name} submits before any input; add the enter_text/select acts, \
+                             or say in the edge `intent` what is submitted as-is"
+                        ),
+                    )),
+                    _ => {}
+                }
+            }
+        }
+        let Some(&&(i, last)) = path.last() else {
+            continue;
+        };
+        let expects = |id: &Value| -> BTreeSet<(String, String)> {
+            screens
+                .get(id.as_str().unwrap_or_default())
+                .and_then(|s| s["expect"].as_array())
+                .into_iter()
+                .flatten()
+                .map(|e| (e["role"].to_string(), e["name"].to_string()))
+                .collect()
+        };
+        let before = expects(&last["from"]);
+        let after = expects(&last["to"]);
+        if !after.is_empty() && after.is_subset(&before) {
+            gaps.push(Finding::new(
+                "flow.outcome_unchecked",
+                format!("/edges/{i}/to"),
+                format!(
+                    "path {name} ends on a screen that expects nothing its previous screen did not \
+                     already show; expect the outcome (a saved value, a confirmation, the new row)"
+                ),
+            ));
+        }
+    }
+    if !strict {
+        return gaps
+            .into_iter()
+            .map(|g| {
+                Finding::new(
+                    "flow.weak_journey",
+                    g.pointer,
+                    format!("{}: {}", g.code, g.message),
+                )
+            })
+            .collect();
+    }
+    gaps
+}
+
 fn mark_digest(flow: &Value, edge: &Value) -> String {
     let url = flow["screens"]
         .as_array()
@@ -527,6 +629,7 @@ pub(super) fn draft_bytes(flow: &Value, project: &Path) -> Result<String, Vec<Fi
         .join(".graphhelm/journeys")
         .join(format!("{}.journey.yaml", flow["id"].as_str().unwrap()));
     findings.extend(semantic(&file, flow, project));
+    findings.extend(weak_journey(flow, true));
     if let Err(finding) = compile(flow) {
         findings.push(finding);
     }
@@ -1143,6 +1246,9 @@ fn write_batch(writes: &BTreeMap<std::path::PathBuf, Vec<u8>>) -> std::io::Resul
 fn approval_findings(file: &Path, text: &str, flow: &Value, project: &Path) -> Vec<Finding> {
     let mut findings = semantic(file, flow, project);
     findings.retain(|f| !matches!(f.code, "flow.approval_stale" | "flow.approved_with_drift"));
+    // #1287: nothing is approved that does not say what it proves.
+    findings.retain(|f| f.code != "flow.weak_journey");
+    findings.extend(weak_journey(flow, true));
     if text != canonical(flow, false) {
         findings.push(Finding::new(
             "flow.not_canonical",
@@ -1196,6 +1302,7 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
                 flow["status"].clone()
             };
             json!({"id": id, "title": flow.get("title").cloned().unwrap_or(Value::Null),
+                "purpose": flow.get("purpose").cloned().unwrap_or(Value::Null),
                 "status": status, "approved": flow["approved"], "drift": flow["drift"],
                 "findings": listed, "approvable": accepted && !settled,
                 "screens": flow["screens"], "edges": flow["edges"], "paths": flow["paths"]})
@@ -1769,8 +1876,8 @@ fn inline(value: &Value, fields: &[&str]) -> String {
 fn canonical(value: &Value, approval_projection: bool) -> String {
     let mut out = String::new();
     for field in [
-        "schema", "id", "title", "status", "approved", "base", "actors", "secrets", "risks",
-        "viewport", "storage",
+        "schema", "id", "title", "purpose", "status", "approved", "base", "actors", "secrets",
+        "risks", "viewport", "storage",
     ] {
         if approval_projection && matches!(field, "status" | "approved") {
             continue;
@@ -1790,7 +1897,7 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
             "screens",
             &["id", "title", "url", "state", "expect", "scope"][..],
         ),
-        ("edges", &["id", "from", "to", "acts", "safe"][..]),
+        ("edges", &["id", "from", "to", "intent", "acts", "safe"][..]),
     ] {
         out.push_str(&format!("{group}:\n"));
         let mut entries = value[group].as_array().unwrap().iter().collect::<Vec<_>>();
@@ -1859,6 +1966,57 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1287: a journey that clicks, submits and checks only "success" proves nothing. Defects
+    /// named: a draft without a purpose, a screen without a title, a submit with no input and no
+    /// intent, or an end screen that expects nothing new is accepted; or an approved flow with
+    /// the same gaps is broken instead of flagged. Cost: in memory only.
+    #[test]
+    fn a_journey_that_does_not_say_what_it_proves_is_refused() {
+        let weak: Value = serde_yaml_ng::from_str(
+            "schema: graphhelm.journey-flow/1\nid: lojas\nstatus: draft\napproved: null\nbase: http://127.0.0.1:3000\nactors: [owner]\nsecrets: []\nrisks: []\nscreens:\n  - {id: admin, url: /admin, state: stable, expect: [{role: link, name: Lojas}], scope: unknown}\n  - {id: lojas, title: Store tags, url: /admin/lojas, state: stable, expect: [{role: button, name: Salvar}], scope: unknown}\n  - {id: salvo, url: /admin/lojas, state: success, expect: [{role: button, name: Salvar}], scope: unknown}\nedges:\n  - {id: admin.lojas, from: admin, to: lojas, acts: [{kind: activate, role: link, name: Lojas}]}\n  - {id: lojas.salvar, from: lojas, to: salvo, acts: [{kind: submit, role: button, name: Salvar}]}\npaths:\n  main: [admin.lojas, lojas.salvar]\ndrift: []\n",
+        )
+        .unwrap();
+        let codes = |flow: &Value| {
+            weak_journey(flow, true)
+                .into_iter()
+                .map(|f| f.code)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            codes(&weak),
+            [
+                "flow.purpose_missing",
+                "flow.screen_title_missing",
+                "flow.screen_title_missing",
+                "flow.submit_without_input",
+                "flow.outcome_unchecked"
+            ]
+        );
+        let flagged = weak_journey(&weak, false);
+        assert!(
+            flagged
+                .iter()
+                .all(|f| f.code == "flow.weak_journey" && f.is_warning())
+        );
+        assert_eq!(flagged.len(), 5);
+
+        let mut strong = weak;
+        strong["purpose"] =
+            json!("The owner tags a store and the tag is still there after a reload.");
+        strong["screens"][0]["title"] = json!("Admin home");
+        strong["screens"][2]["title"] = json!("Saved tags, after a reload");
+        strong["screens"][2]["expect"] = json!([{"role": "cell", "name": "parceiro"}]);
+        strong["edges"][1]["acts"] = json!([
+            {"kind": "enter_text", "role": "textbox", "name": "Tag Amazon", "text": "parceiro"},
+            {"kind": "submit", "role": "button", "name": "Salvar"}
+        ]);
+        assert!(codes(&strong).is_empty(), "{:?}", codes(&strong));
+        strong["edges"][1]["acts"] =
+            json!([{"kind": "submit", "role": "button", "name": "Salvar"}]);
+        strong["edges"][1]["intent"] = json!("Save the default tags unchanged");
+        assert!(codes(&strong).is_empty());
+    }
 
     /// #518 (`keel.invariant.permissions`): the agent's own flow writer (explore, heal, drift)
     /// must never publish a safe mark, even one whose digest is right - an agent can compute it.

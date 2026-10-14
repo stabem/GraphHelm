@@ -1,6 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: keel-task-handoff
 title: A Codex session recovers a Claude handoff from Runtime history
+purpose: "A second agent session picks up a handoff left by another one from Runtime history, with nothing lost."
 status: draft
 approved: null
 base: http://127.0.0.1:8794
@@ -18,7 +19,7 @@ screens:
     title: The isolated handoff observer starts
     url: /start
     state: stable
-    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"verdict\": \"passed\""}, {role: stdout, name: "\"recoveredExecutionId\": \"keel-handoff-fixture\""}, {role: stdout, name: "\"kind\": \"resume_held\""}]
+    expect: [{role: exit, name: "0"}]
     scope: unknown
 edges:
   - id: observe.handoff

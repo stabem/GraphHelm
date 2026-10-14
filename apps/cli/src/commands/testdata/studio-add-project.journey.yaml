@@ -1,6 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: studio-add-project
 title: Read how to add another project folder
+purpose: The owner learns how to add another project folder to the Studio.
 status: draft
 approved: null
 base: http://127.0.0.1:5184

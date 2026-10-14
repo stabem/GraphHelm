@@ -1,11 +1,11 @@
 //! `acceptance_map_is_grounded` — the map cannot rust: every prover fn exists exactly once
-//! in the tree, its suite is on the gate's invocation surface, its assert fingerprint
+//! in the tree, its suite is a real CLI suite or the workspace tests, its assert fingerprint
 //! appears inside the test's own body (gutting the test breaks the map), every D-040
 //! citation still appears in the decision register, and the committed document is
 //! byte-identical to what the generator emits.
 
 use acceptance_map::{
-    fn_body, gate_cli_suites, generate, load_clauses, repo_root, rust_sources, verify_artifacts,
+    cli_test_suites, fn_body, generate, load_clauses, repo_root, rust_sources, verify_artifacts,
     verify_demonstration, verify_tracked,
 };
 
@@ -20,15 +20,12 @@ fn acceptance_map_is_grounded() {
             (path, text)
         })
         .collect();
-    let gate = std::fs::read_to_string(root.join("ci/gate.ps1")).expect("gate.ps1 readable");
-    // #104: since #98, the gate discovers CLI suites from apps/cli/tests/*.rs rather than
-    // naming them as literals - a per-prover `gate.contains("'suite'")` check went
-    // permanently vacuous the day that landed. This recomputes the gate's own suite set
-    // (discovery, minus the gate's own named exclusions) instead of string-matching text
-    // the gate no longer carries.
-    let gate_suites = gate_cli_suites(&root);
+    // #104 / #1203: a prover's suite is checked against the DISCOVERED set of CLI suites
+    // (apps/cli/tests/*.rs), never a hand-written list. The gate runner that used to be read here
+    // is retired (AGENTS.md: there is no gate), and so is the clause it alone proved.
+    let cli_suites = cli_test_suites(&root);
 
-    assert_eq!(clauses.clause.len(), 7, "the seven §8 clauses, exactly");
+    assert_eq!(clauses.clause.len(), 6, "the six §8 clauses, exactly");
 
     // The manual run's committed evidence still exists and still hashes to what the run
     // recorded — in both directions (nothing named missing, nothing on disk unnamed) —
@@ -82,8 +79,8 @@ fn acceptance_map_is_grounded() {
 
     for clause in &clauses.clause {
         assert!(
-            clause.gate || !clause.prover.is_empty(),
-            "{}: every clause names a prover or is the gate clause",
+            !clause.prover.is_empty(),
+            "{}: every clause names a prover",
             clause.id
         );
         for prover in &clause.prover {
@@ -114,50 +111,17 @@ fn acceptance_map_is_grounded() {
                 prover.assert_fingerprint,
                 prover.function
             );
-            if prover.suite == "workspace tests" {
+            if prover.suite != "workspace tests" {
                 assert!(
-                    gate.contains("test --workspace"),
-                    "the gate must run the workspace tests stage"
-                );
-            } else {
-                assert!(
-                    gate_suites.iter().any(|suite| suite == &prover.suite),
-                    "{}: suite {} must be on the gate's discovered CLI suite list \
-                     (apps/cli/tests/*.rs minus any suite named in gate.ps1's own \
-                     $excludedSuites map) - discovered {gate_suites:?}",
+                    cli_suites.iter().any(|suite| suite == &prover.suite),
+                    "{}: suite {} must be a discovered CLI suite (apps/cli/tests/*.rs) - \
+                     discovered {cli_suites:?}",
                     clause.id,
                     prover.suite
                 );
             }
         }
     }
-
-    // The gate clause: the script still ends in the GREEN verdict and still carries both
-    // PostgreSQL passes on its surface.
-    assert!(
-        clauses.clause.iter().any(|clause| clause.gate),
-        "one clause is proven by the gate run itself"
-    );
-    assert!(gate.contains("GREEN - every stage passed"));
-    assert!(gate.contains("PostgreSQL ignored matrix"));
-    assert!(gate.contains("PostgreSQL matrix under a non-C collation"));
-    // The suite set must stay DISCOVERED, not revert to a hand-maintained literal array
-    // (#98's own fix) - otherwise `gate_cli_suites` above would silently stop describing what
-    // the gate actually runs.
-    //
-    // #1053 changed WHERE the discovery happens, and this assertion moved with it. The gate used
-    // to walk `apps/cli/tests/*.rs` itself and run one `cargo test --test <suite>` per name; it
-    // now runs `cargo nextest run -p graphhelm-cli` once, so the enumeration is cargo's. That is
-    // a STRONGER form of #98's property, not a weaker one: there is no loop, no list and no
-    // exclusion map left that an edit could narrow -- a new integration target is compiled and
-    // run because it EXISTS. What this pins is that the gate keeps running the whole PACKAGE.
-    // Narrow it to `--test <something>` and `gate_cli_suites` starts over-describing coverage.
-    assert!(
-        gate.contains("nextest run -p graphhelm-cli"),
-        "the gate must still run the whole graphhelm-cli package in one nextest \
-         invocation, so every apps/cli/tests/*.rs target is gated by existing rather than \
-         by being listed"
-    );
 
     // The refused scope: every citation resolves in the decision register, verbatim.
     let register = std::fs::read_to_string(root.join("docs/DECISION_REGISTER.md"))

@@ -565,6 +565,7 @@ fn setup_registers_the_user_mcp_and_upserts_the_user_block_idempotently() {
 fn enabled_graphhelm_plugin_gets_explicit_duplicate_cleanup_with_freshness_guard() {
     let (p, h) = seeded();
     std::fs::create_dir_all(p.path().join(".claude")).unwrap();
+    std::fs::create_dir_all(h.path().join(".claude/plugins")).unwrap();
     let plugin = tempfile::tempdir().unwrap();
     std::fs::write(plugin.path().join(".mcp.json"), serde_json::to_vec(&serde_json::json!({
         "mcpServers": {"graphhelm": {"command": assert_cmd::cargo::cargo_bin!("graphhelm"), "args": ["mcp", "--discover", "--project", "${GRAPHHELM_PROJECT:-.}", "--actor", "agent-chat"]}}

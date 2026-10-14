@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, unlinkSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -92,6 +92,32 @@ export function authorized(presented: string, nonce: string, token: string): boo
   return presented.length > 0 && (sameSecret(presented, nonce) || sameSecret(presented, stableNonce(token)));
 }
 
+/** #1264: where `graphhelm studio open` leaves its one-shot ticket (`<events>.studio-ticket`,
+ * owner-only, beside the token file). */
+function ticketPath(env: Record<string, string>): string | null {
+  const token = tokenPath(env);
+  return token === null || !token.endsWith(".token") ? null : `${token.slice(0, -".token".length)}.studio-ticket`;
+}
+
+/** #1264: true once for the ticket on disk: a match deletes it, so the link in browser history
+ * is dead after its first use. A failed delete refuses, so a ticket can never be used twice. */
+export function consumeTicket(path: string | null, presented: string): boolean {
+  if (path === null || presented.length === 0) return false;
+  let ticket: string;
+  try {
+    ticket = readFileSync(path, "utf8").trim();
+  } catch {
+    return false;
+  }
+  if (ticket.length === 0 || !sameSecret(presented, ticket)) return false;
+  try {
+    unlinkSync(path);
+  } catch {
+    return false;
+  }
+  return true;
+}
+
 function devSession(env: Record<string, string>): Plugin {
   // One nonce per server run. A launcher may inject its own so it can open the browser at the
   // right URL; otherwise it is random and lives only in this process and its terminal output.
@@ -123,10 +149,10 @@ function devSession(env: Record<string, string>): Plugin {
           response.end(JSON.stringify({ ok: false }));
         };
         // The nonce gate: the run's own nonce or the stable key derived from the token on disk
-        // (#1264). Headers are never evidence - any local process can forge them.
+        // (#1264), or the one-shot ticket of `graphhelm studio open`. Headers are never evidence - any local process can forge them.
         const presented = new URL(request.url ?? "/", "http://localhost").searchParams.get("nonce") ?? "";
         const token = readToken(env);
-        if (token === null || !authorized(presented, nonce, token)) {
+        if (token === null || !(authorized(presented, nonce, token) || consumeTicket(ticketPath(env), presented))) {
           refuse();
           return;
         }

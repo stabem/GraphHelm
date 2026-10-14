@@ -700,55 +700,47 @@ pub(super) fn add_project(launch: &mut Command, project: &Path) {
         .arg(plain(project.to_path_buf()));
 }
 
-/// #1264: the Studio session key, HMAC-SHA256(token, "graphhelm-studio-session-v1") in hex.
-/// The dev server (`apps/studio/vite.config.ts`, `stableNonce`) accepts the same value; only a
-/// reader of the owner-only token file can compute it, and it changes when the token rotates.
-pub(super) fn session_key(token: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut key = [0u8; 64];
-    if token.len() > 64 {
-        key[..32].copy_from_slice(&Sha256::digest(token.as_bytes()));
-    } else {
-        key[..token.len()].copy_from_slice(token.as_bytes());
-    }
-    let pad = |byte: u8| key.iter().map(|k| k ^ byte).collect::<Vec<u8>>();
-    let inner = Sha256::new()
-        .chain_update(pad(0x36))
-        .chain_update(b"graphhelm-studio-session-v1")
-        .finalize();
-    let outer = Sha256::new()
-        .chain_update(pad(0x5c))
-        .chain_update(inner)
-        .finalize();
-    outer.iter().map(|b| format!("{b:02x}")).collect()
+/// #1264: the one-shot ticket `graphhelm studio open` leaves for the Studio dev server, next to the
+/// token file (`<events>.token` -> `<events>.studio-ticket`). The dev server accepts it once and
+/// deletes it (`apps/studio/vite.config.ts`), so the link in browser history is dead after use.
+pub(super) fn ticket_path(events: &Path) -> PathBuf {
+    let name = events.file_name().map_or_else(
+        || "events".into(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    events.with_file_name(format!("{name}.studio-ticket"))
 }
 
-/// Opens a URL in the default browser without a console window.
-fn open_browser(url: &str) -> bool {
-    let mut command = if cfg!(windows) {
-        let mut command = Command::new("rundll32");
-        command.args(["url.dll,FileProtocolHandler", url]);
-        command
-    } else if cfg!(target_os = "macos") {
-        let mut command = Command::new("open");
-        command.arg(url);
-        command
-    } else {
-        let mut command = Command::new("xdg-open");
-        command.arg(url);
-        command
-    };
-    #[cfg(windows)]
+/// Writes a fresh random ticket, owner-only where the OS has modes.
+pub(super) fn write_ticket(path: &Path) -> std::io::Result<String> {
+    use std::io::Write;
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|error| std::io::Error::other(error.to_string()))?;
+    let ticket: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let _ = std::fs::remove_file(path);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
     {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
+    options.open(path)?.write_all(ticket.as_bytes())?;
+    Ok(ticket)
+}
+
+/// The command that opens a URL in the default browser, without a console window.
+pub(super) fn browser_command(url: &str) -> Command {
+    let (program, prefix): (&str, &[&str]) = if cfg!(windows) {
+        ("rundll32", &["url.dll,FileProtocolHandler"])
+    } else if cfg!(target_os = "macos") {
+        ("open", &[])
+    } else {
+        ("xdg-open", &[])
+    };
+    let mut command = graphhelm_process::command(program);
+    command.args(prefix).arg(url);
     command
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
 }
 
 pub fn open(args: &StudioOpenArgs) -> Outcome {
@@ -756,27 +748,35 @@ pub fn open(args: &StudioOpenArgs) -> Outcome {
         Ok(project) => project,
         Err(_) => return refused("the current directory could not be read", "/project"),
     };
-    let path = project.join(".graphhelm").join("events.token");
-    let token = match std::fs::read_to_string(&path) {
-        Ok(raw) if !raw.trim().is_empty() && !raw.trim().contains('\n') => raw.trim().to_owned(),
-        _ => {
+    let events = project.join(".graphhelm").join("events");
+    if !events.with_file_name("events.token").is_file() {
+        return refused(
+            format!(
+                "{} has no Runtime token; run `graphhelm studio start` there first",
+                project.display()
+            ),
+            "/project",
+        );
+    }
+    let ticket = match write_ticket(&ticket_path(&events)) {
+        Ok(ticket) => ticket,
+        Err(error) => {
             return refused(
-                format!(
-                    "{} has no Runtime token; run `graphhelm studio start` there first",
-                    project.display()
-                ),
+                format!("the Studio ticket could not be written: {error}"),
                 "/project",
             );
         }
     };
-    let url = format!(
-        "http://127.0.0.1:{}/?session={}",
-        args.port,
-        session_key(&token)
-    );
-    let opened = !args.no_browser && open_browser(&url);
-    // The link is a credential: printed only when the browser could not take it, to the owner's
-    // own terminal (the same trust class as the token file it is derived from).
+    let url = format!("http://127.0.0.1:{}/?session={ticket}", args.port);
+    let opened = !args.no_browser
+        && browser_command(&url)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+    // The link holds a one-shot ticket, dead once the Studio uses it; printed only when no
+    // browser took it, to the owner's own terminal.
     let data = if opened {
         json!({ "opened": true })
     } else {
@@ -1078,11 +1078,40 @@ mod tests {
     }
 
     #[test]
-    fn the_session_key_matches_the_studio_dev_server() {
-        // Same value as `createHmac("sha256", "fixture-token").update("graphhelm-studio-session-v1")`.
+    fn the_open_ticket_is_one_line_next_to_the_token_and_owner_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let events = dir.path().join(".graphhelm").join("events");
+        std::fs::create_dir_all(&events).unwrap();
+        let path = ticket_path(&events);
         assert_eq!(
-            session_key("fixture-token"),
-            "cce0290a9af90e0522bf0de80226e89b4404b2014ee57a6dd316ffd0c68d5bdf"
+            path,
+            dir.path().join(".graphhelm").join("events.studio-ticket")
+        );
+        let first = write_ticket(&path).unwrap();
+        let second = write_ticket(&path).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), second);
+        assert_eq!(second.len(), 32);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[test]
+    fn the_browser_opens_through_the_hidden_process_helper() {
+        let command = browser_command("http://127.0.0.1:5183/?session=t");
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("http://127.0.0.1:5183/?session=t")
         );
     }
 

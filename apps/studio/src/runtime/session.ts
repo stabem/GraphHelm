@@ -51,15 +51,27 @@ function browserStore(): KeyStore {
   }
 }
 
-async function ask(fetchImpl: typeof fetch, nonce: string): Promise<Response | null> {
-  try {
-    const response = await fetchImpl(`${SESSION_PATH}?nonce=${encodeURIComponent(nonce)}`, {
-      headers: { Accept: "application/json" },
-    });
-    return response.ok ? response : null;
-  } catch {
-    return null;
-  }
+/** #1264: asks already on the wire, by nonce. A one-shot `graphhelm studio open` ticket is spent by
+ * the first request, so a second boot of the same page (React's dev double effect) must share that
+ * answer instead of spending a dead ticket and showing the gate. Cleared when the ask settles. */
+const inFlight = new Map<string, Promise<unknown>>();
+
+function ask(fetchImpl: typeof fetch, nonce: string): Promise<unknown> {
+  const pending = inFlight.get(nonce);
+  if (pending !== undefined) return pending;
+  const request = (async () => {
+    try {
+      const response = await fetchImpl(`${SESSION_PATH}?nonce=${encodeURIComponent(nonce)}`, {
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) return null;
+      return await response.json();
+    } catch {
+      return null;
+    }
+  })().finally(() => inFlight.delete(nonce));
+  inFlight.set(nonce, request);
+  return request;
 }
 
 export async function devSession(
@@ -83,23 +95,15 @@ export async function devSession(
   const candidates = [presented, remembered].filter(
     (nonce, index, all): nonce is string => typeof nonce === "string" && nonce.length > 0 && all.indexOf(nonce) === index,
   );
-  let response: Response | null = null;
+  let payload: unknown = null;
   for (const nonce of candidates) {
-    response = await ask(fetchImpl, nonce);
-    if (response !== null) break;
+    payload = await ask(fetchImpl, nonce);
+    if (payload !== null) break;
     // A remembered key the server now refuses belongs to an old token; keeping it only adds a
     // doomed request to every load.
     if (nonce === remembered) {
       try { store?.removeItem(SESSION_KEY_STORAGE); } catch { /* storage refused: nothing kept */ }
     }
-  }
-  if (response === null) return null;
-
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    return null;
   }
   if (payload === null || typeof payload !== "object") return null;
 

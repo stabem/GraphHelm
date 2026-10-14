@@ -97,6 +97,17 @@ describe("the dev session", () => {
     sessionStorage.clear();
   });
 
+  it("shares one ask between two boots of the page, so a one-shot ticket is spent once", async () => {
+    const fetchImpl = vi.fn(async () => okReply());
+    const [first, second] = await Promise.all([
+      devSession(fetchImpl as never, "?session=ticket", memory()),
+      devSession(fetchImpl as never, "?session=ticket", memory()),
+    ]);
+    expect(first?.token).toBe("fixture");
+    expect(second?.token).toBe("fixture");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("forgets a remembered key the server refuses (token rotated) and shows the gate", async () => {
     const store = memory();
     store.setItem(SESSION_KEY_STORAGE, key);

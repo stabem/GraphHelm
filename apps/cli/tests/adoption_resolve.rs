@@ -605,7 +605,8 @@ fn enabled_graphhelm_plugin_gets_explicit_duplicate_cleanup_with_freshness_guard
         preview["data"]["suggestedResolutions"]
             .as_array()
             .unwrap()
-            .contains(&"home/.claude.json=use-plugin-mcp".into())
+            .contains(&"home/.claude.json=use-plugin-mcp".into()),
+        "{preview}"
     );
     let (ok, resolved) = json(
         setup(p.path(), h.path())

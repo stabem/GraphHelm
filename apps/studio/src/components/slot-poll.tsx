@@ -12,21 +12,47 @@ export function useSlotPoll(client: SlotSource | null, everyMs = SLOT_POLL_MS): 
     if (!client) { setSlots([]); return; }
     let live = true;
     let latestRead = 0;
+    let consecutiveFailures = 0;
     setSlots([]);
     const orderedRead = () => {
       const readId = ++latestRead;
       void Promise.resolve().then(() => client.workspaceSlots()).then((s) => {
-        if (live && readId === latestRead) setSlots(s);
+        if (live && readId === latestRead) {
+          consecutiveFailures = 0;
+          setSlots(s);
+        }
       }, (e: unknown) => {
         if (!live || readId !== latestRead) return;
         const status = (e as { status?: unknown } | null)?.status;
         if (status === 403 || status === 404) { setSlots([]); return; }
-        setSlots((known) => known.map((slot) => ({ root: slot.root, ok: false, errorCodes: [] })));
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= 3) {
+          setSlots((known) => known.map((slot) => ({ root: slot.root, ok: false, errorCodes: [] })));
+        } else if (consecutiveFailures === 1 && latestRead === 1) {
+          setSlots([{ root: "unavailable", ok: false, errorCodes: [] }]);
+        }
       });
     };
-    orderedRead();
-    const id = setInterval(orderedRead, everyMs);
-    return () => { live = false; clearInterval(id); };
+    let id: ReturnType<typeof setInterval> | undefined;
+    const pauseIfHidden = () => {
+      if (document.visibilityState === "hidden") {
+        if (id !== undefined) clearInterval(id);
+        id = undefined;
+      } else if (id === undefined) {
+        orderedRead();
+        id = setInterval(orderedRead, everyMs);
+      }
+    };
+    document.addEventListener("visibilitychange", pauseIfHidden);
+    if (document.visibilityState !== "hidden") {
+      orderedRead();
+      id = setInterval(orderedRead, everyMs);
+    }
+    return () => {
+      live = false;
+      document.removeEventListener("visibilitychange", pauseIfHidden);
+      if (id !== undefined) clearInterval(id);
+    };
   }, [client, everyMs]);
   return slots;
 }

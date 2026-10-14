@@ -486,13 +486,50 @@ class Reach(unittest.TestCase):
         self.assertEqual(plans["graphhelm-cli"], [])
         self.assertIn("bundle metadata", unsupported[0]["reason"])
 
-    def test_whole_package_required_features_are_explicitly_unsupported(self):
+    def test_whole_package_required_features_run_with_those_features(self):
+        # #1280: a gated target is planned with its features, not reported unsupported (which made
+        # run_reached refuse the whole plan). The features go before libtest's `--`.
         plans, unsupported = rt.expand_whole_packages({"graphhelm-cli"}, [{"name": "graphhelm-cli", "targets": [
             {"name": "feature_test", "kind": "test", "test": True, "doctest": False,
-             "requiredFeatures": ["special"]},
+             "requiredFeatures": ["special", "other"]},
         ]}])
-        self.assertEqual(plans["graphhelm-cli"], [])
-        self.assertEqual(unsupported[0]["reason"], "target requires features: special")
+        self.assertEqual(unsupported, [])
+        self.assertEqual([step["argv"] for step in plans["graphhelm-cli"]], [[
+            "cargo", rt.TOOLCHAIN, "test", "--locked", "-p", "graphhelm-cli", "--test", "feature_test",
+            "--features", "special,other", "--", "--test-threads=2",
+        ]])
+
+    def test_a_single_gated_target_runs_with_its_features(self):
+        # #1280: a touched gated test file is a single-target step; it needs the same features
+        # the whole-package path adds, in both the executable step and the printed command.
+        metadata = [{"name": "graphhelm-postgres-event-store", "targets": [
+            {"name": "concurrency", "kind": "test", "test": True, "doctest": False,
+             "requiredFeatures": ["test-support"]},
+            {"name": "plain", "kind": "test", "test": True, "doctest": False, "requiredFeatures": []},
+        ]}]
+        single = {("graphhelm-postgres-event-store", "concurrency", None),
+                  ("graphhelm-postgres-event-store", "plain", None)}
+        argvs = [step["argv"] for step in rt.steps(set(), single, [], package_metadata=metadata)
+                 if "graphhelm-postgres-event-store" in step["argv"] and "--test" in step["argv"]]
+        gated = next(argv for argv in argvs if "concurrency" in argv)
+        plain = next(argv for argv in argvs if "plain" in argv)
+        self.assertEqual(gated[gated.index("--features") + 1], "test-support")
+        self.assertLess(gated.index("--features"), gated.index("--"))
+        self.assertNotIn("--features", plain)
+        printed = rt.commands(set(), single, [], package_metadata=metadata)
+        self.assertTrue(any("--test concurrency --features test-support --" in line for line in printed), printed)
+
+    def test_the_postgres_event_store_plans_its_gated_targets_on_the_real_workspace(self):
+        # #1280, the case seen live on #1279: graphhelm-postgres-event-store declares two test
+        # targets with required-features = ["test-support"].
+        packages = rt.workspace(Path(__file__).resolve().parents[2])
+        plans, unsupported = rt.expand_whole_packages({"graphhelm-postgres-event-store"}, packages)
+        self.assertEqual(unsupported, [])
+        gated = [step["argv"] for step in plans["graphhelm-postgres-event-store"] if "--features" in step["argv"]]
+        self.assertEqual(len(gated), 2, plans["graphhelm-postgres-event-store"])
+        for argv in gated:
+            self.assertEqual(argv[argv.index("--features") + 1], "test-support")
+            self.assertLess(argv.index("--features"), argv.index("--"))
 
     def test_missing_target_metadata_has_empty_plan_without_broad_fallback(self):
         plans, unsupported = rt.expand_whole_packages({"graphhelm-cli"}, [])

@@ -689,11 +689,6 @@ def expand_whole_packages(whole, packages):
         doc_added = False
         for target in targets:
             required = target.get("requiredFeatures", [])
-            if required:
-                unsupported.append({"package": name, "target": target["name"],
-                                    "kind": target["kind"],
-                                    "reason": "target requires features: " + ", ".join(required)})
-                continue
             if not target.get("harnessKnown", True):
                 unsupported.append({"package": name, "target": target["name"],
                                     "kind": target["kind"],
@@ -718,6 +713,11 @@ def expand_whole_packages(whole, packages):
                     unsupported.append({"package": name, "target": target["name"],
                                         "kind": target["kind"], "reason": "unsupported Cargo target kind"})
                 continue
+            if required:
+                # #1280: run a gated target with its features rather than refusing the plan.
+                # Cargo reads them before libtest's `--`.
+                cut = argv.index("--") if "--" in argv else len(argv)
+                argv = argv[:cut] + ["--features", ",".join(required)] + argv[cut:]
             if name == CLI and target.get("kind") == "test" and target.get("name") == "cli":
                 bundle_steps = _cli_bundle_steps(package, target)
                 if not bundle_steps:
@@ -774,6 +774,19 @@ def _group_single(single):
     return sorted(grouped_items, key=lambda item: (item[0], str(item[1])))
 
 
+def _single_features(package_metadata, package, target):
+    """#1280: `--features` for a single-target step whose test or bin target declares them."""
+    if not isinstance(target, str) or target.startswith("lib:"):
+        return []
+    name, kind = (target[4:], "bin") if target.startswith("bin:") else (target, "test")
+    meta = next((item for item in (package_metadata or []) if item["name"] == package), None)
+    for candidate in (meta or {}).get("targets", []):
+        if candidate.get("name") == name and candidate.get("kind") == kind:
+            required = candidate.get("requiredFeatures", [])
+            return ["--features", ",".join(required)] if required else []
+    return []
+
+
 def _target_flags(target):
     if isinstance(target, tuple):
         return ["--bin", target[0][4:], "--test", target[1]]
@@ -807,7 +820,7 @@ def commands(whole, single, studio, tools=(), validate=(), lint_packages=None, p
                 raise ValueError("CLI bundle metadata is missing or empty")
             cmds.extend(_argv_text(step["argv"]) for step in bundle_steps)
             continue
-        kind = " ".join(_target_flags(target))
+        kind = " ".join(_target_flags(target) + _single_features(package_metadata, package, target))
         filters = "" if modules is None else " " + " ".join(modules)
         cmds.append(f"cargo {TOOLCHAIN} test --locked -p {package} {kind} {TEST_THREADS}{filters}")
     rust = sorted(whole | {s[0] for s in single})
@@ -907,7 +920,7 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
                 raise ValueError("CLI bundle metadata is missing or empty")
             out.extend(bundle_steps)
             continue
-        kind = _target_flags(target)
+        kind = _target_flags(target) + _single_features(package_metadata, package, target)
         argv = ["cargo", TOOLCHAIN, "test", "--locked", "-p", package, *kind]
         argv.extend(TEST_THREADS.split())
         if modules is not None:

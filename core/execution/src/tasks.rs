@@ -221,6 +221,14 @@ pub struct TaskEventRecord {
     pub claim_sequence: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// #1193: how long a claim stays live without a heartbeat, in seconds; a claim without the
+    /// field carries the schema's default, 1800.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_seconds: Option<u64>,
+    /// #1193: `graphhelm` on a release the Stop reconciler signed for the lane the record names;
+    /// absent on a lane's own release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub released_by: Option<String>,
     /// #502: when the Runtime appended the record (its own clock, not the lane's `at`).
     #[serde(default)]
     pub occurred_at: Option<PersistedTimestamp>,
@@ -259,6 +267,8 @@ impl TaskEventRecord {
             parent: None,
             claim_sequence: None,
             reason: None,
+            lease_seconds: None,
+            released_by: None,
             occurred_at: None,
             critic: None,
             plan: None,
@@ -510,6 +520,11 @@ pub fn parse_task_event(
             record.repo = repo;
             record.parent = parent;
             record.journeys = journeys;
+            // #1193: the lease, 60 s to a day; absent means the schema's default.
+            record.lease_seconds = Some(match document.get("leaseSeconds") {
+                None => 1800,
+                Some(value) => bounded(value, 60, 86400)?,
+            });
         }
         TaskEventKind::Planned => {
             let plan = task_plan(document)?;
@@ -526,12 +541,31 @@ pub fn parse_task_event(
                 return None;
             }
             let reason = text(field("reason"), 1000)?;
-            if !is_actor("lane") {
-                return None;
-            }
-            record.lane = Some(actor_id.to_owned());
+            let lane = text(field("lane"), 128)?;
+            // #1193: `releasedBy: graphhelm` is the Stop reconciler ending another lane's lapsed
+            // claim; it is read only when `graphhelm` signed it and `lane` names someone else.
+            // Without it, the release is the lane's own (the same identity rule as the Runtime).
+            let released_by = match document.get("releasedBy") {
+                None => {
+                    if lane != actor_id {
+                        return None;
+                    }
+                    None
+                }
+                Some(value) => {
+                    if value.as_str() != Some("graphhelm")
+                        || actor_id != "graphhelm"
+                        || lane == "graphhelm"
+                    {
+                        return None;
+                    }
+                    Some("graphhelm".to_owned())
+                }
+            };
+            record.lane = Some(lane);
             record.claim_sequence = Some(claim_sequence);
             record.reason = Some(reason);
+            record.released_by = released_by;
         }
         TaskEventKind::Heartbeat => {
             if !is_actor("lane")
@@ -851,7 +885,13 @@ pub struct TaskState {
     pub last_sequence: u64,
     /// #729: sequence of this slice's original claim, used to reject releases of another claim.
     pub claim_sequence: Option<u64>,
+    /// The lane that ended the claim: the lane itself, or `graphhelm` (#1193) when the Stop
+    /// reconciler released it as lapsed.
     pub released_by: Option<String>,
+    /// #1193: the Runtime's time of this slice's original claim, and that claim's lease in
+    /// seconds; the overdue state is computed where the Runtime's clock is, never here.
+    pub claimed_at: Option<PersistedTimestamp>,
+    pub lease_seconds: Option<u64>,
 }
 
 /// #562: a design critic round whose task nobody has claimed: no issue, PR or branch.
@@ -954,6 +994,8 @@ fn new_state(event: &TaskEventRecord) -> TaskState {
         last_sequence: 0,
         claim_sequence: None,
         released_by: None,
+        claimed_at: None,
+        lease_seconds: None,
     }
 }
 
@@ -1254,7 +1296,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
             if let Some(latest) = latest
                 && latest.state.claim_sequence == event.claim_sequence
             {
-                latest.state.released_by = event.lane.clone();
+                latest.state.released_by = event.released_by.clone().or_else(|| event.lane.clone());
                 routes.push(Route {
                     sequence: event.sequence,
                     slice: latest.id,
@@ -1406,6 +1448,8 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 }
                 if state.claim_sequence.is_none() {
                     state.claim_sequence = Some(event.sequence);
+                    state.claimed_at = event.occurred_at.clone();
+                    state.lease_seconds = event.lease_seconds;
                 }
             }
             TaskEventKind::Planned => {

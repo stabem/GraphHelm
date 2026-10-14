@@ -41,6 +41,32 @@ class KeelStopHook(unittest.TestCase):
             self.assertIsNone(keel_stop_hook.decide(self.repo, {"session_id": "s1"}))
         record.assert_called_once_with(envelope, {"session_id": "s1"})
 
+    def test_undelivered_signal_is_not_cached(self):
+        """#1228 review: a Runtime failure on record_check retries on the next Stop."""
+        self.code(20)
+        (self.repo / ".graphhelm").mkdir()
+        (self.repo / ".graphhelm" / "keel-card.json").write_text("{}")
+        cli = self.repo.parent / f"{self.repo.name}-graphhelm"
+        cli.write_text("v1")
+        self.addCleanup(cli.unlink)
+        real_run = subprocess.run
+        calls = []
+
+        def fake_run(cmd, *args, **kwargs):
+            if cmd[0].endswith("-graphhelm"):
+                calls.append(cmd)
+                return mock.Mock(returncode=0, stdout="{}")
+            return real_run(cmd, *args, **kwargs)
+
+        with mock.patch.object(keel_stop_hook.shutil, "which", return_value=str(cli)), \
+             mock.patch.object(keel_stop_hook.subprocess, "run", side_effect=fake_run), \
+             mock.patch.object(keel_stop_hook, "_execution", return_value="run-1"), \
+             mock.patch.object(keel_record, "record_check", side_effect=[False, True, True]):
+            keel_stop_hook.decide(self.repo, {})
+            keel_stop_hook.decide(self.repo, {})  # retried: first signal was lost
+            keel_stop_hook.decide(self.repo, {})  # delivered last time: cached now
+        self.assertEqual(len(calls), 2)
+
     def test_unchanged_state_reuses_check_and_records_once(self):
         """#1228: a second Stop on the same diff neither reruns the CLI nor re-posts the signal."""
         self.code(20)

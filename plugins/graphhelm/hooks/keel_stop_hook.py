@@ -135,6 +135,16 @@ def _store(repo: Path, fingerprint: str | None, returncode: int, stdout: str) ->
         pass
 
 
+def forget(repo: Path) -> None:
+    """Drop the cached verdict, so the next Stop checks and records again."""
+    path = _cache_path(repo)
+    try:
+        if path:
+            path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def decide(repo: Path, payload: dict | None = None) -> str | None:
     """The reason to block, or None to let the turn end."""
     global LAST_FROM_CACHE
@@ -158,12 +168,16 @@ def decide(repo: Path, payload: dict | None = None) -> str | None:
                                 capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW)
         returncode, stdout = result.returncode, result.stdout
         if returncode in (0, 2):
+            delivered = False
             try:
                 from keel_record import record_check
-                record_check(json.loads(stdout), payload or {})
+                delivered = record_check(json.loads(stdout), payload or {})
             except Exception:  # noqa: BLE001 - recording must not change the gate
                 pass
-            _store(repo, fingerprint, returncode, stdout)
+            # Cache only once the signal is on the execution (or there is none to send it to), so
+            # a Runtime hiccup is retried on the next Stop instead of lost.
+            if delivered or not _execution(payload or {}):
+                _store(repo, fingerprint, returncode, stdout)
     else:
         returncode, stdout = hit
         LAST_FROM_CACHE = True
@@ -200,11 +214,14 @@ def main() -> int:
         if LAST_FROM_CACHE:  # this exact refusal was already recorded on this execution (#1228)
             return 0
         # The decision is already printed: recording comes after it and can never undo it.
+        delivered = False
         try:
             from keel_record import record_block
-            record_block("stop", reason, payload)
+            delivered = record_block("stop", reason, payload)
         except Exception:  # noqa: BLE001
             pass
+        if not delivered and _execution(payload):
+            forget(Path(top))  # the refusal never reached the execution: retry on the next Stop
     return 0
 
 

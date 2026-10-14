@@ -1,5 +1,5 @@
 import "./mission-view.css";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { JourneyFlowView, JourneyFlowsView, JourneyRunView, JourneyView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
 import type { TaskEventRecord } from "../runtime/team-tasks";
@@ -358,6 +358,12 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
       {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
   </>;
   const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} {...(onOpenNode ? { onOpenNode } : {})} />;
+  const contentRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (sub === "test" && stepId !== null) {
+      contentRef.current?.querySelector(".tc-head")?.scrollIntoView?.({ block: "start" });
+    }
+  }, [sub, stepId]);
   if (sel === null) return <div className="mv" data-wide="true" data-page={page}>
     {routeFailed}{historyFailedCount > 0 && <div role="alert">History partly loaded · {historyFailedCount} records could not be read · <button type="button" onClick={onRetryHistory}>Retry</button></div>}{header}
     {sub === "lanes" ? <div className="mv-pad">{lanesView}</div>
@@ -394,6 +400,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
     onSelectJourney?.(journey.contractId);
     setStepId(id);
     setFrame(Math.max(0, journey.steps.findIndex((s) => s.stepId === id)));
+    if (contentRef.current) contentRef.current.scrollTop = 0;
     setSub("test");
   };
   const reset = () => { setProofJid(null); setStepId(null); setTaskKey(undefined); setStageCol(null); if (sub === "test") setSub("graph"); };
@@ -617,7 +624,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
             )}
           </nav>
         )}
-        <div className="mv-content">
+        <div className="mv-content" ref={contentRef}>
           {page !== "full" && sub === "graph" && runGraph}
           {sub === "graph" && group && <IssueGraph group={group} stepFor={stepFor} selectedTaskKey={shownTask} selectedCol={stageCol}
             onSelectTask={(key) => { setTaskKey(key); setStageCol(null); }} onSelectCol={(c) => { setStageCol(c); setTaskKey(null); }} onOpenTest={openTest} health={health} pace={pace}

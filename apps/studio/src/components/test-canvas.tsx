@@ -38,6 +38,15 @@ export function TestCanvas({ frames, selected, onSelect, frameUrl, onMarkSafe, o
         </span>
       </div>
       {runLine}
+      <div className="tc-frame-bar">
+        <div className="tc-scrub" aria-label="Frames">
+          {frames.map((f, i) => (
+            <button key={f.stepId} type="button" className="tc-tick" data-status={f.status} aria-pressed={i === selected}
+              aria-label={`Jump to frame ${f.n}`} onClick={() => onSelect(i)} />
+          ))}
+        </div>
+        <span className="tc-muted">click a frame to jump</span>
+      </div>
       <ol className="tc-strip" aria-label="Test actions">
         {frames.map((f, i) => (
           <li key={f.stepId} className="tc-strip-item">
@@ -100,13 +109,6 @@ export function TestCanvas({ frames, selected, onSelect, frameUrl, onMarkSafe, o
             <p className="tc-muted">No console captured</p>
           </div>
           <div className="tc-ins-foot">
-            <div className="tc-scrub" aria-label="Frames">
-              {frames.map((f, i) => (
-                <button key={f.stepId} type="button" className="tc-tick" data-status={f.status} aria-pressed={i === selected}
-                  aria-label={`Jump to frame ${f.n}`} onClick={() => onSelect(i)} />
-              ))}
-            </div>
-            <span className="tc-muted">click a frame to jump</span>
             {cur.status === "waits_for_you" && (
               <div className="tc-decide">
                 <button type="button" className="tc-primary" onClick={() => {

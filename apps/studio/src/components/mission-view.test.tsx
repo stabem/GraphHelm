@@ -288,6 +288,36 @@ describe("MissionView", () => {
     expect(screen.getByRole("region", { name: "Work by issue" })).toBeInTheDocument();
   });
 
+  it("#988: opens the test at its header with the frame bar before the canvas", async () => {
+    const scrollIntoView = vi.fn();
+    const priorScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
+    try {
+    const user = fastUserEvent();
+    const { container } = render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0}
+      runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await user.click(screen.getByRole("tab", { name: "Proof" }));
+    const content = container.querySelector<HTMLElement>(".mv-content")!;
+    const body = container.querySelector<HTMLElement>(".mv-body")!;
+    content.scrollTop = 66;
+    body.scrollTop = 2873;
+    await user.click(screen.getByRole("button", { name: "Open test for step 1" }));
+    expect(content.scrollTop).toBe(0);
+    expect(body.scrollTop).toBe(2873);
+    const canvas = container.querySelector(".tc")!;
+    const header = canvas.querySelector(".tc-head")!;
+    expect(header).toBeInTheDocument();
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    expect(scrollIntoView.mock.instances[0]).toBe(header);
+    const frames = canvas.querySelector(".tc-scrub")!;
+    expect(frames).toBeInTheDocument();
+    expect(frames.compareDocumentPosition(canvas.querySelector(".tc-main")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    } finally {
+      if (priorScrollIntoView) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", priorScrollIntoView);
+      else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    }
+  });
+
   it("#813: draft note is separate from the journey name and 0/2 has no proven fill", async () => {
     const two: JourneyView[] = [{ ...journeys[0]!, contractId: "add", title: "Add a model (draft: the test setup has no model gateway, so the Add model button is off)",
       steps: ["open", "save"].map((id) => ({ stepId: id, screen: { screenId: id, title: id, scopePaths: [] }, promises: [] })) }];

@@ -23,12 +23,13 @@
         "title": {"$ref": "#/$defs/title"},
         "summary": {"$ref": "#/$defs/summary"},
         "parent": {"description": "The issue whose work turned this task up (#514); the Studio draws this task inside that issue's card.", "$ref": "#/$defs/positive"},
-        "journeys": {"description": "The journey contract ids the issue serves (#577); the Studio Graph tab links the task to them from the claim on.", "type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/taskId"}}
+        "journeys": {"description": "The journey contract ids the issue serves (#577); the Studio Graph tab links the task to them from the claim on.", "type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/taskId"}},
+        "leaseSeconds": {"description": "#1193: how long the claim stays live without a heartbeat, in seconds. The tasks fold reads the claim as overdue once the later of the claim and its last heartbeat plus this lease has passed; absent means 1800.", "type": "integer", "minimum": 60, "maximum": 86400}
       }
     },
     {
       "title": "task.released",
-      "description": "#729: release only the actor's pre-PR claim, bound to its exact claim record sequence.",
+      "description": "#729: release only the actor's pre-PR claim, bound to its exact claim record sequence. #1193: the reconciler, signing as graphhelm with releasedBy, releases the named lane's overdue claim.",
       "type": "object",
       "required": ["schema", "taskId", "revision", "at", "lane", "claimSequence", "reason"],
       "additionalProperties": false,
@@ -39,7 +40,8 @@
         "at": {"$ref": "#/$defs/at"},
         "lane": {"$ref": "#/$defs/actor"},
         "claimSequence": {"$ref": "#/$defs/positive"},
-        "reason": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
+        "reason": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+        "releasedBy": {"description": "#1193: present only when the recording actor is graphhelm (the Stop reconciler) and lane names another actor whose claim lapsed; the Runtime refuses any other combination.", "const": "graphhelm"}
       }
     },
     {

@@ -207,6 +207,8 @@ def parse(argv):
     p.add_argument("--release-reason", help="released: why this pre-PR claim is being released")
     p.add_argument("--parent", type=int, help="claimed: the issue whose work turned this task up (#514)")
     p.add_argument("--assigned-by", help="claimed: who ordered the work, as reported by this lane")
+    p.add_argument("--lease-seconds", type=int, default=1800,
+                   help="claimed: how long the claim stays live without a heartbeat (60..86400; #1193)")
     p.add_argument("--pr", type=int)
     p.add_argument("--head", help="the PR head sha the step is about")
     p.add_argument("--reviewer")
@@ -374,7 +376,9 @@ def document(args, now):
         doc.update(lane=args.lane)
     elif args.kind == "claimed":
         need(args, "branch")
-        doc.update(issue=args.issue, lane=args.lane, branch=args.branch)
+        if not 60 <= args.lease_seconds <= 86400:
+            sys.exit("task_record: --lease-seconds must be from 60 to 86400")
+        doc.update(issue=args.issue, lane=args.lane, branch=args.branch, leaseSeconds=args.lease_seconds)
         if args.assigned_by is not None:
             if not args.assigned_by or len(args.assigned_by) > 128 or not args.assigned_by.isprintable() or args.assigned_by == args.lane:
                 sys.exit("task_record: --assigned-by must name someone other than the lane in 1-128 printable characters")

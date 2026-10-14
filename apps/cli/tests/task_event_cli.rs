@@ -371,6 +371,48 @@ fn heartbeat_needs_an_open_claim_and_a_pr_ends_it() {
     assert_eq!(history(&events).len(), head);
 }
 
+/// #1193 (plan A2): a claim carries its lease. Before: `leaseSeconds` was an unknown key and the
+/// whole claim was refused (`GHCLI003`), so no lane could state how long its claim stays live.
+/// Now a lease of 60 s to a day is admitted and one outside that range is refused with nothing
+/// appended. Cost: one held fixture run and three CLI signals.
+#[test]
+fn a_claim_carries_a_lease_within_bounds() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let mut claim = as_actor(package_fixture("claimed"));
+    claim["leaseSeconds"] = json!(1800);
+    let admitted = signal(
+        scratch.path(),
+        &events,
+        "lease-claim",
+        "task.claimed",
+        ACTOR,
+        &claim,
+    );
+    assert_eq!(admitted["ok"], true, "{admitted}");
+    let head = history(&events).len();
+    for (id, lease) in [
+        ("lease-short", json!(59)),
+        ("lease-long", json!(86401)),
+        ("lease-text", json!("1800")),
+    ] {
+        let mut bad = claim.clone();
+        bad["taskId"] = json!("issue-1194");
+        bad["issue"] = json!(1194);
+        bad["leaseSeconds"] = lease;
+        let refused = signal(scratch.path(), &events, id, "task.claimed", ACTOR, &bad);
+        assert_eq!(
+            refused["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID",
+            "{id}: {refused}"
+        );
+    }
+    assert_eq!(
+        history(&events).len(),
+        head,
+        "a refused lease appends nothing"
+    );
+}
+
 #[test]
 fn release_ends_heartbeat_eligibility_for_its_claim() {
     let scratch = tempfile::tempdir().unwrap();

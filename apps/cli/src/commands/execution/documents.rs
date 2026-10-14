@@ -165,7 +165,13 @@ pub(crate) fn validate_task_event(
     let document: serde_json::Value = serde_json::from_str(text).map_err(|_| invalid())?;
     // #419: the lane, reviewer or merger a record names is an identity, refused as one (DELIVERY.md
     // "Task records"), before the shape check, so a wrong name is never reported as a wrong shape.
+    // #1193: a release signed by `graphhelm` (the Stop reconciler) names the lane whose claim
+    // lapsed, so its identity is the signer, not the named lane; `releasedBy` says so and is
+    // refused for every other signer below, in the shape check.
+    let graphhelm_release =
+        kind == "task.released" && document["releasedBy"].as_str() == Some("graphhelm");
     let identity = match kind {
+        "task.released" if graphhelm_release => Some("releasedBy"),
         "task.claimed"
         | "task.planned"
         | "task.released"
@@ -284,7 +290,11 @@ pub(crate) fn validate_task_event(
                 // #514: the issue whose work turned this task up; optional, a positive number.
                 && (document.get("parent").is_none() || count("parent"))
                 // #577: the journeys the issue serves; optional, the same ids as pr_opened.
-                && (document.get("journeys").is_none() || ids("journeys")),
+                && (document.get("journeys").is_none() || ids("journeys"))
+                // #1193: the lease, 60 s to a day; absent means the fold's default (1800 s).
+                && document.get("leaseSeconds").is_none_or(|value| {
+                    value.as_u64().is_some_and(|n| (60..=86400).contains(&n))
+                }),
             &[
                 "issue",
                 "lane",
@@ -296,17 +306,24 @@ pub(crate) fn validate_task_event(
                 "parent",
                 "journeys",
                 "assignedBy",
+                "leaseSeconds",
             ],
         ),
         "task.released" => (
             count("claimSequence")
-                && is_actor("lane")
+                // #1193: the lane releases its own claim, or `graphhelm` releases a lapsed claim
+                // of the lane it names; `releasedBy` with any other signer or value is refused.
+                && (if graphhelm_release {
+                    actor_id == "graphhelm" && document["lane"].as_str().is_some_and(|lane| lane != "graphhelm")
+                } else {
+                    document.get("releasedBy").is_none() && is_actor("lane")
+                })
                 && document["reason"].as_str().is_some_and(|reason| {
                     !reason.is_empty()
                         && reason.chars().count() <= 500
                         && !reason.chars().any(char::is_control)
                 }),
-            &["lane", "claimSequence", "reason"],
+            &["lane", "claimSequence", "reason", "releasedBy"],
         ),
         "task.heartbeat" => (is_actor("lane"), &["lane"]),
         "task.planned" => (

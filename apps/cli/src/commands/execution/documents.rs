@@ -521,9 +521,11 @@ pub(crate) fn validate_task_event(
             // claim remains releasable even when an earlier claim's PR was recorded after it.
             let mut open_claims = Vec::new();
             let mut opened_prs = Vec::new();
+            // #1193: a release signed by `graphhelm` ends the lane's claim too; it is kept here
+            // only when its document names this lane (checked once the record is open).
             for event in history
                 .iter()
-                .filter(|event| event.actor.id().as_str() == lane)
+                .filter(|event| event.actor.id().as_str() == lane || graphhelm_released(event))
             {
                 let EventKind::SignalRecorded(recorded) = &event.kind else {
                     continue;
@@ -562,7 +564,9 @@ pub(crate) fn validate_task_event(
                         "/signal/description/claimSequence",
                     )
                 })?;
-                if event_doc["taskId"] != task_id {
+                if event_doc["taskId"] != task_id
+                    || (event.actor.id().as_str() != lane && event_doc["lane"] != lane)
+                {
                     continue;
                 }
                 match recorded.kind.as_str() {
@@ -608,6 +612,14 @@ pub(crate) fn validate_task_event(
     }
 }
 
+/// #1193: a `task.released` recorded by the `graphhelm` actor (the Stop reconciler releasing a
+/// lapsed claim). Both claim folds admit it beside the lane's own records and keep it only when
+/// its document names the lane being folded.
+fn graphhelm_released(event: &graphhelm_protocols::EventEnvelope) -> bool {
+    event.actor.id().as_str() == "graphhelm"
+        && matches!(&event.kind, EventKind::SignalRecorded(recorded) if recorded.kind == "task.released")
+}
+
 fn validate_heartbeat(
     document: &serde_json::Value,
     lane: &str,
@@ -633,9 +645,11 @@ fn validate_heartbeat(
     let mut open_claims = Vec::new();
     let mut opened_prs = Vec::new();
     let mut last_heartbeat = None;
+    // #1193: a release signed by `graphhelm` ends the lane's claim too (kept only when its
+    // document names this lane, checked below).
     for event in history
         .iter()
-        .filter(|event| event.actor.id().as_str() == lane)
+        .filter(|event| event.actor.id().as_str() == lane || graphhelm_released(event))
     {
         let EventKind::SignalRecorded(recorded) = &event.kind else {
             continue;
@@ -659,14 +673,18 @@ fn validate_heartbeat(
         let envelope: serde_json::Value = plaintext
             .expose(|bytes| serde_json::from_slice(bytes))
             .map_err(|_| invalid_history())?;
-        if envelope["type"] != recorded.kind || envelope["source"]["id"] != lane {
+        if envelope["type"] != recorded.kind
+            || envelope["source"]["id"] != event.actor.id().as_str()
+        {
             return Err(invalid_history());
         }
         let record: serde_json::Value = envelope["description"]
             .as_str()
             .and_then(|text| serde_json::from_str(text).ok())
             .ok_or_else(invalid_history)?;
-        if record["taskId"] != document["taskId"] {
+        if record["taskId"] != document["taskId"]
+            || (event.actor.id().as_str() != lane && record["lane"] != lane)
+        {
             continue;
         }
         match recorded.kind.as_str() {

@@ -389,6 +389,41 @@ fn serve_with_keyring(
     (ServerGuard { child }, base, token)
 }
 
+fn serve_with_scoped_agents(
+    events: &Path,
+    credentials: &str,
+    project: &Path,
+) -> (ServerGuard, String, String) {
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    command
+        .args([
+            "serve",
+            "--events",
+            events.to_str().unwrap(),
+            "--bind",
+            "127.0.0.1:0",
+            "--project",
+        ])
+        .arg(project)
+        .env("GRAPHHELM_AGENT_CREDENTIALS", credentials)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = command.spawn().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    stdout.read_line(&mut line).unwrap();
+    let started: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(started["command"], "serve.started", "{started}");
+    let address = started["data"]["address"].as_str().unwrap().to_owned();
+    let token = std::fs::read_to_string(token_path(events))
+        .unwrap()
+        .trim()
+        .to_owned();
+    let base = format!("http://{address}");
+    wait_for_health(&address);
+    (ServerGuard { child }, base, token)
+}
+
 fn wait_for_health(address: &str) {
     let deadline = Instant::now() + scaled(Duration::from_secs(10));
     loop {
@@ -597,6 +632,201 @@ fn tool_envelope(reply: &serde_json::Value) -> (bool, serde_json::Value) {
     )
 }
 
+#[test]
+fn journey_draft_and_review_forward_scoped_credentials_and_runtime_refusals() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("project");
+    let journey_dir = project.join(".graphhelm/journeys");
+    std::fs::create_dir_all(&journey_dir).unwrap();
+    for file in [
+        "app/cart/page.tsx",
+        "app/checkout/page.tsx",
+        "app/api/pay/route.ts",
+    ] {
+        let path = project.join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "export {}\n").unwrap();
+    }
+    let initial_flow = include_str!("fixtures/journey_flow/checkout.journey.yaml")
+        .replace("id: checkout", "id: mcp-review");
+    let flow = initial_flow.replace("title: Shopper pays for the cart", "title: MCP review flow");
+    std::fs::write(journey_dir.join("mcp-review.journey.yaml"), initial_flow).unwrap();
+    let init = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["--json", "init", "--project"])
+        .arg(&project)
+        .args(["--harness", "claude-code"])
+        .output()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "project init failed: {}{}",
+        String::from_utf8_lossy(&init.stdout),
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let git = |args: &[&str]| {
+        graphhelm_process::command("git")
+            .args(args)
+            .current_dir(&project)
+            .output()
+            .unwrap()
+    };
+    for args in [
+        &["init"][..],
+        &["config", "user.name", "GraphHelm test"][..],
+        &["config", "user.email", "graphhelm-test@example.invalid"][..],
+        &["add", "app", ".graphhelm/journeys/mcp-review.journey.yaml"][..],
+        &["commit", "-m", "test: initialize journey project"][..],
+    ] {
+        let output = git(args);
+        assert!(
+            output.status.success(),
+            "git {} failed: {}{}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let events = directory.path().join("events");
+    let writer_token = "1111111111111111111111111111111111111111111111111111111111111111";
+    let reviewer_token = "2222222222222222222222222222222222222222222222222222222222222222";
+    let credentials = format!(
+        "{writer_token}=lane-writer|project-local|execution;{reviewer_token}=lane-reviewer|project-local|execution"
+    );
+    let (server, base, owner_token) = serve_with_scoped_agents(&events, &credentials, &project);
+    let owner_file = directory.path().join("owner-token");
+    std::fs::write(&owner_file, &owner_token).unwrap();
+    let writer_file = directory.path().join("writer-token");
+    std::fs::write(&writer_file, writer_token).unwrap();
+    let reviewer_file = directory.path().join("reviewer-token");
+    std::fs::write(&reviewer_file, reviewer_token).unwrap();
+
+    let draft = mcp_session_with(
+        &[
+            "--url",
+            &base,
+            "--token-file",
+            writer_file.to_str().unwrap(),
+            "--actor",
+            "lane-writer",
+            "--actor-type",
+            "agent",
+        ],
+        &[],
+        &[
+            initialize_request(1, "2025-06-18"),
+            initialized_notification(),
+            tool_call(
+                serde_json::json!(2),
+                "journey_draft",
+                serde_json::json!({"id":"mcp-review", "yaml":flow}),
+            ),
+        ],
+    );
+    let (is_error, draft_reply) = tool_envelope(&draft.replies[1]);
+    assert!(!is_error, "scoped writer draft succeeds: {draft_reply}");
+    assert_eq!(
+        draft_reply["data"]["writer"], "lane-writer",
+        "Runtime attributes the draft to its credential"
+    );
+
+    let self_review = mcp_session_with(
+        &[
+            "--url",
+            &base,
+            "--token-file",
+            writer_file.to_str().unwrap(),
+            "--actor",
+            "lane-writer",
+            "--actor-type",
+            "agent",
+        ],
+        &[],
+        &[
+            initialize_request(1, "2025-06-18"),
+            initialized_notification(),
+            tool_call(
+                serde_json::json!(2),
+                "journey_review",
+                serde_json::json!({"id":"mcp-review", "checked":"Self review."}),
+            ),
+        ],
+    );
+    let (is_error, self_reply) = tool_envelope(&self_review.replies[1]);
+    assert!(
+        is_error,
+        "writer reviewing own digest is refused: {self_reply}"
+    );
+    assert!(
+        self_reply["diagnostics"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("reviewer wrote a version")),
+        "self-review refusal names the writer conflict: {self_reply}"
+    );
+
+    let review = mcp_session_with(
+        &[
+            "--url",
+            &base,
+            "--token-file",
+            reviewer_file.to_str().unwrap(),
+            "--actor",
+            "lane-reviewer",
+            "--actor-type",
+            "agent",
+        ],
+        &[],
+        &[
+            initialize_request(1, "2025-06-18"),
+            initialized_notification(),
+            tool_call(
+                serde_json::json!(2),
+                "journey_review",
+                serde_json::json!({"id":"mcp-review", "checked":"Compared the draft with its screens."}),
+            ),
+        ],
+    );
+    let (is_error, review_reply) = tool_envelope(&review.replies[1]);
+    assert!(
+        !is_error,
+        "different scoped reviewer succeeds: {review_reply}"
+    );
+
+    for (token, actor_type, name) in [
+        (&owner_file, "owner", "owner-only"),
+        (&owner_file, "agent", "unscoped"),
+    ] {
+        let refusal = mcp_session_with(
+            &[
+                "--url",
+                &base,
+                "--token-file",
+                token.to_str().unwrap(),
+                "--actor",
+                "unauthorized",
+                "--actor-type",
+                actor_type,
+            ],
+            &[],
+            &[
+                initialize_request(1, "2025-06-18"),
+                initialized_notification(),
+                tool_call(
+                    serde_json::json!(2),
+                    "journey_draft",
+                    serde_json::json!({"id":"mcp-review", "yaml":flow}),
+                ),
+            ],
+        );
+        let (is_error, refusal_reply) = tool_envelope(&refusal.replies[1]);
+        assert!(is_error, "{name} draft is refused: {refusal_reply}");
+        assert_eq!(
+            refusal_reply["diagnostics"][0]["path"], "/actor",
+            "{name} refusal identifies actor"
+        );
+    }
+    drop(server);
+}
+
 /// Every tool the MCP surface exposes, in the order it exposes them.
 ///
 /// ONE list, because there were two and they drifted. `the_packaging_is_valid_and_names_only_real_tools`
@@ -605,7 +835,7 @@ fn tool_envelope(reply: &serde_json::Value) -> (bool, serde_json::Value) {
 /// would have been reported as naming one that "does not exist" -- the guard failing honest work
 /// while a genuinely wrong name in a skill nobody had added yet would have been caught for the
 /// wrong reason. A second copy of a set is a second thing to forget.
-const MCP_TOOL_NAMES: [&str; 45] = [
+const MCP_TOOL_NAMES: [&str; 47] = [
     "start",
     "list",
     "topology",
@@ -620,6 +850,8 @@ const MCP_TOOL_NAMES: [&str; 45] = [
     "workspace_list",
     "workspace_sweep",
     "journey_flows",
+    "journey_draft",
+    "journey_review",
     "journey_approve",
     // #398: open a journey live at a step, act on it, close it (owner credential).
     "journey_open",

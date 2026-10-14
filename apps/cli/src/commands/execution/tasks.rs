@@ -581,6 +581,22 @@ mod lease_tests {
             "the push answered the BLOCK"
         );
 
+        // A PR closed without a merge (`task.closed`, which the Stop reconciler records for a PR
+        // GitHub reports closed) ends its slice, so it is never stalled.
+        let mut abandoned = base.clone();
+        abandoned.push(record(
+            "task.closed",
+            "lane-alpha",
+            4,
+            "2026-10-14T02:00:00Z",
+            r#""revision":6,"pr":9,"reason":"abandoned","by":9"#,
+        ));
+        let tasks = graphhelm_execution::tasks::fold_task_events(&abandoned);
+        assert!(
+            stalled_tasks(&tasks, &at("2026-10-15T00:00:00Z")).is_empty(),
+            "a closed PR is not stalled"
+        );
+
         let mut approved = fixed.clone();
         approved.push(record("task.review_verdict", "lane-beta", 5, "2026-10-14T21:30:00Z",
             &format!(r#""revision":4,"pr":9,"headSha":"{fix}","reviewer":"lane-beta","verdict":"APPROVE","commentUrl":"https://github.com/o/r/pull/9#c2""#)));

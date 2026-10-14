@@ -3416,6 +3416,40 @@ fn the_tasks_route_folds_the_runs_task_records_into_slices() {
         ),
         404
     );
+    // #1202: the first read opened both task envelopes (the plain signal is not one); an
+    // unchanged head opens none; one more record opens exactly one and is drawn.
+    assert_eq!(data["opened"], 2, "{data}");
+    let again = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks"),
+        Some(&token),
+    );
+    assert_eq!(again["data"]["opened"], 0, "{again}");
+    assert_eq!(again["data"]["tasks"], data["tasks"], "{again}");
+    assert_eq!(again["data"]["records"], data["records"], "{again}");
+    record(
+        "record-merged",
+        "task.merged",
+        lane,
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1149", "revision": 4,
+            "at": "2026-10-13T12:20:00Z", "pr": 1150, "mergeSha": "fedcba98", "closes": [1149], "merger": lane})
+        .to_string(),
+    );
+    let third = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks"),
+        Some(&token),
+    );
+    assert_eq!(third["data"]["opened"], 1, "{third}");
+    assert_eq!(
+        third["data"]["records"].as_array().map(Vec::len),
+        Some(3),
+        "{third}"
+    );
+    assert_eq!(third["data"]["tasks"][0]["step"], "merged", "{third}");
+    assert_eq!(
+        third["data"]["headSequence"],
+        head_sequence(&base, &token, execution),
+        "the third reply names the moved head"
+    );
 }
 
 /// The plan's second Task 3 test: an identical retry (same `Idempotency-Key`, same body) is 200,

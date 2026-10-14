@@ -307,7 +307,7 @@ class SessionHookTests(unittest.TestCase):
         )
         self.assertEqual(companion_manifest["hooks"], "./hooks/codex-hooks.json")
         main_manifest = json.loads((repository / "plugins" / "graphhelm" / "plugin.json").read_text())
-        self.assertEqual(main_manifest["version"], "0.1.33")
+        self.assertEqual(main_manifest["version"], "0.1.35")
         self.assertEqual(companion_manifest["version"], main_manifest["version"])
         for host in (".claude-plugin", ".codex-plugin"):
             legacy = json.loads((repository / "plugins" / "graphhelm" / host / "plugin.json").read_text())
@@ -618,6 +618,73 @@ class SessionHookTests(unittest.TestCase):
         self.assertIn("not verified", signal["description"])
         self.assertNotIn(str(self.token_file), json.dumps(signal))
         self.assertNotIn("test-token", json.dumps(signal))
+
+    def test_lane_bound_end_signs_as_the_lane_and_names_host_and_session(self):
+        # #1184: a lane's session end was signed `{host}-session-{id}`, a name no task record or
+        # Studio lane carries, so a Claude Desktop lane never read as ended. On the parent the
+        # actor is claude-session-session-123. Cost: one local POST.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        self.env["GRAPHHELM_ACTOR"] = "gh-lane-1"
+        result = self.run_hook("end")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        sent = [request for request in RuntimeHandler.requests if request[0] == "POST" and request[1].endswith("/signal")]
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0][2]["X-Graphhelm-Actor"], "gh-lane-1")
+        self.assertEqual(sent[0][2]["X-Graphhelm-Actor-Session"], "session-123")
+        self.assertTrue(sent[0][2]["Idempotency-Key"].startswith("session-end-v3-"))
+        signal = sent[0][3]["signal"]
+        self.assertEqual(signal["type"], "agent_session_ended")
+        self.assertEqual(signal["source"], {"type": "tool", "id": "gh-lane-1"})
+        details = json.loads(signal["description"])
+        self.assertEqual({key: details[key] for key in ("protocol", "phase", "host", "sessionId", "lane", "executionId", "verified")},
+                         {"protocol": "graphhelm-session-v1", "phase": "ended", "host": "claude", "sessionId": "session-123",
+                          "lane": "gh-lane-1", "executionId": "run-test", "verified": False})
+        # The same lane ending again is the same record: one key, one body, no second POST.
+        again = self.run_hook("end")
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertEqual(len([request for request in RuntimeHandler.requests
+                              if request[0] == "POST" and request[1].endswith("/signal")]), 1)
+
+    def test_lane_bound_start_records_started_once_across_resume(self):
+        # #1184: SessionStart recorded nothing, so a lane had no start to pair its end with. The
+        # first start records one agent_session_started as the lane; a resume of the same session
+        # does not record a second. On the parent no POST is made. Cost: two local starts.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        self.env["GRAPHHELM_ACTOR"] = "gh-lane-1"
+        first = self.run_hook("start")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertNotIn("UNOBSERVED", first.stdout)
+        posts = [request for request in RuntimeHandler.requests if request[0] == "POST" and request[1].endswith("/signal")]
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0][2]["X-Graphhelm-Actor"], "gh-lane-1")
+        self.assertTrue(posts[0][2]["Idempotency-Key"].startswith("session-start-v1-"))
+        signal = posts[0][3]["signal"]
+        self.assertEqual((signal["type"], signal["source"]), ("agent_session_started", {"type": "tool", "id": "gh-lane-1"}))
+        details = json.loads(signal["description"])
+        self.assertEqual({key: details[key] for key in ("protocol", "phase", "host", "sessionId", "lane", "executionId")},
+                         {"protocol": "graphhelm-session-v1", "phase": "started", "host": "claude", "sessionId": "session-123",
+                          "lane": "gh-lane-1", "executionId": "run-test"})
+        self.assertNotIn("test-token", json.dumps(signal))
+        resumed = self.run_hook("start", source="resume")
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        posts = [request for request in RuntimeHandler.requests if request[0] == "POST" and request[1].endswith("/signal")]
+        self.assertEqual(len(posts), 1)
+
+    def test_start_without_a_lane_records_nothing_and_a_refused_start_signal_keeps_the_briefing(self):
+        # A bound session with no lane has nothing to join on: no started signal, same requests as
+        # before. A lane whose started signal the Runtime refuses still gets its briefing, and the
+        # refusal is said on stderr. Cost: two local starts.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        plain = self.run_hook("start")
+        self.assertEqual(plain.returncode, 0, plain.stderr)
+        self.assertEqual([item[0] for item in RuntimeHandler.requests], ["GET"])
+        RuntimeHandler.requests = []
+        self.env["GRAPHHELM_ACTOR"] = "gh-lane-1"
+        RuntimeHandler.mismatch_ack = True
+        refused = self.run_hook("start", session_id="session-456")
+        self.assertEqual(refused.returncode, 0, refused.stderr)
+        self.assertIn("additionalContext", refused.stdout)
+        self.assertIn("start signal unobserved", refused.stderr)
 
     def test_unbound_end_never_guesses_an_execution(self):
         result = self.run_hook("end")

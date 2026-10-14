@@ -340,11 +340,23 @@ A critic round's verdict is not an argument: the script derives it from the scor
 (`pass` at `--pass-score`, default 8; `revise` while a round is left of `--max-rounds`, default 3;
 `exhausted` on the last round), which is the rule the Runtime checks. `exhausted` needs a person.
 
-- **Token.** The Runtime's agent session token, `<events>.agent.token` beside its events directory:
-  `<the Runtime's --project>/.graphhelm/events.agent.token`. The default `--token-file` is that
-  path relative to the current directory, which is right only inside the checkout the Runtime
-  serves; from a lane worktree pass `--token-file` with the Runtime checkout's absolute path. A Runtime mints it at start (D-058, #397); a Runtime started by an older binary
-  has none until it restarts. Never use the owner's `events.token` for a lane record.
+- **Token.** `--token-file` names the Runtime's agent session token path, `<events>.agent.token`
+  beside its events directory: `<the Runtime's --project>/.graphhelm/events.agent.token`. The
+  default is that path relative to the current directory, which is right only inside the checkout
+  the Runtime serves; from a lane worktree pass the Runtime checkout's absolute path. A Runtime
+  mints it at start (D-058, #397). **The value sent for a `task.*` record is not that token but
+  the lane's own credential (#1148)**, `<events>.agent.<lane>.token` beside it, which the owner or
+  the orchestrator mints once per lane and execution:
+  `graphhelm tasks credential --lane <lane> --execution gh-team --token-file <project>/.graphhelm/events.token`.
+  The Runtime derives it from the owner token, the execution and the lane and verifies it by
+  recomputation; the credential presented under another lane's `X-GraphHelm-Actor` is not a
+  principal (401). **Rollout:** a Runtime started with `serve --require-lane-credential` refuses a
+  `task.*` record under the shared session token (`GHCLI038_ACTOR_MISMATCH`, 403, nothing
+  appended); without the flag (the default) the shared token keeps recording as before. The
+  owner's order is: upgrade the Runtime, mint one credential per lane, then restart with the flag.
+  Without the file, `task_record.py` sends the shared token and prints the mint command on stderr;
+  under the flag that record is refused. Never use the owner's `events.token` as a lane record's
+  bearer.
 - **Defaults.** `--url http://127.0.0.1:8793`, `--execution gh-team`, `--repo stabem/GraphHelm`;
   `revision` is the step's position (claimed 1 … merged 5; `planned` is 1, beside its claim). `closes` is exactly the `--closes`
   numbers (the issues the squash closed, the intent `ci/closing-keywords.ps1` checked); with none
@@ -367,13 +379,15 @@ A critic round's verdict is not an argument: the script derives it from the scor
   first) is re-sent up to three times.
 - **Output.** `recorded <signal id>` or `already recorded <signal id>` and exit 0, or
   `REFUSED <signal id>` plus each error diagnostic and exit 1.
-- **Limit.** The agent token proves the caller holds an agent credential on this machine, not
-  which lane it is; the actor is the lane's own claim, checked only for consistency with the
-  document. Signing as another lane is a protocol violation, not something the Runtime can stop.
+- **Limit.** A lane credential proves which lane wrote the record (#1148); the Runtime refuses a
+  `task.*` record from the shared agent session token and one whose lane is not the credential's.
+  What it cannot stop is D-058's limit: every credential file belongs to the same OS user, so a
+  session that reads another lane's file from disk can still sign as that lane. Hand each lane
+  only its own path.
 
-The MCP `signal` tool remains a door (same envelope) for a session whose MCP server was started
-with its own `GRAPHHELM_ACTOR`; `graphhelm execution signal` writes to a store directly as
-`owner-cli` and is not a lane door.
+The MCP `signal` tool holds the shared session token, so it is no longer a door for `task.*`
+records; `graphhelm execution signal` writes to a store directly as `owner-cli` and is not a lane
+door either. Task records go through `task_record.py` with the lane's credential.
 
 ## 6. Housekeeping
 

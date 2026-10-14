@@ -109,6 +109,57 @@ pub(crate) fn ensure_agent_token(events: &Path) -> Result<(Provision, String), S
     )
 }
 
+/// The per-lane credential file beside an owner token file: `events.token` →
+/// `events.agent.<lane>.token` (#1148). `task_record.py` and the reconciler look here, beside the
+/// `--token-file` they are given, so a lane is handed one path and never another lane's secret.
+pub(crate) fn lane_credential_beside(owner_token: &Path, lane: &str) -> PathBuf {
+    let mut name = owner_token.file_stem().map_or_else(
+        || std::ffi::OsString::from("events"),
+        std::ffi::OsStr::to_os_string,
+    );
+    name.push(".agent.");
+    name.push(lane);
+    name.push(TOKEN_SUFFIX);
+    owner_token.with_file_name(name)
+}
+
+/// A lane's credential, derived from the owner token, the execution and the lane (#1148):
+/// `sha256("graphhelm-lane-credential-v1" NUL owner NUL execution NUL lane)`, hex. The Runtime
+/// recomputes it to verify, so nothing new is persisted and no restart is needed; a holder of the
+/// shared agent session token cannot derive it, because that token is not an input. The limit is
+/// D-058's: the owner token sits on the same disk, under the same OS user.
+pub(crate) fn lane_credential(owner_token: &str, execution: &str, lane: &str) -> String {
+    use sha2::Digest as _;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(b"graphhelm-lane-credential-v1\0");
+    hasher.update(owner_token.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(execution.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(lane.as_bytes());
+    encode_hex(&hasher.finalize())
+}
+
+/// Writes a derived secret to `path` under the same owner-only creation rules as a minted one.
+/// An existing file holding the same bytes is kept (`Existing`); one holding anything else is
+/// replaced, since a derived value has exactly one correct content.
+pub(crate) fn write_derived(
+    path: &Path,
+    value: &str,
+    what: &str,
+) -> Result<Provision, SecretFileError> {
+    if path.exists() {
+        if read_validated(path, what).is_ok_and(|current| current == value) {
+            return Ok(Provision::Existing);
+        }
+        std::fs::remove_file(path)
+            .map_err(|_| SecretFileError::new(what, "could not be replaced"))?;
+    }
+    create_secret_file_with(path, value)
+        .map_err(|_| SecretFileError::new(what, "could not be created"))?;
+    Ok(Provision::Created)
+}
+
 /// Creates the file at `path` with a fresh secret if it does not exist, then reads and validates
 /// whatever is there. `what` names the file's role in every diagnostic (`bearer token`,
 /// `sealing key`).
@@ -129,8 +180,11 @@ fn create_secret_file(path: &Path) -> std::io::Result<()> {
     let mut bytes = [0_u8; SECRET_BYTES];
     getrandom::fill(&mut bytes)
         .map_err(|_| std::io::Error::other("the OS random source is unavailable"))?;
-    let hex = encode_hex(&bytes);
+    create_secret_file_with(path, &encode_hex(&bytes))
+}
 
+/// The create-only-if-absent, owner-only write, for a value the caller chose.
+fn create_secret_file_with(path: &Path, hex: &str) -> std::io::Result<()> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]

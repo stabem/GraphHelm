@@ -42,6 +42,34 @@ async function actorFor(host: string, session: string): Promise<string> {
   return `agent-session-${hash.slice(0, 48)}`;
 }
 
+/** The `{host}-session-{id}` actor a lane-signed `agent_session_ended` names, after the sealed
+ * envelope is verified against the event's digest; null when it names none or cannot be read. */
+async function sessionEndedMember(executionId: string, event: RuntimeEvent,
+  readEvidence: (executionId: string, evidenceId: string) => Promise<EvidenceContent>): Promise<string | null> {
+  const payload = object(event.payload);
+  const hash = string(payload?.envelopeSha256);
+  if (!hash || payload?.sourceId !== event.actorId) return null;
+  const evidenceId = event.evidenceRefs[0]!;
+  let evidence: EvidenceContent;
+  try { evidence = await readEvidence(executionId, evidenceId); } catch { return null; }
+  if (evidence.evidenceId !== evidenceId || evidence.mediaType !== "application/json"
+      || evidence.content.length > MAX_EVIDENCE || rawHash(evidence.contentSha256) !== rawHash(hash)
+      || rawHash(await digestOf(new TextEncoder().encode(evidence.content).buffer, globalThis.crypto.subtle)) !== rawHash(hash)) {
+    return null;
+  }
+  let details: Record<string, unknown> | null = null;
+  try {
+    const envelope = object(JSON.parse(evidence.content));
+    if (envelope?.type !== "agent_session_ended" || object(envelope.source)?.id !== event.actorId) return null;
+    details = object(JSON.parse(String(envelope.description ?? "")));
+  } catch { return null; }
+  const host = string(details?.host);
+  const session = string(details?.sessionId);
+  if (details?.protocol !== "graphhelm-session-v1" || details.phase !== "ended" || details.lane !== event.actorId
+      || !host || !session || !["codex", "claude"].includes(host)) return null;
+  return actorFor(host, session);
+}
+
 /** Rebuilds run membership and chat from verified sealed signals, never from historical actor counts. */
 export async function readRunTeam(executionId: string, events: RuntimeEvent[],
   readEvidence: (executionId: string, evidenceId: string) => Promise<EvidenceContent>): Promise<RunTeamReadModel> {
@@ -142,13 +170,17 @@ export async function readRunTeam(executionId: string, events: RuntimeEvent[],
     }
   }
   // An ended session is an observed hook event; silence alone never becomes a disconnect.
+  // #1184: a lane's hook signs its end as the lane, so the member is found through the host and
+  // session id inside the sealed signal; an end signed as the member's own actor still matches.
   for (const event of events) {
-    if (event.kind === "signal_recorded" && object(event.payload)?.kind === "agent_session_ended"
-        && event.actorId && members.has(event.actorId)) {
-      const member = members.get(event.actorId)!;
-      if (event.sequence > (lastTeamSequence.get(member.actorId) ?? 0)) {
-        member.endedAt = event.occurredAt;
-      }
+    if (event.kind !== "signal_recorded" || object(event.payload)?.kind !== "agent_session_ended" || !event.actorId) continue;
+    let member = members.get(event.actorId);
+    if (!member && event.evidenceRefs.length === 1) {
+      const named = await sessionEndedMember(executionId, event, readEvidence);
+      if (named) member = members.get(named);
+    }
+    if (member && event.sequence > (lastTeamSequence.get(member.actorId) ?? 0)) {
+      member.endedAt = event.occurredAt;
     }
   }
   result.members = [...members.values()];

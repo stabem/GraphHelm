@@ -15,6 +15,7 @@ const journeys: JourneyView[] = [{
 }];
 
 describe("MissionView", () => {
+
   it("shows recent note-only agents at run level without assigning graph steps", () => {
     const now = Date.parse("2026-10-14T12:00:00Z");
     const events: RuntimeEvent[] = ["codex-issue-2-tuya", "codex-issue-3-tuya"].map((actorId, index) => ({
@@ -56,6 +57,53 @@ describe("MissionView", () => {
     expect(screen.queryByRole("list", { name: "Recently recorded agents" })).toBeNull();
   });
 
+
+  // Cost: one jsdom render per state; no network, browser, or Runtime.
+  it("shows only node-authored Keel cards with their opened text and source", () => {
+    const event = (sequence: number, kind: string, sourceKind = "node") => ({
+      sequence, kind: "signal_recorded", payload: { kind, sourceKind, sourceId: "planner" },
+      occurredAt: null, actorId: "agent", actorType: "agent", idempotencyKey: null, eventId: null, evidenceRefs: [`e-${sequence}`],
+    });
+    render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()}
+      events={[event(4, "task.planned"), event(5, "keel.passed"), event(6, "keel.card", "user"), event(7, "keel.card")]}
+      envelopes={{ 4: { text: "planned text", to: null, replyTo: null }, 5: { text: "passed text", to: null, replyTo: null },
+        6: { text: "wrong source", to: null, replyTo: null }, 7: { text: "Promise: show the card", to: null, replyTo: null } }} />);
+    const cards = screen.getByRole("region", { name: "Keel cards" });
+    expect(cards).toHaveTextContent("planner · record #7");
+    expect(cards).toHaveTextContent("Promise: show the card");
+    expect(cards).not.toHaveTextContent("planned text");
+    expect(cards).not.toHaveTextContent("passed text");
+    expect(cards).not.toHaveTextContent("wrong source");
+  });
+
+  it("distinguishes absent, unavailable and partial card history, and clears a switched run", () => {
+    const event = { sequence: 7, kind: "signal_recorded", payload: { kind: "keel.card", sourceKind: "node", sourceId: "planner" },
+      occurredAt: null, actorId: "agent", actorType: "agent", idempotencyKey: null, eventId: null, evidenceRefs: ["e-7"] };
+    const props = { journeys, tasks: [], lanes: [], now: 0, runFor: () => null, frameUrl: () => null, onMarkSafe: vi.fn() };
+    const { rerender } = render(<MissionView {...props} events={[event]} envelopes={{}} partial />);
+    expect(screen.getByRole("region", { name: "Keel cards" })).toHaveTextContent("Keel card recorded; content unavailable");
+    expect(screen.getByRole("region", { name: "Keel cards" })).toHaveTextContent("partial history");
+    rerender(<MissionView {...props} events={[event]} envelopes={{ 7: { text: "Card from run A", to: null, replyTo: null } }} />);
+    expect(screen.getByRole("region", { name: "Keel cards" })).toHaveTextContent("Card from run A");
+    rerender(<MissionView {...props} events={[]} envelopes={{}} historyLoading />);
+    expect(screen.getByRole("region", { name: "Keel cards" })).toHaveTextContent("still reading the history");
+    expect(screen.queryByText("Card from run A")).toBeNull();
+    rerender(<MissionView {...props} events={[event]} envelopes={{ 7: { text: "Card from run B", to: null, replyTo: null } }} />);
+    expect(screen.getByRole("region", { name: "Keel cards" })).toHaveTextContent("Card from run B");
+    expect(screen.queryByText("Card from run A")).toBeNull();
+    rerender(<MissionView {...props} events={[]} envelopes={{}} />);
+    expect(screen.getByRole("region", { name: "Keel cards" })).toHaveTextContent("No Keel card in the loaded history");
+  });
+
+  it("shows a card as reading while its envelope has not resolved", () => {
+    const event = { sequence: 7, kind: "signal_recorded", payload: { kind: "keel.card", sourceKind: "node", sourceId: "planner" },
+      occurredAt: null, actorId: "agent", actorType: "agent", idempotencyKey: null, eventId: null, evidenceRefs: ["e-7"] };
+    render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null}
+      onMarkSafe={vi.fn()} events={[event]} envelopes={Object.assign({}, { __readingEnvelopeSequences: [7] })} />);
+    const cards = screen.getByRole("region", { name: "Keel cards" });
+    expect(cards).toHaveTextContent("Keel card recorded; reading its content");
+    expect(cards).not.toHaveTextContent("content unavailable");
+  });
   it("draws recent work in the graph while history is still loading", () => {
     render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0}
       runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} historyLoading partial />);

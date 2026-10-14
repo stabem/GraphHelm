@@ -191,6 +191,16 @@ run. Name the journeys in the card (`journeys: [contractId]`, or a `Journeys:` l
 no fresh capture at the head. Gates are off since 2026-09-24: a PR without captures is reviewed and
 merged like any other, and the review says what was not observed.
 
+### The agent verifies; the user never does
+
+Done means an observer proved the user-visible promise, run by the agent. A reply that asks the
+user to verify ("try it in the app", "please test", "vai lá e testa", "me avisa se funcionou")
+is not a delivery: run the journey observer yourself and report what it saw. When the change is
+deployed, replay the journey against the deployed site after the deploy, not only at the head.
+With no observer that can reach it, say `OBSERVER_MISSING` and what is missing. Only a product
+decision (approve a design, choose an option) goes to the user. The plugin's Stop hook
+`plugins/graphhelm/hooks/handoff_stop_hook.py` refuses such a reply once.
+
 ## 4. One review, by another session or a blind subagent
 
 - One review from a reviewer that did not write the change: another session, or a **blind
@@ -294,7 +304,8 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 | release the latest still-open pre-PR claim (#729) | `task.released` | `lane`, exact `claimSequence`, bounded nonempty `reason`; only that claim ends, and unreadable history or a claim with a PR refuses release |
 | release a lapsed claim of another lane (#1193) | `task.released` | the same fields naming that lane, plus `releasedBy: graphhelm`; signed only by the `graphhelm` actor (the Stop reconciler); any other signer, or `releasedBy` on a lane's own release, is refused as an identity mismatch |
 | judge every live pre-PR claim's lease (#1193) | `GET /v1/executions/<id>/tasks` | the reply carries `now` (the Runtime's clock) and `leases`: per live pre-PR claim its `lane`, `claimSequence`, `leaseSeconds`, `expiresAt` (the later of the claim and its last heartbeat plus the lease) and `overdue`; the Stop reconciler releases every `overdue` one as `graphhelm` |
-| judge every lane's liveness (#1234) | `GET /v1/executions/<id>/tasks` | the reply carries `liveness`: `budgets` (`silentAfterSeconds` 1800, `freeAfterSeconds` 900, declared once in the Runtime) and per lane in the fold `lastRecordAt` (its newest event of any kind), `owes` (an open slice it authored or the current review of an open PR), `silent` (owes and quiet for the silent budget) and `free` (a record within the free budget); a stale claim is a lease that is `overdue`. Readers use these, never a threshold of their own |
+| see every open PR nobody moved (#1235) | `GET /v1/executions/<id>/tasks` | `stalls`: per open PR slice with no task record for 2 h its `taskId`, `pr`, `reason` (`block_unanswered`: the author owes a fix push; `awaiting_verdict`: the reviewer owes a verdict; `awaiting_merge`: the approving reviewer owes the merge), `owner` (that lane), `idleSince` and `idleSeconds`; the Stop reconcile reply carries them as `stalled`, so `tasks.reconciled` records them |
+| judge every lane's liveness (#1234) | `GET /v1/executions/<id>/tasks` | the reply carries `liveness`: `budgets` (`silentAfterSeconds` 1800, `freeAfterSeconds` 900 and #1235's `stallAfterSeconds` 7200, declared once in the Runtime) and per lane in the fold `lastRecordAt` (its newest event of any kind), `owes` (an open slice it authored or the current review of an open PR) with `owesSince` (when the oldest began: the claim or the review assignment), `silent` (owes and quiet for the silent budget, quiet counted from the later of the last record and `owesSince`) and `free` (a record within the free budget); a stale claim is a lease that is `overdue`. Readers use these, never a threshold of their own |
 | plan it, **right after the claim** (§2) | `task.planned` | `lane`, `classes`, `reviews`, `proof`, `critic` `{mode, passScore, maxRounds}`, `summary` |
 | say an open pre-PR claim is alive (#1147; the Stop reconciler sends it on every turn end, so a live lane never has to) | `task.heartbeat` | `lane` only; the Runtime refuses one without an open pre-PR claim and limits them to one per 300 s per task; `task_record.py heartbeat` sends it by hand |
 | open the PR (§3), and **again after every push** to it | `task.pr_opened` | `pr`, `headSha`, `journeys`, `lane`, optional `repo` |

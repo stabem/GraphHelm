@@ -867,95 +867,72 @@ export function useEnvelopes(
       };
     };
     let live = true;
-    let publishScheduled = false;
-    const ready: Array<{ page: number; sequence: number; value: ReturnType<typeof openedEnvelope> }> = [];
+    let publishTimer: ReturnType<typeof setTimeout> | undefined;
+    const ready: Array<{ sequence: number; value: ReturnType<typeof openedEnvelope> }> = [];
     const failed: number[] = [];
     const publish = () => {
       if (!live) return;
-      publishScheduled = false;
-      const byPage = new Map<number, typeof ready>();
-      for (const entry of ready.splice(0)) {
-        const entries = byPage.get(entry.page) ?? [];
-        entries.push(entry);
-        byPage.set(entry.page, entries);
-      }
+      publishTimer = undefined;
+      const entries = ready.splice(0);
       const failedSequences = failed.splice(0);
-      for (const entries of byPage.values()) {
-        setEnvelopes((previous) => {
-          const base = previous.forId === executionId ? previous.map : {};
-          const nextMap = { ...base };
-          const nextFailed = new Set(previous.forId === executionId ? previous.failed : []);
-          const nextPending = new Set(previous.forId === executionId ? previous.pending : []);
-          for (const { sequence, value } of entries) {
-            const before = nextMap[sequence];
-            const unchanged = before?.to === value.to && before.replyTo === value.replyTo && before.text === value.text
-              && (before.recommendations ?? []).join("\u0000") === (value.recommendations ?? []).join("\u0000");
-            if (!unchanged) nextMap[sequence] = value;
-            nextFailed.delete(sequence);
-            nextPending.delete(sequence);
-          }
-          for (const sequence of failedSequences) {
-            nextFailed.add(sequence);
-            nextPending.delete(sequence);
-          }
-          return { forId: executionId, map: nextMap, failed: nextFailed, pending: nextPending };
-        });
-      }
-      if (failedSequences.length > 0 && byPage.size === 0) {
-        setEnvelopes((previous) => {
-          const nextFailed = new Set(previous.forId === executionId ? previous.failed : []);
-          const nextPending = new Set(previous.forId === executionId ? previous.pending : []);
-          for (const sequence of failedSequences) {
-            nextFailed.add(sequence);
-            nextPending.delete(sequence);
-          }
-          return { forId: executionId, map: previous.forId === executionId ? previous.map : {}, failed: nextFailed, pending: nextPending };
-        });
-      }
+      if (entries.length === 0 && failedSequences.length === 0) return;
+      setEnvelopes((previous) => {
+        const nextMap = { ...(previous.forId === executionId ? previous.map : {}) };
+        const nextFailed = new Set(previous.forId === executionId ? previous.failed : []);
+        const nextPending = new Set(previous.forId === executionId ? previous.pending : []);
+        for (const { sequence, value } of entries) {
+          const before = nextMap[sequence];
+          const unchanged = before?.to === value.to && before.replyTo === value.replyTo && before.text === value.text
+            && (before.recommendations ?? []).join("\u0000") === (value.recommendations ?? []).join("\u0000");
+          if (!unchanged) nextMap[sequence] = value;
+          nextFailed.delete(sequence);
+          nextPending.delete(sequence);
+        }
+        for (const sequence of failedSequences) {
+          nextFailed.add(sequence);
+          nextPending.delete(sequence);
+        }
+        return { forId: executionId, map: nextMap, failed: nextFailed, pending: nextPending };
+      });
     };
     const schedulePublish = () => {
-      if (publishScheduled) return;
-      publishScheduled = true;
-      queueMicrotask(publish);
+      if (publishTimer !== undefined) clearTimeout(publishTimer);
+      publishTimer = setTimeout(publish, 16);
     };
-    const cached: typeof ready = [];
-    const uncached: Array<{ carrier: (typeof carriers)[number]; page: number; evidenceId: string }> = [];
-    carriers.forEach((carrier, carrierIndex) => {
+    const uncached: Array<{ carrier: (typeof carriers)[number]; evidenceId: string }> = [];
+    carriers.forEach((carrier) => {
       const evidenceId = carrier.evidenceRefs[0];
       const key = `${executionId}/${evidenceId}`;
       const content = RESOLVED_EVIDENCE.get(key);
-      const page = Math.floor(carrierIndex / 50);
-      if (content !== undefined) cached.push({ page, sequence: carrier.sequence, value: openedEnvelope(content) });
-      else uncached.push({ carrier, page, evidenceId });
+      if (content !== undefined) ready.push({ sequence: carrier.sequence, value: openedEnvelope(content) });
+      else uncached.push({ carrier, evidenceId });
     });
-    // Cached content has no I/O dependency, so publish it now in groups of fifty.
-    const cachedPages = new Map<number, typeof cached>();
-    for (const entry of cached) {
-      const page = cachedPages.get(entry.page) ?? [];
-      page.push(entry);
-      cachedPages.set(entry.page, page);
-    }
-    for (const page of cachedPages.values()) {
-      ready.push(...page);
-      publish();
-    }
-    const read = async ({ carrier, page, evidenceId }: (typeof uncached)[number]) => {
+    // Cached content has no I/O dependency, so commit the complete warm set in one update.
+    if (ready.length > 0) publish();
+    const read = async ({ carrier, evidenceId }: (typeof uncached)[number]) => {
       try {
         const content = RESOLVED_EVIDENCE.get(`${executionId}/${evidenceId}`) ?? await openSealed(executionId, evidenceId, openEvidence);
-        if (live) ready.push({ page, sequence: carrier.sequence, value: openedEnvelope(content) });
+        if (live) ready.push({ sequence: carrier.sequence, value: openedEnvelope(content) });
       } catch {
         if (live) failed.push(carrier.sequence);
       }
       schedulePublish();
     };
-    void (async () => {
-      for (let start = 0; start < uncached.length; start += 50) {
-        await Promise.all(uncached.slice(start, start + 50).map(read));
-        publish();
+    let nextUncached = 0;
+    const readWorker = async () => {
+      while (live && nextUncached < uncached.length) {
+        const item = uncached[nextUncached++];
+        if (item !== undefined) await read(item);
       }
-    })();
+    };
+    void Promise.all(Array.from({ length: Math.min(50, uncached.length) }, readWorker)).then(() => {
+      if (!live) return;
+      if (publishTimer !== undefined) clearTimeout(publishTimer);
+      publish();
+    });
     return () => {
       live = false;
+      if (publishTimer !== undefined) clearTimeout(publishTimer);
     };
   }, [eventSequence, executionId, openEvidence]);
   // A stable empty answer, not a fresh literal: downstream memos key off this identity.

@@ -167,10 +167,12 @@ fn exempt(path: &str) -> Option<&'static str> {
 
 /// Every authored Rust file a member owns -- the member ROOT, not `src` and `tests` only.
 ///
-/// The first version swept those two directories, and the workspace already compiles Rust outside
-/// both: `tools/ci-canary/build.rs` and the `hashing.rs` it includes (found by Codex on #578). A
+/// The first version swept those two directories, and the workspace then compiled Rust outside
+/// both: `tools/ci-canary/build.rs` and the `hashing.rs` it included (found by Codex on #578). A
 /// collapsed run introduced in either left this guard green while the crate shipped it, which is
-/// precisely the adoption gap #577 measured, one directory in.
+/// precisely the adoption gap #577 measured, one directory in. That crate was deleted in #1225 and
+/// no member has Rust at its root today; the walk stays so the first one is covered the day it
+/// lands.
 ///
 /// Walking the root also means a member's `benches`, `examples` and any future layout are covered
 /// the day they appear -- the same reason the POPULATION comes from `Cargo.toml` rather than a
@@ -631,16 +633,9 @@ members = [\"a\"]
         );
     }
 
-    // And the sweep reaches Rust that lives at a member's ROOT, not only under src/ and tests/.
-    // `tools/ci-canary/build.rs` compiles and shipped outside both (Codex, #578).
-    let files: Vec<String> = authored_files().iter().map(|path| relative(path)).collect();
-    for outside in ["tools/ci-canary/build.rs", "tools/ci-canary/hashing.rs"] {
-        assert!(
-            files.iter().any(|found| found == outside),
-            "{outside} is authored Rust a member owns and must be swept; it lives at the crate \
-             root, which a src/-and-tests/ walk never reaches"
-        );
-    }
+    // The root-file cell that stood here asserted `tools/ci-canary/build.rs` and `hashing.rs` were
+    // swept (Codex, #578). Both went with the crate in #1225 and no member has Rust at its root
+    // now, so the cell has no subject; `authored_files` still walks each member's root.
 }
 
 /// The parsed population equals the one on disk — the cell that ends the series.

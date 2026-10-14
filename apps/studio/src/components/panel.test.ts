@@ -1,9 +1,24 @@
-import { fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import React from "react";
 
 import { awaitingReply, describe as describeEvent, groupTurns, pinnedToLatest, resetPanelCaches, Thread, useEnvelopes } from "./panel";
 import type { EvidenceContent, RuntimeEvent } from "../runtime/types";
+
+const stateUpdateAudit = vi.hoisted(() => ({ active: false, submissions: 0 }));
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>();
+  const useState = ((initial: unknown) => {
+    const [state, setState] = actual.useState(initial);
+    if (!stateUpdateAudit.active) return [state, setState];
+    return [state, (next: unknown) => {
+      stateUpdateAudit.submissions += 1;
+      setState(next as never);
+    }];
+  }) as typeof actual.useState;
+  const defaultExport = { ...actual, useState } as unknown as typeof React;
+  return { ...actual, default: defaultExport, useState };
+});
 
 function event(sequence: number, kind: string, payload: Record<string, unknown> = {}): RuntimeEvent {
   return {
@@ -183,20 +198,12 @@ it("publishes warm envelopes once per bounded page with complete contents", asyn
   await waitFor(() => expect(first.result.current.__pendingEnvelopeSequences).toEqual([]));
   first.unmount();
 
-  let submissions = 0;
-  const realUseState = React.useState;
-  vi.spyOn(React, "useState").mockImplementation(((initial: unknown) => {
-    const [state, setState] = realUseState(initial);
-    const setter = (next: unknown) => {
-      submissions += 1;
-      setState(next as never);
-    };
-    return [state, setter];
-  }) as typeof React.useState);
+  stateUpdateAudit.active = true;
+  stateUpdateAudit.submissions = 0;
   try {
     const second = renderHook(() => useEnvelopes(rows, "run", open));
     await waitFor(() => expect(second.result.current.__pendingEnvelopeSequences).toEqual([]));
-    expect(submissions).toBeLessThanOrEqual(1 + Math.ceil(rows.length / 50));
+    expect(stateUpdateAudit.submissions).toBeLessThanOrEqual(1 + Math.ceil(rows.length / 50));
     expect(open).toHaveBeenCalledTimes(500);
     for (const row of rows) {
       expect(second.result.current[row.sequence]).toEqual(expect.objectContaining({
@@ -204,7 +211,59 @@ it("publishes warm envelopes once per bounded page with complete contents", asyn
       }));
     }
   } finally {
-    vi.mocked(React.useState).mockRestore();
+    stateUpdateAudit.active = false;
+  }
+});
+
+it("settles 4,900 simultaneous envelopes without beacon flicker", async () => {
+  resetPanelCaches();
+  vi.useFakeTimers();
+  const rows = Array.from({ length: 4_900 }, (_, index) => {
+    const row = event(index + 1, "signal_recorded", { kind: "operator_note", signalId: `sig-${index + 1}` });
+    row.evidenceRefs = [`evidence-${index + 1}`];
+    return row;
+  });
+  const firstBatch = new Map<string, (content: EvidenceContent) => void>();
+  let firstBatchResolved = false;
+  const contentFor = (id: string): EvidenceContent => ({
+    evidenceId: id,
+    content: JSON.stringify({ type: "operator_note", description: `report ${id}`, to: `agent-${id}` }),
+    contentSha256: "hash", mediaType: "application/json", sensitivity: "confidential",
+  });
+  const open = vi.fn((_run: string, id: string): Promise<EvidenceContent> => {
+    if (firstBatchResolved) return Promise.resolve(contentFor(id));
+    return new Promise((resolve) => { firstBatch.set(id, resolve); });
+  });
+  stateUpdateAudit.active = true;
+  stateUpdateAudit.submissions = 0;
+  const beaconTransitions: boolean[] = [];
+  try {
+    const { result } = renderHook(() => {
+      const envelopes = useEnvelopes(rows, "run", open);
+      const checking = envelopes.__pendingEnvelopeSequences.length > 0;
+      if (beaconTransitions.at(-1) !== checking) beaconTransitions.push(checking);
+      return envelopes;
+    });
+    setTimeout(() => {
+      firstBatchResolved = true;
+      for (const [id, resolve] of firstBatch) resolve(contentFor(id));
+    }, 1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(firstBatch.size).toBe(50);
+    expect(beaconTransitions).toEqual([false, true, false]);
+    expect(result.current.__pendingEnvelopeSequences).toEqual([]);
+    expect(open).toHaveBeenCalledTimes(rows.length);
+    for (const row of rows) {
+      expect(result.current[row.sequence]).toEqual(expect.objectContaining({
+        to: `agent-evidence-${row.sequence}`, text: `report evidence-${row.sequence}`,
+      }));
+    }
+    expect(stateUpdateAudit.submissions).toBeLessThanOrEqual(8);
+  } finally {
+    stateUpdateAudit.active = false;
+    vi.useRealTimers();
   }
 });
 

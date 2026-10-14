@@ -45,6 +45,9 @@ pub struct TasksView {
     /// against it; the reconciler releases the `overdue` ones as `graphhelm`.
     pub now: PersistedTimestamp,
     pub leases: Vec<ClaimLease>,
+    /// #1235: every open PR slice with no task record for `STALL_SECONDS`, judged at `now`, with
+    /// who owes the next step. A dead fixer behind a BLOCK reads here instead of sitting silent.
+    pub stalls: Vec<TaskStall>,
     /// #1234 (plan A7): lane liveness judged once, here, from the declared budgets and the
     /// Runtime's own event times at `now`; the Studio reads it instead of keeping thresholds.
     pub liveness: Liveness,
@@ -65,13 +68,18 @@ pub const FREE_AFTER_SECONDS: i64 = 15 * 60;
 pub struct LivenessBudgets {
     pub silent_after_seconds: i64,
     pub free_after_seconds: i64,
+    /// #1235's `STALL_SECONDS`, served here too so every threshold a reader needs is in one place.
+    pub stall_after_seconds: i64,
 }
 
 /// #1234: one lane's liveness at the read's `now`. `last_record_at` is the Runtime's time of the
 /// lane actor's newest event of any kind in this run (absent when it has none); `owes` is whether
 /// it holds an open obligation (an unreleased, unmerged slice it authored, or the current review
-/// of an open PR); `silent` is `owes` and quiet for `silent_after_seconds`; `free` is a record
-/// within `free_after_seconds`.
+/// of an open PR) and `owes_since` when the oldest of those began (the claim, or the review
+/// assignment). `silent` is `owes` and quiet for `silent_after_seconds`, quiet measured from the
+/// LATER of the last record and `owes_since`: a reviewer assigned a minute ago is not silent
+/// because its own last record is old (gh-claude-opt-2 on PR #1249). `free` is a record within
+/// `free_after_seconds`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LaneLiveness {
@@ -79,6 +87,8 @@ pub struct LaneLiveness {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_record_at: Option<PersistedTimestamp>,
     pub owes: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owes_since: Option<PersistedTimestamp>,
     pub silent: bool,
     pub free: bool,
 }
@@ -90,50 +100,92 @@ pub struct Liveness {
     pub lanes: Vec<LaneLiveness>,
 }
 
-/// #1234: the verdict for one lane, pure (`now` injected), so the edges are a unit cell. A lane
-/// with no record at all is not free and, if it owes, silent.
+/// #1234: the verdict for one lane, pure (`now` injected), so the edges are a unit cell. Silence
+/// is measured from the later of the lane's last record and when its oldest open obligation began;
+/// with neither, a lane that owes is silent. Freedom reads the record alone.
 pub fn lane_liveness(
     lane: &str,
     last_record_at: Option<&PersistedTimestamp>,
+    owes_since: Option<&PersistedTimestamp>,
     owes: bool,
     now: &PersistedTimestamp,
 ) -> LaneLiveness {
-    let quiet = last_record_at.map(|at| (*now.as_datetime() - *at.as_datetime()).num_seconds());
+    let seconds_since =
+        |at: &PersistedTimestamp| (*now.as_datetime() - *at.as_datetime()).num_seconds();
+    let record_quiet = last_record_at.map(seconds_since);
+    let quiet = match (record_quiet, owes_since.map(seconds_since)) {
+        (Some(record), Some(since)) => Some(record.min(since)),
+        (record, since) => record.or(since),
+    };
     LaneLiveness {
         lane: lane.to_owned(),
         last_record_at: last_record_at.cloned(),
         owes,
+        owes_since: owes_since.cloned(),
         silent: owes && quiet.is_none_or(|seconds| seconds >= SILENT_AFTER_SECONDS),
-        free: quiet.is_some_and(|seconds| seconds < FREE_AFTER_SECONDS),
+        free: record_quiet.is_some_and(|seconds| seconds < FREE_AFTER_SECONDS),
     }
 }
 
 /// #1234: every lane that appears in the fold (as a slice's lane or its current reviewer), judged.
+/// An obligation begins at the slice's claim (its author) or at the newest `task.review_assigned`
+/// naming the reviewer on that PR (its current reviewer); `owes_since` is the oldest open one.
 fn liveness(
     tasks: &[TaskState],
+    records: &[TaskEventRecord],
     last_by_actor: &BTreeMap<String, PersistedTimestamp>,
     now: &PersistedTimestamp,
 ) -> Liveness {
+    use graphhelm_execution::tasks::TaskEventKind;
     let open = |slice: &TaskState| {
         slice.step != graphhelm_execution::tasks::TaskStep::Merged && slice.released_by.is_none()
     };
-    let mut owes: BTreeMap<String, bool> = BTreeMap::new();
+    let assigned_at = |reviewer: &str, pr: u64| {
+        records
+            .iter()
+            .rev()
+            .find(|record| {
+                record.kind == TaskEventKind::ReviewAssigned
+                    && record.pr == Some(pr)
+                    && record.reviewer.as_deref() == Some(reviewer)
+            })
+            .and_then(|record| record.occurred_at.clone())
+    };
+    let mut owes: BTreeMap<String, (bool, Option<PersistedTimestamp>)> = BTreeMap::new();
+    let mut note = |lane: &str, owing: bool, since: Option<PersistedTimestamp>| {
+        let entry = owes.entry(lane.to_owned()).or_default();
+        entry.0 |= owing;
+        if owing && let Some(since) = since {
+            let older = entry
+                .1
+                .as_ref()
+                .is_none_or(|current| since.as_datetime() < current.as_datetime());
+            if older {
+                entry.1 = Some(since);
+            }
+        }
+    };
     for slice in tasks {
         if let Some(lane) = &slice.lane {
-            *owes.entry(lane.clone()).or_default() |= open(slice);
+            note(lane, open(slice), slice.claimed_at.clone());
         }
         if let Some(reviewer) = &slice.current_reviewer {
-            *owes.entry(reviewer.clone()).or_default() |= open(slice) && slice.pr.is_some();
+            let owing = open(slice) && slice.pr.is_some();
+            let since = slice.pr.and_then(|pr| assigned_at(reviewer, pr));
+            note(reviewer, owing, since);
         }
     }
     Liveness {
         budgets: LivenessBudgets {
             silent_after_seconds: SILENT_AFTER_SECONDS,
             free_after_seconds: FREE_AFTER_SECONDS,
+            stall_after_seconds: STALL_SECONDS,
         },
         lanes: owes
             .into_iter()
-            .map(|(lane, owes)| lane_liveness(&lane, last_by_actor.get(&lane), owes, now))
+            .map(|(lane, (owing, since))| {
+                lane_liveness(&lane, last_by_actor.get(&lane), since.as_ref(), owing, now)
+            })
             .collect(),
     }
 }
@@ -448,7 +500,8 @@ pub(crate) fn read_history(
             event.occurred_at.clone(),
         );
     }
-    let liveness = liveness(&fold.tasks, &last_by_actor, &now);
+    let liveness = liveness(&fold.tasks, &records, &last_by_actor, &now);
+    let stalls = stalled_tasks(&fold.tasks, &now);
     Ok(TasksView {
         execution_id: execution.to_owned(),
         head_sequence: history.last().map_or(0, |event| event.sequence),
@@ -461,7 +514,82 @@ pub(crate) fn read_history(
         now,
         leases,
         liveness,
+        stalls,
     })
+}
+
+/// #1235: how long an open PR slice may go without any task record before it reads as stalled.
+/// Two hours: longer than a reached test run plus a review round, far shorter than the 21 h a
+/// BLOCK on #1136 and #1125 sat behind a dead fixer (2026-10-14).
+pub const STALL_SECONDS: i64 = 7200;
+
+/// #1235: what an open PR slice is waiting on, and so who owes the next step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StallReason {
+    /// A BLOCK on the current head that no push answered; the author owes the fix.
+    BlockUnanswered,
+    /// A recorded head with no verdict; the reviewer owes it.
+    AwaitingVerdict,
+    /// An approved head nobody merged; the approving reviewer owes the merge.
+    AwaitingMerge,
+}
+
+/// #1235: one stalled PR slice.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskStall {
+    pub key: String,
+    pub task_id: String,
+    pub pr: u64,
+    pub reason: StallReason,
+    /// The lane that owes the next step, when the records name one.
+    pub owner: Option<String>,
+    /// The newest task record of the slice; idle time counts from here.
+    pub idle_since: PersistedTimestamp,
+    pub idle_seconds: i64,
+}
+
+/// #1235: the open PR slices (a PR, no merge, no release) idle past `STALL_SECONDS` at `now`.
+/// A slice with no record time is never judged: no time, no claim of silence.
+pub fn stalled_tasks(tasks: &[TaskState], now: &PersistedTimestamp) -> Vec<TaskStall> {
+    use graphhelm_execution::tasks::TaskStep;
+    tasks
+        .iter()
+        .filter(|state| state.released_by.is_none() && state.step != TaskStep::Merged)
+        .filter_map(|state| {
+            let pr = state.pr?;
+            let idle_since = state
+                .clock
+                .last_at
+                .as_ref()
+                .or(state.clock.since.as_ref())?;
+            let idle_seconds = (*now.as_datetime() - *idle_since.as_datetime()).num_seconds();
+            if idle_seconds <= STALL_SECONDS {
+                return None;
+            }
+            let (reason, owner) = match (&state.blocked_by, state.step) {
+                (Some(_), _) => (StallReason::BlockUnanswered, state.lane.clone()),
+                (None, TaskStep::Merge) => (
+                    StallReason::AwaitingMerge,
+                    state
+                        .current_reviewer
+                        .clone()
+                        .or_else(|| state.reviewers.last().cloned()),
+                ),
+                (None, _) => (StallReason::AwaitingVerdict, state.current_reviewer.clone()),
+            };
+            Some(TaskStall {
+                key: state.key.clone(),
+                task_id: state.task_id.clone(),
+                pr,
+                reason,
+                owner,
+                idle_since: idle_since.clone(),
+                idle_seconds,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -476,19 +604,35 @@ mod lease_tests {
         let fresh = at("2026-10-14T11:50:00Z"); // 10 min
         let edge_free = at("2026-10-14T11:45:00Z"); // 15 min
         let edge_silent = at("2026-10-14T11:30:00Z"); // 30 min
-        let quiet = lane_liveness("a", Some(&fresh), true, &now);
+        let quiet = lane_liveness("a", Some(&fresh), None, true, &now);
         assert!(quiet.free && !quiet.silent, "{quiet:?}");
-        let at_free = lane_liveness("a", Some(&edge_free), true, &now);
+        let at_free = lane_liveness("a", Some(&edge_free), None, true, &now);
         assert!(
             !at_free.free && !at_free.silent,
             "free is strictly inside 15 min: {at_free:?}"
         );
-        let at_silent = lane_liveness("a", Some(&edge_silent), true, &now);
+        let at_silent = lane_liveness("a", Some(&edge_silent), None, true, &now);
         assert!(at_silent.silent, "silent from 30 min on: {at_silent:?}");
-        let idle = lane_liveness("a", Some(&edge_silent), false, &now);
+        let idle = lane_liveness("a", Some(&edge_silent), None, false, &now);
         assert!(!idle.silent, "no obligation, no silence: {idle:?}");
-        let never = lane_liveness("a", None, true, &now);
+        let never = lane_liveness("a", None, None, true, &now);
         assert!(never.silent && !never.free, "no record at all: {never:?}");
+        // gh-claude-opt-2 on PR #1249: the obligation's start counts. A reviewer assigned a minute
+        // ago whose own last record is two hours old is not silent, and not free either.
+        let two_hours = at("2026-10-14T10:00:00Z");
+        let a_minute_ago = at("2026-10-14T11:59:00Z");
+        let assigned = lane_liveness("r", Some(&two_hours), Some(&a_minute_ago), true, &now);
+        assert!(
+            !assigned.silent && !assigned.free,
+            "assigned 1 min ago: {assigned:?}"
+        );
+        // Assigned 31 minutes ago and never recorded anything: silent.
+        let thirty_one = at("2026-10-14T11:29:00Z");
+        let unanswered = lane_liveness("r", None, Some(&thirty_one), true, &now);
+        assert!(
+            unanswered.silent && !unanswered.free,
+            "assigned 31 min ago, no record: {unanswered:?}"
+        );
     }
 
     /// #1220 (orchestration session): a claim whose lease has lapsed no longer holds its task, even
@@ -555,5 +699,116 @@ mod lease_tests {
         let stale = at("2026-10-14T02:00:00Z");
         let (expires, _) = lease_state(&claimed, Some(&stale), 60, &at("2026-10-14T03:00:30Z"));
         assert_eq!(expires, at("2026-10-14T03:01:00Z"));
+    }
+
+    fn record(kind: &str, actor: &str, sequence: u64, time: &str, body: &str) -> TaskEventRecord {
+        let document = format!(
+            r#"{{"schema":"graphhelm-task-event-v1","taskId":"issue-7","at":"{time}","issue":7,{body}}}"#
+        );
+        graphhelm_execution::tasks::parse_task_event(
+            kind,
+            actor,
+            &document,
+            sequence,
+            Some(at(time)),
+        )
+        .unwrap_or_else(|| panic!("a valid {kind}: {document}"))
+    }
+
+    /// #1235: the #1136 shape. A BLOCK that no push answers reads as stalled on the author two
+    /// hours later and not before; a fix push clears it; an approved head nobody merges reads as
+    /// owed by the reviewer; a merged slice is never stalled. Cost: one fold of five records.
+    #[test]
+    fn an_unanswered_block_stalls_on_its_author_and_a_push_clears_it() {
+        let head = "a".repeat(40);
+        let fix = "b".repeat(40);
+        let claimed = record(
+            "task.claimed",
+            "lane-alpha",
+            1,
+            "2026-10-14T00:00:00Z",
+            r#""revision":1,"lane":"lane-alpha","branch":"issue-7-work""#,
+        );
+        let opened = record(
+            "task.pr_opened",
+            "lane-alpha",
+            2,
+            "2026-10-14T00:10:00Z",
+            &format!(
+                r#""revision":2,"lane":"lane-alpha","branch":"issue-7-work","pr":9,"headSha":"{head}","journeys":[]"#
+            ),
+        );
+        let blocked = record(
+            "task.review_verdict",
+            "lane-beta",
+            3,
+            "2026-10-14T01:00:00Z",
+            &format!(
+                r#""revision":4,"pr":9,"headSha":"{head}","reviewer":"lane-beta","verdict":"BLOCK","commentUrl":"https://github.com/o/r/pull/9#c1""#
+            ),
+        );
+        let base = vec![claimed, opened, blocked];
+        let tasks = graphhelm_execution::tasks::fold_task_events(&base);
+        assert!(
+            stalled_tasks(&tasks, &at("2026-10-14T03:00:00Z")).is_empty(),
+            "exactly two hours is not yet stalled"
+        );
+        let stalls = stalled_tasks(&tasks, &at("2026-10-14T22:00:00Z"));
+        assert_eq!(stalls.len(), 1, "{stalls:?}");
+        assert_eq!(stalls[0].reason, StallReason::BlockUnanswered);
+        assert_eq!(stalls[0].owner.as_deref(), Some("lane-alpha"));
+        assert_eq!(stalls[0].pr, 9);
+        assert_eq!(stalls[0].idle_seconds, 21 * 3600);
+
+        let mut fixed = base.clone();
+        fixed.push(record("task.pr_opened", "lane-alpha", 4, "2026-10-14T21:00:00Z",
+            &format!(r#""revision":2,"lane":"lane-alpha","branch":"issue-7-work","pr":9,"headSha":"{fix}","journeys":[]"#)));
+        let tasks = graphhelm_execution::tasks::fold_task_events(&fixed);
+        assert!(
+            stalled_tasks(&tasks, &at("2026-10-14T22:00:00Z")).is_empty(),
+            "the push answered the BLOCK"
+        );
+
+        // A PR closed without a merge (`task.closed`, which the Stop reconciler records for a PR
+        // GitHub reports closed) ends its slice, so it is never stalled.
+        let mut abandoned = base.clone();
+        abandoned.push(record(
+            "task.closed",
+            "lane-alpha",
+            4,
+            "2026-10-14T02:00:00Z",
+            r#""revision":6,"pr":9,"reason":"abandoned","by":9"#,
+        ));
+        let tasks = graphhelm_execution::tasks::fold_task_events(&abandoned);
+        assert!(
+            stalled_tasks(&tasks, &at("2026-10-15T00:00:00Z")).is_empty(),
+            "a closed PR is not stalled"
+        );
+
+        let mut approved = fixed.clone();
+        approved.push(record("task.review_verdict", "lane-beta", 5, "2026-10-14T21:30:00Z",
+            &format!(r#""revision":4,"pr":9,"headSha":"{fix}","reviewer":"lane-beta","verdict":"APPROVE","commentUrl":"https://github.com/o/r/pull/9#c2""#)));
+        let tasks = graphhelm_execution::tasks::fold_task_events(&approved);
+        let stalls = stalled_tasks(&tasks, &at("2026-10-15T00:00:00Z"));
+        assert_eq!(stalls.len(), 1, "{stalls:?}");
+        assert_eq!(stalls[0].reason, StallReason::AwaitingMerge);
+        assert_eq!(stalls[0].owner.as_deref(), Some("lane-beta"));
+
+        let mut merged = approved;
+        merged.push(record(
+            "task.merged",
+            "lane-beta",
+            6,
+            "2026-10-14T21:40:00Z",
+            &format!(
+                r#""revision":5,"merger":"lane-beta","pr":9,"mergeSha":"{}","closes":[7]"#,
+                "c".repeat(40)
+            ),
+        ));
+        let tasks = graphhelm_execution::tasks::fold_task_events(&merged);
+        assert!(
+            stalled_tasks(&tasks, &at("2026-10-16T00:00:00Z")).is_empty(),
+            "a merged slice is done"
+        );
     }
 }

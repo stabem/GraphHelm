@@ -3555,6 +3555,127 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
 /// whose `expiresAt` is not the claim's Runtime time plus the lease. The claim is seconds old, so
 /// `overdue` reads false; the arithmetic past the lease is the unit cell beside `lease_state`.
 /// Cost: two CLI signals, one sealed server, one GET.
+/// #1240: a run that ends still holding a pre-PR claim releases it, as the lane, so a single
+/// failed run without a PR never leaves its issue held. The claim with a PR is untouched.
+/// Cost: three CLI signals, one sealed server, one `tasks run-ended`, one GET.
+#[test]
+fn a_run_ended_without_a_pr_releases_its_open_claim() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-run-ended";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = events.with_extension("keyring");
+    create_signal_keyring(&keyring);
+    let record = |id: &str, kind: &str, description: &str| {
+        let envelope = serde_json::json!({"id": id, "source": {"type": "user", "id": "owner-cli"},
+            "type": kind, "severity": "low", "description": description, "evidence": ["task"],
+            "emittedAt": "2026-10-14T03:00:00Z"});
+        let path = directory.path().join(format!("{id}.json"));
+        std::fs::write(&path, serde_json::to_vec(&envelope).unwrap()).unwrap();
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
+            .args(["execution", "signal", "--events"])
+            .arg(&events)
+            .args(["--execution", execution, "--signal"])
+            .arg(&path)
+            .arg("--evidence-out")
+            .arg(directory.path().join(format!("{id}-evidence.json")))
+            .arg("--keyring")
+            .arg(&keyring)
+            .args(["--key-id", "signal-key"])
+            .output()
+            .unwrap();
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["ok"], Value::Bool(true), "{kind}: {reply}");
+    };
+    record(
+        "open-claim",
+        "task.claimed",
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1044", "revision": 1,
+            "at": "2026-10-14T03:00:00Z", "issue": 1044, "lane": "owner-cli", "branch": "issue-1044-x",
+            "repo": "stabem/GraphHelm"})
+        .to_string(),
+    );
+    record(
+        "pr-claim",
+        "task.claimed",
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1045", "revision": 1,
+            "at": "2026-10-14T03:00:00Z", "issue": 1045, "lane": "owner-cli", "branch": "issue-1045-x",
+            "repo": "stabem/GraphHelm"})
+        .to_string(),
+    );
+    record(
+        "pr-open",
+        "task.pr_opened",
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1045", "revision": 2,
+            "at": "2026-10-14T03:01:00Z", "pr": 1046, "headSha": "abcdef01", "journeys": [], "lane": "owner-cli"})
+        .to_string(),
+    );
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let token_file = directory.path().join("run.token");
+    std::fs::write(&token_file, &token).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "tasks",
+            "run-ended",
+            "--execution",
+            execution,
+            "--lane",
+            "owner-cli",
+        ])
+        .args([
+            "--exit",
+            "1",
+            "--run-id",
+            "run-1044",
+            "--url",
+            &base,
+            "--token-file",
+        ])
+        .arg(&token_file)
+        .output()
+        .unwrap();
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reply["data"]["recorded"], true, "{reply}");
+    assert_eq!(
+        reply["data"]["claims"]["released"],
+        serde_json::json!(["issue-1044"]),
+        "{reply}"
+    );
+    let view = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks"),
+        Some(&token),
+    );
+    let data = &view["data"];
+    assert_eq!(
+        data["leases"],
+        serde_json::json!([]),
+        "no claim is held: {data}"
+    );
+    let pr_slice = data["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["taskId"] == "issue-1045")
+        .unwrap_or_else(|| panic!("the PR slice stays: {data}"));
+    assert!(pr_slice.get("releasedBy").is_none(), "{pr_slice}");
+}
+
 #[test]
 fn the_tasks_route_reports_each_open_claims_lease() {
     let directory = tempfile::tempdir().unwrap();
@@ -3630,6 +3751,8 @@ fn the_tasks_route_reports_each_open_claims_lease() {
         data["now"].is_string(),
         "the reply names the clock it judged at: {data}"
     );
+    // #1235: a fresh claim has no PR, so nothing is stalled; the field is always served.
+    assert_eq!(data["stalls"], serde_json::json!([]), "{data}");
     let leases = data["leases"]
         .as_array()
         .unwrap_or_else(|| panic!("no leases array: {data}"));
@@ -3776,6 +3899,11 @@ fn the_tasks_route_folds_the_runs_task_records_into_slices() {
         "{liveness}"
     );
     assert_eq!(liveness["budgets"]["freeAfterSeconds"], 900, "{liveness}");
+    assert_eq!(liveness["budgets"]["stallAfterSeconds"], 7200, "{liveness}");
+    assert!(
+        lane_row_owes_since_is_set(liveness, lane),
+        "the claim dates the obligation: {liveness}"
+    );
     let lane_row = liveness["lanes"]
         .as_array()
         .and_then(|lanes| lanes.iter().find(|row| row["lane"] == lane))
@@ -11961,4 +12089,12 @@ fn durable_memory_publishes_replays_and_enters_production_context() {
     );
     assert_eq!(second_status, 200, "{second}");
     assert_ne!(second["data"]["recordId"], published["data"]["recordId"]);
+}
+
+/// #1234: the liveness row of `lane` names when its oldest open obligation began.
+fn lane_row_owes_since_is_set(liveness: &Value, lane: &str) -> bool {
+    liveness["lanes"]
+        .as_array()
+        .and_then(|lanes| lanes.iter().find(|row| row["lane"] == lane))
+        .is_some_and(|row| row["owesSince"].is_string())
 }

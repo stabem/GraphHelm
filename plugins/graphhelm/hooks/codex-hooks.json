@@ -58,6 +58,15 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${PLUGIN_ROOT}/hooks/handoff_stop_hook.py\"",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }

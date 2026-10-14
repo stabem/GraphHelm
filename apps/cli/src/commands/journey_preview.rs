@@ -364,6 +364,12 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
     {
         return answer(current, Some(failure("preview.unwritable", "/preview", 1)));
     }
+    if let Some(previous) = stored
+        .as_ref()
+        .filter(|state| matches!(state["state"].as_str(), Some("ready" | "failed")))
+    {
+        archive(&dir, previous);
+    }
     let _ = std::fs::remove_dir_all(dir.join("frames"));
     let Ok(executable) = std::env::current_exe() else {
         return answer(current, Some(failure("preview.unwritable", "/runner", 1)));
@@ -1242,6 +1248,119 @@ pub(crate) fn screen_frame(
     ))
 }
 
+/// How many finished runs a journey keeps in `history/` (#history): enough to see when a screen
+/// changed, bounded so a project replayed all day does not fill its disk.
+const HISTORY_KEEP: usize = 20;
+
+/// A finished run's id in `history/`: its start time in milliseconds, zero-padded so the names
+/// sort in time order.
+fn history_id(state: &Value) -> Option<String> {
+    let started = chrono::DateTime::parse_from_rfc3339(state["startedAt"].as_str()?).ok()?;
+    Some(format!("{:020}", started.timestamp_millis().max(0)))
+}
+
+/// Before a new run replaces it, the finished run (its state and frames) moves to
+/// `history/<id>/`, and only the newest `HISTORY_KEEP` stay. Best effort: a run that cannot be
+/// archived is simply not in the history.
+fn archive(dir: &Path, previous: &Value) {
+    let Some(id) = history_id(previous) else {
+        return;
+    };
+    let history = dir.join("history");
+    let target = history.join(&id);
+    if std::fs::create_dir_all(&target).is_err() || safe_directory(&target, false).is_err() {
+        return;
+    }
+    let frames = dir.join("frames");
+    if safe_directory(&frames, false).is_ok() {
+        let _ = std::fs::remove_dir_all(target.join("frames"));
+        let _ = std::fs::rename(&frames, target.join("frames"));
+    }
+    save_state(&target, previous);
+    let mut runs = history_ids(&history);
+    while runs.len() > HISTORY_KEEP {
+        let oldest = runs.remove(0);
+        let _ = std::fs::remove_dir_all(history.join(oldest));
+    }
+}
+
+/// The archived run ids, oldest first.
+fn history_ids(history: &Path) -> Vec<String> {
+    let mut runs: Vec<String> = std::fs::read_dir(history)
+        .map(|entries| {
+            entries
+                .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+                .filter(|name| name.len() == 20 && name.chars().all(|c| c.is_ascii_digit()))
+                .collect()
+        })
+        .unwrap_or_default();
+    runs.sort();
+    runs
+}
+
+/// `GET /v1/journey-flows/{id}/history` (#history): the journey's earlier finished runs, newest
+/// first, each with its verdict, time, flow digest, commit and per-screen results. The current
+/// run is the preview route's; this is only what came before it.
+pub(crate) fn history(project: &Path, id: &str) -> Outcome {
+    if !plain_id(id) {
+        return answer(json!({}), Some(failure("preview.flow_unknown", "/id", 2)));
+    }
+    if let Err(failed) = flow_and_key(project, id) {
+        return answer(json!({}), Some(failed));
+    }
+    let history = dir_of(project, id).join("history");
+    let runs: Vec<Value> = history_ids(&history)
+        .into_iter()
+        .rev()
+        .filter_map(|run| {
+            let state = read_state(&history.join(&run))?;
+            let mut entry = json!({"run": run});
+            for key in [
+                "state",
+                "kind",
+                "result",
+                "reason",
+                "digest",
+                "commit",
+                "startedAt",
+                "ranAt",
+                "screens",
+                "edges",
+                "detail",
+            ] {
+                if !state[key].is_null() {
+                    entry[key] = state[key].clone();
+                }
+            }
+            Some(entry)
+        })
+        .collect();
+    answer(json!({"id": id, "runs": runs}), None)
+}
+
+/// `GET /v1/journey-flows/{id}/history/{run}/screens/{screen}/frame`: one screen's frame as an
+/// earlier run kept it. The run's id never changes, so its bytes never do.
+pub(crate) fn history_frame(project: &Path, id: &str, run: &str, screen: &str) -> Option<Vec<u8>> {
+    if !plain_id(id)
+        || !plain_id(screen)
+        || run.len() != 20
+        || !run.chars().all(|c| c.is_ascii_digit())
+    {
+        return None;
+    }
+    let dir = dir_of(project, id).join("history").join(run);
+    let state = read_state(&dir)?;
+    let entry = &state["screens"][screen];
+    if entry["frame"] != true || entry["file"] != format!("{screen}.png").as_str() {
+        return None;
+    }
+    let file = dir.join("frames").join(format!("{screen}.png"));
+    if !safe_node(&file) || std::fs::metadata(&file).ok()?.len() > FRAME_LIMIT {
+        return None;
+    }
+    std::fs::read(file).ok()
+}
+
 fn sha_of(text: &str) -> String {
     use sha2::Digest as _;
     hex::encode(sha2::Sha256::digest(text.as_bytes()))
@@ -1250,9 +1369,10 @@ fn sha_of(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        Guard, JourneyPreviewArgs, body, failed_reason, plain_id, proof_args, read_state,
-        reap_lost, reap_lost_from, reap_lost_from_with, runner_liveness, runner_liveness_with,
-        save_state, severity, step_reason, unsealed_proof, watch_budget,
+        Guard, HISTORY_KEEP, JourneyPreviewArgs, archive, body, dir_of, failed_reason,
+        history_frame, history_id, history_ids, plain_id, proof_args, read_state, reap_lost,
+        reap_lost_from, reap_lost_from_with, runner_liveness, runner_liveness_with, save_state,
+        severity, step_reason, unsealed_proof, watch_budget,
     };
     use serde_json::{Value, json};
     use std::path::Path;
@@ -1376,6 +1496,41 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         assert_eq!(
             body(None, &json!({"status":"approved"}), "sha256:aa", "c1")["kind"],
             "replay"
+        );
+    }
+
+    /// #history: a finished run that a new one replaces moves to `history/` with its frames, its
+    /// frame stays readable by run id, and only the newest `HISTORY_KEEP` runs are kept.
+    #[test]
+    fn a_replaced_run_is_kept_in_history_with_its_frames() {
+        let project = tempfile::tempdir().unwrap();
+        let dir = dir_of(project.path(), "checkout");
+        std::fs::create_dir_all(dir.join("frames")).unwrap();
+        std::fs::write(dir.join("frames/cart.png"), b"old cart").unwrap();
+        let finished = |at: &str| {
+            json!({"state":"ready","result":"pass","startedAt":at,
+            "screens":{"cart":{"frame":true,"file":"cart.png","result":"pass"}},"edges":{}})
+        };
+        archive(&dir, &finished("2026-10-14T10:00:00Z"));
+        assert!(
+            !dir.join("frames").exists(),
+            "the frames moved with the run"
+        );
+        let runs = history_ids(&dir.join("history"));
+        assert_eq!(runs.len(), 1);
+        assert_eq!(
+            history_frame(project.path(), "checkout", &runs[0], "cart").unwrap(),
+            b"old cart"
+        );
+        assert!(history_frame(project.path(), "checkout", "../../x", "cart").is_none());
+        for minute in 0..25 {
+            archive(&dir, &finished(&format!("2026-10-14T11:{minute:02}:00Z")));
+        }
+        let runs = history_ids(&dir.join("history"));
+        assert_eq!(runs.len(), HISTORY_KEEP);
+        assert_eq!(
+            runs.last(),
+            history_id(&finished("2026-10-14T11:24:00Z")).as_ref()
         );
     }
 

@@ -32,6 +32,33 @@ MANIFESTS = (HERE / "hooks.json", HERE / "codex-hooks.json",
              REPO / "plugins/graphhelm-codex-hooks/hooks/codex-hooks.json")
 
 
+def time_scale() -> int:
+    """#1199: `GRAPHHELM_TEST_TIME_SCALE` (LANES.md §3) multiplies this file's wall-clock ceilings
+    (the 300-note reminder budget, the Stop hang catcher) when the slot's outer script declares a
+    loaded machine: a whole number from 1 to 20. Any other value is a named error, never a silent
+    1, the same rule as apps/cli/tests/support/time_scale.rs. Product budgets never read it."""
+    raw = os.environ.get("GRAPHHELM_TEST_TIME_SCALE", "1")
+    if not raw.isdigit() or not 1 <= int(raw) <= 20:
+        raise ValueError(f"GRAPHHELM_TEST_TIME_SCALE={raw!r} is not a whole number from 1 to 20")
+    return int(raw)
+
+
+class TimeScaleTests(unittest.TestCase):
+    """#1199: the shared-machine knob is honoured and a malformed one is a named red."""
+
+    def test_time_scale_reads_the_declared_factor_and_refuses_anything_else(self):
+        with mock.patch.dict(os.environ, {"GRAPHHELM_TEST_TIME_SCALE": "3"}):
+            self.assertEqual(time_scale(), 3)
+        with mock.patch.dict(os.environ, {}):
+            os.environ.pop("GRAPHHELM_TEST_TIME_SCALE", None)
+            self.assertEqual(time_scale(), 1)
+        for bad in ("fast", "0", "21", "2.5", ""):
+            with self.subTest(value=bad), mock.patch.dict(os.environ, {"GRAPHHELM_TEST_TIME_SCALE": bad}):
+                with self.assertRaises(ValueError) as refused:
+                    time_scale()
+                self.assertIn("GRAPHHELM_TEST_TIME_SCALE", str(refused.exception))
+
+
 class ReconciledDigestTests(unittest.TestCase):
     """#1195: an unchanged reconcile reply is not posted again. Offline: `request` is replaced."""
 
@@ -431,7 +458,7 @@ class LaneStopTests(unittest.TestCase):
                 args = ["--host=codex"] if "--host=codex" in hook["command"] else []
                 result = subprocess.run([sys.executable, str(manifest.parent / name), *args], env=self.env,
                     input=json.dumps({"cwd": self.tmp.name, "session_id": session, "stop_hook_active": active}),
-                    text=True, capture_output=True, timeout=12, creationflags=NO_WINDOW)
+                    text=True, capture_output=True, timeout=12 * time_scale(), creationflags=NO_WINDOW)
                 if name == "lane_stop_hook.py":
                     self.reminder_seconds = time.monotonic() - started
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -684,6 +711,11 @@ class LaneStopTests(unittest.TestCase):
         self.addCleanup(server.shutdown)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.env["GRAPHHELM_RUNTIME_URL"] = f"http://127.0.0.1:{server.server_port}"
+        # #1199: the span below is the Stop hook's reminder path (waiter arm + the scan child's
+        # event pages at 50 ms each; the cwd has no git remote, so no reconcile runs). 2.0 s is
+        # its budget on an idle machine; a loaded one is declared through GRAPHHELM_TEST_TIME_SCALE,
+        # never by widening the number.
+        budget = 2.0 * time_scale()
         for mode in ("busy", "recent", "long", "invalid", "stall"):
             for manifest in MANIFESTS:
                 with self.subTest(mode=mode, manifest=manifest):
@@ -693,9 +725,11 @@ class LaneStopTests(unittest.TestCase):
                         elapsed = self.reminder_seconds
                         self.assertTrue(any(d.get("decision") == "block" for d in decisions), decisions)
                         if mode == "busy":
-                            self.assertLess(elapsed, 2.0, f"300-note reminder took {elapsed:.3f}s")
+                            self.assertLess(elapsed, budget,
+                                            f"300-note reminder took {elapsed:.3f}s of {budget:.1f}s "
+                                            f"(GRAPHHELM_TEST_TIME_SCALE={time_scale()})")
                             self.assertFalse(any("/evidence/" in call for call in calls), calls)
-                            print(f"300 notes: {manifest.name}: {elapsed:.3f}s, {len(calls)} event GETs", flush=True)
+                            print(f"300 notes: {manifest.name}: {elapsed:.3f}s of {budget:.1f}s, {len(calls)} event GETs", flush=True)
                         self.assertEqual(self.stop(manifest, active=True), [])
                     else:
                         self.assertEqual(self.stop(manifest), [])

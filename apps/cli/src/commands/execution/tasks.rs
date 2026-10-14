@@ -40,6 +40,10 @@ pub struct TasksView {
     /// #1202: how many sealed envelopes THIS read opened. A Runtime that remembers the run opens
     /// none on an unchanged head and one per `task.*` record since the last read.
     pub opened: usize,
+    /// #1193: the Runtime's clock at this read, and the lease of every live pre-PR claim judged
+    /// against it; the reconciler releases the `overdue` ones as `graphhelm`.
+    pub now: PersistedTimestamp,
+    pub leases: Vec<ClaimLease>,
 }
 
 /// #1202: what one Runtime remembers of an execution's `task.*` envelopes it already opened.
@@ -65,6 +69,42 @@ impl TaskRecordCache {
             self.head = other.head;
         }
     }
+
+
+/// #1193: one `ClaimLease` per live slice that still holds a pre-PR claim (a slice with a PR, a
+/// merge or a release is not leased), judged at `now`.
+pub fn claim_leases(tasks: &[TaskState], now: &PersistedTimestamp) -> Vec<ClaimLease> {
+    tasks
+        .iter()
+        .filter(|state| {
+            state.pr.is_none()
+                && state.released_by.is_none()
+                && state.step != graphhelm_execution::tasks::TaskStep::Merged
+        })
+        .filter_map(|state| {
+            let (lane, claim_sequence, claimed_at) = (
+                state.lane.as_ref()?,
+                state.claim_sequence?,
+                state.claimed_at.as_ref()?,
+            );
+            let lease_seconds = state.lease_seconds.unwrap_or(1800);
+            let (expires_at, overdue) = lease_state(
+                claimed_at,
+                state.last_heartbeat_at.as_ref(),
+                lease_seconds,
+                now,
+            );
+            Some(ClaimLease {
+                key: state.key.clone(),
+                task_id: state.task_id.clone(),
+                lane: lane.clone(),
+                claim_sequence,
+                lease_seconds,
+                expires_at,
+                overdue,
+            })
+        })
+        .collect()
 }
 
 /// #1193 (plan A2): the lease of one open pre-PR claim, read at `now`. `expires_at` is the later
@@ -99,9 +139,12 @@ pub fn lease_state(
         .filter(|heartbeat| *heartbeat > claimed)
         .unwrap_or(claimed);
     let lease = chrono::Duration::seconds(i64::try_from(lease_seconds).unwrap_or(i64::MAX));
-    let expires = since.checked_add_signed(lease).unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC);
-    let expires_at = PersistedTimestamp::from_datetime(expires)
-        .unwrap_or_else(|_| PersistedTimestamp::from_datetime(since).expect("a persisted instant round-trips"));
+    let expires = since
+        .checked_add_signed(lease)
+        .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC);
+    let expires_at = PersistedTimestamp::from_datetime(expires).unwrap_or_else(|_| {
+        PersistedTimestamp::from_datetime(since).expect("a persisted instant round-trips")
+    });
     let overdue = *now.as_datetime() > *expires_at.as_datetime();
     (expires_at, overdue)
 }
@@ -125,8 +168,12 @@ mod lease_tests {
         let (_, overdue) = lease_state(&claimed, None, 1800, &at("2026-10-14T03:30:01Z"));
         assert!(overdue, "one second past the lease");
         let heartbeat = at("2026-10-14T03:29:59Z");
-        let (expires, overdue) =
-            lease_state(&claimed, Some(&heartbeat), 1800, &at("2026-10-14T03:30:01Z"));
+        let (expires, overdue) = lease_state(
+            &claimed,
+            Some(&heartbeat),
+            1800,
+            &at("2026-10-14T03:30:01Z"),
+        );
         assert_eq!(expires, at("2026-10-14T03:59:59Z"));
         assert!(!overdue, "the heartbeat moved expiry");
         // Exactly at expiry is not yet overdue; a heartbeat older than the claim counts for nothing.
@@ -266,6 +313,9 @@ pub(crate) fn read_cached(
     }
     let fold = fold_task_events_with_routes(&records);
     budget.check_now(walked).map_err(exceeded)?;
+    let now = PersistedTimestamp::from_datetime(chrono::Utc::now())
+        .map_err(|_| super::signal_invalid("the Runtime clock is not a persisted instant", "/"))?;
+    let leases = claim_leases(&fold.tasks, &now);
     Ok(TasksView {
         execution_id: execution.to_owned(),
         head_sequence: history.last().map_or(0, |event| event.sequence),
@@ -275,5 +325,7 @@ pub(crate) fn read_cached(
         slices: fold.slices,
         routes: fold.routes,
         opened,
+        now,
+        leases,
     })
 }

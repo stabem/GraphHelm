@@ -652,7 +652,8 @@ fn validate_claim_holder(
         .map(|event| event.stream_id.as_str().to_owned())
         .unwrap_or_default();
     let budget = crate::commands::tasks_read_budget();
-    let view = super::tasks::with_shared_cache(&execution, |cache| {
+    let key = super::tasks::cache_key(store.root(), &execution);
+    let view = super::tasks::with_shared_cache(&key, |cache| {
         super::tasks::read_history(store, scope, history, &execution, keyring, &budget, cache)
     })
     .map_err(|_| super::signal_invalid("task history cannot be read; claim refused", pointer))?;

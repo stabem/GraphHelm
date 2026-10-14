@@ -74,9 +74,10 @@ impl TaskRecordCache {
 
 /// #1220: the one memory this process keeps of each execution's task records, shared by the tasks
 /// route and claim admission so both read the same fold and neither reopens what the other
-/// already verified. Keyed by execution id only: `read_history` checks the remembered head's event
-/// id against the history it is given, so another store's execution of the same name (a test's
-/// tempdir, a rebuilt store) drops the memory instead of trusting it.
+/// already verified. Keyed by the store's root AND the execution id (`cache_key`), so two stores
+/// in one process never share or merge a memory (gh-claude-opt-2 on PR #1221); within one store,
+/// `read_history` still checks the remembered head's event id, so a store rebuilt under the same
+/// path drops the memory instead of trusting it.
 fn shared_caches() -> &'static Mutex<HashMap<String, TaskRecordCache>> {
     static CACHES: OnceLock<Mutex<HashMap<String, TaskRecordCache>>> = OnceLock::new();
     CACHES.get_or_init(|| Mutex::new(HashMap::new()))
@@ -85,19 +86,21 @@ fn shared_caches() -> &'static Mutex<HashMap<String, TaskRecordCache>> {
 /// Runs `read` with this process's memory of `execution`, outside the lock (a cold read can take
 /// seconds), then folds what it learned back in, a refusal included (#1202, #1220). A poisoned
 /// lock reads as an empty memory: the read still runs, it only opens more.
-pub(crate) fn with_shared_cache<T>(
-    execution: &str,
-    read: impl FnOnce(&mut TaskRecordCache) -> T,
-) -> T {
+pub(crate) fn with_shared_cache<T>(key: &str, read: impl FnOnce(&mut TaskRecordCache) -> T) -> T {
     let mut cache = shared_caches()
         .lock()
-        .map(|map| map.get(execution).cloned().unwrap_or_default())
+        .map(|map| map.get(key).cloned().unwrap_or_default())
         .unwrap_or_default();
     let result = read(&mut cache);
     if let Ok(mut map) = shared_caches().lock() {
-        map.entry(execution.to_owned()).or_default().absorb(cache);
+        map.entry(key.to_owned()).or_default().absorb(cache);
     }
     result
+}
+
+/// The shared cache's key: the events store's root and the execution id.
+pub(crate) fn cache_key(root: &Path, execution: &str) -> String {
+    format!("{}\u{0}{execution}", root.display())
 }
 
 /// #1220: the slice that holds `task_id` against `lane`: a pre-PR claim of another lane, not

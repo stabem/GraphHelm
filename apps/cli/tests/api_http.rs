@@ -2768,6 +2768,88 @@ fn a_second_lane_cannot_claim_a_task_another_lane_holds() {
     );
 }
 
+/// #1220 (gh-claude-opt-2 on PR #1221): two lanes claiming one free task at the same instant
+/// cannot both land. Each claim is validated against a journal head and appended at that head's
+/// next sequence, so the second writer's append is refused instead of slipping in after the first.
+/// Five rounds on five tasks, both posts released by one barrier; whichever interleaving happens,
+/// exactly one claim per task is recorded. Before: both passed admission on head H and both landed.
+/// Cost: one served Runtime, ten concurrent POSTs.
+#[test]
+fn two_concurrent_claims_on_one_task_record_exactly_one() {
+    use std::sync::{Arc, Barrier};
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-claim-race";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let base = Arc::new(base);
+    let token = Arc::new(token);
+    for round in 1..=5_u64 {
+        let task = format!("issue-90{round}");
+        let barrier = Arc::new(Barrier::new(3));
+        let threads: Vec<_> = ["lane-alpha", "lane-beta"]
+            .into_iter()
+            .map(|lane| {
+                let (barrier, base, token, task) =
+                    (Arc::clone(&barrier), Arc::clone(&base), Arc::clone(&token), task.clone());
+                std::thread::spawn(move || {
+                    let id = format!("race-{task}-{lane}");
+                    let document = serde_json::json!({"schema": "graphhelm-task-event-v1",
+                        "taskId": task, "revision": 1, "at": "2026-10-14T04:00:00Z",
+                        "issue": 900 + round, "lane": lane, "branch": format!("{task}-{lane}")});
+                    let body = serde_json::json!({"signal": {"id": id, "source": {"type": "user", "id": lane},
+                        "type": "task.claimed", "severity": "low", "description": document.to_string(),
+                        "evidence": ["task"], "emittedAt": "2026-10-14T04:00:00Z"}});
+                    barrier.wait();
+                    post_json(
+                        &format!("{base}/v1/executions/{execution}/signal"),
+                        &token,
+                        &[
+                            ("Idempotency-Key", id.as_str()),
+                            ("X-GraphHelm-Actor", lane),
+                            ("X-GraphHelm-Actor-Type", "agent"),
+                        ],
+                        &body,
+                    )
+                })
+            })
+            .collect();
+        barrier.wait();
+        let replies: Vec<(u16, Value)> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+        let landed = replies.iter().filter(|(status, _)| *status == 200).count();
+        assert_eq!(
+            landed, 1,
+            "round {round}: exactly one claim lands: {replies:?}"
+        );
+        let tasks = get_json(
+            &format!("{base}/v1/executions/{execution}/tasks"),
+            Some(&token),
+        );
+        let claims = tasks["data"]["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|record| record["taskId"] == task.as_str() && record["kind"] == "task.claimed")
+            .count();
+        assert_eq!(
+            claims, 1,
+            "round {round}: one recorded claim for {task}: {tasks}"
+        );
+    }
+}
+
 /// #1148, the rollout half: without `--require-lane-credential` (the default) the shared agent
 /// session token still records a `task.*` as it does today, so a Runtime upgraded before the
 /// owner has minted every lane's credential loses no record; the lane credential is accepted

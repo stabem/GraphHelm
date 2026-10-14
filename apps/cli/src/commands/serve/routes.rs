@@ -1878,7 +1878,8 @@ pub(super) async fn tasks(
         // #1202/#1220: read with what this process remembers of the run (the memory claim
         // admission shares), outside the lock; what was learned is folded back, refusal included.
         let budget = crate::commands::tasks_read_budget();
-        execution::tasks::with_shared_cache(&execution_id, |cache| {
+        let key = execution::tasks::cache_key(&events, &execution_id);
+        execution::tasks::with_shared_cache(&key, |cache| {
             execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, cache)
         })
         .map(|view| serde_json::to_value(view).expect("a view of serializable fold types"))

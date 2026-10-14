@@ -27,6 +27,8 @@ HANDOFF = re.compile(
     r"|let me know (?:if|whether) it works"
     r"|(?:vai|v[áa]|pode ir) l[áa] e (?:test|tent|verific|confer)\w*"
     r"|(?:testa|tenta|confere|verifica) (?:a[íi]|l[áa]|no app|no site|voc[êe]|vc)\b"
+    r"|pode (?:testar|conferir|verificar|tentar) (?:a[íi]|l[áa]|no app|no site)\b"
+    r"|\b(?:abre|abra|entra|entre|acessa|acesse) [^.?!\n]{0,40}? e (?:testa|teste|tenta|tente|confere|confira|verifica|verifique)\b"
     r"|test[ae] (?:voc[êe]|vc|no app|no site|l[áa]|a[íi])"
     r"|me (?:diz|diga|avisa|avise|fala|fale) se (?:funcion|deu certo)\w*"
     r")",

@@ -23,7 +23,8 @@ import { MAX_NODE_TIMEOUT_SECONDS, RuntimeError, RuntimeClient as ReadClient, RU
 import type { GraphTopology, MutationEvidence } from "./runtime/types";
 import type { ModelContextLike, WebMcpToolDescriptor } from "./webmcp/adapter";
 import { digestOf } from "./runtime/customs";
-import { foldTaskEvents, readTaskEventRecords } from "./runtime/team-tasks";
+import type { TaskState } from "./runtime/team-tasks";
+import { RUNTIME_PREDATES_TASKS_ROUTE } from "./runtime/tasks-route";
 
 const STATUS = {
   executionId: "demo-deploy",
@@ -53,6 +54,25 @@ const PAUSED_EVIDENCE: MutationEvidence = {
   newEvents: [],
   diagnostics: [],
 };
+
+/** #1192: one task slice as the Runtime's tasks route serves it (`core/execution/src/tasks.rs`,
+ * camelCase). Every field a view reads is present; a cell overrides what it observes. */
+function taskState(overrides: Partial<TaskState> & Pick<TaskState, "taskId">): TaskState {
+  return {
+    key: `${overrides.taskId}#claim-0`, branch: null, issue: null, pr: null, lane: null, assignedBy: null,
+    assignedReviewers: [], currentReviewer: null, pendingReviewer: null, headSha: null, journeys: [], plan: null,
+    step: "plan", blockedBy: null, approvedWithRisk: null, blockedSequence: null, authorLastSequence: null,
+    lastHeartbeatAt: null, reviewers: [], mergeSha: null, completionRecorded: false, repoUrl: null, strayVerdicts: [],
+    title: null, summary: null, prTitle: null, prSummary: null, critic: null, recordedHeads: [], parent: null, rounds: [],
+    clock: { since: "2026-10-12T18:00:00Z", lastAt: "2026-10-12T18:00:00Z", spent: {} }, lastSequence: 1,
+    ...overrides,
+  };
+}
+
+/** The tasks route reply for `executionId` with these slices and no records (the views draw slices). */
+function tasksReply(executionId: string, tasks: TaskState[], rejected = 0) {
+  return { executionId, headSequence: 134, tasks, records: [], rejected };
+}
 
 function stubClient(overrides: Record<string, unknown> = {}) {
   return {
@@ -145,6 +165,10 @@ function stubClient(overrides: Record<string, unknown> = {}) {
     // `null` is what an older Runtime without the briefing route yields: the base stub is
     // the id-only world, and the tests that name a run by its objective override it.
     getBriefing: vi.fn(async () => null),
+    // #1192: the task projection is the Runtime's. The base stub is a Runtime that serves the
+    // route with no task records; cells that draw tasks override it with a reply, and the one
+    // that observes an older Runtime answers `null`.
+    getTasks: vi.fn(async (executionId: string) => ({ executionId, headSequence: 13, tasks: [], records: [], rejected: 0 })),
     startTask: vi.fn(
       async (
         _executionId: string,
@@ -4274,53 +4298,24 @@ describe("the board remembers its graph file", () => {
  * a message box that posts nothing still clears itself after you press send.
  */
 describe("the exchange", () => {
-  it("shows recent Lanes work without orphan cards while complete history loads (#961)", async () => {
+  /* #1192 (plan A1, slice 2): the task projection is the Runtime's (`GET /v1/executions/{id}/tasks`).
+   * The Studio opens no envelope and folds nothing: the route reply's slices are what the kanban and
+   * the Lanes board draw. Catches a Graph that still reads evidence for `task.*` records, and a
+   * kanban that draws a merged slice as open. Cost: one rendered App, a stubbed client. */
+  it("draws the Lanes work from the tasks route and opens no task envelope (#1192)", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-12T18:00:30Z"));
     try {
-      const specs = [
-        { sequence: 1, kind: "task.claimed", actor: "lane-a", taskId: "issue-947", issue: 947, lane: "lane-a", branch: "issue-947-work" },
-        { sequence: 2, kind: "task.pr_opened", actor: "lane-a", taskId: "issue-947", pr: 955, headSha: "aaaaaaaa", lane: "lane-a", journeys: [] },
-        { sequence: 3, kind: "task.merged", actor: "reviewer-a", taskId: "issue-947", pr: 955, mergeSha: "bbbbbbbb", merger: "reviewer-a", closes: [947] },
-        { sequence: 4, kind: "task.claimed", actor: "lane-b", taskId: "issue-919", issue: 919, lane: "lane-b", branch: "issue-919-work" },
-        { sequence: 5, kind: "task.pr_opened", actor: "lane-b", taskId: "issue-919", pr: 921, headSha: "cccccccc", lane: "lane-b", journeys: [] },
-        { sequence: 6, kind: "task.merged", actor: "reviewer-a", taskId: "issue-919", pr: 921, mergeSha: "dddddddd", merger: "reviewer-a", closes: [] },
-        { sequence: 7, kind: "task.pr_opened", actor: "lane-c", taskId: "issue-919", pr: 922, headSha: "eeeeeeee", lane: "lane-c", journeys: [] },
-        { sequence: 8, kind: "task.merged", actor: "reviewer-a", taskId: "issue-919", pr: 922, mergeSha: "ffffffff", merger: "reviewer-a", closes: [] },
-        { sequence: 9, kind: "task.pr_opened", actor: "lane-d", taskId: "issue-919", pr: 923, headSha: "11111111", lane: "lane-d", journeys: [] },
-        { sequence: 130, kind: "task.claimed", actor: "lane-e", taskId: "issue-960", issue: 960, lane: "lane-e", branch: "issue-960-work" },
-        { sequence: 131, kind: "task.pr_opened", actor: "lane-e", taskId: "issue-960", pr: 960, headSha: "22222222", lane: "lane-e", journeys: [] },
-        { sequence: 133, kind: "task.review_assigned", actor: "lane-d", taskId: "issue-919", pr: 923, headSha: "11111111", lane: "lane-d", reviewer: "reviewer-b" },
-        { sequence: 134, kind: "task.review_verdict", actor: "reviewer-a", taskId: "issue-947", pr: 955, headSha: "aaaaaaaa", reviewer: "reviewer-a", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/955#c1" },
-      ];
-      const entries = await Promise.all(specs.map(async ({ sequence, kind, actor, ...fields }) => {
-        const description = JSON.stringify({ schema: "graphhelm-task-event-v1", revision: sequence, at: "2026-10-12T18:00:00Z", ...fields });
-        const content = JSON.stringify({ id: `task-${sequence}`, source: { type: "user", id: actor }, type: kind, description });
-        const hash = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
-        return { sequence, evidence: { evidenceId: `ev-task-${sequence}`, mediaType: "application/json" as const,
-          sensitivity: "internal" as const, contentSha256: `sha256:${hash}`, content }, event: {
-          sequence, kind: "signal_recorded", payload: { kind, sourceId: actor, sourceKind: "user", signalId: `task-${sequence}`, envelopeSha256: hash },
-          occurredAt: "2026-10-12T18:00:00Z", actorId: actor, actorType: "agent", idempotencyKey: `k-${sequence}`,
-          eventId: `event-${sequence}`, evidenceRefs: [`ev-task-${sequence}`],
-        } };
-      }));
-      const timeline = Array.from({ length: 134 }, (_, index) => entries.find(({ sequence }) => sequence === index + 1)?.event ?? {
-        sequence: index + 1, kind: "signal_recorded", payload: { kind: "noop" }, occurredAt: "2026-10-12T18:00:00Z",
-        actorId: "fixture", actorType: "agent", idempotencyKey: `noop-${index + 1}`,
-        eventId: `noop-event-${index + 1}`, evidenceRefs: [],
-      });
-      let releaseHistory!: () => void;
-      const history = new Promise<void>((resolve) => { releaseHistory = resolve; });
+      const reply = tasksReply("demo-deploy", [
+        taskState({ taskId: "issue-947", key: "issue-947#pr-955", issue: 947, pr: 955, lane: "lane-a", headSha: "aaaaaaaa", step: "merged", mergeSha: "bbbbbbbb", completionRecorded: true, recordedHeads: ["aaaaaaaa"], reviewers: ["reviewer-a"], claimSequence: 1, lastSequence: 3 }),
+        taskState({ taskId: "issue-919", key: "issue-919#pr-923", issue: 919, pr: 923, lane: "lane-d", headSha: "11111111", step: "review", currentReviewer: "reviewer-b", assignedReviewers: ["reviewer-b"], reviewers: ["reviewer-b"], recordedHeads: ["11111111"], lastSequence: 133 }),
+        taskState({ taskId: "issue-960", key: "issue-960#pr-960", issue: 960, pr: 960, lane: "lane-e", headSha: "22222222", step: "review", recordedHeads: ["22222222"], claimSequence: 130, lastSequence: 131 }),
+      ]);
       const client = stubClient({
         listExecutions: vi.fn(async () => ({ executions: [{ executionId: "demo-deploy", mode: "supervised", status: "running",
           attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 134 }], hasMore: false, nextCursor: null })),
         getStatus: vi.fn(async () => ({ ...STATUS, attention: "can_sleep", attentionReasons: [], headSequence: 134 })),
-        getEvents: vi.fn(async (_run: string, options?: { after?: number }) => ({ head: 134,
-          events: timeline.filter(({ sequence }) => sequence > (options?.after ?? 0)) })),
-        readEvidence: vi.fn(async (_run: string, id: string) => {
-          if (id === "ev-task-1") await history;
-          return entries.find(({ evidence }) => evidence.evidenceId === id)!.evidence;
-        }),
+        getTasks: vi.fn(async () => reply),
       });
       render(<App createClient={() => client as unknown as RuntimeClient}
         session={async () => ({ token: "local-token", project: "dale-api-base" })} />);
@@ -4329,103 +4324,56 @@ describe("the exchange", () => {
       await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
       const mission = await screen.findByRole("region", { name: "Canvas" });
       await userEvent.click(within(mission).getByRole("tab", { name: "Lanes" }));
-      await waitFor(() => expect(client.readEvidence).toHaveBeenCalledWith("demo-deploy", "ev-task-134"));
-      const provisional = within(mission).getByRole("region", { name: "Work by stage" });
-      expect(provisional).toHaveTextContent("#960");
-      expect(provisional).not.toHaveTextContent("#955");
-      expect(provisional).not.toHaveTextContent("#923");
-      await act(async () => releaseHistory());
-      const verified = await readTaskEventRecords({ executionId: "demo-deploy", events: timeline,
-        readEvidence: client.readEvidence });
-      expect(verified).toHaveLength(entries.length);
-      expect(foldTaskEvents(verified).find((task) => task.pr === 923)).toMatchObject({ step: "review", currentReviewer: "reviewer-b" });
       expect(await screen.findByText("#923")).toBeInTheDocument();
       const kanban = screen.getByRole("region", { name: "Work by stage" });
+      expect(kanban).toHaveTextContent("#960");
       expect(kanban).not.toHaveTextContent("#955");
-      expect(kanban).not.toHaveTextContent("#921");
-      expect(kanban).not.toHaveTextContent("#922");
-      expect(within(kanban).getByText("#923")).toBeInTheDocument();
       expect(kanban.querySelector('[data-col="review"]')).toHaveTextContent("#923");
       expect(kanban).toHaveTextContent("reviewer-b");
+      expect(client.getTasks).toHaveBeenCalledWith("demo-deploy");
+      expect(client.readEvidence).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("settles partial task history and Retry recovers the unreadable record", async () => {
-    const description = JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-941", revision: 1,
-      at: "2026-10-11T12:00:00Z", issue: 941, lane: "codex-18", branch: "issue-941-history-stream" });
-    const content = JSON.stringify({ id: "task-941", source: { type: "user", id: "codex-18" }, type: "task.claimed", description });
-    const hash = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
-    let available = false;
-    const readEvidence = vi.fn(async () => {
-      if (!available) throw new Error("Runtime restarted");
-      return { evidenceId: "ev-task-941", mediaType: "application/json" as const, sensitivity: "internal" as const,
-        contentSha256: `sha256:${hash}`, content };
-    });
+  it("shows the Runtime's rejected-envelope count where the history alert was, and Retry asks again (#1192)", async () => {
+    let rejected = 1;
     const client = stubClient({
-      getEvents: vi.fn(async () => ({ head: 1, events: [{ sequence: 1, kind: "signal_recorded",
-        payload: { kind: "task.claimed", sourceId: "codex-18", sourceKind: "user", signalId: "task-941", envelopeSha256: hash },
-        occurredAt: "2026-10-11T12:00:00Z", actorId: "codex-18", actorType: "agent", idempotencyKey: "k-941",
-        eventId: "event-941", evidenceRefs: ["ev-task-941"] }] })),
-      readEvidence,
+      getTasks: vi.fn(async () => tasksReply("demo-deploy", rejected === 0
+        ? [taskState({ taskId: "issue-941", issue: 941, lane: "codex-18", branch: "issue-941-history-stream", claimSequence: 1 })]
+        : [], rejected)),
     });
     await open(client, null, false);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
     const mission = await screen.findByRole("region", { name: "Canvas" });
     expect(await within(mission).findByRole("alert")).toHaveTextContent("History partly loaded · 1 records could not be read");
-    expect(within(mission).queryByText("Loading work…")).not.toBeInTheDocument();
-    available = true;
+    rejected = 0;
     await userEvent.click(within(mission).getByRole("button", { name: "Retry" }));
     expect(await within(mission).findByRole("button", { name: /Row No PR/ })).toBeInTheDocument();
     await waitFor(() => expect(within(mission).queryByRole("alert")).not.toBeInTheDocument());
   });
 
-  it("bounds the first work-page read to a small tail while full history loads", async () => {
-    const client = stubClient({
-      listExecutions: vi.fn(async () => ({ executions: [{ executionId: "demo-deploy", mode: "supervised", status: "running",
-        attention: "needs_you", startedAt: null, lastEventAt: null, headSequence: 2000 }], hasMore: false, nextCursor: null })),
-    });
+  /* The orchestration session's condition for this slice: a Runtime that predates the route (the
+   * live `:8793` on an older binary answers 404 or 401) must say so where the lanes and the kanban
+   * would be, never an empty board and never a silent "Offline". Catches a Studio that draws an
+   * empty kanban for `null`, and one that shows the loading status forever. */
+  it("names a Runtime that predates the tasks route in place of the board, on Graph, Lanes and Team (#1192)", async () => {
+    const client = stubClient({ getTasks: vi.fn(async () => null) });
     await open(client, null, false);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    await waitFor(() => expect(client.getEvents).toHaveBeenCalledWith("demo-deploy", { after: 1936, limit: 64 }));
-  });
-
-  it("progressive task history renders verified records before the final chunk", async () => {
-    const envelopes = await Promise.all(Array.from({ length: 65 }, async (_, index) => {
-      const description = JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: `issue-${index + 1}`, revision: 1,
-        at: "2026-10-11T12:00:00Z", issue: index + 1, lane: "codex-18", branch: `issue-${index + 1}-work` });
-      const content = JSON.stringify({ id: `task-${index + 1}`, source: { type: "user", id: "codex-18" }, type: "task.claimed", description });
-      const hash = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
-      return { evidenceId: `ev-task-${index + 1}`, mediaType: "application/json" as const, sensitivity: "internal" as const,
-        contentSha256: `sha256:${hash}`, content, hash };
-    }));
-    let releaseLast!: (value: typeof envelopes[number]) => void;
-    const last = new Promise<typeof envelopes[number]>((resolve) => { releaseLast = resolve; });
-    const readEvidence = vi.fn(async (_run: string, id: string) => id === "ev-task-65" ? last : envelopes[Number(id.slice(8)) - 1]);
-    const client = stubClient({
-      listExecutions: vi.fn(async () => ({ executions: [{ executionId: "demo-deploy", mode: "supervised", status: "running",
-        attention: "needs_you", startedAt: null, lastEventAt: null, headSequence: 65 },
-        { executionId: "demo-calm", mode: "supervised", status: "running", attention: "can_sleep",
-          startedAt: null, lastEventAt: null, headSequence: 0 }], hasMore: false, nextCursor: null })),
-      getEvents: vi.fn(async (run: string, options?: { after?: number }) => ({ head: run === "demo-calm" ? 0 : 65, events: run === "demo-calm" ? [] : options?.after ? envelopes.slice(1, 64).map((item, index) => ({ sequence: index + 2, kind: "signal_recorded", payload: { kind: "task.claimed", sourceId: "codex-18", sourceKind: "user", signalId: `task-${index + 2}`, envelopeSha256: item.hash }, occurredAt: "2026-10-11T12:00:00Z", actorId: "codex-18", actorType: "agent", idempotencyKey: `tail-${index}`, eventId: `tail-task-${index}`, evidenceRefs: [item.evidenceId] }))
-        : envelopes.map((item, index) => ({ sequence: index + 1, kind: "signal_recorded",
-          payload: { kind: "task.claimed", sourceId: "codex-18", sourceKind: "user", signalId: `task-${index + 1}`, envelopeSha256: item.hash },
-          occurredAt: "2026-10-11T12:00:00Z", actorId: "codex-18", actorType: "agent", idempotencyKey: `k-${index}`,
-          eventId: `event-task-${index}`, evidenceRefs: [item.evidenceId] })) })),
-      readEvidence,
-    });
-    await open(client, null, false);
-    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    // The Team tab is the one a run opens on.
+    const team = await screen.findByRole("tabpanel", { name: "Team" });
+    expect(await within(team).findByRole("alert")).toHaveTextContent(RUNTIME_PREDATES_TASKS_ROUTE);
     await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
     const mission = await screen.findByRole("region", { name: "Canvas" });
-    expect(await within(mission).findByRole("button", { name: /Row No PR/ })).toBeInTheDocument();
-    expect(readEvidence).toHaveBeenCalledWith("demo-deploy", "ev-task-65");
-    expect(readEvidence.mock.calls.filter((call) => call[1] === "ev-task-1")).toHaveLength(1);
-    await userEvent.click(screen.getByRole("button", { name: /^demo-calm;/ }));
-    releaseLast(envelopes[64]);
-    await waitFor(() => expect(within(mission).queryByRole("button", { name: /Row No PR/ })).not.toBeInTheDocument());
+    expect(await within(mission).findByRole("alert")).toHaveTextContent(RUNTIME_PREDATES_TASKS_ROUTE);
+    expect(within(mission).queryByText("Showing recent work · still reading the history")).not.toBeInTheDocument();
+    await userEvent.click(within(mission).getByRole("tab", { name: "Lanes" }));
+    expect(within(mission).getByRole("alert")).toHaveTextContent(RUNTIME_PREDATES_TASKS_ROUTE);
+    expect(within(mission).queryByRole("region", { name: "Work by stage" })).not.toBeInTheDocument();
+    expect(within(mission).queryByText(/Offline/)).not.toBeInTheDocument();
   });
 
   /** A run whose log carries one sealed message from the agent. */
@@ -4460,17 +4408,9 @@ describe("the exchange", () => {
   }
 
   it("does not call an owner ask sent when Runtime receipt is unknown", async () => {
-    const description = JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-771", revision: 1,
-      at: "2026-10-11T12:00:00Z", issue: 771, lane: "codex-12", branch: "issue-771-unconfirmed-note" });
-    const content = JSON.stringify({ id: "task-771", source: { type: "user", id: "codex-12" }, type: "task.claimed", description });
-    const hash = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
     const client = talkingClient({
-      getEvents: vi.fn(async () => ({ head: 15, events: [{ sequence: 15, kind: "signal_recorded",
-        payload: { kind: "task.claimed", sourceId: "codex-12", sourceKind: "user", signalId: "task-771", envelopeSha256: hash },
-        occurredAt: "2026-10-11T12:00:00Z", actorId: "codex-12", actorType: "agent", idempotencyKey: "k-task-771",
-        eventId: "event-task-771", evidenceRefs: ["ev-task-771"] }] })),
-      readEvidence: vi.fn(async () => ({ evidenceId: "ev-task-771", mediaType: "application/json" as const, sensitivity: "internal" as const,
-        contentSha256: `sha256:${hash}`, content })),
+      getTasks: vi.fn(async () => tasksReply("demo-deploy", [taskState({ taskId: "issue-771", issue: 771, lane: "codex-12",
+        branch: "issue-771-unconfirmed-note", claimSequence: 15, lastSequence: 15 })])),
       signal: vi.fn(async () => ({ ...PAUSED_EVIDENCE, action: "signal" as const, result: "unknown" as const,
         diagnostics: [{ code: "unconfirmed", severity: "warning" as const, path: "/", message: "receipt unavailable", source: "runtime" }] })),
     });

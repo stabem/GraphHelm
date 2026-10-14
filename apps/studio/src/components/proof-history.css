@@ -15,3 +15,8 @@
 .ph-toggle { padding: 0; border: 0; background: none; color: #8AB4F8; font: 10.5px var(--mono); cursor: pointer; }
 .tc-badge { font: 10px var(--mono); color: #F0A35E; border: 1px solid #5A4128; border-radius: 3px; padding: 0 4px; }
 .ph-compare { min-width: 0; }
+
+/* #1296: a failed launch shows the launcher's last lines. */
+.tc-run-error p { margin: 0; }
+.tc-run-log { margin: 6px 0 0; padding: 8px; max-height: 9em; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 12px/1.4 ui-monospace, monospace; background: rgba(127,127,127,.12); border-radius: 6px; }
+.tc-run-logpath { font-size: 12px; opacity: .75; margin-top: 4px; word-break: break-all; }

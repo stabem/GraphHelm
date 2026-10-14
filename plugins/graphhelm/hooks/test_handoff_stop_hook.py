@@ -33,7 +33,7 @@ class HandoffStopHook(unittest.TestCase):
         self.assertIn("observer", verdict["reason"])
 
     def test_portuguese_handoffs_block(self):
-        for text in ("Corrigi. Vai lá e testa no app.", "Pronto, me avisa se funcionou.", "Testa aí no app.",
+        for text in ("Corrigi. Vai lá e testa no app.", "Pronto, me avisa se funcionou.", "Testa aí no app.", "Pode testar aí?", "Abre o Studio e testa.",
                      "Teste você no site."):
             self.assertIsNotNone(hook.decide(text), text)
 

@@ -214,8 +214,11 @@ def reconcile(args):
             except OSError:
                 value = ""
             if not value or "\n" in value:
-                raise ValueError(f"no credential for {actor} at {path}; mint it with: graphhelm tasks credential "
-                                 f"--lane {actor} --execution {args.execution} --token-file <events.token>")
+                # Rollout: a Runtime without --require-lane-credential still accepts the shared token.
+                print(f"tasks reconcile: no credential for {actor} at {path}; sending the shared agent token; "
+                      f"mint it with: graphhelm tasks credential --lane {actor} --execution {args.execution} "
+                      f"--token-file <events.token>", file=sys.stderr)
+                value = token
             credentials[actor] = value
         return credentials[actor]
     opened = {}

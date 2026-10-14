@@ -68,16 +68,27 @@ def credential_file(token_file, lane):
 
 
 def read_credential(args):
-    """The lane's credential, or exit 1 naming the mint command; the shared token is never a fallback."""
+    """The lane's credential when its file exists; otherwise the shared token (#1148 rollout: a
+    Runtime without `--require-lane-credential` still accepts it), with a note on stderr naming the
+    mint command, so the missing file is visible without stopping the record."""
     path = credential_file(args.token_file, args.lane)
     try:
         value = path.read_text(encoding="utf-8").strip()
     except OSError:
         value = ""
-    if not value or "\n" in value:
-        sys.exit(f"task_record: no credential for lane {args.lane} at {path}; the owner mints it with: "
-                 f"graphhelm tasks credential --lane {args.lane} --execution {args.execution} --token-file <events.token>")
-    return value
+    if value and "\n" not in value:
+        return value
+    print(f"task_record: no credential for lane {args.lane} at {path}; sending the shared agent token "
+          f"(a Runtime with --require-lane-credential refuses it); the owner mints it with: "
+          f"graphhelm tasks credential --lane {args.lane} --execution {args.execution} --token-file <events.token>",
+          file=sys.stderr)
+    try:
+        token = Path(args.token_file).read_text(encoding="utf-8").strip()
+    except OSError as error:
+        sys.exit(f"task_record: cannot read the agent token ({error}); no record sent")
+    if not token or "\n" in token:
+        sys.exit("task_record: agent token is empty; no record sent")
+    return token
 
 
 def github_words(kind, number, repo):

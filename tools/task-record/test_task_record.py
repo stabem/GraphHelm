@@ -498,12 +498,15 @@ class TaskRecordTest(unittest.TestCase):
         self.assertEqual(task_record.credential_file("x/events.token", "lane-a"), Path("x/events.agent.lane-a.token"))
         self.assertEqual(task_record.credential_file("x/events.agent.token", "lane-a"), Path("x/events.agent.lane-a.token"))
 
-    def test_a_lane_without_a_credential_is_refused_and_told_the_mint_command(self):
-        with self.assertRaises(SystemExit) as refused:
-            self.run_step("--lane", "lane-none", "claimed", "--issue", "9", "--branch", "b", "--no-github")
-        message = str(refused.exception.code)
-        self.assertIn("graphhelm tasks credential --lane lane-none --execution gh-team", message)
-        self.assertEqual(FakeRuntime.seen, [])
+    def test_a_lane_without_a_credential_falls_back_to_the_shared_token_and_names_the_mint_command(self):
+        # #1148 rollout: a Runtime without --require-lane-credential still accepts the shared token,
+        # so the record is sent with it and the missing file is reported on stderr, not fatal.
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code, out = self.run_step("--lane", "lane-none", "claimed", "--issue", "9", "--branch", "b", "--no-github")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(FakeRuntime.auth[-1], "Bearer agent-token")
+        self.assertIn("graphhelm tasks credential --lane lane-none --execution gh-team", err.getvalue())
 
 
 class ClosesAsGiven(unittest.TestCase):

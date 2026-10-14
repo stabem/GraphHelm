@@ -180,6 +180,9 @@ struct ServeState {
     /// Where to append the read audit, when `--read-audit` asked for one. `None` - the default -
     /// means nothing is recorded at all.
     read_audit: Option<Arc<Path>>,
+    /// `--require-lane-credential` (#1148): when set, the signal route refuses a `task.*` record
+    /// from the shared agent session token; off, the shared token keeps recording as before.
+    require_lane_credential: bool,
     /// `--gateway-manifest`: the route manifest the gateway routes list and write when no model
     /// half is wired (#585). Never read by an executor.
     gateway_manifest: Option<Arc<Path>>,
@@ -318,6 +321,7 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         sealing: sealing.map(Arc::new),
         cancels: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         read_audit: args.read_audit.as_deref().map(Arc::from),
+        require_lane_credential: args.require_lane_credential,
         gateway_manifest: args.gateway_manifest.as_deref().map(Arc::from),
         sweep_interval: args.sweep_interval,
         native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),

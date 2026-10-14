@@ -1332,6 +1332,11 @@ pub struct ServeArgs {
     /// movement would stop implying progress.
     #[arg(long = "read-audit")]
     pub read_audit: Option<PathBuf>,
+    /// #1148: refuse a `task.*` record authenticated by the shared agent session token, so only a
+    /// lane's own credential (`graphhelm tasks credential`) can sign one. Off by default: the
+    /// owner flips it after minting one credential per lane, so no record is lost in between.
+    #[arg(long = "require-lane-credential")]
+    pub require_lane_credential: bool,
     /// The bare program name a `tests` tool node runs, resolved on the child's PATH (see
     /// `--path-prepend`). Host configuration, never caller input.
     #[arg(long = "tests-runner", default_value = "cargo")]

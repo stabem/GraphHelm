@@ -349,10 +349,14 @@ A critic round's verdict is not an argument: the script derives it from the scor
   the orchestrator mints once per lane and execution:
   `graphhelm tasks credential --lane <lane> --execution gh-team --token-file <project>/.graphhelm/events.token`.
   The Runtime derives it from the owner token, the execution and the lane and verifies it by
-  recomputation: a `task.*` record under the shared session token is refused
-  (`GHCLI038_ACTOR_MISMATCH`, 403, nothing appended), and the credential presented under another
-  lane's `X-GraphHelm-Actor` is not a principal (401). Without the file, `task_record.py` exits 1
-  naming the mint command. Never use the owner's `events.token` as a lane record's bearer.
+  recomputation; the credential presented under another lane's `X-GraphHelm-Actor` is not a
+  principal (401). **Rollout:** a Runtime started with `serve --require-lane-credential` refuses a
+  `task.*` record under the shared session token (`GHCLI038_ACTOR_MISMATCH`, 403, nothing
+  appended); without the flag (the default) the shared token keeps recording as before. The
+  owner's order is: upgrade the Runtime, mint one credential per lane, then restart with the flag.
+  Without the file, `task_record.py` sends the shared token and prints the mint command on stderr;
+  under the flag that record is refused. Never use the owner's `events.token` as a lane record's
+  bearer.
 - **Defaults.** `--url http://127.0.0.1:8793`, `--execution gh-team`, `--repo stabem/GraphHelm`;
   `revision` is the step's position (claimed 1 … merged 5; `planned` is 1, beside its claim). `closes` is exactly the `--closes`
   numbers (the issues the squash closed, the intent `ci/closing-keywords.ps1` checked); with none

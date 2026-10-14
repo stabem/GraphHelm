@@ -2406,6 +2406,7 @@ fn a_task_record_needs_the_lanes_credential_not_the_shared_token() {
             keyring.to_str().unwrap(),
             "--key-id",
             "signal-key",
+            "--require-lane-credential",
         ],
         &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
     );
@@ -2511,6 +2512,90 @@ fn a_task_record_needs_the_lanes_credential_not_the_shared_token() {
     let event = last_event_of_kind(&base, &owner_token, execution, "signal_recorded");
     assert_eq!(event["actor"]["id"], "lane-alpha");
     assert_eq!(event["actor"]["type"], "agent", "{event}");
+}
+
+/// #1148, the rollout half: without `--require-lane-credential` (the default) the shared agent
+/// session token still records a `task.*` as it does today, so a Runtime upgraded before the
+/// owner has minted every lane's credential loses no record; the lane credential is accepted
+/// beside it. The refusal is the flag's, not the upgrade's. Cost: one served Runtime, one CLI
+/// run, two POSTs.
+#[test]
+fn without_the_flag_the_shared_token_still_records_a_task_record() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-lane-credential-off";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, owner_token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let shared_token = std::fs::read_to_string(directory.path().join("events.agent.token"))
+        .unwrap()
+        .trim()
+        .to_owned();
+    let claim = |id: &str, task: &str| {
+        let document = serde_json::json!({"schema": "graphhelm-task-event-v1",
+            "taskId": task, "revision": 1, "at": "2026-10-13T12:00:00Z",
+            "issue": task.trim_start_matches("issue-").parse::<u64>().unwrap(),
+            "lane": "lane-alpha", "branch": "b", "repo": "stabem/GraphHelm"});
+        serde_json::json!({"signal": {"id": id, "source": {"type": "user", "id": "lane-alpha"},
+            "type": "task.claimed", "severity": "low", "description": document.to_string(),
+            "evidence": ["task"], "emittedAt": "2026-10-13T12:00:00Z"}})
+    };
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        &shared_token,
+        &[
+            ("Idempotency-Key", "claim-shared-off"),
+            ("X-GraphHelm-Actor", "lane-alpha"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &claim("claim-shared-off", "issue-1148"),
+    );
+    assert_eq!(status, 200, "shared token, flag off: {reply}");
+    let event = last_event_of_kind(&base, &owner_token, execution, "signal_recorded");
+    assert_eq!(event["actor"]["id"], "lane-alpha");
+
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "--json",
+            "tasks",
+            "credential",
+            "--lane",
+            "lane-alpha",
+            "--execution",
+            execution,
+            "--token-file",
+            directory.path().join("events.token").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()["ok"],
+        true
+    );
+    let credential =
+        std::fs::read_to_string(directory.path().join("events.agent.lane-alpha.token")).unwrap();
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        credential.trim(),
+        &[
+            ("Idempotency-Key", "claim-cred-off"),
+            ("X-GraphHelm-Actor", "lane-alpha"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &claim("claim-cred-off", "issue-1149"),
+    );
+    assert_eq!(status, 200, "lane credential, flag off: {reply}");
 }
 
 /// A scoped agent bearer is the principal. Caller supplied actor headers cannot turn it into an

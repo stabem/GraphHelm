@@ -838,8 +838,16 @@ pub(super) fn run_forwarding(launch: &mut Command) -> std::io::Result<std::proce
         })
     });
     let status = child.wait();
+    // A grandchild that inherited the pipes (a Runtime left running) keeps them open after the
+    // launcher exits; the readers then never end. Give them a moment to drain, never more.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     for thread in [out, err].into_iter().flatten() {
-        let _ = thread.join();
+        while !thread.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        if thread.is_finished() {
+            let _ = thread.join();
+        }
     }
     status
 }
@@ -1181,6 +1189,16 @@ mod tests {
         command.args(["-c", "echo out; echo err >&2; exit 3"]);
         let status = run_forwarding(&mut command).unwrap();
         assert_eq!(status.code(), Some(3));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_grandchild_holding_the_pipes_does_not_hang_the_start() {
+        let mut command = graphhelm_process::command("sh");
+        command.args(["-c", "sleep 30 & exit 0"]);
+        let started = std::time::Instant::now();
+        assert!(run_forwarding(&mut command).unwrap().success());
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
     }
 
     #[test]

@@ -280,6 +280,10 @@ or set `GRAPHHELM_SOURCE`; that clone is only fast-forwarded when it is clean an
 (`--keep-local` builds it as it is). On Windows the running `graphhelm.exe` is renamed to
 `graphhelm.old.exe` first, and restored if the install fails.
 
+`graphhelm update --check` builds nothing: it fetches `origin/main` and exits non-zero unless the
+running binary was built from exactly that commit, naming how far behind it is (#1244). A binary with
+no install stamp (a dev build) fails too. Run it before any validation an agent will trust.
+
 The same launch by hand. Windows, one command — reuses the Runtime from section 3 if it is already answering, otherwise
 starts one; installs dependencies on the first run; opens the browser connected:
 

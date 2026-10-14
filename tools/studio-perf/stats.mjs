@@ -27,7 +27,8 @@ export function reduceEnvelopeObservation(input) {
   else if (input.timingBufferLost) reason = 'resource timing buffer was lost';
   else if (input.checkingStartedAt == null || input.settledAt == null) reason = 'checking beacon boundary was missing';
   else if (input.settledAt > input.cutoffAt) reason = 'beacon settled after observation cutoff';
-  else if (input.pendingRequests > 0) reason = 'evidence requests remained pending at cutoff';
+  else if ((input.pendingRequests ?? []).some(request => request.executionId === input.executionId)
+    || (typeof input.pendingRequests === 'number' && input.pendingRequests > 0)) reason = 'evidence requests remained pending at cutoff';
   else if (requests.length === 0) reason = 'no initial-load evidence responses were attributed';
   else if (requests.some(request => request.status < 200 || request.status >= 300)) reason = 'an evidence request failed';
   else if (requests.some(request => !Number.isFinite(request.responseEnd))) reason = 'an evidence body completion time was missing';

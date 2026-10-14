@@ -59,7 +59,7 @@ try {
               prior.responseEnd = entry.responseEnd > 0 ? performance.timeOrigin + entry.responseEnd : null;
               prior.status ||= entry.responseStatus || (entry.responseEnd > 0 ? 200 : 0);
             } else {
-              state.requests.push({ name: entry.name, kind,
+              state.requests.push({ name: entry.name, executionId, kind,
                 responseEnd: entry.responseEnd > 0 ? performance.timeOrigin + entry.responseEnd : null,
                 status: entry.responseStatus || (entry.responseEnd > 0 ? 200 : 0), poll: state.checkingStartedAt !== null });
             }
@@ -75,9 +75,11 @@ try {
           if (raw) {
             try {
               const url = new URL(raw, location.href);
-              if (url.pathname.includes(`/executions/${executionId}/`) && url.pathname.includes('/evidence')) {
+              const belongsToExecution = url.searchParams.get('execution') === executionId
+                || url.pathname.includes(`/executions/${executionId}/`);
+              if (belongsToExecution && url.pathname.includes('/evidence')) {
                 const kind = url.pathname.endsWith('/evidence') && url.searchParams.has('ids') ? 'batch' : 'single';
-                tracked = { name: url.href, kind, responseEnd: null, status: 0, poll: state.checkingStartedAt !== null };
+                tracked = { name: url.href, executionId, kind, responseEnd: null, status: 0, poll: state.checkingStartedAt !== null };
                 state.requests.push(tracked);
               }
             } catch { /* ignore non-URL fetch inputs */ }
@@ -107,7 +109,12 @@ try {
         };
         new MutationObserver(beacon).observe(document, { subtree: true, childList: true, characterData: true });
         beacon();
-        setTimeout(() => { state.cutoffAt = mark(); state.pendingRequests = state.requests.filter(request => request.responseEnd === null).length; }, 30000);
+        setTimeout(() => {
+          state.cutoffAt = mark();
+          state.pendingRequests = state.requests.filter(request => request.responseEnd === null).map(request => ({
+            executionId: request.executionId ?? executionId, responseEnd: request.responseEnd,
+          }));
+        }, 30000);
       }, { executionId: options['--execution'], sourceHead: options['--source-head'] });
       const page = await context.newPage();
       page.setDefaultTimeout(30000);
@@ -122,7 +129,7 @@ try {
       const captured = await page.evaluate(() => ({ ...window.studioEnvelopePerf, navigationStartedAt: Number(window.name) }));
       const { executionId, sourceHead, requests, checkingStartedAt, settledAt, cutoffAt, pendingRequests, eventHeadChanged, eventHeadObserved, timingBufferLost } = captured;
       const result = reduceEnvelopeObservation({ executionId, sourceHead, navigationStartedAt,
-        requests: requests.map(({ kind, responseEnd, status, poll }) => ({ executionId, kind, responseEnd, status, poll })),
+        requests: requests.map(({ executionId: requestExecutionId, kind, responseEnd, status, poll }) => ({ executionId: requestExecutionId, kind, responseEnd, status, poll })),
         checkingStartedAt, settledAt, cutoffAt, pendingRequests, eventHeadChanged: eventHeadObserved ? eventHeadChanged : null, timingBufferLost });
       const report = { mode, base: base.origin, observation: result,
         totalNavigationMs: settledAt === null ? null : settledAt - navigationStartedAt,

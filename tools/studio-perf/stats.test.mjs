@@ -38,6 +38,26 @@ test('envelope gap uses body completion for the selected execution and excludes 
   assert.deepEqual(result.requestCounts, { single: 1, batch: 1, failed: 0 });
 });
 
+test('pending requests are scoped to the selected execution', () => {
+  const result = reduceEnvelopeObservation({
+    executionId: 'gh-team', sourceHead: 'abc12345', navigationStartedAt: 0,
+    requests: [{ executionId: 'gh-team', kind: 'single', responseEnd: 100, status: 200 }],
+    checkingStartedAt: 110, settledAt: 150, cutoffAt: 200, eventHeadChanged: false,
+    pendingRequests: [{ executionId: 'other', responseEnd: null }],
+  });
+  assert.equal(result.status, 'ok');
+  assert.equal(result.postEvidenceGapMs, 50);
+
+  const selectedPending = reduceEnvelopeObservation({
+    executionId: 'gh-team', sourceHead: 'abc12345', navigationStartedAt: 0,
+    requests: [{ executionId: 'gh-team', kind: 'single', responseEnd: 100, status: 200 }],
+    checkingStartedAt: 110, settledAt: 150, cutoffAt: 200, eventHeadChanged: false,
+    pendingRequests: [{ executionId: 'gh-team', responseEnd: null }],
+  });
+  assert.equal(selectedPending.status, 'unknown');
+  assert.equal(selectedPending.reason, 'evidence requests remained pending at cutoff');
+});
+
 test('ambiguous or incomplete envelope boundaries stay unknown', () => {
   const base = {
     executionId: 'gh-team', sourceHead: 'abc12345', navigationStartedAt: 0,

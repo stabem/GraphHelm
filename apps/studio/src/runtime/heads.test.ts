@@ -5,6 +5,7 @@ import { withCurrentReviewer, type MissionTask } from "./mission";
 import { stageHealth } from "./stage-health";
 import { parseSlots } from "./slots";
 import type { Lane } from "./lane-bars";
+import { TEST_FREE_MS, TEST_SILENT_MS } from "../test/task-fold";
 import type { TaskState } from "./team-tasks";
 import agentBoardSource from "./agent-board.ts?raw";
 import missionSource from "./mission.ts?raw";
@@ -40,7 +41,8 @@ describe("an 8-char pr_opened and a 40-char verdict are one head in every view (
   it("agent board: a BLOCK recorded on the full sha frees the reviewer of the short-sha head", () => {
     const bot = { key: "rev", actorId: "rev", name: "rev", hue: 0, role: null, doingNow: "", lastRecordAt: new Date(now).toISOString(),
       lastSequence: 0, state: "working", quietMinutes: null, shared: false, native: false, tasks: [] } as never;
-    const lane: Lane = { lane: "rev", bars: [], silent: false, lastEventAt: now };
+    // #1234: a hand-built lane carries the budgets the Runtime serves; without them nobody is free.
+    const lane: Lane = { lane: "rev", bars: [], silent: false, lastEventAt: now, silentAfterMs: TEST_SILENT_MS, freeAfterMs: TEST_FREE_MS };
     const blocked = mission({ blocked: true, blockedBy: { reviewer: "rev", headSha: FULL }, currentReviewer: "rev" });
     expect(agentBoard([bot], [lane], [blocked], now)[0]!.status).toBe("free");
     const round = mission({ rounds: [{ reviewer: "rev", headSha: FULL, fixHead: null, blockedAt: null }], currentReviewer: "rev" });

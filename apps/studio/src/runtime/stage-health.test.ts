@@ -207,3 +207,15 @@ describe("#636 build-slot queue", () => {
     expect(stageHealth(two, [reviewer], [one, two], NOW, false, waiting)?.flag).toBe("waiting_build");
   });
 });
+
+/* #1281: the Stalled card's age is the owing lane's quiet as the Runtime measures it
+ * (`now - max(lastRecordAt, owesSince)`, served as `Lane.quietSinceAt`), not the age of the newest
+ * activity the Studio saw on the PR: seen live, a card read "silent 53s" for a lane silent 41 min. */
+describe("the Stalled age is the Runtime's quiet for the owner (#1281)", () => {
+  it("reads the served quiet, not a fresher PR event", () => {
+    const owner: Lane = { ...lane("gh-claude-1", NOW - 53_000), silent: true, quietSinceAt: NOW - 41 * M };
+    const health = stageHealth(ts("t"), [owner], [ts("t")], NOW);
+    expect(health).toMatchObject({ flag: "stalled", text: `gh-claude-1 silent ${stageDuration(41 * M)}` });
+    expect(laneLiveness("gh-claude-1", [owner], [], NOW)).toEqual({ live: false, sinceMs: 41 * M });
+  });
+});

@@ -604,9 +604,12 @@ mod lease_tests {
         let fresh = at("2026-10-14T11:50:00Z"); // 10 min
         let edge_free = at("2026-10-14T11:45:00Z"); // 15 min
         let edge_silent = at("2026-10-14T11:30:00Z"); // 30 min
-        let quiet = lane_liveness("a", Some(&fresh), None, true, &now);
+        let quiet = lane_liveness("a", Some(&fresh), None, false, &now);
         assert!(quiet.free && !quiet.silent, "{quiet:?}");
-        let at_free = lane_liveness("a", Some(&edge_free), None, true, &now);
+        // #1281 (seen live on a84c52a7): owing and free at once. A lane that owes is never free.
+        let owing = lane_liveness("a", Some(&fresh), Some(&fresh), true, &now);
+        assert!(!owing.free && !owing.silent, "owes, so not free: {owing:?}");
+        let at_free = lane_liveness("a", Some(&edge_free), None, false, &now);
         assert!(
             !at_free.free && !at_free.silent,
             "free is strictly inside 15 min: {at_free:?}"
@@ -699,6 +702,46 @@ mod lease_tests {
         let stale = at("2026-10-14T02:00:00Z");
         let (expires, _) = lease_state(&claimed, Some(&stale), 60, &at("2026-10-14T03:00:30Z"));
         assert_eq!(expires, at("2026-10-14T03:01:00Z"));
+    }
+
+    /// #1281 (seen live on a84c52a7): a lane owed with no `owesSince`. A slice born at
+    /// `pr_opened` has no claim time and a reviewer named only by a verdict has no assignment
+    /// record; each obligation still began at the oldest record bearing on it. Cost: one fold.
+    #[test]
+    fn every_owing_lane_has_an_owes_since() {
+        let head = "a".repeat(40);
+        let opened = record(
+            "task.pr_opened",
+            "lane-alpha",
+            1,
+            "2026-10-14T00:10:00Z",
+            &format!(
+                r#""revision":2,"lane":"lane-alpha","branch":"issue-7-work","pr":9,"headSha":"{head}","journeys":[]"#
+            ),
+        );
+        let approved = record(
+            "task.review_verdict",
+            "lane-beta",
+            2,
+            "2026-10-14T01:00:00Z",
+            &format!(
+                r#""revision":4,"pr":9,"headSha":"{head}","reviewer":"lane-beta","verdict":"APPROVE","commentUrl":"https://github.com/o/r/pull/9#c1""#
+            ),
+        );
+        let records = vec![opened, approved];
+        let tasks = graphhelm_execution::tasks::fold_task_events(&records);
+        let view = liveness(
+            &tasks,
+            &records,
+            &BTreeMap::new(),
+            &at("2026-10-14T02:00:00Z"),
+        );
+        let owing: Vec<&LaneLiveness> = view.lanes.iter().filter(|row| row.owes).collect();
+        assert!(!owing.is_empty(), "HARNESS-BROKE: nobody owes: {view:?}");
+        for row in owing {
+            assert!(row.owes_since.is_some(), "owes with no owesSince: {row:?}");
+            assert!(!row.free, "owes, so not free: {row:?}");
+        }
     }
 
     fn record(kind: &str, actor: &str, sequence: u64, time: &str, body: &str) -> TaskEventRecord {

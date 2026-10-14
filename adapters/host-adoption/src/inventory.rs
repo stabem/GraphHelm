@@ -158,6 +158,150 @@ fn installed_plugin_records(home: &Path, host: &str) -> (Vec<Value>, Option<Valu
     (entries, gap)
 }
 
+fn graphhelm_plugin_contributions(home: &Path, project: &Path, claude: &Value) -> Vec<Value> {
+    let enablement = |root: &str, name: &str| {
+        claude["items"].as_array().and_then(|items| {
+            items
+                .iter()
+                .filter(|item| {
+                    item["root"] == root
+                        && item["kind"] == "plugin"
+                        && item["name"] == name
+                        && item["origin"] == "configured"
+                })
+                .max_by_key(|item| {
+                    if item["path"] == ".claude/settings.local.json" {
+                        2
+                    } else {
+                        1
+                    }
+                })
+                .and_then(|item| {
+                    let path = item["path"].as_str().unwrap_or("");
+                    let parent = items.iter().find(|candidate| {
+                        candidate["root"] == root
+                            && candidate["path"] == path
+                            && candidate["kind"] == path
+                    })?;
+                    item["enabled"].as_bool().and_then(|enabled| {
+                        parent["digest"]
+                            .as_str()
+                            .map(|digest| (enabled, path, digest))
+                    })
+                })
+        })
+    };
+    let Ok(Some(bytes)) = read_candidate(home, INSTALLED_PLUGINS_RECORD) else {
+        return Vec::new();
+    };
+    let record_digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
+    let Some(plugins) = serde_json::from_slice::<Value>(&bytes)
+        .ok()
+        .and_then(|v| v.get("plugins").cloned())
+        .and_then(|v| v.as_object().cloned())
+    else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let mut examined = 0usize;
+    for (name, installs) in plugins {
+        if !name.starts_with("graphhelm@") {
+            continue;
+        }
+        let install_values: Vec<&Value> = installs
+            .as_array()
+            .map(|v| v.iter().collect())
+            .unwrap_or_else(|| vec![&installs]);
+        for install in install_values {
+            examined += 1;
+            if examined > MAX_DISCOVERY_ENTRIES {
+                return Vec::new();
+            }
+            let Some(root) = install
+                .get("installPath")
+                .or_else(|| install.get("path"))
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            let scope = install["scope"].as_str().unwrap_or("user");
+            let root_scope = if scope == "project" {
+                "project"
+            } else {
+                "home"
+            };
+            let Some((true, settings_relative, settings_digest)) = enablement(root_scope, &name)
+            else {
+                continue;
+            };
+            if scope == "project" {
+                let Some(project_path) = install.get("projectPath").and_then(Value::as_str) else {
+                    continue;
+                };
+                let (Ok(actual), Ok(recorded)) = (
+                    std::fs::canonicalize(project),
+                    std::fs::canonicalize(project_path),
+                ) else {
+                    continue;
+                };
+                if actual != recorded {
+                    continue;
+                }
+            } else if scope != "user" {
+                continue;
+            }
+            let path = Path::new(root).join(".mcp.json");
+            let Ok(Some(mcp)) = read_candidate(Path::new(root), ".mcp.json") else {
+                continue;
+            };
+            let Ok(document) = serde_json::from_slice::<Value>(&mcp) else {
+                continue;
+            };
+            let Some(entry) = document.get("mcpServers").and_then(|v| v.get("graphhelm")) else {
+                continue;
+            };
+            let Some(args) = entry.get("args").and_then(Value::as_array) else {
+                continue;
+            };
+            let args = args.iter().filter_map(Value::as_str).collect::<Vec<_>>();
+            let valid = entry["command"].as_str().is_some_and(|v| !v.is_empty())
+                && args.as_slice().windows(2).any(|pair| {
+                    pair == ["--project", "."] || pair == ["--project", "${GRAPHHELM_PROJECT:-.}"]
+                })
+                && args.contains(&"mcp")
+                && args.contains(&"--discover")
+                && args.contains(&"--actor");
+            if !valid {
+                continue;
+            }
+            let settings_root = if root_scope == "project" {
+                project
+            } else {
+                home
+            };
+            found.push(json!({"pluginName": name.clone(), "scope": scope, "contributionPath": path.to_string_lossy().replace('\\', "/"), "contributionDigest": format!("sha256:{}", hex::encode(Sha256::digest(&mcp))), "recordPath": home.join(INSTALLED_PLUGINS_RECORD).to_string_lossy().replace('\\', "/"), "recordDigest": record_digest.clone(), "enabledPath": settings_root.join(settings_relative).to_string_lossy().replace('\\', "/"), "enabledDigest": settings_digest}));
+        }
+    }
+    let user_scoped = found
+        .iter()
+        .filter(|v| v["scope"] == "user")
+        .cloned()
+        .collect::<Vec<_>>();
+    let project_scoped = found
+        .iter()
+        .filter(|v| v["scope"] == "project")
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut effective = Vec::new();
+    if user_scoped.len() == 1 {
+        effective.push(user_scoped[0].clone());
+    }
+    if project_scoped.len() == 1 {
+        effective.push(project_scoped[0].clone());
+    }
+    effective
+}
+
 pub fn inventory(project: &Path, home: &Path) -> Result<Value, AdoptionError> {
     validate_root(project)?;
     validate_root(home)?;
@@ -179,6 +323,7 @@ pub fn inventory(project: &Path, home: &Path) -> Result<Value, AdoptionError> {
             .expect("coverage details")
             .push(gap);
     }
+    claude["pluginContributions"] = json!(graphhelm_plugin_contributions(home, project, &claude));
     mark_duplicates(&mut claude);
     mark_duplicates(&mut codex);
     let coverage = [claude["coverage"].as_str(), codex["coverage"].as_str()]

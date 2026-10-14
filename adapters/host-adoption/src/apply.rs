@@ -8,6 +8,7 @@ use graphhelm_policy::adoption::approval_matches;
 use graphhelm_protocols::adoption::{AdoptionError, AdoptionReason, TransactionState};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::io::Read;
 use std::path::Path;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Boundary {
@@ -626,6 +627,103 @@ fn preflight(plan: &Value, accepted: &str) -> Result<Vec<Operation>, AdoptionErr
                 reason: AdoptionReason::ReviewRequired,
             });
         }
+        if let Some(guard) = value.get("pluginGuard") {
+            let expected_scope = if root == "home" { "user" } else { "project" };
+            if guard["targetScope"] != expected_scope {
+                return Err(AdoptionError {
+                    reason: AdoptionReason::ReviewRequired,
+                });
+            }
+            let read_guard = |path: &str, expected: &str| -> Result<Vec<u8>, AdoptionError> {
+                let mut parent = Path::new(path).parent();
+                while let Some(directory) = parent {
+                    if std::fs::symlink_metadata(directory)
+                        .map_err(|_| AdoptionError {
+                            reason: AdoptionReason::ReviewRequired,
+                        })?
+                        .file_type()
+                        .is_symlink()
+                    {
+                        return Err(AdoptionError {
+                            reason: AdoptionReason::ReviewRequired,
+                        });
+                    }
+                    parent = directory.parent();
+                }
+                let metadata = std::fs::symlink_metadata(path).map_err(|_| AdoptionError {
+                    reason: AdoptionReason::ReviewRequired,
+                })?;
+                if !metadata.is_file()
+                    || metadata.file_type().is_symlink()
+                    || metadata.len() > 1024 * 1024
+                {
+                    return Err(AdoptionError {
+                        reason: AdoptionReason::ReviewRequired,
+                    });
+                }
+                let mut bytes = Vec::new();
+                std::fs::File::open(path)
+                    .map_err(|_| AdoptionError {
+                        reason: AdoptionReason::ReviewRequired,
+                    })?
+                    .take(1024 * 1024 + 1)
+                    .read_to_end(&mut bytes)
+                    .map_err(|_| AdoptionError {
+                        reason: AdoptionReason::ReviewRequired,
+                    })?;
+                if bytes.len() > 1024 * 1024 || hex::encode(Sha256::digest(&bytes)) != expected {
+                    return Err(AdoptionError {
+                        reason: AdoptionReason::ReviewRequired,
+                    });
+                }
+                Ok(bytes)
+            };
+            for (path_key, digest_key) in [
+                ("contributionPath", "contributionDigest"),
+                ("recordPath", "recordDigest"),
+                ("enabledPath", "enabledDigest"),
+            ] {
+                let path = guard[path_key]
+                    .as_str()
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(storage::failed)?;
+                let expected = guard[digest_key]
+                    .as_str()
+                    .and_then(|v| v.strip_prefix("sha256:"))
+                    .ok_or_else(storage::failed)?;
+                let bytes = read_guard(path, expected)?;
+                if path_key != "contributionPath" {
+                    continue;
+                }
+                let document: Value =
+                    serde_json::from_slice(&bytes).map_err(|_| AdoptionError {
+                        reason: AdoptionReason::ReviewRequired,
+                    })?;
+                let Some(entry) = document.get("mcpServers").and_then(|v| v.get("graphhelm"))
+                else {
+                    return Err(AdoptionError {
+                        reason: AdoptionReason::ReviewRequired,
+                    });
+                };
+                let plugin_args = entry["args"].as_array().is_some_and(|args| {
+                    args.iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .windows(2)
+                        .any(|pair| {
+                            pair == ["--project", "."]
+                                || pair == ["--project", "${GRAPHHELM_PROJECT:-.}"]
+                        })
+                        && args.iter().any(|v| v == "mcp")
+                        && args.iter().any(|v| v == "--discover")
+                });
+                if !plugin_args || entry["command"].as_str().is_none() {
+                    return Err(AdoptionError {
+                        reason: AdoptionReason::ReviewRequired,
+                    });
+                }
+            }
+        }
         result.push(Operation {
             root: root.into(),
             path: path.into(),
@@ -640,7 +738,7 @@ fn preflight(plan: &Value, accepted: &str) -> Result<Vec<Operation>, AdoptionErr
 fn protect_settings(before: &[u8], after: &[u8], operation: &Value) -> Result<(), AdoptionError> {
     // `~/.claude.json` is Claude Code's user-scope MCP registration: the same one-entry guard.
     if operation["path"] == ".mcp.json" || operation["path"] == ".claude.json" {
-        return protect_mcp_registration(before, after);
+        return protect_mcp_registration(before, after, operation.get("pluginGuard").is_some());
     }
     if operation["path"] == ".codex/config.toml" {
         let before = std::str::from_utf8(before).map_err(|_| storage::failed())?;
@@ -677,7 +775,11 @@ fn protect_settings(before: &[u8], after: &[u8], operation: &Value) -> Result<()
 }
 /// `.mcp.json` may change in exactly one place: the `graphhelm` server entry, which must be a
 /// command registration afterwards. Every other key and every other server is kept as it was.
-fn protect_mcp_registration(before: &[u8], after: &[u8]) -> Result<(), AdoptionError> {
+fn protect_mcp_registration(
+    before: &[u8],
+    after: &[u8],
+    guarded_cleanup: bool,
+) -> Result<(), AdoptionError> {
     let review = || AdoptionError {
         reason: AdoptionReason::ReviewRequired,
     };
@@ -704,9 +806,16 @@ fn protect_mcp_registration(before: &[u8], after: &[u8]) -> Result<(), AdoptionE
         };
         Ok((map, registration))
     };
-    let (before, _) = without_graphhelm(parse(before)?)?;
+    let (before, before_registration) = without_graphhelm(parse(before)?)?;
     let (after, registration) = without_graphhelm(parse(after)?)?;
-    if before != after || !registration.as_ref().is_some_and(is_graphhelm_registration) {
+    if before != after
+        || (!registration.as_ref().is_some_and(is_graphhelm_registration)
+            && !(guarded_cleanup
+                && before_registration
+                    .as_ref()
+                    .is_some_and(is_graphhelm_registration)
+                && registration.is_none()))
+    {
         return Err(review());
     }
     Ok(())

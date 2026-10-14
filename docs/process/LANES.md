@@ -258,10 +258,16 @@ records"). From a lane worktree the token path must be absolute:
 
 | When | Command |
 |---|---|
-| Start a task | `$T --issue N claimed --branch B --journeys <contractId>` |
-| Open a PR, and again after **every** push | `$T --issue N pr_opened --pr P --head SHA --reviewer <reviewer> --journeys <contractId>` |
+| Start a task | `$T --issue N claimed --branch B --journeys <contractId>` (`--assigned-by <who>` when the order came from someone; `--lease-seconds` to change the 1800 s claim lease, #1193) |
+| Right after the claim, before code | `$T --issue N planned --summary "<the plan in one line>"` (paths from git, or `--paths <scope...>`) |
+| Give up a pre-PR claim (yours; the Stop reconciler releases lapsed ones as `graphhelm`) | `$T --issue N released --claim-sequence <seq> --release-reason "<why>"` |
+| Say the claim is alive (the Stop hook does this for you on every turn end; one per 300 s, the Runtime decides) | `$T --issue N heartbeat` |
+| Open a PR, and again after **every** push (this also records `review_assigned`, #508) | `$T --issue N pr_opened --pr P --head SHA --reviewer <reviewer> --journeys <contractId>` |
+| Change the reviewer without a push | `$T --issue N review_assigned --pr P --head SHA --reviewer <other>` |
 | As reviewer, after posting the verdict | `$T --issue N review_verdict --pr P --head SHA --verdict APPROVE\|APPROVE-WITH-RISK\|BLOCK --comment-url URL` |
 | As merger, only after your own `gh pr merge` exits 0 | `$T --issue N merged --pr P --merge-sha SHA --closes <issues the squash closed>` |
+| A PR closed without a merge (the Stop reconciler records this; by hand only to repair) | `$T --issue N closed --pr P --reason superseded\|abandoned --by <PR>` |
+| Grade a design round when the plan says `critic: design` (#467) | `$T --issue N critic_verdict --round R --score 0-10 --design-ref <path> --reason "<why>"` |
 
 Name the journey the issue serves; the Studio Graph tab links the task to it. Ids are the stems of .graphhelm/journeys/*.journey.yaml.
 
@@ -269,10 +275,12 @@ Name the journey the issue serves; the Studio Graph tab links the task to it. Id
 `Refs` PR. Every lane merges under one GitHub account, so `mergedBy` cannot tell whose merge it
 was; the exit code of the `gh pr merge` you ran is the evidence.
 
-`pr_opened --reviewer` is meant to record the reviewer in the same call. Until the change that does
-so lands, also run `$T --issue N review_assigned --pr P --head SHA --reviewer <reviewer>`.
-
-Record only as yourself. Recording as another lane is a protocol violation the Runtime cannot stop.
+Record only as yourself. `task_record.py` sends the lane's own credential
+(`<events>.agent.<lane>.token`, minted once per lane with `graphhelm tasks credential`, #1179) when it
+exists and the shared agent token otherwise; a Runtime started with `serve --require-lane-credential`
+refuses a `task.*` record under the shared token or under another lane's credential
+(`GHCLI038_ACTOR_MISMATCH`). The rules, the lease and the per-step fields are in DELIVERY.md
+"Task records"; this table is the command per step.
 
 ## 5. Naming and messages
 

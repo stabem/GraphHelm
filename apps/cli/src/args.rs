@@ -214,6 +214,9 @@ pub enum JourneyCommand {
     /// Mark one edge of a DRAFT flow safe to watch although an act on it looks destructive
     /// (#518). Owner only. The mark binds the edge's acts: editing them voids it.
     MarkSafe(JourneyMarkSafeArgs),
+    /// Set a flow's display labels (#1296): its short `--name` and the `--feature` the Studio
+    /// groups it under. Labels sit outside the approved digest, so an approved flow stays approved.
+    Label(JourneyLabelArgs),
     /// List every flow source for review: status, drift, validate findings, whether Approve
     /// would be accepted, and its screens, edges and paths.
     Flows(JourneyFlowsArgs),
@@ -519,6 +522,20 @@ pub struct JourneyMarkSafeArgs {
     /// The project's owner token (`.graphhelm/events.token`): marking is the owner's (#534).
     #[arg(long = "token-file")]
     pub token_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct JourneyLabelArgs {
+    /// The flow id.
+    pub id: String,
+    /// Short, verb-first name ("Create a new item").
+    #[arg(long)]
+    pub name: Option<String>,
+    /// The feature or business rule it belongs to ("Items").
+    #[arg(long)]
+    pub feature: Option<String>,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

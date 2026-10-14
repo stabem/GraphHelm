@@ -323,15 +323,27 @@ class LaneStopTests(unittest.TestCase):
             self.assertEqual(tasks_reconcile.reconcile(args)["released"], [766])
         self.assertEqual(post.call_args.args[-1]["claimSequence"], 12)
 
-    def test_stop_invokes_configured_cli_reconciliation(self):
+    def test_codex_lane_stop_hook_is_byte_identical(self):
+        # #1181: the Codex companion carried its own lane_stop_hook.py (hard-coded host), so a fix
+        # in one copy did not reach the other. Cost: two file reads.
+        claude_copy = (HERE / "lane_stop_hook.py").read_bytes()
+        codex_copy = (REPO / "plugins/graphhelm-codex-hooks/hooks/lane_stop_hook.py").read_bytes()
+        self.assertEqual(claude_copy, codex_copy, "plugins/graphhelm-codex-hooks/hooks/lane_stop_hook.py differs")
+
+    def test_stop_invokes_configured_cli_reconciliation_and_records_its_reply(self):
+        # #1181: the reconciler's JSON was discarded; now a Stop records it as a `tasks.reconciled`
+        # signal by the lane. On the parent no such event exists. Cost: one Stop, one event read.
         root = Path(self.tmp.name)
         subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True, creationflags=NO_WINDOW)
         subprocess.run(["git", "-C", str(root), "remote", "add", "origin",
                         "git@github.com:stabem/GraphHelm.git"], check=True, capture_output=True, creationflags=NO_WINDOW)
         output = root / "cli-args.txt"
         script = root / "record_cli.py"
+        reply = {"ok": True, "command": "tasks.reconcile",
+                 "data": {"merged": [9001], "closed": [], "released": [], "heartbeat": {"sent": [766], "refused": []}, "inspected": 1}}
         script.write_text("import sys\nfrom pathlib import Path\n"
-                          f"Path({str(output)!r}).open('a').write(' '.join(sys.argv[1:]) + '\\n')\n")
+                          f"Path({str(output)!r}).open('a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+                          f"print({json.dumps(reply)!r})\n")
         if os.name == "nt":
             cli = root / "configured-graphhelm.cmd"
             cli.write_text(f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n')
@@ -350,6 +362,15 @@ class LaneStopTests(unittest.TestCase):
         self.assertIn("tasks reconcile --execution lane-test", reconcile)
         self.assertIn("--lane codex-4", reconcile)
         self.assertIn("--repo stabem/GraphHelm", reconcile)
+        token = Path(self.env["GRAPHHELM_TOKEN_FILE"]).read_text().strip()
+        page = tasks_reconcile.get(self.url + "/v1/executions/lane-test/events?after=0&limit=512", token)
+        recorded = [event for event in page["events"]
+                    if event["kind"]["type"] == "signal_recorded"
+                    and event["kind"]["data"].get("kind") == "tasks.reconciled"]
+        self.assertEqual([event["actor"]["id"] for event in recorded], ["codex-4"])
+        evidence_id = recorded[0]["evidenceRefs"][0]["evidenceId"]
+        content = tasks_reconcile.get(self.url + f"/v1/executions/lane-test/evidence/{evidence_id}", token)["content"]
+        self.assertEqual(json.loads(json.loads(content)["description"]), reply["data"])
 
     def stop(self, manifest, active=False, session="test-session"):
         # Drive the registered Stop commands, not an unregistered helper. On the parent

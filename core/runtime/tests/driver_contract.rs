@@ -2523,6 +2523,83 @@ fn an_ordinary_pause_stops_the_drive_before_it_dispatches_more_work() {
     );
 }
 
+/// #1226: the driver folds only the events appended since its last read. Another writer's append
+/// between passes must still reach the next reread, and the projection the drive returns must
+/// equal `replay` of the whole stream at its end -- the property an incremental fold could break.
+#[test]
+fn the_kept_projection_sees_a_foreign_append_and_equals_a_full_replay() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let spec = spec_with(
+        vec![
+            ("first", agent_graph_node("held")),
+            ("second", agent_graph_node("held")),
+        ],
+        vec![],
+        1,
+    );
+    let model = Arc::new(HangsOnceModelPort::new());
+    let executor = Arc::new(port_executor_with(
+        model.clone(),
+        Arc::new(FakeToolPort {
+            disposition: ToolDisposition::Completed { exit_code: 0 },
+            reuse: None,
+        }),
+    ));
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
+
+    let runtime = multi_thread_runtime();
+    let projection = runtime.block_on(async {
+        let driver = tokio::spawn(drive_to_quiescence_async(
+            opener(directory.path().to_path_buf()),
+            Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default())),
+            Arc::new(SequenceIds::default()),
+            driver_scope(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            execution_id.clone(),
+            spec,
+            executor,
+            driver_actor(),
+            std::collections::BTreeSet::new(),
+            driver_actor(),
+            cancel_rx,
+            None,
+            None,
+        ));
+        while model.called.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        // By now the drive has folded the stream at least once; this append comes from outside it.
+        append_execution_paused(directory.path(), &execution_id);
+        model.release();
+        driver.await.unwrap().unwrap()
+    });
+
+    let repository = LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+    )
+    .unwrap();
+    let full = replay(
+        &driver_scope(),
+        DRIVER_STREAM,
+        &repository
+            .read_replay_stream(&driver_scope(), DRIVER_STREAM)
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        model.called.load(Ordering::SeqCst),
+        1,
+        "the foreign pause never reached a reread: the kept fold went stale"
+    );
+    assert_eq!(
+        projection, full,
+        "the drive's projection differs from a full replay of the same stream"
+    );
+}
+
 /// A governed proposal arriving during an active drive is an owner-review boundary. It must park
 /// the execution before the current pass can dispatch another node or report completion. This is
 /// the regression for the native agent path: a proposal is appended while the first model call is

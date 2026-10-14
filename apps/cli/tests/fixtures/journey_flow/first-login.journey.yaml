@@ -1,6 +1,8 @@
 schema: graphhelm.journey-flow/1
 id: first-login
 title: First login to a configured store
+name: First login
+feature: Sign-in
 purpose: "A new seller signs in with Mercado Livre, finishes store setup and lands on their dashboard."
 status: draft
 approved: null

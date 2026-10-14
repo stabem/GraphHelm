@@ -4,12 +4,11 @@ import { describe, expect, it } from "vitest";
 import { Connect } from "./Connect";
 
 describe("Connect gate note", () => {
-  it("sends the user to the session link studio start printed, not to npm run dev", () => {
+  it("sends the user to `graphhelm studio open` (#1264), not to npm run dev", () => {
     render(<Connect onConnect={() => {}} busy={false} error="" />);
-    const note = screen.getByText(/opened without its session link/);
-    expect(note.textContent).toContain("graphhelm studio start");
-    expect(note.textContent).toContain("?session=");
+    const note = screen.getByText(/opens this page already connected/);
+    expect(note.textContent).toContain("graphhelm studio open");
     expect(note.textContent).not.toContain("npm run dev");
-    expect(note.textContent).toContain("never put the bearer token in a URL");
+    expect(note.textContent).toMatch(/never put\s+the bearer token in a URL/i);
   });
 });

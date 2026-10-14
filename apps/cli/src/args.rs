@@ -602,6 +602,23 @@ pub enum StudioCommand {
     /// Update the GraphHelm clone the Studio runs from (fast-forward of `main`, only when the
     /// clone is clean and on `main`), then start the Runtime and the Studio for this project.
     Start(StudioStartArgs),
+    /// Open the running Studio for this project in the browser, already connected (#1264). The
+    /// link carries a key derived from the project's token file, so only someone who can read
+    /// that file can make it; no console window is opened.
+    Open(StudioOpenArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct StudioOpenArgs {
+    /// The project directory `graphhelm init` provisioned. Defaults to the current directory.
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    /// The Studio port on 127.0.0.1.
+    #[arg(long, default_value_t = 5183)]
+    pub port: u16,
+    /// Print nothing but open the browser; without it the link is printed only when opening fails.
+    #[arg(long = "no-browser")]
+    pub no_browser: bool,
 }
 
 #[derive(Debug, Args)]

@@ -20,7 +20,7 @@ use std::process::Command;
 use graphhelm_protocols::Diagnostic;
 use serde_json::json;
 
-use crate::args::{StudioStartArgs, UpdateArgs};
+use crate::args::{StudioOpenArgs, StudioStartArgs, UpdateArgs};
 use crate::commands::gateway::keyring::SEALING_KEY_ENVIRONMENT;
 
 /// The broker passphrase `serve` reads for model routes (`serve/ports.rs::gateway_passphrase`).
@@ -727,6 +727,91 @@ pub(super) fn add_project(launch: &mut Command, project: &Path) {
         .arg(plain(project.to_path_buf()));
 }
 
+/// #1264: the one-shot ticket `graphhelm studio open` leaves for the Studio dev server, next to the
+/// token file (`<events>.token` -> `<events>.studio-ticket`). The dev server accepts it once and
+/// deletes it (`apps/studio/vite.config.ts`), so the link in browser history is dead after use.
+pub(super) fn ticket_path(events: &Path) -> PathBuf {
+    let name = events.file_name().map_or_else(
+        || "events".into(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    events.with_file_name(format!("{name}.studio-ticket"))
+}
+
+/// Writes a fresh random ticket, owner-only where the OS has modes.
+pub(super) fn write_ticket(path: &Path) -> std::io::Result<String> {
+    use std::io::Write;
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|error| std::io::Error::other(error.to_string()))?;
+    let ticket: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let _ = std::fs::remove_file(path);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)?.write_all(ticket.as_bytes())?;
+    Ok(ticket)
+}
+
+/// The command that opens a URL in the default browser, without a console window.
+pub(super) fn browser_command(url: &str) -> Command {
+    let (program, prefix): (&str, &[&str]) = if cfg!(windows) {
+        ("rundll32", &["url.dll,FileProtocolHandler"])
+    } else if cfg!(target_os = "macos") {
+        ("open", &[])
+    } else {
+        ("xdg-open", &[])
+    };
+    let mut command = graphhelm_process::command(program);
+    command.args(prefix).arg(url);
+    command
+}
+
+pub fn open(args: &StudioOpenArgs) -> Outcome {
+    let project = match args.project.clone().map_or_else(std::env::current_dir, Ok) {
+        Ok(project) => project,
+        Err(_) => return refused("the current directory could not be read", "/project"),
+    };
+    let events = project.join(".graphhelm").join("events");
+    if !events.with_file_name("events.token").is_file() {
+        return refused(
+            format!(
+                "{} has no Runtime token; run `graphhelm studio start` there first",
+                project.display()
+            ),
+            "/project",
+        );
+    }
+    let ticket = match write_ticket(&ticket_path(&events)) {
+        Ok(ticket) => ticket,
+        Err(error) => {
+            return refused(
+                format!("the Studio ticket could not be written: {error}"),
+                "/project",
+            );
+        }
+    };
+    let url = format!("http://127.0.0.1:{}/?session={ticket}", args.port);
+    let opened = !args.no_browser
+        && browser_command(&url)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+    // The link holds a one-shot ticket, dead once the Studio uses it; printed only when no
+    // browser took it, to the owner's own terminal.
+    let data = if opened {
+        json!({ "opened": true })
+    } else {
+        json!({ "opened": false, "url": url })
+    };
+    Outcome::success(COMMAND, data)
+}
+
 pub fn start(args: &StudioStartArgs) -> Outcome {
     let project = match args.project.clone().map_or_else(std::env::current_dir, Ok) {
         Ok(project) => project,
@@ -1017,6 +1102,44 @@ mod tests {
         assert!(!already_installed(Some("abc"), None));
         assert!(!already_installed(None, Some("abc")));
         assert!(!already_installed(Some(""), Some("")));
+    }
+
+    #[test]
+    fn the_open_ticket_is_one_line_next_to_the_token_and_owner_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let events = dir.path().join(".graphhelm").join("events");
+        std::fs::create_dir_all(&events).unwrap();
+        let path = ticket_path(&events);
+        assert_eq!(
+            path,
+            dir.path().join(".graphhelm").join("events.studio-ticket")
+        );
+        let first = write_ticket(&path).unwrap();
+        let second = write_ticket(&path).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), second);
+        assert_eq!(second.len(), 32);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[test]
+    fn the_browser_opens_through_the_hidden_process_helper() {
+        let command = browser_command("http://127.0.0.1:5183/?session=t");
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("http://127.0.0.1:5183/?session=t")
+        );
     }
 
     #[test]

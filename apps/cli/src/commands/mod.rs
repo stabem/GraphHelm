@@ -645,6 +645,7 @@ pub fn run(command: TopLevel) -> Outcome {
         TopLevel::Update(args) => studio::update_cli(&args),
         TopLevel::Studio(args) => match args.command {
             crate::args::StudioCommand::Start(start) => studio::start(&start),
+            crate::args::StudioCommand::Open(open) => studio::open(&open),
         },
         TopLevel::Skills(args) => match args.command {
             crate::args::SkillsCommand::Sync {

@@ -116,6 +116,15 @@ const COMMAND: &str = "tasks.reconcile";
 const SCRIPT: &str = include_str!("../../../../plugins/graphhelm/hooks/tasks_reconcile.py");
 
 pub(super) fn run(args: &TasksArgs) -> Outcome {
+    if let TasksCommand::Credential {
+        lane,
+        execution,
+        token_file,
+        out,
+    } = &args.command
+    {
+        return credential(lane, execution, token_file, out.as_deref());
+    }
     let TasksCommand::Reconcile {
         execution,
         url,
@@ -151,6 +160,71 @@ pub(super) fn run(args: &TasksArgs) -> Outcome {
         }
         Ok(_) => failure("reconciler failed; check the Runtime binding and agent token"),
         Err(_) => failure("could not start Python reconciler"),
+    }
+}
+
+/// `graphhelm tasks credential` (#1148): derives the lane's credential from the OWNER token and
+/// writes it owner-only. The lane and execution take the same bounded identifier alphabet the
+/// Runtime's actor id and path segment accept, so a value that would never verify is refused here.
+fn credential(lane: &str, execution: &str, token_file: &Path, out: Option<&Path>) -> Outcome {
+    const COMMAND: &str = "tasks.credential";
+    let refuse = |message: &str, pointer: &str| {
+        Outcome::application(
+            COMMAND,
+            Diagnostic::error(
+                crate::error_codes::GHCLI001_ARGUMENT_INVALID,
+                message,
+                pointer,
+                "tasks-cli",
+            ),
+        )
+    };
+    let identifier = |value: &str| {
+        !value.is_empty()
+            && value.len() <= 128
+            && value
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"._:-".contains(&c))
+    };
+    if !identifier(lane) {
+        return refuse(
+            "--lane must be 1 to 128 characters of [A-Za-z0-9._:-]",
+            "/lane",
+        );
+    }
+    if !identifier(execution) {
+        return refuse(
+            "--execution must be 1 to 128 characters of [A-Za-z0-9._:-]",
+            "/execution",
+        );
+    }
+    let owner_token = match super::secret_file::read_existing(token_file, "bearer token") {
+        Ok(token) => Zeroizing::new(token),
+        Err(error) => return refuse(error.message(), "/tokenFile"),
+    };
+    let value = Zeroizing::new(super::secret_file::lane_credential(
+        &owner_token,
+        execution,
+        lane,
+    ));
+    let path = out.map_or_else(
+        || super::secret_file::lane_credential_beside(token_file, lane),
+        Path::to_path_buf,
+    );
+    match super::secret_file::write_derived(&path, &value, "lane credential") {
+        Ok(provision) => Outcome::success(
+            COMMAND,
+            serde_json::json!({
+                "lane": lane,
+                "execution": execution,
+                "path": path.to_string_lossy(),
+                "provision": match provision {
+                    super::secret_file::Provision::Created => "created",
+                    super::secret_file::Provision::Existing => "existing",
+                },
+            }),
+        ),
+        Err(error) => refuse(error.message(), "/out"),
     }
 }
 

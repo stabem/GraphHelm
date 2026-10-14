@@ -3444,6 +3444,28 @@ pub(super) async fn signal(
             "/signal",
         );
     };
+    // #1148: a `task.*` record names a lane, and only that lane's credential may write it. The
+    // shared agent session token authenticates "an agent on this machine", not a lane, so a
+    // request it authenticated (marked by the auth layer) is refused as an identity mismatch
+    // before the mutation, and nothing is appended. The owner token keeps its rights (D-058).
+    // Gated by `--require-lane-credential`: off (the default) keeps today's acceptance so the
+    // owner mints one credential per lane before flipping it, and no record is lost in between.
+    if state.require_lane_credential
+        && signal_value
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|kind| kind.starts_with("task."))
+        && headers.contains_key(super::SHARED_SESSION_HEADER)
+    {
+        return respond_failure(
+            SIGNAL_COMMAND,
+            execution::Failure {
+                code: crate::error_codes::GHCLI038_ACTOR_MISMATCH,
+                message: "a task.* record needs the credential of the lane it names; the shared agent session token proves no lane (graphhelm tasks credential --lane <lane>)".to_owned(),
+                pointer: "/actor".to_owned(),
+            },
+        );
+    }
     if signal_value.get("proposal").is_some()
         && (identity.actor.actor_type() != PersistedActorType::Agent
             || !verify_agent_credential(&state, &headers, &identity.actor))
@@ -6784,6 +6806,7 @@ pub(super) mod tests {
             cancels: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             sweep_interval: None,
             read_audit: None,
+            require_lane_credential: false,
             gateway_manifest: None,
             native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             seen_actors: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),

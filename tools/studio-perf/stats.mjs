@@ -42,6 +42,8 @@ export function reduceCpuProfile(profile, options = {}) {
   const totals = new Map();
   let cursor = 0;
   let idleTimeUs = 0;
+  let garbageCollectionTimeUs = 0;
+  let nativeTimeUs = 0;
   let unassignedTimeUs = 0;
   for (let index = 0; index < profile.samples.length; index++) {
     const weight = profile.timeDeltas[index];
@@ -64,7 +66,9 @@ export function reduceCpuProfile(profile, options = {}) {
     const frame = sampledNode.callFrame;
     const name = String(frame.functionName ?? '').trim();
     if (!name || name === '(idle)') { idleTimeUs += clipped; continue; }
-    if (name === '(program)' || name === '(garbage collector)') { unassignedTimeUs += clipped; continue; }
+    if (name === '(garbage collector)') { garbageCollectionTimeUs += clipped; continue; }
+    if (frame.scriptId === '0') { nativeTimeUs += clipped; continue; }
+    if (name === '(program)' || name === '(root)') { unassignedTimeUs += clipped; continue; }
     const url = sanitizeProfileUrl(frame.url);
     const key = `${name}\0${url}\0${Number.isSafeInteger(frame.lineNumber) ? frame.lineNumber + 1 : null}`;
     const prior = totals.get(key) ?? { functionName: sanitizeText(name), url, line: Number.isSafeInteger(frame.lineNumber) && frame.lineNumber >= 0 ? frame.lineNumber + 1 : null, selfTimeUs: 0, samples: 0 };
@@ -76,7 +80,7 @@ export function reduceCpuProfile(profile, options = {}) {
   const frames = [...totals.values()].sort((a, b) => b.selfTimeUs - a.selfTimeUs || a.functionName.localeCompare(b.functionName));
   return { status: 'ok', reason: null, sourceHead: options.sourceHead, alignment: sanitizeText(options.alignment),
     startUs: options.startUs, endUs: options.endUs, intervalUs: options.endUs - options.startUs,
-    frames, idleTimeUs, unassignedTimeUs, sampleCount: profile.samples.length,
+    frames, idleTimeUs, garbageCollectionTimeUs, nativeTimeUs, unassignedTimeUs, sampleCount: profile.samples.length,
     note: 'Sample weights estimate self time; they are not exact durations or causal proof.' };
 }
 

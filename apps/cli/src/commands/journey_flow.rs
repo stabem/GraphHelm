@@ -1320,6 +1320,8 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
             };
             json!({"id": id, "title": flow.get("title").cloned().unwrap_or(Value::Null),
                 "purpose": flow.get("purpose").cloned().unwrap_or(Value::Null),
+                "name": flow.get("name").cloned().unwrap_or(Value::Null),
+                "feature": flow.get("feature").cloned().unwrap_or(Value::Null),
                 "status": status, "approved": approved, "drift": flow["drift"],
                 "findings": listed, "approvable": accepted && !settled,
                 "screens": flow["screens"], "edges": flow["edges"], "paths": flow["paths"]})
@@ -2020,6 +2022,21 @@ mod tests {
             "{:?}",
             refused.iter().map(|f| f.code).collect::<Vec<_>>()
         );
+    }
+
+    /// #1296: `name` and `feature` only label a journey for the Studio rail. Defect named: adding
+    /// or renaming them changes the approved digest, so labelling an approved journey makes it
+    /// stale. Cost: in memory only.
+    #[test]
+    fn a_journey_name_and_feature_never_change_the_approved_digest() {
+        let mut flow: Value = serde_yaml_ng::from_str(
+            "schema: graphhelm.journey-flow/1\nid: itens\ntitle: Usuario da obra cria um item novo\nstatus: draft\napproved: null\nbase: http://127.0.0.1:3000\nactors: [owner]\nsecrets: []\nrisks: []\nscreens:\n  - {id: a, url: /a, state: stable, expect: [], scope: unknown}\nedges: []\npaths: {main: []}\ndrift: []\n",
+        )
+        .unwrap();
+        let before = approval_digest(&flow);
+        flow["name"] = json!("Cadastrar novo item");
+        flow["feature"] = json!("Itens");
+        assert_eq!(approval_digest(&flow), before);
     }
 
     /// #1287: a journey that clicks, submits and checks only "success" proves nothing. Defects

@@ -22,6 +22,18 @@
       "minLength": 1,
       "maxLength": 512
     },
+    "name": {
+      "description": "Short name for the journey, verb first, like a menu item (\"Create a new item\"). Display only: not part of the approved digest, so adding or renaming it never makes an approval stale (#1296).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60
+    },
+    "feature": {
+      "description": "The feature or business rule this journey belongs to (\"Items\", \"Deliveries\"). The Studio groups journeys by it. Display only, outside the approved digest (#1296).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60
+    },
     "status": {
       "enum": [
         "draft",

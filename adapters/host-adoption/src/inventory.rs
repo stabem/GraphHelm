@@ -164,7 +164,10 @@ fn graphhelm_plugin_contributions(home: &Path, project: &Path, claude: &Value) -
             items
                 .iter()
                 .filter(|item| {
-                    item["root"] == root && item["kind"] == "plugin" && item["name"] == name
+                    item["root"] == root
+                        && item["kind"] == "plugin"
+                        && item["name"] == name
+                        && item["origin"] == "configured"
                 })
                 .max_by_key(|item| {
                     if item["path"] == ".claude/settings.local.json" {

@@ -1111,3 +1111,69 @@ fn a_safe_mark_needs_the_owner_and_a_copied_mark_is_void() {
     let copied = validate(other.path());
     assert!(finding(&copied, "flow.safe_unsigned"), "{copied}");
 }
+
+/// #1296: `name` and `feature` are labels. Defects named: a labelled flow fails the canonical
+/// bytes check (so approve and replay refuse it), or relabelling an approved flow makes its
+/// approval stale. Cost: one tempdir, one git repo, four CLI runs.
+#[test]
+fn a_labelled_flow_approves_and_relabelling_keeps_the_approval() {
+    let labelled = EXAMPLE.replacen(
+        "title: Shopper pays for the cart\n",
+        "title: Shopper pays for the cart\nname: Pay for the cart\nfeature: Checkout\n",
+        1,
+    );
+    let dir = project(&labelled);
+    let token = owner_token(dir.path());
+    for args in [
+        vec!["init", "-q"],
+        vec!["add", "-A"],
+        vec![
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@example.test",
+            "commit",
+            "-q",
+            "-m",
+            "f",
+        ],
+    ] {
+        let out = graphhelm_process::command("git")
+            .current_dir(dir.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let (out, reply) = run(dir.path(), &["approve", "checkout", "--token-file", &token]);
+    assert!(out.status.success(), "{reply}");
+    let file = dir.path().join(".graphhelm/journeys/checkout.journey.yaml");
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("name: Pay for the cart\nfeature: Checkout\n")
+    );
+
+    let (out, reply) = run(
+        dir.path(),
+        &[
+            "label",
+            "checkout",
+            "--name",
+            "Pay",
+            "--feature",
+            "Payments",
+        ],
+    );
+    assert!(out.status.success(), "{reply}");
+    let (_, flows) = run(dir.path(), &["flows"]);
+    let flow = &flows["data"]["flows"][0];
+    assert_eq!(flow["status"], "approved", "{flow}");
+    assert_eq!(flow["feature"], "Payments");
+    assert_eq!(flow["name"], "Pay");
+    assert_eq!(flow["findings"], serde_json::json!([]), "{flow}");
+}

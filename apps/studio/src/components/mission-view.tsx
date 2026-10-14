@@ -14,7 +14,7 @@ import { IssueGraph, MissionGraph, STATUS_LABEL, stageState } from "./mission-gr
 import { ProofTable } from "./proof-table";
 import { TestCanvas } from "./test-canvas";
 import { ProofRun } from "./proof-run";
-import type { JourneyRunSource } from "./journey-flows";
+import { journeyVerdict, runJourneys, type JourneyRunSource, type JourneyVerdict } from "./journey-flows";
 import { LanesTimeline } from "./lanes-timeline";
 import { WorkKanban, type KanbanItem } from "./work-kanban";
 import type { Bot } from "../runtime/team";
@@ -207,6 +207,15 @@ function flowStepOrder(flow: JourneyFlowView): JourneyFlowView["screens"] {
   if (ordered.some((screen) => screen === undefined)) return flow.screens;
   return [...ordered as JourneyFlowView["screens"], ...flow.screens.filter((screen) => !ids.includes(screen.id))];
 }
+const VERDICT_LABEL: Record<JourneyVerdict, string> = { passed: "✓ passed", failed: "✕ failed", stale: "! stale", needs_you: "! needs you", not_run: "○ not run", running: "… running" };
+const VERDICT_HINT: Record<JourneyVerdict, string> = {
+  passed: "Last replay passed and still matches the current flow.",
+  failed: "Last replay failed. Open it to see where.",
+  stale: "The flow changed since the last replay. Run it again.",
+  needs_you: "The replay stopped at a step only you can mark safe.",
+  not_run: "Not replayed yet.",
+  running: "Replaying now.",
+};
 function JourneyRailButton({ mission, flow, duplicateTitle, selected, onSelect }: { mission: Mission; flow?: JourneyFlowView; duplicateTitle: boolean; selected: boolean; onSelect(): void }) {
   const { name, note } = splitDraftTitle(mission.title);
   const pathName = flow === undefined ? undefined : mission.contractId === flow.id ? "main" : mission.contractId.slice(flow.id.length + 1);
@@ -227,7 +236,7 @@ function JourneyRailButton({ mission, flow, duplicateTitle, selected, onSelect }
     <span className="mv-journey-count">{`${mission.summary.proven}/${mission.summary.total}`}</span>
   </button>;
 }
-export function JourneyProgress({ statuses }: { statuses: string[] }) {
+export function JourneyProgress({ statuses, caption = true }: { statuses: string[]; caption?: boolean }) {
   const total = statuses.length, proven = statuses.filter((s) => s === "proven").length;
   const work = statuses.filter((s) => s === "work").length;
   const merged = statuses.filter((s) => s === "merged").length;
@@ -242,7 +251,7 @@ export function JourneyProgress({ statuses }: { statuses: string[] }) {
         <span className="mv-progress-part" data-progress="merged" title="Merged, not proven (hatched)" style={{ flexGrow: merged }} />
         <span className="mv-progress-part" data-progress="remaining" title="Not proven" style={{ flexGrow: remaining, background: SEG_TONE.ready }} />
       </span>
-      <span className="mv-progress-text">{words}</span>
+      {caption && <span className="mv-progress-text">{words}</span>}
     </span>
   );
 }
@@ -408,6 +417,37 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
       contentRef.current?.querySelector(".tc-head")?.scrollIntoView?.({ block: "start" });
     }
   }, [sub, stepId]);
+  // #run-all: like a test explorer. Each journey's last run is read from the Runtime's cache once
+  // and kept until something it depends on changes (the flow digest: stale). Run all replays
+  // every journey in one click, one after another; ▶ Run replays one.
+  const runnable = useMemo(() => (run && (sub === "proof" || sub === "test") ? missions.filter((m) => flowForContract(flows?.flows ?? [], m.contractId) !== undefined).map((m) => m.contractId) : []), [run, sub, missions, flows]);
+  const [batch, setBatch] = useState<{ ids: string[]; done: number; current: string | null } | null>(null);
+  const [batchNote, setBatchNote] = useState<string | null>(null);
+  const [batchRevision, setBatchRevision] = useState(0);
+  const readCached = useRef(new Set<string>());
+  useEffect(() => {
+    if (!run || !onRun) return;
+    // Every journey, on every tab: the rail's x/y and verdict must come from the cache on load,
+    // not only after the journey is clicked.
+    for (const id of journeys.map((j) => j.contractId)) {
+      if (readCached.current.has(id) || runFor(id) !== null) continue;
+      readCached.current.add(id);
+      run.read(id).then((value) => onRun(id, value), () => {});
+    }
+  }, [run, onRun, journeys, runFor]);
+  const verdictOf = (m: Mission): JourneyVerdict => (batch?.current === m.contractId ? "running" : journeyVerdict(m.steps.map((step) => step.status), runFor(m.contractId)));
+  const verdictCount = (v: JourneyVerdict) => missions.filter((m) => runnable.includes(m.contractId) && verdictOf(m) === v).length;
+  const startBatch = (ids: string[]) => {
+    if (!run || batch !== null) return;
+    setBatchNote(null);
+    setBatch({ ids, done: 0, current: null });
+    void runJourneys(ids, run, (id, value) => onRun?.(id, value), (id) => setBatch((before) => before && ({ ...before, current: id, done: id === null ? before.done : Math.max(0, before.ids.indexOf(id)) }))).then((outcome) => {
+      setBatch(null);
+      setBatchRevision((n) => n + 1);
+      if (outcome.busy) setBatchNote("Another journey is still running in this tab. Try again when it ends.");
+      else if (Object.keys(outcome.errors).length > 0) setBatchNote(`Couldn't start ${Object.keys(outcome.errors).length} journey(s): ${Object.values(outcome.errors)[0]}`);
+    });
+  };
   if (sel === null) return <div className="mv" data-wide="true" data-page={page}>
     {routeFailed}{historyFailedCount > 0 && <div role="alert">History partly loaded · {historyFailedCount} records could not be read · <button type="button" onClick={onRetryHistory}>Retry</button></div>}{header}
     {sub === "lanes" ? <div className="mv-pad">{lanesView}</div>
@@ -530,13 +570,24 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
           <nav aria-label="Journeys" className="mv-journeys">
             <span className="mv-cap">Journeys</span>
             {pendingFlows.length > 0 && <span className="mv-cap">{approvableCount > 0 ? `${approvableCount} to approve` : `${pendingFlows.length} awaiting proof`}</span>}
+            {runnable.length > 0 && <div className="mv-runall">
+              <button type="button" className="mv-runall-btn" disabled={batch !== null} onClick={() => startBatch(runnable)}>
+                {batch !== null && batch.ids.length > 1 ? `Running ${batch.done + 1}/${batch.ids.length}…` : "▶ Run all"}
+              </button>
+              <span className="mv-runall-sum">{`${verdictCount("passed")} passed · ${verdictCount("failed")} failed · ${verdictCount("stale")} stale · ${verdictCount("not_run")} not run`}</span>
+              {batchNote && <p role="alert" className="mv-runall-note">{batchNote}</p>}
+            </div>}
             {missions.length === 0 && <p className="mv-none">No journeys in this project yet</p>}
             {missions.map((m) => {
               const on = m.contractId === contractId;
               return (
                 <div key={m.contractId} className="mv-jcard" data-selected={on}>
                   <JourneyRailButton mission={m} flow={flowForContract(flows?.flows ?? [], m.contractId)} duplicateTitle={proofTitles.filter((title) => title === proofTitles[missions.indexOf(m)]).length > 1} selected={on} onSelect={() => pickProof(m.contractId)} />
-                  {historyLoading ? <span className="mv-progress-text" role="status">… loading work</span> : <JourneyProgress statuses={journeyStepProgress(m)} />}
+                  {runnable.includes(m.contractId) && <span className="mv-jrun">
+                    <span className="mv-verdict" data-verdict={verdictOf(m)} title={VERDICT_HINT[verdictOf(m)]}>{VERDICT_LABEL[verdictOf(m)]}</span>
+                    <button type="button" className="mv-jrun-btn" aria-label={`Run journey ${m.title}`} disabled={batch !== null} onClick={() => startBatch([m.contractId])}>▶ Run</button>
+                  </span>}
+                  {historyLoading ? <span className="mv-progress-text" role="status">… loading work</span> : <JourneyProgress statuses={journeyStepProgress(m)} caption={false} />}
                 </div>
               );
             })}
@@ -676,7 +727,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
             {...(inspectorActions ? { inspectorActions } : {})} />}
           {sub === "graph" && !group && mission && (!historyLoading || partial) && <MissionGraph mission={mission} selectedStepId={stepId} selectedTaskKey={taskKey ?? null}
             onSelectStep={(id) => { setStepId(id); setTaskKey(null); }} onSelectTask={pickTask} onOpenTest={openTest} />}
-          {sub === "proof" && (mission && contractId ? <ProofTable key={contractId} mission={mission} flow={flow} onOpenTest={openTest} frameUrl={(id) => frameUrl(id, contractId)}
+          {sub === "proof" && (mission && contractId ? <ProofTable key={`${contractId}:${batchRevision}`} mission={mission} flow={flow} onOpenTest={openTest} frameUrl={(id) => frameUrl(id, contractId)}
             run={run} onApprove={onApprove} onWatch={onWatch} busy={flowBusy} onBusy={setFlowBusy} error={flowError} onActionError={setFlowError}
             {...(onRun ? { onRun: (value: JourneyRunView) => onRun(contractId, value) } : {})}
             />

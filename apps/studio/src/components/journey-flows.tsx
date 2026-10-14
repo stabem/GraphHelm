@@ -95,3 +95,49 @@ export function useJourneyRun(flowId: string, source: JourneyRunSource | undefin
   return { offered: source !== undefined && !absent, run, frames, failure, busyReason, launching: starting, again: () => launch(false), confirm: () => launch(true), confirming: attempt.confirm && starting };
 
 }
+
+/** What a journey's last run says, folded from its steps (#run-all): one word for the rail, like a
+ * test explorer. `stale` = the cached run belongs to an older flow and needs a rerun. */
+export type JourneyVerdict = "passed" | "failed" | "stale" | "needs_you" | "not_run" | "running";
+export function journeyVerdict(statuses: readonly string[], run: JourneyRunView | null): JourneyVerdict {
+  if (run?.state === "running") return "running";
+  if (run?.state === "failed" || statuses.includes("failed")) return "failed";
+  if (statuses.includes("stale")) return "stale";
+  if (statuses.includes("needs_you")) return "needs_you";
+  if (statuses.length > 0 && statuses.every((s) => s === "proven")) return "passed";
+  return "not_run";
+}
+
+/**
+ * Run all (#run-all): replay each journey once, in order, one at a time (the tab's one-run lock is
+ * held for the whole batch, so a single click never races a row's Run again). Each journey is a
+ * forced run - every step in one go - polled until it ends and handed to `onRun`, which is the same
+ * cache the rail and Proof read. A journey that fails to start is reported and the batch goes on.
+ */
+export async function runJourneys(ids: readonly string[], source: JourneyRunSource, onRun: (id: string, run: JourneyRunView) => void,
+  onCurrent: (id: string | null) => void = () => {}, wait: (ms: number) => Promise<void> = (ms) => new Promise((done) => setTimeout(done, ms))): Promise<{ busy: boolean; errors: Record<string, string> }> {
+  if (activePreview !== null) return { busy: true, errors: {} };
+  const token = Symbol("run-all");
+  activePreview = token;
+  const errors: Record<string, string> = {};
+  try {
+    for (const id of ids) {
+      onCurrent(id);
+      try {
+        let run = await source.start(id, true);
+        onRun(id, run);
+        while (run.state === "running") {
+          await wait(RUN_POLL_MS);
+          run = await source.read(id);
+          onRun(id, run);
+        }
+      } catch (cause) {
+        errors[id] = cause instanceof Error ? cause.message : String(cause);
+      }
+    }
+  } finally {
+    onCurrent(null);
+    if (activePreview === token) activePreview = null;
+  }
+  return { busy: false, errors };
+}

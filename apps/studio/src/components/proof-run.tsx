@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 
 import type { JourneyFlowView, JourneyRunView, JourneyView } from "../runtime/types";
 import { testFrames } from "../runtime/test-frames";
+import { runFailure } from "../runtime/run-failure";
 import { useJourneyRun, type JourneyRunSource } from "./journey-flows";
 import { TestCanvas } from "./test-canvas";
 import { CHANGED_AT, FrameCompare, HistoryStrip, useJourneyHistory } from "./proof-history";
@@ -46,8 +47,14 @@ export function ProofRun({ journey, flow, source, selected, onSelect, frameUrl, 
     : journey.steps.findIndex((s) => !run?.screens?.[s.screen?.screenId ?? s.stepId]?.result);
   const currentId = currentIdx >= 0 ? journey.steps[currentIdx]!.stepId : null;
   const frames = testFrames(journey, run, currentId, flow);
+  const screenIds0 = journey.steps.map((s) => s.screen?.screenId ?? s.stepId);
+  const failedRun = run?.state === "failed" ? runFailure(run, screenIds0) : null;
+  // #1296: the step the run failed on reads failed, even when it never reported a screen result.
+  if (failedRun?.step != null && frames[failedRun.step]?.status === "not_run") {
+    frames[failedRun.step] = { ...frames[failedRun.step]!, status: "failed", reason: failedRun.text };
+  }
   const nowFrame = (stepId: string) => runFrames[screenOf(stepId)] ?? frameUrl(stepId);
-  const screenIds = journey.steps.map((s) => s.screen?.screenId ?? s.stepId);
+  const screenIds = screenIds0;
   const history = useJourneyHistory(journey.contractId, source, run, (screen) => runFrames[screen] ?? null, screenIds);
   const badges: Record<string, string> = {};
   for (const step of journey.steps) {
@@ -71,10 +78,14 @@ export function ProofRun({ journey, flow, source, selected, onSelect, frameUrl, 
   let line;
   if (failure !== null) {
     line = <p role="alert" className="tc-run-error">{`Couldn't run this journey: ${failure}`}</p>;
-  } else if (run?.state === "failed") {
-    const why = run.reason ?? "the Runtime refused the run";
-    const detail = run.detail ? ` (${run.detail.code} at ${run.detail.pointer})` : "";
-    line = <p role="alert" className="tc-run-error">{`Couldn't run this journey: ${why}${detail}`}</p>;
+  } else if (failedRun !== null) {
+    line = (
+      <div role="alert" className="tc-run-error">
+        <p>{`Couldn't run this journey. ${failedRun.text}`}</p>
+        {failedRun.log && <pre className="tc-run-log" aria-label="What the launcher said">{failedRun.log}</pre>}
+        {failedRun.logPath && <p className="tc-run-logpath">{`Full log: ${failedRun.logPath}`}</p>}
+      </div>
+    );
   } else if (run === null || running) {
     const step = currentIdx >= 0 ? currentIdx + 1 : Math.min(frames.length, count("passed") + count("failed") + 1);
     const since = run?.startedAt ? Date.parse(run.startedAt) : NaN;

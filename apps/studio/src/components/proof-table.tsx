@@ -7,6 +7,7 @@ import { MiniBrowser } from "./issue-proof";
 import type { JourneyFlowView, JourneyRunView } from "../runtime/types";
 import { approvalBlockReason } from "../runtime/journeys";
 import { useJourneyRun, type JourneyRunSource } from "./journey-flows";
+import { runFailure as explain } from "../runtime/run-failure";
 
 const HINT: Record<StepStatus, string> = {
   proven: "Proven by a machine. Seen by you closes the ladder.",
@@ -23,12 +24,12 @@ const EV: Record<StepStatus, [string, string, string]> = {
 const TONE: Record<StepStatus, string> = { proven: "proven", stale: "stalled", failed: "stalled", needs_you: "stalled", preview_only: "work", not_run: "ready" };
 
 /** #1157: a finished run that failed is said, not left reading "not replayed yet". */
-function runFailure(run: JourneyRunView): string {
+function runFailure(run: JourneyRunView, stepIds: string[]): string {
   if (run.reason === "driver.observer_missing" || run.detail?.code === "replay.observer_missing") {
     return "Couldn't run this journey: no browser observer is installed. Run `graphhelm setup --install-observer playwright` in this project, then Run again.";
   }
-  const detail = run.detail ? ` (${run.detail.code} at ${run.detail.pointer})` : "";
-  return `Couldn't run this journey: ${run.reason ?? "the Runtime refused the run"}${detail}`;
+  const failed = explain(run, stepIds);
+  return `Couldn't run this journey. ${failed.text}${failed.log ? ` The launcher said: ${failed.log.split("\n").slice(-2).join(" / ")}` : ""}`;
 }
 
 interface Props {
@@ -86,7 +87,7 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
         {preview.run?.state === "ready" && <span>{preview.run.kind === "preview" ? "Preview only — not proof" : "Replay recorded"}</span>}
         {preview.run?.state === "running" && <span role="status">Running…</span>}
         {(error || preview.failure || preview.busyReason) && <p role="alert">{error ?? preview.failure ?? preview.busyReason}</p>}
-        {!error && !preview.failure && !preview.busyReason && preview.run?.state === "failed" && <p role="alert">{runFailure(preview.run)}</p>}
+        {!error && !preview.failure && !preview.busyReason && preview.run?.state === "failed" && <p role="alert">{runFailure(preview.run, mission.steps.map((s) => s.stepId))}</p>}
       </div>}
       <div className="proof-summary">
         <section className="proof-promise-list" aria-labelledby="proof-promise-heading">

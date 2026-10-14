@@ -548,6 +548,8 @@ export interface JourneyRunView {
    * click (#548): the edge, the act's name and the app (`base`) it would act on. That edge reads
    * `{result: "skipped", reason: "confirm_needed"}`. Absent otherwise. */
   held?: { edge: string; act: string; base: string };
+  /** A failed launch's output (#1296): the log file and its last bytes, which name the cause. */
+  launchLog?: { path?: string; tail?: string };
 }
 /** One earlier finished run of a journey (#history): `GET /v1/journey-flows/{id}/history`. */
 export interface JourneyPastRun extends JourneyRunView { run: string }

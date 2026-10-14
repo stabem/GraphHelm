@@ -835,7 +835,10 @@ fn journey_draft_and_review_forward_scoped_credentials_and_runtime_refusals() {
 /// would have been reported as naming one that "does not exist" -- the guard failing honest work
 /// while a genuinely wrong name in a skill nobody had added yet would have been caught for the
 /// wrong reason. A second copy of a set is a second thing to forget.
-const MCP_TOOL_NAMES: [&str; 47] = [
+///
+/// #1277: `resolve_contract`, `present`, `compile_context` and `accounting` are callable but
+/// unlisted (`UNLISTED_STUBS` in tools.rs), so they are not here.
+const MCP_TOOL_NAMES: [&str; 43] = [
     "start",
     "list",
     "topology",
@@ -877,12 +880,8 @@ const MCP_TOOL_NAMES: [&str; 47] = [
     "wake_wait",
     "route_set",
     "probe",
-    "resolve_contract",
     "memory_status",
-    "present",
-    "compile_context",
     "memory_propose",
-    "accounting",
     "sweep",
     "claim",
     "clear",

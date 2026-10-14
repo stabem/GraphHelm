@@ -630,6 +630,18 @@ fn every_real_tool_is_gated_by_capability_not_just_the_two_already_covered() {
         "agent-x",
         audit_log.to_str().unwrap(),
     );
+    // #1277: the unlisted #223 stubs are still callable, so the empty allowlist must refuse them
+    // too; tools/list no longer brings them into the population, so they are named here.
+    let mut population = population;
+    population.extend(
+        [
+            "resolve_contract",
+            "present",
+            "compile_context",
+            "accounting",
+        ]
+        .map(str::to_owned),
+    );
     let mut lines = vec![initialize_request(1), initialized_notification()];
     for (index, name) in population.iter().enumerate() {
         lines.push(json!({

@@ -55,7 +55,7 @@ pub use projection::{
     MemoryRecordProjection, OpenClaim, OpenWait, OverdueStage, ProjectionGeneration,
     ProjectionRebuildRequest, ProjectionRebuilder, ProjectionRepository, ProjectionWatermark,
     ReplayError, SubagentRecord, WakeMisBurn, claim_evidence_digest, overdue_at,
-    project_customs_stage, replay, replay_within,
+    project_customs_stage, projection_events_folded, replay, replay_within,
 };
 pub use repository::{
     ActiveVersion, ArtifactCatalog, AsyncEventRepository, AuthenticatedCheckpoint, EventPage,

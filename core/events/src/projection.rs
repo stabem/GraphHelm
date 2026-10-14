@@ -1383,11 +1383,22 @@ fn record_scan(
     Ok(())
 }
 
+/// Every event any projection fold has applied in this process (#1226). An observer for fold
+/// cost: a test reads it before and after a run in its own test binary. Never a decision input.
+static EVENTS_FOLDED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The process-wide count behind `EVENTS_FOLDED`.
+#[doc(hidden)]
+pub fn projection_events_folded() -> u64 {
+    EVENTS_FOLDED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn apply_projection_event(
     projection: &mut ExecutionProjection,
     active_legal_holds: &mut BTreeSet<(ScopedEvidenceId, String)>,
     event: &EventEnvelope,
 ) -> Result<(), ReplayError> {
+    EVENTS_FOLDED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     projection
         .stream_id
         .get_or_insert_with(|| event.stream_id.to_string());

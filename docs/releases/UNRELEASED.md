@@ -13,3 +13,7 @@
   `studio-stage`, `schema-stage-profile.tests` and `ci/fixtures/`; the token-bench task `1145`
   whose oracle cut functions out of `ci/gate.ps1`. `ci/` keeps the scripts a live caller names.
   #1204.
+- The `ci/` scripts only the gate runner called: `event-contract-sweep`, `frozen-release-guard`,
+  `find-culture-comparisons`, `crate-input-hash`, `manifest-name`, `required-features` (each with
+  its suite) and `tool-versions.json`. `ci/` keeps `closing-keywords`, `normalize-script-eol`,
+  `postgres` and `test-count`. #1231.

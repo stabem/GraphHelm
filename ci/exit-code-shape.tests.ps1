@@ -37,7 +37,7 @@
 # below (none remain since that file was retired), so a waiver cannot be added silently: a new
 # marker fails this suite until someone moves the pin and says why.
 
-$ExpectedAssertionCount = 12
+$ExpectedAssertionCount = 11
 $ErrorActionPreference = 'Stop'
 $script:total = 0
 $script:failures = 0
@@ -230,8 +230,12 @@ try {
     Assert-True -Condition ($swept -contains 'closing-keywords.ps1') `
         -Message 'and closing-keywords.ps1, a script with a live caller, is IN the population, not merely near it'
 
-    Assert-True -Condition ($records.Count -gt 0) `
-        -Message "and the pattern still matches something in this tree, so a clean answer below is about the tree rather than about the pattern (matched $($records.Count) statements)"
+    # The control that stood here required the pattern to match at least one statement in this
+    # tree. Its three matches lived in scripts deleted with the gate (#1218, #1231), and the kept
+    # scripts hold none, so it could only fail. What it guarded -- that a clean answer is about the
+    # tree, not about a pattern that has rotted -- is carried by canaries A and B above, which run in
+    # this same invocation and must each find exactly one live hit. The count is still printed.
+    Write-Host "  (the pattern matched $($records.Count) statement(s) in the swept scripts)"
 
     $survivors = @($records | Where-Object { $_.Live -and -not $_.Waived })
     Assert-True -Condition ($survivors.Count -eq 0) `

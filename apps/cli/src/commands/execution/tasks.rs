@@ -16,7 +16,7 @@ use graphhelm_events::{EvidenceOpener, EvidenceRead};
 use graphhelm_execution::tasks::{
     FoldSlice, Route, TaskEventRecord, TaskState, fold_task_events_with_routes, parse_task_event,
 };
-use graphhelm_protocols::{EventKind, EvidenceId};
+use graphhelm_protocols::{EventKind, EvidenceId, PersistedTimestamp};
 use serde::Serialize;
 
 use super::signal::SignalKeyring;
@@ -64,6 +64,77 @@ impl TaskRecordCache {
         if later {
             self.head = other.head;
         }
+    }
+}
+
+/// #1193 (plan A2): the lease of one open pre-PR claim, read at `now`. `expires_at` is the later
+/// of the claim and its last heartbeat plus the lease; `overdue` is `now` past it. Computed here,
+/// beside the Runtime's clock, never in the pure fold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimLease {
+    /// The slice key the lease belongs to (`TaskState.key`).
+    pub key: String,
+    pub task_id: String,
+    pub lane: String,
+    pub claim_sequence: u64,
+    pub lease_seconds: u64,
+    pub expires_at: PersistedTimestamp,
+    pub overdue: bool,
+}
+
+/// The lease arithmetic, total for any instants: a heartbeat before the claim (a corrupt or
+/// reordered log) cannot move expiry earlier than the claim itself, and a `now` before the claim
+/// reads as not overdue. `lease_seconds` is bounded by admission (60..86400) and the fold's
+/// default; any value is accepted here.
+pub fn lease_state(
+    claimed_at: &PersistedTimestamp,
+    last_heartbeat_at: Option<&PersistedTimestamp>,
+    lease_seconds: u64,
+    now: &PersistedTimestamp,
+) -> (PersistedTimestamp, bool) {
+    let claimed = *claimed_at.as_datetime();
+    let since = last_heartbeat_at
+        .map(|at| *at.as_datetime())
+        .filter(|heartbeat| *heartbeat > claimed)
+        .unwrap_or(claimed);
+    let lease = chrono::Duration::seconds(i64::try_from(lease_seconds).unwrap_or(i64::MAX));
+    let expires = since.checked_add_signed(lease).unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC);
+    let expires_at = PersistedTimestamp::from_datetime(expires)
+        .unwrap_or_else(|_| PersistedTimestamp::from_datetime(since).expect("a persisted instant round-trips"));
+    let overdue = *now.as_datetime() > *expires_at.as_datetime();
+    (expires_at, overdue)
+}
+
+#[cfg(test)]
+mod lease_tests {
+    use super::*;
+
+    fn at(value: &str) -> PersistedTimestamp {
+        PersistedTimestamp::parse(value).unwrap()
+    }
+
+    /// #1193: the plan's cell. A claim at T with no heartbeat is overdue at T+lease+1s and not at
+    /// T+lease-1s; a heartbeat at T+lease-1s moves expiry to that instant plus the lease.
+    #[test]
+    fn a_claim_goes_overdue_one_second_past_its_lease_and_a_heartbeat_moves_expiry() {
+        let claimed = at("2026-10-14T03:00:00Z");
+        let (expires, overdue) = lease_state(&claimed, None, 1800, &at("2026-10-14T03:29:59Z"));
+        assert_eq!(expires, at("2026-10-14T03:30:00Z"));
+        assert!(!overdue, "one second inside the lease");
+        let (_, overdue) = lease_state(&claimed, None, 1800, &at("2026-10-14T03:30:01Z"));
+        assert!(overdue, "one second past the lease");
+        let heartbeat = at("2026-10-14T03:29:59Z");
+        let (expires, overdue) =
+            lease_state(&claimed, Some(&heartbeat), 1800, &at("2026-10-14T03:30:01Z"));
+        assert_eq!(expires, at("2026-10-14T03:59:59Z"));
+        assert!(!overdue, "the heartbeat moved expiry");
+        // Exactly at expiry is not yet overdue; a heartbeat older than the claim counts for nothing.
+        let (_, overdue) = lease_state(&claimed, None, 1800, &at("2026-10-14T03:30:00Z"));
+        assert!(!overdue);
+        let stale = at("2026-10-14T02:00:00Z");
+        let (expires, _) = lease_state(&claimed, Some(&stale), 60, &at("2026-10-14T03:00:30Z"));
+        assert_eq!(expires, at("2026-10-14T03:01:00Z"));
     }
 }
 

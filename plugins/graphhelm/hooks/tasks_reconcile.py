@@ -294,8 +294,40 @@ def reconcile(args):
                  args.lane, {"lane": args.lane, "claimSequence": outstanding[-1],
                              "reason": "Issue closed" if result.get("state") == "CLOSED" else "Issue reassigned"})
         released.append(issue)
+    # #1193: every open pre-PR claim the Runtime's tasks fold reads as past its lease is released
+    # as graphhelm, whichever lane holds it; the claim's lane is told by `releasedBy`.
+    lapsed = release_overdue(args.url.rstrip("/"), token, credential, args.execution, args.repo)
     return {"merged": done, "closed": closed, "released": released, "heartbeat": beats,
-            "inspected": len(opened)}
+            "lapsed": lapsed, "inspected": len(opened)}
+
+
+def release_overdue(base, token, credential, execution, repo):
+    """Releases, as graphhelm, each lease the tasks route reports overdue (#1193). Returns
+    {"released": [...], "refused": [...]}; a route that does not serve leases (older Runtime)
+    yields empty lists, never an error, so the rest of the reconcile stands."""
+    out = {"released": [], "refused": []}
+    try:
+        view = get(f"{base}/v1/executions/{urllib.parse.quote(execution, safe='')}/tasks", token)
+    except (OSError, ValueError, KeyError):
+        return out
+    leases = view.get("leases") if isinstance(view, dict) else None
+    if not isinstance(leases, list):
+        return out
+    for lease in leases:
+        if not isinstance(lease, dict) or lease.get("overdue") is not True:
+            continue
+        lane, task_id, sequence = lease.get("lane"), lease.get("taskId"), lease.get("claimSequence")
+        if not (isinstance(lane, str) and isinstance(task_id, str) and type(sequence) is int and sequence > 0):
+            continue
+        entry = {"taskId": task_id, "lane": lane, "claimSequence": sequence}
+        try:
+            post_end(base, credential("graphhelm"), execution, "released", task_id, repo, "graphhelm",
+                     {"lane": lane, "claimSequence": sequence, "releasedBy": "graphhelm",
+                      "reason": f"lease of {lease.get('leaseSeconds')} s lapsed at {lease.get('expiresAt')} without a heartbeat"})
+            out["released"].append(entry)
+        except (OSError, ValueError, KeyError) as error:
+            out["refused"].append({**entry, "message": f"{type(error).__name__}: {error}"})
+    return out
 
 
 def main():

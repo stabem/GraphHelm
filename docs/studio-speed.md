@@ -91,7 +91,7 @@ The updated observer below is the single completed baseline collection.
 | Open Chat beside Graph | 60.45 | 62.50 |
 | Send chat to visible message | 282.60 | 295.50 |
 
-[Raw JSON](studio-speed-2026-10-09.json) retains all ten samples, tool versions,
+[Raw JSON](../tools/studio-speed/results/studio-speed-2026-10-09.json) retains all ten samples, tool versions,
 source revision and dirty-tree status. Median uses the middle pair; p95 uses
 nearest rank, which is the maximum with only ten samples. These are local
 development observations, with low tail confidence and machine-load sensitivity.

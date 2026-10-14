@@ -965,6 +965,18 @@ class Reach(unittest.TestCase):
         ])
         self.assertEqual(other, [])
 
+    def test_a_markdown_change_under_docs_or_an_entry_point_runs_the_docs_guard(self):
+        # #1248: before this rule a `.md` change mapped nothing, so an orphan or a dead link
+        # introduced by a docs-only PR was never observed.
+        repo = Path(__file__).resolve().parents[2]
+        guard = "python -m unittest tools/docs-guard/test_docs_reachable.py"
+        for path in ("docs/process/DELIVERY.md", "README.md", "AGENTS.md"):
+            *_, tools, _, other = reach(path, repo=repo)
+            self.assertIn(guard, tools, path)
+            self.assertEqual(other, [], path)
+        *_, tools, _, _ = reach("plugins/graphhelm/README.md", repo=repo)
+        self.assertNotIn(guard, tools, "a plugin README is not a docs/ document")
+
     def test_a_path_no_rule_maps_is_reported(self):
         *_, other = reach("ci/gate.ps1")
         self.assertEqual(other, ["ci/gate.ps1"])

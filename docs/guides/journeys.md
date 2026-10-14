@@ -492,7 +492,7 @@ byte-identical to the binary's copy, else `replay.observer_missing`), Node 22.22
   what was observed, not proof of a business goal.
 
 Design: [`docs/specs/2026-10-06-journey-explore-design.md`](../specs/2026-10-06-journey-explore-design.md).
-Plan: [`docs/superpowers/plans/2026-10-07-journey-explore-phase-3.md`](../superpowers/plans/2026-10-07-journey-explore-phase-3.md).
+Plan: `docs/superpowers/plans/2026-10-07-journey-explore-phase-3.md` (removed in #1248; `git show 02df519c:docs/superpowers/plans/2026-10-07-journey-explore-phase-3.md`).
 
 ## See also
 

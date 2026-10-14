@@ -17,13 +17,12 @@ When checked-in sources conflict, use this order:
 3. normative subsystem specifications
 4. `docs/product/PRODUCT_REQUIREMENTS.md` and `docs/product/ROADMAP_AND_ACCEPTANCE.md`
 5. examples under `examples/`
-6. `CODEX_BOOTSTRAP_PROMPT.md`
 
 Do not silently resolve a contradiction between higher-precedence sources. Record it in an ADR or RFC with evidence, affected contracts, alternatives, and a recommendation. The product design is already approved; do not restart product brainstorming for implementation work.
 
 ## Documentation language
 
-All documentation in this repository — every file under `docs/`, `README.md`, `MASTER_PRD.md`, `CHANGELOG.md`, ADRs, RFCs, decision register entries, and any new document — must be written in English. Do not add or merge Portuguese (or any other non-English) prose. This applies to new documents and to edits of existing ones.
+All documentation in this repository — every file under `docs/`, `README.md`, ADRs, RFCs, decision register entries, and any new document — must be written in English. Do not add or merge Portuguese (or any other non-English) prose. This applies to new documents and to edits of existing ones.
 
 ## Constitutional architecture invariants
 
@@ -256,7 +255,7 @@ The initial milestone implemented this sequence:
 
 Use the checked-in schemas as canonical wire contracts. Model the stable typed subset required by this milestone and preserve schema-permitted unknown fields for forward compatibility. Schema validation precedes typed deserialization. The validator registry is entirely in-memory from `schemas/`; it must never fetch a `$ref` from the network.
 
-The historical `CODEX_BOOTSTRAP_PROMPT.md` and its issue numbers do not limit current work. Scope
+The historical `CODEX_BOOTSTRAP_PROMPT.md` (removed in #1248) and its issue numbers do not limit current work. Scope
 new work by its current public issue, the decision register, accepted ADRs, and checked-in schemas.
 
 ## Security rules

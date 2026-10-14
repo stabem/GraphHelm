@@ -3,10 +3,9 @@
 //! tell"), never pass it. Cost: one local bare repository, one clone, one CLI call; no network.
 
 use std::path::Path;
-use std::process::Command;
 
 fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = graphhelm_process::command("git")
         .arg("-C")
         .arg(dir)
         .args(args)

@@ -32,19 +32,20 @@ that implementation detail does not prove a real update reuses it.
 
 ## Owner-PC observer commands
 
-Run these in one hidden PowerShell terminal, with no other heavy job running. Use a
-fresh target directory for the cold build. The touching step intentionally invalidates
-the CLI crate for the warm build.
+Run these in one hidden PowerShell terminal, with no other heavy job running. Submit
+both Cargo builds through the shared build slot shown below. Use a fresh target
+directory for the cold build. The touching step intentionally invalidates the CLI
+crate for the warm build.
 
 ```powershell
 $target = 'D:/ghc/perf-1186-cold'
 $cold = Measure-Command {
-    cargo build --locked --profile update -p graphhelm-cli --jobs 6 --timings --target-dir $target
+    graphhelm --json workspace slot --root D:/gh --lane <lane> --jobs 4 --label windows-cold-build -- cargo +1.97.1 build --locked --profile update -p graphhelm-cli --timings --target-dir $target
 }
 $cold | Select-Object TotalSeconds
 (Get-Item apps/cli/src/main.rs).LastWriteTime = Get-Date
 $warm = Measure-Command {
-    cargo build --locked --profile update -p graphhelm-cli --jobs 6 --timings --target-dir $target
+    graphhelm --json workspace slot --root D:/gh --lane <lane> --jobs 4 --label windows-warm-build -- cargo +1.97.1 build --locked --profile update -p graphhelm-cli --timings --target-dir $target
 }
 $warm | Select-Object TotalSeconds
 ```
@@ -53,8 +54,8 @@ Keep `cargo-timings/cargo-timing.html` and record its ten slowest units. Then in
 the update target with:
 
 ```powershell
-$home = [Environment]::GetFolderPath('UserProfile')
-$updateTarget = Join-Path $home '.graphhelm/target'
+$userProfile = [Environment]::GetFolderPath('UserProfile')
+$updateTarget = Join-Path $userProfile '.graphhelm/target'
 Test-Path -LiteralPath $updateTarget
 ```
 

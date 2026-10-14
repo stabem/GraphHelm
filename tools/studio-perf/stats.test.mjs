@@ -114,6 +114,26 @@ test('profile reducer refuses missing alignment and malformed or oversized data'
   assert.equal(reduceCpuProfile(valid, { startUs: 0, endUs: 10, sourceHead: 'abc12345', alignment: 'same-load', limits: { maxSamples: 0 } }).status, 'unknown');
 });
 
+test('profile keeps idle, garbage collection, native, and unassigned weights separate', () => {
+  const profile = {
+    nodes: [
+      { id: 1, callFrame: { functionName: '(root)', url: '' }, children: [2, 3, 4, 5, 6] },
+      { id: 2, callFrame: { functionName: '(idle)', url: '' } },
+      { id: 3, callFrame: { functionName: '(garbage collector)', url: '' } },
+      { id: 4, callFrame: { functionName: 'nativeCall', scriptId: '0', url: '' } },
+      { id: 5, callFrame: { functionName: '(program)', url: '' } },
+      { id: 6, callFrame: { functionName: 'work', url: 'file:///app/work.js', lineNumber: 0 } },
+    ],
+    samples: [2, 3, 4, 5, 6], timeDeltas: [4, 5, 7, 11, 14],
+  };
+  const result = reduceCpuProfile(profile, { startUs: 0, endUs: 41, sourceHead: 'abc12345', alignment: 'same-load profile clock' });
+  assert.equal(result.idleTimeUs, 4);
+  assert.equal(result.garbageCollectionTimeUs, 5);
+  assert.equal(result.nativeTimeUs, 7);
+  assert.equal(result.unassignedTimeUs, 11);
+  assert.equal(result.frames.reduce((sum, frame) => sum + frame.selfTimeUs, 0), 14);
+});
+
 test('offline profile command emits JSON without loading Playwright', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'studio-profile-'));
   try {

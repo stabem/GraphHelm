@@ -1,5 +1,5 @@
 import type { TaskEventRecord } from "./team-tasks";
-import type { LaneFold } from "./tasks-route";
+import type { LaneFold, LaneLiveness } from "./tasks-route";
 import type { RuntimeEvent } from "./types";
 import { sameHead } from "./heads";
 
@@ -24,11 +24,21 @@ export interface Lane {
   silentAfterMs?: number; freeAfterMs?: number;
   /** #1193/#1234: the tasks whose claim lease the Runtime reads as overdue: stale claims. */
   overdueTasks?: string[];
+  /** #1281: when the Runtime starts this lane's quiet, `max(lastRecordAt, owesSince)` in ms; the
+   * Stalled age is `now` minus this. Absent when the Runtime judged nothing for the lane. */
+  quietSinceAt?: number;
   /** Latest observed session end for this lane. */
   endedAt?: number;
   lastRecord?: LaneRecord | null;
   /** #591: PRs this lane opened that wait on a review: no verdict on their newest head, not merged. */
   awaiting?: number[];
+}
+
+/** #1281: the instant the Runtime measures a lane's quiet from: the later of its last record and
+ * its oldest open obligation, the same pair `lane_liveness` takes. */
+function quietSince(row: LaneLiveness | undefined): { quietSinceAt?: number } {
+  const times = [row?.lastRecordAt, row?.owesSince].map((at) => (at ? Date.parse(at) : NaN)).filter(Number.isFinite);
+  return times.length ? { quietSinceAt: Math.max(...times) } : {};
 }
 
 /** #1234: the budgets a set of lanes was judged by (the same for every lane of one run). */
@@ -232,6 +242,7 @@ export function laneBars(events: TimedTaskEvent[], fold: LaneFold, now: number, 
       const bars = l.bars.filter((b) => b.end >= from).map((b) => ({ ...b, start: Math.max(b.start, from) }));
       return {
         lane, bars, lastEventAt: l.last, silent: verdictOf.get(lane)?.silent ?? false, lastRecord: l.record, awaiting: [...l.awaiting],
+        ...quietSince(verdictOf.get(lane)),
         ...(silentAfterMs !== undefined ? { silentAfterMs } : {}), ...(freeAfterMs !== undefined ? { freeAfterMs } : {}),
         ...(overdueOf.has(lane) ? { overdueTasks: overdueOf.get(lane)! } : {}),
       };

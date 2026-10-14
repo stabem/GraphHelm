@@ -8,7 +8,7 @@ import type { GraphModel } from "../graph/model";
 import { captureDocuments } from "./journeys";
 import type { NeedsYouItem } from "./needs-you";
 import { firstLine, timeOf, type Bot } from "./team";
-import { parseTaskEvent, type ClaudeTaskReadModel } from "./team-tasks";
+import type { ClaudeTaskReadModel, TaskEventRecord } from "./team-tasks";
 import type { RuntimeEvent } from "./types";
 
 export const HANDOVER_MIN_GAP_MS = 15 * 60 * 1000;
@@ -18,7 +18,9 @@ const SETTLED = new Set(["succeeded", "waived", "skipped"]);
 
 export interface HandoverLine { text: string; sequences: number[] }
 export interface Handover { fromSeq: number; toSeq: number; eventCount: number; gapMinutes: number; shipped: HandoverLine[]; needsYou: HandoverLine[]; quiet: HandoverLine[]; untouched: HandoverLine[] }
-export interface HandoverInput { events: RuntimeEvent[]; bots: Bot[]; model: GraphModel | null; claudeTasks: ClaudeTaskReadModel | null; openItems: NeedsYouItem[]; envelopes?: EnvelopeRecord; fromSeq: number; toSeq: number; seenAt?: number }
+export interface HandoverInput { events: RuntimeEvent[]; bots: Bot[]; model: GraphModel | null; claudeTasks: ClaudeTaskReadModel | null; openItems: NeedsYouItem[]; envelopes?: EnvelopeRecord; fromSeq: number; toSeq: number; seenAt?: number;
+  /** #1192: the run's verified `task.*` records from the Runtime's tasks route; a merge line reads its PR here. */
+  taskRecords?: TaskEventRecord[] }
 
 function payloadOf(event: RuntimeEvent): Record<string, unknown> {
   return event.payload !== null && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, unknown> : {};
@@ -56,15 +58,15 @@ export function buildHandover(input: HandoverInput): Handover {
       const task = input.claudeTasks?.tasks.find((candidate) => candidate.completedSequence === event.sequence);
       shipped.push({ text: task ? `${botName(event.actorId)} finished “${task.taskSubject}”` : `${botName(event.actorId)} finished a task`, sequences: [event.sequence] });
     } else if (event.kind === "signal_recorded" && payload.kind === "task.merged" && event.actorId !== null) {
-      // #445: a merged task (#388) is shipped work. An envelope not opened yet still counts, without
-      // its PR; an opened one that is not a well-formed record by its own merger counts as nothing.
-      const envelope = input.envelopes?.[event.sequence];
-      if (envelope === undefined) {
+      // #445: a merged task (#388) is shipped work. #1192: the record comes from the Runtime's tasks
+      // route (verified there: kind, signer, shape); a merge the route has not served yet still
+      // counts, without its PR.
+      const merge = input.taskRecords?.find((record) => record.sequence === event.sequence && record.kind === "task.merged");
+      if (merge === undefined) {
         shipped.push({ text: `${botName(event.actorId)} merged a task`, sequences: [event.sequence] });
         continue;
       }
-      const merge = parseTaskEvent("task.merged", event.actorId, envelope.text);
-      if (merge === null || merge.pr === undefined) continue;
+      if (merge.actorId !== event.actorId || merge.pr === undefined) continue;
       const closes = merge.closes?.length ? ` · closes ${merge.closes.map((issue) => `#${issue}`).join(", ")}` : "";
       shipped.push({ text: `PR #${merge.pr} merged by ${botName(event.actorId)}${closes}`, sequences: [event.sequence] });
     }

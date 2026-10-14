@@ -1,4 +1,5 @@
-import { foldTaskEvents, type TaskEventRecord, type TaskState } from "./team-tasks";
+import type { TaskEventRecord } from "./team-tasks";
+import type { LaneFold } from "./tasks-route";
 import type { RuntimeEvent } from "./types";
 
 export type TimedTaskEvent = TaskEventRecord & { at: string };
@@ -26,18 +27,15 @@ export interface Lane {
 /** #591: a lane with no record of any kind for this long is silent; a step it owns reads Stalled.
  * One rule for the Graph cards, the pace dot and the Lanes agent board. */
 export const LIVENESS_MS = 30 * 60 * 1000;
-export function laneBars(events: TimedTaskEvent[], now: number, windowMs: number): Lane[] {
+/** #1192: the bars are drawn from the Runtime's fold (`GET /v1/executions/{id}/tasks`): `fold`
+ * carries every slice the Runtime created, live or not, and the slice each record landed in. No
+ * fold runs in the browser; a record the Runtime routed nowhere draws nothing. */
+export function laneBars(events: TimedTaskEvent[], fold: LaneFold, now: number, windowMs: number): Lane[] {
   const lanes = new Map<string, { bars: LaneBar[]; last: number; record: LaneRecord | null; awaiting: Set<number> }>();
   const open = new Map<string, { lane: string; bar: LaneBar; slice: string }>();
-  // The fold's returned slices may be filtered or sorted; keep the routed slice identity.
-  const routed = new Map<number, string>();
-  const keys = new Map<TaskState, string>();
-  foldTaskEvents(events.map(({ at, ...event }) => ({ ...event, occurredAt: at })),
-    (event, state) => {
-      let key = keys.get(state);
-      if (key === undefined) { key = `slice-${keys.size}`; keys.set(state, key); }
-      routed.set(event.sequence, key);
-    });
+  // Slice identity is the Runtime's id, stable across the slices it later closed or absorbed.
+  const routed = new Map<number, string>(fold.routes.map((route) => [route.sequence, `slice-${route.slice}`]));
+  const keys = new Map(fold.slices.map((slice) => [slice.state, `slice-${slice.id}`] as const));
   const prOfKey = new Map<string, number>();
   const prSlices = new Map<number, Set<string>>();
   const titleOf = new Map<string, string>();

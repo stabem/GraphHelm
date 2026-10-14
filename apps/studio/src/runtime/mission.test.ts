@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { laneBarsOf } from "../test/task-fold";
 import { buildMission, custodyRows, toMissionTask, unlinkedTasks, withCurrentReviewer, TRUST_LABELS, type MissionTask } from "./mission";
-import { laneBars, type TimedTaskEvent } from "./lane-bars";
+import { type TimedTaskEvent } from "./lane-bars";
 import type { JourneyView, JourneyRunView } from "./types";
 import { foldTaskEvents, parseTaskEvent, type TaskState } from "./team-tasks";
 
@@ -149,14 +150,14 @@ describe("withCurrentReviewer (#591)", () => {
     ev({ kind: "task.review_assigned", reviewer: "gh-claude-7", pr: 609, at: at(5) }),
   ];
   it("the live reviewer is the latest assignment on the current head; earlier ones are history", () => {
-    const t = withCurrentReviewer(base, laneBars(events, T0 + 10 * 60_000, 3_600_000));
+    const t = withCurrentReviewer(base, laneBarsOf(events, T0 + 10 * 60_000, 3_600_000));
     expect(t.reviewers).toEqual(["gh-claude-7"]);
     expect(t.reviewerHistory).toEqual(["gh-claude-3"]);
     expect(custodyRows(t).at(-1)).toMatchObject({ stage: "Review", who: "gh-claude-7", verdict: "pending" });
   });
   it("a reviewer handed the review back on the new head is live again", () => {
     const back = [...events, ev({ kind: "task.review_assigned", reviewer: "gh-claude-3", pr: 609, at: at(6) })];
-    const t = withCurrentReviewer(base, laneBars(back, T0 + 10 * 60_000, 3_600_000));
+    const t = withCurrentReviewer(base, laneBarsOf(back, T0 + 10 * 60_000, 3_600_000));
     expect(t.reviewers).toEqual(["gh-claude-3"]);
     expect(t.reviewerHistory).toEqual(["gh-claude-7"]);
   });
@@ -166,6 +167,6 @@ describe("withCurrentReviewer (#591)", () => {
       ev({ kind: "task.pr_opened", lane: "gh-claude-1", pr: 609, headSha: "ccc", at: at(6) }),
       ev({ kind: "task.review_assigned", reviewer: "gh-claude-5", pr: 609, headSha: "ccc", at: at(7) }),
     ];
-    expect(withCurrentReviewer(old, laneBars(assigned, T0 + 10 * 60_000, 3_600_000)).reviewers).toEqual(["gh-claude-5"]);
+    expect(withCurrentReviewer(old, laneBarsOf(assigned, T0 + 10 * 60_000, 3_600_000)).reviewers).toEqual(["gh-claude-5"]);
   });
 });

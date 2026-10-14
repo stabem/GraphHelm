@@ -33,7 +33,8 @@ import type { NativeChatRequest } from "./runtime/types";
 import { workConversation } from "./runtime/work-conversation";
 import { isSubagentLifecycleSignal } from "./runtime/subagents";
 import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
-import { foldTaskEvents, isClaudeTaskSignal, isTaskEventSignal, readClaudeTasks, readTaskEventRecords, type ClaudeTaskReadModel, type TaskEventRecord, type TaskState } from "./runtime/team-tasks";
+import { isClaudeTaskSignal, isTaskEventSignal, readClaudeTasks, type ClaudeTaskReadModel, type TaskEventRecord, type TaskState } from "./runtime/team-tasks";
+import { RUNTIME_PREDATES_TASKS_ROUTE, type LaneFold } from "./runtime/tasks-route";
 import { SlotPoll } from "./components/slot-poll";
 import { MissionView } from "./components/mission-view";
 import { applySessionEnds, laneBars, type TimedTaskEvent } from "./runtime/lane-bars";
@@ -131,8 +132,6 @@ function budgetSecondsLegal(typed: string | undefined): boolean {
  * Runtime a fresh store open plus a full stream replay, so fewer, larger pages are what make a
  * big run open fast: 200 per page made a 5,000-event run cost 25 serial full replays. */
 const EVENT_PAGE_SIZE = 1000;
-/** The first work paint opens only a small tail; the complete fold still follows. */
-const FIRST_WORK_PAGE_SIZE = 64;
 /** How many tail pages are asked for at once once the first page has told us the head. */
 const EVENT_PAGE_PARALLEL = 4;
 const LIST_PAGE_SIZE = 20;
@@ -1793,29 +1792,16 @@ export default function App({
   const [runTeamRead, setRunTeamRead] = useState<RunTeamReadModel | null>(null);
   const [claudeTaskRead, setClaudeTaskRead] = useState<ClaudeTaskReadModel | null>(null);
   // #391: the per-task graphs, folded from the run's `task.*` records.
-  const [taskGraphs, setTaskGraphs] = useState<{ executionId: string; tasks: TaskState[]; records: TaskEventRecord[] } | null>(null);
+  const [taskGraphs, setTaskGraphs] = useState<({ executionId: string; tasks: TaskState[]; records: TaskEventRecord[] } & LaneFold) | null>(null);
   const [historyFailure, setHistoryFailure] = useState<{ executionId: string; count: number } | null>(null);
   const [historyRetry, setHistoryRetry] = useState(0);
-  // A recent page gives the Graph useful work while the complete history is still rebuilding.
-  // It is provisional: the full fold below replaces it. A late verdict or assignment alone
-  // cannot establish an active task when its claim and PR opening are outside this page.
-  const [recentTaskGraphs, setRecentTaskGraphs] = useState<{ executionId: string; tasks: TaskState[]; records: TaskEventRecord[] } | null>(null);
-  useEffect(() => {
-    const client = clientRef.current;
-    const head = selectedSummary?.headSequence;
-    if (!client || !selected || head === undefined) return;
-    let cancelled = false;
-    setRecentTaskGraphs(null);
-    void client.getEvents(selected, { after: Math.max(0, head - FIRST_WORK_PAGE_SIZE), limit: FIRST_WORK_PAGE_SIZE })
-      .then((page) => readTaskEventRecords({ executionId: selected, events: page.events, readEvidence: openEvidence }))
-      .then((records) => {
-        if (!cancelled && clientRef.current === client && selectedRef.current === selected)
-          setRecentTaskGraphs({ executionId: selected,
-            tasks: foldTaskEvents(records).filter((task) => task.claimSequence !== undefined || task.recordedHeads.length > 0),
-            records });
-      }, () => { /* The complete read remains authoritative. */ });
-    return () => { cancelled = true; };
-  }, [selected, selectedSummary?.headSequence, openEvidence]);
+  // #1192: the run whose Runtime answered the tasks route with "no such route" (an older binary).
+  // The Team, Graph and Lanes views then say so in one sentence instead of drawing an empty board.
+  const [tasksRouteMissing, setTasksRouteMissing] = useState<string | null>(null);
+  // #1192: the run whose Runtime refused the tasks route (seen live: GHE013_READ_BUDGET_EXCEEDED
+  // on a run with 4307 task envelopes). The Runtime's own code and sentence are shown; "N records
+  // could not be read" is a different failure (envelopes that did not verify) and stays for that.
+  const [tasksRouteFailure, setTasksRouteFailure] = useState<{ executionId: string; text: string } | null>(null);
   useEffect(() => {
     if (!selected || events === null) {
       setRunTeamRead(null);
@@ -1825,31 +1811,37 @@ export default function App({
     let cancelled = false;
     const run = selected;
     const client = clientRef.current;
-    let unreadable = 0;
-    let completedRecords: TaskEventRecord[] = [];
     setHistoryFailure(null);
+    setTasksRouteFailure((current) => (current?.executionId === run ? null : current));
     void readRunTeam(run, eventList, openEvidence)
       .then((result) => { if (!cancelled) setRunTeamRead(result); })
       .catch(() => { if (!cancelled) setRunTeamRead({ executionId: run, members: [], messages: [], rejected: 0, unavailable: true }); });
     void readClaudeTasks({ executionId: run, events: eventList, readEvidence: openEvidence })
       .then((result) => { if (!cancelled) setClaudeTaskRead(result); })
       .catch(() => { if (!cancelled) setClaudeTaskRead({ executionId: run, tasks: [], rejected: 1 }); });
-    void readTaskEventRecords({ executionId: run, events: eventList, readEvidence: openEvidence,
-      shouldContinue: () => !cancelled && clientRef.current === client && selectedRef.current === run,
-      onReadFailure: (count) => { unreadable += count; },
-      onProgress: (records) => {
-        if (!cancelled && clientRef.current === client && selectedRef.current === run) {
-          completedRecords = records;
+    // #1192 (plan A1): the task projection is the Runtime's (`GET /v1/executions/{id}/tasks`,
+    // #1149): one request returns the slices and the verified records; the browser opens no
+    // envelope and folds nothing. `rejected` is the Runtime's count of envelopes that did not
+    // verify, shown where the per-envelope read failures were. `null` is an older Runtime.
+    if (client === null) return () => { cancelled = true; };
+    void client.getTasks(run)
+      .then((reply) => {
+        if (cancelled || clientRef.current !== client) return;
+        if (reply === null) {
+          setTasksRouteMissing(run);
+          setTaskGraphs({ executionId: run, tasks: [], records: [], slices: [], routes: [] });
+          return;
         }
-      },
-    })
-      .then((records) => { if (!cancelled && clientRef.current === client) {
-        setTaskGraphs({ executionId: run, tasks: foldTaskEvents(records), records });
-        setHistoryFailure(unreadable > 0 ? { executionId: run, count: unreadable } : null);
-      } })
-      .catch(() => { if (!cancelled && clientRef.current === client) {
-        setHistoryFailure({ executionId: run, count: Math.max(1, unreadable) });
-        setTaskGraphs({ executionId: run, tasks: foldTaskEvents(completedRecords), records: completedRecords });
+        setTasksRouteMissing((current) => (current === run ? null : current));
+        setTaskGraphs({ executionId: run, tasks: reply.tasks, records: reply.records, slices: reply.slices, routes: reply.routes });
+        setHistoryFailure(reply.rejected > 0 ? { executionId: run, count: reply.rejected } : null);
+      })
+      .catch((error: unknown) => { if (!cancelled && clientRef.current === client) {
+        const text = error instanceof RuntimeError && error.code !== ""
+          ? `${error.code} · ${error.diagnostics[0]?.message ?? error.message}`
+          : error instanceof Error ? error.message : String(error);
+        setTasksRouteFailure({ executionId: run, text });
+        setTaskGraphs((current) => (current?.executionId === run ? current : { executionId: run, tasks: [], records: [], slices: [], routes: [] }));
       } });
     return () => { cancelled = true; };
   }, [selected, events, eventList, openEvidence, historyRetry]);
@@ -2260,10 +2252,7 @@ export default function App({
   const [journeyContract, setJourneyContract] = useState<string | null>(null);
   const botNameOf = useCallback((id: string) => botNames[id] ?? id, [botNames]);
   // #393: one thread per task, opened by the run's task.* records.
-  const currentTaskGraphs = useMemo(() => {
-    if (taskGraphs?.executionId === selected) return taskGraphs;
-    return recentTaskGraphs?.executionId === selected ? recentTaskGraphs : null;
-  }, [taskGraphs, recentTaskGraphs, selected]);
+  const currentTaskGraphs = useMemo(() => (taskGraphs?.executionId === selected ? taskGraphs : null), [taskGraphs, selected]);
   const runTasks = currentTaskGraphs?.tasks ?? null;
   // #479: a message's issue/PR numbers link to the run's GitHub repository (read off its task
   // records) and a journey id it names opens the Journey tab on that journey.
@@ -2385,7 +2374,7 @@ export default function App({
   const missionLanes = useMemo(() => {
     const records = currentTaskGraphs?.records ?? [];
     const timed: TimedTaskEvent[] = records.flatMap((r) => (r.occurredAt ? [{ ...r, at: r.occurredAt }] : []));
-    return applySessionEnds(laneBars(timed, clock, 14 * 3_600_000), eventList);
+    return applySessionEnds(laneBars(timed, { slices: currentTaskGraphs?.slices ?? [], routes: currentTaskGraphs?.routes ?? [] }, clock, 14 * 3_600_000), eventList);
   }, [currentTaskGraphs, clock, eventList]);
   const watchFlow = useCallback(async (flowId: string, path?: string) => {
     const client = clientRef.current;
@@ -2412,7 +2401,7 @@ export default function App({
   useEffect(() => { setSeenSeq(selected === "" ? null : readLastSeen(projectKey, selected)); }, [projectKey, selected]);
   const head = status?.headSequence ?? 0;
   const handover = useMemo(() => status !== null && status.executionId === selected && shouldShowHandover(eventList, seenSeq, head)
-    ? buildHandover({ events: eventList, bots: team.bots, model, claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null,
+    ? buildHandover({ events: eventList, bots: team.bots, model, taskRecords: currentTaskGraphs?.records ?? [], claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null,
         openItems: needs.items, envelopes, fromSeq: typeof seenSeq === "number" ? seenSeq : seenSeq!.sequence,
         seenAt: typeof seenSeq === "object" ? seenSeq?.at : undefined, toSeq: head })
     : null, [status, selected, eventList, seenSeq, head, team, model, claudeTaskRead, needs, envelopes]);
@@ -3148,10 +3137,16 @@ export default function App({
               style={dockReservePx === null ? undefined : ({ "--dock-reserve": `${dockReservePx}px` } as CSSProperties)}
             >
             <div id="studio-panel-team" role="tabpanel" aria-label="Team" hidden={canvasTab !== "team"}>
-            {canvasTab === "team" && taskGraphs?.executionId === selected && (
+            {canvasTab === "team" && tasksRouteMissing === selected && (
+              <p className="mv-none mv-pad" role="alert">{RUNTIME_PREDATES_TASKS_ROUTE}</p>
+            )}
+            {canvasTab === "team" && tasksRouteFailure?.executionId === selected && (
+              <div className="mv-pad" role="alert">Tasks route failed · {tasksRouteFailure.text} · <button type="button" onClick={() => setHistoryRetry((value) => value + 1)}>Retry</button></div>
+            )}
+            {canvasTab === "team" && taskGraphs?.executionId === selected && tasksRouteMissing !== selected && (
               <DelegationTree tasks={taskGraphs.tasks} />
             )}
-            {canvasTab === "team" && taskGraphs?.executionId === selected && (
+            {canvasTab === "team" && taskGraphs?.executionId === selected && tasksRouteMissing !== selected && (
               <TaskGraphs tasks={taskGraphs.tasks}
                   onOpenJourney={(contractId) => { setJourneyContract(contractId); chooseCanvas("journey"); }} />
             )}
@@ -3173,7 +3168,7 @@ export default function App({
             </div>
             {(canvasTab === "graph" || canvasTab === "journey") && (
               <div id="studio-panel-graph" role="tabpanel" aria-label={canvasTab === "journey" ? "Proof" : "Graph"}>
-                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} events={eventList} envelopes={envelopes} wakeListeners={status?.wakeListeners ?? []} seenActors={status?.seenActors ?? []} seenActorAgesMs={status?.seenActorAgesMs ?? {}} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} partial={currentTaskGraphs !== null && currentTaskGraphs !== taskGraphs} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && currentTaskGraphs === null} historyFailedCount={historyFailure?.executionId === selected ? historyFailure.count : 0} onRetryHistory={() => setHistoryRetry((value) => value + 1)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
+                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} events={eventList} envelopes={envelopes} wakeListeners={status?.wakeListeners ?? []} seenActors={status?.seenActors ?? []} seenActorAgesMs={status?.seenActorAgesMs ?? {}} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} tasksRouteMissing={tasksRouteMissing === selected} tasksRouteFailure={tasksRouteFailure?.executionId === selected ? tasksRouteFailure.text : null} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && currentTaskGraphs === null} historyFailedCount={historyFailure?.executionId === selected ? historyFailure.count : 0} onRetryHistory={() => setHistoryRetry((value) => value + 1)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
                   initialView={canvasTab === "journey" ? "proof" : "graph"} focusJourneyId={journeyContract}
                   flows={flowsRead.view} onApprove={approveFlow} onWatch={watchFlow}
 

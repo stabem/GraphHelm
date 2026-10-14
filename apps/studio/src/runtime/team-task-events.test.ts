@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { laneBarsOf } from "../test/task-fold";
 import { digestOf } from "./customs";
-import { laneBars } from "./lane-bars";
+
 import { stageHealth } from "./stage-health";
 import { prPath } from "./work-groups";
 import { foldTaskEvents, parseTaskEvent, readTaskEventRecords, timingSamples, type TaskEventRecord } from "./team-tasks";
@@ -32,7 +33,7 @@ describe("foldTaskEvents", () => {
     const second = event(4, "task.heartbeat", "codex-1", { lane: "codex-1" }, 40);
     const state = foldTaskEvents([claim, plan, first, second])[0];
     expect(state).toMatchObject({ step: "implement", claimSequence: 1, authorLastSequence: 2, lastSequence: 2, lastHeartbeatAt: at(40) });
-    const lanes = laneBars([claim, plan, first, second].map((entry) => ({ ...entry, at: entry.occurredAt })), Date.parse(at(41)), 60 * 60_000);
+    const lanes = laneBarsOf([claim, plan, first, second].map((entry) => ({ ...entry, at: entry.occurredAt })), Date.parse(at(41)), 60 * 60_000);
     expect(stageHealth(state, lanes, [state], Date.parse(at(41)))?.flag).toBe("moving");
     expect(lanes.find((lane) => lane.lane === "codex-1")?.lastEventAt).toBe(Date.parse(at(40)));
 
@@ -71,7 +72,7 @@ describe("foldTaskEvents", () => {
     expect(tasks[0]).toMatchObject({ taskId, issue: 758, pr: 760, step: "merged" });
     expect(tasks.filter((task) => task.pr === null)).toHaveLength(0);
     const now = Date.parse("2026-10-07T20:31:00Z");
-    const lanes = laneBars(events.map((event, index) => ({ ...event, at: new Date(now - 31 * 60_000 + index * 1_000).toISOString() })), now, 60 * 60_000);
+    const lanes = laneBarsOf(events.map((event, index) => ({ ...event, at: new Date(now - 31 * 60_000 + index * 1_000).toISOString() })), now, 60 * 60_000);
     expect(lanes.find((lane) => lane.lane === "codex-13")?.bars.filter((bar) => bar.open)).toEqual([]);
   });
   it("does not reopen gh-claude-9's merged PR #516 (#881)", () => {
@@ -87,7 +88,7 @@ describe("foldTaskEvents", () => {
     expect(tasks.filter((task) => task.pr === 516)).toMatchObject([{ step: "merged", issue: 509 }]);
     expect(tasks.filter((task) => task.taskId === taskId && task.pr === null)).toEqual([]);
     const now = Date.parse("2026-10-09T12:00:00Z");
-    expect(laneBars(events.map((event, index) => ({ ...event, at: new Date(now - 30_000 + index * 1_000).toISOString() })), now, 60 * 60_000)
+    expect(laneBarsOf(events.map((event, index) => ({ ...event, at: new Date(now - 30_000 + index * 1_000).toISOString() })), now, 60 * 60_000)
       .find((lane) => lane.lane === "gh-claude-9")?.bars.filter((bar) => bar.open && bar.label === "#516") ?? []).toEqual([]);
   });
   it("keeps an interrupted pre-claim plan out of a later claim (#881)", () => {

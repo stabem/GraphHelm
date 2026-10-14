@@ -1554,3 +1554,191 @@ fn serializes_a_slice_with_the_studio_field_names() {
         "2026-10-13T12:00:00Z"
     );
 }
+
+/// #1193 (plan A2, slice 2 in core): a claim carries its lease, 1800 when the record has none;
+/// a lease outside 60..86400 or not an integer refuses the record. Catches a parser that drops the
+/// field or accepts the Runtime's refused shapes.
+#[test]
+fn a_claim_carries_its_lease_and_defaults_to_1800() {
+    let claim = |patch: Value| {
+        let mut doc = json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1193", "revision": 1, "at": "now", "issue": 1193, "lane": "lane-a", "branch": "b"});
+        for (k, v) in patch.as_object().unwrap() {
+            doc[k] = v.clone();
+        }
+        parse("task.claimed", "lane-a", doc)
+    };
+    assert_eq!(claim(json!({})).unwrap().lease_seconds, Some(1800));
+    assert_eq!(
+        claim(json!({"leaseSeconds": 600})).unwrap().lease_seconds,
+        Some(600)
+    );
+    assert!(claim(json!({"leaseSeconds": 59})).is_none());
+    assert!(claim(json!({"leaseSeconds": 86401})).is_none());
+    assert!(claim(json!({"leaseSeconds": "1800"})).is_none());
+    let base = "2026-10-14T12:00:00Z";
+    let state = &fold_task_events(&[with_time(
+        claim(json!({"leaseSeconds": 600})).unwrap(),
+        at(base, 0),
+    )])[0];
+    assert_eq!(state.claimed_at, Some(at(base, 0)));
+    assert_eq!(state.lease_seconds, Some(600));
+}
+
+/// #1193: a release signed by `graphhelm` with `releasedBy: graphhelm` ends the named lane's claim
+/// like the lane's own release, and the slice records who ended it. The same document under any
+/// other signer, or `releasedBy` on a lane's own release, is not a record. Catches the parser that
+/// still requires `lane == actor` for every release (the Studio's rule before #1193).
+#[test]
+fn graphhelm_releases_another_lanes_claim_only_with_released_by() {
+    let release = json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1193", "revision": 2, "at": "now", "lane": "lane-b", "claimSequence": 10, "reason": "lease lapsed", "releasedBy": "graphhelm"});
+    let by_graphhelm = parse("task.released", "graphhelm", release.clone()).unwrap();
+    assert_eq!(
+        (
+            by_graphhelm.lane.as_deref(),
+            by_graphhelm.released_by.as_deref()
+        ),
+        (Some("lane-b"), Some("graphhelm"))
+    );
+    assert!(parse("task.released", "lane-x", release.clone()).is_none());
+    assert!(parse("task.released", "lane-b", release.clone()).is_none());
+    let mut own = release.clone();
+    own["lane"] = json!("graphhelm");
+    assert!(parse("task.released", "graphhelm", own).is_none());
+    let mut unnamed = release;
+    unnamed.as_object_mut().unwrap().remove("releasedBy");
+    assert!(
+        parse("task.released", "graphhelm", unnamed).is_none(),
+        "graphhelm releasing without releasedBy is an identity mismatch"
+    );
+
+    let mut ended = by_graphhelm;
+    ended.sequence = 11;
+    let tasks = fold_task_events(&[
+        claimed(10, "lane-b", "issue-1193", 1193, "issue-1193-work"),
+        ended,
+    ]);
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(
+        (
+            tasks[0].lane.as_deref(),
+            tasks[0].released_by.as_deref(),
+            tasks[0].pr
+        ),
+        (Some("lane-b"), Some("graphhelm"), None)
+    );
+    let heartbeat = record(
+        12,
+        "task.heartbeat",
+        "lane-b",
+        json!({"taskId": "issue-1193", "lane": "lane-b"}),
+    );
+    assert!(
+        fold_task_events(&[
+            claimed(10, "lane-b", "issue-1193", 1193, "issue-1193-work"),
+            heartbeat
+        ])[0]
+            .released_by
+            .is_none()
+    );
+}
+
+/// #1192: the one fixture the Studio's parity cell reads (`apps/studio/src/runtime/tasks-route.test.ts`):
+/// the route reply (`tasks`, `records`, `slices`, `routes`) for a corpus that exercises slices,
+/// absorption, a closed PR, a stray verdict, a release and heartbeats. The Studio's test helper folds
+/// the same `records` and must land every record on the same slice id; a drift between the two
+/// folds shows here as a fixture mismatch, not as a Studio that silently draws another graph.
+/// Regenerate with `GRAPHHELM_WRITE_FIXTURES=1`; a fixture change is reviewed like any golden.
+#[test]
+fn the_route_fixture_matches_the_fold() {
+    let records = vec![
+        claimed(1, "lane-a", "issue-10", 10, "issue-10-first"),
+        planned(2, "lane-a", "issue-10", "none", "first plan"),
+        record(
+            3,
+            "task.heartbeat",
+            "lane-a",
+            json!({"taskId": "issue-10", "lane": "lane-a"}),
+        ),
+        claimed(4, "lane-a", "issue-10", 10, "issue-10-second"),
+        opened(5, "lane-a", "issue-10", 100, "aaaaaaaa"),
+        verdict(
+            6,
+            "rev-1",
+            "issue-10",
+            100,
+            "aaaaaaaa",
+            "BLOCK",
+            "https://github.com/o/r/pull/100#c1",
+        ),
+        opened(7, "lane-a", "issue-10", 100, "bbbbbbbb"),
+        verdict(
+            8,
+            "rev-1",
+            "issue-10",
+            100,
+            "cccccccc",
+            "APPROVE",
+            "https://github.com/o/r/pull/100#c2",
+        ),
+        verdict(
+            9,
+            "rev-1",
+            "issue-10",
+            100,
+            "bbbbbbbb",
+            "APPROVE",
+            "https://github.com/o/r/pull/100#c3",
+        ),
+        claimed(10, "lane-b", "issue-11", 11, "issue-11-work"),
+        record(
+            11,
+            "task.released",
+            "lane-b",
+            json!({"taskId": "issue-11", "lane": "lane-b", "claimSequence": 10, "reason": "Handed over"}),
+        ),
+        opened(12, "lane-c", "issue-12", 120, "dddddddd"),
+        record(
+            13,
+            "task.closed",
+            "lane-c",
+            json!({"taskId": "issue-12", "pr": 120, "reason": "superseded", "by": 121}),
+        ),
+        merged(14, "rev-1", "issue-10", 100, "eeeeeeee", &[10]),
+    ];
+    let base = "2026-10-14T10:00:00Z";
+    let records: Vec<TaskEventRecord> = records
+        .into_iter()
+        .map(|r| {
+            let minutes = i64::try_from(r.sequence).unwrap();
+            with_time(r, at(base, minutes))
+        })
+        .collect();
+    let fold = graphhelm_execution::tasks::fold_task_events_with_routes(&records);
+    let reply = json!({
+        "executionId": "fixture-run",
+        "headSequence": 14,
+        "tasks": fold.tasks,
+        "records": records,
+        "slices": fold.slices,
+        "routes": fold.routes,
+        "rejected": 0,
+    });
+    let text = serde_json::to_string_pretty(&reply).unwrap() + "\n";
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tasks-route.json");
+    if std::env::var_os("GRAPHHELM_WRITE_FIXTURES").is_some() {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &text).unwrap();
+    }
+    let committed = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+        panic!(
+            "missing {}; run with GRAPHHELM_WRITE_FIXTURES=1",
+            path.display()
+        )
+    });
+    assert_eq!(
+        committed.replace("\r\n", "\n"),
+        text,
+        "the committed route fixture differs from the fold"
+    );
+}

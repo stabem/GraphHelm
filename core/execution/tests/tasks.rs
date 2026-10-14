@@ -367,6 +367,71 @@ fn folds_pr_opened_block_new_head_approve_and_merged_into_the_step_sequence() {
 }
 
 /// #608: a `blockedBy` cleared only by a verdict drew a pushed fix as "blocked" everywhere.
+/// #1262, seen live on gh-team (PR #1249): the PR was opened with `b9319a3a` and the BLOCK was
+/// recorded with the full 40-character sha of the same commit. Compared exactly, the verdict was a
+/// stray: `blockedBy` stayed empty, the slice read "awaiting a verdict", and the stall rule kept
+/// naming the reviewer for 2.5 h. One commit, two spellings, is one head.
+#[test]
+fn a_full_sha_verdict_counts_against_a_short_sha_head_1262() {
+    let short = "b9319a3a";
+    let full = "b9319a3ac21f6ee1b23db30bb9563a7cab66aaba";
+    let opened_short = opened(1, "gh-claude-opt-1", "issue-1234", 1249, short);
+    let assigned = record(
+        2,
+        "task.review_assigned",
+        "gh-claude-opt-1",
+        json!({"taskId": "issue-1234", "pr": 1249, "headSha": short, "reviewer": "gh-claude-opt-2", "lane": "gh-claude-opt-1"}),
+    );
+    let block_full = verdict(
+        3,
+        "gh-claude-opt-2",
+        "issue-1234",
+        1249,
+        full,
+        "BLOCK",
+        "https://github.com/stabem/GraphHelm/pull/1249#c1",
+    );
+
+    let blocked =
+        &fold_task_events(&[opened_short.clone(), assigned.clone(), block_full.clone()])[0];
+    assert_eq!(
+        blocked.blocked_by.as_ref().map(|b| b.reviewer.as_str()),
+        Some("gh-claude-opt-2"),
+        "the full-sha BLOCK speaks for the short-sha head: {blocked:?}"
+    );
+    assert_eq!(blocked.step, TaskStep::Review);
+
+    // The same commit pushed again, spelled in full, is not the author's fix.
+    let same_full = opened(4, "gh-claude-opt-1", "issue-1234", 1249, full);
+    let still = &fold_task_events(&[
+        opened_short.clone(),
+        assigned.clone(),
+        block_full.clone(),
+        same_full,
+    ])[0];
+    assert!(still.blocked_by.is_some(), "{still:?}");
+    assert!(still.rounds[0].fix_head.is_none(), "{still:?}");
+
+    // A different commit that shares only six characters is a different head.
+    let other = opened(5, "gh-claude-opt-1", "issue-1234", 1249, "b9319acf");
+    let fixed = &fold_task_events(&[opened_short.clone(), assigned.clone(), block_full, other])[0];
+    assert!(fixed.blocked_by.is_none(), "{fixed:?}");
+    assert_eq!(fixed.rounds[0].fix_head.as_deref(), Some("b9319acf"));
+
+    // And an APPROVE spelled in full moves the short-sha slice to merge.
+    let approve_full = verdict(
+        6,
+        "gh-claude-opt-2",
+        "issue-1234",
+        1249,
+        full,
+        "APPROVE",
+        "https://github.com/stabem/GraphHelm/pull/1249#c2",
+    );
+    let approved = &fold_task_events(&[opened_short, assigned, approve_full])[0];
+    assert_eq!(approved.step, TaskStep::Merge, "{approved:?}");
+}
+
 #[test]
 fn a_newer_head_after_a_block_reads_as_the_re_review_not_as_blocked_608() {
     let opened_a = opened(1, "gh-claude-4", "pr-384", 608, "aaaaaaaa");

@@ -328,6 +328,23 @@ fn journey_ids(value: &serde_json::Value) -> Option<Vec<String>> {
 }
 
 /// `^[0-9a-f]{7,64}$`.
+/// #1262: two spellings of one commit. Heads are parsed by `sha` (7..=64 lowercase hex), and a
+/// lane may record the same commit short in `pr_opened` and full in `review_verdict`; comparing
+/// them exactly made a BLOCK invisible and the stall rule name the reviewer as owing a verdict
+/// already given. Equal when one is a prefix of the other; exact equality is the special case.
+fn same_head(a: &str, b: &str) -> bool {
+    a.len() >= 7 && b.len() >= 7 && (a.starts_with(b) || b.starts_with(a))
+}
+
+/// `same_head` over optional heads; two absent heads are equal, as `==` said before.
+fn same_opt_head(a: Option<&String>, b: Option<&String>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => same_head(a, b),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
 fn sha(value: &serde_json::Value) -> Option<String> {
     let s = value.as_str()?;
     ((7..=64).contains(&s.len())
@@ -1061,7 +1078,11 @@ fn apply_verdict(
         );
         // A second BLOCK on the same unanswered head (another reviewer) is the same round.
         let same_round = state.rounds.last().is_some_and(|last| {
-            last.fix_head.is_none() && Some(&last.head_sha) == event.head_sha.as_ref()
+            last.fix_head.is_none()
+                && event
+                    .head_sha
+                    .as_deref()
+                    .is_some_and(|head| same_head(&last.head_sha, head))
         });
         if !same_round {
             state.rounds.push(ReviewRound {
@@ -1114,7 +1135,10 @@ fn slice_for(slices: &mut Vec<Slice>, next_id: &mut usize, event: &TaskEventReco
         if with_head {
             slices
                 .iter()
-                .position(|s| s.state.pr == Some(pr) && s.state.head_sha == event.head_sha)
+                .position(|s| {
+                    s.state.pr == Some(pr)
+                        && same_opt_head(s.state.head_sha.as_ref(), event.head_sha.as_ref())
+                })
                 .or_else(|| slices.iter().position(|s| s.state.pr == Some(pr)))
         } else {
             slices.iter().position(|s| s.state.pr == Some(pr))
@@ -1429,8 +1453,8 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
             state.author_last_sequence = Some(event.sequence);
         }
         let before = state.step;
-        let same_head_repeat =
-            event.kind == TaskEventKind::PrOpened && event.head_sha == state.head_sha;
+        let same_head_repeat = event.kind == TaskEventKind::PrOpened
+            && same_opt_head(event.head_sha.as_ref(), state.head_sha.as_ref());
         match event.kind {
             TaskEventKind::Claimed => {
                 state.assigned_by = event.assigned_by.clone();
@@ -1502,7 +1526,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 if event.summary.is_some() {
                     state.pr_summary = event.summary.clone();
                 }
-                if event.head_sha != state.head_sha {
+                if !same_opt_head(event.head_sha.as_ref(), state.head_sha.as_ref()) {
                     state.current_reviewer = None;
                     state.approved_with_risk = None;
                     blockers.clear();
@@ -1513,7 +1537,10 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                     state.head_sha = event.head_sha.clone();
                 }
                 if let Some(pending) = &state.pending_reviewer
-                    && Some(&pending.head_sha) == event.head_sha.as_ref()
+                    && event
+                        .head_sha
+                        .as_deref()
+                        .is_some_and(|head| same_head(&pending.head_sha, head))
                 {
                     state.current_reviewer = Some(pending.reviewer.clone());
                     state.pending_reviewer = None;
@@ -1530,7 +1557,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 // #514: a newer head after a BLOCK is the author's fix; its review is the re-review.
                 if let Some(round) = state.rounds.last_mut()
                     && let Some(head) = &event.head_sha
-                    && *head != round.head_sha
+                    && !same_head(head, &round.head_sha)
                 {
                     round.fix_head = Some(head.clone());
                     round.fixed_at = event.occurred_at.clone();
@@ -1538,7 +1565,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 // #608: the author answered the BLOCK with a newer head, so nothing is blocked now.
                 if let Some(blocked) = &state.blocked_by
                     && let Some(head) = &event.head_sha
-                    && *head != blocked.head_sha
+                    && !same_head(head, &blocked.head_sha)
                 {
                     state.blocked_by = None;
                     state.blocked_sequence = None;
@@ -1556,7 +1583,11 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                             ref head_sha,
                             ref record,
                             ..
-                        } if Some(head_sha) == state.head_sha.as_ref() => {
+                        } if state
+                            .head_sha
+                            .as_deref()
+                            .is_some_and(|head| same_head(head_sha, head)) =>
+                        {
                             apply.push(record.clone());
                         }
                         other => kept.push(other),
@@ -1575,10 +1606,13 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 if state.head_sha.is_none() {
                     state.head_sha = event.head_sha.clone();
                 }
-                if event.head_sha == state.head_sha {
+                if same_opt_head(event.head_sha.as_ref(), state.head_sha.as_ref()) {
                     state.current_reviewer = event.reviewer.clone();
                 } else if let (Some(head), Some(reviewer)) = (&event.head_sha, &event.reviewer)
-                    && !state.recorded_heads.contains(head)
+                    && !state
+                        .recorded_heads
+                        .iter()
+                        .any(|recorded| same_head(recorded, head))
                 {
                     state.pending_reviewer = Some(PendingReviewer {
                         head_sha: head.clone(),
@@ -1592,7 +1626,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
             TaskEventKind::ReviewVerdict => {
                 // A verdict on a head other than the current one says nothing about the current
                 // one.
-                if event.head_sha == state.head_sha {
+                if same_opt_head(event.head_sha.as_ref(), state.head_sha.as_ref()) {
                     apply_verdict(state, event, blockers);
                 } else {
                     let reviewer = event.reviewer.clone().unwrap_or_default();
@@ -1602,10 +1636,12 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                         .unwrap_or_default()
                         .to_owned();
                     let head_sha = event.head_sha.clone().unwrap_or_default();
-                    let superseded = event
-                        .head_sha
-                        .as_ref()
-                        .is_some_and(|head| state.recorded_heads.contains(head));
+                    let superseded = event.head_sha.as_ref().is_some_and(|head| {
+                        state
+                            .recorded_heads
+                            .iter()
+                            .any(|recorded| same_head(recorded, head))
+                    });
                     state.stray_verdicts.push(if superseded {
                         StrayVerdict::Superseded {
                             reviewer,

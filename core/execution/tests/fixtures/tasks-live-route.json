@@ -6893,10 +6893,6 @@
         "lastSequence": 6660,
         "mergeSha": "533208bbbcb22f69dc8b25b5af440bcbebaa6367",
         "parent": null,
-        "pendingReviewer": {
-          "headSha": "767b4bc7c6bfc9291759158fb1474c00139450fa",
-          "reviewer": "codexrev-2"
-        },
         "plan": null,
         "pr": 972,
         "prSummary": "Report measured journal verification and lifecycle startup times in health.",
@@ -6915,6 +6911,14 @@
         ],
         "rounds": [
           {
+            "blockedAt": "2026-10-12T21:45:30.135236700Z",
+            "commentUrl": "https://github.com/stabem/GraphHelm/pull/972#issuecomment-6133181365",
+            "fixHead": "94120338158c1d41f37b6b8357f6f58f8e9db757",
+            "fixedAt": "2026-10-12T22:06:34.204393500Z",
+            "headSha": "767b4bc7c6bfc9291759158fb1474c00139450fa",
+            "reviewer": "codexrev-2"
+          },
+          {
             "blockedAt": "2026-10-12T22:26:11.890520500Z",
             "commentUrl": "https://github.com/stabem/GraphHelm/pull/972#issuecomment-6133769106",
             "fixHead": "8442830f9fc454b766250be71d7e31ae2a589388",
@@ -6932,26 +6936,7 @@
           }
         ],
         "step": "merged",
-        "strayVerdicts": [
-          {
-            "headSha": "767b4bc7c6bfc9291759158fb1474c00139450fa",
-            "reason": "unrecorded",
-            "record": {
-              "actorId": "codexrev-2",
-              "commentUrl": "https://github.com/stabem/GraphHelm/pull/972#issuecomment-6133181365",
-              "headSha": "767b4bc7c6bfc9291759158fb1474c00139450fa",
-              "kind": "task.review_verdict",
-              "occurredAt": "2026-10-12T21:45:30.135236700Z",
-              "pr": 972,
-              "reviewer": "codexrev-2",
-              "sequence": 6323,
-              "taskId": "issue-41",
-              "verdict": "BLOCK"
-            },
-            "reviewer": "codexrev-2",
-            "verdict": "BLOCK"
-          }
-        ],
+        "strayVerdicts": [],
         "summary": null,
         "taskId": "issue-41",
         "title": null
@@ -7001,10 +6986,6 @@
         "leaseSeconds": 1800,
         "mergeSha": null,
         "parent": null,
-        "pendingReviewer": {
-          "headSha": "c7eadc18896174a5d09df67dd5dac0babf0d51b2",
-          "reviewer": "codexrev-2"
-        },
         "plan": {
           "classes": [
             "code"
@@ -7037,6 +7018,14 @@
         ],
         "rounds": [
           {
+            "blockedAt": "2026-10-12T23:27:20.219025500Z",
+            "commentUrl": "https://github.com/stabem/GraphHelm/pull/991#issuecomment-6134570581",
+            "fixHead": "79f3394ee7ec00008414245bf392a4b4a819dcc5",
+            "fixedAt": "2026-10-12T23:50:03.951333600Z",
+            "headSha": "c7eadc18896174a5d09df67dd5dac0babf0d51b2",
+            "reviewer": "codexrev-2"
+          },
+          {
             "blockedAt": "2026-10-13T01:50:32.170159600Z",
             "commentUrl": "https://github.com/stabem/GraphHelm/pull/991#issuecomment-6136321964",
             "fixHead": "23dadd014ebcc25921efc7c78b5a392c403fe712",
@@ -7054,26 +7043,7 @@
           }
         ],
         "step": "merge",
-        "strayVerdicts": [
-          {
-            "headSha": "c7eadc18896174a5d09df67dd5dac0babf0d51b2",
-            "reason": "unrecorded",
-            "record": {
-              "actorId": "codexrev-2",
-              "commentUrl": "https://github.com/stabem/GraphHelm/pull/991#issuecomment-6134570581",
-              "headSha": "c7eadc18896174a5d09df67dd5dac0babf0d51b2",
-              "kind": "task.review_verdict",
-              "occurredAt": "2026-10-12T23:27:20.219025500Z",
-              "pr": 991,
-              "reviewer": "codexrev-2",
-              "sequence": 6487,
-              "taskId": "issue-988",
-              "verdict": "BLOCK"
-            },
-            "reviewer": "codexrev-2",
-            "verdict": "BLOCK"
-          }
-        ],
+        "strayVerdicts": [],
         "summary": "A journey's test view opens with its result bar below the fold and its header scrolled away.",
         "taskId": "issue-988",
         "title": "Studio: test view opens with its result bar hidden"
@@ -9322,8 +9292,9 @@
           "since": "2026-10-14T02:35:01.486483800Z",
           "spent": {
             "critic": 2094316,
+            "merge": 44432,
             "plan": 2208,
-            "review": 1628897
+            "review": 1584465
           }
         },
         "completionRecorded": true,
@@ -9365,46 +9336,18 @@
         "reviewers": [
           "gh-claude-opt-1"
         ],
-        "rounds": [],
-        "step": "merged",
-        "strayVerdicts": [
+        "rounds": [
           {
+            "blockedAt": "2026-10-14T02:15:54.724390300Z",
+            "commentUrl": "https://github.com/stabem/GraphHelm/pull/1194#issuecomment-6159386407",
+            "fixHead": "2030515a",
+            "fixedAt": "2026-10-14T02:17:15.568258100Z",
             "headSha": "d9d2b1556a5d685576f61094d9a69014a90a3ad7",
-            "reason": "unrecorded",
-            "record": {
-              "actorId": "gh-claude-opt-1",
-              "commentUrl": "https://github.com/stabem/GraphHelm/pull/1194#issuecomment-6159386407",
-              "headSha": "d9d2b1556a5d685576f61094d9a69014a90a3ad7",
-              "kind": "task.review_verdict",
-              "occurredAt": "2026-10-14T02:15:54.724390300Z",
-              "pr": 1194,
-              "reviewer": "gh-claude-opt-1",
-              "sequence": 8743,
-              "taskId": "issue-1193",
-              "verdict": "BLOCK"
-            },
-            "reviewer": "gh-claude-opt-1",
-            "verdict": "BLOCK"
-          },
-          {
-            "headSha": "2030515ae86a7a5e0658112eaa5723766c31219d",
-            "reason": "unrecorded",
-            "record": {
-              "actorId": "gh-claude-opt-1",
-              "commentUrl": "https://github.com/stabem/GraphHelm/pull/1194#issuecomment-6159595970",
-              "headSha": "2030515ae86a7a5e0658112eaa5723766c31219d",
-              "kind": "task.review_verdict",
-              "occurredAt": "2026-10-14T02:34:17.054941800Z",
-              "pr": 1194,
-              "reviewer": "gh-claude-opt-1",
-              "sequence": 8762,
-              "taskId": "issue-1193",
-              "verdict": "APPROVE"
-            },
-            "reviewer": "gh-claude-opt-1",
-            "verdict": "APPROVE"
+            "reviewer": "gh-claude-opt-1"
           }
         ],
+        "step": "merged",
+        "strayVerdicts": [],
         "summary": "a claim that stops heartbeating inside its lease reads as overdue on the tasks route, and the reconciler releases it as `graphhelm`, never as the lane.",
         "taskId": "issue-1193",
         "title": "Runtime: claims carry a lease and go overdue"
@@ -10164,10 +10107,6 @@
       "lastSequence": 6660,
       "mergeSha": "533208bbbcb22f69dc8b25b5af440bcbebaa6367",
       "parent": null,
-      "pendingReviewer": {
-        "headSha": "767b4bc7c6bfc9291759158fb1474c00139450fa",
-        "reviewer": "codexrev-2"
-      },
       "plan": null,
       "pr": 972,
       "prSummary": "Report measured journal verification and lifecycle startup times in health.",
@@ -10186,6 +10125,14 @@
       ],
       "rounds": [
         {
+          "blockedAt": "2026-10-12T21:45:30.135236700Z",
+          "commentUrl": "https://github.com/stabem/GraphHelm/pull/972#issuecomment-6133181365",
+          "fixHead": "94120338158c1d41f37b6b8357f6f58f8e9db757",
+          "fixedAt": "2026-10-12T22:06:34.204393500Z",
+          "headSha": "767b4bc7c6bfc9291759158fb1474c00139450fa",
+          "reviewer": "codexrev-2"
+        },
+        {
           "blockedAt": "2026-10-12T22:26:11.890520500Z",
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/972#issuecomment-6133769106",
           "fixHead": "8442830f9fc454b766250be71d7e31ae2a589388",
@@ -10203,26 +10150,7 @@
         }
       ],
       "step": "merged",
-      "strayVerdicts": [
-        {
-          "headSha": "767b4bc7c6bfc9291759158fb1474c00139450fa",
-          "reason": "unrecorded",
-          "record": {
-            "actorId": "codexrev-2",
-            "commentUrl": "https://github.com/stabem/GraphHelm/pull/972#issuecomment-6133181365",
-            "headSha": "767b4bc7c6bfc9291759158fb1474c00139450fa",
-            "kind": "task.review_verdict",
-            "occurredAt": "2026-10-12T21:45:30.135236700Z",
-            "pr": 972,
-            "reviewer": "codexrev-2",
-            "sequence": 6323,
-            "taskId": "issue-41",
-            "verdict": "BLOCK"
-          },
-          "reviewer": "codexrev-2",
-          "verdict": "BLOCK"
-        }
-      ],
+      "strayVerdicts": [],
       "summary": null,
       "taskId": "issue-41",
       "title": null
@@ -10358,10 +10286,6 @@
       "leaseSeconds": 1800,
       "mergeSha": null,
       "parent": null,
-      "pendingReviewer": {
-        "headSha": "c7eadc18896174a5d09df67dd5dac0babf0d51b2",
-        "reviewer": "codexrev-2"
-      },
       "plan": {
         "classes": [
           "code"
@@ -10394,6 +10318,14 @@
       ],
       "rounds": [
         {
+          "blockedAt": "2026-10-12T23:27:20.219025500Z",
+          "commentUrl": "https://github.com/stabem/GraphHelm/pull/991#issuecomment-6134570581",
+          "fixHead": "79f3394ee7ec00008414245bf392a4b4a819dcc5",
+          "fixedAt": "2026-10-12T23:50:03.951333600Z",
+          "headSha": "c7eadc18896174a5d09df67dd5dac0babf0d51b2",
+          "reviewer": "codexrev-2"
+        },
+        {
           "blockedAt": "2026-10-13T01:50:32.170159600Z",
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/991#issuecomment-6136321964",
           "fixHead": "23dadd014ebcc25921efc7c78b5a392c403fe712",
@@ -10411,26 +10343,7 @@
         }
       ],
       "step": "merge",
-      "strayVerdicts": [
-        {
-          "headSha": "c7eadc18896174a5d09df67dd5dac0babf0d51b2",
-          "reason": "unrecorded",
-          "record": {
-            "actorId": "codexrev-2",
-            "commentUrl": "https://github.com/stabem/GraphHelm/pull/991#issuecomment-6134570581",
-            "headSha": "c7eadc18896174a5d09df67dd5dac0babf0d51b2",
-            "kind": "task.review_verdict",
-            "occurredAt": "2026-10-12T23:27:20.219025500Z",
-            "pr": 991,
-            "reviewer": "codexrev-2",
-            "sequence": 6487,
-            "taskId": "issue-988",
-            "verdict": "BLOCK"
-          },
-          "reviewer": "codexrev-2",
-          "verdict": "BLOCK"
-        }
-      ],
+      "strayVerdicts": [],
       "summary": "A journey's test view opens with its result bar below the fold and its header scrolled away.",
       "taskId": "issue-988",
       "title": "Studio: test view opens with its result bar hidden"
@@ -12438,8 +12351,9 @@
         "since": "2026-10-14T02:35:01.486483800Z",
         "spent": {
           "critic": 2094316,
+          "merge": 44432,
           "plan": 2208,
-          "review": 1628897
+          "review": 1584465
         }
       },
       "completionRecorded": true,
@@ -12481,46 +12395,18 @@
       "reviewers": [
         "gh-claude-opt-1"
       ],
-      "rounds": [],
-      "step": "merged",
-      "strayVerdicts": [
+      "rounds": [
         {
+          "blockedAt": "2026-10-14T02:15:54.724390300Z",
+          "commentUrl": "https://github.com/stabem/GraphHelm/pull/1194#issuecomment-6159386407",
+          "fixHead": "2030515a",
+          "fixedAt": "2026-10-14T02:17:15.568258100Z",
           "headSha": "d9d2b1556a5d685576f61094d9a69014a90a3ad7",
-          "reason": "unrecorded",
-          "record": {
-            "actorId": "gh-claude-opt-1",
-            "commentUrl": "https://github.com/stabem/GraphHelm/pull/1194#issuecomment-6159386407",
-            "headSha": "d9d2b1556a5d685576f61094d9a69014a90a3ad7",
-            "kind": "task.review_verdict",
-            "occurredAt": "2026-10-14T02:15:54.724390300Z",
-            "pr": 1194,
-            "reviewer": "gh-claude-opt-1",
-            "sequence": 8743,
-            "taskId": "issue-1193",
-            "verdict": "BLOCK"
-          },
-          "reviewer": "gh-claude-opt-1",
-          "verdict": "BLOCK"
-        },
-        {
-          "headSha": "2030515ae86a7a5e0658112eaa5723766c31219d",
-          "reason": "unrecorded",
-          "record": {
-            "actorId": "gh-claude-opt-1",
-            "commentUrl": "https://github.com/stabem/GraphHelm/pull/1194#issuecomment-6159595970",
-            "headSha": "2030515ae86a7a5e0658112eaa5723766c31219d",
-            "kind": "task.review_verdict",
-            "occurredAt": "2026-10-14T02:34:17.054941800Z",
-            "pr": 1194,
-            "reviewer": "gh-claude-opt-1",
-            "sequence": 8762,
-            "taskId": "issue-1193",
-            "verdict": "APPROVE"
-          },
-          "reviewer": "gh-claude-opt-1",
-          "verdict": "APPROVE"
+          "reviewer": "gh-claude-opt-1"
         }
       ],
+      "step": "merged",
+      "strayVerdicts": [],
       "summary": "a claim that stops heartbeating inside its lease reads as overdue on the tasks route, and the reconciler releases it as `graphhelm`, never as the lane.",
       "taskId": "issue-1193",
       "title": "Runtime: claims carry a lease and go overdue"

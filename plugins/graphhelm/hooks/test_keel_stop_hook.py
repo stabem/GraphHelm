@@ -35,10 +35,75 @@ class KeelStopHook(unittest.TestCase):
         with mock.patch.object(keel_stop_hook, "_merge_base", return_value="base"), \
              mock.patch.object(keel_stop_hook, "code_lines_changed", return_value=20), \
              mock.patch.object(keel_stop_hook.shutil, "which", return_value="graphhelm"), \
+             mock.patch.object(keel_stop_hook, "_fingerprint", return_value=None), \
              mock.patch.object(keel_stop_hook.subprocess, "run", return_value=result), \
              mock.patch.object(keel_record, "record_check") as record:
             self.assertIsNone(keel_stop_hook.decide(self.repo, {"session_id": "s1"}))
         record.assert_called_once_with(envelope, {"session_id": "s1"})
+
+    def test_undelivered_signal_is_not_cached(self):
+        """#1228 review: a Runtime failure on record_check retries on the next Stop."""
+        self.code(20)
+        (self.repo / ".graphhelm").mkdir()
+        (self.repo / ".graphhelm" / "keel-card.json").write_text("{}")
+        cli = self.repo.parent / f"{self.repo.name}-graphhelm"
+        cli.write_text("v1")
+        self.addCleanup(cli.unlink)
+        real_run = subprocess.run
+        calls = []
+
+        def fake_run(cmd, *args, **kwargs):
+            if cmd[0].endswith("-graphhelm"):
+                calls.append(cmd)
+                return mock.Mock(returncode=0, stdout="{}")
+            return real_run(cmd, *args, **kwargs)
+
+        with mock.patch.object(keel_stop_hook.shutil, "which", return_value=str(cli)), \
+             mock.patch.object(keel_stop_hook.subprocess, "run", side_effect=fake_run), \
+             mock.patch.object(keel_stop_hook, "_execution", return_value="run-1"), \
+             mock.patch.object(keel_record, "record_check", side_effect=[False, True, True]):
+            keel_stop_hook.decide(self.repo, {})
+            keel_stop_hook.decide(self.repo, {})  # retried: first signal was lost
+            keel_stop_hook.decide(self.repo, {})  # delivered last time: cached now
+        self.assertEqual(len(calls), 2)
+
+    def test_unchanged_state_reuses_check_and_records_once(self):
+        """#1228: a second Stop on the same diff neither reruns the CLI nor re-posts the signal."""
+        self.code(20)
+        (self.repo / ".graphhelm").mkdir()
+        (self.repo / ".graphhelm" / "keel-card.json").write_text("{}")
+        envelope = {"data": {"findings": [{"blocking": True, "rule": "R1", "path": "a.py"}]}}
+        real_run = subprocess.run
+        calls = []
+
+        def fake_run(cmd, *args, **kwargs):
+            if cmd[0].endswith("-graphhelm"):
+                calls.append(cmd)
+                return mock.Mock(returncode=2, stdout=json.dumps(envelope))
+            return real_run(cmd, *args, **kwargs)
+
+        cli = self.repo.parent / f"{self.repo.name}-graphhelm"
+        cli.write_text("v1")
+        self.addCleanup(cli.unlink)
+        with mock.patch.object(keel_stop_hook.shutil, "which", return_value=str(cli)), \
+             mock.patch.object(keel_stop_hook.subprocess, "run", side_effect=fake_run), \
+             mock.patch.object(keel_record, "record_check") as record:
+            first = keel_stop_hook.decide(self.repo, {})
+            self.assertFalse(keel_stop_hook.LAST_FROM_CACHE)
+            second = keel_stop_hook.decide(self.repo, {})
+            self.assertTrue(keel_stop_hook.LAST_FROM_CACHE)  # main() skips record_block on this
+            self.assertEqual(first, second)
+            self.assertIn("R1 a.py", first)
+            self.assertEqual((len(calls), record.call_count), (1, 1))
+            (self.repo / "a.py").write_text("changed\n")
+            self.assertIn("R1 a.py", keel_stop_hook.decide(self.repo, {}))
+            self.assertEqual((len(calls), record.call_count), (2, 2))
+            with mock.patch.object(keel_stop_hook, "_execution", return_value="other-run"):
+                keel_stop_hook.decide(self.repo, {})  # another execution records its own signal
+            self.assertEqual((len(calls), record.call_count), (3, 3))
+            cli.write_text("v2, new rules")  # `graphhelm update` must not reuse an old verdict
+            keel_stop_hook.decide(self.repo, {})
+            self.assertEqual((len(calls), record.call_count), (4, 4))
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

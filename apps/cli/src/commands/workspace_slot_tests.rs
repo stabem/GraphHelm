@@ -853,6 +853,102 @@ fn the_jobs_budget_is_configurable_and_fails_closed() {
     }
 }
 
+/// #1257: a lane that reaches its build-directory cap while its request waits at the head of the
+/// root's queue is refused there, at once, instead of waiting out machine admission for a refusal
+/// that is already certain (seen live: 3,988 s at the head of `D:/gh/opt`, blocking the queue).
+/// A 24-job run on another root holds the whole budget, so the request cannot be admitted; while
+/// it waits, a second worktree of the same lane takes the lane's only build directory. Before
+/// #1257 the request waited until `--max-wait` and failed at `/slot`. Cost: one marker child.
+#[test]
+fn a_lane_that_reaches_its_cap_while_queued_is_refused_at_the_head() {
+    let dir = tempfile::tempdir().unwrap();
+    let admission = dir.path().join("cap-admission");
+    let log = dir.path().join("cap.log");
+    let release = dir.path().join("release-blocker");
+
+    // The blocker: another root, the whole budget, held until released.
+    let blocker_root = dir.path().join("root-blocker");
+    let blocker_command = held_command(&log, "blocker", &release);
+    let blocker_cwd = dir.path().to_owned();
+    let blocker_admission = admission.clone();
+    let blocker = std::thread::spawn(move || {
+        let mut request = request(&blocker_root, "lane-z", "blocker", &blocker_command);
+        request.jobs = super::DEFAULT_JOBS_BUDGET;
+        super::run_admitted_slot_core(&request, &blocker_cwd, None, &blocker_admission)
+    });
+    assert!(
+        wait_for_line(&log, "blocker start"),
+        "the blocker never started"
+    );
+
+    // The capped root: lane-a may hold one build directory.
+    let root = dir.path().join("root");
+    let fast = dir.path().join("fast");
+    let rules = root.join(".graphhelm-workspaces");
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(
+        rules.join("slot-targets.json"),
+        serde_json::json!({"targetRoot": fast, "cap": 1, "minFreeGb": 0}).to_string(),
+    )
+    .unwrap();
+    let (first, second) = (dir.path().join("wt-first"), dir.path().join("wt-second"));
+    std::fs::create_dir_all(&first).unwrap();
+    std::fs::create_dir_all(&second).unwrap();
+
+    let waiting_root = root.clone();
+    let waiting_admission = admission.clone();
+    let waiting_command = marker_command(&log, "capped", 0);
+    let waiting = std::thread::spawn(move || {
+        let mut request = SlotRequest {
+            shared: false,
+            ..request(&waiting_root, "lane-a", "capped", &waiting_command)
+        };
+        request.jobs = 8;
+        request.max_wait = Some(0.25); // 15 s: what the parent would wait before failing at /slot
+        let started = std::time::Instant::now();
+        let outcome = super::run_admitted_slot_core(&request, &second, None, &waiting_admission);
+        (outcome, started.elapsed())
+    });
+    wait_for_ticket(&root, "lane-a");
+
+    // While it waits for admission, the lane's other worktree takes its only build directory.
+    let rule = super::super::workspace::target_rule(&root)
+        .unwrap()
+        .unwrap();
+    super::super::workspace::slot_target(&root, &rule, "lane-a", &first, true).unwrap();
+
+    let (outcome, elapsed) = waiting.join().unwrap();
+    std::fs::write(&release, b"go").unwrap();
+    let blocker = blocker.join().unwrap();
+
+    assert!(!outcome.output.ok, "{:?}", outcome.output);
+    assert_eq!(
+        outcome.output.diagnostics[0].path, "/target",
+        "refused by the cap at the head, not by --max-wait: {:?}",
+        outcome.output
+    );
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "the refusal waited {elapsed:?}; it should not wait for admission"
+    );
+    assert!(
+        !std::fs::read_to_string(&log)
+            .unwrap()
+            .contains("capped start")
+    );
+    assert!(
+        std::fs::read_dir(slot_dir(&root))
+            .unwrap()
+            .flatten()
+            .all(|entry| entry
+                .path()
+                .extension()
+                .is_none_or(|extension| extension != "ticket")),
+        "the refused request leaves no ticket, so the next one becomes the head"
+    );
+    assert_eq!(blocker.exit_code, 0, "{:?}", blocker.output);
+}
+
 #[test]
 fn update_installer_waits_for_slot_admission_before_starting_child() {
     if let (Some(admission), Some(log), Some(exe), Some(script)) = (

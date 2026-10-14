@@ -1328,6 +1328,21 @@ fn run_admitted_slot_core(
                 .open(dir.join("slot.lock"))
             && slot.try_lock().is_ok()
         {
+            // #1257: at the head, re-check the lane's cap and floor BEFORE asking for admission.
+            // The lane can reach its cap while this request waits (another of its worktrees took
+            // a build directory); waiting out admission would only end in this same refusal, and
+            // it blocks every request behind this one. No reclaim and no record here: those
+            // happen once admitted, as before.
+            if let (Some(rule), Some(worktree)) = (&rule, &worktree)
+                && let Err(message) =
+                    super::workspace::slot_target(root, rule, lane, worktree, false)
+            {
+                drop(slot);
+                drop(admission);
+                drop(ticket);
+                remove_ticket(&mine);
+                return refuse(&message, "/target");
+            }
             // #1254: admitted while the machine's granted jobs plus ours fit the budget; this
             // root's queue keeps its order either way, since only its head asks.
             match try_grant(

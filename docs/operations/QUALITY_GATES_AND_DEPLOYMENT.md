@@ -3,9 +3,9 @@
 > **Status: target deployment architecture.** This document describes the intended verification
 > graph and deployment path. It is not the current contribution or merge procedure. Today, use
 > [the delivery process](../process/DELIVERY.md): run the checks the change reaches, obtain one
-> independent review, and merge at the reviewed head. `ci/gate.ps1` is an optional full local
-> check; a merge does not wait for it. The pre-push and VPS tiers below are design targets, not
-> checks currently required of contributors.
+> independent review, and merge at the reviewed head. The gate runner (`ci/gate.ps1`) was
+> retired on 2026-09-24 and deleted in #1204. The pre-push and VPS tiers below are design
+> targets, not checks currently required of contributors.
 
 ## 1. Objective
 
@@ -20,7 +20,8 @@ silently break an existing behavior. It is local/VPS-first by decision, not by l
   public API/CLI every other action uses.
 - **Endgame: the pipeline is a GraphHelm execution graph.** Each gate below maps to a §21
   gate-node (`HARNESS_SPEC.md`); the runtime that ships is the runtime that verifies and deploys
-  itself. Until that graph exists, `ci/gate.ps1`-style stage scripts are the interim carrier.
+  itself. Until that graph exists, the change-directed checks of the delivery process are the
+  interim carrier (the `ci/gate.ps1` stage script that carried them before was deleted in #1204).
 
 ## 2. Topology
 

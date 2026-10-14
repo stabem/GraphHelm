@@ -262,8 +262,8 @@ merged like any other, and the review says what was not observed.
 
 ## 5. Merge, by the reviewer
 
-The reviewer who approved merges (a blind subagent included). There is no gate and no separate presser. `ci/gate.ps1` still
-exists as an optional full local check (it takes about 20 minutes); a merge never waits on it.
+The reviewer who approved merges (a blind subagent included). There is no gate and no separate presser; the gate
+runner (`ci/gate.ps1`) was deleted in #1204, so there is nothing a merge could wait on.
 
 1. Pin the head: `gh pr view <N> --json headRefOid` must equal the sha the review named, and no
    BLOCK on that head is left unanswered by the review (§4).

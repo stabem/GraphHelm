@@ -104,13 +104,15 @@ test('profile samples are clipped and attributed to leaf self time', () => {
 });
 
 test('profile frame names do not copy sensitive text into the report', () => {
-  const profile = {
-    nodes: [{ id: 1, callFrame: { functionName: 'render bearer sk-test-123', url: 'https://site.test/app.js' } }],
-    samples: [1], timeDeltas: [10],
-  };
-  const result = reduceCpuProfile(profile, { startUs: 0, endUs: 10, sourceHead: 'abc12345', alignment: 'same-load' });
-  assert.equal(result.status, 'ok');
-  assert.ok(!JSON.stringify(result).includes('sk-test-123'));
+  for (const secretName of ['render bearer sk-test-123', 'render AIzaSyA12345678901234567890123456789012', 'api_key: abc123secret']) {
+    const profile = {
+      nodes: [{ id: 1, callFrame: { functionName: secretName, url: 'https://site.test/app.js' } }],
+      samples: [1], timeDeltas: [10],
+    };
+    const result = reduceCpuProfile(profile, { startUs: 0, endUs: 10, sourceHead: 'abc12345', alignment: 'same-load' });
+    assert.equal(result.status, 'ok');
+    assert.equal(result.frames[0].functionName, '[redacted frame]', secretName);
+  }
 });
 
 test('profile reducer refuses missing alignment and malformed or oversized data', () => {

@@ -89,7 +89,7 @@ export function reduceCpuProfile(profile, options = {}) {
 function sanitizeProfileFunctionName(value) {
   const name = String(value ?? '').trim();
   if (!name || name === '(idle)' || name === '(garbage collector)' || name === '(program)' || name === '(root)') return name;
-  if (/(?:bearer\s+\S+|\bsk-[A-Za-z0-9_-]{8,}|[?&](?:token|api[_-]?key|secret|password)=)/i.test(name)) return '[redacted frame]';
+  if (/(?:bearer\s+\S+|\bsk-[A-Za-z0-9_-]{8,}|\bAIza[0-9A-Za-z_-]{20,}|(?:[?&]|\b)(?:token|api[_-]?key|secret|password)\s*[:=]\s*\S+)/i.test(name)) return '[redacted frame]';
   return name.replace(/(?:[A-Za-z]:)?[\\/](?:[^\\/\s]+[\\/])+[^\\/\s]*/g, '[path]').slice(0, 160);
 }
 function sanitizeProfileUrl(value) {

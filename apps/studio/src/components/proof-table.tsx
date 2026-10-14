@@ -77,7 +77,7 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
         </div>
       </div>
       {flow && <div className="proof-flow-actions" role="group" aria-label="Journey actions">
-        <span>{flow.status === "draft" ? "Waiting for your approval" : flow.status === "approval_stale" ? "Changed since approval" : flow.status === "approved" ? "Approved" : "Can't be read"}</span>
+        <span>{flow.status === "draft" ? "Waiting for your approval" : flow.status === "approval_stale" ? "Changed since approval" : flow.status === "weak" ? "Does not say what it proves" : flow.status === "approved" ? "Approved" : "Can't be read"}</span>
         {flow.status !== "approved" && <><button type="button" disabled={!flow.approvable || approvalReason !== null || busy || !onApprove}
           aria-describedby={approvalReason ? "proof-approval-reason" : undefined} onClick={() => onApprove && act(() => onApprove(flow.id))}>Approve</button>
           {approvalReason && <span id="proof-approval-reason">{approvalReason}</span>}</>}

@@ -30,4 +30,12 @@ describe("testFrames with the flow source", () => {
   it("without the flow, a frame has no inputs or checks", () => {
     expect(testFrames(journey, null)[1]).toMatchObject({ inputs: [], intent: null, checks: [] });
   });
+
+  it("a weak flow's cached replay is never shown as passed (#1287)", () => {
+    const run = { state: "done", kind: "replay", screens: { lojas: { result: "pass" }, salvo: { result: "pass" } } } as never;
+    expect(testFrames(journey, run, null, flow).map((f) => f.status)).toEqual(["passed", "passed"]);
+    const weak = testFrames(journey, run, null, { ...flow, status: "weak", approved: null });
+    expect(weak.map((f) => f.status)).toEqual(["not_run", "not_run"]);
+    expect(weak[0]!.reason).toMatch(/does not say what it proves/);
+  });
 });

@@ -415,7 +415,8 @@ export interface JourneyView {
 }
 
 /** `GET /v1/journey-flows` (#353): `graphhelm journey flows`, one entry per `.journey.yaml`. */
-export type JourneyFlowStatus = "draft" | "approved" | "approval_stale" | "unreadable";
+/** `weak` (#1287): approved before the rule but does not say what it proves; never proof. */
+export type JourneyFlowStatus = "draft" | "approved" | "approval_stale" | "weak" | "unreadable";
 
 export interface JourneyFlowFinding {
   code: string;

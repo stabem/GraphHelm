@@ -1302,14 +1302,25 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
             let stale = findings.iter().any(|f| f.code == "flow.approval_stale");
             let drifted = flow["drift"].as_array().is_some_and(|d| !d.is_empty());
             let settled = flow["status"] == "approved" && !stale && !drifted;
+            // #1287 follow-up: an approved flow that does not say what it proves is not settled:
+            // `weak` with no approved digest, so no replay cached under that digest reads as proof.
+            let weak = flow["status"] == "approved" && !weak_journey(&flow, true).is_empty();
+            let settled = settled && !weak;
             let status = if stale {
                 json!("approval_stale")
+            } else if weak {
+                json!("weak")
             } else {
                 flow["status"].clone()
             };
+            let approved = if weak {
+                Value::Null
+            } else {
+                flow["approved"].clone()
+            };
             json!({"id": id, "title": flow.get("title").cloned().unwrap_or(Value::Null),
                 "purpose": flow.get("purpose").cloned().unwrap_or(Value::Null),
-                "status": status, "approved": flow["approved"], "drift": flow["drift"],
+                "status": status, "approved": approved, "drift": flow["drift"],
                 "findings": listed, "approvable": accepted && !settled,
                 "screens": flow["screens"], "edges": flow["edges"], "paths": flow["paths"]})
         })
@@ -1986,6 +1997,20 @@ mod tests {
         let dir = project.path().join(".graphhelm/journeys");
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("checkout.journey.yaml");
+        std::fs::write(&file, canonical(&flow, false)).unwrap();
+        // The Studio reads `journey flows`: a weak approved flow is `weak` with no approved
+        // digest, so a replay cached under its old digest reads as stale, never as passed.
+        let mut approved = flow.clone();
+        approved["status"] = json!("approved");
+        let digest = approval_digest(&approved);
+        approved["approved"] = json!({"revision": "a".repeat(40), "digest": digest});
+        std::fs::write(&file, canonical(&approved, false)).unwrap();
+        let listed = run_flows(&crate::args::JourneyFlowsArgs {
+            project: Some(project.path().to_path_buf()),
+        });
+        let entry = &listed.output.data.unwrap()["flows"][0];
+        assert_eq!(entry["status"], "weak", "{entry}");
+        assert!(entry["approved"].is_null(), "{entry}");
         std::fs::write(&file, canonical(&flow, false)).unwrap();
         let refused = read_for_replay(&file, project.path()).unwrap_err();
         assert!(

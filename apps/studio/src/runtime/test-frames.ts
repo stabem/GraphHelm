@@ -56,7 +56,8 @@ export function testFrames(journey: JourneyView, run: JourneyRunView | null, run
     const screen = run?.screens?.[s.stepId];
     let status: FrameStatus = "not_run";
     let reason: string | null = null;
-    if (skipped) { status = "waits_for_you"; reason = skipped[1].reason ?? null; }
+    if (flow?.status === "weak") { reason = "Not proof: this journey does not say what it proves"; }
+    else if (skipped) { status = "waits_for_you"; reason = skipped[1].reason ?? null; }
     else if (screen?.result === "pass") status = "passed";
     else if (screen?.result) { status = "failed"; reason = screen.reason ?? null; }
     else if (running === s.stepId) status = "running";

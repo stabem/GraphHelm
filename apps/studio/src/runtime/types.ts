@@ -548,6 +548,9 @@ export interface JourneyRunView {
    * `{result: "skipped", reason: "confirm_needed"}`. Absent otherwise. */
   held?: { edge: string; act: string; base: string };
 }
+/** One earlier finished run of a journey (#history): `GET /v1/journey-flows/{id}/history`. */
+export interface JourneyPastRun extends JourneyRunView { run: string }
+export interface JourneyHistoryView { id: string; runs: JourneyPastRun[] }
 /** One frame's bytes and the tag to ask for a newer one with. */
 export interface JourneyFrame { blob: Blob; etag: string | null }
 /** One act sent into a live session: `POST /v1/journeys/sessions/{id}/act`. */

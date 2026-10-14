@@ -883,6 +883,14 @@ fn build_router(state: ServeState) -> Router {
             "/v1/journey-flows/{id}/screens/{screen}/frame",
             get(routes::journey_screen_frame),
         )
+        .route(
+            "/v1/journey-flows/{id}/history",
+            get(routes::journey_history),
+        )
+        .route(
+            "/v1/journey-flows/{id}/history/{run}/screens/{screen}/frame",
+            get(routes::journey_history_frame),
+        )
         .route("/v1/executions/{id}/events", get(routes::events))
         .route("/v1/executions/{id}/evidence", get(routes::evidence_batch))
         .route(

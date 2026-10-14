@@ -20,9 +20,13 @@ interface Props {
   runLine?: ReactNode;
   /** #746: shown at the top of the inspector, e.g. the held step's confirm. */
   inspectorTop?: ReactNode;
+  /** #history: a short note per step, e.g. "changed" when its frame differs from an earlier run's. */
+  badges?: Record<string, string>;
+  /** #history: shown in the inspector under the step, e.g. the compare with an earlier run. */
+  inspectorStep?: (stepId: string) => ReactNode;
 }
 
-export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUrl, onMarkSafe, onSendBack, runLine, inspectorTop }: Props) {
+export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUrl, onMarkSafe, onSendBack, runLine, inspectorTop, badges, inspectorStep }: Props) {
   const cur = frames[selected];
   const [failure, setFailure] = useState<{ stepId: string; message: string } | null>(null);
   if (!cur) return <p className="tc-empty">This journey has no steps to test</p>;
@@ -63,6 +67,7 @@ export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUr
                   <span className="tc-num">{f.n}</span>
                   <span className="tc-verb">{f.verb}</span>
                   <span className="tc-chip" data-status={f.status}>{LABEL[f.status]}</span>
+                  {badges?.[f.stepId] && <span className="tc-badge">{badges[f.stepId]}</span>}
                 </span>
                 <span className="tc-card-text">{f.text}</span>
               </span>
@@ -100,6 +105,7 @@ export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUr
             <h3>{cur.text}</h3>
             <code className="tc-code">{`step ${cur.stepId}\n${cur.verb.toLowerCase()} ${cur.text}`}</code>
           </div>
+          {inspectorStep?.(cur.stepId)}
           {(cur.inputs.length > 0 || cur.intent) && (
             <div className="tc-ins-block">
               <span className="tc-cap">WHAT IT DID</span>

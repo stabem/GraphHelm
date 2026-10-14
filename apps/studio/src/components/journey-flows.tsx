@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import type { JourneyFrame, JourneyRunView } from "../runtime/types";
+import type { JourneyFrame, JourneyHistoryView, JourneyRunView } from "../runtime/types";
 
 export interface JourneyRunSource {
   start: (flowId: string, force: boolean, confirm?: boolean) => Promise<JourneyRunView>;
   read: (flowId: string) => Promise<JourneyRunView>;
   screenFrame: (flowId: string, screenId: string) => Promise<JourneyFrame | null>;
   liveFrame: (sessionId: string, etag: string | null) => Promise<JourneyFrame | null>;
+  /** #history: earlier finished runs, and one screen's frame as such a run kept it. Absent: no history. */
+  history?: (flowId: string) => Promise<JourneyHistoryView>;
+  historyFrame?: (flowId: string, run: string, screenId: string) => Promise<JourneyFrame | null>;
 }
 
 const RUN_POLL_MS = 1000;

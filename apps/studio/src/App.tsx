@@ -2393,7 +2393,7 @@ export default function App({
   useEffect(() => { setSeenSeq(selected === "" ? null : readLastSeen(projectKey, selected)); }, [projectKey, selected]);
   const head = status?.headSequence ?? 0;
   const handover = useMemo(() => status !== null && status.executionId === selected && shouldShowHandover(eventList, seenSeq, head)
-    ? buildHandover({ events: eventList, bots: team.bots, model, claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null,
+    ? buildHandover({ events: eventList, bots: team.bots, model, taskRecords: currentTaskGraphs?.records ?? [], claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null,
         openItems: needs.items, envelopes, fromSeq: typeof seenSeq === "number" ? seenSeq : seenSeq!.sequence,
         seenAt: typeof seenSeq === "object" ? seenSeq?.at : undefined, toSeq: head })
     : null, [status, selected, eventList, seenSeq, head, team, model, claudeTaskRead, needs, envelopes]);

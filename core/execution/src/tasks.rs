@@ -1087,7 +1087,7 @@ fn slice_for(slices: &mut Vec<Slice>, next_id: &mut usize, event: &TaskEventReco
             && s.released_by.is_none()
             && (s.lane.is_none() || event.lane.is_none() || s.lane == event.lane)
     };
-    let add = |slices: &mut Vec<Slice>| {
+    let mut add = |slices: &mut Vec<Slice>| {
         let id = *next_id;
         *next_id += 1;
         slices.push(Slice {

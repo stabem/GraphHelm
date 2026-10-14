@@ -1554,3 +1554,104 @@ fn serializes_a_slice_with_the_studio_field_names() {
         "2026-10-13T12:00:00Z"
     );
 }
+
+/// #1192: the one fixture the Studio's parity cell reads (`apps/studio/src/runtime/tasks-route.test.ts`):
+/// the route reply (`tasks`, `records`, `slices`, `routes`) for a corpus that exercises slices,
+/// absorption, a closed PR, a stray verdict, a release and heartbeats. The Studio's test helper folds
+/// the same `records` and must land every record on the same slice id; a drift between the two
+/// folds shows here as a fixture mismatch, not as a Studio that silently draws another graph.
+/// Regenerate with `GRAPHHELM_WRITE_FIXTURES=1`; a fixture change is reviewed like any golden.
+#[test]
+fn the_route_fixture_matches_the_fold() {
+    let records = vec![
+        claimed(1, "lane-a", "issue-10", 10, "issue-10-first"),
+        planned(2, "lane-a", "issue-10", "none", "first plan"),
+        record(
+            3,
+            "task.heartbeat",
+            "lane-a",
+            json!({"taskId": "issue-10", "lane": "lane-a"}),
+        ),
+        claimed(4, "lane-a", "issue-10", 10, "issue-10-second"),
+        opened(5, "lane-a", "issue-10", 100, "aaaaaaaa"),
+        verdict(
+            6,
+            "rev-1",
+            "issue-10",
+            100,
+            "aaaaaaaa",
+            "BLOCK",
+            "https://github.com/o/r/pull/100#c1",
+        ),
+        opened(7, "lane-a", "issue-10", 100, "bbbbbbbb"),
+        verdict(
+            8,
+            "rev-1",
+            "issue-10",
+            100,
+            "cccccccc",
+            "APPROVE",
+            "https://github.com/o/r/pull/100#c2",
+        ),
+        verdict(
+            9,
+            "rev-1",
+            "issue-10",
+            100,
+            "bbbbbbbb",
+            "APPROVE",
+            "https://github.com/o/r/pull/100#c3",
+        ),
+        claimed(10, "lane-b", "issue-11", 11, "issue-11-work"),
+        record(
+            11,
+            "task.released",
+            "lane-b",
+            json!({"taskId": "issue-11", "lane": "lane-b", "claimSequence": 10, "reason": "Handed over"}),
+        ),
+        opened(12, "lane-c", "issue-12", 120, "dddddddd"),
+        record(
+            13,
+            "task.closed",
+            "lane-c",
+            json!({"taskId": "issue-12", "pr": 120, "reason": "superseded", "by": 121}),
+        ),
+        merged(14, "rev-1", "issue-10", 100, "eeeeeeee", &[10]),
+    ];
+    let base = "2026-10-14T10:00:00Z";
+    let records: Vec<TaskEventRecord> = records
+        .into_iter()
+        .map(|r| {
+            let minutes = i64::try_from(r.sequence).unwrap();
+            with_time(r, at(base, minutes))
+        })
+        .collect();
+    let fold = graphhelm_execution::tasks::fold_task_events_with_routes(&records);
+    let reply = json!({
+        "executionId": "fixture-run",
+        "headSequence": 14,
+        "tasks": fold.tasks,
+        "records": records,
+        "slices": fold.slices,
+        "routes": fold.routes,
+        "rejected": 0,
+    });
+    let text = serde_json::to_string_pretty(&reply).unwrap() + "\n";
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tasks-route.json");
+    if std::env::var_os("GRAPHHELM_WRITE_FIXTURES").is_some() {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &text).unwrap();
+    }
+    let committed = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+        panic!(
+            "missing {}; run with GRAPHHELM_WRITE_FIXTURES=1",
+            path.display()
+        )
+    });
+    assert_eq!(
+        committed.replace("\r\n", "\n"),
+        text,
+        "the committed route fixture differs from the fold"
+    );
+}

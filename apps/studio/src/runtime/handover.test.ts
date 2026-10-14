@@ -4,6 +4,7 @@ import type { GraphModel } from "../graph/model";
 import type { Bot } from "./team";
 import type { RuntimeEvent } from "./types";
 import { buildHandover, hiddenThisSession, hideThisSession, lastSeenKey, readLastSeen, shouldShowHandover, writeLastSeen } from "./handover";
+import { parseTaskEvent } from "./team-tasks";
 
 const T0 = Date.parse("2026-10-05T08:00:00Z");
 const at = (minutes: number) => new Date(T0 + minutes * 60_000).toISOString();
@@ -151,8 +152,14 @@ describe("buildHandover task.merged", () => {
     ev(sequence, minutes, "signal_recorded", actor, { kind: "task.merged", signalId: `m${sequence}` });
   const doc = (merger: string) => ({ to: null, replyTo: null, text: JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-501",
     revision: 1, at: at(100), pr: 77, mergeSha: "b".repeat(40), closes: [501], merger }) });
+  // #1192: the merge record reaches the handover from the Runtime's tasks route (verified there);
+  // the cells keep their document fixtures and hand them over as the route's records.
   const shippedOf = (extra: RuntimeEvent[], envelopes: Record<number, ReturnType<typeof doc>>, fromSeq = 10) => buildHandover({
     events: [...events, ...extra], bots: [bot("kit-2")], model: null, claudeTasks: null, openItems: [], fromSeq, toSeq: 50, envelopes,
+    taskRecords: Object.entries(envelopes).map(([sequence, envelope]) => {
+      const merger = (JSON.parse(envelope.text) as { merger: string }).merger;
+      return { ...parseTaskEvent("task.merged", merger, envelope.text)!, sequence: Number(sequence) };
+    }),
   }).shipped.filter((line) => line.text.includes("merged"));
 
   it("lists a merge in the gap with its PR, merger and closed issues, citing its sequence", () => {

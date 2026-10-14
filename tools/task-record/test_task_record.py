@@ -491,6 +491,24 @@ class TaskRecordTest(unittest.TestCase):
         self.assertEqual(FakeRuntime.seen, [])
 
     # #1148: the bearer is the lane's own credential beside --token-file, never the shared token.
+    # #1193: a claim carries its lease when asked; absent, the field is not sent (a Runtime older
+    # than #1193 refuses unknown keys, and the schema reads absence as 1800); an out-of-range lease
+    # is refused before anything is sent (on the parent the flag did not exist).
+    def test_a_claim_carries_its_lease_and_an_out_of_range_lease_is_refused(self):
+        code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", "--no-github")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("leaseSeconds", json.loads(FakeRuntime.seen[-1][1]["signal"]["description"]))
+        code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "10", "--branch", "b", "--no-github",
+                                  "--lease-seconds", "600")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(FakeRuntime.seen[-1][1]["signal"]["description"])["leaseSeconds"], 600)
+        sent = len(FakeRuntime.seen)
+        with self.assertRaises(SystemExit) as refused:
+            self.run_step("--lane", "lane-a", "claimed", "--issue", "11", "--branch", "b", "--no-github",
+                          "--lease-seconds", "59")
+        self.assertIn("--lease-seconds", str(refused.exception.code))
+        self.assertEqual(len(FakeRuntime.seen), sent)
+
     def test_a_record_is_sent_with_the_lanes_credential_not_the_shared_token(self):
         code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", "--no-github")
         self.assertEqual(code, 0, out)

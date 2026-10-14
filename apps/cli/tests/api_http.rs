@@ -2514,6 +2514,91 @@ fn a_task_record_needs_the_lanes_credential_not_the_shared_token() {
     assert_eq!(event["actor"]["type"], "agent", "{event}");
 }
 
+/// #1193 (plan A2): the Stop reconciler, signing as `graphhelm`, releases a lapsed claim of the
+/// lane it names, and only with `releasedBy: graphhelm`. Before: every release had to be signed
+/// by the lane itself (`GHCLI038` otherwise), so a dead lane's claim could never be released.
+/// Through the HTTP door with the owner token, whose actor headers are honoured (D-058). Cost:
+/// one served Runtime, five POSTs.
+#[test]
+fn graphhelm_releases_another_lanes_claim_only_with_released_by() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-lapsed-release";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let post = |id: &str, actor: &str, kind: &str, document: &Value| {
+        let body = serde_json::json!({"signal": {"id": id, "source": {"type": "user", "id": actor},
+            "type": kind, "severity": "low", "description": document.to_string(),
+            "evidence": ["task"], "emittedAt": "2026-10-14T02:00:00Z"}});
+        post_json(
+            &format!("{base}/v1/executions/{execution}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", id),
+                ("X-GraphHelm-Actor", actor),
+                ("X-GraphHelm-Actor-Type", "agent"),
+            ],
+            &body,
+        )
+    };
+    let claim = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1193",
+        "revision": 1, "at": "2026-10-14T02:00:00Z", "issue": 1193, "lane": "lane-alpha",
+        "branch": "issue-1193-claim-lease", "repo": "stabem/GraphHelm", "leaseSeconds": 1800});
+    let (status, reply) = post("lapsed-claim", "lane-alpha", "task.claimed", &claim);
+    assert_eq!(status, 200, "{reply}");
+    let claim_sequence = head_sequence(&base, &token, execution);
+    let mut release = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1193",
+        "revision": 2, "at": "2026-10-14T02:31:00Z", "lane": "lane-alpha",
+        "claimSequence": claim_sequence, "reason": "lease of 1800 s lapsed without a heartbeat"});
+    // Signed by graphhelm, naming the lane, without releasedBy: an identity mismatch.
+    let (status, reply) = post(
+        "lapsed-release-unnamed",
+        "graphhelm",
+        "task.released",
+        &release,
+    );
+    assert_eq!(status, 403, "unnamed: {reply}");
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI038_ACTOR_MISMATCH");
+    // releasedBy under a third lane's signature: refused the same way.
+    release["releasedBy"] = serde_json::json!("graphhelm");
+    let (status, reply) = post("lapsed-release-forged", "lane-x", "task.released", &release);
+    assert_eq!(status, 403, "forged: {reply}");
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI038_ACTOR_MISMATCH");
+    assert_eq!(
+        head_sequence(&base, &token, execution),
+        claim_sequence,
+        "refused releases append nothing"
+    );
+    // Signed by graphhelm with releasedBy: admitted, recorded as graphhelm, and the lane's claim
+    // is closed for heartbeats.
+    let (status, reply) = post("lapsed-release", "graphhelm", "task.released", &release);
+    assert_eq!(status, 200, "released: {reply}");
+    let event = last_event_of_kind(&base, &token, execution, "signal_recorded");
+    assert_eq!(event["actor"]["id"], "graphhelm");
+    let heartbeat = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1193",
+        "revision": 3, "at": "2026-10-14T02:32:00Z", "lane": "lane-alpha"});
+    let (status, reply) = post(
+        "lapsed-heartbeat",
+        "lane-alpha",
+        "task.heartbeat",
+        &heartbeat,
+    );
+    assert_eq!(status, 400, "heartbeat after release: {reply}");
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID");
+}
+
 /// #1148, the rollout half: without `--require-lane-credential` (the default) the shared agent
 /// session token still records a `task.*` as it does today, so a Runtime upgraded before the
 /// owner has minted every lane's credential loses no record; the lane credential is accepted

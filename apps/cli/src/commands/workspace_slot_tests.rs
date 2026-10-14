@@ -3,9 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{
-    BatchRun, BatchSpec, SlotRequest, batch_boundary, parse_slot_batch, run_admitted_slot,
-    run_admitted_slot_in, run_admitted_slot_in_with_batch, run_slot_with_batch_payload, run_status,
-    slot_dir,
+    BatchRun, BatchSpec, SlotRequest, batch_boundary, open_build_admission, parse_slot_batch,
+    run_admitted_slot, run_admitted_slot_in, run_admitted_slot_in_with_batch,
+    run_slot_with_batch_payload, run_status, slot_dir,
 };
 
 fn marker_command(log: &Path, tag: &str, millis: u64) -> Vec<String> {
@@ -122,9 +122,9 @@ fn batch_child_failure_keeps_prefix_and_stops_children() {
     let mut first = marker_command(&log, "first", 0);
     first.last_mut().unwrap().push_str("; exit 7");
     let second = marker_command(&log, "second", 1);
-    let request = request(&root, "lane", "batch", &first);
+    let batch_request = request(&root, "lane", "batch", &first);
     let outcome = run_admitted_slot_in_with_batch(
-        &request,
+        &batch_request,
         dir.path(),
         Some(BatchRun {
             spec: BatchSpec {
@@ -141,6 +141,29 @@ fn batch_child_failure_keeps_prefix_and_stops_children() {
     assert_eq!(data["batch"]["completed"].as_array().unwrap().len(), 1);
     assert_eq!(data["batch"]["remaining"], serde_json::json!([1]));
     assert_eq!(tags(&log), ["first"]);
+
+    // A failed child must release the shared authority so a later build can enter.
+    let retry = marker_command(&log, "retry", 0);
+    let retry_request = request(&root, "lane", "retry", &retry);
+    let retry_outcome = run_admitted_slot_in(&retry_request, dir.path());
+    assert!(
+        retry_outcome.output.ok && retry_outcome.exit_code == 0,
+        "retry child failed: {:?}",
+        retry_outcome.output
+    );
+    assert_eq!(tags(&log), ["first", "retry"]);
+}
+
+#[test]
+fn invalid_build_admission_directory_fails_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let invalid = dir.path().join("authority-file");
+    std::fs::write(&invalid, b"not a directory").unwrap();
+
+    // Contract: an unusable authority refuses admission instead of falling back.
+    // This catches a regression that silently permits independent build execution.
+    // Cost: one local filesystem probe; no child process or network.
+    assert!(open_build_admission(&invalid).is_err());
 }
 
 #[test]
@@ -469,6 +492,304 @@ fn admitted_slot_serializes_real_children_in_arrival_order_and_cleans_tickets() 
             .extension()
             .is_none_or(|extension| extension != "ticket")
     }));
+}
+
+/// Two independent slot roots must serialize their build children through one shared OS
+/// admission authority. Cost: two local marker children, about two seconds.
+#[test]
+fn shared_admission_serializes_children_across_slot_roots() {
+    let dir = tempfile::tempdir().unwrap();
+    let root_a = dir.path().join("root-a");
+    let root_b = dir.path().join("root-b");
+    let log = dir.path().join("cross-root.log");
+    let command_for = |tag: &str, release: &Path| {
+        let log = log.to_string_lossy().replace('\'', "''");
+        let release = release.to_string_lossy().replace('\'', "''");
+        if cfg!(windows) {
+            vec![
+                "powershell".into(),
+                "-NoProfile".into(),
+                "-Command".into(),
+                format!(
+                    "$deadline=(Get-Date).AddSeconds(10); Add-Content -LiteralPath '{log}' \"{tag} start $env:CARGO_TARGET_DIR\"; while (!(Test-Path -LiteralPath '{release}') -and (Get-Date) -lt $deadline) {{ Start-Sleep -Milliseconds 10 }}; if (!(Test-Path -LiteralPath '{release}')) {{ exit 91 }}; Add-Content -LiteralPath '{log}' '{tag} end'"
+                ),
+            ]
+        } else {
+            vec![
+                "sh".into(),
+                "-c".into(),
+                format!(
+                    "echo \"{tag} start $CARGO_TARGET_DIR\" >> '{log}'; i=0; while [ ! -f '{release}' ] && [ $i -lt 1000 ]; do sleep 0.01; i=$((i+1)); done; if [ ! -f '{release}' ]; then exit 91; fi; echo '{tag} end' >> '{log}'"
+                ),
+            ]
+        }
+    };
+    let release_a = dir.path().join("release-a");
+    let command_a = command_for("a", &release_a);
+    let command_b = marker_command(&log, "b", 0);
+    let cwd = dir.path().to_owned();
+    let admission = dir.path().join("shared-test-admission");
+    let expected_target_a = super::shared_target(&root_a).to_string_lossy().into_owned();
+    let expected_target_b = super::shared_target(&root_b).to_string_lossy().into_owned();
+    let first_admission = admission.clone();
+    let first = std::thread::spawn({
+        let cwd = cwd.clone();
+        move || {
+            let request = request(&root_a, "lane-a", "cross-root-a", &command_a);
+            super::run_admitted_slot_core(&request, &cwd, None, &first_admission)
+        }
+    });
+    let started = std::time::Instant::now();
+    while started.elapsed() < Duration::from_secs(3)
+        && !std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .contains(" start")
+    {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let first_started = std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .contains("a start");
+    let second_root = root_b.clone();
+    let second_cwd = cwd.clone();
+    let second_admission = admission.clone();
+    let mut timed = request(&second_root, "lane-b", "cross-root-b", &command_b);
+    timed.max_wait = Some(0.02);
+    let timed = super::run_admitted_slot_core(&timed, &second_cwd, None, &second_admission);
+    let timed_marker = std::fs::read_to_string(&log).unwrap_or_default();
+    std::fs::write(&release_a, b"release").unwrap();
+    let first = first.join().unwrap();
+    let retry_request = request(&root_b, "lane-b", "cross-root-b-retry", &command_b);
+    let retry = super::run_admitted_slot_core(&retry_request, &cwd, None, &admission);
+    let first_target = first
+        .output
+        .data
+        .as_ref()
+        .and_then(|data| data["targetDir"].as_str())
+        .unwrap_or_default()
+        .to_owned();
+    assert!(first_started, "first child did not enter before contender");
+    assert_eq!(first.exit_code, 0, "first child failed: {:?}", first.output);
+    assert!(!timed.output.ok);
+    assert_eq!(timed.output.diagnostics[0].path, "/slot");
+    assert!(!timed_marker.contains("b start"));
+    assert_eq!(retry.exit_code, 0, "retry child failed: {:?}", retry.output);
+    assert_eq!(first_target, expected_target_a);
+    let retry_target = retry.output.data.as_ref().unwrap()["targetDir"]
+        .as_str()
+        .unwrap_or_default();
+    assert_eq!(retry_target, expected_target_b);
+    assert_ne!(first_target, retry_target);
+    let child_markers = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        child_markers.contains(&format!("a start {expected_target_a}")),
+        "{child_markers}"
+    );
+    assert!(
+        child_markers.contains(&format!("b start {expected_target_b}")),
+        "{child_markers}"
+    );
+}
+
+#[test]
+fn update_installer_waits_for_slot_admission_before_starting_child() {
+    if let (Some(admission), Some(log), Some(exe), Some(script)) = (
+        std::env::var_os("GRAPHHELM_UPDATE_OBSERVER_ADMISSION"),
+        std::env::var_os("GRAPHHELM_UPDATE_OBSERVER_LOG"),
+        std::env::var_os("GRAPHHELM_UPDATE_OBSERVER_EXE"),
+        std::env::var_os("GRAPHHELM_UPDATE_OBSERVER_SCRIPT"),
+    ) {
+        let command = if cfg!(windows) {
+            vec![
+                "powershell".into(),
+                "-NoProfile".into(),
+                "-File".into(),
+                script,
+            ]
+        } else {
+            vec!["sh".into(), script]
+        };
+        let mut install = graphhelm_process::command(&command[0]);
+        install.args(&command[1..]);
+        let ok = super::super::studio::run_install(
+            &mut install,
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+            crate::progress::Progress::decide("update-test"),
+            Path::new(&admission),
+            Some(Path::new(&exe)),
+        );
+        assert!(ok);
+        assert!(Path::new(&log).exists());
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let log = dir.path().join("update-v-slot.log");
+    let release = dir.path().join("release");
+    let admission = dir.path().join("shared-test-admission");
+    let log_text = log.to_string_lossy().replace('\'', "''");
+    let release_text = release.to_string_lossy().replace('\'', "''");
+    let slot_command = if cfg!(windows) {
+        vec![
+            "powershell".into(),
+            "-NoProfile".into(),
+            "-Command".into(),
+            format!(
+                "$deadline=(Get-Date).AddSeconds(10); Add-Content -LiteralPath '{log_text}' 'slot start'; while (!(Test-Path -LiteralPath '{release_text}') -and (Get-Date) -lt $deadline) {{ Start-Sleep -Milliseconds 10 }}; if (!(Test-Path -LiteralPath '{release_text}')) {{ exit 91 }}; Add-Content -LiteralPath '{log_text}' 'slot end'"
+            ),
+        ]
+    } else {
+        vec![
+            "sh".into(),
+            "-c".into(),
+            format!(
+                "echo 'slot start' >> '{log_text}'; i=0; while [ ! -f '{release_text}' ] && [ $i -lt 1000 ]; do sleep 0.01; i=$((i+1)); done; if [ ! -f '{release_text}' ]; then exit 91; fi; echo 'slot end' >> '{log_text}'"
+            ),
+        ]
+    };
+    let slot_root = root.clone();
+    let slot_cwd = dir.path().to_owned();
+    let slot_admission = admission.clone();
+    let slot = std::thread::spawn(move || {
+        let request = request(&slot_root, "lane", "slot", &slot_command);
+        super::run_admitted_slot_core(&request, &slot_cwd, None, &slot_admission)
+    });
+
+    let started = std::time::Instant::now();
+    while started.elapsed() < Duration::from_secs(3) {
+        if std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .contains("slot start")
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let slot_started = std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .contains("slot start");
+
+    let update_script = if cfg!(windows) {
+        let script = dir.path().join("update-fixture.ps1");
+        std::fs::write(
+            &script,
+            format!(
+                "Add-Content -LiteralPath '{log_text}' 'update start'\nAdd-Content -LiteralPath '{log_text}' 'update end'\n"
+            ),
+        )
+        .unwrap();
+        script
+    } else {
+        let script = dir.path().join("update-fixture.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "echo 'update start' >> '{}'; echo 'update end' >> '{}'\n",
+                log.display(),
+                log.display()
+            ),
+        )
+        .unwrap();
+        script
+    };
+    let fake_exe = dir.path().join(if cfg!(windows) {
+        "graphhelm.exe"
+    } else {
+        "graphhelm"
+    });
+    std::fs::write(&fake_exe, b"fixture executable").unwrap();
+    let stderr = dir.path().join("update.stderr");
+    let mut update = graphhelm_process::command(std::env::current_exe().unwrap());
+    update
+        .args([
+            "--exact",
+            "commands::workspace_slot::workspace_slot_tests::update_installer_waits_for_slot_admission_before_starting_child",
+            "--nocapture",
+        ])
+        .env("GRAPHHELM_UPDATE_OBSERVER_ADMISSION", &admission)
+        .env("GRAPHHELM_UPDATE_OBSERVER_LOG", &log)
+        .env("GRAPHHELM_UPDATE_OBSERVER_EXE", &fake_exe)
+        .env("GRAPHHELM_UPDATE_OBSERVER_SCRIPT", &update_script)
+        .stderr(std::process::Stdio::from(std::fs::File::create(&stderr).unwrap()));
+    let mut update = update.spawn().unwrap();
+    let waited = std::time::Instant::now();
+    let update_waiting = loop {
+        if std::fs::read_to_string(&stderr)
+            .unwrap_or_default()
+            .contains("waiting for the shared build admission lock")
+        {
+            break true;
+        }
+        if waited.elapsed() >= Duration::from_secs(5) {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let original_present_while_held = fake_exe.exists();
+    let old_absent_while_held = !fake_exe
+        .with_file_name(if cfg!(windows) {
+            "graphhelm.old.exe"
+        } else {
+            "graphhelm.old"
+        })
+        .exists();
+    let update_not_started_while_held = !std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .contains("update start");
+    std::fs::write(&release, b"release").unwrap();
+    let slot = slot.join().unwrap();
+    let mut forced_update_termination = false;
+    let update_status = loop {
+        if let Some(status) = update.try_wait().unwrap() {
+            break status;
+        }
+        if waited.elapsed() >= Duration::from_secs(5) {
+            forced_update_termination = true;
+            let _ = update.kill();
+            break update.wait().unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let lines = std::fs::read_to_string(&log).unwrap();
+    let tags = lines
+        .lines()
+        .map(|line| {
+            line.split_whitespace()
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect::<Vec<_>>();
+    assert!(slot_started, "slot child did not enter the build section");
+    assert!(
+        update_waiting,
+        "update did not report actual lock contention"
+    );
+    assert!(
+        !forced_update_termination,
+        "update observer exceeded its cleanup bound"
+    );
+    assert!(slot.output.ok, "slot child failed: {:?}", slot.output);
+    assert!(
+        update_status.success(),
+        "update observer failed: {update_status:?}"
+    );
+    assert!(
+        original_present_while_held,
+        "update renamed the running executable before admission"
+    );
+    assert!(
+        old_absent_while_held,
+        "update moved the running executable before admission"
+    );
+    assert!(
+        update_not_started_while_held,
+        "update child entered while slot held admission"
+    );
+    assert_eq!(
+        tags,
+        vec!["slot start", "slot end", "update start", "update end"]
+    );
 }
 
 #[test]

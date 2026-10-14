@@ -63,6 +63,15 @@ class RunnerContracts(unittest.TestCase):
             self.assertEqual(rr.main(["--output", "feedback.json", "--batch-slot"]), 0)
             self.assertTrue(run.call_args.args[0].batch_slot)
 
+    def test_jobs_rejects_non_positive_before_runner(self):
+        with patch.object(rr, "run", return_value=0) as run:
+            self.assertEqual(rr.main(["--output", "feedback.json", "--jobs", "1"]), 0)
+            self.assertEqual(run.call_args.args[0].jobs, 1)
+            run.reset_mock()
+            with self.assertRaises(SystemExit):
+                rr.main(["--output", "feedback.json", "--jobs", "0"])
+            run.assert_not_called()
+
     def test_batch_order_hoists_only_fmt_and_keeps_selector_indices(self):
         steps, error = rr._steps({"steps": [
             {"argv": ["python", "-c", "pass"], "cwd": ".", "slot": False},
@@ -157,7 +166,7 @@ class RunnerContracts(unittest.TestCase):
             args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
                                       "root": "D:/gh", "lane": "test", "budget_seconds": 180,
                                       "allow_whole_package": None, "plan": False,
-                                      "graphhelm": sys.executable})()
+                                      "graphhelm": sys.executable, "jobs": 1})()
             with patch.object(rr, "_selector", return_value=plan), patch.object(rr, "_git", side_effect=fake_git), \
                     patch.object(rr.subprocess, "run", side_effect=fake_run):
                 self.assertEqual(rr.run(args), 0)
@@ -170,6 +179,9 @@ class RunnerContracts(unittest.TestCase):
             self.assertEqual(len(second["commands"]), 1)
             self.assertEqual(second["commands"][0], plan["steps"][1]["argv"])
             self.assertEqual(first["deadlineUnixMs"], second["deadlineUnixMs"])
+            self.assertEqual(calls[0][1]["CARGO_BUILD_JOBS"], "1")
+            self.assertEqual(calls[0][0][calls[0][0].index("--jobs") + 1], "1")
+            self.assertEqual(calls[1][0][calls[1][0].index("--jobs") + 1], "1")
 
     def test_jobs_flag_reaches_every_slot_command_and_defaults_to_six(self):
         # #1188: the owner's rule is one root at up to 16 jobs; the runner must carry the chosen
@@ -531,11 +543,14 @@ class RunnerContracts(unittest.TestCase):
                 args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
                                           "root": "D:/gh", "lane": "test", "budget_seconds": 180,
                                           "allow_whole_package": None, "plan": False, "batch_slot": False,
+                                          "jobs": 1,
                                           "graphhelm": sys.executable})()
                 self.assertEqual(rr.run(args), 0)
             self.assertEqual(len(calls), 2)
             self.assertEqual(calls[0][0:4], [sys.executable, "--json", "workspace", "slot"])
+            self.assertEqual(calls[0][calls[0].index("--jobs") + 1], "1")
             self.assertEqual(calls[1][0], sys.executable)
+            self.assertEqual(envs[0]["CARGO_BUILD_JOBS"], "1")
             self.assertNotIn("GRAPHHELM_SLOT_BATCH", envs[1])
             self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["heldSeconds"], 2.0)
 

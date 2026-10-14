@@ -903,15 +903,13 @@ mod tests {
         );
         let failure =
             super::super::tasks::read(directory.path(), "execution-budget", &keyring, &lapsed)
-                .err()
-                .expect("a lapsed budget must refuse the task read");
+                .expect_err("a lapsed budget must refuse the task read");
         assert_eq!(failure.code, "GHE013_READ_BUDGET_EXCEEDED");
 
         let ample = ReadBudget::starting_now(Arc::new(FrozenClock), chrono::Duration::seconds(5));
         let failure =
             super::super::tasks::read(directory.path(), "execution-budget", &keyring, &ample)
-                .err()
-                .expect("control: the missing keyring refuses once the budget check is passed");
+                .expect_err("control: the missing keyring refuses once the budget check is passed");
         assert_ne!(
             failure.code, "GHE013_READ_BUDGET_EXCEEDED",
             "control: an unlapsed budget never refuses; the keyring does"

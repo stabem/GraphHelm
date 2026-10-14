@@ -453,6 +453,9 @@ export interface JourneyFlowView {
   title: string | null;
   /** #1287: what the journey proves for the user. Absent from older Runtimes. */
   purpose?: string | null;
+  /** #1296: short, verb-first name and the feature it belongs to. Display only; absent from older Runtimes. */
+  name?: string | null;
+  feature?: string | null;
   status: JourneyFlowStatus;
   approved: { revision: string; digest: string } | null;
   drift: unknown[];

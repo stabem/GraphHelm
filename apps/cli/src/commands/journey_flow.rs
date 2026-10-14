@@ -1320,6 +1320,8 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
             };
             json!({"id": id, "title": flow.get("title").cloned().unwrap_or(Value::Null),
                 "purpose": flow.get("purpose").cloned().unwrap_or(Value::Null),
+                "name": flow.get("name").cloned().unwrap_or(Value::Null),
+                "feature": flow.get("feature").cloned().unwrap_or(Value::Null),
                 "status": status, "approved": approved, "drift": flow["drift"],
                 "findings": listed, "approvable": accepted && !settled,
                 "screens": flow["screens"], "edges": flow["edges"], "paths": flow["paths"]})
@@ -1759,6 +1761,60 @@ pub(crate) fn approve_as(
 /// on that edge of a canonical DRAFT and nothing else; the reply lists every act the mark covers,
 /// so one mark never blesses an act the owner was not shown. Owner door: the CLI on the owner's
 /// machine, or the Runtime route with the owner credential.
+/// `graphhelm journey label <id> --name .. --feature ..` (#1296): writes the display labels and
+/// re-renders the canonical file. Refuses if the approved digest would move (it never should).
+pub(crate) fn run_label(args: &crate::args::JourneyLabelArgs) -> Outcome {
+    const COMMAND: &str = "journey.label";
+    let project = args.project.clone().unwrap_or_else(|| ".".into());
+    let clean = |v: &Option<String>| {
+        v.as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned)
+    };
+    let (name, feature) = (clean(&args.name), clean(&args.feature));
+    if name.is_none() && feature.is_none() {
+        return input_error(COMMAND, "give --name and/or --feature");
+    }
+    if [&name, &feature]
+        .iter()
+        .any(|v| v.as_ref().is_some_and(|v| v.chars().count() > 60))
+    {
+        return input_error(COMMAND, "a label is at most 60 characters");
+    }
+    let Some(files) = files(&project, std::slice::from_ref(&args.id)) else {
+        return input_error(COMMAND, "invalid flow id or unsafe journeys directory");
+    };
+    let Ok(_lock) = write_lock(&project) else {
+        return input_error(COMMAND, "journey-flow write lock unavailable or unsafe");
+    };
+    let file = &files[0];
+    let (_, mut flow) = match read(file) {
+        Ok(value) => value,
+        Err(findings) => return report(COMMAND, vec![], findings, json!({})),
+    };
+    let before = approval_digest(&flow);
+    if let Some(name) = &name {
+        flow["name"] = json!(name);
+    }
+    if let Some(feature) = &feature {
+        flow["feature"] = json!(feature);
+    }
+    if approval_digest(&flow) != before {
+        return input_error(
+            COMMAND,
+            "labelling would change the approved digest; nothing written",
+        );
+    }
+    if atomic_write(file, canonical(&flow, false).as_bytes()).is_err() {
+        return input_error(COMMAND, "could not write the flow");
+    }
+    Outcome::success(
+        COMMAND,
+        json!({"id": args.id, "name": flow["name"], "feature": flow["feature"], "digest": before}),
+    )
+}
+
 pub(crate) fn run_mark_safe(args: &crate::args::JourneyMarkSafeArgs) -> Outcome {
     const COMMAND: &str = "journey.mark_safe";
     let project = args.project.clone().unwrap_or_else(|| ".".into());
@@ -1893,10 +1949,12 @@ fn inline(value: &Value, fields: &[&str]) -> String {
 fn canonical(value: &Value, approval_projection: bool) -> String {
     let mut out = String::new();
     for field in [
-        "schema", "id", "title", "purpose", "status", "approved", "base", "actors", "secrets",
-        "risks", "viewport", "storage",
+        "schema", "id", "title", "name", "feature", "purpose", "status", "approved", "base",
+        "actors", "secrets", "risks", "viewport", "storage",
     ] {
-        if approval_projection && matches!(field, "status" | "approved") {
+        // #1296: `name` and `feature` are labels: kept in the file's canonical bytes, never in
+        // what the owner approves.
+        if approval_projection && matches!(field, "status" | "approved" | "name" | "feature") {
             continue;
         }
         // #585: how a run opens its browser is part of what the owner approves.
@@ -2019,6 +2077,27 @@ mod tests {
                 .any(|f| f.code == "flow.purpose_missing" && !f.is_warning()),
             "{:?}",
             refused.iter().map(|f| f.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// #1296: `name` and `feature` only label a journey for the Studio rail. Defect named: adding
+    /// or renaming them changes the approved digest, so labelling an approved journey makes it
+    /// stale. Cost: in memory only.
+    #[test]
+    fn a_journey_name_and_feature_never_change_the_approved_digest() {
+        let mut flow: Value = serde_yaml_ng::from_str(
+            "schema: graphhelm.journey-flow/1\nid: itens\ntitle: Usuario da obra cria um item novo\nstatus: draft\napproved: null\nbase: http://127.0.0.1:3000\nactors: [owner]\nsecrets: []\nrisks: []\nscreens:\n  - {id: a, url: /a, state: stable, expect: [], scope: unknown}\nedges: []\npaths: {main: []}\ndrift: []\n",
+        )
+        .unwrap();
+        let before = approval_digest(&flow);
+        flow["name"] = json!("Cadastrar novo item");
+        flow["feature"] = json!("Itens");
+        assert_eq!(approval_digest(&flow), before);
+        // The labels survive the canonical writer, so a labelled file is still canonical.
+        let text = canonical(&flow, false);
+        assert!(
+            text.contains("name: Cadastrar novo item\nfeature: Itens\n"),
+            "{text}"
         );
     }
 

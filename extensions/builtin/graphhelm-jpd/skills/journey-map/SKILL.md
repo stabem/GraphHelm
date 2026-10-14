@@ -66,7 +66,11 @@ if broken. For each write `.graphhelm/journeys/<id>.journey.yaml` (the worked ex
 
 - `schema: graphhelm.journey-flow/1`, `id` (also the file name), optional `title`,
   `purpose` (what the journey proves for the user, in one sentence: "the owner tags a store and
-  the tag is still there after a reload", not "test the stores page"), `status: draft`, `approved: null`, `base` (the app origin; every `url` is a path under it).
+  the tag is still there after a reload", not "test the stores page"), `name` (a short,
+  verb-first label of 2-5 words like a menu item: "Create a new item"; the Studio shows it with
+  the `purpose` under it), `feature` (the feature or business rule it belongs to, one or two
+  words shared by its sibling journeys: "Items", "Deliveries"; the Studio groups journeys by it),
+  `status: draft`, `approved: null`, `base` (the app origin; every `url` is a path under it).
 - `actors`, `secrets` (names only; values come from `GRAPHHELM_SECRET_<NAME>`, never the file)
   and `risks` (the contract's risk enum, for example `authentication`, `money`, `personal_data`).
 - `screens`: one per screen from (a) on the journey: `id`, `title` (what the screen is for), `url` (a path pattern; numeric, uuid
@@ -77,6 +81,8 @@ if broken. For each write `.graphhelm/journeys/<id>.journey.yaml` (the worked ex
   including what is left as-is), and `acts`, each `{kind, role, name}` with the contract's
   semantic action kinds; `enter_text` takes `secret: <name>` (or a non-secret `text`). Write
   every input the user gives before a submit (`enter_text`, `select`, `upload`) as its own act.
+- Labels (#1296): `name` and `feature` sit outside the approved digest, so give a journey that
+  lacks them a `name` and a `feature` whenever you touch it, approved or not; it never goes stale.
 - What it proves (#1287): a journey that clicks, submits and checks only a state word proves
   nothing. The draft writer and approval refuse a flow with no `purpose`
   (`flow.purpose_missing`), a screen with no `title` (`flow.screen_title_missing`), a `submit`
@@ -209,6 +215,8 @@ specs under `e2e/specs/`. Step (a) reads its `page.tsx` files and yields screens
 schema: graphhelm.journey-flow/1
 id: first-login
 title: First login to a configured store
+name: First login
+feature: Sign-in
 purpose: "A new seller signs in with Mercado Livre, finishes store setup and lands on their dashboard."
 status: draft
 approved: null

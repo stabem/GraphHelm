@@ -216,6 +216,20 @@ const VERDICT_HINT: Record<JourneyVerdict, string> = {
   not_run: "Not replayed yet.",
   running: "Replaying now.",
 };
+/** #1296: the Proof rail's journeys grouped by the flow's `feature` (business rule), groups and
+ * journeys in name order so rows never jump while Run all lands verdicts. Without any feature the
+ * rail stays one flat list in its old order. Ungrouped journeys go last, under "Other". */
+export interface JourneyGroup<T> { feature: string | null; items: T[] }
+export function groupJourneys<T>(items: readonly T[], featureOf: (item: T) => string | null | undefined, nameOf: (item: T) => string): JourneyGroup<T>[] {
+  const feature = (item: T) => featureOf(item)?.trim() || null;
+  if (!items.some((item) => feature(item) !== null)) return items.length ? [{ feature: null, items: [...items] }] : [];
+  const byName = (a: T, b: T) => nameOf(a).localeCompare(nameOf(b), undefined, { sensitivity: "base", numeric: true });
+  const groups = new Map<string | null, T[]>();
+  for (const item of items) groups.set(feature(item), [...groups.get(feature(item)) ?? [], item]);
+  return [...groups.entries()]
+    .sort(([a], [b]) => a === null ? 1 : b === null ? -1 : a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }))
+    .map(([key, list]) => ({ feature: key, items: list.sort(byName) }));
+}
 function JourneyRailButton({ mission, flow, duplicateTitle, selected, onSelect }: { mission: Mission; flow?: JourneyFlowView; duplicateTitle: boolean; selected: boolean; onSelect(): void }) {
   const { name, note } = splitDraftTitle(mission.title);
   const pathName = flow === undefined ? undefined : mission.contractId === flow.id ? "main" : mission.contractId.slice(flow.id.length + 1);
@@ -228,8 +242,12 @@ function JourneyRailButton({ mission, flow, duplicateTitle, selected, onSelect }
     || stepIds?.length !== mission.steps.length || stepIds.some((id, index) => id !== mission.steps[index]?.stepId)
     || flow.findings.some((finding) => finding.code === "flow.contract_stale" && finding.pointer === `/journeys/${mission.contractId}.json`));
   const title = stale && flow.title ? flow.title : name;
-  return <button type="button" className="mv-journey mv-proof-journey" aria-pressed={selected} title={note ? `Draft: ${note}` : title} onClick={onSelect}>
-    <span className="mv-journey-title">{title}</span>
+  // #1296: a short name reads like a menu item; the promise (or the long title) becomes its description.
+  const short = flow?.name?.trim() ? (pathName && pathName !== "main" ? `${flow.name.trim()} · ${pathName}` : flow.name.trim()) : null;
+  const description = short === null ? null : flow?.purpose?.trim() || title;
+  return <button type="button" className="mv-journey mv-proof-journey" aria-pressed={selected} title={note ? `Draft: ${note}` : description ?? title} onClick={onSelect}>
+    <span className="mv-journey-title">{short ?? title}</span>
+    {description && <span className="mv-journey-desc">{description}</span>}
     {(duplicateTitle || stale) && <span className="mv-journey-id">{mission.contractId}</span>}
     {note && <span className="mv-draft-tag" title={note}>draft</span>}
     {stale && <span className="mv-draft-tag" title="The compiled contract does not match the current flow">contract out of date</span>}
@@ -333,6 +351,10 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
     const flow = flowForContract(flows?.flows ?? [], m.contractId);
     return flow?.title && flow.title !== m.title ? flow.title : splitDraftTitle(m.title).name;
   });
+  const railGroups = useMemo(() => groupJourneys(missions, (m) => flowForContract(flows?.flows ?? [], m.contractId)?.feature,
+    (m) => flowForContract(flows?.flows ?? [], m.contractId)?.name?.trim() || proofTitles[missions.indexOf(m)] || m.contractId),
+  [missions, flows]);
+  const railOrder = railGroups.flatMap((g) => g.items);
   const groups = useMemo(() => buildWorkGroups(tasks, journeys, runFor, partial), [tasks, journeys, runFor, partial]);
   const orphans = useMemo(() => unlinkedTasks(journeys, tasks), [journeys, tasks]);
   const allTasks = useMemo(() => tasks.map(toMissionTask), [tasks]);
@@ -420,7 +442,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   // #run-all: like a test explorer. Each journey's last run is read from the Runtime's cache once
   // and kept until something it depends on changes (the flow digest: stale). Run all replays
   // every journey in one click, one after another; ▶ Run replays one.
-  const runnable = useMemo(() => (run && (sub === "proof" || sub === "test") ? missions.filter((m) => flowForContract(flows?.flows ?? [], m.contractId) !== undefined).map((m) => m.contractId) : []), [run, sub, missions, flows]);
+  const runnable = useMemo(() => (run && (sub === "proof" || sub === "test") ? railOrder.filter((m) => flowForContract(flows?.flows ?? [], m.contractId) !== undefined).map((m) => m.contractId) : []), [run, sub, missions, flows]);
   const [batch, setBatch] = useState<{ ids: string[]; done: number; current: string | null } | null>(null);
   const [batchNote, setBatchNote] = useState<string | null>(null);
   const [batchRevision, setBatchRevision] = useState(0);
@@ -578,7 +600,8 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
               {batchNote && <p role="alert" className="mv-runall-note">{batchNote}</p>}
             </div>}
             {missions.length === 0 && <p className="mv-none">No journeys in this project yet</p>}
-            {missions.map((m) => {
+            {railGroups.map((g) => {
+              const cards = g.items.map((m) => {
               const on = m.contractId === contractId;
               return (
                 <div key={m.contractId} className="mv-jcard" data-selected={on}>
@@ -589,6 +612,20 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
                   </span>}
                   {historyLoading ? <span className="mv-progress-text" role="status">… loading work</span> : <JourneyProgress statuses={journeyStepProgress(m)} caption={false} />}
                 </div>
+              );
+              });
+              if (railGroups.length === 1 && g.feature === null) return cards;
+              const passed = g.items.filter((m) => verdictOf(m) === "passed").length;
+              const failed = g.items.filter((m) => verdictOf(m) === "failed").length;
+              return (
+                <details key={g.feature ?? "\u0000other"} className="mv-jgroup" open>
+                  <summary className="mv-jgroup-head">
+                    <span className="mv-jgroup-name">{g.feature ?? "Other"}</span>
+                    {failed > 0 && <span className="mv-verdict" data-verdict="failed">{`${failed} failed`}</span>}
+                    <span className="mv-journey-count">{runnable.length > 0 ? `${passed}/${g.items.length}` : g.items.length}</span>
+                  </summary>
+                  {cards}
+                </details>
               );
             })}
           </nav>

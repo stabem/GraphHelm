@@ -190,13 +190,12 @@ it("publishes warm envelopes once per bounded page with complete contents", asyn
   await waitFor(() => expect(first.result.current.__pendingEnvelopeSequences).toEqual([]));
   first.unmount();
 
-  const submissions: unknown[] = [];
+  let submissions = 0;
   const realUseState = React.useState;
   vi.spyOn(React, "useState").mockImplementation(((initial: unknown) => {
     const [state, setState] = realUseState(initial);
     const setter = (next: unknown) => {
-      if (typeof next === "function") submissions.push((next as (previous: unknown) => unknown)(state));
-      else submissions.push(next);
+      submissions += 1;
       setState(next as never);
     };
     return [state, setter];
@@ -204,7 +203,7 @@ it("publishes warm envelopes once per bounded page with complete contents", asyn
   try {
     const second = renderHook(() => useEnvelopes(rows, "run", open));
     await waitFor(() => expect(second.result.current.__pendingEnvelopeSequences).toEqual([]));
-    expect(submissions.length).toBeLessThanOrEqual(1 + Math.ceil(rows.length / 50));
+    expect(submissions).toBeLessThanOrEqual(1 + Math.ceil(rows.length / 50));
     expect(open).toHaveBeenCalledTimes(500);
     for (const row of rows) {
       expect(second.result.current[row.sequence]).toEqual(expect.objectContaining({

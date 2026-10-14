@@ -58,6 +58,27 @@ try {
     if ($studioSocket) { $studioSocket.Dispose() }
 }
 if ($studioPortOccupied) {
+    # #1267: a Studio dev server of THIS checkout left over from an earlier start is replaced, like
+    # a stale Runtime (#287); anything else on the port still refuses.
+    $studioPath = $studio.Replace('\','/').ToLowerInvariant().TrimEnd('/') + '/'
+    $owners = @(Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort $StudioPort -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)
+    $replaced = $false
+    foreach ($owner in $owners) {
+        $line = (Get-CimInstance Win32_Process -Filter "ProcessId = $owner" -ErrorAction SilentlyContinue).CommandLine
+        if ($line -and $line.Replace('\','/').ToLowerInvariant().Contains($studioPath) -and $line.ToLowerInvariant().Contains('vite')) {
+            Write-Host "[up] replacing the earlier Studio of this checkout on port $StudioPort (pid $owner)"
+            & taskkill.exe /PID $owner /T /F 2>$null | Out-Null
+            $replaced = $true
+        }
+    }
+    if ($replaced) {
+        for ($i = 0; $i -lt 20 -and $studioPortOccupied; $i++) {
+            Start-Sleep -Milliseconds 250
+            try { $probe = New-Object System.Net.Sockets.TcpClient("127.0.0.1", $StudioPort); $probe.Dispose() } catch { $studioPortOccupied = $false }
+        }
+    }
+}
+if ($studioPortOccupied) {
     throw "Studio address http://127.0.0.1:$StudioPort is already in use. Stop that Studio explicitly before starting this project; no other port was selected."
 }
 

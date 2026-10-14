@@ -727,7 +727,7 @@ pub(super) fn add_project(launch: &mut Command, project: &Path) {
         .arg(plain(project.to_path_buf()));
 }
 
-/// #1264: the one-shot ticket `graphhelm studio open` leaves for the Studio dev server, next to the
+/// #1267: the one-shot ticket `graphhelm studio open` leaves for the Studio dev server, next to the
 /// token file (`<events>.token` -> `<events>.studio-ticket`). The dev server accepts it once and
 /// deletes it (`apps/studio/vite.config.ts`), so the link in browser history is dead after use.
 pub(super) fn ticket_path(events: &Path) -> PathBuf {
@@ -810,6 +810,38 @@ pub fn open(args: &StudioOpenArgs) -> Outcome {
         json!({ "opened": false, "url": url })
     };
     Outcome::success(COMMAND, data)
+}
+
+/// Runs the launcher with its output piped and copied line by line to this terminal (#1267).
+/// The child is started hidden (`CREATE_NO_WINDOW`), which gives it its own invisible console:
+/// output written to an inherited console never reached the owner, so a refused start said only
+/// "its output is above" over nothing.
+pub(super) fn run_forwarding(launch: &mut Command) -> std::io::Result<std::process::ExitStatus> {
+    use std::io::{BufRead, BufReader, Write};
+    let mut child = launch
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    let out = child.stdout.take().map(|pipe| {
+        std::thread::spawn(move || {
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                let _ = writeln!(std::io::stdout(), "{line}");
+            }
+        })
+    });
+    let err = child.stderr.take().map(|pipe| {
+        std::thread::spawn(move || {
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                let _ = writeln!(std::io::stderr(), "{line}");
+            }
+        })
+    });
+    let status = child.wait();
+    for thread in [out, err].into_iter().flatten() {
+        let _ = thread.join();
+    }
+    status
 }
 
 pub fn start(args: &StudioStartArgs) -> Outcome {
@@ -901,7 +933,7 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
     if args.no_browser {
         launch.arg(flag("NoBrowser"));
     }
-    let launched = match launch.status() {
+    let launched = match run_forwarding(&mut launch) {
         Ok(status) => status.success(),
         Err(_) => {
             return refused(
@@ -1140,6 +1172,15 @@ mod tests {
             args.last().map(String::as_str),
             Some("http://127.0.0.1:5183/?session=t")
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn the_launcher_runs_with_piped_output_and_its_status_survives() {
+        let mut command = graphhelm_process::command("sh");
+        command.args(["-c", "echo out; echo err >&2; exit 3"]);
+        let status = run_forwarding(&mut command).unwrap();
+        assert_eq!(status.code(), Some(3));
     }
 
     #[test]

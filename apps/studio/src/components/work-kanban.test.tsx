@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
 import { MissionView } from "./mission-view";
-import { LIVENESS_MS } from "../runtime/lane-bars";
+import { TEST_SILENT_MS as LIVENESS_MS, judgedLane } from "../test/task-fold";
 import type { Lane } from "../runtime/lane-bars";
 import type { TaskState } from "../runtime/team-tasks";
 
@@ -19,7 +19,7 @@ const tasks = [
   wt("e", { issue: 3, pr: 34, prTitle: "Merging now", step: "merge", lastSequence: 2 }),
   wt("f", { issue: 3, pr: 35, prTitle: "Done already", step: "merged", mergeSha: "1234567890", lastSequence: 1 }),
 ] as unknown as TaskState[];
-const lane = (name: string, at: number) => ({ lane: name, bars: [], lastEventAt: at }) as unknown as Lane;
+const lane = (name: string, at: number): Lane => judgedLane({ lane: name, bars: [], lastEventAt: at }, NOW);
 const lanes = [lane("gh-claude-1", NOW), lane("gh-claude-9", NOW), lane("gh-claude-7", NOW - 2 * LIVENESS_MS)];
 
 const renderLanes = async () => {

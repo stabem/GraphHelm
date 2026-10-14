@@ -1,16 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { laneBarsOf } from "../test/task-fold";
+import { TEST_FREE_MS, TEST_SILENT_MS, laneBarsOf } from "../test/task-fold";
 import { agentBoard, span } from "./agent-board";
 import type { Bot } from "./team";
 import { type Lane, type TimedTaskEvent } from "./lane-bars";
-import { STALE_CLAIM_MS } from "./agent-board";
 import type { MissionTask } from "./mission";
 
 const now = 10 * 3_600_000;
 const M = 60_000;
 const bot = (name: string): Bot => ({ key: name, actorId: name, name, hue: 0, role: null, doingNow: "", lastRecordAt: new Date(now).toISOString(), lastSequence: 0,
   state: "working", quietMinutes: null, shared: false, native: false, tasks: [] });
-const lane = (name: string, bars: Lane["bars"], silent = false): Lane => ({ lane: name, bars, silent, lastEventAt: now });
+const lane = (name: string, bars: Lane["bars"], silent = false): Lane => ({ lane: name, bars, silent, lastEventAt: now, silentAfterMs: TEST_SILENT_MS, freeAfterMs: TEST_FREE_MS });
 const bar = (kind: "implement" | "review" | "merge", since: number, open = true, end = now, label = "#7") =>
   ({ kind, label, start: since, end, open, since, taskId: "t7" });
 const task = (over: Partial<MissionTask>): MissionTask => ({ key: "t7", pr: 7, issue: null, title: "Add board", lane: "a", reviewers: [],
@@ -157,8 +156,8 @@ describe("#591 board times the latest activity (record shapes)", () => {
   const iso = (ms: number) => new Date(T0 + ms).toISOString();
   let seq = 0;
   const ev = (e: Partial<TimedTaskEvent>): TimedTaskEvent => ({ actorId: "rt", sequence: seq++, taskId: "issue-600", ...e }) as TimedTaskEvent;
-  const board = (events: TimedTaskEvent[], at: number, names: string[]) => {
-    const lanes = laneBarsOf(events, T0 + at, 48 * H);
+  const board = (events: TimedTaskEvent[], at: number, names: string[], leases: Parameters<typeof laneBarsOf>[3] = []) => {
+    const lanes = laneBarsOf(events, T0 + at, 48 * H, leases);
     return Object.fromEntries(agentBoard(names.map(bot), lanes, [], T0 + at).map((r) => [r.name, r]));
   };
 
@@ -195,8 +194,10 @@ describe("#591 board times the latest activity (record shapes)", () => {
         closes: match === "closes" ? [549] : [], ...(match === "issue" ? { issue: 549 } : {}), at: iso(3 * M) }),
     ];
     const delivered = task({ lane: "codex-3", step: "merged", title: "Previous delivery" });
+    // #1234: at 3 h the claim's lease is overdue (the Runtime's stale verdict); at 4 min it is live.
+    const lease = (overdue: boolean) => [{ key: "issue-549#claim-1", taskId: "issue-549", lane: "codex-3", claimSequence: 1, leaseSeconds: 1800, expiresAt: iso(30 * M), overdue }];
     for (const at of [3 * H, 4 * M]) {
-      const lanes = laneBarsOf(events, T0 + at, 48 * H);
+      const lanes = laneBarsOf(events, T0 + at, 48 * H, lease(at === 3 * H));
       const row = agentBoard([bot("codex-3")], lanes, [delivered], T0 + at).find((r) => r.name === "codex-3");
       const closed = match === "closes";
       expect(row).toMatchObject({ status: closed ? (at === 3 * H ? "offline" : "free") : at === 3 * H ? "stale" : "working",
@@ -240,10 +241,13 @@ describe("#591 board times the latest activity (record shapes)", () => {
     expect(rows["gh-claude-5"]).toMatchObject({ latest: "review_verdict #613 · 3m ago", forMs: 3 * M });
   });
 
-  it("a claim with no PR and no record for over 2h reads stale claim · #issue", () => {
+  /* #1234: a stale claim is the Runtime's lease verdict (#1193), not a quiet threshold kept here:
+   * the same quiet claim is work while its lease is live and a stale claim once it is overdue. */
+  it("a PR-less claim whose lease the Runtime reads as overdue reads stale claim · #issue", () => {
     const events = [ev({ kind: "task.claimed", lane: "gh-claude-3", issue: 600, at: iso(0) })];
-    expect(board(events, STALE_CLAIM_MS - M, ["gh-claude-3"])["gh-claude-3"]!.status).not.toBe("stale");
-    const r = board(events, STALE_CLAIM_MS + M, ["gh-claude-3"])["gh-claude-3"]!;
+    const lease = (overdue: boolean) => [{ key: "issue-600#claim-1", taskId: "issue-600", lane: "gh-claude-3", claimSequence: 1, leaseSeconds: 1800, expiresAt: iso(30 * M), overdue }];
+    expect(board(events, 3 * H, ["gh-claude-3"], lease(false))["gh-claude-3"]!.status).not.toBe("stale");
+    const r = board(events, 3 * H, ["gh-claude-3"], lease(true))["gh-claude-3"]!;
     expect(r).toMatchObject({ status: "stale", label: "stale claim · #600" });
   });
 

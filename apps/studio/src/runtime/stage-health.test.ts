@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { STAGE_ALLOWANCE_MS, ownerRole, laneLiveness, ownerLane, SLOW_FACTOR, SLOW_MIN_SAMPLES, activity, liveDuration, stageDuration, stageHealth, stageProgress, stageSince } from "./stage-health";
-import { LIVENESS_MS, type Lane } from "./lane-bars";
+import type { Lane } from "./lane-bars";
+import { TEST_SILENT_MS as LIVENESS_MS, judgedLane } from "../test/task-fold";
 import type { TaskState } from "./team-tasks";
 import { parseSlots } from "./slots";
 
@@ -12,10 +13,11 @@ const ts = (key: string, over: Partial<TaskState> = {}): TaskState => ({
   blockedBy: null, reviewers: [], mergeSha: null, repoUrl: null, strayVerdicts: [], title: "T", summary: null, prTitle: null,
   prSummary: null, critic: null, recordedHeads: [], parent: null, rounds: [], clock: { since: iso(NOW - H), spent: {} }, lastSequence: 0, ...over,
 });
-const lane = (name: string, lastEventAt: number, taskId?: string, since?: number): Lane => ({
-  lane: name, silent: false, lastEventAt,
+// #1234: the Runtime judges silence; these lanes carry the verdict it would serve at NOW.
+const lane = (name: string, lastEventAt: number, taskId?: string, since?: number): Lane => judgedLane({
+  lane: name, lastEventAt,
   bars: taskId ? [{ kind: "implement", label: taskId, start: since ?? 0, end: NOW, open: true, taskId, since: since ?? 0 }] : [],
-});
+}, NOW);
 const done = (key: string, implementMs: number) => ts(key, { step: "merged", clock: { since: null, spent: { implement: implementMs } } });
 
 describe("stageDuration", () => {
@@ -132,11 +134,11 @@ describe("laneLiveness (#591)", () => {
   it("29m59s since the lane's last record is live, 30m is stalled", () => {
     expect(laneLiveness("l", [lane("l", NOW - LIVENESS_MS + 1000)], [], NOW)).toEqual({ live: true, sinceMs: LIVENESS_MS - 1000 });
     expect(laneLiveness("l", [lane("l", NOW - LIVENESS_MS)], [], NOW)).toEqual({ live: false, sinceMs: LIVENESS_MS });
-    expect(LIVENESS_MS).toBe(30 * M);
   });
   it("a record the lane left on another task keeps it alive", () => {
     const other = ts("other", { lane: "l", rounds: [{ reviewer: "r", headSha: "a", commentUrl: "", fixHead: "b", blockedAt: null, fixedAt: iso(NOW - 5 * M) }] });
-    expect(laneLiveness("l", [lane("l", NOW - 2 * H)], [ts("mine", { lane: "l" }), other], NOW)).toEqual({ live: true, sinceMs: 5 * M });
+    // The Runtime counts every event the lane recorded (the fix 5 minutes ago), so it is not silent.
+    expect(laneLiveness("l", [{ ...lane("l", NOW - 2 * H), silent: false }], [ts("mine", { lane: "l" }), other], NOW)).toEqual({ live: true, sinceMs: 5 * M });
   });
   it("an implementing lane silent 1h 10m reads Stalled, red, naming the lane", () => {
     const t = ts("a", { lane: "gh-claude-9" });

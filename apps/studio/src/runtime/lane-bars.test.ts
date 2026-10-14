@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { laneBarsOf } from "../test/task-fold";
 import { agentBoard } from "./agent-board";
-import { LIVENESS_MS, applySessionEnds, packBars, placeholderLane, type TimedTaskEvent } from "./lane-bars";
+import { applySessionEnds, packBars, placeholderLane, type TimedTaskEvent } from "./lane-bars";
+import { TEST_SILENT_MS as LIVENESS_MS } from "../test/task-fold";
 import type { RuntimeEvent } from "./types";
 
 const T0 = Date.parse("2026-10-09T00:00:00Z");

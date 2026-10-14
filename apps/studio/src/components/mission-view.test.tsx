@@ -1,3 +1,4 @@
+import { TEST_BUDGETS } from "../test/task-fold";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
@@ -37,8 +38,9 @@ describe("MissionView", () => {
       { ...first!, key: "placeholder", actorId: "placeholder", name: "TBD" },
       { ...first!, key: "unrecorded", actorId: "unrecorded", lastRecordAt: null }];
     const node: GraphNode = { id: "step-1", declaredName: "First step", state: "ready", assignedActor: null } as GraphNode;
+    // #1234: the recent-agent window is the Runtime's free budget, served with the reply.
     const props = { journeys: [], tasks: [], lanes: [], runFor: () => null, frameUrl: () => null,
-      onMarkSafe: vi.fn(), runNodes: [node], unassignedNodeIds: [node.id] };
+      onMarkSafe: vi.fn(), runNodes: [node], unassignedNodeIds: [node.id], livenessBudgets: TEST_BUDGETS };
     const { rerender } = render(<MissionView {...props} now={now} agents={agents} />);
 
     const graph = screen.getByRole("region", { name: "Run graph" });

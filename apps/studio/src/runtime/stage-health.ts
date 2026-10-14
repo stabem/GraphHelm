@@ -1,7 +1,7 @@
 /* #591 (owner): each PR card on the Graph says how long the agent has been in its stage and, in
  * plain words, whether it needs help. Pure: the view passes the lanes and the clock it already has. */
 import type { TaskState } from "./team-tasks";
-import { LIVENESS_MS, type Lane } from "./lane-bars";
+import type { Lane } from "./lane-bars";
 import { openBlock } from "./mission";
 import type { TimedStep } from "./step-timing";
 import { slotStatus, slotText, type SlotView } from "./slots";
@@ -62,12 +62,14 @@ function slotBelongsToTask(t: TaskState, owner: string | null, lanes: Lane[]): b
 }
 
 export interface Liveness { live: boolean; sinceMs: number | null }
-/** #591: a lane is live while its newest record of any kind, on any task, is under LIVENESS_MS old:
- * the lane bars' last event (claims, PRs, assignments, verdicts, merges) and the times the task
- * records carry for it (a pushed fix, a BLOCK). No record at all says nothing: live, `sinceMs` null. */
+/** #591/#1234: a lane is live unless the Runtime reads it silent (`Lane.silent`, judged against the
+ * served budget from its newest record and its oldest open obligation). `sinceMs` is shown, not
+ * judged: the age of its newest record here (the lane bars' last event and the times the task
+ * records carry for it). No record at all says nothing: live, `sinceMs` null. */
 export function laneLiveness(name: string | null | undefined, lanes: Lane[], records: TaskState[], now: number, slots: SlotView[] = []): Liveness {
   if (!name) return { live: true, sinceMs: null };
-  let last = lanes.find((l) => l.lane === name)?.lastEventAt ?? 0;
+  const lane = lanes.find((l) => l.lane === name);
+  let last = lane?.lastEventAt ?? 0;
   const at = (iso: string | null | undefined) => { const ms = iso ? Date.parse(iso) : NaN; if (Number.isFinite(ms)) last = Math.max(last, ms); };
   for (const r of records) for (const round of r.rounds ?? []) {
     if (r.lane === name) at(round.fixedAt);
@@ -76,7 +78,7 @@ export function laneLiveness(name: string | null | undefined, lanes: Lane[], rec
   if (!(last > 0)) return { live: true, sinceMs: null };
   const sinceMs = Math.max(0, now - last);
   // #636: a lane building or queued for a build slot is alive: queue time is not silence.
-  return { live: sinceMs < LIVENESS_MS || slotStatus(name, slots) !== null, sinceMs };
+  return { live: !(lane?.silent ?? false) || slotStatus(name, slots) !== null, sinceMs };
 }
 
 /** When the task entered its stage: a pushed fix's time for the re-review (#591), else the Runtime's

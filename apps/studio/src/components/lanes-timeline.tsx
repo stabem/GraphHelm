@@ -1,10 +1,10 @@
 import "./lanes-timeline.css";
-import { LIVENESS_MS, packBars, placeholderLane, type Lane } from "../runtime/lane-bars";
+import { laneBudgets, packBars, placeholderLane, type Lane } from "../runtime/lane-bars";
 import { stageDuration } from "../runtime/stage-health";
 import type { MissionTask } from "../runtime/mission";
 import type { Bot } from "../runtime/team";
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { agentBoard, FREE_LIVENESS_MS, type AgentRow, type AgentStatus } from "../runtime/agent-board";
+import { agentBoard, type AgentRow, type AgentStatus } from "../runtime/agent-board";
 import { slotDuration, type SlotView } from "../runtime/slots";
 
 const pct = (n: number) => `${Math.round(n * 10000) / 100}%`;
@@ -48,7 +48,9 @@ export interface BotActions {
   onNameBot?: (actorId: string, displayName: string) => void | Promise<unknown>;
 }
 
-interface Props extends BotActions { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[]; agents?: Bot[]; slots?: SlotView[]; onDemandLanes?: readonly string[]; liveLanes?: readonly string[]; seenActors?: readonly string[]; seenActorAgesMs?: Readonly<Record<string, number>>; historyLoading?: boolean }
+/** `freeAfterMs` is the Runtime's free budget (#1234), passed by the parent that holds the reply;
+ * without it, the one the lanes carry. */
+interface Props extends BotActions { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[]; agents?: Bot[]; slots?: SlotView[]; onDemandLanes?: readonly string[]; liveLanes?: readonly string[]; seenActors?: readonly string[]; seenActorAgesMs?: Readonly<Record<string, number>>; historyLoading?: boolean; freeAfterMs?: number }
 
 /** #647: the Team canvas's rename control (same gate, labels and save path), on a board row. */
 export function NameBot({ bot, onSave }: { bot: Bot; onSave: (actorId: string, displayName: string) => void | Promise<unknown> }) {
@@ -162,7 +164,7 @@ function recordAge(ms: number): string {
   return `${Math.round(hours / 24)}d`;
 }
 
-function noteOnlyLanes(lanes: Lane[], agents: Bot[], now: number): Map<string, { name: string; age: string }> {
+function noteOnlyLanes(lanes: Lane[], agents: Bot[], now: number, freeAfterMs: number): Map<string, { name: string; age: string }> {
   const represented = new Set<string>();
   for (const lane of lanes) represented.add(lane.lane.trim().toLocaleLowerCase());
   const rows = new Map<string, { name: string; age: string }>();
@@ -170,7 +172,7 @@ function noteOnlyLanes(lanes: Lane[], agents: Bot[], now: number): Map<string, {
     if (!bot.actorId || bot.shared || bot.native || bot.actorId === "codex" || bot.actorId === "claude-code" || bot.actorId === "studio-operator") continue;
     const lastAt = bot.lastRecordAt === null ? NaN : Date.parse(bot.lastRecordAt);
     const age = now - lastAt;
-    if (!Number.isFinite(lastAt) || age < 0 || age > FREE_LIVENESS_MS) continue;
+    if (!Number.isFinite(lastAt) || age < 0 || age > freeAfterMs) continue;
     const aliases = [bot.actorId, bot.key, bot.name].map((value) => value.trim().toLocaleLowerCase()).filter(Boolean);
     if (aliases.some((alias) => represented.has(alias))) continue;
     const display = bot.name.trim();
@@ -197,14 +199,15 @@ function useTrackWidth(ref: RefObject<HTMLElement | null>): number {
   return w;
 }
 
-export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], slots = [], onDemandLanes = [], liveLanes = [], seenActors = [], seenActorAgesMs = {}, historyLoading = false, onOpenBotDetails, onNameBot }: Props) {
+export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], slots = [], onDemandLanes = [], liveLanes = [], seenActors = [], seenActorAgesMs = {}, historyLoading = false, onOpenBotDetails, onNameBot, freeAfterMs }: Props) {
+  const free = freeAfterMs ?? laneBudgets(lanes).freeAfterMs;
   const listRef = useRef<HTMLUListElement>(null);
   const trackW = useTrackWidth(listRef);
   if (historyLoading) return <section className="lt-loading" role="status">Loading the team's history…</section>;
   lanes = lanes.filter((l) => !placeholderLane(l.lane));
   if (lanes.length === 0 && agents.length === 0 && onDemandLanes.length === 0) return <>{<SlotStrip slots={slots} />}<p className="lt-empty">No agent has recorded work in this window</p></>;
-  const board = agentBoard(agents, lanes, tasks, now, slots, onDemandLanes, liveLanes, seenActors, seenActorAgesMs);
-  const noteRows = noteOnlyLanes(lanes, agents, now);
+  const board = agentBoard(agents, lanes, tasks, now, slots, onDemandLanes, liveLanes, seenActors, seenActorAgesMs, free);
+  const noteRows = noteOnlyLanes(lanes, agents, now, free);
   const rank = new Map<string, number>();
   board.forEach((r, i) => rank.set(r.name, i));
   const botOf = (l: Lane) => agents.find((b) => b.actorId === l.lane || b.key === l.lane)?.name;
@@ -270,7 +273,7 @@ export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], s
                   const text = b.displayLabel ?? `${b.label} ${b.kind}`;
                   const frac = (b.end - b.start) / windowMs;
                   const stallStart = Math.max(b.start, b.lastActivityAt !== undefined
-                    ? b.lastActivityAt + LIVENESS_MS : l.lastEventAt > 0 ? l.lastEventAt + LIVENESS_MS : b.start);
+                    ? b.lastActivityAt + (l.silentAfterMs ?? Number.POSITIVE_INFINITY) : l.lastEventAt > 0 ? l.lastEventAt + (l.silentAfterMs ?? Number.POSITIVE_INFINITY) : b.start);
                   const spans = b.quietSpans?.map((span) => ({ start: Math.max(b.start, span.start), end: Math.min(b.end, span.end) }))
                     .filter((span) => span.start < span.end) ?? [];
                   if (!b.open && !b.quietSpans && b.lastActivityAt !== undefined && stallStart < b.end) spans.push({ start: stallStart, end: b.end });

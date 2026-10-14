@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { laneBarsOf } from "../test/task-fold";
+import { TEST_FREE_MS, TEST_SILENT_MS, laneBarsOf } from "../test/task-fold";
+
+// #1234: hand-built lanes carry the budgets the Runtime would serve with them.
+const B = { silentAfterMs: TEST_SILENT_MS, freeAfterMs: TEST_FREE_MS };
 import { render, screen, within } from "@testing-library/react";
 import { LanesTimeline } from "./lanes-timeline";
 import type { MissionTask } from "../runtime/mission";
@@ -11,8 +14,8 @@ import type { RuntimeEvent } from "../runtime/types";
 
 const now = 1_000_000;
 const lanes = [
-  { lane: "gh-claude-5", silent: true, lastEventAt: 0, bars: [{ kind: "review" as const, label: "#548", start: now - 500, end: now, open: true }] },
-  { lane: "gh-claude-6", silent: false, lastEventAt: now, bars: [{ kind: "implement" as const, label: "#559", start: now - 1000, end: now - 750, open: false }] },
+  { ...B, lane: "gh-claude-5", silent: true, lastEventAt: 0, bars: [{ kind: "review" as const, label: "#548", start: now - 500, end: now, open: true }] },
+  { ...B, lane: "gh-claude-6", silent: false, lastEventAt: now, bars: [{ kind: "implement" as const, label: "#559", start: now - 1000, end: now - 750, open: false }] },
 ];
 const t = (over: Partial<MissionTask>): MissionTask => ({
   key: "k", pr: 1, issue: null, title: "t", lane: "gh-claude-6", reviewers: [], step: "implement", blocked: false, trust: 1,
@@ -31,7 +34,7 @@ describe("LanesTimeline", () => {
     const agents = teamModel({ events, envelopes: {}, personas: {}, nativeLinks: {}, aliases: {}, model: null,
       claudeTasks: null, waitingAskers: new Set(), now: at }).bots;
 
-    render(<LanesTimeline lanes={laneBarsOf([], at, 3_600_000)} agents={agents} now={at} windowMs={3_600_000} />);
+    render(<LanesTimeline lanes={laneBarsOf([], at, 3_600_000)} freeAfterMs={TEST_FREE_MS} agents={agents} now={at} windowMs={3_600_000} />);
     const timeline = within(screen.getByRole("list", { name: "Agent lanes" }));
     for (const [name, age] of [["codex-one", "2m ago"], ["claude-two", "3m ago"]]) {
       const row = timeline.getByText(name).closest("li")!;
@@ -63,11 +66,11 @@ describe("LanesTimeline", () => {
   it("Available count matches free rows while other statuses stay selectable", async () => {
     const H = 3_600_000, at = 10 * H;
     const rows = [
-      { lane: "building", silent: true, lastEventAt: at - 5 * H, bars: [{ kind: "implement" as const, label: "#1", start: at - 5 * H, end: at, open: true }] },
-      { lane: "stale", silent: true, lastEventAt: at - 5 * H, bars: [{ kind: "implement" as const, label: "issue-2", issue: 2, start: at - 5 * H, end: at, open: true }] },
-      { lane: "working", silent: false, lastEventAt: at, bars: [{ kind: "implement" as const, label: "#3", start: at - H, end: at, open: true }] },
-      { lane: "awaiting", silent: false, lastEventAt: at, awaiting: [4], bars: [] },
-      { lane: "free", silent: false, lastEventAt: at, bars: [] },
+      { ...B, lane: "building", silent: true, lastEventAt: at - 5 * H, bars: [{ kind: "implement" as const, label: "#1", start: at - 5 * H, end: at, open: true }] },
+      { ...B, lane: "stale", silent: true, lastEventAt: at - 5 * H, overdueTasks: ["issue-2"], bars: [{ kind: "implement" as const, label: "issue-2", taskId: "issue-2", issue: 2, start: at - 5 * H, end: at, open: true }] },
+      { ...B, lane: "working", silent: false, lastEventAt: at, bars: [{ kind: "implement" as const, label: "#3", start: at - H, end: at, open: true }] },
+      { ...B, lane: "awaiting", silent: false, lastEventAt: at, awaiting: [4], bars: [] },
+      { ...B, lane: "free", silent: false, lastEventAt: at, bars: [] },
     ];
     render(<LanesTimeline lanes={rows} now={at} windowMs={6 * H} slots={[{ root: "D:/gh", ok: true, holder: { lane: "building", label: "#1", pid: 1, worktree: null, heldSeconds: 60 }, waiting: [] }]} />);
     const user = fastUserEvent();
@@ -84,8 +87,8 @@ describe("LanesTimeline", () => {
     const user = fastUserEvent();
     const H = 3_600_000, at = 10 * H;
     const rows = [
-      { lane: "working", silent: false, lastEventAt: at, bars: [{ kind: "implement" as const, label: "#1", start: at - H, end: at, open: true }] },
-      { lane: "stale", silent: false, lastEventAt: at - 3 * H, bars: [{ kind: "implement" as const, label: "issue 2", start: at - 3 * H, end: at, open: true }] },
+      { ...B, lane: "working", silent: false, lastEventAt: at, bars: [{ kind: "implement" as const, label: "#1", start: at - H, end: at, open: true }] },
+      { ...B, lane: "stale", silent: false, lastEventAt: at - 3 * H, overdueTasks: ["issue-2"], bars: [{ kind: "implement" as const, label: "issue 2", taskId: "issue-2", start: at - 3 * H, end: at, open: true }] },
     ];
     render(<LanesTimeline lanes={rows} now={at} windowMs={4 * H} />);
     const board = screen.getByRole("list", { name: "Agent board" });
@@ -99,7 +102,7 @@ describe("LanesTimeline", () => {
 
   it("shows an old-record slot holder as busy without hatching its open bar after the slot began", () => {
     const H = 3_600_000, at = 10 * H;
-    const { container } = render(<LanesTimeline lanes={[{ lane: "builder", silent: true, lastEventAt: at - 5 * H, bars: [{
+    const { container } = render(<LanesTimeline lanes={[{ ...B, lane: "builder", silent: true, lastEventAt: at - 5 * H, bars: [{
       kind: "implement", label: "#1", start: at - 5 * H, end: at, open: true, lastActivityAt: at - 5 * H,
     }] }]} now={at} windowMs={6 * H} slots={[{ root: "D:/gh", ok: true, holder: { lane: "builder", label: "#1", pid: 1, worktree: null, heldSeconds: 60 }, waiting: [] }]} />);
     const row = within(screen.getByRole("list", { name: "Agent lanes" })).getByText("builder").closest("li")!;
@@ -125,7 +128,7 @@ describe("LanesTimeline", () => {
 
   it("hatches only the middle quiet span and counts it in the tooltip", () => {
     const hour = 3_600_000;
-    const closed = { lane: "dev", silent: false, lastEventAt: now, bars: [{
+    const closed = { ...B, lane: "dev", silent: false, lastEventAt: now, bars: [{
       kind: "implement" as const, label: "#783", start: now - 14 * hour, end: now, open: false,
       lastActivityAt: now - 5 * 60_000,
       quietSpans: [{ start: now - 13 * hour, end: now - hour }],
@@ -141,7 +144,7 @@ describe("LanesTimeline", () => {
   });
   it("hatches a closed bar's quiet time and explains its end record", () => {
     const hour = 3_600_000;
-    const closed = { lane: "dev", silent: false, lastEventAt: now, bars: [{
+    const closed = { ...B, lane: "dev", silent: false, lastEventAt: now, bars: [{
       kind: "implement" as const, label: "#548", start: now - 27 * hour, end: now, open: false,
       lastActivityAt: now - 27 * hour, endedBy: { kind: "released", actor: "supervisor" },
     }] };
@@ -170,7 +173,7 @@ describe("LanesTimeline", () => {
     const hour = 3_600_000;
     const current = 4 * hour;
     const { container } = render(<LanesTimeline lanes={[{
-      lane: "dev", silent: false, lastEventAt: current, bars: [
+      ...B, lane: "dev", silent: false, lastEventAt: current, bars: [
         { kind: "implement", label: "#1", start: 0, end: current, open: true, lastActivityAt: hour },
         { kind: "review", label: "#2", start: 2 * hour, end: current, open: true, lastActivityAt: current },
       ],
@@ -279,12 +282,12 @@ describe("LanesTimeline", () => {
   });
 
   it("#591: overlapping bars stack in sub-rows; narrow bars carry no text; every bar has a tooltip; TBD lanes drop", () => {
-    const busy = { lane: "gh-claude-6", silent: false, lastEventAt: now, bars: [
+    const busy = { ...B, lane: "gh-claude-6", silent: false, lastEventAt: now, bars: [
       { kind: "implement" as const, label: "#600", start: now - 1000, end: now, open: true },
       { kind: "review" as const, label: "#601", start: now - 800, end: now - 400, open: false },
       { kind: "review" as const, label: "#602", start: now - 300, end: now - 290, open: false },
     ] };
-    const tbd = { lane: "TBD", silent: false, lastEventAt: now, bars: [{ kind: "implement" as const, label: "#9", start: now - 10, end: now, open: true }] };
+    const tbd = { ...B, lane: "TBD", silent: false, lastEventAt: now, bars: [{ kind: "implement" as const, label: "#9", start: now - 10, end: now, open: true }] };
     const blank = { ...tbd, lane: "" };
     render(<LanesTimeline lanes={[busy, tbd, blank]} now={now} windowMs={1000} agents={[{ name: "TBD" } as never]} />);
     const list = screen.getByRole("list", { name: "Agent lanes" });
@@ -304,7 +307,7 @@ describe("LanesTimeline", () => {
 
   it("#591 the board shows the latest record, and an author awaiting review is not Free", async () => {
     const M = 60_000, T = 10 * 3_600_000;
-    const author = { lane: "gh-claude-3", silent: false, lastEventAt: T - 12 * M, bars: [], awaiting: [613], lastRecord: { kind: "pr_opened", pr: 613, at: T - 12 * M } };
+    const author = { ...B, lane: "gh-claude-3", silent: false, lastEventAt: T - 12 * M, bars: [], awaiting: [613], lastRecord: { kind: "pr_opened", pr: 613, at: T - 12 * M } };
     render(<LanesTimeline lanes={[author]} now={T} windowMs={3_600_000} />);
     await fastUserEvent().click(screen.getByRole("button", { name: "Waiting 1" }));
     const row = within(screen.getByRole("list", { name: "Agent board" })).getByText("gh-claude-3").closest("li")!;
@@ -317,7 +320,7 @@ describe("LanesTimeline", () => {
 
   it("agent row: one-line pill and rectangular chips that wrap only between parts, full name, labels unchanged", async () => {
     const H = 3_600_000, T = 10 * H;
-    const stale = { lane: "gh-claude-11", silent: false, lastEventAt: T - 3 * H, bars: [{ kind: "implement" as const, label: "issue 549", issue: 549, start: T - 3 * H, end: T, open: true }] };
+    const stale = { ...B, lane: "gh-claude-11", silent: false, lastEventAt: T - 3 * H, overdueTasks: ["issue-549"], bars: [{ kind: "implement" as const, label: "issue 549", taskId: "issue-549", issue: 549, start: T - 3 * H, end: T, open: true }] };
     render(<LanesTimeline lanes={[stale]} now={T} windowMs={4 * H} />);
     await fastUserEvent().click(screen.getByRole("button", { name: "Stale claim 1" }));
     const row = within(screen.getByRole("list", { name: "Agent board" })).getByText("gh-claude-11").closest("li")!;

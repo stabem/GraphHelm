@@ -183,6 +183,54 @@ class RunnerContracts(unittest.TestCase):
             self.assertEqual(calls[0][0][calls[0][0].index("--jobs") + 1], "1")
             self.assertEqual(calls[1][0][calls[1][0].index("--jobs") + 1], "1")
 
+    def test_jobs_flag_reaches_every_slot_command_and_defaults_to_six(self):
+        # #1188: the owner's rule is one root at up to 16 jobs; the runner must carry the chosen
+        # count into the slot command, and an older caller without `jobs` keeps six.
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            (repo / "x").write_text("x", encoding="utf-8")
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            plan = {"steps": [{"argv": ["cargo", "+1.97.1", "test", "--lib"], "cwd": ".", "slot": True}]}
+
+            def fake_git(_repo, *args):
+                return "HEAD" if args[0] == "rev-parse" else ""
+
+            def runner(jobs):
+                calls = []
+
+                def fake_run(command, **kwargs):
+                    if command[0] == "git":
+                        return subprocess.CompletedProcess(command, 0, "", "")
+                    calls.append(command)
+                    kwargs["stdout"].write(json.dumps({"command": "workspace.slot", "ok": True, "data": {
+                        "waitedSeconds": 1, "heldSeconds": 2, "exitCode": 0, "batch": {
+                            "schema": "graphhelm.slot-batch-result/1",
+                            "completed": [{"index": 0, "exitCode": 0, "elapsedSeconds": 1}],
+                            "remaining": [], "stopReason": "exhausted"}}}) + "\n")
+                    return subprocess.CompletedProcess(command, 0, "", "")
+
+                fields = {"repo": str(repo), "output": str(Path(temp).parent / (Path(temp).name + f"-jobs-{jobs}.json")),
+                          "base": "HEAD", "head": "HEAD", "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                          "allow_whole_package": None, "plan": False, "graphhelm": sys.executable}
+                if jobs is not None:
+                    fields["jobs"] = jobs
+                args = type("Args", (), fields)()
+                with patch.object(rr, "_selector", return_value=plan), patch.object(rr, "_git", side_effect=fake_git),                         patch.object(rr.subprocess, "run", side_effect=fake_run):
+                    self.assertEqual(rr.run(args), 0)
+                return calls[0]
+
+            sixteen = runner(16)
+            self.assertEqual(sixteen[sixteen.index("--jobs") + 1], "16")
+            legacy = runner(None)
+            self.assertEqual(legacy[legacy.index("--jobs") + 1], "6")
+        with self.assertRaises(SystemExit):
+            rr.main(["--output", "x.json", "--jobs", "0"])
+        with self.assertRaises(SystemExit):
+            rr.main(["--output", "x.json", "--jobs", "33"])
+
     def test_batch_runner_observes_deadline_and_final_child_failure(self):
         def run_case(batch, cli_code):
             with tempfile.TemporaryDirectory() as temp:

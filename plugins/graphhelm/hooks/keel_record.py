@@ -1,8 +1,9 @@
 """Record Keel lock refusals and check recommendations on the bound execution.
 
-Best effort and silent: inside a GraphHelm execution (`GRAPHHELM_EXECUTION_ID` bound, the same
-binding the session hook uses) a refusal is posted as a `keel.blocked` signal; outside one, or on
-any failure, nothing happens and the lock's own decision stands unchanged.
+Best effort and silent: inside a GraphHelm execution (bound by `GRAPHHELM_EXECUTION_ID`, or by the
+session's lane name plus `.graphhelm/team.json`, the same `binding(payload)` the session hook uses,
+#1181) a refusal is posted as a `keel.blocked` signal; outside one, or on any failure, nothing
+happens and the lock's own decision stands unchanged.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ def record_check(envelope: dict, payload: dict) -> bool:
             return False
         if any(not isinstance(item, str) for item in findings + paths):
             return False
-        bound = session_hook.binding()
+        bound = session_hook.binding(payload)
         if bound is None:
             return False
         execution, token_file, url, _origin, node_id = bound
@@ -58,7 +59,7 @@ def record_check(envelope: dict, payload: dict) -> bool:
 
 def record_block(gate: str, reason: str, payload: dict) -> bool:
     try:
-        bound = session_hook.binding()
+        bound = session_hook.binding(payload)
         if bound is None:
             return False
         execution, token_file, url, _origin, node_id = bound

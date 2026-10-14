@@ -22,6 +22,7 @@ class Handler(BaseHTTPRequestHandler):
     events = []
     ambiguous = False
     slow_post = False
+    refuse = False
 
     def do_GET(self):
         self.__class__.requests.append(("GET", self.path, None))
@@ -34,6 +35,15 @@ class Handler(BaseHTTPRequestHandler):
         self.__class__.requests.append(("POST", self.path, body))
         signal = body["signal"]
         actor_id = signal["source"]["id"]
+        if self.__class__.refuse:
+            encoded = json.dumps({"ok": False, "diagnostics": [{"code": "GHCLI003_SIGNAL_INVALID",
+                                  "severity": "error", "message": "refused by test"}]}).encode()
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+            return
         self.__class__.events.append({"sequence": len(self.__class__.events) + 1,
                                       "actor": {"type": "agent", "id": actor_id},
                                       "kind": {"type": "signal_recorded", "data": {
@@ -91,6 +101,7 @@ class ClaudeTaskHookTests(unittest.TestCase):
         Handler.events = []
         Handler.ambiguous = False
         Handler.slow_post = False
+        Handler.refuse = False
         self.temp = tempfile.TemporaryDirectory()
         token = Path(self.temp.name) / "token"
         token.write_text("test-token", encoding="utf-8")
@@ -111,6 +122,51 @@ class ClaudeTaskHookTests(unittest.TestCase):
                             "team_name": "legacy-name-must-not-be-persisted"}
         return subprocess.run([sys.executable, str(SCRIPT), phase], input=json.dumps(value),
                               text=True, capture_output=True, env=self.env, timeout=10, creationflags=NO_WINDOW)
+
+    def bind_by_team_json(self):
+        """A Claude Desktop lane: no GRAPHHELM_* env, the lane name in ~/.graphhelm/lane-sessions
+        and the Runtime in <repo>/.graphhelm/team.json, the way session_hook.binding(payload) reads it."""
+        root = Path(self.temp.name)
+        home = root / "home"
+        (home / ".graphhelm/lane-sessions").mkdir(parents=True)
+        (home / ".graphhelm/lane-sessions/parent-1.json").write_text(json.dumps({"actor": "codex-4"}), encoding="utf-8")
+        repo = root / "repo"
+        (repo / ".graphhelm").mkdir(parents=True)
+        (repo / ".graphhelm/team.json").write_text(json.dumps({
+            "executionId": "run-test", "runtimeUrl": self.env["GRAPHHELM_RUNTIME_URL"],
+            "tokenFile": self.env["GRAPHHELM_TOKEN_FILE"]}), encoding="utf-8")
+        for key in ("GRAPHHELM_EXECUTION_ID", "GRAPHHELM_RUNTIME_URL", "GRAPHHELM_TOKEN_FILE", "GRAPHHELM_ACTOR"):
+            self.env.pop(key, None)
+        self.env["HOME"] = str(home)
+        self.env["USERPROFILE"] = str(home)
+        return repo
+
+    def test_team_json_bound_lane_without_env_records_the_task(self):
+        # #1181: binding() was read without the payload, so a lane bound by title/team.json (every
+        # Claude Desktop lane) emitted nothing. On the parent: no POST, exit 0, empty stderr.
+        # Cost: one local POST.
+        repo = self.bind_by_team_json()
+        result = self.run_hook("created", {"hook_event_name": "TaskCreated", "session_id": "parent-1",
+                                           "task_id": "task-001", "task_subject": "Bound by team.json",
+                                           "cwd": str(repo)})
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        posts = [item[2]["signal"] for item in Handler.requests if item[0] == "POST"]
+        self.assertEqual([signal["type"] for signal in posts], ["agent_task_created"])
+        self.assertEqual(json.loads(posts[0]["description"])["executionId"], "run-test")
+
+    def test_bound_hook_that_cannot_deliver_exits_1_with_the_same_line(self):
+        # #1181: a bound hook whose POST is refused reported "unobserved" on stderr and exited 0,
+        # so the host showed nothing. On the parent the exit code is 0. Cost: one local POST.
+        Handler.refuse = True
+        result = self.run_hook("created")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(result.stderr.strip(), "graphhelm-task-hook: created unobserved (HTTPError)")
+        self.assertEqual(len([item for item in Handler.requests if item[0] == "POST"]), 1)
+        # An unbound hook is still silent and exits 0: there is nothing it failed to deliver.
+        for key in ("GRAPHHELM_EXECUTION_ID", "GRAPHHELM_RUNTIME_URL", "GRAPHHELM_TOKEN_FILE"):
+            self.env.pop(key, None)
+        unbound = self.run_hook("created")
+        self.assertEqual((unbound.returncode, unbound.stderr), (0, ""))
 
     def test_records_only_bounded_title_teammate_and_phase(self):
         result = self.run_hook("created")

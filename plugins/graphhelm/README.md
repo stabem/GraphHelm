@@ -52,7 +52,11 @@ next action needs it. Compaction restores cached context labeled as not refreshe
 HTTP read. A cached summary never authorizes a state transition; the Runtime still validates
 the current state. `SessionEnd` records an attributed
 `agent_session_ended` signal. It never marks a task or node complete. The hook does not create a
-run, pick a run by project name, or forward the host's raw payload.
+run, pick a run by project name, or forward the host's raw payload. When the session is a lane
+(`GRAPHHELM_ACTOR`, or the lane name its title or `.graphhelm/team.json` bound), `SessionStart`
+also records one `agent_session_started` and both signals are signed as the lane, with the host
+and session id in the description, so the Studio's lanes and run members read the lane's start and
+end; a session that is no lane keeps the `{host}-session-{id}` actor.
 
 Each hook process accepts one bounded JSON object frame. It returns after the first
 complete object, even when the caller keeps stdin open; a process performs one

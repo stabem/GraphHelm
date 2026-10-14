@@ -1,5 +1,10 @@
 """Reconcile finished GitHub PRs with sealed Runtime task records.
 
+Runs on every Stop of a bound lane (`lane_stop_hook.py` -> `graphhelm tasks reconcile`). Besides
+recording merges, closes and releases, it heartbeats the lane's open pre-PR claims (#1147): a live
+lane needs no reminder to say it is alive, and the Runtime alone decides whether a heartbeat is due
+(`validate_heartbeat`: one per 300 s); its refusal is reported, never retried or pre-empted here.
+
 The CLI embeds this file, so it also works from an installed GraphHelm binary.
 """
 import argparse
@@ -11,6 +16,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 import os
@@ -119,10 +125,23 @@ def post(base, token, execution, pr, task_id, repo, sha, closes):
         raise ValueError("Runtime refused task.merged")
 
 
-def post_end(base, token, execution, kind, task_id, repo, lane, fields):
+def head(base, token, execution):
+    """The execution's event head: the state a heartbeat observed, and so its revision."""
+    path = f"{base}/v1/executions/{urllib.parse.quote(execution, safe='')}"
+    value = get(f"{path}/events?after=0&limit=1", token)["head"]
+    if type(value) is not int or value < 1:
+        raise ValueError("invalid event head")
+    return value
+
+
+def post_end(base, token, execution, kind, task_id, repo, lane, fields, revision=None):
+    """POST one `task.<kind>` record as the lane. Returns the Runtime's reply for a `heartbeat`
+    (refusal included: the Runtime owns that rule); every other kind raises on refusal."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if revision is None:
+        revision = 6 if kind == "closed" else 2
     doc = {"schema": "graphhelm-task-event-v1", "taskId": task_id,
-           "revision": 6 if kind == "closed" else 2, "at": now, **fields}
+           "revision": revision, "at": now, **fields}
     content = json.dumps({k: v for k, v in doc.items() if k != "at"}, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256((lane + "\n" + kind + "\n" + content).encode()).hexdigest()[:16]
     signal_id = f"{lane}-{task_id}-{kind}-{digest}"
@@ -141,10 +160,32 @@ def post_end(base, token, execution, kind, task_id, repo, lane, fields):
                "X-GraphHelm-Actor-Type": "agent"}
     request = urllib.request.Request(url, data=json.dumps({"signal": signal}).encode(),
                                      headers=headers, method="POST")
-    with urllib.request.urlopen(request, timeout=3) as reply:
-        answer = json.load(reply)
+    try:
+        with urllib.request.urlopen(request, timeout=3) as reply:
+            answer = json.load(reply)
+    except urllib.error.HTTPError as error:
+        if kind != "heartbeat":
+            raise
+        answer = json.loads(error.read() or b"{}")
+    if kind == "heartbeat":
+        return answer
     if answer.get("ok") is not True:
         raise ValueError("Runtime refused task." + kind)
+
+
+def heartbeat(base, token, credential, execution, task_id, repo, lane):
+    """One `task.heartbeat` for an open claim. Returns None when it landed (or was already
+    recorded), else the Runtime's refusal message: the cooldown lives there, not here.
+    The head is read with the shared token; the record is written with the lane's credential (#1148)."""
+    answer = post_end(base, credential, execution, "heartbeat", task_id, repo, lane, {"lane": lane},
+                      revision=head(base, token, execution))
+    if answer.get("ok") is True:
+        return None
+    errors = [d for d in answer.get("diagnostics", []) if isinstance(d, dict) and d.get("severity") == "error"]
+    codes = {d.get("code") for d in errors}
+    if codes == {"GHE003_IDEMPOTENCY_CONFLICT"}:
+        return None
+    return "; ".join(f"{d.get('code')}: {d.get('message')}" for d in errors) or "Runtime refused task.heartbeat"
 
 
 def reconcile(args):
@@ -154,6 +195,32 @@ def reconcile(args):
     token = Path(args.token_file).read_text(encoding="utf-8").strip()
     if not token or "\n" in token:
         raise ValueError("invalid agent token")
+    # #1148: reads use the shared agent token; a task.* record is written only with the credential
+    # of the actor it names (`graphhelm` for merged, the lane for closed/released), read beside
+    # --token-file at <events>.agent.<actor>.token, never the shared token.
+    credentials = {}
+
+    def credential(actor):
+        if actor not in credentials:
+            path = Path(args.token_file)
+            stem = path.name
+            for suffix in (".agent.token", ".token"):
+                if stem.endswith(suffix):
+                    stem = stem[: -len(suffix)]
+                    break
+            path = path.with_name(f"{stem}.agent.{actor}.token")
+            try:
+                value = path.read_text(encoding="utf-8").strip()
+            except OSError:
+                value = ""
+            if not value or "\n" in value:
+                # Rollout: a Runtime without --require-lane-credential still accepts the shared token.
+                print(f"tasks reconcile: no credential for {actor} at {path}; sending the shared agent token; "
+                      f"mint it with: graphhelm tasks credential --lane {actor} --execution {args.execution} "
+                      f"--token-file <events.token>", file=sys.stderr)
+                value = token
+            credentials[actor] = value
+        return credentials[actor]
     opened = {}
     finished = set()
     claims = {}
@@ -191,7 +258,7 @@ def reconcile(args):
             by = int(match.group(1)) if match else pr
             if args.lane is None:
                 continue
-            post_end(args.url.rstrip("/"), token, args.execution, "closed", task_id, repo,
+            post_end(args.url.rstrip("/"), credential(args.lane), args.execution, "closed", task_id, repo,
                      args.lane, {"pr": pr, "reason": "superseded" if match else "abandoned", "by": by})
             closed.append(pr)
             continue
@@ -201,9 +268,10 @@ def reconcile(args):
             raise ValueError(f"PR {pr} has no confirmed merge commit")
         closes = [issue["number"] for issue in result.get("closingIssuesReferences") or []
                   if issue.get("repository", {}).get("nameWithOwner", repo) == repo]
-        post(args.url.rstrip("/"), token, args.execution, pr, task_id, repo, sha, closes)
+        post(args.url.rstrip("/"), credential("graphhelm"), args.execution, pr, task_id, repo, sha, closes)
         done.append(pr)
     released = []
+    beats = {"sent": [], "refused": []}
     for task_id, sequences in claims.items():
         latest_release = max((sequence for sequence in releases.get(task_id, set())
                               if type(sequence) is int), default=0)
@@ -215,12 +283,19 @@ def reconcile(args):
         assignees = result.get("assignees") or []
         reassigned = bool(assignees) and args.lane not in [person.get("login") for person in assignees]
         if result.get("state") != "CLOSED" and not reassigned:
+            # The claim stays open and this lane is alive (it is stopping a turn): heartbeat it.
+            refusal = heartbeat(args.url.rstrip("/"), token, credential(args.lane), args.execution, task_id, args.repo, args.lane)
+            if refusal is None:
+                beats["sent"].append(issue)
+            else:
+                beats["refused"].append({"issue": issue, "message": refusal})
             continue
-        post_end(args.url.rstrip("/"), token, args.execution, "released", task_id, args.repo,
+        post_end(args.url.rstrip("/"), credential(args.lane), args.execution, "released", task_id, args.repo,
                  args.lane, {"lane": args.lane, "claimSequence": outstanding[-1],
                              "reason": "Issue closed" if result.get("state") == "CLOSED" else "Issue reassigned"})
         released.append(issue)
-    return {"merged": done, "closed": closed, "released": released, "inspected": len(opened)}
+    return {"merged": done, "closed": closed, "released": released, "heartbeat": beats,
+            "inspected": len(opened)}
 
 
 def main():

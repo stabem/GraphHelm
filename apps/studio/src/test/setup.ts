@@ -18,4 +18,7 @@ configure({ asyncUtilTimeout: scaled(UI_WAIT_BASE_MS) });
  */
 afterEach(() => {
   cleanup();
+  // #1169: the Studio writes the open run into the address; one test's `?run=` must not pick
+  // the next test's run.
+  if (typeof window !== "undefined" && window.location.search) window.history.replaceState(null, "", "/");
 });

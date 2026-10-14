@@ -36,7 +36,7 @@ import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/r
 import { foldTaskEvents, isClaudeTaskSignal, isTaskEventSignal, readClaudeTasks, readTaskEventRecords, type ClaudeTaskReadModel, type TaskEventRecord, type TaskState } from "./runtime/team-tasks";
 import { SlotPoll } from "./components/slot-poll";
 import { MissionView } from "./components/mission-view";
-import { laneBars, type TimedTaskEvent } from "./runtime/lane-bars";
+import { applySessionEnds, laneBars, type TimedTaskEvent } from "./runtime/lane-bars";
 import { skippedEdgeInto } from "./runtime/mission";
 import { TaskGraphs } from "./components/task-graphs";
 import { JEV_ABSENT_NOTE, jevAvailability } from "./runtime/jev";
@@ -192,6 +192,16 @@ export default function App({
   const toolsRef = useRef<RegisteredTools | null>(null);
 
   const [runActionsOpen, setRunActionsOpen] = useState(false);
+  /** #1156: resume was pressed without a graph file; the field says what it is waiting for. */
+  const [resumeNeedsFile, setResumeNeedsFile] = useState(false);
+  // #1156: Escape closes the Run actions popover. A click elsewhere does not: a pending proposal
+  // opens the menu on purpose, and selecting the run must not shut it again.
+  useEffect(() => {
+    if (!runActionsOpen) return undefined;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setRunActionsOpen(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [runActionsOpen]);
   /** #585: the step whose chat picker Main chat's "Connect existing chat" opened. */
   const [connected, setConnected] = useState(false);
   const [previousExit, setPreviousExit] = useState<RuntimePreviousExit | null>(null);
@@ -262,6 +272,11 @@ export default function App({
   }, [executions]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selected, setSelected] = useState("");
+  // #1169: the open run lives in the address (`?run=`), so a reload reopens it. An empty
+  // selection before connect must not erase it; the draft path clears it on purpose.
+  useEffect(() => { if (selected) rememberSelectedRun(selected); }, [selected]);
+  // #1156: the resume prompt belongs to the run it was asked for.
+  useEffect(() => { setResumeNeedsFile(false); }, [selected]);
   const [governedActorByNode, setGovernedActorByNode] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<ExecutionStatus | null>(null);
   // Loads, polls and verified mutations can settle out of order within one selection. A later
@@ -527,7 +542,7 @@ export default function App({
       });
       try {
         const [nextStatus, nextEvents] = await Promise.all([
-          client.getStatus(id),
+          client.getStatus(id, true),
           readEvents(client, id, 0),
         ]);
         // THE CONNECTION IS A GUARD AXIS TOO (PR #467 review, P1): dispose() cannot cancel a
@@ -645,7 +660,7 @@ export default function App({
             return rows;
           };
           const [nextStatus, fresh] = await Promise.all([
-            client.getStatus(selected),
+            client.getStatus(selected, true),
             readEvents(client, selected, lastSeen),
           ]);
           // The connection too, not just the run: Runtime B can hold the same execution id, and
@@ -849,6 +864,7 @@ export default function App({
     setTalkOpen(true);
     selectedRef.current = "";
     setSelected("");
+    rememberSelectedRun("");
     setStatus(null);
     setEvents(null);
     setTopology(null);
@@ -1405,7 +1421,18 @@ export default function App({
         candidate = mostRecentNeedsYou(next.executions);
         cursor = next.hasMore ? next.nextCursor : null;
       }
-      const first = candidate ?? firstVisible;
+      // #1169: a reload reopens the run its address names, unless that run was removed here or
+      // the Runtime does not know it; then the ordinary pick stands and the address forgets it.
+      const wanted = selectedRunFromUrl();
+      let first: { executionId: string } | undefined = candidate ?? firstVisible;
+      if (wanted) {
+        const known = visible({ executionId: wanted } as ExecutionSummary) &&
+          (page.executions.some((row) => row.executionId === wanted) ||
+            (await client.getStatus(wanted).then(() => true, () => false)));
+        if (clientRef.current !== client) return;
+        if (known) first = { executionId: wanted };
+        else rememberSelectedRun("");
+      }
       if (first) {
         selectedRef.current = first.executionId;
         setSelected(first.executionId);
@@ -1578,6 +1605,8 @@ export default function App({
     restoredOutsidePage.current.clear();
     setNextCursor(null);
     setSelected("");
+    // #1169: another token may open another project; its runs must not inherit this `?run=`.
+    rememberSelectedRun("");
     setStatus(null);
     setEvents(null);
     setEvidence(null);
@@ -2356,15 +2385,7 @@ export default function App({
   const missionLanes = useMemo(() => {
     const records = currentTaskGraphs?.records ?? [];
     const timed: TimedTaskEvent[] = records.flatMap((r) => (r.occurredAt ? [{ ...r, at: r.occurredAt }] : []));
-    const lanes = laneBars(timed, clock, 14 * 3_600_000);
-    for (const event of eventList) {
-      if (event.kind !== "signal_recorded" || !event.payload || typeof event.payload !== "object"
-        || !("kind" in event.payload) || event.payload.kind !== "agent_session_ended" || !event.actorId) continue;
-      const lane = lanes.find((row) => row.lane === event.actorId);
-      const at = event.occurredAt ? Date.parse(event.occurredAt) : NaN;
-      if (lane && Number.isFinite(at) && (lane.endedAt === undefined || at > lane.endedAt)) lane.endedAt = at;
-    }
-    return lanes;
+    return applySessionEnds(laneBars(timed, clock, 14 * 3_600_000), eventList);
   }, [currentTaskGraphs, clock, eventList]);
   const watchFlow = useCallback(async (flowId: string, path?: string) => {
     const client = clientRef.current;
@@ -3145,12 +3166,14 @@ export default function App({
                 graphFileOpen={graphFileOpen} onGraphFileOpenChange={setGraphFileOpen}
                 graphFileRow={<><GraphFileRow graphFile={graphFile} onGraphFileChange={onGraphFileChange} onDrawConnections={() => void drawConnections()} busy={busy}
                   demonstration={status.executor === "fixture"} fixtureFile={fixtureFile} onFixtureFileChange={setFixtureFile} inputRef={graphFileInput} />
-                  <p className={`connection-note ${connectionTone}`} role="status">{connectionNote}</p></>} />
+                  <p className={`connection-note ${resumeNeedsFile && graphFile.trim().length === 0 ? "none" : connectionTone}`} role="status">{resumeNeedsFile && graphFile.trim().length === 0
+                    ? "Resume needs this run's graph file. Type its path on the Runtime host in the Graph file field, then press resume again."
+                    : connectionNote}</p></>} />
             )}
             </div>
             {(canvasTab === "graph" || canvasTab === "journey") && (
               <div id="studio-panel-graph" role="tabpanel" aria-label={canvasTab === "journey" ? "Proof" : "Graph"}>
-                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} events={eventList} envelopes={envelopes} wakeListeners={status?.wakeListeners} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} partial={currentTaskGraphs !== null && currentTaskGraphs !== taskGraphs} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && currentTaskGraphs === null} historyFailedCount={historyFailure?.executionId === selected ? historyFailure.count : 0} onRetryHistory={() => setHistoryRetry((value) => value + 1)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
+                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} events={eventList} envelopes={envelopes} wakeListeners={status?.wakeListeners ?? []} seenActors={status?.seenActors ?? []} seenActorAgesMs={status?.seenActorAgesMs ?? {}} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} partial={currentTaskGraphs !== null && currentTaskGraphs !== taskGraphs} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && currentTaskGraphs === null} historyFailedCount={historyFailure?.executionId === selected ? historyFailure.count : 0} onRetryHistory={() => setHistoryRetry((value) => value + 1)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
                   initialView={canvasTab === "journey" ? "proof" : "graph"} focusJourneyId={journeyContract}
                   flows={flowsRead.view} onApprove={approveFlow} onWatch={watchFlow}
 
@@ -3336,6 +3359,8 @@ export default function App({
                     // no path, resume walks the person to the box instead of sitting disabled
                     // with its excuse in a tooltip a disabled button never shows.
                     if (graphFile.trim().length === 0 && resumeGraph === null && !snapshotResumeAvailable) {
+                      setRunActionsOpen(false);
+                      setResumeNeedsFile(true);
                       setCanvasTab("team");
                       setGraphFileOpen(true);
                       setFileFocusNonce((nonce) => nonce + 1);
@@ -3515,7 +3540,7 @@ export default function App({
                   ? ` · ${evidence.diagnostics[0].message}`
                   : ""}
                 {evidence.result === "unknown"
-                  ? " · the Runtime accepted it but the verification read failed — do not treat this as done"
+                  ? " · the Studio could not confirm whether the Runtime applied it — check the run before treating it as done"
                   : ""}
               </p>
             )}
@@ -3622,4 +3647,20 @@ export default function App({
     </div>
     </SaidLinks.Provider>
   );
+}
+
+/** #1169: the run named by `?run=` in this tab's address, or none. */
+export function selectedRunFromUrl(): string {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get("run") ?? "";
+}
+
+/** #1169: keep `?run=` in step with the open run, leaving every other parameter alone. */
+export function rememberSelectedRun(run: string): void {
+  if (typeof window === "undefined" || typeof window.history?.replaceState !== "function") return;
+  const url = new URL(window.location.href);
+  if ((url.searchParams.get("run") ?? "") === run) return;
+  if (run) url.searchParams.set("run", run);
+  else url.searchParams.delete("run");
+  window.history.replaceState(window.history.state, "", url);
 }

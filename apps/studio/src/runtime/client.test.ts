@@ -8,6 +8,7 @@ import {
   RUNTIME_REQUEST_TIMEOUT_MS,
   RUNTIME_READ_TIMEOUT_MS,
   WEBMCP_ACTOR,
+  RUNTIME_UNREACHABLE_HEADER,
 } from "./client";
 import { digestOf } from "./customs";
 import { foldTaskEvents, readTaskEventRecords } from "./team-tasks";
@@ -555,6 +556,29 @@ describe("the token", () => {
     expect(document.cookie).toBe("");
   });
 
+  it("adds process liveness to the board read without changing ordinary status", async () => {
+    const { fetchImpl, calls } = scriptedFetch([
+      { match: (call) => call.url === "/v1/executions/demo", reply: ok(statusData()) },
+      { match: (call) => call.url === "/v1/seen-actors", reply: ok({ seenActors: ["lane-a"], seenActorAgesMs: { "lane-a": 180000 } }, "serve.seen_actors") },
+    ]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    expect((await client.getStatus("demo")).seenActors).toBeUndefined();
+    expect(await client.getStatus("demo", true)).toMatchObject({ seenActors: ["lane-a"], seenActorAgesMs: { "lane-a": 180000 } });
+    expect(calls.filter((call) => call.url === "/v1/seen-actors")).toHaveLength(1);
+  });
+
+  it("stops requesting unsupported liveness after a 404 while status polling continues", async () => {
+    const { fetchImpl, calls } = scriptedFetch([
+      { match: (call) => call.url === "/v1/executions/demo", reply: ok(statusData()) },
+      { match: (call) => call.url === "/v1/seen-actors", reply: { status: 404, envelope: { ok: false, diagnostics: [] } } },
+    ]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    await client.getStatus("demo", true);
+    await client.getStatus("demo", true);
+    expect(calls.filter((call) => call.url === "/v1/executions/demo")).toHaveLength(2);
+    expect(calls.filter((call) => call.url === "/v1/seen-actors")).toHaveLength(1);
+  });
+
   it("cannot be serialised out of the client by accident", () => {
     const client = new RuntimeClient("tok-abc");
     expect(JSON.stringify(client)).not.toContain("tok-abc");
@@ -678,6 +702,23 @@ describe("verified mutations", () => {
       await expect(client.signal("demo", "{}", { kind, actor: { id: "agent-1", type: "agent" } })).rejects.toThrow(/must be recorded by the owner/i);
     }
     expect(scripted.calls).toHaveLength(0);
+  });
+
+  /** #1170: a connection the Runtime refused was never delivered, so it is a refusal, not "maybe applied". */
+  it("reports a mutation as not sent when the dev proxy says the Runtime refused the connection", async () => {
+    let up = true;
+    const down = () => new Response("", { status: 503, headers: { [RUNTIME_UNREACHABLE_HEADER]: "connection-refused" } });
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit = {}) => {
+      if (up && (init.method ?? "GET") === "GET") {
+        up = false;
+        return new Response(JSON.stringify(ok(statusData()).envelope), { status: 200 });
+      }
+      return down();
+    }) as unknown as typeof fetch;
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    const evidence = await client.approve("demo", "implementation", { idempotencyKey: "fixed-key-1" });
+    expect(evidence.result).toBe("refused");
+    expect(evidence.diagnostics[0]?.message).toMatch(/not answering, so nothing was sent/);
   });
 
   /** The full happy path: read the head, mutate against it, read back, report the delta. */

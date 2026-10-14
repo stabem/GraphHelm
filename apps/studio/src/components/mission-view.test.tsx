@@ -348,6 +348,15 @@ describe("MissionView", () => {
     expect(screen.getByText("The owner sees it")).toBeInTheDocument();
   });
 
+  it("#1166: a claimed issue without a PR reads no PR yet, not 1 PR", () => {
+    const tasks = [wt("a", { issue: 5, pr: 50, prTitle: "Moving", step: "review" }), wt("b", { issue: 6, pr: null, step: "implement" })] as unknown as TaskState[];
+    render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    const cards = Array.from(screen.getByRole("region", { name: "Work by issue" }).querySelectorAll<HTMLElement>(".mv-jcard"));
+    const texts = cards.map((c) => c.querySelector(".mv-progress-text")!.textContent);
+    expect(texts).toContain("1 PR · 1 in work");
+    expect(texts.find((t) => t !== "1 PR · 1 in work")).toMatch(/^no PR yet · /);
+  });
+
   it("#735: each work group shows one progress bar with its counts in words; no spinners; a blocked chip is marked", () => {
     const block = { reviewer: "r", headSha: "abcdef0123", commentUrl: "" };
     const tasks = [wt("a", { issue: 5, pr: 50, prTitle: "Moving", step: "review" }), wt("b", { issue: 5, pr: 51, prTitle: "Held", step: "review", blockedBy: block }),

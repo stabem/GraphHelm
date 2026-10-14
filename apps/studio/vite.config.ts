@@ -7,6 +7,7 @@ import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
 import { scaled, TEST_TIMEOUT_BASE_MS } from "./src/test/time-scale.ts";
+import { RUNTIME_UNREACHABLE_HEADER } from "./src/runtime/proxy-signal.ts";
 
 /** Where the dev server looks for the bearer token, in order of precedence. */
 function tokenPath(env: Record<string, string>): string | null {
@@ -198,9 +199,20 @@ function devWebMcpShim(): Plugin {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "");
   const target = env.GRAPHHELM_RUNTIME_URL || "http://127.0.0.1:8080";
+  // #1170: a refused connection proves the request never reached the Runtime. Say so in a header
+  // the client can trust, so a mutation is reported as not sent instead of "maybe committed".
+  const configure = (proxy: { on: (event: "error", listener: (...args: unknown[]) => void) => void }) => {
+    proxy.on("error", (error, _req, res) => {
+      const code = (error as { code?: string }).code;
+      const reply = res as { headersSent?: boolean; writeHead?: (s: number, h: Record<string, string>) => void; end?: () => void };
+      if (code !== "ECONNREFUSED" || reply.headersSent || !reply.writeHead || !reply.end) return;
+      reply.writeHead(503, { [RUNTIME_UNREACHABLE_HEADER]: "connection-refused" });
+      reply.end();
+    });
+  };
   const proxy = {
-    "/v1": { target, changeOrigin: false },
-    "/health": { target, changeOrigin: false },
+    "/v1": { target, changeOrigin: false, configure },
+    "/health": { target, changeOrigin: false, configure },
   };
 
   return {

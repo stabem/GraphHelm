@@ -13,10 +13,12 @@ need a per-lane environment or a session relaunch:
     python tools/task-record/task_record.py --lane gh-claude-6 merged --issue 355 --pr 357 --merge-sha <sha>
     python tools/task-record/task_record.py --lane gh-claude-2 critic_verdict --issue 355 --round 1 --score 6 --design-ref <path> --reason "<why>"
 
-It POSTs `/v1/executions/<execution>/signal` with the Runtime's AGENT SESSION token
-(`<events>.agent.token`, beside the Runtime's events directory; D-058) and
-`X-GraphHelm-Actor: <lane>`. The Runtime forces the actor type to `agent` for that token and refuses
-a record whose `lane` / `reviewer` / `merger` is not the recording actor (GHCLI038_ACTOR_MISMATCH).
+It POSTs `/v1/executions/<execution>/signal` with the LANE'S OWN credential (#1148):
+`<events>.agent.<lane>.token`, resolved beside `--token-file` (the shared `<events>.agent.token`
+path, whose value is never sent for a task record), and `X-GraphHelm-Actor: <lane>`. The owner or
+the orchestrator mints that file with `graphhelm tasks credential --lane <lane> --execution <exec>
+--token-file <events.token>`; the Runtime verifies the lane by recomputing the credential and refuses
+a `task.*` record under the shared token or in another lane's name (GHCLI038_ACTOR_MISMATCH).
 Standard library only. `--dry-run` prints the request instead of sending it.
 """
 import argparse
@@ -46,12 +48,47 @@ PROOFS = ("none", "tests", "journey", "both")
 # #477: what the naming standard asks (DELIVERY.md "Naming") and what the Runtime accepts.
 STANDARD = {"claimed": 50, "pr_opened": 60, "summary": 100}
 ACCEPTED = {"title": 200, "summary": 300}
-HEARTBEAT_INTERVAL = datetime.timedelta(seconds=300)
 MAX_HISTORY_EVENTS = 10_000
 MAX_HISTORY_PAGES = MAX_HISTORY_EVENTS // 1000
 MAX_HEARTBEAT_EVIDENCE_READS = 256
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_TOTAL_EVIDENCE_BYTES = 2 * 1024 * 1024
+
+
+def credential_file(token_file, lane):
+    """The lane's credential beside `--token-file` (#1148): `events.agent.token` or `events.token`
+    → `events.agent.<lane>.token`, the path `graphhelm tasks credential --lane <lane>` writes."""
+    path = Path(token_file)
+    stem = path.name
+    for suffix in (".agent.token", ".token"):
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    return path.with_name(f"{stem}.agent.{lane}.token")
+
+
+def read_credential(args):
+    """The lane's credential when its file exists; otherwise the shared token (#1148 rollout: a
+    Runtime without `--require-lane-credential` still accepts it), with a note on stderr naming the
+    mint command, so the missing file is visible without stopping the record."""
+    path = credential_file(args.token_file, args.lane)
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        value = ""
+    if value and "\n" not in value:
+        return value
+    print(f"task_record: no credential for lane {args.lane} at {path}; sending the shared agent token "
+          f"(a Runtime with --require-lane-credential refuses it); the owner mints it with: "
+          f"graphhelm tasks credential --lane {args.lane} --execution {args.execution} --token-file <events.token>",
+          file=sys.stderr)
+    try:
+        token = Path(args.token_file).read_text(encoding="utf-8").strip()
+    except OSError as error:
+        sys.exit(f"task_record: cannot read the agent token ({error}); no record sent")
+    if not token or "\n" in token:
+        sys.exit("task_record: agent token is empty; no record sent")
+    return token
 
 
 def github_words(kind, number, repo):
@@ -206,7 +243,8 @@ def parse(argv):
     p.add_argument("--execution", default="gh-team")
     p.add_argument("--url", default="http://127.0.0.1:8793")
     p.add_argument("--token-file", default=".graphhelm/events.agent.token",
-                   help="the Runtime's agent session token (never the owner's events.token)")
+                   help="the Runtime's agent session token path; the lane's own credential is read beside it, "
+                        "at <events>.agent.<lane>.token (#1148), and the shared token's value is never sent")
     p.add_argument("--title", help="claimed/pr_opened: the issue's or PR's title; default: read with gh")
     p.add_argument("--summary", help="claimed/pr_opened: one sentence; default: the body's 'Summary:' line, read with gh."
                    " planned: the plan in one line (at most 300 characters), required")
@@ -469,12 +507,7 @@ def _runtime_json(args, path, token, *, max_bytes=MAX_RESPONSE_BYTES):
 
 def read_execution_history(args):
     """Read a complete bounded event tail and its referenced task evidence from the Runtime."""
-    try:
-        token = Path(args.token_file).read_text(encoding="utf-8").strip()
-    except OSError as error:
-        sys.exit(f"task_record: cannot read the agent token; heartbeat not sent ({error})")
-    if not token:
-        sys.exit("task_record: agent token is empty; heartbeat not sent")
+    token = read_credential(args)
 
     events, _ = _runtime_json(args, "/events?after=0&limit=1000", token)
     head = events.get("head")
@@ -545,23 +578,13 @@ def read_execution_history(args):
     return [(event, kind, evidence_docs[event["evidenceRefs"][0]["evidenceId"]]) for event, kind in relevant]
 
 
-def _event_time(value):
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return None
-    return parsed.astimezone(datetime.timezone.utc)
-
-
 def heartbeat_document(args, history, now):
+    """The heartbeat record for the lane's open pre-PR claim. The 300 s cooldown is not checked
+    here (#1147): the Runtime owns that rule (`validate_heartbeat`) and its refusal is the answer.
+    Earlier heartbeats still count toward the revision."""
     task_id = f"issue-{args.issue}"
     open_claims = []
     opened_prs = []
-    last_heartbeat = None
     max_revision = 0
     for event, kind, envelope in history:
         if envelope.get("type") != kind or envelope.get("source", {}).get("id") != args.lane:
@@ -609,16 +632,8 @@ def heartbeat_document(args, history, now):
                 # A terminal record names the task's PR. If PR-open history is incomplete,
                 # still fail closed for this task rather than heartbeat a terminal claim.
                 open_claims.pop(0)
-        elif kind == "task.heartbeat":
-            occurred_at = _event_time(event.get("occurredAt"))
-            if occurred_at is None:
-                sys.exit("task_record: heartbeat event time is invalid; no record sent")
-            last_heartbeat = occurred_at
     if not open_claims:
         sys.exit("task_record: no open pre-PR claim for this lane/task; heartbeat not sent")
-    now_dt = datetime.datetime.fromisoformat(now.replace("Z", "+00:00"))
-    if last_heartbeat is not None and now_dt - last_heartbeat < HEARTBEAT_INTERVAL:
-        sys.exit("task_record: heartbeat is limited to one per 300 seconds; no record sent")
     return {"schema": "graphhelm-task-event-v1", "taskId": task_id,
             "revision": max_revision + 1, "at": now, "lane": args.lane}
 
@@ -663,7 +678,7 @@ def send(args, doc, now):
     if args.dry_run:
         print(json.dumps({"url": url, "headers": headers, "body": body}, indent=1))
         return 3, signal_id, {}
-    token = Path(args.token_file).read_text(encoding="utf-8").strip()
+    token = read_credential(args)
     request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
                                      headers={**headers, "Authorization": f"Bearer {token}"})
     # GHE001: another writer appended between the Runtime's read and this append; the same body

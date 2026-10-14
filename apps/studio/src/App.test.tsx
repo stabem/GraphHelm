@@ -306,7 +306,7 @@ describe("Studio organization and responsive navigation", () => {
     saveRemovedRuns(`${location.origin}:dale-api-base`, ["demo-deploy"]);
     const client = stubClient();
     await open(client);
-    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("demo-calm"));
+    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("demo-calm", true));
     expect(client.getStatus).not.toHaveBeenCalledWith("demo-deploy");
   });
 
@@ -325,11 +325,11 @@ describe("Studio organization and responsive navigation", () => {
     await screen.findByRole("navigation", { name: "Projects" });
     if (token === "local-token") {
       expect(screen.getByRole("button", { name: "Rename My workspace" })).toBeVisible();
-      await waitFor(() => expect(second.getStatus).toHaveBeenCalledWith("demo-calm"));
+      await waitFor(() => expect(second.getStatus).toHaveBeenCalledWith("demo-calm", true));
       expect(second.getStatus).not.toHaveBeenCalledWith("demo-deploy");
     } else {
       expect(screen.getByRole("button", { name: "Rename this runtime" })).toBeVisible();
-      await waitFor(() => expect(second.getStatus).toHaveBeenCalledWith("demo-deploy"));
+      await waitFor(() => expect(second.getStatus).toHaveBeenCalledWith("demo-deploy", true));
     }
   });
 
@@ -642,6 +642,18 @@ describe("live team layout", () => {
     await userEvent.click(screen.getByRole("button", { name: "resume" }));
     expect(screen.getByRole("tab", { name: "Team (live)" })).toHaveAttribute("aria-selected", "true");
     await waitFor(() => expect(screen.getByLabelText("Graph file path on the Runtime host")).toHaveFocus());
+    // #1156: the menu closes off the field, and the field says what resume waits for.
+    expect(screen.getByRole("button", { name: "Run actions" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText(/Resume needs this run's graph file/)).toBeInTheDocument();
+  });
+
+  it("#1156: Escape closes Run actions", async () => {
+    await open(stubClient());
+    const summary = screen.getByRole("button", { name: "Run actions" });
+    if (summary.getAttribute("aria-expanded") !== "true") await userEvent.click(summary);
+    await waitFor(() => expect(summary).toHaveAttribute("aria-expanded", "true"));
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(summary).toHaveAttribute("aria-expanded", "false"));
   });
 
 
@@ -1021,7 +1033,7 @@ describe("the projects rail", () => {
   it("opens on the run that needs the operator, not merely the first one", async () => {
     const client = stubClient();
     await open(client);
-    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("demo-deploy"));
+    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("demo-deploy", true));
   });
 
   it("opens the most recently active run when several runs need the operator", async () => {
@@ -1036,8 +1048,49 @@ describe("the projects rail", () => {
       })),
     });
     await open(client);
-    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("active-run"));
+    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("active-run", true));
     expect(client.getStatus).not.toHaveBeenCalledWith("quiet-demo");
+  });
+
+  /** #1169 review: an address naming a run the Runtime does not know falls back to the default pick. */
+  it("falls back to the default pick when the address names an unknown run", async () => {
+    window.history.replaceState(null, "", "/?session=abc&run=gone-run");
+    const base = stubClient();
+    const getStatus = base.getStatus;
+    const client = stubClient({
+      getStatus: vi.fn(async (id: string, ...rest: unknown[]) => {
+        if (id === "gone-run") throw new Error("not found");
+        return (getStatus as (...args: unknown[]) => unknown)(id, ...rest);
+      }),
+    } as never);
+    await open(client);
+    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("demo-deploy", true));
+    expect(new URLSearchParams(window.location.search).get("run")).toBe("demo-deploy");
+  });
+
+  /** #1169: a reload mid-run reopens the run the address names, not the default pick. */
+  it("reopens the run named in the address after a reload, and writes the open run there", async () => {
+    window.history.replaceState(null, "", "/?session=abc&run=quiet-demo");
+    try {
+      const client = stubClient({
+        listExecutions: vi.fn(async () => ({
+          executions: [
+            { executionId: "quiet-demo", mode: "supervised", status: "running", attention: "can_sleep", startedAt: null, lastEventAt: "2026-09-25T13:00:00Z", headSequence: 7 },
+            { executionId: "active-run", mode: "supervised", status: "running", attention: "needs_you", startedAt: null, lastEventAt: "2026-09-25T17:00:00Z", headSequence: 39 },
+          ],
+          hasMore: false,
+          nextCursor: null,
+        })),
+      });
+      await open(client);
+      await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("quiet-demo", true));
+      expect(client.getStatus).not.toHaveBeenCalledWith("active-run", true);
+      const params = new URLSearchParams(window.location.search);
+      expect(params.get("run")).toBe("quiet-demo");
+      expect(params.get("session")).toBe("abc");
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
   });
 });
 
@@ -1284,7 +1337,7 @@ describe("operator actions", () => {
     });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: /pause · finish in-flight/i }));
-    expect(await screen.findByText(/do not treat this as done/i)).toBeInTheDocument();
+    expect(await screen.findByText(/could not confirm whether the Runtime applied it/i)).toBeInTheDocument();
   });
 
   /** Phase 2 (#105): the runtime's TWO pauses are two buttons with two promises, and the

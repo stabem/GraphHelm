@@ -579,6 +579,62 @@ def _context(digest: dict, freshness: str, execution: str, session: str, node_id
     return value
 
 
+SESSION_PROTOCOL = "graphhelm-session-v1"
+
+
+def _lane(payload: dict) -> str | None:
+    """#1184: the lane this session works as, when it is one: the env actor, or the lane name the
+    SessionStart title / team.json binding recorded. None for a session that is not a lane."""
+    lane = os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload)
+    return lane if isinstance(lane, str) and ID.fullmatch(lane) else None
+
+
+def _session_details(phase: str, execution: str, session: str, host: str, lane: str, node_id: str | None) -> str:
+    details = {"protocol": SESSION_PROTOCOL, "phase": phase, "executionId": execution, "host": host,
+               "sessionId": session, "lane": lane, "declaredNodeId": node_id}
+    if phase == "ended":
+        details["verified"] = False
+    return json.dumps(details, separators=(",", ":"), sort_keys=True)
+
+
+def _started_signal(execution: str, session: str, host: str, origin: str, lane: str, node_id: str | None,
+                    emitted_at: str) -> tuple[str, dict]:
+    digest = hashlib.sha256(f"v1\0{execution}\0{session}\0{host}\0{origin}\0{lane}".encode()).hexdigest()[:24]
+    key = f"session-start-v1-{digest}"
+    signal = {"id": key, "source": {"type": "tool", "id": lane}, "type": "agent_session_started", "severity": "low",
+              "description": _session_details("started", execution, session, host, lane, node_id),
+              "evidence": [execution], "emittedAt": emitted_at}
+    return key, signal
+
+
+def _record_started(bound: tuple, host: str, session: str, lane: str, state: dict, path: Path) -> None:
+    """#1184: one agent_session_started per lane session, signed as the lane. A resume, clear or
+    compact of the same session reuses the key and posts nothing once the state says it landed.
+    Failure is said on stderr and never costs the briefing."""
+    if state.get("started") is True:
+        return
+    execution, token_file, url, origin, node_id = bound
+    emitted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    key, signal = _started_signal(execution, session, host, origin, lane, node_id, emitted_at)
+    try:
+        try:
+            reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal",
+                            token_from_file(token_file), "POST", {"signal": signal},
+                            {"X-GraphHelm-Actor": lane, "X-GraphHelm-Actor-Type": "agent",
+                             "X-GraphHelm-Actor-Session": session, "Idempotency-Key": key}, timeout=2.0)
+        except urllib.error.HTTPError as error:
+            if error.code != 409:
+                raise
+            reply = {"data": {"executionId": execution, "signalId": key}}  # GHE003: already committed
+        data = reply.get("data")
+        if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != key:
+            raise ValueError("signal acknowledgment did not match")
+        state["started"] = True
+        _write_state(path, state)
+    except (OSError, ValueError, KeyError) as error:
+        print(f"graphhelm-session-hook: start signal unobserved ({type(error).__name__})", file=sys.stderr)
+
+
 def _start_impl(payload: dict, host: str, output_format: str = "native") -> None:
     if payload.get("hook_event_name") != "SessionStart":
         raise ValueError("wrong hook event")
@@ -611,6 +667,11 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
         state = state or {"version": 2, "executionId": execution, "sessionId": session, "host": host, "origin": origin}
         state["briefing"] = digest
         _write_state(path, state)
+    # #1184: the started record is appended before the waiter arms its wake lease, so the append
+    # cannot consume the lease the waiter is about to park on.
+    lane = _lane(payload)
+    if lane is not None:
+        _record_started(bound, host, session, lane, state, path)
     start_lane_waiter(payload, bound, host)
     context = KEEL_CONTEXT + "\n" + _context(digest, freshness, execution, session, node_id)
     if len(context) > MAX_CONTEXT:
@@ -636,7 +697,17 @@ def start(payload: dict, host: str, output_format: str = "native") -> None:
         _release_lock(lock)
 
 
-def _signal(execution: str, session: str, host: str, emitted_at: str, node_id: str | None, origin: str) -> tuple[str, dict]:
+def _signal(execution: str, session: str, host: str, emitted_at: str, node_id: str | None, origin: str,
+            lane: str | None = None) -> tuple[str, dict]:
+    if lane is not None:
+        # #1184: a lane's end is signed as the lane, the name its task records and the Studio's
+        # lanes carry; host and session id travel inside the description.
+        digest = hashlib.sha256(f"v3\0{execution}\0{session}\0{host}\0{origin}\0{lane}".encode()).hexdigest()[:24]
+        key = f"session-end-v3-{digest}"
+        signal = {"id": key, "source": {"type": "tool", "id": lane}, "type": "agent_session_ended", "severity": "low",
+                  "description": _session_details("ended", execution, session, host, lane, node_id),
+                  "evidence": [execution], "emittedAt": emitted_at}
+        return key, signal
     digest = hashlib.sha256(f"v2\0{execution}\0{session}\0{host}\0{origin}".encode()).hexdigest()[:24]
     key = f"session-end-v2-{digest}"
     actor = f"{host}-session-{session}"
@@ -662,15 +733,19 @@ def _validate_delivery(value: dict, execution: str, session: str, host: str, ori
     timestamp = signal["emittedAt"]
     if len(timestamp) > 40 or datetime.fromisoformat(timestamp).tzinfo is None:
         raise ValueError("invalid signal timestamp")
-    key, expected = _signal(execution, session, host, timestamp, node, origin)
+    lane = value.get("lane")
+    if lane is not None and (not isinstance(lane, str) or not ID.fullmatch(lane)):
+        raise ValueError("invalid delivery lane")
+    key, expected = _signal(execution, session, host, timestamp, node, origin, lane)
     if value.get("signalId") != key or signal != expected:
         raise ValueError("invalid stored signal")
 
 
-def _end_impl(payload: dict, host: str) -> None:
+def _end_impl(payload: dict, host: str, bound: tuple | None = None, lane: str | None = None) -> None:
     if payload.get("hook_event_name") != "SessionEnd":
         raise ValueError("wrong hook event")
-    bound = binding()
+    if bound is None:
+        bound = binding(payload)
     if bound is None:
         return
     execution, token_file, url, origin, node_id = bound
@@ -683,8 +758,10 @@ def _end_impl(payload: dict, host: str) -> None:
     delivery = state.get("delivery")
     if delivery is None:
         emitted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        signal_id, signal = _signal(execution, session, host, emitted_at, node_id, origin)
+        signal_id, signal = _signal(execution, session, host, emitted_at, node_id, origin, lane)
         delivery = {"executionId": execution, "sessionId": session, "signalId": signal_id, "signal": signal, "declaredNodeId": node_id, "delivered": False}
+        if lane is not None:
+            delivery["lane"] = lane
         state["delivery"] = delivery
         _write_state(path, state)
     if delivery.get("delivered") is True:
@@ -705,7 +782,10 @@ def end(payload: dict, host: str, output_format: str = "native") -> bool:
     host = _host(host)
     if payload.get("hook_event_name") != "SessionEnd":
         raise ValueError("wrong hook event")
-    bound = binding()
+    # #1184: the binding and the lane are read from the payload before the lane file goes, so a
+    # title- or team.json-bound lane ends under its own name like an env-bound one.
+    bound = binding(payload)
+    lane = _lane(payload)
     if bound is not None:
         stop_lane_waiter(payload, bound, host)
     _forget_lane(payload)
@@ -715,7 +795,7 @@ def end(payload: dict, host: str, output_format: str = "native") -> bool:
     session = _session(payload)
     lock = _claim_lock(state_path(execution, session, host, origin))
     try:
-        _end_impl(payload, host)
+        _end_impl(payload, host, bound, lane)
     finally:
         _release_lock(lock)
     return True

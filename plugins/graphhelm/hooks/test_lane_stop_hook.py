@@ -77,7 +77,17 @@ class LaneStopTests(unittest.TestCase):
         self.env.update(GRAPHHELM_RUNTIME_URL=self.url,
                         GRAPHHELM_TOKEN_FILE=str(root / "events.agent.token"))
         self.owner_token = (root / "events.token").read_text().strip()
+        # #1148: a task.* record is written only with the lane's credential (never the shared
+        # agent token), minted by the owner once per lane; the reconciler writes `merged` as
+        # `graphhelm` and `closed`/`released` as the lane. Requires an upgraded CLI.
+        for lane in ("graphhelm", "codex-4"):
+            self.run_cli("tasks", "credential", "--lane", lane, "--execution", "lane-test",
+                         "--token-file", str(root / "events.token"))
         self.env.pop("GRAPHHELM_SESSION_ID", None)
+
+    def lane_credential(self, lane):
+        return (Path(self.env["GRAPHHELM_TOKEN_FILE"]).with_name(f"events.agent.{lane}.token")
+                .read_text().strip())
 
     def stop_server(self):
         self.server.terminate()
@@ -145,7 +155,7 @@ class LaneStopTests(unittest.TestCase):
         signal = {"id": "pr-9001-opened", "source": {"type": "user", "id": "codex-4"},
                   "type": "task.pr_opened", "severity": "low", "description": json.dumps(document),
                   "evidence": ["https://github.com/stabem/GraphHelm/pull/9001"], "emittedAt": now}
-        token = Path(self.env["GRAPHHELM_TOKEN_FILE"]).read_text().strip()
+        token = self.lane_credential("codex-4")
         request = urllib.request.Request(self.url + "/v1/executions/lane-test/signal",
                   data=json.dumps({"signal": signal}).encode(), headers={"Authorization": "Bearer " + token,
                   "Content-Type": "application/json", "Idempotency-Key": "pr-9001-opened",
@@ -208,7 +218,7 @@ class LaneStopTests(unittest.TestCase):
         signal = {"id": "pr-9001-opened", "source": {"type": "user", "id": "codex-4"},
                   "type": "task.pr_opened", "severity": "low", "description": json.dumps(document),
                   "evidence": ["https://github.com/stabem/GraphHelm/pull/9001"], "emittedAt": now}
-        token = Path(args.token_file).read_text().strip()
+        token = self.lane_credential("codex-4")
         request = urllib.request.Request(self.url + "/v1/executions/lane-test/signal",
                   data=json.dumps({"signal": signal}).encode(), headers={"Authorization": "Bearer " + token,
                   "Content-Type": "application/json", "Idempotency-Key": "pr-9001-opened",
@@ -225,21 +235,24 @@ class LaneStopTests(unittest.TestCase):
         self.assertEqual([(kind, doc["revision"], doc["reason"], doc["by"]) for kind, doc, _ in found if kind == "task.closed"],
                          [("task.closed", 6, "superseded", 9002)])
 
-    def test_released_claim_is_recorded_once(self):
-        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+    def reconcile_args(self):
+        return type("Args", (), {"execution": "lane-test", "url": self.url,
                     "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
                     "repo": "stabem/GraphHelm", "lane": "codex-4"})()
+
+    def claim(self, issue):
+        """Record codex-4's `task.claimed` for the issue on the temporary Runtime."""
         now = "2026-10-10T00:00:00Z"
-        doc = {"schema": "graphhelm-task-event-v1", "taskId": "issue-766", "revision": 1,
-               "at": now, "lane": "codex-4", "branch": "issue-766-test", "repo": "stabem/GraphHelm"}
-        doc["issue"] = 766
-        token = Path(args.token_file).read_text().strip()
-        signal = {"id": "claim-766", "source": {"type": "user", "id": "codex-4"},
+        doc = {"schema": "graphhelm-task-event-v1", "taskId": f"issue-{issue}", "revision": 1,
+               "at": now, "lane": "codex-4", "branch": f"issue-{issue}-test", "repo": "stabem/GraphHelm",
+               "issue": issue}
+        token = self.lane_credential("codex-4")
+        signal = {"id": f"claim-{issue}", "source": {"type": "user", "id": "codex-4"},
                   "type": "task.claimed", "severity": "low", "description": json.dumps(doc),
-                  "evidence": ["https://github.com/stabem/GraphHelm/issues/766"], "emittedAt": now}
+                  "evidence": [f"https://github.com/stabem/GraphHelm/issues/{issue}"], "emittedAt": now}
         req = urllib.request.Request(self.url + "/v1/executions/lane-test/signal",
             data=json.dumps({"signal": signal}).encode(), headers={"Authorization": "Bearer " + token,
-            "Content-Type": "application/json", "Idempotency-Key": "claim-766",
+            "Content-Type": "application/json", "Idempotency-Key": f"claim-{issue}",
             "X-GraphHelm-Actor": "codex-4", "X-GraphHelm-Actor-Type": "agent"})
         try:
             response = urllib.request.urlopen(req, timeout=5)
@@ -248,6 +261,33 @@ class LaneStopTests(unittest.TestCase):
         with response:
             answer = json.load(response)
             self.assertTrue(answer["ok"], answer)
+
+    def test_stop_reconcile_heartbeats_an_open_claim_and_the_runtime_owns_the_cooldown(self):
+        # #1147: a live lane heartbeats without being told. The first Stop reconcile lands one
+        # task.heartbeat for the open pre-PR claim; the second, inside 300 s, is refused by the
+        # Runtime's own rule and reconcile still succeeds. On the parent, reconcile has no
+        # `heartbeat` key and no heartbeat event exists. Cost: one claim, two reconciles and one
+        # event read against the temporary Runtime, under a second.
+        args = self.reconcile_args()
+        self.claim(766)
+        with mock.patch.object(tasks_reconcile, "github_issue", return_value={"state": "OPEN", "assignees": []}):
+            first = tasks_reconcile.reconcile(args)
+            second = tasks_reconcile.reconcile(args)
+        self.assertEqual(first["heartbeat"], {"sent": [766], "refused": []})
+        self.assertEqual(second["heartbeat"]["sent"], [])
+        self.assertEqual([entry["issue"] for entry in second["heartbeat"]["refused"]], [766])
+        self.assertIn("300 seconds", second["heartbeat"]["refused"][0]["message"])
+        token = Path(args.token_file).read_text().strip()
+        page = tasks_reconcile.get(self.url + "/v1/executions/lane-test/events?after=0&limit=512", token)
+        self.assertLessEqual(page["head"], 512, "test execution outgrew one page")
+        heartbeats = [event for event in page["events"]
+                      if event["kind"]["type"] == "signal_recorded"
+                      and event["kind"]["data"].get("kind") == "task.heartbeat"]
+        self.assertEqual([event["actor"]["id"] for event in heartbeats], ["codex-4"])
+
+    def test_released_claim_is_recorded_once(self):
+        args = self.reconcile_args()
+        self.claim(766)
         with mock.patch.object(tasks_reconcile, "github_issue", return_value={"state": "CLOSED", "assignees": []}):
             self.assertEqual(tasks_reconcile.reconcile(args)["released"], [766])
             self.assertEqual(tasks_reconcile.reconcile(args)["released"], [])
@@ -293,15 +333,27 @@ class LaneStopTests(unittest.TestCase):
             self.assertEqual(tasks_reconcile.reconcile(args)["released"], [766])
         self.assertEqual(post.call_args.args[-1]["claimSequence"], 12)
 
-    def test_stop_invokes_configured_cli_reconciliation(self):
+    def test_codex_lane_stop_hook_is_byte_identical(self):
+        # #1181: the Codex companion carried its own lane_stop_hook.py (hard-coded host), so a fix
+        # in one copy did not reach the other. Cost: two file reads.
+        claude_copy = (HERE / "lane_stop_hook.py").read_bytes()
+        codex_copy = (REPO / "plugins/graphhelm-codex-hooks/hooks/lane_stop_hook.py").read_bytes()
+        self.assertEqual(claude_copy, codex_copy, "plugins/graphhelm-codex-hooks/hooks/lane_stop_hook.py differs")
+
+    def test_stop_invokes_configured_cli_reconciliation_and_records_its_reply(self):
+        # #1181: the reconciler's JSON was discarded; now a Stop records it as a `tasks.reconciled`
+        # signal by the lane. On the parent no such event exists. Cost: one Stop, one event read.
         root = Path(self.tmp.name)
         subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True, creationflags=NO_WINDOW)
         subprocess.run(["git", "-C", str(root), "remote", "add", "origin",
                         "git@github.com:stabem/GraphHelm.git"], check=True, capture_output=True, creationflags=NO_WINDOW)
         output = root / "cli-args.txt"
         script = root / "record_cli.py"
+        reply = {"ok": True, "command": "tasks.reconcile",
+                 "data": {"merged": [9001], "closed": [], "released": [], "heartbeat": {"sent": [766], "refused": []}, "inspected": 1}}
         script.write_text("import sys\nfrom pathlib import Path\n"
-                          f"Path({str(output)!r}).open('a').write(' '.join(sys.argv[1:]) + '\\n')\n")
+                          f"Path({str(output)!r}).open('a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+                          f"print({json.dumps(reply)!r})\n")
         if os.name == "nt":
             cli = root / "configured-graphhelm.cmd"
             cli.write_text(f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n')
@@ -320,6 +372,15 @@ class LaneStopTests(unittest.TestCase):
         self.assertIn("tasks reconcile --execution lane-test", reconcile)
         self.assertIn("--lane codex-4", reconcile)
         self.assertIn("--repo stabem/GraphHelm", reconcile)
+        token = Path(self.env["GRAPHHELM_TOKEN_FILE"]).read_text().strip()
+        page = tasks_reconcile.get(self.url + "/v1/executions/lane-test/events?after=0&limit=512", token)
+        recorded = [event for event in page["events"]
+                    if event["kind"]["type"] == "signal_recorded"
+                    and event["kind"]["data"].get("kind") == "tasks.reconciled"]
+        self.assertEqual([event["actor"]["id"] for event in recorded], ["codex-4"])
+        evidence_id = recorded[0]["evidenceRefs"][0]["evidenceId"]
+        content = tasks_reconcile.get(self.url + f"/v1/executions/lane-test/evidence/{evidence_id}", token)["content"]
+        self.assertEqual(json.loads(json.loads(content)["description"]), reply["data"])
 
     def stop(self, manifest, active=False, session="test-session"):
         # Drive the registered Stop commands, not an unregistered helper. On the parent

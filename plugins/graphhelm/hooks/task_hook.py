@@ -210,13 +210,17 @@ def _reconcile(url: str, token: str, execution: str, signal: dict, deadline: flo
     return False
 
 
-def _run(payload: dict, event: str, deadline: float) -> None:
+def _run(payload: dict, event: str, deadline: float, outcome: dict | None = None) -> None:
     if payload.get("hook_event_name") != event:
         raise ValueError("wrong hook event")
     parent, task_id, title, teammate = _identity(payload)
-    bound = binding()
+    # #1181: the payload carries the session id and cwd that a title- or team.json-bound lane
+    # (every Claude Desktop lane) is identified by; without it only env-bound lanes ever emitted.
+    bound = binding(payload)
     if bound is None:
         return
+    if outcome is not None:
+        outcome["bound"] = True
     execution, token_file, url, origin, _node = bound
     phase = PHASES[event]
     host = "claude"
@@ -278,20 +282,25 @@ def main() -> int:
     event = "TaskCreated" if args.phase == "created" else "TaskCompleted"
     deadline = time.monotonic() + HOOK_BUDGET_SECONDS
     errors: list[Exception] = []
+    outcome = {"bound": False}
 
     def execute() -> None:
         try:
-            _run(hook_input(), event, deadline)
+            _run(hook_input(), event, deadline, outcome)
         except (OSError, ValueError, KeyError, RecursionError) as error:
             errors.append(error)
 
     worker = threading.Thread(target=execute, name="graphhelm-task-hook", daemon=True)
     worker.start()
     worker.join(timeout=max(0.0, deadline - time.monotonic()))
+    # #1181: a bound hook that did not deliver fails loud (exit 1, same line) so the host shows
+    # it; an unbound hook, or one refused before its binding was read, stays silent.
     if worker.is_alive():
         print(f"graphhelm-task-hook: {args.phase} unobserved (deadline exceeded)", file=sys.stderr)
-    elif errors:
+        return 1 if outcome["bound"] else 0
+    if errors:
         print(f"graphhelm-task-hook: {args.phase} unobserved ({type(errors[0]).__name__})", file=sys.stderr)
+        return 1 if outcome["bound"] else 0
     return 0
 
 

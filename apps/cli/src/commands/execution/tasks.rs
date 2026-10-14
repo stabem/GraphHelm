@@ -38,12 +38,25 @@ pub(crate) fn read(
     events: &Path,
     execution: &str,
     keyring: &SignalKeyring,
+    budget: &graphhelm_events::ReadBudget,
 ) -> Result<TasksView, Failure> {
+    // ONE budget for the whole read (the status read's, #750): the store walk, every sealed
+    // envelope opened and the fold are all inside it, so `status --tasks` cannot spend a second
+    // unbounded history read after the budgeted status fold (codexrev-2 on PR #1190). The checks
+    // read the clock (`check_now`), since envelope opens are not events the walk counts.
+    let exceeded = |exceeded: graphhelm_events::ReadBudgetExceeded| {
+        super::replay_failure(&graphhelm_events::ReplayError::BudgetExceeded {
+            walked: exceeded.walked,
+            limit_millis: exceeded.limit_millis,
+        })
+    };
     let store = event_store(events).map_err(|e| super::repository_failure(&e))?;
     let (scope, _, history) = resolve_stream(&store, Some(execution))?;
     if history.is_empty() {
         return Err(super::not_found());
     }
+    let walked = history.len() as u64;
+    budget.check_now(walked).map_err(exceeded)?;
     let opener = super::signal::open_sealer(keyring)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
@@ -98,8 +111,10 @@ pub(crate) fn read(
             Some(parsed) => records.push(parsed),
             None => rejected += 1,
         }
+        budget.check_now(walked).map_err(exceeded)?;
     }
     let tasks = fold_task_events(&records);
+    budget.check_now(walked).map_err(exceeded)?;
     Ok(TasksView {
         execution_id: execution.to_owned(),
         head_sequence: history.last().map_or(0, |event| event.sequence),

@@ -1875,7 +1875,10 @@ pub(super) async fn tasks(
     };
     let events = state.events.clone();
     let Some(result) = off_reactor(move || {
-        execution::tasks::read(&events, &execution_id, &keyring)
+        // The operator-facing read budget (#750), the same one `status` declares: the walk, the
+        // envelope opens and the fold share it.
+        let budget = crate::commands::status_read_budget();
+        execution::tasks::read(&events, &execution_id, &keyring, &budget)
             .map(|view| serde_json::to_value(view).expect("a view of serializable fold types"))
     })
     .await

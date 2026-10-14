@@ -599,6 +599,38 @@ fn enabled_graphhelm_plugin_gets_explicit_duplicate_cleanup_with_freshness_guard
     })).unwrap()).unwrap();
     let state = private_dir();
     let out = state.path().join("plan.json");
+    let local_settings = p.path().join(".claude/settings.local.json");
+    std::fs::write(
+        &local_settings,
+        br#"{"enabledPlugins":{"graphhelm@local":false}}"#,
+    )
+    .unwrap();
+    let (ok, disabled_preview) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{disabled_preview}");
+    assert!(
+        !disabled_preview["data"]["suggestedResolutions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "project/.mcp.json=use-plugin-mcp"),
+        "{disabled_preview}"
+    );
+    let (ok, disabled_resolution) = json(
+        setup(p.path(), h.path())
+            .args([
+                "--resolve",
+                "project/AGENTS.md=keep",
+                "--resolve",
+                "project/.mcp.json=use-plugin-mcp",
+            ])
+            .output()
+            .unwrap(),
+    );
+    assert!(
+        !ok,
+        "project-disabled plugin was selected: {disabled_resolution}"
+    );
+    std::fs::remove_file(&local_settings).unwrap();
     let (ok, preview) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
     assert!(ok, "{preview}");
     assert!(
@@ -676,6 +708,36 @@ fn enabled_graphhelm_plugin_gets_explicit_duplicate_cleanup_with_freshness_guard
         "/adoption/review_required"
     );
     std::fs::write(&settings_path, settings_original).unwrap();
+    std::fs::write(
+        &local_settings,
+        br#"{"enabledPlugins":{"graphhelm@local":false}}"#,
+    )
+    .unwrap();
+    let (ok, late_disable) = json(
+        setup(p.path(), h.path())
+            .args(["--state-root"])
+            .arg(state.path())
+            .args(["--apply"])
+            .arg(&out)
+            .args(["--accept"])
+            .arg(digest)
+            .output()
+            .unwrap(),
+    );
+    assert!(!ok, "late project disable was accepted: {late_disable}");
+    assert_eq!(
+        late_disable["diagnostics"][0]["path"],
+        "/adoption/review_required"
+    );
+    assert_eq!(
+        std::fs::read(h.path().join(".claude.json")).unwrap(),
+        user_before
+    );
+    assert_eq!(
+        std::fs::read(p.path().join(".mcp.json")).unwrap(),
+        project_before
+    );
+    std::fs::remove_file(&local_settings).unwrap();
     std::fs::remove_file(&plugin_mcp).unwrap();
     let (ok, removed) = json(
         setup(p.path(), h.path())

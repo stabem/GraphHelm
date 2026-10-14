@@ -209,8 +209,8 @@ def parse(argv):
     p.add_argument("--assigned-by", help="claimed: who ordered the work, as reported by this lane")
     p.add_argument("--lease-seconds", type=int,
                    help="claimed: how long the claim stays live without a heartbeat (300..86400, never below the heartbeat cooldown; #1193). "
-                        "Absent means the fold's default (1800) and the field is not sent, so a Runtime older "
-                        "than #1193 still admits the claim")
+                        "Default 1800 (#1223); a Runtime older than #1194 that refuses the field gets the claim again without "
+                        "the DEFAULT lease, never without one you gave")
     p.add_argument("--pr", type=int)
     p.add_argument("--head", help="the PR head sha the step is about")
     p.add_argument("--reviewer")
@@ -379,10 +379,13 @@ def document(args, now):
     elif args.kind == "claimed":
         need(args, "branch")
         doc.update(issue=args.issue, lane=args.lane, branch=args.branch)
-        if args.lease_seconds is not None:
-            if not 300 <= args.lease_seconds <= 86400:
-                sys.exit("task_record: --lease-seconds must be from 300 (the heartbeat cooldown) to 86400")
-            doc["leaseSeconds"] = args.lease_seconds
+        # #1223: the claim states its lease; the default is 1800 s, the fold's own default. Only the
+        # DEFAULT may be dropped for a Runtime older than #1194 (send_opening); a given lease never is.
+        args.lease_defaulted = args.lease_seconds is None
+        lease = 1800 if args.lease_defaulted else args.lease_seconds
+        if not 300 <= lease <= 86400:
+            sys.exit("task_record: --lease-seconds must be from 300 (the heartbeat cooldown) to 86400")
+        doc["leaseSeconds"] = lease
         if args.assigned_by is not None:
             if not args.assigned_by or len(args.assigned_by) > 128 or not args.assigned_by.isprintable() or args.assigned_by == args.lane:
                 sys.exit("task_record: --assigned-by must name someone other than the lane in 1-128 printable characters")
@@ -650,12 +653,17 @@ def send_opening(args, doc, now):
     code, signal_id, reply = send(args, doc, now)
     errors = {d.get("code") for d in reply.get("diagnostics", []) if d.get("severity") == "error"}
     words = [key for key in ("title", "summary") if key in doc]
+    # #1223: a Runtime built before #1194 refuses `leaseSeconds` too. Only the DEFAULT lease joins the
+    # retry; a lease the lane asked for is never silently dropped.
+    if getattr(args, "lease_defaulted", False) and "leaseSeconds" in doc:
+        words.append("leaseSeconds")
     if code == 1 and errors == {"GHCLI003_SIGNAL_INVALID"} and words:
         # #498: a Runtime built before #486 refuses these keys. The step itself matters more than
         # its words, so it is sent again without them, loudly: an old Runtime must be noticed.
         print(f"task_record: warning: the Runtime refused {signal_id} with GHCLI003. It may predate task "
-              f"titles (#486), so the step is sent again without title/summary; if that lands, restart the "
-              f"Runtime on a current build. GHCLI003 also covers other defects, so a second refusal is reported as is.",
+              f"titles (#486) or claim leases (#1194), so the step is sent again without {'/'.join(words)}; if "
+              f"that lands, restart the Runtime on a current build. GHCLI003 also covers other defects, so a "
+              f"second refusal is reported as is.",
               file=sys.stderr)
         code, signal_id, reply = send(args, {k: v for k, v in doc.items() if k not in words}, now)
     return code, signal_id, reply

@@ -258,7 +258,7 @@ records"). From a lane worktree the token path must be absolute:
 
 | When | Command |
 |---|---|
-| Start a task | `$T --issue N claimed --branch B --journeys <contractId>` (`--assigned-by <who>` when the order came from someone; `--lease-seconds` to change the 1800 s claim lease, #1193) |
+| Start a task | `$T --issue N claimed --branch B --journeys <contractId>` (`--assigned-by <who>` when the order came from someone; the claim states a 1800 s lease, `--lease-seconds` to change it, #1193, #1223) |
 | Right after the claim, before code | `$T --issue N planned --summary "<the plan in one line>"` (paths from git, or `--paths <scope...>`) |
 | Give up a pre-PR claim (yours; the Stop reconciler releases lapsed ones as `graphhelm`) | `$T --issue N released --claim-sequence <seq> --release-reason "<why>"` |
 | Say the claim is alive (the Stop hook does this for you on every turn end; one per 300 s, the Runtime decides) | `$T --issue N heartbeat` |

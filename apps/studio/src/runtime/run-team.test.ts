@@ -61,6 +61,20 @@ describe("issue 86 run team projection", () => {
     expect(model.rejected).toBe(0);
   });
 
+  it("a session end signed as the lane still ends the member it names", async () => {
+    // #1184: the hook signs session ends as the lane, not as {host}-session-{id}; the member is
+    // found through the host and session id the signal carries. On the parent endedAt stays null.
+    const fixture = log();
+    await fixture.add("run_team_joined", claude("a1"), { actorId: claude("a1"), host: "claude", sessionId: "a1" });
+    await fixture.add("run_team_joined", codex("c1"), { actorId: codex("c1"), host: "codex", sessionId: "c1" });
+    await fixture.add("agent_session_ended", "gh-claude-7", { protocol: "graphhelm-session-v1", phase: "ended",
+      host: "claude", sessionId: "a1", lane: "gh-claude-7", verified: false });
+    const model = await fixture.read();
+    expect(model.members.find((member) => member.actorId === claude("a1"))!.endedAt).toBe("2026-10-01T12:03:00Z");
+    expect(model.members.find((member) => member.actorId === codex("c1"))!.endedAt).toBeNull();
+    expect(model.rejected).toBe(0);
+  });
+
   it("C3 excludes wrong-run evidence and forged recipient receipts without inventing acknowledgement", async () => {
     const fixture = log();
     await fixture.add("run_team_joined", codex("c1"), { actorId: codex("c1"), host: "codex", sessionId: "c1" });

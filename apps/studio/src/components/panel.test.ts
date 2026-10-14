@@ -135,14 +135,7 @@ it("keeps unread question envelopes pending until their evidence read settles", 
 it("reads each event once when the caller rebuilds the unchanged array", async () => {
   resetPanelCaches();
   const candidate = event(5, "signal_recorded", { kind: "operator_note", signalId: "sig-q" });
-  let evidenceReads = 0;
-  const refs = new Proxy(["question"], {
-    get(target, property, receiver) {
-      if (property === "0") evidenceReads += 1;
-      return Reflect.get(target, property, receiver);
-    },
-  });
-  Object.defineProperty(candidate, "evidenceRefs", { get: () => refs });
+  candidate.evidenceRefs = ["question"];
   const stableEvents = [candidate];
   let renders = 0;
   const open = vi.fn(async (_run: string, id: string): Promise<EvidenceContent> => ({
@@ -154,7 +147,7 @@ it("reads each event once when the caller rebuilds the unchanged array", async (
   }));
   const { result } = renderHook(() => useEnvelopes(renders++ < 4 ? [candidate] : stableEvents, "run", open));
   await waitFor(() => expect(result.current[5]?.text).toBe("Question"));
-  expect(evidenceReads).toBe(1);
+  expect(open).toHaveBeenCalledTimes(1);
 });
 
 it("settles cached envelopes after a poll adds another carrier", async () => {
@@ -172,6 +165,47 @@ it("settles cached envelopes after a poll adds another carrier", async () => {
   rerender({ rows: [first, next] });
   await waitFor(() => expect(result.current[6]?.text).toBe("unrelated"));
   expect(result.current.__pendingEnvelopeSequences).toEqual([]);
+});
+
+it("publishes warm envelopes once per bounded page with complete contents", async () => {
+  resetPanelCaches();
+  const rows = Array.from({ length: 500 }, (_, index) => {
+    const row = event(index + 1, "signal_recorded", { kind: "operator_note", signalId: `sig-${index + 1}` });
+    row.evidenceRefs = [`evidence-${index + 1}`];
+    return row;
+  });
+  const open = vi.fn(async (_run: string, id: string): Promise<EvidenceContent> => ({
+    evidenceId: id,
+    content: JSON.stringify({ type: "operator_note", description: `report ${id}`, to: `agent-${id}` }),
+    contentSha256: "hash", mediaType: "application/json", sensitivity: "confidential",
+  }));
+  const first = renderHook(() => useEnvelopes(rows, "run", open));
+  await waitFor(() => expect(first.result.current.__pendingEnvelopeSequences).toEqual([]));
+  first.unmount();
+
+  let submissions = 0;
+  const realUseState = React.useState;
+  vi.spyOn(React, "useState").mockImplementation(((initial: unknown) => {
+    const [state, setState] = realUseState(initial);
+    const setter = (next: unknown) => {
+      submissions += 1;
+      setState(next as never);
+    };
+    return [state, setter];
+  }) as typeof React.useState);
+  try {
+    const second = renderHook(() => useEnvelopes(rows, "run", open));
+    await waitFor(() => expect(second.result.current.__pendingEnvelopeSequences).toEqual([]));
+    expect(submissions).toBeLessThanOrEqual(1 + Math.ceil(rows.length / 50));
+    expect(open).toHaveBeenCalledTimes(500);
+    for (const row of rows) {
+      expect(second.result.current[row.sequence]).toEqual(expect.objectContaining({
+        to: `agent-evidence-${row.sequence}`, text: `report evidence-${row.sequence}`,
+      }));
+    }
+  } finally {
+    vi.mocked(React.useState).mockRestore();
+  }
 });
 
 it("does not reuse a previously opened envelope when execution sequence numbers repeat", async () => {

@@ -45,6 +45,8 @@ import type {
   WireActorType,
   LiveAct,
 } from "./types";
+import { RUNTIME_UNREACHABLE_HEADER } from "./proxy-signal";
+import { tasksReply, type TasksReply } from "./tasks-route";
 
 /** The actor id the human interface records. */
 export const OPERATOR_ACTOR: Actor = { id: "studio-operator", type: "owner" };
@@ -58,6 +60,10 @@ export const OPERATOR_ACTOR: Actor = { id: "studio-operator", type: "owner" };
  * stays with the adapter.
  */
 export const WEBMCP_ACTOR: Actor = { id: "studio-webmcp-adapter", type: "agent" };
+
+export { RUNTIME_UNREACHABLE_HEADER };
+/** #1170: the diagnostic code for a request the Runtime never received. */
+export const RUNTIME_UNREACHABLE = "GHSTUDIO_RUNTIME_UNREACHABLE";
 
 /** The largest event page the Studio will ask for. The API's own ceiling is 1000; this is the
  * Studio's smaller working bound, so a page always fits one render pass. */
@@ -506,6 +512,7 @@ export class RuntimeClient {
   #evidenceQueues = new Map<string, EvidenceReadQueue>();
   /** Set once this Runtime has refused the route listing as fixture-only. See `listRoutes`. */
   #fixtureOnly = false;
+  #seenActorsUnsupported = false;
 
   constructor(token: string, options: { baseUrl?: string; fetch?: typeof fetch } = {}) {
     this.#token = token;
@@ -579,6 +586,13 @@ export class RuntimeClient {
       } catch (error) {
         if (error instanceof RequestDeadlineError || deadlineReached) throw new RequestDeadlineError();
         if (error instanceof DisconnectedError) throw error;
+        // #1170: the dev proxy marks a refused connection; that request was never delivered.
+        if (response.headers?.get?.(RUNTIME_UNREACHABLE_HEADER)) {
+          const message = "The Runtime is not answering, so nothing was sent. Start graphhelm serve, then try again.";
+          throw new RuntimeError(message, response.status, [
+            { code: RUNTIME_UNREACHABLE, severity: "error", message, path: "/", source: "studio" },
+          ]);
+        }
         throw new RuntimeError(
           response.status === 401
             ? "The bearer token was refused."
@@ -692,13 +706,24 @@ export class RuntimeClient {
     });
   }
 
-  async getStatus(executionId: string): Promise<ExecutionStatus> {
+  async getStatus(executionId: string, includeSeenActors = false): Promise<ExecutionStatus> {
     const id = checkedId(executionId, "executionId");
-    return this.#request<ExecutionStatus>({
+    const status = await this.#request<ExecutionStatus>({
       method: "GET",
       path: `/v1/executions/${encodeURIComponent(id)}`,
       timeoutMs: RUNTIME_READ_TIMEOUT_MS,
     });
+    if (!includeSeenActors || this.#seenActorsUnsupported) return status;
+    try {
+      const seen = await this.#request<Pick<ExecutionStatus, "seenActors" | "seenActorAgesMs">>({
+        method: "GET", path: "/v1/seen-actors", timeoutMs: RUNTIME_READ_TIMEOUT_MS,
+      });
+      return { ...status, ...seen };
+    } catch (error) {
+      if (error instanceof RuntimeError && error.httpStatus === 404) this.#seenActorsUnsupported = true;
+      // Older Runtimes do not expose process-local liveness. Status remains readable.
+      return status;
+    }
   }
 
   async listNativeChats(options: { cursor?: string } = {}): Promise<NativeChatPage> {
@@ -789,6 +814,39 @@ export class RuntimeClient {
         reason instanceof RuntimeError &&
         reason.httpStatus === 404 &&
         !reason.diagnostics.some((diagnostic) => diagnostic.code === EXECUTION_NOT_FOUND)
+      ) {
+        return null;
+      }
+      throw reason;
+    }
+  }
+
+  /**
+   * #1192: the task projection the Runtime folds (`GET /v1/executions/{id}/tasks`, #1149). `null`
+   * means the Runtime predates the route: a 404 that does not carry `GHCLI028_EXECUTION_NOT_FOUND`
+   * (an older binary's `serve.not_found`), or a 401 from this route alone (an older auth layer
+   * that knows no such read). A 404 naming an unknown execution, and every other failure, still
+   * throws, so a broken store is never read as an old server. A reply that is not the known shape
+   * is an error too: the views must not draw a guess.
+   */
+  async getTasks(executionId: string): Promise<TasksReply | null> {
+    const id = checkedId(executionId, "executionId");
+    try {
+      const data = await this.#request<unknown>({
+        method: "GET",
+        path: `/v1/executions/${encodeURIComponent(id)}/tasks`,
+      });
+      const reply = tasksReply(data);
+      if (reply === null) {
+        throw new RuntimeError("The tasks route answered with a shape this Studio does not know.", 200, []);
+      }
+      return reply;
+    } catch (reason) {
+      if (
+        reason instanceof RuntimeError &&
+        ((reason.httpStatus === 404 &&
+          !reason.diagnostics.some((diagnostic) => diagnostic.code === EXECUTION_NOT_FOUND)) ||
+          reason.httpStatus === 401)
       ) {
         return null;
       }
@@ -958,7 +1016,9 @@ export class RuntimeClient {
       // A 4xx response proves the Runtime rejected the request. Transport failures, unreadable
       // responses and server errors may arrive after the mutation committed, so they stay
       // ambiguous even when a later read observes head movement.
-      refused = error.httpStatus >= 400 && error.httpStatus < 500;
+      refused =
+        (error.httpStatus >= 400 && error.httpStatus < 500) ||
+        error.diagnostics.some((diagnostic) => diagnostic.code === RUNTIME_UNREACHABLE);
       postAmbiguous = !refused;
       diagnostics = error.diagnostics.length > 0
         ? error.diagnostics
@@ -1181,7 +1241,9 @@ export class RuntimeClient {
     } catch (error) {
       if (error instanceof DisconnectedError) throw error;
       if (!(error instanceof RuntimeError)) throw error;
-      refused = error.httpStatus >= 400 && error.httpStatus < 500;
+      refused =
+        (error.httpStatus >= 400 && error.httpStatus < 500) ||
+        error.diagnostics.some((diagnostic) => diagnostic.code === RUNTIME_UNREACHABLE);
       diagnostics = error.diagnostics.length > 0
         ? error.diagnostics
         : [{ code: "", severity: "error", message: error.message, path: "/", source: "studio" }];

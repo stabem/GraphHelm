@@ -34,6 +34,7 @@ const KEEL_CARD_SCHEMA: &str = include_str!(
 /// A card is a few hundred bytes (`keel.yaml` `card.maxCardBytes`); this only stops an unbounded
 /// read. A card between the two is read and reported as `keel.card.too_large`.
 const MAX_CARD_READ_BYTES: u64 = 1024 * 1024;
+const MAX_ROUTE_BINDING_BYTES: u64 = 1024 * 1024;
 
 const INPUT_INVALID: &str = crate::error_codes::GHCLI031_KEEL_CHECK_INPUT;
 
@@ -208,6 +209,17 @@ pub(super) struct JourneyRecords {
     pub(super) key_id: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RouteBinding {
+    expected_head: String,
+    execution: String,
+    task: String,
+    node: String,
+    implement_draft: graphhelm_protocols::GraphDraft,
+    review_draft: graphhelm_protocols::GraphDraft,
+}
+
 /// `graphhelm keel check --diff <base>..<head> [--card <card.json>] [--repo <dir>]
 /// [--prove-new-tests]` (#1330, #1333).
 ///
@@ -220,6 +232,7 @@ pub(super) fn check(
     card_path: Option<&Path>,
     prove: Option<ProveArgs>,
     records: Option<JourneyRecords>,
+    route_proposal: Option<&Path>,
 ) -> Outcome {
     if range.starts_with('-') || !range.contains("..") {
         return input_error("--diff takes a git range `<base>..<head>`", "/diff");
@@ -251,10 +264,36 @@ pub(super) fn check(
     }
     let base = if base.is_empty() { "HEAD" } else { base };
     let head = if head.is_empty() { "HEAD" } else { head };
+    // Pin both revisions before evaluating any part of the report. The later signal must cite
+    // exactly the commit whose diff and journey captures this check evaluated.
+    let resolve = |revision: &str| match graphhelm_process::command("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", "--end-of-options"])
+        .arg(format!("{revision}^{{commit}}"))
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        }
+        Ok(_) => Err(input_error(
+            "git could not resolve the range revision",
+            "/diff",
+        )),
+        Err(_) => Err(input_error("git did not start", "/repo")),
+    };
+    let base = match resolve(base) {
+        Ok(base) => base,
+        Err(outcome) => return outcome,
+    };
+    let head = match resolve(head) {
+        Ok(head) => head,
+        Err(outcome) => return outcome,
+    };
     let merge_base = match graphhelm_process::command("git")
         .arg("-C")
         .arg(repo)
-        .args(["merge-base", base, head])
+        .args(["merge-base", &base, &head])
         .output()
     {
         Ok(output) if output.status.success() => {
@@ -334,7 +373,7 @@ pub(super) fn check(
             .extend(journey_reader_findings(&journeys, &changed));
     }
     if let Some((card, _)) = card.as_ref().filter(|(card, _)| !card.journeys.is_empty()) {
-        match journey_findings(repo, head, card, &journeys, records.as_ref(), &changed) {
+        match journey_findings(repo, &head, card, &journeys, records.as_ref(), &changed) {
             Ok(findings) => report.findings.extend(findings),
             Err(outcome) => return *outcome,
         }
@@ -350,7 +389,7 @@ pub(super) fn check(
             let options = ProveOptions {
                 repo: repo.to_path_buf(),
                 base: merge_base.clone(),
-                head: head.to_owned(),
+                head: head.clone(),
                 target_dir,
                 scratch_root,
                 timeout: Duration::from_secs(args.timeout_secs),
@@ -380,27 +419,6 @@ pub(super) fn check(
         })
         .collect();
     let refused = report.refused;
-    let head = match graphhelm_process::command("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["rev-parse", "--verify", "--end-of-options"])
-        .arg(format!("{head}^{{commit}}"))
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout).trim().to_owned()
-        }
-        Ok(output) => {
-            return input_error(
-                format!(
-                    "git could not resolve the range head: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ),
-                "/diff",
-            );
-        }
-        Err(error) => return input_error(format!("git did not start: {error}"), "/repo"),
-    };
     let recommendation = if refused {
         serde_json::json!({
             "step": "implement",
@@ -428,7 +446,7 @@ pub(super) fn check(
             Err(error) => return Outcome::internal(COMMAND, error.to_string()),
         }
     }
-    Outcome {
+    let mut outcome = Outcome {
         output: CommandOutput {
             ok: !refused,
             command: COMMAND,
@@ -436,7 +454,121 @@ pub(super) fn check(
             diagnostics,
         },
         exit_code: if refused { 2 } else { 0 },
+    };
+    if let Some(binding_path) = route_proposal {
+        let Some(records) = records.as_ref() else {
+            return input_error(
+                "--route-proposal requires sealed execution records",
+                "/routeProposal",
+            );
+        };
+        match submit_route(binding_path, records, &head, &report.findings, refused) {
+            Ok(recorded) => {
+                if let Some(data) = outcome.output.data.as_mut() {
+                    data["routeProposal"] = recorded;
+                }
+            }
+            Err(error) => {
+                outcome.output.ok = false;
+                outcome.exit_code = 3;
+                outcome.output.diagnostics.push(error);
+            }
+        }
     }
+    outcome
+}
+
+fn submit_route(
+    path: &Path,
+    records: &JourneyRecords,
+    head: &str,
+    findings: &[Finding],
+    refused: bool,
+) -> Result<serde_json::Value, Diagnostic> {
+    let invalid =
+        |message: &str, pointer: &str| Diagnostic::error(INPUT_INVALID, message, pointer, "keel");
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(|_| invalid("route binding cannot be read", "/routeProposal"))?
+        .take(MAX_ROUTE_BINDING_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| invalid("route binding cannot be read", "/routeProposal"))?;
+    if bytes.len() as u64 > MAX_ROUTE_BINDING_BYTES {
+        return Err(invalid("route binding exceeds 1 MiB", "/routeProposal"));
+    }
+    let binding: RouteBinding = serde_json::from_slice(&bytes)
+        .map_err(|_| invalid("route binding is invalid", "/routeProposal"))?;
+    if binding.expected_head != head || binding.expected_head.len() != 40 {
+        return Err(invalid(
+            "route binding head differs from checked commit",
+            "/routeProposal/expectedHead",
+        ));
+    }
+    if binding.execution != records.execution
+        || binding.task.trim().is_empty()
+        || binding.node.trim().is_empty()
+    {
+        return Err(invalid(
+            "route binding identity differs from selected execution",
+            "/routeProposal",
+        ));
+    }
+    let store = super::event_store(&records.events)
+        .map_err(|_| invalid("execution store cannot be read", "/events"))?;
+    let (_, _, projection) = super::execution::load_projection(&store, Some(&records.execution))
+        .map_err(|_| invalid("selected execution cannot be read", "/execution"))?;
+    let known_node = projection.node_states.contains_key(&binding.node)
+        || projection
+            .declared_form
+            .as_ref()
+            .is_some_and(|form| form.node_ids.iter().any(|id| id.as_str() == binding.node));
+    if !known_node {
+        return Err(invalid(
+            "route source node is not in the selected execution",
+            "/routeProposal/node",
+        ));
+    }
+    let draft = if refused {
+        binding.implement_draft
+    } else {
+        binding.review_draft
+    };
+    let mut evidence = vec![
+        format!("head:{head}"),
+        format!("task:{}", binding.task),
+        format!("node:{}", binding.node),
+    ];
+    for finding in findings {
+        evidence.push(format!("finding:{}", finding.rule));
+        if let Some(path) = &finding.path {
+            evidence.push(format!("path:{path}"));
+        }
+    }
+    let signal = serde_json::json!({
+        "id": super::execution::idempotency_key("keel-route-signal").as_str(),
+        "type": if refused { "keel.blocked" } else { "keel.passed" },
+        "source": {"type": "node", "id": binding.node},
+        "severity": if refused { "high" } else { "low" },
+        "description": format!("Keel check verdict for task {} at {head}", binding.task),
+        "evidence": evidence,
+        "emittedAt": chrono::Utc::now().to_rfc3339(),
+        "proposal": draft,
+    });
+    let keyring = super::execution::signal::SignalKeyring {
+        directory: records.keyring.clone(),
+        key_id: records.key_id.clone(),
+    };
+    super::execution::signal::execute(
+        &records.events,
+        Some(&records.execution),
+        &serde_json::to_vec(&signal).expect("JSON value serializes"),
+        None,
+        super::execution::owner_actor(),
+        super::execution::idempotency_key("keel-route-recorded"),
+        Some(&keyring),
+        &[],
+    )
+    .map_err(|failure| Diagnostic::error(failure.code, failure.message, failure.pointer, "keel"))
 }
 
 /// Advice about the card shape that fits this diff. It records an obligation, never proof that

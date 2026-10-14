@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 44] = [
+const TOOLS: [ToolSpec; 47] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start). Minimal \
@@ -96,6 +96,15 @@ const TOOLS: [ToolSpec; 44] = [
         schema: optional_execution_schema,
     },
     ToolSpec {
+        name: "tasks",
+        description: "Read the task projection of a run (GET /v1/executions/{executionId}/tasks): \
+                      every task slice with its lit delivery step (plan, critic, implement, \
+                      review, merge, merged), lane, issue, PR, head, open BLOCK, claim sequence \
+                      and last heartbeat, folded by the Runtime from the run's verified task.* \
+                      records. Identical on CLI (execution status --tasks), HTTP and MCP. Read-only.",
+        schema: execution_only_schema,
+    },
+    ToolSpec {
         name: "keel_plan",
         description: "Plan one task under the shipped keel.yaml (POST /v1/keel/plan; \
                       `graphhelm keel plan`): classifies its paths (invariant class, user-visible \
@@ -130,6 +139,20 @@ const TOOLS: [ToolSpec; 44] = [
                       journey_approve would accept it, and its screens, edges and paths. \
                       Identical on CLI, HTTP and MCP. Read-only.",
         schema: no_arguments_schema,
+    },
+    ToolSpec {
+        name: "journey_draft",
+        description: "Write a journey-flow draft through the Runtime (POST \
+                      /v1/journey-flows/{id}/draft). The Runtime records the authenticated scoped \
+                      agent as writer; unscoped and owner-only credentials are refused.",
+        schema: journey_draft_schema,
+    },
+    ToolSpec {
+        name: "journey_review",
+        description: "Review a journey-flow draft through the Runtime (POST \
+                      /v1/journey-flows/{id}/review). The Runtime requires a different scoped \
+                      agent from every writer of the current digest.",
+        schema: journey_review_schema,
     },
     ToolSpec {
         name: "journey_approve",
@@ -532,6 +555,26 @@ fn optional_execution_schema() -> serde_json::Value {
 
 fn journey_approve_schema() -> serde_json::Value {
     object_schema(serde_json::json!({"id": {"type": "string"}}), &["id"])
+}
+
+fn journey_draft_schema() -> serde_json::Value {
+    mutating_schema(
+        serde_json::json!({
+            "id": {"type": "string", "minLength": 1},
+            "yaml": {"type": "string", "minLength": 1}
+        }),
+        &["id", "yaml"],
+    )
+}
+
+fn journey_review_schema() -> serde_json::Value {
+    mutating_schema(
+        serde_json::json!({
+            "id": {"type": "string", "minLength": 1},
+            "checked": {"type": "string"}
+        }),
+        &["id"],
+    )
 }
 
 fn journey_open_schema() -> serde_json::Value {
@@ -1668,6 +1711,15 @@ pub(crate) fn call(
             None,
             None,
         )),
+        "tasks" => require(arguments, "executionId").map(|id| {
+            api.request(
+                "GET",
+                &url::segment_path(&["v1", "executions", id, "tasks"]),
+                None,
+                None,
+                None,
+            )
+        }),
         "journeys" => {
             let path = match str_arg(arguments, "executionId") {
                 Some(id) => url::segment_path(&["v1", "executions", id, "journeys"]),
@@ -1682,6 +1734,29 @@ pub(crate) fn call(
             None,
             None,
         )),
+        "journey_draft" => require(arguments, "id").and_then(|id| {
+            let yaml = require(arguments, "yaml")?;
+            Ok(api.request(
+                "POST",
+                &url::segment_path(&["v1", "journey-flows", id, "draft"]),
+                Some(&serde_json::json!({"yaml": yaml})),
+                None,
+                arguments.get("ifMatch").and_then(serde_json::Value::as_u64),
+            ))
+        }),
+        "journey_review" => require(arguments, "id").map(|id| {
+            let mut body = serde_json::json!({});
+            if let Some(checked) = arguments.get("checked").and_then(serde_json::Value::as_str) {
+                body["checked"] = checked.into();
+            }
+            api.request(
+                "POST",
+                &url::segment_path(&["v1", "journey-flows", id, "review"]),
+                Some(&body),
+                None,
+                arguments.get("ifMatch").and_then(serde_json::Value::as_u64),
+            )
+        }),
         // #353: approving a journey is the owner's decision. An agent-typed session (every lane
         // runs as one) is refused before any request, whatever credential the session holds.
         "journey_approve" if api.actor_type != "owner" => Err(HandlerOutcome::Error {

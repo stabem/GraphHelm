@@ -84,13 +84,8 @@ fn = "capacity_class_errors_park_the_node_and_only_them"
 suite = "workspace tests"
 assert_fingerprint = "NeedsCapacity"
 
-[[clause]]
-id = "full-gate-green"
-text = "The full local gate is green, both PostgreSQL locale passes included."
-rationale = "Proven by the gate run itself, not by one test: the grounding check pins that the gate script still ends in the GREEN verdict line and still carries both PostgreSQL passes."
-gate = true
-
-# M08 Task 0b: the seventh clause, added by OWNER DECISION on 2026-08-17 and in that order
+# M08 Task 0b: the last clause (the seventh until #1203 retired `full-gate-green` with the gate
+# runner it alone proved), added by OWNER DECISION on 2026-08-17 and in that order
 # — the promise entered §8 first, these bindings second, the grounding count last. M07
 # produced this property and M07's map REFUSED to anchor it, correctly: a clause added at
 # the end of a milestone by its own author is a promise nobody made. Every prover below

@@ -5,7 +5,6 @@
 pub mod nodes;
 pub mod policy;
 pub mod ranking;
-pub mod red;
 pub mod reuse;
 
 use std::collections::BTreeMap;

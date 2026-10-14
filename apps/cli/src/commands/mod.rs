@@ -6,7 +6,6 @@ mod draft;
 mod events;
 mod execution;
 mod extension;
-mod gate;
 mod gateway;
 mod hash;
 mod init;
@@ -53,9 +52,9 @@ use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator};
 
 use crate::args::{
     CodeIndexCommand, CredentialCommand, DevelopmentCommand, DraftCommand, EventsCommand,
-    ExecutionCommand, ExtensionCommand, GateCommand, GatewayCommand, GraphCommand, KeelCommand,
-    KeelTestCommand, KeyringCommand, QualityCommand, RouteCommand, SchemaCommand, SynthesizeArgs,
-    TasksCommand, ToolCommand, TopLevel,
+    ExecutionCommand, ExtensionCommand, GatewayCommand, GraphCommand, KeelCommand, KeelTestCommand,
+    KeyringCommand, QualityCommand, RouteCommand, SchemaCommand, SynthesizeArgs, TasksCommand,
+    ToolCommand, TopLevel,
 };
 use crate::output::Outcome;
 
@@ -317,11 +316,22 @@ pub fn run(command: TopLevel) -> Outcome {
                 execution,
                 html,
                 file,
+                tasks,
+                keyring,
+                key_id,
             } => execution::status::run(
                 &events,
                 execution.as_deref(),
                 html.as_deref(),
                 file.as_deref(),
+                tasks
+                    .then(|| keyring.zip(key_id))
+                    .flatten()
+                    .map(|(directory, key_id)| execution::signal::SignalKeyring {
+                        directory,
+                        key_id,
+                    })
+                    .as_ref(),
             ),
             ExecutionCommand::Briefing {
                 events,
@@ -677,6 +687,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 execution,
                 keyring,
                 key_id,
+                route_proposal,
             } => keel::check(
                 &repo,
                 &diff,
@@ -692,6 +703,7 @@ pub fn run(command: TopLevel) -> Outcome {
                     keyring: keyring.unwrap_or_default(),
                     key_id: key_id.unwrap_or_default(),
                 }),
+                route_proposal.as_deref(),
             ),
             KeelCommand::Plan {
                 task,
@@ -723,9 +735,6 @@ pub fn run(command: TopLevel) -> Outcome {
                 execution,
                 gate,
             } => quality::run(&events, execution.as_deref(), &gate),
-        },
-        TopLevel::Gate(args) => match args.command {
-            GateCommand::ClassifyRed(args) => gate::classify_red::run(&args),
         },
     }
 }
@@ -837,6 +846,15 @@ pub(super) fn status_read_budget() -> graphhelm_events::ReadBudget {
     graphhelm_events::ReadBudget::starting_now(
         Arc::new(SystemClock),
         chrono::Duration::milliseconds(graphhelm_events::STATUS_READ_BUDGET_MILLIS),
+    )
+}
+
+/// #1202: the task projection route's own budget (`TASKS_READ_BUDGET_MILLIS`); its cold read
+/// opens every envelope once, which the status budget was never sized for.
+pub(super) fn tasks_read_budget() -> graphhelm_events::ReadBudget {
+    graphhelm_events::ReadBudget::starting_now(
+        Arc::new(SystemClock),
+        chrono::Duration::milliseconds(graphhelm_events::TASKS_READ_BUDGET_MILLIS),
     )
 }
 

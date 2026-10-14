@@ -5,6 +5,8 @@ with replyTo. Re-entry and unreadable state allow Stop without acknowledging not
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,7 +16,9 @@ import sys
 import time
 from urllib.parse import quote
 
-from session_hook import _lane_actor, binding, hook_input, request, token_from_file, start_lane_waiter, ID
+import urllib.error
+
+from session_hook import _lane_actor, binding, hook_input, request, token_from_file, start_lane_waiter, state_path, ID
 
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -86,6 +90,41 @@ def pending(payload: dict | None = None) -> bool:
     raise ValueError("note scan exceeded bound")
 
 
+def record_reconciled(bound: tuple, lane: str, data: dict, memory: Path | None = None) -> None:
+    """#1181: the reconciler's reply is a record, not noise. One `tasks.reconciled` signal by the
+    lane per distinct reply: the key is the reply's content. #1195: the body carries a fresh
+    `emittedAt`, so re-sending an unchanged reply under the same key earns a 409 on every quiet
+    Stop; `memory` (a file beside the session's hook state) keeps the digest of the last reply this
+    session recorded, and an unchanged reply costs no request. A 409 for a key the Runtime already
+    holds is "recorded" and is remembered the same way."""
+    execution, token_file, url, _origin, _node = bound
+    content = json.dumps(data, sort_keys=True, separators=(",", ":"))
+    if len(content) > 4096:
+        raise ValueError("reconcile reply too large to record")
+    digest = hashlib.sha256(f"{execution}\0{lane}\0{content}".encode()).hexdigest()[:24]
+    if memory is not None:
+        try:
+            if memory.read_text(encoding="ascii").strip() == digest:
+                return
+        except (OSError, ValueError):
+            pass
+    signal_id = f"tasks-reconciled-{digest}"
+    signal = {"id": signal_id, "source": {"type": "tool", "id": lane}, "type": "tasks.reconciled",
+              "severity": "low", "description": content, "evidence": [execution],
+              "emittedAt": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    try:
+        request(f"{url}/v1/executions/{quote(execution, safe='')}/signal", token_from_file(token_file),
+                "POST", {"signal": signal},
+                {"X-GraphHelm-Actor": lane, "X-GraphHelm-Actor-Type": "agent", "Idempotency-Key": signal_id},
+                timeout=2.0)
+    except urllib.error.HTTPError as error:
+        if error.code != 409:
+            raise
+    if memory is not None:
+        memory.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        memory.write_text(digest, encoding="ascii")
+
+
 def main() -> int:
     if sys.argv[1:] == ["--scan"]:
         try:
@@ -113,10 +152,18 @@ def main() -> int:
                 match = re.fullmatch(r"(?:git@github\.com:|https://github\.com/)([^/\s]+/[^/\s]+?)(?:\.git)?", remote)
                 if match is not None:
                     cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
-                    subprocess.run([cli, "tasks", "reconcile", "--execution", execution,
-                                    "--token-file", token_file, "--url", url, "--lane", lane,
-                                    "--repo", match.group(1)],
-                                   capture_output=True, timeout=5, creationflags=NO_WINDOW)
+                    result = subprocess.run([cli, "tasks", "reconcile", "--execution", execution,
+                                             "--token-file", token_file, "--url", url, "--lane", lane,
+                                             "--repo", match.group(1)],
+                                            capture_output=True, timeout=5, creationflags=NO_WINDOW)
+                    if result.returncode == 0:
+                        reply = json.loads(result.stdout or b"{}")
+                        data = reply.get("data") if isinstance(reply, dict) and reply.get("ok") is True else None
+                        if isinstance(data, dict):
+                            session = payload.get("session_id")
+                            memory = (state_path(execution, session, host, bound[3]).with_suffix(".reconciled")
+                                      if isinstance(session, str) and ID.fullmatch(session) else None)
+                            record_reconciled(bound, lane, data, memory)
     except (OSError, ValueError, subprocess.SubprocessError):
         pass
     # The host sets this on the continuation caused by a Stop block. One reminder

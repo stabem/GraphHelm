@@ -49,9 +49,6 @@ pub enum TopLevel {
     WakeWait(WakeWaitArgs),
     /// Quality-gate operations: the thymus ritual and the certification stamp.
     Quality(QualityArgs),
-    /// Operations beside the CI gate's own run (`ci/gate.ps1`). Nothing here changes a verdict:
-    /// the gate stays deterministic, and these commands only read what it left behind.
-    Gate(GateArgs),
     /// First run in a project (#1062): provisions `<project>/.graphhelm/` — the events
     /// directory, the bearer token `serve` will read, the sealing key and keyring the Studio's
     /// message box needs — registers the MCP server with the chat harnesses it detects, ignores
@@ -125,6 +122,22 @@ pub enum TasksCommand {
         lane: Option<String>,
         #[arg(long, default_value = "stabem/GraphHelm")]
         repo: String,
+    },
+    /// Write a lane's credential (#1148): `<events>.agent.<lane>.token` beside the owner token,
+    /// derived from that token, the execution and the lane. Run by the owner or the orchestrator;
+    /// the Runtime verifies it by recomputation, so no restart is needed.
+    Credential {
+        /// The lane: its `X-GraphHelm-Actor` and the `lane` its task records name.
+        #[arg(long)]
+        lane: String,
+        #[arg(long, default_value = "gh-team")]
+        execution: String,
+        /// The Runtime's OWNER token (`<events>.token`), never the agent session token.
+        #[arg(long)]
+        token_file: PathBuf,
+        /// Where to write; default: `<events>.agent.<lane>.token` beside `--token-file`.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
 }
 
@@ -697,6 +710,9 @@ pub enum KeelCommand {
         keyring: Option<PathBuf>,
         #[arg(long, requires = "events")]
         key_id: Option<String>,
+        /// Explicit graph-specific drafts to propose after a valid check; requires sealed records.
+        #[arg(long, requires_all = ["events", "execution", "keyring", "key_id"])]
+        route_proposal: Option<PathBuf>,
     },
     /// Plan one task (#382 phase B): classify the paths it names under the shipped `keel.yaml`
     /// (invariant class, user-visible screen, code, docs), and print the `graphhelm-task-plan-v1`
@@ -825,57 +841,6 @@ pub struct AdoptionRestoreArgs {
     pub accept: Option<String>,
     #[arg(long, conflicts_with = "apply")]
     pub recover: Option<String>,
-}
-
-#[derive(Debug, Args)]
-pub struct GateArgs {
-    #[command(subcommand)]
-    pub command: GateCommand,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum GateCommand {
-    /// SHADOW classification of a RED gate run by a typed judge (#1138, edge 1): a bounded
-    /// excerpt of the log and the known-flake list are put to the judge as closed questions
-    /// (`class` over `known_flake | environment_void | real_defect | harness_broke`, one
-    /// `same_as:<issue>` per known flake) and the reading is printed and, with `--out`, written
-    /// beside the manifest. The verdict is never touched, nothing is re-queued, and a
-    /// classification never makes the command exit non-zero: only its own failures do (an
-    /// unreadable log, a bad flakes file, a judge that cannot answer).
-    ///
-    /// The judge is the recorded door (`--judge-fixture`, keyless) or a `direct_api` `typesafe`
-    /// route (`--manifest --judge-route --broker --keyring --key-id`); exactly one of the two.
-    ClassifyRed(Box<ClassifyRedArgs>),
-}
-
-/// The flags of `gate classify-red`; see the variant's doc for the two judge doors.
-#[derive(Debug, Args)]
-pub struct ClassifyRedArgs {
-    /// The gate log to classify, UTF-8 or UTF-16 (the runner's transcripts are UTF-16 with a
-    /// BOM), at most 16 MiB.
-    #[arg(long)]
-    pub log: PathBuf,
-    /// A JSON array of `{"issue": <n>, "test": "<name>", "summary": "<why it flakes>"}`.
-    #[arg(long = "known-flakes")]
-    pub known_flakes: PathBuf,
-    /// The recorded judge door: a `{"answers": {"<request sha256>": <reply>}}` recording.
-    #[arg(long = "judge-fixture", conflicts_with = "judge_route")]
-    pub judge_fixture: Option<PathBuf>,
-    #[arg(long, requires = "judge_route")]
-    pub manifest: Option<PathBuf>,
-    /// The judge door over a gateway route: a `direct_api` route whose provider is `typesafe`.
-    #[arg(long = "judge-route", requires = "manifest")]
-    pub judge_route: Option<String>,
-    #[arg(long)]
-    pub broker: Option<PathBuf>,
-    #[arg(long)]
-    pub keyring: Option<PathBuf>,
-    #[arg(long = "key-id")]
-    pub key_id: Option<String>,
-    /// Where the classification is written, beside the manifest. Must end in `.json` and must
-    /// not exist yet: a record is never overwritten.
-    #[arg(long)]
-    pub out: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -1316,6 +1281,11 @@ pub struct ServeArgs {
     /// movement would stop implying progress.
     #[arg(long = "read-audit")]
     pub read_audit: Option<PathBuf>,
+    /// #1148: refuse a `task.*` record authenticated by the shared agent session token, so only a
+    /// lane's own credential (`graphhelm tasks credential`) can sign one. Off by default: the
+    /// owner flips it after minting one credential per lane, so no record is lost in between.
+    #[arg(long = "require-lane-credential")]
+    pub require_lane_credential: bool,
     /// The bare program name a `tests` tool node runs, resolved on the child's PATH (see
     /// `--path-prepend`). Host configuration, never caller input.
     #[arg(long = "tests-runner", default_value = "cargo")]
@@ -1424,6 +1394,20 @@ pub enum ExecutionCommand {
         /// a newer one was published, is refused.
         #[arg(long)]
         file: Option<PathBuf>,
+        /// #1149: also fold the execution's `task.*` records into `tasks`, the same projection
+        /// `GET /v1/executions/{id}/tasks` and the MCP tool `tasks` serve. Needs `--execution`
+        /// and the sealing keyring (`--keyring`, `--key-id`) that opens the envelopes.
+        #[arg(
+            long,
+            requires = "execution",
+            requires = "keyring",
+            requires = "key_id"
+        )]
+        tasks: bool,
+        #[arg(long)]
+        keyring: Option<PathBuf>,
+        #[arg(long)]
+        key_id: Option<String>,
     },
     /// Replays a stream and reports the resume briefing: what the execution is for, every
     /// decision with its actor in order, the work done, what is pending, and the next step.

@@ -1,0 +1,583 @@
+{
+  "executionId": "fixture-run",
+  "headSequence": 14,
+  "records": [
+    {
+      "actorId": "lane-a",
+      "branch": "issue-10-first",
+      "issue": 10,
+      "kind": "task.claimed",
+      "lane": "lane-a",
+      "leaseSeconds": 1800,
+      "occurredAt": "2026-10-14T10:01:00Z",
+      "sequence": 1,
+      "taskId": "issue-10"
+    },
+    {
+      "actorId": "lane-a",
+      "kind": "task.planned",
+      "lane": "lane-a",
+      "occurredAt": "2026-10-14T10:02:00Z",
+      "plan": {
+        "classes": [
+          "code"
+        ],
+        "critic": {
+          "maxRounds": 3,
+          "mode": "none",
+          "passScore": 8
+        },
+        "proof": "tests",
+        "reviews": 1,
+        "summary": "first plan"
+      },
+      "sequence": 2,
+      "taskId": "issue-10"
+    },
+    {
+      "actorId": "lane-a",
+      "kind": "task.heartbeat",
+      "lane": "lane-a",
+      "occurredAt": "2026-10-14T10:03:00Z",
+      "sequence": 3,
+      "taskId": "issue-10"
+    },
+    {
+      "actorId": "lane-a",
+      "branch": "issue-10-second",
+      "issue": 10,
+      "kind": "task.claimed",
+      "lane": "lane-a",
+      "leaseSeconds": 1800,
+      "occurredAt": "2026-10-14T10:04:00Z",
+      "sequence": 4,
+      "taskId": "issue-10"
+    },
+    {
+      "actorId": "lane-a",
+      "headSha": "aaaaaaaa",
+      "journeys": [],
+      "kind": "task.pr_opened",
+      "lane": "lane-a",
+      "occurredAt": "2026-10-14T10:05:00Z",
+      "pr": 100,
+      "sequence": 5,
+      "taskId": "issue-10"
+    },
+    {
+      "actorId": "rev-1",
+      "commentUrl": "https://github.com/o/r/pull/100#c1",
+      "headSha": "aaaaaaaa",
+      "kind": "task.review_verdict",
+      "occurredAt": "2026-10-14T10:06:00Z",
+      "pr": 100,
+      "reviewer": "rev-1",
+      "sequence": 6,
+      "taskId": "issue-10",
+      "verdict": "BLOCK"
+    },
+    {
+      "actorId": "lane-a",
+      "headSha": "bbbbbbbb",
+      "journeys": [],
+      "kind": "task.pr_opened",
+      "lane": "lane-a",
+      "occurredAt": "2026-10-14T10:07:00Z",
+      "pr": 100,
+      "sequence": 7,
+      "taskId": "issue-10"
+    },
+    {
+      "actorId": "rev-1",
+      "commentUrl": "https://github.com/o/r/pull/100#c2",
+      "headSha": "cccccccc",
+      "kind": "task.review_verdict",
+      "occurredAt": "2026-10-14T10:08:00Z",
+      "pr": 100,
+      "reviewer": "rev-1",
+      "sequence": 8,
+      "taskId": "issue-10",
+      "verdict": "APPROVE"
+    },
+    {
+      "actorId": "rev-1",
+      "commentUrl": "https://github.com/o/r/pull/100#c3",
+      "headSha": "bbbbbbbb",
+      "kind": "task.review_verdict",
+      "occurredAt": "2026-10-14T10:09:00Z",
+      "pr": 100,
+      "reviewer": "rev-1",
+      "sequence": 9,
+      "taskId": "issue-10",
+      "verdict": "APPROVE"
+    },
+    {
+      "actorId": "lane-b",
+      "branch": "issue-11-work",
+      "issue": 11,
+      "kind": "task.claimed",
+      "lane": "lane-b",
+      "leaseSeconds": 1800,
+      "occurredAt": "2026-10-14T10:10:00Z",
+      "sequence": 10,
+      "taskId": "issue-11"
+    },
+    {
+      "actorId": "lane-b",
+      "claimSequence": 10,
+      "kind": "task.released",
+      "lane": "lane-b",
+      "occurredAt": "2026-10-14T10:11:00Z",
+      "reason": "Handed over",
+      "sequence": 11,
+      "taskId": "issue-11"
+    },
+    {
+      "actorId": "lane-c",
+      "headSha": "dddddddd",
+      "journeys": [],
+      "kind": "task.pr_opened",
+      "lane": "lane-c",
+      "occurredAt": "2026-10-14T10:12:00Z",
+      "pr": 120,
+      "sequence": 12,
+      "taskId": "issue-12"
+    },
+    {
+      "actorId": "lane-c",
+      "closeReason": "superseded",
+      "kind": "task.closed",
+      "occurredAt": "2026-10-14T10:13:00Z",
+      "pr": 120,
+      "sequence": 13,
+      "supersededBy": 121,
+      "taskId": "issue-12"
+    },
+    {
+      "actorId": "rev-1",
+      "closes": [
+        10
+      ],
+      "kind": "task.merged",
+      "mergeSha": "eeeeeeee",
+      "occurredAt": "2026-10-14T10:14:00Z",
+      "pr": 100,
+      "sequence": 14,
+      "taskId": "issue-10"
+    }
+  ],
+  "rejected": 0,
+  "routes": [
+    {
+      "sequence": 1,
+      "slice": 0
+    },
+    {
+      "sequence": 2,
+      "slice": 0
+    },
+    {
+      "sequence": 3,
+      "slice": 0
+    },
+    {
+      "sequence": 4,
+      "slice": 1
+    },
+    {
+      "sequence": 5,
+      "slice": 1
+    },
+    {
+      "sequence": 6,
+      "slice": 1
+    },
+    {
+      "sequence": 7,
+      "slice": 1
+    },
+    {
+      "sequence": 8,
+      "slice": 1
+    },
+    {
+      "sequence": 9,
+      "slice": 1
+    },
+    {
+      "sequence": 10,
+      "slice": 2
+    },
+    {
+      "sequence": 11,
+      "slice": 2
+    },
+    {
+      "sequence": 12,
+      "slice": 3
+    },
+    {
+      "sequence": 13,
+      "slice": 3
+    },
+    {
+      "sequence": 14,
+      "slice": 1
+    }
+  ],
+  "slices": [
+    {
+      "absorbed": true,
+      "ended": false,
+      "id": 0,
+      "state": {
+        "assignedBy": null,
+        "assignedReviewers": [],
+        "authorLastSequence": 2,
+        "blockedBy": null,
+        "blockedSequence": null,
+        "branch": "issue-10-first",
+        "claimSequence": 1,
+        "claimedAt": "2026-10-14T10:01:00Z",
+        "clock": {
+          "lastAt": "2026-10-14T10:02:00Z",
+          "since": "2026-10-14T10:02:00Z",
+          "spent": {
+            "plan": 60000
+          }
+        },
+        "critic": null,
+        "currentReviewer": null,
+        "headSha": null,
+        "issue": 10,
+        "journeys": [],
+        "key": "",
+        "lane": "lane-a",
+        "lastHeartbeatAt": "2026-10-14T10:03:00Z",
+        "lastSequence": 2,
+        "leaseSeconds": 1800,
+        "mergeSha": null,
+        "parent": null,
+        "plan": {
+          "classes": [
+            "code"
+          ],
+          "critic": {
+            "maxRounds": 3,
+            "mode": "none",
+            "passScore": 8
+          },
+          "proof": "tests",
+          "reviews": 1,
+          "summary": "first plan"
+        },
+        "pr": null,
+        "prSummary": null,
+        "prTitle": null,
+        "recordedHeads": [],
+        "repoUrl": null,
+        "reviewers": [],
+        "rounds": [],
+        "step": "implement",
+        "strayVerdicts": [],
+        "summary": null,
+        "taskId": "issue-10",
+        "title": null
+      }
+    },
+    {
+      "absorbed": false,
+      "ended": false,
+      "id": 1,
+      "state": {
+        "assignedBy": null,
+        "assignedReviewers": [],
+        "authorLastSequence": 7,
+        "blockedBy": null,
+        "blockedSequence": null,
+        "branch": "issue-10-second",
+        "claimSequence": 4,
+        "claimedAt": "2026-10-14T10:04:00Z",
+        "clock": {
+          "lastAt": "2026-10-14T10:14:00Z",
+          "since": "2026-10-14T10:14:00Z",
+          "spent": {
+            "implement": 60000,
+            "merge": 300000,
+            "review": 240000
+          }
+        },
+        "completionRecorded": true,
+        "critic": null,
+        "currentReviewer": null,
+        "headSha": "bbbbbbbb",
+        "issue": 10,
+        "journeys": [],
+        "key": "issue-10#pr-100",
+        "lane": "lane-a",
+        "lastHeartbeatAt": null,
+        "lastSequence": 14,
+        "leaseSeconds": 1800,
+        "mergeSha": "eeeeeeee",
+        "parent": null,
+        "plan": null,
+        "pr": 100,
+        "prSummary": null,
+        "prTitle": null,
+        "recordedHeads": [
+          "aaaaaaaa",
+          "bbbbbbbb"
+        ],
+        "repoUrl": "https://github.com/o/r",
+        "reviewers": [
+          "rev-1"
+        ],
+        "rounds": [
+          {
+            "blockedAt": "2026-10-14T10:06:00Z",
+            "commentUrl": "https://github.com/o/r/pull/100#c1",
+            "fixHead": "bbbbbbbb",
+            "fixedAt": "2026-10-14T10:07:00Z",
+            "headSha": "aaaaaaaa",
+            "reviewer": "rev-1"
+          }
+        ],
+        "step": "merged",
+        "strayVerdicts": [
+          {
+            "headSha": "cccccccc",
+            "reason": "unrecorded",
+            "record": {
+              "actorId": "rev-1",
+              "commentUrl": "https://github.com/o/r/pull/100#c2",
+              "headSha": "cccccccc",
+              "kind": "task.review_verdict",
+              "occurredAt": "2026-10-14T10:08:00Z",
+              "pr": 100,
+              "reviewer": "rev-1",
+              "sequence": 8,
+              "taskId": "issue-10",
+              "verdict": "APPROVE"
+            },
+            "reviewer": "rev-1",
+            "verdict": "APPROVE"
+          }
+        ],
+        "summary": null,
+        "taskId": "issue-10",
+        "title": null
+      }
+    },
+    {
+      "absorbed": false,
+      "ended": false,
+      "id": 2,
+      "state": {
+        "assignedBy": null,
+        "assignedReviewers": [],
+        "authorLastSequence": null,
+        "blockedBy": null,
+        "blockedSequence": null,
+        "branch": "issue-11-work",
+        "claimSequence": 10,
+        "claimedAt": "2026-10-14T10:10:00Z",
+        "clock": {
+          "lastAt": "2026-10-14T10:10:00Z",
+          "since": "2026-10-14T10:10:00Z",
+          "spent": {}
+        },
+        "critic": null,
+        "currentReviewer": null,
+        "headSha": null,
+        "issue": 11,
+        "journeys": [],
+        "key": "issue-11#claim-1",
+        "lane": "lane-b",
+        "lastHeartbeatAt": null,
+        "lastSequence": 10,
+        "leaseSeconds": 1800,
+        "mergeSha": null,
+        "parent": null,
+        "plan": null,
+        "pr": null,
+        "prSummary": null,
+        "prTitle": null,
+        "recordedHeads": [],
+        "releasedBy": "lane-b",
+        "repoUrl": null,
+        "reviewers": [],
+        "rounds": [],
+        "step": "plan",
+        "strayVerdicts": [],
+        "summary": null,
+        "taskId": "issue-11",
+        "title": null
+      }
+    },
+    {
+      "absorbed": false,
+      "ended": true,
+      "id": 3,
+      "state": {
+        "assignedBy": null,
+        "assignedReviewers": [],
+        "authorLastSequence": 13,
+        "blockedBy": null,
+        "blockedSequence": null,
+        "branch": null,
+        "clock": {
+          "lastAt": "2026-10-14T10:13:00Z",
+          "since": "2026-10-14T10:12:00Z",
+          "spent": {}
+        },
+        "critic": null,
+        "currentReviewer": null,
+        "headSha": "dddddddd",
+        "issue": 12,
+        "journeys": [],
+        "key": "issue-12#pr-120",
+        "lane": "lane-c",
+        "lastHeartbeatAt": null,
+        "lastSequence": 13,
+        "mergeSha": null,
+        "parent": null,
+        "plan": null,
+        "pr": 120,
+        "prSummary": null,
+        "prTitle": null,
+        "recordedHeads": [
+          "dddddddd"
+        ],
+        "repoUrl": null,
+        "reviewers": [],
+        "rounds": [],
+        "step": "review",
+        "strayVerdicts": [],
+        "summary": null,
+        "taskId": "issue-12",
+        "title": null
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "assignedBy": null,
+      "assignedReviewers": [],
+      "authorLastSequence": null,
+      "blockedBy": null,
+      "blockedSequence": null,
+      "branch": "issue-11-work",
+      "claimSequence": 10,
+      "claimedAt": "2026-10-14T10:10:00Z",
+      "clock": {
+        "lastAt": "2026-10-14T10:10:00Z",
+        "since": "2026-10-14T10:10:00Z",
+        "spent": {}
+      },
+      "critic": null,
+      "currentReviewer": null,
+      "headSha": null,
+      "issue": 11,
+      "journeys": [],
+      "key": "issue-11#claim-1",
+      "lane": "lane-b",
+      "lastHeartbeatAt": null,
+      "lastSequence": 10,
+      "leaseSeconds": 1800,
+      "mergeSha": null,
+      "parent": null,
+      "plan": null,
+      "pr": null,
+      "prSummary": null,
+      "prTitle": null,
+      "recordedHeads": [],
+      "releasedBy": "lane-b",
+      "repoUrl": null,
+      "reviewers": [],
+      "rounds": [],
+      "step": "plan",
+      "strayVerdicts": [],
+      "summary": null,
+      "taskId": "issue-11",
+      "title": null
+    },
+    {
+      "assignedBy": null,
+      "assignedReviewers": [],
+      "authorLastSequence": 7,
+      "blockedBy": null,
+      "blockedSequence": null,
+      "branch": "issue-10-second",
+      "claimSequence": 4,
+      "claimedAt": "2026-10-14T10:04:00Z",
+      "clock": {
+        "lastAt": "2026-10-14T10:14:00Z",
+        "since": "2026-10-14T10:14:00Z",
+        "spent": {
+          "implement": 60000,
+          "merge": 300000,
+          "review": 240000
+        }
+      },
+      "completionRecorded": true,
+      "critic": null,
+      "currentReviewer": null,
+      "headSha": "bbbbbbbb",
+      "issue": 10,
+      "journeys": [],
+      "key": "issue-10#pr-100",
+      "lane": "lane-a",
+      "lastHeartbeatAt": null,
+      "lastSequence": 14,
+      "leaseSeconds": 1800,
+      "mergeSha": "eeeeeeee",
+      "parent": null,
+      "plan": null,
+      "pr": 100,
+      "prSummary": null,
+      "prTitle": null,
+      "recordedHeads": [
+        "aaaaaaaa",
+        "bbbbbbbb"
+      ],
+      "repoUrl": "https://github.com/o/r",
+      "reviewers": [
+        "rev-1"
+      ],
+      "rounds": [
+        {
+          "blockedAt": "2026-10-14T10:06:00Z",
+          "commentUrl": "https://github.com/o/r/pull/100#c1",
+          "fixHead": "bbbbbbbb",
+          "fixedAt": "2026-10-14T10:07:00Z",
+          "headSha": "aaaaaaaa",
+          "reviewer": "rev-1"
+        }
+      ],
+      "step": "merged",
+      "strayVerdicts": [
+        {
+          "headSha": "cccccccc",
+          "reason": "unrecorded",
+          "record": {
+            "actorId": "rev-1",
+            "commentUrl": "https://github.com/o/r/pull/100#c2",
+            "headSha": "cccccccc",
+            "kind": "task.review_verdict",
+            "occurredAt": "2026-10-14T10:08:00Z",
+            "pr": 100,
+            "reviewer": "rev-1",
+            "sequence": 8,
+            "taskId": "issue-10",
+            "verdict": "APPROVE"
+          },
+          "reviewer": "rev-1",
+          "verdict": "APPROVE"
+        }
+      ],
+      "summary": null,
+      "taskId": "issue-10",
+      "title": null
+    }
+  ]
+}

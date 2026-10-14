@@ -376,6 +376,10 @@ fn the_public_slot_refuses_script_commands_before_any_effect() {
     let marker = dir.path().join("marker.txt");
     let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .current_dir(dir.path())
+        .env(
+            "GRAPHHELM_BUILD_ADMISSION_DIR",
+            dir.path().join("private-admission"),
+        )
         .args(["--json", "workspace", "slot", "--root"])
         .arg(&root)
         .args(["--lane", "lane-a", "--"])
@@ -408,6 +412,10 @@ fn the_public_slot_refuses_script_commands_before_any_effect() {
     ] {
         let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .current_dir(dir.path())
+            .env(
+                "GRAPHHELM_BUILD_ADMISSION_DIR",
+                dir.path().join("private-admission"),
+            )
             .args(["--json", "workspace", "slot", "--root"])
             .arg(&root)
             .args(["--lane", "lane-a", "--"])
@@ -766,6 +774,10 @@ fn clean_workspace_that_cannot_clean_refuses_and_never_runs_the_command() {
     std::fs::create_dir_all(&not_a_workspace).unwrap();
     let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .current_dir(&not_a_workspace)
+        .env(
+            "GRAPHHELM_BUILD_ADMISSION_DIR",
+            dir.path().join("private-admission"),
+        )
         .args([
             "--json",
             "workspace",
@@ -814,6 +826,10 @@ fn a_huge_max_wait_is_refused_not_a_panic() {
     let root = dir.path().join("root");
     let log = dir.path().join("log.txt");
     let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .env(
+            "GRAPHHELM_BUILD_ADMISSION_DIR",
+            dir.path().join("private-admission"),
+        )
         .args(["--json", "workspace", "slot", "--root"])
         .arg(&root)
         .args([

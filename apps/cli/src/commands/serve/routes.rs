@@ -804,6 +804,21 @@ pub(super) async fn status(
     }
 }
 
+/// Process-local request liveness is separate from the event-backed execution status.
+pub(super) async fn seen_actors(State(state): State<ServeState>) -> Response {
+    respond(
+        StatusCode::OK,
+        Outcome::success(
+            "serve.seen_actors",
+            serde_json::json!({
+                "seenActors": state.seen_actors(),
+                "seenActorAgesMs": state.seen_actor_ages_ms(),
+            }),
+        )
+        .output,
+    )
+}
+
 /// `GET /v1/executions/{id}/reply-suggestions`: produce two operator replies for a live
 /// `needs_you` execution. The chat route writes bounded candidates; the explicit Jev route scores
 /// them against the replayed status and briefing. This is deliberately read-only: no suggestion
@@ -1840,6 +1855,52 @@ pub(super) async fn journeys(
 /// no `/v1/journeys`).
 pub(super) async fn project_journeys(State(state): State<ServeState>) -> Response {
     journeys_over(state, None).await
+}
+
+/// `GET /v1/executions/{id}/tasks` (#1149): the task projection of one run, exactly
+/// `graphhelm execution status --tasks`'s `tasks` block: every task slice with its lit step,
+/// lane, PR, head, claim sequence and last heartbeat, folded in the Runtime from the run's
+/// verified `task.*` envelopes (opened with the Runtime's own keyring). Read-only; an agent
+/// session token reaches it like every other `GET /v1/executions/...`.
+pub(super) async fn tasks(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+) -> Response {
+    const COMMAND: &str = "execution.tasks";
+    let Some(keyring) = state.sealing.clone() else {
+        return respond_failure(
+            COMMAND,
+            execution::execution_state("the task projection requires a sealed keyring", "/keyring"),
+        );
+    };
+    let events = state.events.clone();
+    let caches = state.tasks_cache.clone();
+    let Some(result) = off_reactor(move || {
+        // #1202: read with what this Runtime remembers of the run, outside the lock (a read can
+        // take seconds cold); fold what was learned back in afterwards, refusal included.
+        let mut cache = caches
+            .lock()
+            .map(|map| map.get(&execution_id).cloned().unwrap_or_default())
+            .unwrap_or_default();
+        let budget = crate::commands::tasks_read_budget();
+        let result =
+            execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, &mut cache);
+        if let Ok(mut map) = caches.lock() {
+            map.entry(execution_id).or_default().absorb(cache);
+        }
+        result.map(|view| serde_json::to_value(view).expect("a view of serializable fold types"))
+    })
+    .await
+    else {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(COMMAND, "the tasks task failed").output,
+        );
+    };
+    match result {
+        Ok(value) => respond(StatusCode::OK, Outcome::success(COMMAND, value).output),
+        Err(failure) => respond_failure(COMMAND, failure),
+    }
 }
 
 /// `POST /v1/keel/plan` (#382 phase B): exactly `graphhelm keel plan` (without recording) over
@@ -3429,6 +3490,28 @@ pub(super) async fn signal(
             "/signal",
         );
     };
+    // #1148: a `task.*` record names a lane, and only that lane's credential may write it. The
+    // shared agent session token authenticates "an agent on this machine", not a lane, so a
+    // request it authenticated (marked by the auth layer) is refused as an identity mismatch
+    // before the mutation, and nothing is appended. The owner token keeps its rights (D-058).
+    // Gated by `--require-lane-credential`: off (the default) keeps today's acceptance so the
+    // owner mints one credential per lane before flipping it, and no record is lost in between.
+    if state.require_lane_credential
+        && signal_value
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|kind| kind.starts_with("task."))
+        && headers.contains_key(super::SHARED_SESSION_HEADER)
+    {
+        return respond_failure(
+            SIGNAL_COMMAND,
+            execution::Failure {
+                code: crate::error_codes::GHCLI038_ACTOR_MISMATCH,
+                message: "a task.* record needs the credential of the lane it names; the shared agent session token proves no lane (graphhelm tasks credential --lane <lane>)".to_owned(),
+                pointer: "/actor".to_owned(),
+            },
+        );
+    }
     if signal_value.get("proposal").is_some()
         && (identity.actor.actor_type() != PersistedActorType::Agent
             || !verify_agent_credential(&state, &headers, &identity.actor))
@@ -6665,7 +6748,7 @@ mod pause_digest_body_tests {
 /// the runs recorded before and after are compared, and the thread the new run happened on must
 /// not be the runtime's own. Serialised through one lock because the witness is process-wide.
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
 
@@ -6717,7 +6800,8 @@ mod tests {
         String::from_utf8(bytes.to_vec()).unwrap()
     }
 
-    fn known_execution_state() -> (tempfile::TempDir, super::ServeState) {
+    pub(in crate::commands::serve) fn known_execution_state()
+    -> (tempfile::TempDir, super::ServeState) {
         let directory = tempfile::tempdir().unwrap();
         let execution_id = OpaqueId::parse("execution-known").unwrap();
         let scope = RepositoryScope::new(
@@ -6768,8 +6852,11 @@ mod tests {
             cancels: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             sweep_interval: None,
             read_audit: None,
+            require_lane_credential: false,
             gateway_manifest: None,
             native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            seen_actors: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
+            tasks_cache: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         };
         (directory, state)
     }

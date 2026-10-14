@@ -36,11 +36,13 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
     seen = []
     # #498: a Runtime built before #486 refuses the opening records' title/summary keys.
     old = False
+    no_lease = False  # #1223: a Runtime built before #1194 refuses `leaseSeconds` (GHCLI003)
     reject_heartbeat = False
     history = []
     history_head = None
     evidence = {}
     reads = []
+    auth = []
 
     def do_GET(self):
         FakeRuntime.reads.append(self.path)
@@ -66,12 +68,14 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         key = self.headers["Idempotency-Key"]
         FakeRuntime.seen.append((key, body))
+        FakeRuntime.auth.append(self.headers.get("Authorization"))
         identity = json.dumps(body, sort_keys=True)  # a retry carries a new emittedAt: a different body
         described = json.loads(body["signal"]["description"])
         if len(key) > 64:
             status, reply = 400, {"ok": False, "diagnostics": [{"code": "GHCLI001_ARGUMENT_INVALID", "severity": "error",
                                                                   "path": "/idempotencyKey", "message": "Idempotency-Key must be at most 64 characters"}]}
-        elif FakeRuntime.old and ("title" in described or "summary" in described):
+        elif (FakeRuntime.old and ("title" in described or "summary" in described)) or \
+                (FakeRuntime.no_lease and "leaseSeconds" in described):
             status, reply = 400, {"ok": False, "diagnostics": [{"code": "GHCLI003_SIGNAL_INVALID", "severity": "error",
                                                                   "path": "/signal/description", "message": "one document for its kind"}]}
         elif FakeRuntime.reject_heartbeat and body["signal"]["type"] == "task.heartbeat":
@@ -187,11 +191,18 @@ class TaskRecordTest(unittest.TestCase):
                                        self.history_event(terminal_kind, 2)]
                 self.assert_refused_without_post()
 
-    def test_heartbeat_cooldown_uses_event_time_at_299_and_300_seconds(self):
+    def test_heartbeat_cooldown_is_the_runtimes_answer_not_a_local_clock(self):
+        # #1147: the 300 s rule has one owner. A heartbeat 299 s after the last one is still sent,
+        # and the Runtime's refusal is what the lane reads; the script never pre-empts it.
         FakeRuntime.history = [self.history_event("task.claimed", 1),
                                self.history_event("task.heartbeat", 2, occurred="2026-10-13T11:55:01Z",
                                                   at="2099-01-01T00:00:00Z")]
-        self.assert_refused_without_post()
+        FakeRuntime.reject_heartbeat = True
+        code, out = self.run_heartbeat()
+        self.assertEqual((code, out.split()[0]), (1, "REFUSED"), out)
+        self.assertEqual(len(FakeRuntime.seen), 1)
+        FakeRuntime.reject_heartbeat = False
+        FakeRuntime.seen.clear()
         FakeRuntime.history = [self.history_event("task.claimed", 1)]
         first_code, first_out = self.run_heartbeat()
         self.assertEqual((first_code, first_out.split()[0]), (0, "recorded"), first_out)
@@ -211,11 +222,7 @@ class TaskRecordTest(unittest.TestCase):
         self.assertEqual(second[0], 0, second[1])
         self.assertEqual(FakeRuntime.seen[0][0], FakeRuntime.seen[1][0])
 
-    def test_new_claim_and_unrelated_lane_or_task_do_not_bypass_or_reset_cooldown(self):
-        FakeRuntime.history = [self.history_event("task.claimed", 1),
-                               self.history_event("task.heartbeat", 2, occurred="2026-10-13T11:55:01Z"),
-                               self.history_event("task.claimed", 3)]
-        self.assert_refused_without_post()
+    def test_unrelated_lane_or_task_heartbeats_do_not_block_this_one(self):
         FakeRuntime.history = [self.history_event("task.claimed", 1),
                                self.history_event("task.claimed", 2, lane="lane-b", task_id="issue-1024"),
                                self.history_event("task.heartbeat", 3, lane="lane-b", task_id="issue-1024",
@@ -289,6 +296,9 @@ class TaskRecordTest(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.token = Path(cls.tmp.name) / "events.agent.token"
         cls.token.write_text("agent-token\n", encoding="utf-8")
+        # #1148: each lane these cells record as holds its own credential beside the shared token.
+        for lane in ("lane-a", "lane-b", "test", "l", "gh-claude-1", "gh-claude-2", "gh-claude-3", "gh-claude-6"):
+            task_record.credential_file(cls.token, lane).write_text(f"credential-{lane}\n", encoding="utf-8")
 
     @classmethod
     def tearDownClass(cls):
@@ -299,6 +309,7 @@ class TaskRecordTest(unittest.TestCase):
         FakeRuntime.keys.clear()
         FakeRuntime.seen.clear()
         FakeRuntime.old = False
+        FakeRuntime.no_lease = False
         FakeRuntime.reject_heartbeat = False
         FakeRuntime.history = []
         FakeRuntime.history_head = None
@@ -367,6 +378,7 @@ class TaskRecordTest(unittest.TestCase):
             ("lane-a", "623", "review_assigned", "lane-b"),
         ]
         for lane, issue, kind, reviewer in cases:
+            task_record.credential_file(self.token, lane).write_text(f"credential-{lane}\n", encoding="utf-8")
             with self.subTest(lane=lane, issue=issue, kind=kind, reviewer=reviewer):
                 step = ("--lane", lane, kind, "--issue", issue, "--pr", "19",
                         "--head", HEAD_A, "--reviewer", reviewer, "--no-github")
@@ -480,6 +492,63 @@ class TaskRecordTest(unittest.TestCase):
             self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", url="http://example.com:8793")
         self.assertIn("loopback", str(refused.exception.code))
         self.assertEqual(FakeRuntime.seen, [])
+
+    # #1148: the bearer is the lane's own credential beside --token-file, never the shared token.
+    # #1193: a claim carries its lease when asked; absent, the field is not sent (a Runtime older
+    # than #1193 refuses unknown keys, and the schema reads absence as 1800); an out-of-range lease
+    # is refused before anything is sent (on the parent the flag did not exist).
+    def test_a_claim_carries_its_lease_and_an_out_of_range_lease_is_refused(self):
+        # #1223: the default claim states the fold's default lease, 1800 s (on the parent it sent none).
+        code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", "--no-github")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(FakeRuntime.seen[-1][1]["signal"]["description"])["leaseSeconds"], 1800)
+        code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "10", "--branch", "b", "--no-github",
+                                  "--lease-seconds", "600")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(FakeRuntime.seen[-1][1]["signal"]["description"])["leaseSeconds"], 600)
+        sent = len(FakeRuntime.seen)
+        with self.assertRaises(SystemExit) as refused:
+            self.run_step("--lane", "lane-a", "claimed", "--issue", "11", "--branch", "b", "--no-github",
+                          "--lease-seconds", "299")
+        self.assertIn("--lease-seconds", str(refused.exception.code))
+        self.assertEqual(len(FakeRuntime.seen), sent)
+
+    def test_a_runtime_older_than_leases_still_records_a_default_claim_but_not_a_given_lease(self):
+        # #1223: a Runtime built before #1194 refuses `leaseSeconds` (GHCLI003). A claim that carried
+        # only the DEFAULT lease is sent once more without it and lands; one whose lease the lane gave
+        # is not retried, so a requested lease is never silently dropped. Cost: three local POSTs.
+        FakeRuntime.no_lease = True
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", "--no-github")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(FakeRuntime.seen), 2)
+        self.assertEqual(json.loads(FakeRuntime.seen[0][1]["signal"]["description"])["leaseSeconds"], 1800)
+        self.assertNotIn("leaseSeconds", json.loads(FakeRuntime.seen[1][1]["signal"]["description"]))
+        self.assertIn("claim leases (#1194)", err.getvalue())
+        FakeRuntime.seen.clear()
+        with redirect_stderr(io.StringIO()):
+            code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "10", "--branch", "b", "--no-github",
+                                      "--lease-seconds", "600")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(len(FakeRuntime.seen), 1, "a given lease is not dropped and resent")
+
+    def test_a_record_is_sent_with_the_lanes_credential_not_the_shared_token(self):
+        code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", "--no-github")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(FakeRuntime.auth[-1], "Bearer credential-lane-a")
+        self.assertEqual(task_record.credential_file("x/events.token", "lane-a"), Path("x/events.agent.lane-a.token"))
+        self.assertEqual(task_record.credential_file("x/events.agent.token", "lane-a"), Path("x/events.agent.lane-a.token"))
+
+    def test_a_lane_without_a_credential_falls_back_to_the_shared_token_and_names_the_mint_command(self):
+        # #1148 rollout: a Runtime without --require-lane-credential still accepts the shared token,
+        # so the record is sent with it and the missing file is reported on stderr, not fatal.
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code, out = self.run_step("--lane", "lane-none", "claimed", "--issue", "9", "--branch", "b", "--no-github")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(FakeRuntime.auth[-1], "Bearer agent-token")
+        self.assertIn("graphhelm tasks credential --lane lane-none --execution gh-team", err.getvalue())
 
 
 class ClosesAsGiven(unittest.TestCase):
@@ -922,6 +991,30 @@ class GithubWordsDecodeUtf8(unittest.TestCase):
         finally:
             task_record.subprocess.run = real
         self.assertEqual(words, ("feat: say \u201chello\u201d", "The owner reads \u201cplain words\u201d \u2713"))
+
+
+class LaneDocsGuardTest(unittest.TestCase):
+    """#1197 (A8): the two pages a lane reads name every record kind the recorder writes, and keep
+    no sentence the code has outgrown. Cost: two file reads, no network."""
+
+    REPO = Path(__file__).resolve().parents[2]
+
+    def test_the_lane_docs_name_every_record_kind_the_recorder_writes(self):
+        import re
+        kinds = set(task_record.KINDS)
+        lanes = (self.REPO / "docs/process/LANES.md").read_text(encoding="utf-8")
+        section = lanes.split("## 4. Task records", 1)[1].split("\n## ", 1)[0]
+        # LANES §4: every `$T --issue N <kind>` in the command table.
+        in_lanes = set(re.findall(r"\$T --issue N (\w+)", section))
+        self.assertEqual(in_lanes, kinds, f"LANES.md §4 names {sorted(in_lanes)}, task_record.py writes {sorted(kinds)}")
+        self.assertNotIn("Until the change that does so lands", section,
+                         "#508 landed: pr_opened --reviewer records review_assigned")
+        self.assertNotIn("the Runtime cannot stop", section,
+                         "#1179 landed: a Runtime started with --require-lane-credential refuses another lane's record")
+        delivery = (self.REPO / "docs/process/DELIVERY.md").read_text(encoding="utf-8")
+        table = delivery.split("### Task records", 1)[1].split("`taskId` is `issue-<N>`", 1)[0]
+        in_delivery = set(re.findall(r"\| `task\.(\w+)` \|", table))
+        self.assertEqual(in_delivery, kinds, f"DELIVERY.md step table names {sorted(in_delivery)}, task_record.py writes {sorted(kinds)}")
 
 
 if __name__ == "__main__":

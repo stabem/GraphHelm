@@ -82,6 +82,16 @@ When the check is refused, `step` is `implement`, `findingIds` lists the blockin
 caller, not a task transition. Input and tool errors return the input error envelope and never
 recommend review.
 
+`--route-proposal <binding.json>` explicitly submits the verdict as a sealed pending graph
+proposal. It requires `--events`, `--execution`, `--keyring`, and `--key-id` and a key in
+`GRAPHHELM_EVENTS_KEY`. The bounded JSON file contains `expectedHead` (the full resolved
+commit SHA), `execution`, `task`, `node`, and two Graph Draft objects: `implementDraft` and
+`reviewDraft`. The node must belong to that execution. A blocking check selects the former;
+a valid pass, including warnings only, selects the latter. The signal evidence contains the
+checked head, task, node, and blocking finding IDs and paths. The reply reports admission in
+`data.routeProposal`; `recommendation.applied` stays false. Submission does not approve or
+publish the draft. Without this option, checks and capture reads do not submit proposals.
+
 `surface` puts the counts beside the card: `changedFiles`, `newFiles`, `newTestFiles`, `newTests`,
 `newModules`, `newPublicSymbols`, `newDependencies`, `cardScopePaths`, `cardExportedSymbols`, and
 `undeclaredPublicSymbols` (public symbols the diff adds that the card does not name; reported,

@@ -1041,7 +1041,7 @@
           "id": "schema/task-event",
           "kind": "schema",
           "path": "schemas/task-event.schema.json",
-          "sha256": "sha256:529ffb76ca68f1c1a6010b3dba705a1f1d477ac225fb43e858587713cad506c0",
+          "sha256": "sha256:e4d278a0fbb831218abe118d2f4ac93737f1668db898abeeb53fb67ef6ed37bf",
           "effects": [],
           "permissions": [],
           "requires": {

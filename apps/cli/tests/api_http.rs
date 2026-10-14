@@ -52,7 +52,7 @@ fn create_signal_keyring(path: &Path) {
 /// Also owns the two background threads draining the child's stdout AND stderr (#140): past the
 /// one startup line `serve_with` reads synchronously, NOTHING previously read either pipe again —
 /// a server panic under load (the storm test's own shape) died into an OS pipe nobody drained, in
-/// every run alike, regardless of what `ci/gate.ps1`'s own capture does with `cargo test`'s
+/// every run alike, regardless of what the retired gate runner's capture did with `cargo test`'s
 /// stdout (#100 fixed a different, outer level; this is a nested child process one level deeper).
 /// `Drop` prints whatever accumulated ONLY when `std::thread::panicking()` — a passing run stays
 /// exactly as quiet as before; a failing one gets the server's own diagnostic instead of a bare
@@ -774,7 +774,7 @@ const CONNECT_BUDGET: Duration = Duration::from_secs(1);
 /// 30s   0/20    0%   Wilson 95% [ 0.0%.. 16.1%]
 /// ```
 ///
-/// **Re-verified at `ci/gate.ps1`'s own invocation** (no `--test-threads` flag at all -- the
+/// **Re-verified at the retired gate runner's own invocation** (no `--test-threads` flag at all -- the
 /// machine's default parallelism, 32 on the one this was measured on, not the 4 above): the
 /// guard's own verbatim gate line, n=20, machine quiet, isolated `CARGO_TARGET_DIR` -- 0/20
 /// failures. `--test-threads=4` was this ticket's own controlled arrangement; the gate decides
@@ -1342,7 +1342,7 @@ fn harness_broke_error_recolours_only_timed_out() {
         "{message}"
     );
     // The old assertion pinned a false description of the gate: a literal "--test-threads=4"
-    // that `ci/gate.ps1`'s own invocation never passes (#736, H + Codex both caught it -- H found
+    // that the retired gate runner's invocation never passed (#736, H + Codex both caught it -- H found
     // it as a guard that would teach the wrong edit: "fixing" the message to tell the truth would
     // have reddened this exact line). Structural only, on purpose: the VALUE is
     // `test_concurrency`'s own claim to prove, with hand-built inputs, in the tests below -- this
@@ -1402,7 +1402,7 @@ fn test_concurrency_falls_back_to_the_env_var_with_no_cli_flag() {
     assert_eq!(test_concurrency(args, Some("8".to_owned())), (8, "env"));
 }
 
-/// The genuine fallback: neither the CLI flag nor the env var present, same as `ci/gate.ps1`'s own
+/// The genuine fallback: neither the CLI flag nor the env var present, same as the retired gate runner's
 /// invocation (#716/#737) -- `available_parallelism()` is the real source of truth for this arm,
 /// so checking against it here is proving the "default" arm delegates correctly, not re-deriving
 /// the function under test.
@@ -2383,6 +2383,306 @@ fn a_task_closed_signal_is_accepted_over_http() {
     assert_eq!(event["actor"]["id"], "lane-alpha");
 }
 
+/// #1148 (plan A4): a `task.*` record is written only with the credential of the lane it names.
+/// Before: the shared agent session token plus a caller-chosen `X-GraphHelm-Actor` recorded
+/// `task.claimed` as any lane, so the identity rule (#419) checked a name against itself. Now the
+/// shared token is refused for `task.*` with 403 `GHCLI038_ACTOR_MISMATCH` and appends nothing;
+/// the lane's own credential (`graphhelm tasks credential`) records it; the same credential under
+/// another lane's name is a 401 at the auth layer. Cost: one served Runtime, one CLI run, three
+/// POSTs.
+#[test]
+fn a_task_record_needs_the_lanes_credential_not_the_shared_token() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-lane-credential";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, owner_token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+            "--require-lane-credential",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let shared_token = std::fs::read_to_string(directory.path().join("events.agent.token"))
+        .unwrap()
+        .trim()
+        .to_owned();
+    let recorded = || {
+        get_json(
+            &format!("{base}/v1/executions/{execution}/events?limit=1000"),
+            Some(&owner_token),
+        )["data"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["kind"]["type"] == "signal_recorded")
+            .count()
+    };
+    let claim = |id: &str| {
+        let document = serde_json::json!({"schema": "graphhelm-task-event-v1",
+            "taskId": "issue-1148", "revision": 1, "at": "2026-10-13T12:00:00Z", "issue": 1148,
+            "lane": "lane-alpha", "branch": "issue-1148-lane-credential", "repo": "stabem/GraphHelm"});
+        serde_json::json!({"signal": {"id": id, "source": {"type": "user", "id": "lane-alpha"},
+            "type": "task.claimed", "severity": "low", "description": document.to_string(),
+            "evidence": ["task"], "emittedAt": "2026-10-13T12:00:00Z"}})
+    };
+    let before = recorded();
+
+    // The shared session token names any lane it likes; refused, nothing appended.
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        &shared_token,
+        &[
+            ("Idempotency-Key", "claim-shared"),
+            ("X-GraphHelm-Actor", "lane-alpha"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &claim("claim-shared"),
+    );
+    assert_eq!(status, 403, "shared token: {reply}");
+    assert_eq!(
+        reply["diagnostics"][0]["code"], "GHCLI038_ACTOR_MISMATCH",
+        "shared token: {reply}"
+    );
+    assert_eq!(recorded(), before, "a refused task record appends nothing");
+
+    // The owner (or orchestrator) mints lane-alpha's credential from the owner token.
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "--json",
+            "tasks",
+            "credential",
+            "--lane",
+            "lane-alpha",
+            "--execution",
+            execution,
+            "--token-file",
+            directory.path().join("events.token").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let minted: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(minted["ok"], true, "{minted}");
+    let credential_path = directory.path().join("events.agent.lane-alpha.token");
+    assert_eq!(
+        minted["data"]["path"].as_str(),
+        Some(credential_path.to_string_lossy().as_ref())
+    );
+    let credential = std::fs::read_to_string(&credential_path)
+        .unwrap()
+        .trim()
+        .to_owned();
+    assert_eq!(credential.len(), 64);
+    assert_ne!(credential, shared_token);
+
+    // That credential under another lane's name is not a principal at all.
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        &credential,
+        &[
+            ("Idempotency-Key", "claim-forged"),
+            ("X-GraphHelm-Actor", "lane-beta"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &claim("claim-forged"),
+    );
+    assert_eq!(status, 401, "forged lane: {reply}");
+    assert_eq!(recorded(), before);
+
+    // Under its own name it records, as an agent, as lane-alpha.
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        &credential,
+        &[
+            ("Idempotency-Key", "claim-own"),
+            ("X-GraphHelm-Actor", "lane-alpha"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &claim("claim-own"),
+    );
+    assert_eq!(status, 200, "own credential: {reply}");
+    assert_eq!(recorded(), before + 1);
+    let event = last_event_of_kind(&base, &owner_token, execution, "signal_recorded");
+    assert_eq!(event["actor"]["id"], "lane-alpha");
+    assert_eq!(event["actor"]["type"], "agent", "{event}");
+}
+
+/// #1193 (plan A2): the Stop reconciler, signing as `graphhelm`, releases a lapsed claim of the
+/// lane it names, and only with `releasedBy: graphhelm`. Before: every release had to be signed
+/// by the lane itself (`GHCLI038` otherwise), so a dead lane's claim could never be released.
+/// Through the HTTP door with the owner token, whose actor headers are honoured (D-058). Cost:
+/// one served Runtime, five POSTs.
+#[test]
+fn graphhelm_releases_another_lanes_claim_only_with_released_by() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-lapsed-release";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let post = |id: &str, actor: &str, kind: &str, document: &Value| {
+        let body = serde_json::json!({"signal": {"id": id, "source": {"type": "user", "id": actor},
+            "type": kind, "severity": "low", "description": document.to_string(),
+            "evidence": ["task"], "emittedAt": "2026-10-14T02:00:00Z"}});
+        post_json(
+            &format!("{base}/v1/executions/{execution}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", id),
+                ("X-GraphHelm-Actor", actor),
+                ("X-GraphHelm-Actor-Type", "agent"),
+            ],
+            &body,
+        )
+    };
+    let claim = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1193",
+        "revision": 1, "at": "2026-10-14T02:00:00Z", "issue": 1193, "lane": "lane-alpha",
+        "branch": "issue-1193-claim-lease", "repo": "stabem/GraphHelm", "leaseSeconds": 1800});
+    let (status, reply) = post("lapsed-claim", "lane-alpha", "task.claimed", &claim);
+    assert_eq!(status, 200, "{reply}");
+    let claim_sequence = head_sequence(&base, &token, execution);
+    let mut release = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1193",
+        "revision": 2, "at": "2026-10-14T02:31:00Z", "lane": "lane-alpha",
+        "claimSequence": claim_sequence, "reason": "lease of 1800 s lapsed without a heartbeat"});
+    // Signed by graphhelm, naming the lane, without releasedBy: an identity mismatch.
+    let (status, reply) = post(
+        "lapsed-release-unnamed",
+        "graphhelm",
+        "task.released",
+        &release,
+    );
+    assert_eq!(status, 403, "unnamed: {reply}");
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI038_ACTOR_MISMATCH");
+    // releasedBy under a third lane's signature: refused the same way.
+    release["releasedBy"] = serde_json::json!("graphhelm");
+    let (status, reply) = post("lapsed-release-forged", "lane-x", "task.released", &release);
+    assert_eq!(status, 403, "forged: {reply}");
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI038_ACTOR_MISMATCH");
+    assert_eq!(
+        head_sequence(&base, &token, execution),
+        claim_sequence,
+        "refused releases append nothing"
+    );
+    // Signed by graphhelm with releasedBy: admitted, recorded as graphhelm, and the lane's claim
+    // is closed for heartbeats.
+    let (status, reply) = post("lapsed-release", "graphhelm", "task.released", &release);
+    assert_eq!(status, 200, "released: {reply}");
+    let event = last_event_of_kind(&base, &token, execution, "signal_recorded");
+    assert_eq!(event["actor"]["id"], "graphhelm");
+    let heartbeat = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1193",
+        "revision": 3, "at": "2026-10-14T02:32:00Z", "lane": "lane-alpha"});
+    let (status, reply) = post(
+        "lapsed-heartbeat",
+        "lane-alpha",
+        "task.heartbeat",
+        &heartbeat,
+    );
+    assert_eq!(status, 400, "heartbeat after release: {reply}");
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID");
+}
+
+/// #1148, the rollout half: without `--require-lane-credential` (the default) the shared agent
+/// session token still records a `task.*` as it does today, so a Runtime upgraded before the
+/// owner has minted every lane's credential loses no record; the lane credential is accepted
+/// beside it. The refusal is the flag's, not the upgrade's. Cost: one served Runtime, one CLI
+/// run, two POSTs.
+#[test]
+fn without_the_flag_the_shared_token_still_records_a_task_record() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-lane-credential-off";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, owner_token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let shared_token = std::fs::read_to_string(directory.path().join("events.agent.token"))
+        .unwrap()
+        .trim()
+        .to_owned();
+    let claim = |id: &str, task: &str| {
+        let document = serde_json::json!({"schema": "graphhelm-task-event-v1",
+            "taskId": task, "revision": 1, "at": "2026-10-13T12:00:00Z",
+            "issue": task.trim_start_matches("issue-").parse::<u64>().unwrap(),
+            "lane": "lane-alpha", "branch": "b", "repo": "stabem/GraphHelm"});
+        serde_json::json!({"signal": {"id": id, "source": {"type": "user", "id": "lane-alpha"},
+            "type": "task.claimed", "severity": "low", "description": document.to_string(),
+            "evidence": ["task"], "emittedAt": "2026-10-13T12:00:00Z"}})
+    };
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        &shared_token,
+        &[
+            ("Idempotency-Key", "claim-shared-off"),
+            ("X-GraphHelm-Actor", "lane-alpha"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &claim("claim-shared-off", "issue-1148"),
+    );
+    assert_eq!(status, 200, "shared token, flag off: {reply}");
+    let event = last_event_of_kind(&base, &owner_token, execution, "signal_recorded");
+    assert_eq!(event["actor"]["id"], "lane-alpha");
+
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "--json",
+            "tasks",
+            "credential",
+            "--lane",
+            "lane-alpha",
+            "--execution",
+            execution,
+            "--token-file",
+            directory.path().join("events.token").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()["ok"],
+        true
+    );
+    let credential =
+        std::fs::read_to_string(directory.path().join("events.agent.lane-alpha.token")).unwrap();
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        credential.trim(),
+        &[
+            ("Idempotency-Key", "claim-cred-off"),
+            ("X-GraphHelm-Actor", "lane-alpha"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &claim("claim-cred-off", "issue-1149"),
+    );
+    assert_eq!(status, 200, "lane credential, flag off: {reply}");
+}
+
 /// A scoped agent bearer is the principal. Caller supplied actor headers cannot turn it into an
 /// owner or another seat, and the same credential cannot cross its one execution binding. This
 /// observes the real HTTP middleware plus the durable event actor, rather than checking a parser
@@ -2452,6 +2752,59 @@ fn scoped_agent_bearer_binds_execution_and_actor_attribution() {
     let foreign = format!("{base}/v1/executions/exec-http-other/signal");
     let (foreign_status, foreign_reply) = post_json(&foreign, credential, &headers, &body);
     assert_eq!(foreign_status, 401, "{foreign_reply}");
+}
+
+/// #1149 (gh-claude-opt-2's BLOCK on PR #1190): the lanes' MCP tool `tasks` reads
+/// `GET /v1/executions/{id}/tasks` with a scoped agent credential, so that route is on the
+/// scoped allow-list beside `briefing` and `events`; an unlisted GET under the same execution
+/// (`journeys`) stays 401 with the same bearer, and another execution's `tasks` too. Cost: one
+/// served Runtime, three GETs.
+#[test]
+fn a_scoped_agent_credential_reads_its_runs_tasks_route_and_nothing_wider() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-scoped-tasks";
+    cli_start(&events, &all_success_fixtures(directory.path()), execution);
+    let credential = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let binding = format!("{credential}=agent-planner|project-local|{execution}");
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, _owner_token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[
+            ("GRAPHHELM_AGENT_CREDENTIALS", binding.as_str()),
+            ("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX),
+        ],
+    );
+    let reply = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks"),
+        Some(credential),
+    );
+    assert_eq!(reply["ok"], Value::Bool(true), "{reply}");
+    assert_eq!(reply["data"]["executionId"], execution);
+    assert_eq!(reply["data"]["tasks"].as_array().map(Vec::len), Some(0));
+    assert_eq!(
+        get_status(
+            &format!("{base}/v1/executions/{execution}/journeys"),
+            Some(credential)
+        ),
+        401,
+        "an unlisted GET under the execution stays owner-only"
+    );
+    assert_eq!(
+        get_status(
+            &format!("{base}/v1/executions/exec-http-other/tasks"),
+            Some(credential)
+        ),
+        401,
+        "the credential is bound to its execution"
+    );
 }
 
 /// Native chat routes are owner-only surfaces. A scoped agent credential is allowed to read its
@@ -2942,6 +3295,286 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
     assert_eq!(
         head_sequence(&base, &owner_token, "exec_feature"),
         delivered_head
+    );
+}
+
+/// #1193 (plan A2): the tasks route judges each live pre-PR claim's lease at the Runtime's
+/// clock. Before: the reply had no `leases` and no `now`, so no reader could say which claim had
+/// lapsed. Catches a reply that leases a slice with a PR, one that ignores `leaseSeconds`, and one
+/// whose `expiresAt` is not the claim's Runtime time plus the lease. The claim is seconds old, so
+/// `overdue` reads false; the arithmetic past the lease is the unit cell beside `lease_state`.
+/// Cost: two CLI signals, one sealed server, one GET.
+#[test]
+fn the_tasks_route_reports_each_open_claims_lease() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-leases";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = events.with_extension("keyring");
+    create_signal_keyring(&keyring);
+    let record = |id: &str, kind: &str, description: &str| {
+        let envelope = serde_json::json!({"id": id, "source": {"type": "user", "id": "owner-cli"},
+            "type": kind, "severity": "low", "description": description, "evidence": ["task"],
+            "emittedAt": "2026-10-14T03:00:00Z"});
+        let path = directory.path().join(format!("{id}.json"));
+        std::fs::write(&path, serde_json::to_vec(&envelope).unwrap()).unwrap();
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
+            .args(["execution", "signal", "--events"])
+            .arg(&events)
+            .args(["--execution", execution, "--signal"])
+            .arg(&path)
+            .arg("--evidence-out")
+            .arg(directory.path().join(format!("{id}-evidence.json")))
+            .arg("--keyring")
+            .arg(&keyring)
+            .args(["--key-id", "signal-key"])
+            .output()
+            .unwrap();
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["ok"], Value::Bool(true), "{kind}: {reply}");
+    };
+    // A leased claim, and a second claim that already has a PR (not leased).
+    record(
+        "lease-claim",
+        "task.claimed",
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1193", "revision": 1,
+            "at": "2026-10-14T03:00:00Z", "issue": 1193, "lane": "owner-cli", "branch": "issue-1193-lease",
+            "repo": "stabem/GraphHelm", "leaseSeconds": 600})
+        .to_string(),
+    );
+    record(
+        "pr-claim",
+        "task.claimed",
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1194", "revision": 1,
+            "at": "2026-10-14T03:00:00Z", "issue": 1194, "lane": "owner-cli", "branch": "issue-1194-x",
+            "repo": "stabem/GraphHelm"})
+        .to_string(),
+    );
+    record(
+        "pr-open",
+        "task.pr_opened",
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1194", "revision": 2,
+            "at": "2026-10-14T03:01:00Z", "pr": 1195, "headSha": "abcdef01", "journeys": [], "lane": "owner-cli"})
+        .to_string(),
+    );
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let reply = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks"),
+        Some(&token),
+    );
+    assert_eq!(reply["ok"], Value::Bool(true), "{reply}");
+    let data = &reply["data"];
+    assert!(
+        data["now"].is_string(),
+        "the reply names the clock it judged at: {data}"
+    );
+    let leases = data["leases"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no leases array: {data}"));
+    assert_eq!(leases.len(), 1, "only the pre-PR claim is leased: {data}");
+    let lease = &leases[0];
+    assert_eq!(lease["taskId"], "issue-1193");
+    assert_eq!(lease["lane"], "owner-cli");
+    assert_eq!(lease["leaseSeconds"], 600);
+    assert_eq!(
+        lease["overdue"], false,
+        "a claim seconds old is live: {lease}"
+    );
+    let claimed_at = data["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["taskId"] == "issue-1193")
+        .map(|task| task["claimedAt"].as_str().unwrap().to_owned())
+        .unwrap_or_else(|| panic!("no leased task: {data}"));
+    let claimed = chrono::DateTime::parse_from_rfc3339(&claimed_at).unwrap();
+    let expires =
+        chrono::DateTime::parse_from_rfc3339(lease["expiresAt"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        expires - claimed,
+        chrono::Duration::seconds(600),
+        "expiry is the claim's Runtime time plus its lease: {lease}"
+    );
+    assert_eq!(
+        lease["claimSequence"],
+        data["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["taskId"] == "issue-1193")
+            .unwrap()["claimSequence"]
+    );
+}
+
+/// #1149: `GET /v1/executions/{id}/tasks` serves the Runtime's own fold of the run's `task.*`
+/// records. Catches a route that folds nothing (an empty `tasks` for a run with a claim and a
+/// PR), one that draws a non-task signal as a task, and one that leaves the step on `plan` after
+/// the PR opened. The records go in through the real sealed signal door (the CLI's, with the same
+/// keyring the server is then started with, as `task_event_cli` does), so the route verifies the
+/// same envelopes a lane writes. Cost: three CLI signals, one sealed server, two GETs.
+#[test]
+fn the_tasks_route_folds_the_runs_task_records_into_slices() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-tasks";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = events.with_extension("keyring");
+    create_signal_keyring(&keyring);
+    let record = |id: &str, kind: &str, lane: &str, description: &str| {
+        let envelope = serde_json::json!({
+            "id": id,
+            "source": {"type": "user", "id": lane},
+            "type": kind,
+            "severity": "low",
+            "description": description,
+            "evidence": ["task"],
+            "emittedAt": "2026-10-13T12:00:00Z"
+        });
+        let path = directory.path().join(format!("{id}.json"));
+        std::fs::write(&path, serde_json::to_vec(&envelope).unwrap()).unwrap();
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
+            .args(["execution", "signal", "--events"])
+            .arg(&events)
+            .args(["--execution", execution, "--signal"])
+            .arg(&path)
+            .arg("--evidence-out")
+            .arg(directory.path().join(format!("{id}-evidence.json")))
+            .arg("--keyring")
+            .arg(&keyring)
+            .args(["--key-id", "signal-key"])
+            .output()
+            .unwrap();
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["ok"], Value::Bool(true), "{kind}: {reply}");
+    };
+    // The CLI door records as `owner-cli`, so the lane these records name is that actor.
+    let lane = "owner-cli";
+    record(
+        "record-claim",
+        "task.claimed",
+        lane,
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1149", "revision": 1,
+            "at": "2026-10-13T12:00:00Z", "issue": 1149, "lane": lane, "branch": "issue-1149-tasks",
+            "repo": "stabem/GraphHelm"})
+        .to_string(),
+    );
+    // A plain signal between the records: the projection must not draw it as a task.
+    record(
+        "record-plain",
+        "no_progress",
+        lane,
+        "the deploy stage needs a manual review",
+    );
+    record(
+        "record-pr",
+        "task.pr_opened",
+        lane,
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1149", "revision": 3,
+            "at": "2026-10-13T12:10:00Z", "pr": 1150, "headSha": "abcdef01", "journeys": [], "lane": lane})
+        .to_string(),
+    );
+
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let reply = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks"),
+        Some(&token),
+    );
+    assert_eq!(reply["ok"], Value::Bool(true), "{reply}");
+    assert_eq!(reply["command"], "execution.tasks");
+    let data = &reply["data"];
+    assert_eq!(data["executionId"], execution);
+    assert_eq!(data["rejected"], 0, "{data}");
+    assert_eq!(data["records"].as_array().map(Vec::len), Some(2), "{data}");
+    let tasks = data["tasks"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no tasks array: {data}"));
+    assert_eq!(tasks.len(), 1, "{data}");
+    let task = &tasks[0];
+    assert_eq!(task["key"], "issue-1149#pr-1150");
+    assert_eq!(task["issue"], 1149);
+    assert_eq!(task["pr"], 1150);
+    assert_eq!(task["lane"], lane);
+    assert_eq!(task["headSha"], "abcdef01");
+    // #1211: the Studio reads `releasedBy === undefined` as a live claim; `null` emptied its
+    // kanban. A live slice carries no key at all.
+    assert!(
+        task.get("releasedBy").is_none(),
+        "a live claim must not serialise releasedBy: {task}"
+    );
+    assert!(task.get("claimSequence").is_some(), "{task}");
+    assert_eq!(task["step"], "review");
+    assert_eq!(task["repoUrl"], "https://github.com/stabem/GraphHelm");
+    assert!(
+        task["clock"]["since"].is_string(),
+        "the Runtime's append time drives the clock: {task}"
+    );
+    assert_eq!(
+        data["headSequence"],
+        head_sequence(&base, &token, execution),
+        "the tasks reply names the same head as status"
+    );
+    assert_eq!(
+        get_status(
+            &format!("{base}/v1/executions/no-such-run/tasks"),
+            Some(&token)
+        ),
+        404
+    );
+    // #1202: the first read opened both task envelopes (the plain signal is not one); an
+    // unchanged head opens none; one more record opens exactly one and is drawn.
+    assert_eq!(data["opened"], 2, "{data}");
+    let again = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks"),
+        Some(&token),
+    );
+    assert_eq!(again["data"]["opened"], 0, "{again}");
+    assert_eq!(again["data"]["tasks"], data["tasks"], "{again}");
+    assert_eq!(again["data"]["records"], data["records"], "{again}");
+    record(
+        "record-merged",
+        "task.merged",
+        lane,
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1149", "revision": 4,
+            "at": "2026-10-13T12:20:00Z", "pr": 1150, "mergeSha": "fedcba98", "closes": [1149], "merger": lane})
+        .to_string(),
+    );
+    let third = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks"),
+        Some(&token),
+    );
+    assert_eq!(third["data"]["opened"], 1, "{third}");
+    assert_eq!(
+        third["data"]["records"].as_array().map(Vec::len),
+        Some(3),
+        "{third}"
+    );
+    assert_eq!(third["data"]["tasks"][0]["step"], "merged", "{third}");
+    assert_eq!(
+        third["data"]["headSequence"],
+        head_sequence(&base, &token, execution),
+        "the third reply names the moved head"
     );
 }
 

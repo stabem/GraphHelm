@@ -872,6 +872,12 @@ fn a_reviewer_agent_approves_only_with_its_own_credential_and_never_its_own_draf
         );
         assert_ne!(status, 200, "{path}: {refused}");
     }
+    // #1178: a non-canonical draft is refused to its author, not later to its reviewer, and
+    // leaves the file as it was.
+    let (status, refused) = draft(AGENT_CREDENTIAL, &format!("{before}# stray comment\n"));
+    assert_ne!(status, 200, "a non-canonical draft was accepted: {refused}");
+    assert!(refused.to_string().contains("not canonical"), "{refused}");
+    assert_eq!(harness.flow_text("checkout"), before);
     // The author writes its draft through the Runtime.
     let authored = before.replace(
         "title: Shopper pays for the cart",

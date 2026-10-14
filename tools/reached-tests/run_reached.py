@@ -448,6 +448,9 @@ def _summary(report: dict[str, Any], output: Path) -> str:
 
 
 def run(args: argparse.Namespace) -> int:
+    # #1188: the slot's build parallelism. Six when the caller does not choose; one root may go to
+    # 16, and the jobs of every root building at the same time add up to at most 24 (LANES.md §3).
+    jobs = str(getattr(args, "jobs", 6))
     started = time.monotonic()
     deadline_unix_ms = time.time() * 1000.0 + args.budget_seconds * 1000.0
     repo = Path(args.repo).resolve()
@@ -523,7 +526,7 @@ def run(args: argparse.Namespace) -> int:
             for index in skip_browser:
                 report["pending"].remove(index)
             child_env = os.environ.copy()
-            child_env.update({"CARGO_BUILD_JOBS": "6", "RUST_TEST_THREADS": "2"})
+            child_env.update({"CARGO_BUILD_JOBS": jobs, "RUST_TEST_THREADS": "2"})
             report["fingerprint"] = _fingerprint(repo, steps, selected_graphhelm, child_env)
             keys = [_proof_key(report["fingerprint"], step) for step in steps]
             problems, warnings = _preflight(repo, output, steps, getattr(args, "min_free_gb", None))
@@ -587,7 +590,7 @@ def run(args: argparse.Namespace) -> int:
                 if is_batch:
                     # The CLI receives original argv; its Rust worker selects the child cwd/target.
                     command = [str(selected_graphhelm), "--json", "workspace", "slot", "--root", args.root,
-                               "--lane", args.lane, "--jobs", "6", "--label", f"reached-batch-{indices[0]}",
+                               "--lane", args.lane, "--jobs", jobs, "--label", f"reached-batch-{indices[0]}",
                                "--max-wait", repr(remaining_budget / 60.0), "--", *commands[0]]
                     # Batch commands are carried by the opt-in environment, never by the CLI argv.
                     payload = {"schema": _BATCH_SCHEMA, "commands": commands,
@@ -595,7 +598,7 @@ def run(args: argparse.Namespace) -> int:
                                "leaseSeconds": 30}
                 elif entry["slot"]:
                     command = [str(selected_graphhelm), "--json", "workspace", "slot", "--root", args.root,
-                               "--lane", args.lane, "--jobs", "6", "--label", f"reached-step-{entry['index']}",
+                               "--lane", args.lane, "--jobs", jobs, "--label", f"reached-step-{entry['index']}",
                                "--max-wait", repr(remaining_budget / 60.0), "--", *commands[0]]
                     payload = None
                 else:
@@ -736,6 +739,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--graphhelm", help="GraphHelm executable; overrides GRAPHHELM_CLI and PATH")
     ap.add_argument("--output", required=True)
     ap.add_argument("--budget-seconds", type=float, default=180)
+    ap.add_argument("--jobs", type=int, default=6,
+                    help="cargo build jobs for every slot command (1..32; default 6; one root up to 16)")
     ap.add_argument("--allow-whole-package")
     ap.add_argument("--include-browser", action="store_true",
                     help="allow selector steps marked observer=browser when local Playwright is installed")
@@ -753,7 +758,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skip-preflight", action="store_true",
                     help="run even when preflight finds a problem; the problems stay in the report")
     ap.add_argument("--json", action="store_true", help="print the full report instead of the short summary")
-    return run(ap.parse_args(argv))
+    args = ap.parse_args(argv)
+    if not 1 <= args.jobs <= 32:
+        ap.error("--jobs must be between 1 and 32")
+    return run(args)
 
 
 if __name__ == "__main__":

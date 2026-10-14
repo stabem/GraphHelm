@@ -1,5 +1,7 @@
 # Optimization plan, October 2026
 
+Windows update build measurements: [October report](../operations/update-build-windows-2026-10.md).
+
 Summary: one ordered list of tickets that removes dead code, fixes the measured O(n²) paths,
 shrinks what every agent must read or send, and makes agent status a single machine-verified
 source. Written from six read-only audits of head `c90cd4de` (2026-10-13). Nothing here was
@@ -93,6 +95,10 @@ symptoms of the same shape.
   lane B is refused".
 - Keel row: permissions and security (expanded route, JPD flow). Size M. The same defect class
   as #1129 to #1133, now closed for task records.
+- Landed as #1148: the credential is derived (`sha256(owner token, execution, lane)`) and minted
+  by `graphhelm tasks credential`, so no new persisted state and no Runtime restart; the Runtime
+  verifies by recomputation. Open for A2/A6: the hooks that call `task_record.py` need the lane's
+  credential file minted, and `task.review_assigned` / `task.closed` keep today's identity rule.
 
 ### A5. One identity namespace
 

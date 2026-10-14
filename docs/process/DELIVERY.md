@@ -262,8 +262,8 @@ merged like any other, and the review says what was not observed.
 
 ## 5. Merge, by the reviewer
 
-The reviewer who approved merges (a blind subagent included). There is no gate and no separate presser. `ci/gate.ps1` still
-exists as an optional full local check (it takes about 20 minutes); a merge never waits on it.
+The reviewer who approved merges (a blind subagent included). There is no gate and no separate presser; the gate
+runner (`ci/gate.ps1`) was deleted in #1204, so there is nothing a merge could wait on.
 
 1. Pin the head: `gh pr view <N> --json headRefOid` must equal the sha the review named, and no
    BLOCK on that head is left unanswered by the review (§4).
@@ -290,13 +290,17 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 
 | Step | Kind | Fields besides `schema`, `taskId`, `revision`, `at` |
 |---|---|---|
-| take the issue (§1) | `task.claimed` | `issue`, `lane`, `branch`, optional `plan`, optional `repo`, optional `journeys` |
+| take the issue (§1) | `task.claimed` | `issue`, `lane`, `branch`, optional `plan`, optional `repo`, optional `journeys`, optional `leaseSeconds` (300..86400, #1193, never below the 300 s heartbeat cooldown: how long the claim stays live without a heartbeat; `task_record.py` sends 1800 unless `--lease-seconds` says otherwise, #1223; a Runtime older than #1194 that refuses the field gets the claim once more without the DEFAULT lease, never without one the lane gave) |
 | release the latest still-open pre-PR claim (#729) | `task.released` | `lane`, exact `claimSequence`, bounded nonempty `reason`; only that claim ends, and unreadable history or a claim with a PR refuses release |
+| release a lapsed claim of another lane (#1193) | `task.released` | the same fields naming that lane, plus `releasedBy: graphhelm`; signed only by the `graphhelm` actor (the Stop reconciler); any other signer, or `releasedBy` on a lane's own release, is refused as an identity mismatch |
+| judge every live pre-PR claim's lease (#1193) | `GET /v1/executions/<id>/tasks` | the reply carries `now` (the Runtime's clock) and `leases`: per live pre-PR claim its `lane`, `claimSequence`, `leaseSeconds`, `expiresAt` (the later of the claim and its last heartbeat plus the lease) and `overdue`; the Stop reconciler releases every `overdue` one as `graphhelm` |
 | plan it, **right after the claim** (§2) | `task.planned` | `lane`, `classes`, `reviews`, `proof`, `critic` `{mode, passScore, maxRounds}`, `summary` |
+| say an open pre-PR claim is alive (#1147; the Stop reconciler sends it on every turn end, so a live lane never has to) | `task.heartbeat` | `lane` only; the Runtime refuses one without an open pre-PR claim and limits them to one per 300 s per task; `task_record.py heartbeat` sends it by hand |
 | open the PR (§3), and **again after every push** to it | `task.pr_opened` | `pr`, `headSha`, `journeys`, `lane`, optional `repo` |
 | ask a reviewer (§4) | `task.review_assigned` | `pr`, `headSha`, `reviewer`, `ordinal` (1 or 2) |
 | post the verdict (§4) | `task.review_verdict` | `pr`, `headSha`, `reviewer`, `verdict`, `commentUrl` |
 | merge and read what landed (§5) | `task.merged` | `pr`, `mergeSha`, `closes`, `merger` |
+| a PR closed without a merge (the Stop reconciler records it as the lane; by hand only to repair) | `task.closed` | `pr`, `reason` (`superseded` or `abandoned`), `by` (the superseding PR, or the PR itself when abandoned) |
 | grade the design, once per round, when the plan says `critic: design` (#467) | `task.critic_verdict` | `round`, `score`, `passScore`, `maxRounds`, `verdict`, `designRef`, `lane`, `reasons` |
 
 `taskId` is `issue-<N>` for the whole life of the task. An issue worked in several PRs is one
@@ -340,11 +344,23 @@ A critic round's verdict is not an argument: the script derives it from the scor
 (`pass` at `--pass-score`, default 8; `revise` while a round is left of `--max-rounds`, default 3;
 `exhausted` on the last round), which is the rule the Runtime checks. `exhausted` needs a person.
 
-- **Token.** The Runtime's agent session token, `<events>.agent.token` beside its events directory:
-  `<the Runtime's --project>/.graphhelm/events.agent.token`. The default `--token-file` is that
-  path relative to the current directory, which is right only inside the checkout the Runtime
-  serves; from a lane worktree pass `--token-file` with the Runtime checkout's absolute path. A Runtime mints it at start (D-058, #397); a Runtime started by an older binary
-  has none until it restarts. Never use the owner's `events.token` for a lane record.
+- **Token.** `--token-file` names the Runtime's agent session token path, `<events>.agent.token`
+  beside its events directory: `<the Runtime's --project>/.graphhelm/events.agent.token`. The
+  default is that path relative to the current directory, which is right only inside the checkout
+  the Runtime serves; from a lane worktree pass the Runtime checkout's absolute path. A Runtime
+  mints it at start (D-058, #397). **The value sent for a `task.*` record is not that token but
+  the lane's own credential (#1148)**, `<events>.agent.<lane>.token` beside it, which the owner or
+  the orchestrator mints once per lane and execution:
+  `graphhelm tasks credential --lane <lane> --execution gh-team --token-file <project>/.graphhelm/events.token`.
+  The Runtime derives it from the owner token, the execution and the lane and verifies it by
+  recomputation; the credential presented under another lane's `X-GraphHelm-Actor` is not a
+  principal (401). **Rollout:** a Runtime started with `serve --require-lane-credential` refuses a
+  `task.*` record under the shared session token (`GHCLI038_ACTOR_MISMATCH`, 403, nothing
+  appended); without the flag (the default) the shared token keeps recording as before. The
+  owner's order is: upgrade the Runtime, mint one credential per lane, then restart with the flag.
+  Without the file, `task_record.py` sends the shared token and prints the mint command on stderr;
+  under the flag that record is refused. Never use the owner's `events.token` as a lane record's
+  bearer.
 - **Defaults.** `--url http://127.0.0.1:8793`, `--execution gh-team`, `--repo stabem/GraphHelm`;
   `revision` is the step's position (claimed 1 … merged 5; `planned` is 1, beside its claim). `closes` is exactly the `--closes`
   numbers (the issues the squash closed, the intent `ci/closing-keywords.ps1` checked); with none
@@ -367,13 +383,15 @@ A critic round's verdict is not an argument: the script derives it from the scor
   first) is re-sent up to three times.
 - **Output.** `recorded <signal id>` or `already recorded <signal id>` and exit 0, or
   `REFUSED <signal id>` plus each error diagnostic and exit 1.
-- **Limit.** The agent token proves the caller holds an agent credential on this machine, not
-  which lane it is; the actor is the lane's own claim, checked only for consistency with the
-  document. Signing as another lane is a protocol violation, not something the Runtime can stop.
+- **Limit.** A lane credential proves which lane wrote the record (#1148); the Runtime refuses a
+  `task.*` record from the shared agent session token and one whose lane is not the credential's.
+  What it cannot stop is D-058's limit: every credential file belongs to the same OS user, so a
+  session that reads another lane's file from disk can still sign as that lane. Hand each lane
+  only its own path.
 
-The MCP `signal` tool remains a door (same envelope) for a session whose MCP server was started
-with its own `GRAPHHELM_ACTOR`; `graphhelm execution signal` writes to a store directly as
-`owner-cli` and is not a lane door.
+The MCP `signal` tool holds the shared session token, so it is no longer a door for `task.*`
+records; `graphhelm execution signal` writes to a store directly as `owner-cli` and is not a lane
+door either. Task records go through `task_record.py` with the lane's credential.
 
 ## 6. Housekeeping
 

@@ -31,13 +31,18 @@ orchestrator calls this once per agent. The orchestrator itself never takes a la
 
 1. **Name it.** `<role>-<n>` (`author-1`, `review-2`), unique in the execution. The name is the
    lane, the `X-GraphHelm-Actor`, the `--reviewer`/`--author` id and the identity line.
-2. **Register it before it works.** Record the claim and the plan as that lane, so the Team tab
-   shows it at once:
+2. **Register it before it works.** Mint the lane's credential (once per lane and execution; the
+   Runtime refuses a `task.*` record under the shared agent session token, #1148), then record the
+   claim and the plan as that lane, so the Team tab shows it at once:
 
    ```sh
+   graphhelm tasks credential --lane <lane> --execution <exec> --token-file <project>/.graphhelm/events.token
    python <clone>/tools/task-record/task_record.py --lane <lane> --execution <exec> --repo <owner/name> --token-file <project>/.graphhelm/events.agent.token claimed --issue <N> --branch issue-<N>-<desc> --journeys <contractId> --assigned-by <orchestrator lane>
    python <clone>/tools/task-record/task_record.py --lane <lane> --execution <exec> --repo <owner/name> --token-file <project>/.graphhelm/events.agent.token planned --issue <N> --summary "<plan in one line>"
    ```
+
+   `task_record.py` reads `<project>/.graphhelm/events.agent.<lane>.token` beside the
+   `--token-file` it is given; the orchestrator records as its own lane with `--assigned-by`.
 
 3. **Start it** with the host's subagent tool and the roster's model for its role. Its brief
    carries: its lane name, the issue, the project path and branch, the Runtime URL, execution

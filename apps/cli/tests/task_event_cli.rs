@@ -244,6 +244,105 @@ fn as_actor(mut document: Value) -> Value {
     document
 }
 
+/// #1149: `execution status --tasks` carries the same fold the Runtime route serves, read from the
+/// records the CLI's own signal door wrote. Catches a CLI that drops the block or ignores the flag,
+/// and `--tasks` offered without the keyring that opens the envelopes. Cost: one held fixture run
+/// and three sealed signals in a tempdir.
+#[test]
+fn status_with_tasks_folds_the_recorded_task_events() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let claimed = signal(
+        scratch.path(),
+        &events,
+        "tasks-claim",
+        "task.claimed",
+        ACTOR,
+        &as_actor(package_fixture("claimed")),
+    );
+    assert_eq!(claimed["ok"], json!(true), "{claimed}");
+    let mut opened = as_actor(package_fixture("pr-opened"));
+    opened["taskId"] = as_actor(package_fixture("claimed"))["taskId"].clone();
+    let opened_reply = signal(
+        scratch.path(),
+        &events,
+        "tasks-pr",
+        "task.pr_opened",
+        ACTOR,
+        &opened,
+    );
+    assert_eq!(opened_reply["ok"], json!(true), "{opened_reply}");
+    let mut block = as_actor(package_fixture("review-verdict"));
+    block["taskId"] = opened["taskId"].clone();
+    block["pr"] = opened["pr"].clone();
+    block["headSha"] = opened["headSha"].clone();
+    block["verdict"] = json!("BLOCK");
+    let block_reply = signal(
+        scratch.path(),
+        &events,
+        "tasks-block",
+        "task.review_verdict",
+        ACTOR,
+        &block,
+    );
+    assert_eq!(block_reply["ok"], json!(true), "{block_reply}");
+
+    let output = command()
+        .args(["execution", "status", "--events"])
+        .arg(&events)
+        .args(["--execution", RUN, "--tasks", "--keyring"])
+        .arg(scratch.path().join("keyring"))
+        .args(["--key-id", "owner-key"])
+        .output()
+        .unwrap();
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reply["ok"], json!(true), "{reply}");
+    let data = &reply["data"]["tasks"];
+    assert_eq!(data["rejected"], 0, "{data}");
+    let tasks = data["tasks"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no tasks: {data}"));
+    assert_eq!(tasks.len(), 1, "{data}");
+    assert_eq!(tasks[0]["pr"], opened["pr"]);
+    assert_eq!(tasks[0]["headSha"], opened["headSha"]);
+    assert_eq!(tasks[0]["lane"], ACTOR);
+    assert_eq!(tasks[0]["step"], "review");
+    assert_eq!(tasks[0]["blockedBy"]["reviewer"], ACTOR, "{}", tasks[0]);
+    let claim_sequence = history(&events)
+        .iter()
+        .find(|event| {
+            matches!(&event.kind, EventKind::SignalRecorded(recorded) if recorded.kind == "task.claimed")
+        })
+        .map(|event| event.sequence)
+        .expect("the claim was recorded");
+    assert_eq!(
+        tasks[0]["claimSequence"],
+        json!(claim_sequence),
+        "{}",
+        tasks[0]
+    );
+
+    // Without the flag the status reply carries no projection, as before.
+    let plain = command()
+        .args(["execution", "status", "--events"])
+        .arg(&events)
+        .args(["--execution", RUN])
+        .output()
+        .unwrap();
+    let plain: Value = serde_json::from_slice(&plain.stdout).unwrap();
+    assert_eq!(plain["ok"], json!(true), "{plain}");
+    assert!(plain["data"].get("tasks").is_none(), "{plain}");
+
+    // `--tasks` needs the keyring that opens the envelopes: clap refuses before anything runs.
+    let refused = command()
+        .args(["execution", "status", "--events"])
+        .arg(&events)
+        .args(["--execution", RUN, "--tasks"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+}
+
 /// A heartbeat is admitted through the real sealed signal door only while this lane owns a claim.
 #[test]
 fn heartbeat_on_an_open_claim_is_recorded_without_changing_the_claim() {
@@ -369,6 +468,48 @@ fn heartbeat_needs_an_open_claim_and_a_pr_ends_it() {
     );
     assert_eq!(ended["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID");
     assert_eq!(history(&events).len(), head);
+}
+
+/// #1193 (plan A2): a claim carries its lease. Before: `leaseSeconds` was an unknown key and the
+/// whole claim was refused (`GHCLI003`), so no lane could state how long its claim stays live.
+/// Now a lease of 60 s to a day is admitted and one outside that range is refused with nothing
+/// appended. Cost: one held fixture run and three CLI signals.
+#[test]
+fn a_claim_carries_a_lease_within_bounds() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let mut claim = as_actor(package_fixture("claimed"));
+    claim["leaseSeconds"] = json!(1800);
+    let admitted = signal(
+        scratch.path(),
+        &events,
+        "lease-claim",
+        "task.claimed",
+        ACTOR,
+        &claim,
+    );
+    assert_eq!(admitted["ok"], true, "{admitted}");
+    let head = history(&events).len();
+    for (id, lease) in [
+        ("lease-short", json!(299)),
+        ("lease-long", json!(86401)),
+        ("lease-text", json!("1800")),
+    ] {
+        let mut bad = claim.clone();
+        bad["taskId"] = json!("issue-1194");
+        bad["issue"] = json!(1194);
+        bad["leaseSeconds"] = lease;
+        let refused = signal(scratch.path(), &events, id, "task.claimed", ACTOR, &bad);
+        assert_eq!(
+            refused["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID",
+            "{id}: {refused}"
+        );
+    }
+    assert_eq!(
+        history(&events).len(),
+        head,
+        "a refused lease appends nothing"
+    );
 }
 
 #[test]

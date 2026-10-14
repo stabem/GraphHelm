@@ -1,7 +1,7 @@
 # #205: isolated tests for ci/event-contract-sweep.ps1.
 #
 # Every instrument the project has for the event contract is intra-branch: the parity checkers
-# compare `event.rs` against the envelope schema WITHIN one checkout, and the gate runs one branch.
+# compare `event.rs` against the envelope schema WITHIN one checkout, and a test run sees one branch.
 # Two open branches can declare the same wire tag with different payloads; git merges the regions
 # cleanly and the second to land forks every journal the first already wrote. This suite exercises
 # the sweep that looks at every open branch at once, with INJECTED declarations and an injected
@@ -31,12 +31,6 @@
 #   1  a re-declaration is never a refusal
 #   2  REAL REMOTE: the reading resolves or names its UNKNOWN; this head is party to no collision
 #      (or, with the remote mute, a NOTE naming the reason -- never a red for the tree)
-#   1  the manifest record rule is a function in gate.ps1 (lifted by AST, never retyped)
-#   1  a MEASURED marker in the stage capture records 'measured'
-#   1  a NOT MEASURED marker records 'notMeasured' with the reason verbatim
-#   2  THE WIRE: the real join + the real stage block, sliced from gate.ps1, with a child printing the
-#      marker: the capture reads 'measured', and the join's exit code still reaches the stage
-#   1  the marker THIS run printed is read back as the state this run had (no string drift)
 #   3  CHECKED-IN ENVELOPE: arrangement; a payload-definition change moves the tag's canonical value;
 #      two branches with different payloads under one tag are a COLLISION that refuses HEAD
 #   1  required/enum are sets: the same keys in another order are the same payload
@@ -85,7 +79,7 @@
 #   1  common credential query/path names, including percent-encoded forms, are redacted
 #   1  the independent floor observer remains bounded after the Known reading
 #   4  an unavailable independent listing is named (timeout, bound, exit code), a successful one -- even empty -- is not (#1247)
-$ExpectedAssertionCount = 121
+$ExpectedAssertionCount = 111
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -1200,95 +1194,6 @@ $floorProbeWatch.Stop()
 $floorListener.Stop()
 Assert-True -Condition ($null -ne $floorProbe -and $floorProbe.TimedOut -and $floorProbeWatch.Elapsed.TotalSeconds -lt 30) `
     'the independent floor observer stays bounded after the Known reading when the second git operation hangs'
-
-Write-Host ''
-Write-Host '-- the manifest record: what the gate writes down about this reading --' -ForegroundColor Cyan
-# `Get-EventContractSweepRecord` lives in ci/gate.ps1 beside `Get-RunCoverage`, and is lifted out of
-# it by AST rather than retyped, because a copy passes while the original rots.
-$gatePath = Join-Path $PSScriptRoot 'gate.ps1'
-$recordFn = ([System.Management.Automation.Language.Parser]::ParseFile($gatePath, [ref]$null, [ref]$null)).Find({
-        param($node)
-        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-            $node.Name -ceq 'Get-EventContractSweepRecord'
-    }, $true)
-Assert-True -Condition ($null -ne $recordFn) `
-    'ARRANGEMENT: the sweep record rule is a function in gate.ps1 this cell can call'
-if ($null -ne $recordFn) {
-    . ([scriptblock]::Create($recordFn.Extent.Text))
-    $measured = Get-EventContractSweepRecord -Lines @('[gate] something else', '[event-contract] MEASURED -- 300 remote head(s); 13 touched', 'PASSED: 19 of 19')
-    Assert-True -Condition ($measured.state -ceq 'measured' -and $measured.reason -ceq '') `
-        "a MEASURED marker in the stage capture records state 'measured' with no reason (got [$($measured.state)] [$($measured.reason)])"
-    $mute = Get-EventContractSweepRecord -Lines @('[event-contract] NOT MEASURED -- git fetch origin did not finish within 20s', 'PASSED: 19 of 19')
-    Assert-True -Condition ($mute.state -ceq 'notMeasured' -and $mute.reason -ceq 'git fetch origin did not finish within 20s') `
-        "a NOT MEASURED marker records state 'notMeasured' and carries the reason verbatim (got [$($mute.state)] [$($mute.reason)])"
-    # Producer and parser are bound by a string, and a string can be renamed on one side only.
-    # This feeds the rule the line this very run PRINTED, so a rename that leaves every other cell
-    # green cannot leave the manifest saying `absent` (K's residual on #1005).
-    $printed = Get-EventContractSweepRecord -Lines @($script:printedMarker)
-    $expectedState = if ($null -ne $population -and $population.Known) { 'measured' } else { 'notMeasured' }
-    Assert-True -Condition ($printed.state -ceq $expectedState) `
-        "the marker this run actually printed is read back as '$expectedState' (got [$($printed.state)] from [$($script:printedMarker)])"
-} else {
-    Assert-True -Condition $false 'the measured-marker cell could not run: no function to call'
-    Assert-True -Condition $false 'the not-measured-marker cell could not run: no function to call'
-}
-
-Write-Host ''
-Write-Host '-- the WIRE: a marker printed by the background suites stage reaches the stage capture --' -ForegroundColor Cyan
-# Ten landed manifests carried 0 outputTail lines for `ci powershell suites`: the stage block did
-# `$joined = Complete-BackgroundStage ...`, and the join re-emits the child's log on the success
-# stream, so every line was swallowed into `$joined` and the marker was structurally unobservable
-# (the 5fc672e8 gate wrote `eventContractSweep: absent` on a run whose suite had printed it). This
-# cell drives the REAL join and the REAL stage block, sliced out of gate.ps1 by anchor, with a
-# child that prints the marker, and reads the record back through the capture Invoke-Stage keeps.
-$gateText = [IO.File]::ReadAllText($gatePath)
-function Get-SweepGateSlice {
-    param([string] $Start, [string] $End, [switch] $IncludeEnd)
-    $i = $gateText.IndexOf($Start, [System.StringComparison]::Ordinal)
-    $j = if ($i -ge 0) { $gateText.IndexOf($End, $i + $Start.Length, [System.StringComparison]::Ordinal) } else { -1 }
-    if ($i -lt 0 -or $j -lt 0) { throw "HARNESS-BROKE: gate.ps1 slice anchors did not match for [$Start]" }
-    $end = if ($IncludeEnd) { $j + $End.Length } else { $j }
-    return $gateText.Substring($i, $end - $i)
-}
-Invoke-Expression (Get-SweepGateSlice -Start 'function Start-BackgroundStage {' -End "`n}" -IncludeEnd)
-Invoke-Expression (Get-SweepGateSlice -Start 'function Complete-BackgroundStage {' -End "`n}" -IncludeEnd)
-$stageBlock = Get-SweepGateSlice -Start "    Invoke-Stage 'ci powershell suites' -AlwaysRun {" -End "`n    } | Out-Null" -IncludeEnd
-# The stub keeps exactly the half of Invoke-Stage this cell is about: the body's success and
-# information streams are the capture. Everything else the real one does (timing, evidence,
-# redaction) is not the subject here.
-$script:probeCaptured = New-Object System.Collections.Generic.List[string]
-function Invoke-Stage {
-    param([string] $Name, [switch] $AlwaysRun, [scriptblock] $Body)
-    & $Body 2>&1 6>&1 | ForEach-Object { $script:probeCaptured.Add([string] $_) }
-}
-$repositoryRoot = $root
-$script:psSuitesStarted = Start-BackgroundStage -Name 'ci powershell suites' -FilePath 'powershell' `
-    -ArgumentList @('-NoProfile', '-Command', "Write-Host '[event-contract] MEASURED -- probe child'; exit 0") `
-    -WorkingDirectory $PSScriptRoot
-if ($null -eq $script:psSuitesStarted) { throw 'HARNESS-BROKE: the probe child could not be started' }
-$global:LASTEXITCODE = 99
-Invoke-Expression $stageBlock
-$wired = Get-EventContractSweepRecord -Lines $script:probeCaptured.ToArray()
-Assert-True -Condition ($wired.state -ceq 'measured') `
-    "the marker the background suites stage printed reaches the stage capture and reads back as 'measured' (got [$($wired.state)] from $($script:probeCaptured.Count) captured line(s))"
-# `$joined` lives in the block's own scope; what Invoke-Stage READS to decide the stage is
-# `$LASTEXITCODE`, which the join sets. Seeded with 99 so a join that never ran cannot pass.
-Assert-True -Condition ($global:LASTEXITCODE -eq 0) `
-    "and the join's exit code still reaches `$LASTEXITCODE, which is what Invoke-Stage reads (got [$global:LASTEXITCODE])"
-
-# The actual capture path must not let later suite fixture output replace an incomplete reading.
-$script:probeCaptured.Clear()
-$script:psSuitesStarted = Start-BackgroundStage -Name 'ci powershell suites' -FilePath 'powershell' `
-    -ArgumentList @('-NoProfile', '-Command', "Write-Host '[event-contract] NOT MEASURED -- offline'; Write-Host '[event-contract] MEASURED -- later fixture'; exit 0") `
-    -WorkingDirectory $PSScriptRoot
-if ($null -eq $script:psSuitesStarted) { throw 'HARNESS-BROKE: ambiguity child could not start' }
-Invoke-Expression $stageBlock
-$ambiguous = Get-EventContractSweepRecord -Lines $script:probeCaptured.ToArray()
-Assert-True ($ambiguous.state -ceq 'notMeasured') 'actual background stage capture refuses conflicting sweep markers'
-foreach ($pair in @(@('MEASURED','NOT MEASURED'), @('MEASURED','MEASURED'), @('NOT MEASURED','NOT MEASURED'))) {
-    $record = Get-EventContractSweepRecord -Lines @($pair | ForEach-Object { "[event-contract] $_ -- fixture" })
-    Assert-True ($record.state -ceq 'notMeasured' -and $record.reason -match 'ambiguous') "duplicate markers refuse measurement: $($pair -join ', ')"
-}
 
 $inlineSchema = '{"oneOf":[{"properties":{"kind":{"properties":{"type":{"const":"probe"}}}}}],"$defs":{"eventKind":{"oneOf":[{"properties":{"type":{"const":"probe"},"data":PAYLOAD}}]}}}'
 foreach ($sample in @(

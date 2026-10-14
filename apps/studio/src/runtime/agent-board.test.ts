@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { laneBarsOf } from "../test/task-fold";
 import { agentBoard, span } from "./agent-board";
 import type { Bot } from "./team";
-import { laneBars, type Lane, type TimedTaskEvent } from "./lane-bars";
+import { type Lane, type TimedTaskEvent } from "./lane-bars";
 import { STALE_CLAIM_MS } from "./agent-board";
 import type { MissionTask } from "./mission";
 
@@ -30,6 +31,11 @@ describe("agentBoard", () => {
     expect(live).toMatchObject({ status: "free", latest: "live now · wake listener" });
     const closed = agentBoard([], [old], [], now)[0]!;
     expect(closed.status).toBe("offline");
+  });
+  it("names authenticated request as the source of a recently seen idle actor", () => {
+    const old = { ...lane("idle", []), lastEventAt: now - 10 * 3_600_000 };
+    const seen = agentBoard([], [old], [], now, [], [], [], ["idle"], { idle: 3 * M })[0]!;
+    expect(seen).toMatchObject({ status: "free", latest: "last seen 3m ago · authenticated request" });
   });
   it("uses the slot's PR label, never an older review assignment", () => {
     const old = { ...lane("rev", []), lastRecord: { kind: "review_assigned", pr: 720, at: now - M } };
@@ -152,7 +158,7 @@ describe("#591 board times the latest activity (record shapes)", () => {
   let seq = 0;
   const ev = (e: Partial<TimedTaskEvent>): TimedTaskEvent => ({ actorId: "rt", sequence: seq++, taskId: "issue-600", ...e }) as TimedTaskEvent;
   const board = (events: TimedTaskEvent[], at: number, names: string[]) => {
-    const lanes = laneBars(events, T0 + at, 48 * H);
+    const lanes = laneBarsOf(events, T0 + at, 48 * H);
     return Object.fromEntries(agentBoard(names.map(bot), lanes, [], T0 + at).map((r) => [r.name, r]));
   };
 
@@ -190,7 +196,7 @@ describe("#591 board times the latest activity (record shapes)", () => {
     ];
     const delivered = task({ lane: "codex-3", step: "merged", title: "Previous delivery" });
     for (const at of [3 * H, 4 * M]) {
-      const lanes = laneBars(events, T0 + at, 48 * H);
+      const lanes = laneBarsOf(events, T0 + at, 48 * H);
       const row = agentBoard([bot("codex-3")], lanes, [delivered], T0 + at).find((r) => r.name === "codex-3");
       const closed = match === "closes";
       expect(row).toMatchObject({ status: closed ? (at === 3 * H ? "offline" : "free") : at === 3 * H ? "stale" : "working",
@@ -218,7 +224,7 @@ describe("#591 board times the latest activity (record shapes)", () => {
       ev({ kind: "task.claimed", taskId: "issue-729", lane: "codex-12", issue: 729, sequence: 10, at: iso(0) }),
       ev({ kind: "task.released", taskId: "issue-729", lane: "codex-12", sequence: 11, claimSequence: 10, reason: "Stopped", at: iso(M) } as never),
     ];
-    const lanes = laneBars(events, T0 + 2 * M, 48 * H);
+    const lanes = laneBarsOf(events, T0 + 2 * M, 48 * H);
     expect(agentBoard([bot("codex-12")], lanes, [], T0 + 2 * M)[0]).toMatchObject({ status: "free" });
   });
 

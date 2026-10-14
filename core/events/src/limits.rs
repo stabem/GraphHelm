@@ -79,3 +79,14 @@ pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 /// execution produces. When someone does, this constant should be revisited against it rather
 /// than against the format's ceiling.
 pub const STATUS_READ_BUDGET_MILLIS: i64 = 5_000;
+
+/// Wall-clock budget for the Runtime's task projection (`GET /v1/executions/{id}/tasks`, #1202).
+///
+/// Unlike the status fold, this read opens one sealed envelope per `task.*` record, and the
+/// first read of a run pays for every envelope. Measured 2026-10-14 on the live `gh-team` run:
+/// 4307 envelopes in ~5.5 s on the installed Runtime, while the status fold of the same 8795
+/// events answered in 0.10 s. The Runtime keeps what it verified per execution, so only the
+/// first read after a start (or the envelopes recorded since the last read) costs; this budget
+/// bounds that cold read at 60 s, about ten times the largest run seen. `graphhelm execution
+/// status --tasks` (one process, no cache) keeps `STATUS_READ_BUDGET_MILLIS`.
+pub const TASKS_READ_BUDGET_MILLIS: i64 = 60_000;

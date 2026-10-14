@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -89,6 +90,8 @@ const STARTED_COMMAND: &str = "serve.started";
 const HEALTH_COMMAND: &str = "serve.health";
 const UNAUTHORIZED_COMMAND: &str = "serve.unauthorized";
 const NOT_FOUND_COMMAND: &str = "serve.not_found";
+const SEEN_ACTOR_TTL: Duration = Duration::from_secs(15 * 60);
+const SEEN_ACTOR_LIMIT: usize = 256;
 
 fn argument(message: &str, pointer: &str) -> Failure {
     Failure {
@@ -177,10 +180,76 @@ struct ServeState {
     /// Where to append the read audit, when `--read-audit` asked for one. `None` - the default -
     /// means nothing is recorded at all.
     read_audit: Option<Arc<Path>>,
+    /// `--require-lane-credential` (#1148): when set, the signal route refuses a `task.*` record
+    /// from the shared agent session token; off, the shared token keeps recording as before.
+    require_lane_credential: bool,
     /// `--gateway-manifest`: the route manifest the gateway routes list and write when no model
     /// half is wired (#585). Never read by an executor.
     gateway_manifest: Option<Arc<Path>>,
     native_chat_busy: Arc<tokio::sync::Mutex<std::collections::HashMap<String, String>>>,
+    /// In-memory liveness only: an authenticated actor has contacted this Runtime recently.
+    /// Never persisted; it is display evidence and grants no authority.
+    seen_actors: Arc<std::sync::Mutex<BTreeMap<String, Instant>>>,
+    /// #1202: per execution, the `task.*` envelopes this Runtime already opened, so the tasks
+    /// route opens only what was recorded since its last read.
+    tasks_cache: Arc<std::sync::Mutex<HashMap<String, execution::tasks::TaskRecordCache>>>,
+}
+
+impl ServeState {
+    fn record_seen_actor(&self, headers: &HeaderMap, now: Instant) {
+        let Some(actor) = headers
+            .get("x-graphhelm-actor")
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| ActorId::parse(*value).is_ok())
+        else {
+            return;
+        };
+        let mut seen = self
+            .seen_actors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        seen.retain(|_, at| now.saturating_duration_since(*at) <= SEEN_ACTOR_TTL);
+        seen.insert(actor.to_owned(), now);
+        while seen.len() > SEEN_ACTOR_LIMIT {
+            let oldest = seen
+                .iter()
+                .min_by_key(|(actor, at)| (**at, actor.as_str()))
+                .map(|(actor, _)| actor.clone());
+            let Some(oldest) = oldest else { break };
+            seen.remove(&oldest);
+        }
+    }
+
+    fn seen_actors_at(&self, now: Instant) -> Vec<String> {
+        let mut seen = self
+            .seen_actors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        seen.retain(|_, at| now.saturating_duration_since(*at) <= SEEN_ACTOR_TTL);
+        seen.keys().cloned().collect()
+    }
+
+    fn seen_actors(&self) -> Vec<String> {
+        self.seen_actors_at(Instant::now())
+    }
+
+    fn seen_actor_ages_ms(&self) -> BTreeMap<String, u64> {
+        let now = Instant::now();
+        self.seen_actors_at(now);
+        self.seen_actors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|(actor, at)| {
+                (
+                    actor.clone(),
+                    now.saturating_duration_since(*at)
+                        .as_millis()
+                        .min(u128::from(u64::MAX)) as u64,
+                )
+            })
+            .collect()
+    }
 }
 
 /// `graphhelm serve --events <dir> --bind <addr>`: creates or loads the bearer token, binds
@@ -255,9 +324,12 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         sealing: sealing.map(Arc::new),
         cancels: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         read_audit: args.read_audit.as_deref().map(Arc::from),
+        require_lane_credential: args.require_lane_credential,
         gateway_manifest: args.gateway_manifest.as_deref().map(Arc::from),
         sweep_interval: args.sweep_interval,
         native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+        seen_actors: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
+        tasks_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
     };
 
     let rt =
@@ -334,6 +406,25 @@ fn load_agent_credentials() -> Result<BTreeMap<String, ScopedAgentCredential>, F
         );
     }
     Ok(result)
+}
+
+/// Set by the auth layer on a request authenticated by the SHARED agent session token (#1148) and
+/// removed on every other principal. That token proves the caller is some agent on this machine,
+/// not which lane, so the signal route refuses a `task.*` record that carries this mark. A caller
+/// forging the header can only refuse its own request.
+pub(super) const SHARED_SESSION_HEADER: &str = "x-graphhelm-agent-session";
+
+/// The execution (path segment 3) and the declared lane (`X-GraphHelm-Actor`) a lane credential
+/// would be derived for; `None` when either is absent.
+fn lane_credential_subject(request: &Request) -> Option<(&str, &str)> {
+    let execution = request
+        .uri()
+        .path()
+        .split('/')
+        .nth(3)
+        .filter(|segment| !segment.is_empty())?;
+    let lane = header_value(request.headers(), "x-graphhelm-actor")?;
+    Some((execution, lane))
 }
 
 fn verify_agent_credential(
@@ -739,12 +830,14 @@ fn build_router(state: ServeState) -> Router {
         .route("/v1/executions", get(routes::list_executions))
         .route("/v1/native-chats", get(native_chats::list))
         .route("/v1/executions/{id}", get(routes::status))
+        .route("/v1/seen-actors", get(routes::seen_actors))
         .route(
             "/v1/executions/{id}/reply-suggestions",
             get(routes::reply_suggestions),
         )
         .route("/v1/executions/{id}/briefing", get(routes::briefing))
         .route("/v1/executions/{id}/journeys", get(routes::journeys))
+        .route("/v1/executions/{id}/tasks", get(routes::tasks))
         .route("/v1/journeys", get(routes::project_journeys))
         .route("/v1/keel/plan", post(routes::keel_plan))
         .route("/v1/workspaces", get(routes::workspaces))
@@ -974,6 +1067,37 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
             .headers_mut()
             .insert("x-graphhelm-actor-type", HeaderValue::from_static("agent"));
         request.headers_mut().remove("x-graphhelm-agent-credential");
+        request
+            .headers_mut()
+            .insert(SHARED_SESSION_HEADER, HeaderValue::from_static("shared"));
+        return next.run(request).await;
+    }
+    // #1148: a per-lane credential, derived from the owner token, the execution in the path and
+    // the lane the caller declares in `X-GraphHelm-Actor`. Recomputed here and compared in
+    // constant time, so the declared lane is VERIFIED, not trusted: a credential derived for
+    // lane A presented under lane B's name is a 401, like any other wrong bearer. It reaches the
+    // routes the shared session token does, without its `SHARED_SESSION_HEADER` mark, so the
+    // signal route accepts this principal's `task.*` records.
+    if let Some((execution, lane)) = lane_credential_subject(&request)
+        && let Ok(owner_token) = std::str::from_utf8(&state.token)
+        && constant_time_eq(
+            presented.as_bytes(),
+            secret_file::lane_credential(owner_token, execution, lane).as_bytes(),
+        )
+    {
+        // What the shared session token reaches, on this execution only (the derivation binds
+        // the execution, so another execution's path never matches): the lane's reads of its
+        // own run, including evidence, and the signal route.
+        if !agent_session_route_allowed(&request) {
+            return refused(request, owner_required_response()).await;
+        }
+        let mut request = request;
+        request
+            .headers_mut()
+            .insert("x-graphhelm-actor-type", HeaderValue::from_static("agent"));
+        request.headers_mut().remove("x-graphhelm-agent-credential");
+        request.headers_mut().remove(SHARED_SESSION_HEADER);
+        state.record_seen_actor(request.headers(), Instant::now());
         return next.run(request).await;
     }
     // Agent credentials are bearer principals in their own right. They are never accepted as
@@ -1000,6 +1124,8 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
         "x-graphhelm-agent-credential",
         HeaderValue::from_str(&presented).unwrap_or_else(|_| HeaderValue::from_static("invalid")),
     );
+    request.headers_mut().remove(SHARED_SESSION_HEADER);
+    state.record_seen_actor(request.headers(), Instant::now());
     next.run(request).await
 }
 
@@ -1114,6 +1240,9 @@ fn journey_review_route(request: &Request) -> bool {
         )
 }
 
+/// The routes a scoped agent credential reaches: reads of its own execution (status, briefing,
+/// events and, since #1149, the task projection `tasks`, which the lanes' MCP tool reads) and the
+/// signal route. Everything else is the owner's or the shared session token's.
 fn agent_route_allowed(request: &Request) -> bool {
     let path = request.uri().path();
     let method = request.method();
@@ -1123,7 +1252,7 @@ fn agent_route_allowed(request: &Request) -> bool {
             && segments.get(2) == Some(&"executions")
             && (segments.len() == 4
                 || (segments.len() == 5
-                    && (segments[4] == "briefing" || segments[4] == "events")));
+                    && matches!(segments[4], "briefing" | "events" | "tasks")));
     }
     let segments: Vec<_> = path.split('/').collect();
     method == axum::http::Method::POST
@@ -3253,6 +3382,90 @@ fn append_audit_line(path: &Path, line: &serde_json::Value) -> std::io::Result<(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Promise: a scoped agent status read identifies its admitted actor without advancing the
+    /// event head, and that observation expires after the 15-minute liveness window. Regression:
+    /// omitting actor tracking or appending a heartbeat would make one of these assertions fail.
+    /// The isolated route fixture owns a temporary event store; no live Runtime is contacted.
+    /// Cost: one in-process HTTP request and one temporary store.
+    #[tokio::test]
+    async fn a_served_actor_reads_as_seen_without_a_journal_write() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (_directory, mut state) = routes::tests::known_execution_state();
+        state.token = Arc::<[u8]>::from(b"test-token".to_vec());
+        state.agent_session_token = Arc::<[u8]>::from(b"shared-token".to_vec());
+        state.agent_credentials = Arc::new(BTreeMap::from([(
+            "scoped-token".to_owned(),
+            ScopedAgentCredential {
+                actor: PersistedActor::new(
+                    PersistedActorType::Agent,
+                    ActorId::parse("lane-a").unwrap(),
+                ),
+                project: execution::PROJECT.to_owned(),
+                execution: "execution-known".to_owned(),
+            },
+        )]));
+        let state_for_expiry = state.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, build_router(state)).await.unwrap();
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        stream.write_all(b"GET /v1/executions/execution-known HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer test-token\r\nX-GraphHelm-Actor: lane-a\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        let body_start = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .unwrap()
+            + 4;
+        let body: serde_json::Value = serde_json::from_slice(&response[body_start..]).unwrap();
+        assert!(body["data"].get("seenActors").is_none());
+        assert!(state_for_expiry.seen_actors().is_empty());
+        let mut shared = tokio::net::TcpStream::connect(address).await.unwrap();
+        shared.write_all(b"GET /v1/executions/execution-known HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer shared-token\r\nX-GraphHelm-Actor: lane-a\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut shared_response = Vec::new();
+        shared.read_to_end(&mut shared_response).await.unwrap();
+        assert!(state_for_expiry.seen_actors().is_empty());
+        let mut scoped = tokio::net::TcpStream::connect(address).await.unwrap();
+        scoped.write_all(b"GET /v1/executions/execution-known HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer scoped-token\r\nX-GraphHelm-Actor: forged-lane\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut scoped_response = Vec::new();
+        scoped.read_to_end(&mut scoped_response).await.unwrap();
+        assert_eq!(state_for_expiry.seen_actors(), vec!["lane-a"]);
+        let mut liveness = tokio::net::TcpStream::connect(address).await.unwrap();
+        liveness.write_all(b"GET /v1/seen-actors HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer test-token\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut liveness_response = Vec::new();
+        liveness.read_to_end(&mut liveness_response).await.unwrap();
+        server.abort();
+        let liveness_body_start = liveness_response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .unwrap()
+            + 4;
+        let liveness_body: serde_json::Value =
+            serde_json::from_slice(&liveness_response[liveness_body_start..]).unwrap();
+        assert_eq!(
+            liveness_body["data"]["seenActors"],
+            serde_json::json!(["lane-a"])
+        );
+        assert!(
+            liveness_body["data"]["seenActorAgesMs"]["lane-a"]
+                .as_u64()
+                .unwrap()
+                < 60_000
+        );
+        assert_eq!(state_for_expiry.seen_actors(), vec!["lane-a"]);
+        assert!(state_for_expiry.seen_actor_ages_ms()["lane-a"] < 60_000);
+        assert_eq!(body["data"]["headSequence"], 1);
+        assert!(
+            state_for_expiry
+                .seen_actors_at(Instant::now() + Duration::from_secs(16 * 60))
+                .is_empty()
+        );
+    }
 
     #[test]
     fn a_cancel_retry_does_not_accept_a_successful_completion_with_the_same_execution() {

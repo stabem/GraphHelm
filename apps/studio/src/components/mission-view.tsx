@@ -1,9 +1,10 @@
 import "./mission-view.css";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { JourneyFlowView, JourneyFlowsView, JourneyRunView, JourneyView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
 import type { TaskEventRecord } from "../runtime/team-tasks";
 import type { Lane } from "../runtime/lane-bars";
+import { RUNTIME_PREDATES_TASKS_ROUTE } from "../runtime/tasks-route";
 import { buildMission, toMissionTask, unlinkedTasks, withCurrentReviewer, type Mission } from "../runtime/mission";
 import { layoutMission } from "../runtime/mission-layout";
 import { testFrames } from "../runtime/test-frames";
@@ -22,6 +23,7 @@ import { laneLiveness } from "../runtime/stage-health";
 import { WORK_STAGES } from "../runtime/work-groups";
 import { LaneActions, laneRoster, type LaneNote } from "./lane-actions";
 import { laneRepliedAfterAsk } from "./lane-actions";
+import { FREE_LIVENESS_MS } from "../runtime/agent-board";
 import type { EnvelopeRecord } from "../graph/ledger";
 import type { RuntimeEvent } from "../runtime/types";
 import type { SlotView } from "../runtime/slots";
@@ -74,6 +76,11 @@ interface Props {
   historyLoading?: boolean;
   /** The displayed task history is a recent page rather than the complete fold. */
   partial?: boolean;
+  /** #1192: the Runtime answered the tasks route with "no such route" (an older binary); the
+   * Lanes board and the kanban are replaced by one sentence saying so, never left empty. */
+  tasksRouteMissing?: boolean;
+  /** #1192: the Runtime's code and sentence when the tasks route failed (null when it answered). */
+  tasksRouteFailure?: string | null;
   /** Recent task history is ready for Lanes while the complete history is still loading. */
   lanesHistoryLoading?: boolean;
   historyFailedCount?: number;
@@ -88,6 +95,8 @@ interface Props {
   slots?: SlotView[];
   /** Actors with an armed, unconsumed wake lease; absent on older Runtimes. */
   wakeListeners?: string[];
+  seenActors?: string[];
+  seenActorAgesMs?: Record<string, number>;
   onDemandLanes?: string[];
   /** #647: the run's graph nodes for the Run graph strip; empty, the strip is omitted. */
   runNodes?: GraphNode[];
@@ -102,9 +111,20 @@ interface Props {
 }
 
 /** #647: the run's nodes and their state, each one opening the node window the Team canvas opened. */
-export function RunGraphStrip({ nodes, unassigned, onOpenNode }: { nodes: GraphNode[]; unassigned: string[]; onOpenNode?: (nodeId: string) => void }) {
+export function RunGraphStrip({ nodes, unassigned, agents = [], now, onOpenNode }: { nodes: GraphNode[]; unassigned: string[]; agents?: Bot[]; now: number; onOpenNode?: (nodeId: string) => void }) {
   const [open, setOpen] = useState(true);
   if (nodes.length === 0) return null;
+  const technical = new Set(["codex", "claude-code", "studio-operator"]);
+  const recentAgents = new Map<string, { name: string; lastAt: number }>();
+  for (const agent of agents) {
+    const actorId = agent.actorId?.trim();
+    const name = agent.name.trim();
+    const lastAt = agent.lastRecordAt === null ? NaN : Date.parse(agent.lastRecordAt);
+    const age = now - lastAt;
+    if (!actorId || agent.shared || agent.native || technical.has(actorId.toLowerCase())
+      || !name || name.toLowerCase() === "tbd" || !Number.isFinite(lastAt) || age < 0 || age > FREE_LIVENESS_MS) continue;
+    if (!recentAgents.has(actorId)) recentAgents.set(actorId, { name, lastAt });
+  }
   const free = new Set(unassigned);
   const parts = [
     { title: "Steps without a bot", nodes: nodes.filter((n) => free.has(n.id)) },
@@ -123,6 +143,12 @@ export function RunGraphStrip({ nodes, unassigned, onOpenNode }: { nodes: GraphN
           <ol>{p.nodes.map(item)}</ol>
         </div>
       ))}
+      {open && recentAgents.size > 0 && <div className="mv-run-part">
+        <h3>Recently recorded agents</h3>
+        <ul aria-label="Recently recorded agents">{[...recentAgents].map(([actorId, agent]) => (
+          <li key={actorId}>{agent.name} · Last record {ago(now - agent.lastAt)}</li>
+        ))}</ul>
+      </div>}
     </section>
   );
 }
@@ -140,10 +166,10 @@ export const awayText = (a: { minutes: number; shipped: number }) => `${Math.max
 /** #735: one stacked bar per work group, plus the same counts in words, instead of a spinner per item. */
 const PROGRESS_ORDER = ["proven", "merged", "work", "stalled", "ready"] as const;
 const PROGRESS_WORD: Record<(typeof PROGRESS_ORDER)[number], string> = { proven: "proven", merged: "merged", work: "in work", stalled: "blocked", ready: "Ready · unclaimed" };
-export function GroupProgress({ states }: { states: string[] }) {
+/** `prs` is how many of the tasks have a PR (#1166): a claimed task without one is work, not a PR. */
+export function GroupProgress({ states, prs = states.length }: { states: string[]; prs?: number }) {
   const counts = PROGRESS_ORDER.map((k) => [k, states.filter((s) => s === k).length] as const).filter(([, n]) => n > 0);
-  const total = states.length;
-  const words = [`${total} ${total === 1 ? "PR" : "PRs"}`, ...counts.map(([k, n]) => `${n} ${PROGRESS_WORD[k]}`)].join(" · ");
+  const words = [prs === 0 ? "no PR yet" : `${prs} ${prs === 1 ? "PR" : "PRs"}`, ...counts.map(([k, n]) => `${n} ${PROGRESS_WORD[k]}`)].join(" · ");
   return (
     <span className="mv-progress">
       <span className="mv-progress-bar" role="img" aria-label={words}>
@@ -169,6 +195,9 @@ function flowStepOrder(flow: JourneyFlowView): JourneyFlowView["screens"] {
   const edges = flow.paths.main?.map((id) => flow.edges.find((edge) => edge.id === id));
   if (!edges?.length || edges.some((edge) => edge === undefined)) return flow.screens;
   const ids = [edges[0]!.from, ...edges.map((edge) => edge!.to)];
+  // A path that revisits a screen is a validation finding (flow.path_revisits_screen); id order
+  // keeps each step once instead of repeating one.
+  if (new Set(ids).size !== ids.length) return flow.screens;
   const ordered = ids.map((id) => flow.screens.find((screen) => screen.id === id));
   if (ordered.some((screen) => screen === undefined)) return flow.screens;
   return [...ordered as JourneyFlowView["screens"], ...flow.screens.filter((screen) => !ids.includes(screen.id))];
@@ -246,7 +275,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], tasksRouteMissing = false, tasksRouteFailure = null, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, seenActors, seenActorAgesMs, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
   const journeys = useMemo(() => {
     const known = new Set(compiledJourneys.map((journey) => journey.contractId));
     return [...compiledJourneys, ...(flows?.flows ?? []).filter((flow) => !known.has(flow.id)).map((flow): JourneyView => ({
@@ -338,16 +367,25 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   const openOnGraph = (groupKey: string, key: string) => {
     setChosen({ kind: "group", key: groupKey }); setStepId(null); setStageCol(null); setTaskKey(key); setSub("graph");
   };
-  const lanesView = <>
+  const routeMissing = <p className="mv-none mv-pad" role="alert">{RUNTIME_PREDATES_TASKS_ROUTE}</p>;
+  const routeFailed = tasksRouteFailure === null ? null
+    : <div role="alert">Tasks route failed · {tasksRouteFailure} · <button type="button" onClick={onRetryHistory}>Retry</button></div>;
+  const lanesView = tasksRouteMissing ? routeMissing : <>
     <WorkKanban items={kanbanItems} onOpen={openOnGraph} historyLoading={lanesHistoryLoading} />
-    <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} onDemandLanes={onDemandLanes} liveLanes={wakeListeners} historyLoading={lanesHistoryLoading}
+    <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} onDemandLanes={onDemandLanes} liveLanes={wakeListeners} seenActors={seenActors} seenActorAgesMs={seenActorAgesMs} historyLoading={lanesHistoryLoading}
       {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
   </>;
-  const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} {...(onOpenNode ? { onOpenNode } : {})} />;
+  const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} agents={agents} now={now} {...(onOpenNode ? { onOpenNode } : {})} />;
+  const contentRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (sub === "test" && stepId !== null) {
+      contentRef.current?.querySelector(".tc-head")?.scrollIntoView?.({ block: "start" });
+    }
+  }, [sub, stepId]);
   if (sel === null) return <div className="mv" data-wide="true" data-page={page}>
-    {historyFailedCount > 0 && <div role="alert">History partly loaded · {historyFailedCount} records could not be read · <button type="button" onClick={onRetryHistory}>Retry</button></div>}{header}
+    {routeFailed}{historyFailedCount > 0 && <div role="alert">History partly loaded · {historyFailedCount} records could not be read · <button type="button" onClick={onRetryHistory}>Retry</button></div>}{header}
     {sub === "lanes" ? <div className="mv-pad">{lanesView}</div>
-      : <>{sub === "graph" && runGraph}<p className="mv-none mv-pad" role={historyLoading ? "status" : undefined}>{historyLoading ? "Showing recent work · still reading the history" : "No journeys in this project yet"}</p></>}</div>;
+      : <>{sub === "graph" && runGraph}{tasksRouteMissing ? routeMissing : <p className="mv-none mv-pad" role={historyLoading ? "status" : undefined}>{historyLoading ? "Showing recent work · still reading the history" : "No journeys in this project yet"}</p>}</>}</div>;
   const rawGroup: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
   // #591: the live Review row names only the current reviewer (latest assignment on the current head).
   const group: WorkGroup | null = rawGroup ? { ...rawGroup, rows: rawGroup.graphRows.map((r) => ({ ...r, task: withCurrentReviewer(r.task, lanes) })) } : null;
@@ -380,6 +418,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
     onSelectJourney?.(journey.contractId);
     setStepId(id);
     setFrame(Math.max(0, journey.steps.findIndex((s) => s.stepId === id)));
+    if (contentRef.current) contentRef.current.scrollTop = 0;
     setSub("test");
   };
   const reset = () => { setProofJid(null); setStepId(null); setTaskKey(undefined); setStageCol(null); if (sub === "test") setSub("graph"); };
@@ -452,13 +491,15 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   return (
     // data-wide: the Studio layout gives the mission view the whole main area (mission-view.css).
     <div className="mv" data-wide="true" data-page={page}>
+      {routeFailed}
       {historyFailedCount > 0 && <div role="alert">History partly loaded · {historyFailedCount} records could not be read · <button type="button" onClick={onRetryHistory}>Retry</button></div>}
       {header}
       {page !== "full" && summary}
       <div className="mv-body">
         {page === "full" && summary}
         {page === "full" && sub === "graph" && runGraph}
-        {sub === "graph" && historyLoading && <p className="mv-none" role="status">Showing recent work · still reading the history</p>}
+        {sub === "graph" && tasksRouteMissing && routeMissing}
+        {sub === "graph" && !tasksRouteMissing && historyLoading && <p className="mv-none" role="status">Showing recent work · still reading the history</p>}
         {proofMode && (
           <nav aria-label="Journeys" className="mv-journeys">
             <span className="mv-cap">Journeys</span>
@@ -489,7 +530,8 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
                       <button type="button" className="mv-journey mv-group" aria-pressed={false} title={g.label} onClick={() => pickGroup(g.key)}>
                         <span className="mv-journey-title">{g.label}</span>
                       </button>
-                      <GroupProgress states={visibleTasks.map((t) => stageState(g.stages[t.key]!, t))} />
+                      <GroupProgress states={visibleTasks.map((t) => stageState(g.stages[t.key]!, t))} prs={prs} />
+                      {g.contested.length > 0 && <span className="mv-journey-meta mv-contested" data-tone="stalled" title="Two lanes hold open claims on this issue: one of them is duplicate work">{`${g.contested.length} claims: ${g.contested.join(", ")}`}</span>}
                       {visibleTasks.length === 0 && g.releasedKeys.length > 0 && <span className="mv-journey-meta">released</span>}
                     </div>
                   );
@@ -498,7 +540,8 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
                       <button type="button" className="mv-journey mv-group" aria-pressed={true} title={g.label} onClick={() => pickGroup(g.key)}>
                         <span className="mv-journey-title">{g.label}</span>
                       </button>
-                      <GroupProgress states={visibleTasks.map((t) => stageState(g.stages[t.key]!, t))} />
+                      <GroupProgress states={visibleTasks.map((t) => stageState(g.stages[t.key]!, t))} prs={prs} />
+                      {g.contested.length > 0 && <span className="mv-journey-meta mv-contested" data-tone="stalled" title="Two lanes hold open claims on this issue: one of them is duplicate work">{`${g.contested.length} claims: ${g.contested.join(", ")}`}</span>}
                       {visibleTasks.length === 0 && g.releasedKeys.length > 0 && <span className="mv-journey-meta">released</span>}
                       <span className="mv-journey-meta">{`${g.issue !== null ? `issue #${g.issue}` : partial ? "issue not read yet" : "no issue"} · ${prs} ${prs === 1 ? "PR" : "PRs"}`}</span>
                       <div className="mv-chips">
@@ -535,7 +578,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
               const issue = m.tasks.find((t) => t.issue !== null)?.issue ?? null;
               return (
                 <div key={m.contractId} className="mv-jcard" data-selected={on}>
-                  <button type="button" className="mv-journey" aria-pressed={on} title={m.title} onClick={() => pickJourney(m.contractId)}>
+                  <button type="button" className="mv-journey" aria-pressed={on} title={m.title} onClick={() => pickProof(m.contractId)}>
                     <span className="mv-journey-title">{m.title}</span>
                     <span className="mv-journey-count">{`${m.summary.proven}/${m.summary.total}`}</span>
                   </button>
@@ -599,7 +642,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
             )}
           </nav>
         )}
-        <div className="mv-content">
+        <div className="mv-content" ref={contentRef}>
           {page !== "full" && sub === "graph" && runGraph}
           {sub === "graph" && group && <IssueGraph group={group} stepFor={stepFor} selectedTaskKey={shownTask} selectedCol={stageCol}
             onSelectTask={(key) => { setTaskKey(key); setStageCol(null); }} onSelectCol={(c) => { setStageCol(c); setTaskKey(null); }} onOpenTest={openTest} health={health} pace={pace}

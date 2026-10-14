@@ -542,6 +542,7 @@ pub fn run(
     execution: Option<&str>,
     html: Option<&Path>,
     file: Option<&Path>,
+    tasks: Option<&super::signal::SignalKeyring>,
 ) -> Outcome {
     // #134: `--file` is loaded, linted and published the way `resume` does it, so the version
     // whose hash is compared below is the same object `resume` would redispatch from.
@@ -590,6 +591,21 @@ pub fn run(
     // and handed to both, the five seconds bound the command rather than each half of it.
     let budget = crate::commands::status_read_budget();
     let value = execute_within(events, execution, budget.clone(), version.as_ref());
+    // #1149: `--tasks` attaches the task projection (clap requires `--execution` beside it), the
+    // same fold the Runtime serves on `GET /v1/executions/{id}/tasks`. It spends THE SAME budget
+    // the status read declared (codexrev-2 on PR #1190): the store walk, every sealed envelope
+    // opened and the fold are checked against the one deadline minted above, so `--tasks` can
+    // never be a second unbounded history read behind a budgeted first one.
+    let value = match (value, tasks, execution) {
+        (Ok(mut value), Some(keyring), Some(execution)) => {
+            super::tasks::read(events, execution, keyring, &budget).map(|view| {
+                value["tasks"] = serde_json::to_value(view)
+                    .expect("a view built from serializable fold types serializes");
+                value
+            })
+        }
+        (value, _, _) => value,
+    };
     // `--html` AFTER the status derived, never before (Codex on #1014): the snapshot used to be
     // written first, so a refused `--file` -- missing, lint-invalid, or a graph other than the
     // active one -- left an apparently successful artefact behind a command that exited 2. A
@@ -866,6 +882,39 @@ mod tests {
             html.exists(),
             "control: without this the refusal arm proves nothing about the budget"
         );
+    }
+
+    /// #1149 (codexrev-2 on PR #1190): `--tasks` spends the status read's own budget. A lapsed
+    /// budget refuses the task read at its first check, before any sealed envelope is opened
+    /// (the keyring here does not exist, so the refusal can only be the budget's); a budget that
+    /// has not lapsed gets past that check and fails on the keyring instead, which is the control
+    /// that the lapsed refusal is not a keyring failure in disguise. Cost: a seeded tempdir.
+    #[test]
+    fn the_tasks_read_spends_the_status_budget_before_opening_any_envelope() {
+        let directory = tempfile::tempdir().unwrap();
+        seed(directory.path(), 3);
+        let keyring = super::super::signal::SignalKeyring {
+            directory: directory.path().join("no-such-keyring"),
+            key_id: "missing".to_owned(),
+        };
+        let lapsed = ReadBudget::starting_now(
+            Arc::new(LapsingClock(AtomicU64::new(0))),
+            chrono::Duration::seconds(5),
+        );
+        let failure =
+            super::super::tasks::read(directory.path(), "execution-budget", &keyring, &lapsed)
+                .expect_err("a lapsed budget must refuse the task read");
+        assert_eq!(failure.code, "GHE013_READ_BUDGET_EXCEEDED");
+
+        let ample = ReadBudget::starting_now(Arc::new(FrozenClock), chrono::Duration::seconds(5));
+        let failure =
+            super::super::tasks::read(directory.path(), "execution-budget", &keyring, &ample)
+                .expect_err("control: the missing keyring refuses once the budget check is passed");
+        assert_ne!(
+            failure.code, "GHE013_READ_BUDGET_EXCEEDED",
+            "control: an unlapsed budget never refuses; the keyring does"
+        );
+        assert_eq!(failure.pointer, "/keyring");
     }
 
     /// #371: on ml-saas every read refolded a ~9k-event stream from sequence 1, so a read whose

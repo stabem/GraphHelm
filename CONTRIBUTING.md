@@ -30,8 +30,8 @@ GraphHelm does not use hosted GitHub Actions as its CI system. Run the tests the
 and list each command and result in the pull request. For a documentation-only change, inspect
 the changed text and check links and whitespace. A Rust code change also requires formatting
 and Clippy on the touched crates; see [the delivery process](docs/process/DELIVERY.md) for the
-exact commands and review rules. `ci/gate.ps1` is an optional full local check, not a merge
-requirement.
+exact commands and review rules. There is no gate script to run: the gate runner was retired
+on 2026-09-24 and deleted in #1204.
 
 Do not enable or run GitHub Actions. Local, change-directed evidence is the source of truth for
 validation.

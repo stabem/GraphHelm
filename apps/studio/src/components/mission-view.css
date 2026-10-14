@@ -73,6 +73,8 @@
 .mv-draft-tag { flex: none; padding: 1px 5px; border: 1px solid #574322; border-radius: 999px; color: #F5C76B; font: 10px var(--mono); }
 .mv-journey-count { flex: none; font-family: var(--mono); font-size: 11px; font-weight: 400; color: #A9AEB8; }
 .mv-journey-meta { font-family: var(--mono); font-size: 11px; color: #8D929C; }
+/* #1151: two lanes on one open claim is duplicate work; it reads in the stalled tone, never grey. */
+.mv-contested { color: #FF6B5E; }
 .mv-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(24px, 1fr)); gap: 4px; }
 .mv-chip { height: 20px; padding: 0; border: 0; border-radius: 4px; cursor: pointer; font: 500 10px var(--mono); color: #0B0C0F; background: var(--mv-tone); opacity: .6; }
 .mv-chip[data-status="not_run"] { background: transparent; border: 1px dashed var(--mv-tone); color: var(--mv-tone); opacity: 1; }

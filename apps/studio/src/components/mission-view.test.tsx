@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
 import { JourneyProgress, MissionView } from "./mission-view";
+import { teamModel } from "../runtime/team";
+import type { RuntimeEvent } from "../runtime/types";
+import type { GraphNode } from "../graph/model";
 import type { JourneyView } from "../runtime/types";
 import type { JourneyFlowView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
@@ -12,6 +15,47 @@ const journeys: JourneyView[] = [{
 }];
 
 describe("MissionView", () => {
+  it("shows recent note-only agents at run level without assigning graph steps", () => {
+    const now = Date.parse("2026-10-14T12:00:00Z");
+    const events: RuntimeEvent[] = ["codex-issue-2-tuya", "codex-issue-3-tuya"].map((actorId, index) => ({
+      sequence: index + 1, kind: "signal_recorded", payload: { kind: "operator_note" },
+      occurredAt: new Date(now - (index + 1) * 60_000).toISOString(), actorId, actorType: "agent",
+      idempotencyKey: null, eventId: null, evidenceRefs: [],
+    }));
+    const team = teamModel({ events, envelopes: {}, personas: {}, nativeLinks: {}, aliases: {}, model: null,
+      claudeTasks: null, waitingAskers: new Set(), now });
+    const [first, second] = team.bots;
+    const sameName = { ...first!, key: "codex-issue-4-tuya", actorId: "codex-issue-4-tuya", lastRecordAt: first!.lastRecordAt };
+    const agents = [first!, second!, { ...first! }, sameName,
+      { ...first!, key: "stale", actorId: "stale", lastRecordAt: new Date(now - 900_001).toISOString() },
+      { ...first!, key: "future", actorId: "future", lastRecordAt: new Date(now + 1).toISOString() },
+      { ...first!, key: "invalid", actorId: "invalid", lastRecordAt: "invalid" },
+      { ...first!, key: "shared", actorId: "shared", shared: true },
+      { ...first!, key: "native", actorId: "native", native: true },
+      { ...first!, key: "codex", actorId: "codex" },
+      { ...first!, key: "placeholder", actorId: "placeholder", name: "TBD" },
+      { ...first!, key: "unrecorded", actorId: "unrecorded", lastRecordAt: null }];
+    const node: GraphNode = { id: "step-1", declaredName: "First step", state: "ready", assignedActor: null } as GraphNode;
+    const props = { journeys: [], tasks: [], lanes: [], runFor: () => null, frameUrl: () => null,
+      onMarkSafe: vi.fn(), runNodes: [node], unassignedNodeIds: [node.id] };
+    const { rerender } = render(<MissionView {...props} now={now} agents={agents} />);
+
+    const graph = screen.getByRole("region", { name: "Run graph" });
+    const recent = within(graph).getByRole("list", { name: "Recently recorded agents" });
+    expect(within(recent).getAllByText(/codex-issue-2-tuya · Last record 1 min ago/)).toHaveLength(2);
+    expect(within(recent).getByText(/codex-issue-3-tuya · Last record 2 min ago/)).toBeInTheDocument();
+    expect(within(recent).queryByText(/stale|future|invalid|shared|native|placeholder|unrecorded/)).toBeNull();
+    expect(within(graph).getByRole("heading", { name: "Steps without a bot" })).toBeInTheDocument();
+    expect(within(graph).getByText("First step · ready")).toBeInTheDocument();
+
+    const refreshed = { ...first!, lastRecordAt: new Date(now + 1_000).toISOString() };
+    rerender(<MissionView {...props} now={now + 61_000} agents={[refreshed]} />);
+    expect(within(screen.getByRole("list", { name: "Recently recorded agents" }))
+      .getByText(/codex-issue-2-tuya · Last record 1 min ago/)).toBeInTheDocument();
+    rerender(<MissionView {...props} now={now + 901_001} agents={[refreshed]} />);
+    expect(screen.queryByRole("list", { name: "Recently recorded agents" })).toBeNull();
+  });
+
   it("draws recent work in the graph while history is still loading", () => {
     render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0}
       runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} historyLoading partial />);
@@ -166,16 +210,40 @@ describe("MissionView", () => {
     expect(rows).toHaveLength(2);
     expect(rail.querySelector("button.mv-group")).toHaveAttribute("aria-pressed", "true");
     await userEvent.click(rows[0]);
-    expect(rows[0]).toHaveAttribute("aria-pressed", "true");
-    await userEvent.click(rows[1]);
-    expect(rows[1]).toHaveAttribute("aria-pressed", "true");
-    expect(rows[0]).toHaveAttribute("aria-pressed", "false");
+    let currentRail = screen.getByRole("navigation", { name: "Journeys" });
+    let currentRows = Array.from(currentRail.querySelectorAll<HTMLButtonElement>("button.mv-journey:not(.mv-group)"));
+    expect(currentRows[0]).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(currentRows[1]!);
+    currentRail = screen.getByRole("navigation", { name: "Journeys" });
+    currentRows = Array.from(currentRail.querySelectorAll<HTMLButtonElement>("button.mv-journey:not(.mv-group)"));
+    expect(currentRows[1]).toHaveAttribute("aria-pressed", "true");
+    expect(currentRows[0]).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
     const fold = screen.getByRole("button", { name: "Unlinked work · 1" });
     expect(fold).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("#40 Loose PR")).toBeNull();
     await userEvent.click(fold);
     expect(fold).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("#40 Loose PR")).toBeInTheDocument();
+  });
+
+  it.each([true, false])("opens the selected journey's proof from Graph while historyLoading=%s", async (historyLoading) => {
+    const second: JourneyView = { ...journeys[0]!, contractId: "second", title: "Second journey", steps: [
+      { stepId: "unique-proof-step", screen: { screenId: "unique-proof-step", title: "Second unique proof step", scopePaths: [] }, promises: [] },
+    ] };
+    const onSelectJourney = vi.fn();
+    render(<MissionView journeys={[journeys[0]!, second]} tasks={[]} lanes={[]} now={0} runFor={() => null}
+      frameUrl={() => null} onMarkSafe={vi.fn()} onSelectJourney={onSelectJourney} historyLoading={historyLoading} />);
+
+    await fastUserEvent().click(screen.getByRole("button", { name: /Second journey/ }));
+
+    expect(screen.getByRole("tab", { name: "Proof" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Graph" })).toHaveAttribute("aria-selected", "false");
+    const rail = screen.getByRole("navigation", { name: "Journeys" });
+    expect(within(rail).getByRole("button", { name: /Second journey/ })).toHaveAttribute("aria-pressed", "true");
+    const proof = within(screen.getByRole("region", { name: "Proof" }));
+    expect(within(proof.getByRole("list", { name: "Steps" })).getByText("Second unique proof step")).toBeInTheDocument();
+    expect(onSelectJourney).toHaveBeenCalledWith("second");
   });
 
   it("#948: keeps the Graph counters and run graph inside the phone scroll body", () => {
@@ -288,6 +356,36 @@ describe("MissionView", () => {
     expect(screen.getByRole("region", { name: "Work by issue" })).toBeInTheDocument();
   });
 
+  it("#988: opens the test at its header with the frame bar before the canvas", async () => {
+    const scrollIntoView = vi.fn();
+    const priorScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
+    try {
+    const user = fastUserEvent();
+    const { container } = render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0}
+      runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await user.click(screen.getByRole("tab", { name: "Proof" }));
+    const content = container.querySelector<HTMLElement>(".mv-content")!;
+    const body = container.querySelector<HTMLElement>(".mv-body")!;
+    content.scrollTop = 66;
+    body.scrollTop = 2873;
+    await user.click(screen.getByRole("button", { name: "Open test for step 1" }));
+    expect(content.scrollTop).toBe(0);
+    expect(body.scrollTop).toBe(2873);
+    const canvas = container.querySelector(".tc")!;
+    const header = canvas.querySelector(".tc-head")!;
+    expect(header).toBeInTheDocument();
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    expect(scrollIntoView.mock.instances[0]).toBe(header);
+    const frames = canvas.querySelector(".tc-scrub")!;
+    expect(frames).toBeInTheDocument();
+    expect(frames.compareDocumentPosition(canvas.querySelector(".tc-main")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    } finally {
+      if (priorScrollIntoView) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", priorScrollIntoView);
+      else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    }
+  });
+
   it("#813: draft note is separate from the journey name and 0/2 has no proven fill", async () => {
     const two: JourneyView[] = [{ ...journeys[0]!, contractId: "add", title: "Add a model (draft: the test setup has no model gateway, so the Add model button is off)",
       steps: ["open", "save"].map((id) => ({ stepId: id, screen: { screenId: id, title: id, scopePaths: [] }, promises: [] })) }];
@@ -348,6 +446,15 @@ describe("MissionView", () => {
     expect(screen.getByText("The owner sees it")).toBeInTheDocument();
   });
 
+  it("#1166: a claimed issue without a PR reads no PR yet, not 1 PR", () => {
+    const tasks = [wt("a", { issue: 5, pr: 50, prTitle: "Moving", step: "review" }), wt("b", { issue: 6, pr: null, step: "implement" })] as unknown as TaskState[];
+    render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    const cards = Array.from(screen.getByRole("region", { name: "Work by issue" }).querySelectorAll<HTMLElement>(".mv-jcard"));
+    const texts = cards.map((c) => c.querySelector(".mv-progress-text")!.textContent);
+    expect(texts).toContain("1 PR · 1 in work");
+    expect(texts.find((t) => t !== "1 PR · 1 in work")).toMatch(/^no PR yet · /);
+  });
+
   it("#735: each work group shows one progress bar with its counts in words; no spinners; a blocked chip is marked", () => {
     const block = { reviewer: "r", headSha: "abcdef0123", commentUrl: "" };
     const tasks = [wt("a", { issue: 5, pr: 50, prTitle: "Moving", step: "review" }), wt("b", { issue: 5, pr: 51, prTitle: "Held", step: "review", blockedBy: block }),
@@ -362,6 +469,19 @@ describe("MissionView", () => {
     expect(within(cards[0]!).getByRole("img", { name: words(cards[0]!)! })).toHaveClass("mv-progress-bar");
     const chip = (pr: number) => Array.from(cards[0]!.querySelectorAll<HTMLElement>(".mv-pr-chip")).find((c) => c.getAttribute("aria-label")!.startsWith(`PR #${pr}`))!;
     expect([chip(50), chip(51), chip(52)].map((c) => c.getAttribute("data-alert"))).toEqual(["false", "true", "false"]);
+  });
+
+  it("#1151: an issue with two lanes on open claims says so on its card; one lane says nothing", () => {
+    const tasks = [wt("a", { issue: 1148, lane: "gh-claude-opt-3", step: "implement" }), wt("b", { issue: 1148, lane: "codex-4", step: "implement" }),
+      wt("c", { issue: 1147, lane: "gh-claude-opt-2", step: "implement" })] as unknown as TaskState[];
+    render(<MissionView journeys={journeys} tasks={tasks} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    const region = screen.getByRole("region", { name: "Work by issue" });
+    const cards = Array.from(region.querySelectorAll<HTMLElement>(".mv-jcard"));
+    const contested = (c: HTMLElement) => c.querySelector<HTMLElement>(".mv-contested");
+    const card = (issue: number) => cards.find((c) => c.textContent!.includes(`Issue #${issue}`))!;
+    expect(contested(card(1148))!.textContent).toBe("2 claims: gh-claude-opt-3, codex-4");
+    expect(contested(card(1148))!.getAttribute("data-tone")).toBe("stalled");
+    expect(contested(card(1147))).toBeNull();
   });
 
   it("#824: each Proof rail count stays with its label while the line can wrap", () => {

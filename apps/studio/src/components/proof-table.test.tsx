@@ -82,6 +82,19 @@ describe("ProofTable", () => {
     await userEvent.click(screen.getByRole("button", { name: "Run again" }));
     await waitFor(() => expect(onRun).toHaveBeenCalledWith(expect.objectContaining({ state: "ready", result: "pass" })));
   });
+  it("#1157: a rerun that failed for want of an observer says so and how to fix it", async () => {
+    const failed = { state: "failed" as const, kind: "preview" as const, reason: "driver.observer_missing",
+      detail: { code: "replay.observer_missing", pointer: "/observer" }, screens: {} };
+    const run: JourneyRunSource = {
+      start: vi.fn(async () => failed), read: vi.fn(async () => ({ state: "none" as const, screens: {} })),
+      screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null),
+    };
+    render(<ProofTable mission={mission} onOpenTest={vi.fn()} run={run}
+      flow={{ id: "j", title: "J", status: "draft", approved: null, drift: [], findings: [], approvable: true, screens: [], edges: [], paths: {} }} />);
+    await userEvent.click(screen.getByRole("button", { name: "Run again" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("no browser observer is installed");
+    expect(screen.getByRole("alert")).toHaveTextContent("graphhelm setup --install-observer playwright");
+  });
   it("#813: draft note is a muted line below the clean question", () => {
     render(<ProofTable mission={{ ...mission, title: "Add a model (draft: the test setup has no model gateway)" }} onOpenTest={vi.fn()} />);
     expect(screen.getByRole("heading", { name: 'Can I trust “Add a model”?' })).toBeInTheDocument();

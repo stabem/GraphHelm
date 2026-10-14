@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { laneBarsOf } from "../test/task-fold";
 import { render, screen, within } from "@testing-library/react";
 import { LanesTimeline } from "./lanes-timeline";
 import type { MissionTask } from "../runtime/mission";
 import { fastUserEvent } from "../test/user-event";
 import css from "./lanes-timeline.css?raw";
-import { laneBars, type TimedTaskEvent } from "../runtime/lane-bars";
+import { type TimedTaskEvent } from "../runtime/lane-bars";
+import { teamModel } from "../runtime/team";
+import type { RuntimeEvent } from "../runtime/types";
 
 const now = 1_000_000;
 const lanes = [
@@ -18,13 +21,34 @@ const t = (over: Partial<MissionTask>): MissionTask => ({
 const round = { reviewer: "r", headSha: "h", fixHead: "f", blockedAt: null };
 
 describe("LanesTimeline", () => {
+  it("shows recent note-only actors in the timeline without inventing task work", () => {
+    const at = Date.parse("2026-10-14T12:00:00Z");
+    const events: RuntimeEvent[] = ["codex-one", "claude-two"].map((actorId, index) => ({
+      sequence: index + 1, kind: "signal_recorded", payload: { kind: "operator_note", signalId: `note-${index + 1}` },
+      occurredAt: new Date(at - (index + 2) * 60_000).toISOString(), actorId, actorType: "agent",
+      idempotencyKey: null, eventId: `event-${index + 1}`, evidenceRefs: [],
+    }));
+    const agents = teamModel({ events, envelopes: {}, personas: {}, nativeLinks: {}, aliases: {}, model: null,
+      claudeTasks: null, waitingAskers: new Set(), now: at }).bots;
+
+    render(<LanesTimeline lanes={laneBarsOf([], at, 3_600_000)} agents={agents} now={at} windowMs={3_600_000} />);
+    const timeline = within(screen.getByRole("list", { name: "Agent lanes" }));
+    for (const [name, age] of [["codex-one", "2m ago"], ["claude-two", "3m ago"]]) {
+      const row = timeline.getByText(name).closest("li")!;
+      expect(row).toHaveTextContent("No task work recorded");
+      expect(row).toHaveTextContent(`Last record ${age}`);
+      expect(row.querySelectorAll(".lt-bar")).toHaveLength(0);
+    }
+    expect(timeline.getAllByText(/No task work recorded/)).toHaveLength(2);
+  });
+
   it("shows an author awaiting review as waiting in every Lanes status view", async () => {
     const at = 10 * 3_600_000;
     const events = [
       { sequence: 1, actorId: "codex-12", taskId: "issue-945", kind: "task.claimed", lane: "codex-12", issue: 945, at: new Date(at - 1000).toISOString() },
       { sequence: 2, actorId: "codex-12", taskId: "issue-945", kind: "task.pr_opened", lane: "codex-12", pr: 923, headSha: "head1", at: new Date(at).toISOString() },
     ] as TimedTaskEvent[];
-    const { container } = render(<LanesTimeline lanes={laneBars(events, at, 3_600_000)} now={at} windowMs={3_600_000} />);
+    const { container } = render(<LanesTimeline lanes={laneBarsOf(events, at, 3_600_000)} now={at} windowMs={3_600_000} />);
     const board = screen.getByRole("list", { name: "Agent board" });
     await fastUserEvent().click(screen.getByRole("button", { name: "Waiting 1" }));
     expect(within(board).getByText("codex-12").closest("li")!.querySelector(".ab-pill")).toHaveAttribute("data-status", "waiting");
@@ -92,7 +116,7 @@ describe("LanesTimeline", () => {
       { sequence: 2, actorId: "dev", taskId: "issue-809", kind: "task.pr_opened", lane: "dev", pr: 822, title: "Close false timeline bars", at: "2026-10-09T00:00:01Z" },
     ] as TimedTaskEvent[];
     const at = Date.parse("2026-10-09T00:00:10Z");
-    const { container } = render(<LanesTimeline lanes={laneBars(events, at, 1000)} now={at} windowMs={1000} />);
+    const { container } = render(<LanesTimeline lanes={laneBarsOf(events, at, 1000)} now={at} windowMs={1000} />);
     const bar = container.querySelector(".lt-bar")!;
     expect(bar).toHaveTextContent("#822 Close false timeline bars");
     expect(bar.getAttribute("title")).toContain("#822 Close false timeline bars");
@@ -238,14 +262,13 @@ describe("LanesTimeline", () => {
     expect(within(board).getByText("gh-claude-6")).toBeInTheDocument();
     expect(within(board).getByText(/last seen/)).toBeInTheDocument();
   });
-  it("counts idle lanes with wake listeners as Free and shows the source", async () => {
+  it("counts live idle lanes as Free and names the source", async () => {
     const user = fastUserEvent();
     const old = ["gh-claude-6", "coordinator"].map((name) => ({ ...lanes[1]!, lane: name, lastEventAt: now - 10 * 3_600_000 }));
     render(<LanesTimeline lanes={old} now={now} windowMs={1000} liveLanes={["gh-claude-6", "coordinator"]} />);
     await user.click(screen.getByRole("button", { name: "Free 2" }));
     const board = screen.getByRole("list", { name: "Agent board" });
     expect(within(board).getAllByRole("listitem")).toHaveLength(2);
-    expect(within(board).getAllByText("live now")).toHaveLength(2);
     expect(within(board).getAllByText(/wake listener/)).toHaveLength(2);
   });
 

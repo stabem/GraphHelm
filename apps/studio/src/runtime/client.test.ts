@@ -8,6 +8,7 @@ import {
   RUNTIME_REQUEST_TIMEOUT_MS,
   RUNTIME_READ_TIMEOUT_MS,
   WEBMCP_ACTOR,
+  RUNTIME_UNREACHABLE_HEADER,
 } from "./client";
 import { digestOf } from "./customs";
 import { foldTaskEvents, readTaskEventRecords } from "./team-tasks";
@@ -555,6 +556,29 @@ describe("the token", () => {
     expect(document.cookie).toBe("");
   });
 
+  it("adds process liveness to the board read without changing ordinary status", async () => {
+    const { fetchImpl, calls } = scriptedFetch([
+      { match: (call) => call.url === "/v1/executions/demo", reply: ok(statusData()) },
+      { match: (call) => call.url === "/v1/seen-actors", reply: ok({ seenActors: ["lane-a"], seenActorAgesMs: { "lane-a": 180000 } }, "serve.seen_actors") },
+    ]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    expect((await client.getStatus("demo")).seenActors).toBeUndefined();
+    expect(await client.getStatus("demo", true)).toMatchObject({ seenActors: ["lane-a"], seenActorAgesMs: { "lane-a": 180000 } });
+    expect(calls.filter((call) => call.url === "/v1/seen-actors")).toHaveLength(1);
+  });
+
+  it("stops requesting unsupported liveness after a 404 while status polling continues", async () => {
+    const { fetchImpl, calls } = scriptedFetch([
+      { match: (call) => call.url === "/v1/executions/demo", reply: ok(statusData()) },
+      { match: (call) => call.url === "/v1/seen-actors", reply: { status: 404, envelope: { ok: false, diagnostics: [] } } },
+    ]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    await client.getStatus("demo", true);
+    await client.getStatus("demo", true);
+    expect(calls.filter((call) => call.url === "/v1/executions/demo")).toHaveLength(2);
+    expect(calls.filter((call) => call.url === "/v1/seen-actors")).toHaveLength(1);
+  });
+
   it("cannot be serialised out of the client by accident", () => {
     const client = new RuntimeClient("tok-abc");
     expect(JSON.stringify(client)).not.toContain("tok-abc");
@@ -678,6 +702,23 @@ describe("verified mutations", () => {
       await expect(client.signal("demo", "{}", { kind, actor: { id: "agent-1", type: "agent" } })).rejects.toThrow(/must be recorded by the owner/i);
     }
     expect(scripted.calls).toHaveLength(0);
+  });
+
+  /** #1170: a connection the Runtime refused was never delivered, so it is a refusal, not "maybe applied". */
+  it("reports a mutation as not sent when the dev proxy says the Runtime refused the connection", async () => {
+    let up = true;
+    const down = () => new Response("", { status: 503, headers: { [RUNTIME_UNREACHABLE_HEADER]: "connection-refused" } });
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit = {}) => {
+      if (up && (init.method ?? "GET") === "GET") {
+        up = false;
+        return new Response(JSON.stringify(ok(statusData()).envelope), { status: 200 });
+      }
+      return down();
+    }) as unknown as typeof fetch;
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    const evidence = await client.approve("demo", "implementation", { idempotencyKey: "fixed-key-1" });
+    expect(evidence.result).toBe("refused");
+    expect(evidence.diagnostics[0]?.message).toMatch(/not answering, so nothing was sent/);
   });
 
   /** The full happy path: read the head, mutate against it, read back, report the delta. */
@@ -1353,6 +1394,54 @@ describe("the briefing", () => {
     ]);
     const other = new RuntimeClient("tok", { fetch: broken.fetchImpl });
     await expect(other.getBriefing("run-1")).rejects.toBeInstanceOf(RuntimeError);
+  });
+});
+
+/**
+ * #1192 (plan A1, slice 2): the task projection comes from the Runtime (`GET
+ * /v1/executions/{id}/tasks`, #1149). The cells pin the three answers the views act on: the reply
+ * under the bearer; `null` for a Runtime that predates the route (404 `serve.not_found` or 401 on
+ * this route), which the views turn into one sentence instead of an empty board; and a throw for
+ * an unknown execution, a broken store or a reply of an unknown shape, so none of those is ever
+ * read as "old server". Cost: scripted fetch, milliseconds.
+ */
+describe("the tasks route (#1192)", () => {
+  const reply = { executionId: "run-1", headSequence: 7, tasks: [{ key: "issue-1#pr-2", taskId: "issue-1", step: "review" }], records: [{ kind: "task.claimed", actorId: "lane-a", sequence: 1, taskId: "issue-1" }], rejected: 0 };
+
+  it("reads the projection under the same bearer and hands the reply through whole", async () => {
+    const { fetchImpl, calls } = scriptedFetch([
+      { match: (call) => call.url === "/v1/executions/run-1/tasks", reply: ok(reply, "execution.tasks") },
+    ]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    await expect(client.getTasks("run-1")).resolves.toEqual(reply);
+    expect(calls[0].method).toBe("GET");
+    expect(calls[0].headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("answers null for a Runtime that predates the route: 404 without the unknown-id code, or 401", async () => {
+    const notFound = scriptedFetch([
+      { match: (call) => call.url.endsWith("/tasks"), reply: { status: 404, envelope: { ok: false, command: "serve.not_found", data: null, diagnostics: [{ code: "GHCLI008_SERVE_NOT_FOUND", severity: "error", message: "no route", path: "", source: "serve-cli" }] } } },
+    ]);
+    await expect(new RuntimeClient("tok", { fetch: notFound.fetchImpl }).getTasks("run-1")).resolves.toBeNull();
+    const unauthorized = scriptedFetch([
+      { match: (call) => call.url.endsWith("/tasks"), reply: { status: 401, envelope: { ok: false, command: "serve.unauthorized", data: null, diagnostics: [{ code: "GHCLI007_SERVE_UNAUTHORIZED", severity: "error", message: "a valid Authorization: Bearer token is required", path: "/authorization", source: "serve-cli" }] } } },
+    ]);
+    await expect(new RuntimeClient("tok", { fetch: unauthorized.fetchImpl }).getTasks("run-1")).resolves.toBeNull();
+  });
+
+  it("throws for an unknown execution, a broken store and an unknown reply shape", async () => {
+    const unknownId = scriptedFetch([
+      { match: (call) => call.url.endsWith("/tasks"), reply: { status: 404, envelope: { ok: false, command: "execution.tasks", data: null, diagnostics: [{ code: "GHCLI028_EXECUTION_NOT_FOUND", severity: "error", message: "no execution with this id exists in this store", path: "/execution", source: "execution-cli" }] } } },
+    ]);
+    await expect(new RuntimeClient("tok", { fetch: unknownId.fetchImpl }).getTasks("typo")).rejects.toMatchObject({ code: "GHCLI028_EXECUTION_NOT_FOUND", httpStatus: 404 });
+    const broken = scriptedFetch([
+      { match: (call) => call.url.endsWith("/tasks"), reply: { status: 500, envelope: { ok: false, command: "execution.tasks", data: null, diagnostics: [] } } },
+    ]);
+    await expect(new RuntimeClient("tok", { fetch: broken.fetchImpl }).getTasks("run-1")).rejects.toBeInstanceOf(RuntimeError);
+    const odd = scriptedFetch([
+      { match: (call) => call.url.endsWith("/tasks"), reply: ok({ executionId: "run-1", tasks: "not a list" }, "execution.tasks") },
+    ]);
+    await expect(new RuntimeClient("tok", { fetch: odd.fetchImpl }).getTasks("run-1")).rejects.toBeInstanceOf(RuntimeError);
   });
 });
 

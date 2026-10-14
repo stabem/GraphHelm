@@ -1,4 +1,4 @@
-# Studio click-to-visible measurements
+# Studio click and envelope timing measurements
 
 This is a measuring tool, not a performance gate. It changes no Studio settings,
 sets no pass/fail threshold and compares no builds. Use only a disposable Studio
@@ -73,5 +73,28 @@ node --test tools/studio-perf/stats.test.mjs
 ```
 
 The tests cover numeric ordering, odd/even medians, nearest-rank p90 on ten values,
-maximum, a single value, unchanged inputs and refusal of empty/non-finite input.
-They require only Node, no browser, Runtime or network; normally under one second.
+maximum, a single value, unchanged inputs and refusal of empty/non-finite input. Envelope tests
+exercise the shared reducer with selected-execution requests, single and batch body completion,
+unrelated work, later polling and unknown-boundary cases. They require only Node, no browser,
+Runtime or network; normally under one second.
+
+## One-load envelope diagnostic
+
+Envelope mode makes one fresh page load and captures one execution. It is still restricted to an
+isolated local fixture and is not a live-project driver:
+
+```bash
+node tools/studio-perf/measure.mjs --base http://127.0.0.1:15815 --runs 1 \
+  --mode envelopes --execution gh-team-fixture --source-head abc12345 \
+  --out D:/gh/codex-9/envelopes.json
+```
+
+The report uses browser `performance` timestamps. It records the selected execution and source
+head, evidence request counts and failures, the last completed response body, the visible
+`Checking question envelopes` start and settlement, navigation duration, and the 30-second
+observation cutoff. It includes no response bodies or evidence text. Single and batch evidence
+requests are included; requests after the checking beacon starts are marked as polls and excluded
+from the initial-load cohort. Missing or ambiguous boundaries, cache-only loads, failed or pending
+reads, changed event heads and lost timing entries produce `status: "unknown"` and a null gap.
+The gap includes scheduling and rendering time; it is not pure CPU time. This mode does no clicks,
+seeding, messages, model calls or Runtime writes.

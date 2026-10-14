@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { laneBarsOf } from "../test/task-fold";
 import { agentBoard } from "./agent-board";
-import { LIVENESS_MS, applySessionEnds, packBars, placeholderLane, type TimedTaskEvent } from "./lane-bars";
+import { applySessionEnds, laneBars, packBars, placeholderLane, type TimedTaskEvent } from "./lane-bars";
+import { TEST_BUDGETS, TEST_SILENT_MS as LIVENESS_MS, foldForTests } from "../test/task-fold";
 import type { RuntimeEvent } from "./types";
 
 const T0 = Date.parse("2026-10-09T00:00:00Z");
@@ -425,5 +426,24 @@ describe("packBars (#591)", () => {
   it("a lane named TBD or nothing is a placeholder", () => {
     expect(["TBD", "tbd ", "", "  "].map(placeholderLane)).toEqual([true, true, true, true]);
     expect(placeholderLane("gh-claude-5")).toBe(false);
+  });
+});
+
+/* #1234: `silent` is the served verdict, never a re-judgment of the records. Each case is one where the
+ * records alone would say the opposite of what the Runtime served (it counts what the records here do
+ * not show, such as a recent owesSince or events of other kinds), so a local rule cannot pass both. */
+describe("laneBars reads silence from the Runtime's verdict (#1234)", () => {
+  const T = Date.parse("2026-10-14T12:00:00Z");
+  const claim = (lane: string, atMs: number): TimedTaskEvent => ({ kind: "task.claimed", lane, actorId: lane, sequence: 1, taskId: `issue-${lane}`, at: new Date(atMs).toISOString() }) as TimedTaskEvent;
+  const served = (events: TimedTaskEvent[], rows: { lane: string; silent: boolean }[]) =>
+    laneBars(events, { ...foldForTests(events.map(({ at: occurredAt, ...e }) => ({ ...e, occurredAt }))), liveness: { budgets: TEST_BUDGETS, lanes: rows.map((r) => ({ ...r, owes: true, free: false })) } }, T, 48 * 3_600_000);
+  it("an open bar quiet for hours is not silent when the Runtime serves silent:false", () => {
+    expect(served([claim("old", T - 5 * 3_600_000)], [{ lane: "old", silent: false }])[0]).toMatchObject({ lane: "old", silent: false });
+  });
+  it("a lane that recorded a minute ago is silent when the Runtime serves silent:true", () => {
+    expect(served([claim("fresh", T - 60_000)], [{ lane: "fresh", silent: true }])[0]).toMatchObject({ lane: "fresh", silent: true });
+  });
+  it("a lane the Runtime did not judge is not silent", () => {
+    expect(served([claim("unjudged", T - 5 * 3_600_000)], [])[0]).toMatchObject({ silent: false });
   });
 });

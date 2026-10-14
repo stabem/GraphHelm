@@ -12,7 +12,14 @@ export interface FoldSlice { id: number; ended: boolean; absorbed: boolean; stat
 /** Where one record landed: the id of the slice the fold routed it to. */
 export interface Route { sequence: number; slice: number }
 /** What a lane timeline needs beside the records: every slice and every record's slice. */
-export interface LaneFold { slices: FoldSlice[]; routes: Route[] }
+/** #1234 (plan A7): the Runtime judges lane liveness once and serves the budgets it judged by;
+ * the views read these and keep no threshold of their own. Absent on a Runtime that predates it. */
+export interface LivenessBudgets { silentAfterSeconds: number; freeAfterSeconds: number; stallAfterSeconds: number }
+export interface LaneLiveness { lane: string; lastRecordAt?: string; owes: boolean; owesSince?: string; silent: boolean; free: boolean }
+export interface Liveness { budgets: LivenessBudgets; lanes: LaneLiveness[] }
+/** #1193: a live pre-PR claim's lease; `overdue` is the stale-claim verdict. */
+export interface ClaimLease { key: string; taskId: string; lane: string; claimSequence: number; leaseSeconds: number; expiresAt: string; overdue: boolean }
+export interface LaneFold { slices: FoldSlice[]; routes: Route[]; liveness?: Liveness; leases?: ClaimLease[] }
 
 export interface TasksReply extends LaneFold {
   executionId: string;

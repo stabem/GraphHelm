@@ -23,7 +23,8 @@ import { laneLiveness } from "../runtime/stage-health";
 import { WORK_STAGES } from "../runtime/work-groups";
 import { LaneActions, laneRoster, type LaneNote } from "./lane-actions";
 import { laneRepliedAfterAsk } from "./lane-actions";
-import { FREE_LIVENESS_MS } from "../runtime/agent-board";
+import { laneBudgets } from "../runtime/lane-bars";
+import type { LivenessBudgets } from "../runtime/tasks-route";
 import type { EnvelopeRecord } from "../graph/ledger";
 import type { RuntimeEvent } from "../runtime/types";
 import type { SlotView } from "../runtime/slots";
@@ -42,6 +43,8 @@ function timerTask(task: TaskState): TaskState {
 }
 
 interface Props {
+  /** #1234: the budgets the Runtime judged liveness by (the tasks route's `liveness.budgets`). */
+  livenessBudgets?: LivenessBudgets;
   events?: RuntimeEvent[];
   envelopes?: EnvelopeRecord;
   journeys: JourneyView[];
@@ -111,7 +114,9 @@ interface Props {
 }
 
 /** #647: the run's nodes and their state, each one opening the node window the Team canvas opened. */
-export function RunGraphStrip({ nodes, unassigned, agents = [], now, onOpenNode }: { nodes: GraphNode[]; unassigned: string[]; agents?: Bot[]; now: number; onOpenNode?: (nodeId: string) => void }) {
+/** `freeAfterMs` is the Runtime's free budget (#1234): an agent counts as recent within it; 0 (no
+ * budget served) lists nobody. */
+export function RunGraphStrip({ nodes, unassigned, agents = [], now, onOpenNode, freeAfterMs = 0 }: { nodes: GraphNode[]; unassigned: string[]; agents?: Bot[]; now: number; onOpenNode?: (nodeId: string) => void; freeAfterMs?: number }) {
   const [open, setOpen] = useState(true);
   if (nodes.length === 0) return null;
   const technical = new Set(["codex", "claude-code", "studio-operator"]);
@@ -122,7 +127,7 @@ export function RunGraphStrip({ nodes, unassigned, agents = [], now, onOpenNode 
     const lastAt = agent.lastRecordAt === null ? NaN : Date.parse(agent.lastRecordAt);
     const age = now - lastAt;
     if (!actorId || agent.shared || agent.native || technical.has(actorId.toLowerCase())
-      || !name || name.toLowerCase() === "tbd" || !Number.isFinite(lastAt) || age < 0 || age > FREE_LIVENESS_MS) continue;
+      || !name || name.toLowerCase() === "tbd" || !Number.isFinite(lastAt) || age < 0 || age > freeAfterMs) continue;
     if (!recentAgents.has(actorId)) recentAgents.set(actorId, { name, lastAt });
   }
   const free = new Set(unassigned);
@@ -275,7 +280,8 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], tasksRouteMissing = false, tasksRouteFailure = null, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, seenActors, seenActorAgesMs, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], tasksRouteMissing = false, tasksRouteFailure = null, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, seenActors, seenActorAgesMs, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot, livenessBudgets }: Props) {
+  const freeAfterMs = livenessBudgets ? livenessBudgets.freeAfterSeconds * 1000 : laneBudgets(lanes).freeAfterMs;
   const journeys = useMemo(() => {
     const known = new Set(compiledJourneys.map((journey) => journey.contractId));
     return [...compiledJourneys, ...(flows?.flows ?? []).filter((flow) => !known.has(flow.id)).map((flow): JourneyView => ({
@@ -392,10 +398,10 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
     : <div role="alert">Tasks route failed · {tasksRouteFailure} · <button type="button" onClick={onRetryHistory}>Retry</button></div>;
   const lanesView = tasksRouteMissing ? routeMissing : <>
     <WorkKanban items={kanbanItems} onOpen={openOnGraph} historyLoading={lanesHistoryLoading} />
-    <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} onDemandLanes={onDemandLanes} liveLanes={wakeListeners} seenActors={seenActors} seenActorAgesMs={seenActorAgesMs} historyLoading={lanesHistoryLoading}
+    <LanesTimeline lanes={lanes} freeAfterMs={freeAfterMs} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} onDemandLanes={onDemandLanes} liveLanes={wakeListeners} seenActors={seenActors} seenActorAgesMs={seenActorAgesMs} historyLoading={lanesHistoryLoading}
       {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
   </>;
-  const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} agents={agents} now={now} {...(onOpenNode ? { onOpenNode } : {})} />;
+  const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} agents={agents} now={now} freeAfterMs={freeAfterMs} {...(onOpenNode ? { onOpenNode } : {})} />;
   const contentRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (sub === "test" && stepId !== null) {

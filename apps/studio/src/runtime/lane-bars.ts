@@ -16,7 +16,13 @@ export interface LaneBar {
 /** #591: the newest record a lane left: its kind without the `task.` prefix, and its PR or issue. */
 export interface LaneRecord { kind: string; pr?: number; issue?: number; at: number }
 export interface Lane {
+  /** #1234: `silent` is the Runtime's verdict (`liveness.lanes`), not a threshold kept here. */
   lane: string; bars: LaneBar[]; silent: boolean; lastEventAt: number;
+  /** #1234: the budgets the Runtime judged by, in ms; absent when it served none (an older
+   * Runtime), and then nothing is drawn quiet and nobody counts as recently seen. */
+  silentAfterMs?: number; freeAfterMs?: number;
+  /** #1193/#1234: the tasks whose claim lease the Runtime reads as overdue: stale claims. */
+  overdueTasks?: string[];
   /** Latest observed session end for this lane. */
   endedAt?: number;
   lastRecord?: LaneRecord | null;
@@ -24,13 +30,22 @@ export interface Lane {
   awaiting?: number[];
 }
 
-/** #591: a lane with no record of any kind for this long is silent; a step it owns reads Stalled.
- * One rule for the Graph cards, the pace dot and the Lanes agent board. */
-export const LIVENESS_MS = 30 * 60 * 1000;
+/** #1234: the budgets a set of lanes was judged by (the same for every lane of one run). */
+export function laneBudgets(lanes: readonly Lane[]): { silentAfterMs: number; freeAfterMs: number } {
+  const judged = lanes.find((lane) => lane.silentAfterMs !== undefined);
+  return { silentAfterMs: judged?.silentAfterMs ?? Number.POSITIVE_INFINITY, freeAfterMs: judged?.freeAfterMs ?? 0 };
+}
 /** #1192: the bars are drawn from the Runtime's fold (`GET /v1/executions/{id}/tasks`): `fold`
  * carries every slice the Runtime created, live or not, and the slice each record landed in. No
  * fold runs in the browser; a record the Runtime routed nowhere draws nothing. */
 export function laneBars(events: TimedTaskEvent[], fold: LaneFold, now: number, windowMs: number): Lane[] {
+  // #1234: the Runtime's budgets and verdicts; without them nothing is drawn quiet or silent.
+  const silentAfterMs = fold.liveness ? fold.liveness.budgets.silentAfterSeconds * 1000 : undefined;
+  const freeAfterMs = fold.liveness ? fold.liveness.budgets.freeAfterSeconds * 1000 : undefined;
+  const quietAfter = silentAfterMs ?? Number.POSITIVE_INFINITY;
+  const verdictOf = new Map((fold.liveness?.lanes ?? []).map((row) => [row.lane, row] as const));
+  const overdueOf = new Map<string, string[]>();
+  for (const lease of fold.leases ?? []) if (lease.overdue) overdueOf.set(lease.lane, [...(overdueOf.get(lease.lane) ?? []), lease.taskId]);
   const lanes = new Map<string, { bars: LaneBar[]; last: number; record: LaneRecord | null; awaiting: Set<number> }>();
   const open = new Map<string, { lane: string; bar: LaneBar; slice: string }>();
   // Slice identity is the Runtime's id, stable across the slices it later closed or absorbed.
@@ -70,7 +85,7 @@ export function laneBars(events: TimedTaskEvent[], fold: LaneFold, now: number, 
     open.set(k, { lane, bar, slice });
   };
   const finish = (bar: LaneBar, t: number) => {
-    const quietStart = (bar.lastActivityAt ?? bar.since ?? bar.start) + LIVENESS_MS;
+    const quietStart = (bar.lastActivityAt ?? bar.since ?? bar.start) + quietAfter;
     if (quietStart < t) (bar.quietSpans ??= []).push({ start: quietStart, end: t });
     bar.end = t;
     bar.open = false;
@@ -98,7 +113,7 @@ export function laneBars(events: TimedTaskEvent[], fold: LaneFold, now: number, 
     if (e.kind === "task.planned" || e.kind === "task.pr_opened" || e.kind === "task.critic_verdict") {
       for (const v of open.values()) if (v.slice === slice && v.lane === e.actorId) {
         const last = v.bar.lastActivityAt ?? v.bar.since ?? v.bar.start;
-        if (last + LIVENESS_MS < t) (v.bar.quietSpans ??= []).push({ start: last + LIVENESS_MS, end: t });
+        if (last + quietAfter < t) (v.bar.quietSpans ??= []).push({ start: last + quietAfter, end: t });
         v.bar.lastActivityAt = Math.max(last, t);
       }
     }
@@ -214,8 +229,11 @@ export function laneBars(events: TimedTaskEvent[], fold: LaneFold, now: number, 
   return [...lanes.entries()]
     .map(([lane, l]) => {
       const bars = l.bars.filter((b) => b.end >= from).map((b) => ({ ...b, start: Math.max(b.start, from) }));
-      const owes = l.bars.some((b) => b.open);
-      return { lane, bars, lastEventAt: l.last, silent: owes && now - l.last >= LIVENESS_MS, lastRecord: l.record, awaiting: [...l.awaiting] };
+      return {
+        lane, bars, lastEventAt: l.last, silent: verdictOf.get(lane)?.silent ?? false, lastRecord: l.record, awaiting: [...l.awaiting],
+        ...(silentAfterMs !== undefined ? { silentAfterMs } : {}), ...(freeAfterMs !== undefined ? { freeAfterMs } : {}),
+        ...(overdueOf.has(lane) ? { overdueTasks: overdueOf.get(lane)! } : {}),
+      };
     })
     .sort((a, b) => a.lane.localeCompare(b.lane));
 }

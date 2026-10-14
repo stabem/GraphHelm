@@ -6,12 +6,36 @@
  * this helper's output to the Runtime's on the same records, so the two cannot drift unseen. */
 import { laneBars, type Lane, type TimedTaskEvent } from "../runtime/lane-bars";
 import { foldTaskEvents, type TaskEventRecord, type TaskState } from "../runtime/team-tasks";
-import type { LaneFold } from "../runtime/tasks-route";
+import type { ClaimLease, LaneFold, Liveness } from "../runtime/tasks-route";
+
+/* #1234, TEST SUPPORT ONLY: the Studio keeps no liveness threshold; the Runtime serves budgets and
+ * verdicts (`liveness`, judged in `apps/cli/src/commands/execution/tasks.rs::lane_liveness`, whose
+ * edges are pinned by Rust cells). These stand in for a Runtime reply in the Studio's own cells:
+ * the same budgets, and a lane silent when it owes (an open bar) and has been quiet for the silent
+ * budget, the rule the Runtime applies. */
+export const TEST_SILENT_MS = 30 * 60_000;
+export const TEST_FREE_MS = 15 * 60_000;
+export const TEST_BUDGETS = { silentAfterSeconds: TEST_SILENT_MS / 1000, freeAfterSeconds: TEST_FREE_MS / 1000, stallAfterSeconds: 7200 };
+
+/** A hand-built lane judged the way the Runtime would judge it at `now`, with the served budgets. */
+export function judgedLane(lane: Omit<Lane, "silent"> & { silent?: boolean }, now: number, owes = true): Lane {
+  return { ...lane, silent: lane.silent ?? (owes && now - lane.lastEventAt >= TEST_SILENT_MS), silentAfterMs: TEST_SILENT_MS, freeAfterMs: TEST_FREE_MS };
+}
 
 /** `laneBars` over records that carry their own time, folded the way the Runtime would fold them
- * (the record's `at` is the Runtime's `occurredAt`), for cells written before the route existed. */
-export function laneBarsOf(events: TimedTaskEvent[], now: number, windowMs: number): Lane[] {
-  return laneBars(events, foldForTests(events.map(({ at, ...event }) => ({ ...event, occurredAt: at }))), now, windowMs);
+ * (the record's `at` is the Runtime's `occurredAt`), for cells written before the route existed.
+ * The fold carries the test budgets and a stand-in verdict per lane; `leases` adds claim leases. */
+export function laneBarsOf(events: TimedTaskEvent[], now: number, windowMs: number, leases: ClaimLease[] = []): Lane[] {
+  const fold = foldForTests(events.map(({ at, ...event }) => ({ ...event, occurredAt: at })));
+  const unjudged = laneBars(events, { ...fold, liveness: { budgets: TEST_BUDGETS, lanes: [] }, leases }, now, windowMs);
+  const liveness: Liveness = {
+    budgets: TEST_BUDGETS,
+    lanes: unjudged.map((lane) => {
+      const owes = lane.bars.some((bar) => bar.open);
+      return { lane: lane.lane, owes, silent: owes && now - lane.lastEventAt >= TEST_SILENT_MS, free: now - lane.lastEventAt < TEST_FREE_MS };
+    }),
+  };
+  return laneBars(events, { ...fold, liveness, leases }, now, windowMs);
 }
 
 /** The fold the Runtime would serve for these records: every slice with a stable id (in creation

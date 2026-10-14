@@ -1,13 +1,12 @@
 import type { Bot } from "./team";
-import type { Lane, LaneBar } from "./lane-bars";
+import { laneBudgets, type Lane, type LaneBar } from "./lane-bars";
 import type { MissionTask } from "./mission";
 import { ordinal, slotDuration, slotStatus, type SlotView } from "./slots";
 
 /** #591 Lanes board: who is free, who does what, and for how long. */
 export type AgentStatus = "silent" | "stale" | "building" | "build_wait" | "working" | "waiting" | "free" | "offline";
-export const FREE_LIVENESS_MS = 15 * 60_000;
-/** #591: a claim with no PR and no record of its lane for this long is a stale claim, not work. */
-export const STALE_CLAIM_MS = 2 * 3_600_000;
+/* #1234: no threshold lives here. "Recently seen" is the Runtime's free budget (`laneBudgets`), and a
+ * stale claim is a claim whose lease the Runtime reads as overdue (`Lane.overdueTasks`, #1193). */
 export interface AgentRow {
   name: string;
   status: AgentStatus;
@@ -55,7 +54,9 @@ function hasVerdictOnHead(t: MissionTask, names: string[]): boolean {
 
 /** One row per bot, plus a row per lane no bot claims; silent first, then working (longest
  * first), then waiting, then free. Silent is the lane-bars STALL rule (`Lane.silent`). */
-export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now: number, slots: SlotView[] = [], onDemand: readonly string[] = [], live: readonly string[] = [], seenActors: readonly string[] = [], seenActorAgesMs: Readonly<Record<string, number>> = {}): AgentRow[] {
+/** `freeAfterMs` is the Runtime's free budget (#1234); it defaults to the one the lanes carry, so a
+ * caller that holds the served budgets passes it even when the run has no task lanes yet. */
+export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now: number, slots: SlotView[] = [], onDemand: readonly string[] = [], live: readonly string[] = [], seenActors: readonly string[] = [], seenActorAgesMs: Readonly<Record<string, number>> = {}, freeAfterMs: number = laneBudgets(lanes).freeAfterMs): AgentRow[] {
   bots = bots.filter((b) => !blank(b.name));
   lanes = lanes.filter((l) => !blank(l.lane));
   const used = new Set<Lane>();
@@ -72,9 +73,9 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
   const rows0 = pairs.map(({ name, lane }): AgentRow => {
     const ids = [name, lane?.lane].filter((n): n is string => !!n);
     const when = latestOf(lane, now);
-    const quietMs = lane && lane.lastEventAt > 0 ? now - lane.lastEventAt : 0;
-    // #591: a PR-less claim whose lane left no record for STALE_CLAIM_MS is not work.
-    const staleClaim = (b: LaneBar) => b.kind === "implement" && !b.label.startsWith("#") && quietMs > STALE_CLAIM_MS;
+    // #591/#1234: a PR-less claim whose lease the Runtime reads as overdue is not work.
+    const staleClaim = (b: LaneBar) => b.kind === "implement" && !b.label.startsWith("#")
+      && b.taskId !== undefined && (lane?.overdueTasks ?? []).includes(b.taskId);
     const allOpen = (lane?.bars ?? []).filter((b) => b.open);
     const awaiting = lane?.awaiting ?? [];
     const endedClaim = (b: LaneBar) => b.kind === "implement" && !b.label.startsWith("#")
@@ -139,7 +140,7 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
       const seen = Math.max(pairs[i]!.lane?.lastEventAt ?? 0,
         ...bots.filter((b) => ids.includes(b.name) || (b.actorId !== null && ids.includes(b.actorId)))
           .map((b) => b.lastRecordAt === null ? 0 : Date.parse(b.lastRecordAt)).filter(Number.isFinite));
-      if (seen > 0 && now - seen < FREE_LIVENESS_MS) return r;
+      if (seen > 0 && now - seen < freeAfterMs) return r;
       return { ...r, status: "offline", label: `Offline · last seen ${seen > 0 ? `${span(Math.max(0, now - seen))} ago` : "never"}` };
     }
     const source = slots.find((s) => s.ok && s.root === slot.root);

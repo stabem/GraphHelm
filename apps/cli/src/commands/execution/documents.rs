@@ -165,7 +165,13 @@ pub(crate) fn validate_task_event(
     let document: serde_json::Value = serde_json::from_str(text).map_err(|_| invalid())?;
     // #419: the lane, reviewer or merger a record names is an identity, refused as one (DELIVERY.md
     // "Task records"), before the shape check, so a wrong name is never reported as a wrong shape.
+    // #1193: a release signed by `graphhelm` (the Stop reconciler) names the lane whose claim
+    // lapsed, so its identity is the signer, not the named lane; `releasedBy` says so and is
+    // refused for every other signer below, in the shape check.
+    let graphhelm_release =
+        kind == "task.released" && document["releasedBy"].as_str() == Some("graphhelm");
     let identity = match kind {
+        "task.released" if graphhelm_release => Some("releasedBy"),
         "task.claimed"
         | "task.planned"
         | "task.released"
@@ -284,7 +290,11 @@ pub(crate) fn validate_task_event(
                 // #514: the issue whose work turned this task up; optional, a positive number.
                 && (document.get("parent").is_none() || count("parent"))
                 // #577: the journeys the issue serves; optional, the same ids as pr_opened.
-                && (document.get("journeys").is_none() || ids("journeys")),
+                && (document.get("journeys").is_none() || ids("journeys"))
+                // #1193: the lease, 60 s to a day; absent means the fold's default (1800 s).
+                && document.get("leaseSeconds").is_none_or(|value| {
+                    value.as_u64().is_some_and(|n| (60..=86400).contains(&n))
+                }),
             &[
                 "issue",
                 "lane",
@@ -296,17 +306,24 @@ pub(crate) fn validate_task_event(
                 "parent",
                 "journeys",
                 "assignedBy",
+                "leaseSeconds",
             ],
         ),
         "task.released" => (
             count("claimSequence")
-                && is_actor("lane")
+                // #1193: the lane releases its own claim, or `graphhelm` releases a lapsed claim
+                // of the lane it names; `releasedBy` with any other signer or value is refused.
+                && (if graphhelm_release {
+                    actor_id == "graphhelm" && document["lane"].as_str().is_some_and(|lane| lane != "graphhelm")
+                } else {
+                    document.get("releasedBy").is_none() && is_actor("lane")
+                })
                 && document["reason"].as_str().is_some_and(|reason| {
                     !reason.is_empty()
                         && reason.chars().count() <= 500
                         && !reason.chars().any(char::is_control)
                 }),
-            &["lane", "claimSequence", "reason"],
+            &["lane", "claimSequence", "reason", "releasedBy"],
         ),
         "task.heartbeat" => (is_actor("lane"), &["lane"]),
         "task.planned" => (
@@ -504,9 +521,11 @@ pub(crate) fn validate_task_event(
             // claim remains releasable even when an earlier claim's PR was recorded after it.
             let mut open_claims = Vec::new();
             let mut opened_prs = Vec::new();
+            // #1193: a release signed by `graphhelm` ends the lane's claim too; it is kept here
+            // only when its document names this lane (checked once the record is open).
             for event in history
                 .iter()
-                .filter(|event| event.actor.id().as_str() == lane)
+                .filter(|event| event.actor.id().as_str() == lane || graphhelm_released(event))
             {
                 let EventKind::SignalRecorded(recorded) = &event.kind else {
                     continue;
@@ -545,7 +564,9 @@ pub(crate) fn validate_task_event(
                         "/signal/description/claimSequence",
                     )
                 })?;
-                if event_doc["taskId"] != task_id {
+                if event_doc["taskId"] != task_id
+                    || (event.actor.id().as_str() != lane && event_doc["lane"] != lane)
+                {
                     continue;
                 }
                 match recorded.kind.as_str() {
@@ -591,6 +612,14 @@ pub(crate) fn validate_task_event(
     }
 }
 
+/// #1193: a `task.released` recorded by the `graphhelm` actor (the Stop reconciler releasing a
+/// lapsed claim). Both claim folds admit it beside the lane's own records and keep it only when
+/// its document names the lane being folded.
+fn graphhelm_released(event: &graphhelm_protocols::EventEnvelope) -> bool {
+    event.actor.id().as_str() == "graphhelm"
+        && matches!(&event.kind, EventKind::SignalRecorded(recorded) if recorded.kind == "task.released")
+}
+
 fn validate_heartbeat(
     document: &serde_json::Value,
     lane: &str,
@@ -616,9 +645,11 @@ fn validate_heartbeat(
     let mut open_claims = Vec::new();
     let mut opened_prs = Vec::new();
     let mut last_heartbeat = None;
+    // #1193: a release signed by `graphhelm` ends the lane's claim too (kept only when its
+    // document names this lane, checked below).
     for event in history
         .iter()
-        .filter(|event| event.actor.id().as_str() == lane)
+        .filter(|event| event.actor.id().as_str() == lane || graphhelm_released(event))
     {
         let EventKind::SignalRecorded(recorded) = &event.kind else {
             continue;
@@ -642,14 +673,18 @@ fn validate_heartbeat(
         let envelope: serde_json::Value = plaintext
             .expose(|bytes| serde_json::from_slice(bytes))
             .map_err(|_| invalid_history())?;
-        if envelope["type"] != recorded.kind || envelope["source"]["id"] != lane {
+        if envelope["type"] != recorded.kind
+            || envelope["source"]["id"] != event.actor.id().as_str()
+        {
             return Err(invalid_history());
         }
         let record: serde_json::Value = envelope["description"]
             .as_str()
             .and_then(|text| serde_json::from_str(text).ok())
             .ok_or_else(invalid_history)?;
-        if record["taskId"] != document["taskId"] {
+        if record["taskId"] != document["taskId"]
+            || (event.actor.id().as_str() != lane && record["lane"] != lane)
+        {
             continue;
         }
         match recorded.kind.as_str() {

@@ -38,6 +38,7 @@ const PRIORITY_LANES: &str = "slot-priority-lanes";
 const HOLDER: &str = "holder.json";
 /// Prefix of a priority ticket: sorts before the digits of every normal arrival key.
 const PRIORITY_MARK: &str = "!";
+const BUILD_ADMISSION_ENV: &str = "GRAPHHELM_BUILD_ADMISSION_DIR";
 
 fn refuse(message: &str, path: &str) -> Outcome {
     refuse_as(COMMAND, message, path)
@@ -63,6 +64,38 @@ pub(crate) fn refuse_args() -> Outcome {
 /// The opt-in shared target directory (`--shared-target`).
 pub(crate) fn shared_target(root: &Path) -> PathBuf {
     root.join("target-shared")
+}
+
+/// The one OS lock shared by every GraphHelm build and update on this user account.
+pub(crate) fn build_admission_dir() -> Result<PathBuf, String> {
+    if let Some(value) = std::env::var_os(BUILD_ADMISSION_ENV) {
+        let path = PathBuf::from(value);
+        return path
+            .is_absolute()
+            .then_some(path)
+            .ok_or_else(|| format!("{BUILD_ADMISSION_ENV} must be an absolute path"));
+    }
+    #[cfg(windows)]
+    let home = std::env::var_os("USERPROFILE");
+    #[cfg(not(windows))]
+    let home = std::env::var_os("HOME");
+    let home = home.ok_or("the user home directory is unavailable")?;
+    let home = PathBuf::from(home);
+    if !home.is_absolute() {
+        return Err("the user home directory is not absolute".to_owned());
+    }
+    Ok(home.join(".graphhelm").join("build-admission"))
+}
+
+pub(crate) fn open_build_admission(path: &Path) -> Result<File, String> {
+    std::fs::create_dir_all(path)
+        .map_err(|_| "the build admission directory could not be created".to_owned())?;
+    OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path.join("build.lock"))
+        .map_err(|_| "the build admission lock could not be opened".to_owned())
 }
 
 fn slot_dir(root: &Path) -> PathBuf {
@@ -783,7 +816,12 @@ fn run_slot_with_batch_payload(
 
 #[cfg(test)]
 fn run_admitted_slot(request: &SlotRequest<'_>) -> Outcome {
-    run_admitted_slot_with_batch(request, None)
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(_) => return refuse("the current directory could not be read", "/target"),
+    };
+    let admission = request.root.join("test-admission");
+    run_admitted_slot_core(request, &cwd, None, &admission)
 }
 
 struct BatchSpec {
@@ -891,18 +929,34 @@ fn run_admitted_slot_with_batch(request: &SlotRequest<'_>, batch: Option<BatchRu
     let Ok(cwd) = std::env::current_dir() else {
         return refuse("the current directory could not be read", "/target");
     };
-    run_admitted_slot_in_with_batch(request, &cwd, batch)
+    let admission = match build_admission_dir() {
+        Ok(path) => path,
+        Err(message) => return refuse(&message, "/admission"),
+    };
+    run_admitted_slot_core(request, &cwd, batch, &admission)
 }
 
 #[cfg(test)]
 fn run_admitted_slot_in(request: &SlotRequest<'_>, cwd: &Path) -> Outcome {
-    run_admitted_slot_in_with_batch(request, cwd, None)
+    let admission = request.root.join("test-admission");
+    run_admitted_slot_core(request, cwd, None, &admission)
 }
 
+#[cfg(test)]
 fn run_admitted_slot_in_with_batch(
     request: &SlotRequest<'_>,
     cwd: &Path,
     batch: Option<BatchRun>,
+) -> Outcome {
+    let admission = request.root.join("test-admission");
+    run_admitted_slot_core(request, cwd, batch, &admission)
+}
+
+fn run_admitted_slot_core(
+    request: &SlotRequest<'_>,
+    cwd: &Path,
+    batch: Option<BatchRun>,
+    admission: &Path,
 ) -> Outcome {
     let (root, lane, label) = (request.root, request.lane, request.label);
     if !super::workspace::valid_id(lane) {
@@ -959,6 +1013,10 @@ fn run_admitted_slot_in_with_batch(
     {
         return refuse(&message, "/target");
     }
+    let admission = match open_build_admission(admission) {
+        Ok(lock) => lock,
+        Err(message) => return refuse(&message, "/admission"),
+    };
     let dir = slot_dir(root);
     if std::fs::create_dir_all(&dir).is_err() {
         return refuse("the slot directory could not be created", "/root");
@@ -990,6 +1048,7 @@ fn run_admitted_slot_in_with_batch(
             .is_some_and(|run| run.started.elapsed() >= run.spec.budget);
         if batch_expired || max_wait.is_some_and(|limit| started.elapsed() > limit) {
             let waited = started.elapsed().as_secs_f64();
+            drop(admission);
             drop(ticket);
             remove_ticket(&mine);
             let expires = unix_now() + RESUME_GRACE.as_nanos();
@@ -1027,7 +1086,20 @@ fn run_admitted_slot_in_with_batch(
                 .open(dir.join("slot.lock"))
             && slot.try_lock().is_ok()
         {
-            break slot;
+            match admission.try_lock() {
+                Ok(()) => break slot,
+                Err(TryLockError::WouldBlock) => drop(slot),
+                Err(TryLockError::Error(_)) => {
+                    drop(slot);
+                    drop(admission);
+                    drop(ticket);
+                    remove_ticket(&mine);
+                    return refuse(
+                        "the build admission lock could not be checked",
+                        "/admission",
+                    );
+                }
+            }
         }
         std::thread::sleep(POLL);
     };
@@ -1043,8 +1115,9 @@ fn run_admitted_slot_in_with_batch(
             "sinceNanos": held_since.to_string(), "worktree": cwd, "ticket": mine.file_name().map(|n| n.to_string_lossy().into_owned())})
         .to_string(),
     );
-    let release = |slot: File, ticket: File| {
+    let release = |slot: File, ticket: File, admission: &File| {
         let _ = std::fs::remove_file(dir.join(HOLDER));
+        let _ = admission.unlock();
         drop(slot);
         drop(ticket);
         remove_ticket(&mine);
@@ -1060,7 +1133,7 @@ fn run_admitted_slot_in_with_batch(
                 target
             }
             Err(message) => {
-                release(slot, ticket);
+                release(slot, ticket, &admission);
                 return refuse(&message, "/target");
             }
         }
@@ -1073,7 +1146,7 @@ fn run_admitted_slot_in_with_batch(
         match clean_workspace_packages(&cargo, &target, cwd) {
             Ok(report) => cleaned = Some(report),
             Err(reason) => {
-                release(slot, ticket);
+                release(slot, ticket, &admission);
                 return refuse(&reason, "/cleanWorkspace");
             }
         }
@@ -1132,13 +1205,13 @@ fn run_admitted_slot_in_with_batch(
             .env_remove("GRAPHHELM_SLOT_BATCH")
             .status();
         let Ok(status) = status else {
-            release(slot, ticket);
+            release(slot, ticket, &admission);
             return refuse("the command could not be started", "/command");
         };
         (status.code().unwrap_or(1), None)
     };
     let held = held_clock.elapsed().as_secs_f64();
-    release(slot, ticket);
+    release(slot, ticket, &admission);
     let mut data = json!({"lane": lane, "label": label, "exitCode": code, "waitedSeconds": waited,
         "heldSeconds": held, "targetDir": target.to_string_lossy(), "cleaned": cleaned,
         "priority": request.priority, "reclaimedTargets": reclaimed});

@@ -1,6 +1,6 @@
 //! `GET /v1/executions/{id}/tasks`, the MCP tool `tasks` and `graphhelm execution status --tasks`
 //! (#1149, optimization plan A1): the Runtime opens an execution's sealed `task.*` envelopes,
-//! keeps the ones that verify, and serves `graphhelm_execution::tasks::fold_task_events` over them.
+//! keeps the ones that verify, and serves `graphhelm_execution::tasks::fold_task_events_with_routes` over them.
 //!
 //! What verifies: the recorded event has exactly one evidence reference, naming the envelope
 //! `signal-<signalId>`; the sealed content's digest is the one the event recorded; the envelope

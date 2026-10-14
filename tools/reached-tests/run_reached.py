@@ -526,7 +526,7 @@ def run(args: argparse.Namespace) -> int:
             for index in skip_browser:
                 report["pending"].remove(index)
             child_env = os.environ.copy()
-            child_env.update({"CARGO_BUILD_JOBS": "6", "RUST_TEST_THREADS": "2"})
+            child_env.update({"CARGO_BUILD_JOBS": jobs, "RUST_TEST_THREADS": "2"})
             report["fingerprint"] = _fingerprint(repo, steps, selected_graphhelm, child_env)
             keys = [_proof_key(report["fingerprint"], step) for step in steps]
             problems, warnings = _preflight(repo, output, steps, getattr(args, "min_free_gb", None))

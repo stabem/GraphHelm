@@ -34,7 +34,7 @@ def parser():
 
 def main(argv=None):
     args = parser().parse_args(argv)
-    if args.pid <= 0 or args.creation_filetime <= 0 or not (0 < args.timeout_seconds <= 86400):
+    if not (0 < args.pid <= 0xFFFFFFFF) or args.creation_filetime <= 0 or not (0 < args.timeout_seconds <= 86400):
         print(ERRORS["invalid"], file=sys.stderr)
         return 2
     if os.name != "nt":

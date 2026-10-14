@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
 import { JourneyProgress, MissionView } from "./mission-view";
+import { teamModel } from "../runtime/team";
+import type { RuntimeEvent } from "../runtime/types";
+import type { GraphNode } from "../graph/model";
 import type { JourneyView } from "../runtime/types";
 import type { JourneyFlowView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
@@ -12,6 +15,47 @@ const journeys: JourneyView[] = [{
 }];
 
 describe("MissionView", () => {
+  it("shows recent note-only agents at run level without assigning graph steps", () => {
+    const now = Date.parse("2026-10-14T12:00:00Z");
+    const events: RuntimeEvent[] = ["codex-issue-2-tuya", "codex-issue-3-tuya"].map((actorId, index) => ({
+      sequence: index + 1, kind: "signal_recorded", payload: { kind: "operator_note" },
+      occurredAt: new Date(now - (index + 1) * 60_000).toISOString(), actorId, actorType: "agent",
+      idempotencyKey: null, eventId: null, evidenceRefs: [],
+    }));
+    const team = teamModel({ events, envelopes: {}, personas: {}, nativeLinks: {}, aliases: {}, model: null,
+      claudeTasks: null, waitingAskers: new Set(), now });
+    const [first, second] = team.bots;
+    const sameName = { ...first!, key: "codex-issue-4-tuya", actorId: "codex-issue-4-tuya", lastRecordAt: first!.lastRecordAt };
+    const agents = [first!, second!, { ...first! }, sameName,
+      { ...first!, key: "stale", actorId: "stale", lastRecordAt: new Date(now - 900_001).toISOString() },
+      { ...first!, key: "future", actorId: "future", lastRecordAt: new Date(now + 1).toISOString() },
+      { ...first!, key: "invalid", actorId: "invalid", lastRecordAt: "invalid" },
+      { ...first!, key: "shared", actorId: "shared", shared: true },
+      { ...first!, key: "native", actorId: "native", native: true },
+      { ...first!, key: "codex", actorId: "codex" },
+      { ...first!, key: "placeholder", actorId: "placeholder", name: "TBD" },
+      { ...first!, key: "unrecorded", actorId: "unrecorded", lastRecordAt: null }];
+    const node: GraphNode = { id: "step-1", declaredName: "First step", state: "ready", assignedActor: null } as GraphNode;
+    const props = { journeys: [], tasks: [], lanes: [], runFor: () => null, frameUrl: () => null,
+      onMarkSafe: vi.fn(), runNodes: [node], unassignedNodeIds: [node.id] } as const;
+    const { rerender } = render(<MissionView {...props} now={now} agents={agents} />);
+
+    const graph = screen.getByRole("region", { name: "Run graph" });
+    const recent = within(graph).getByRole("list", { name: "Recently recorded agents" });
+    expect(within(recent).getAllByText(/codex-issue-2-tuya · Last record 1 min ago/)).toHaveLength(2);
+    expect(within(recent).getByText(/codex-issue-3-tuya · Last record 2 min ago/)).toBeInTheDocument();
+    expect(within(recent).queryByText(/stale|future|invalid|shared|native|placeholder|unrecorded/)).toBeNull();
+    expect(within(graph).getByRole("heading", { name: "Steps without a bot" })).toBeInTheDocument();
+    expect(within(graph).getByText("First step · ready")).toBeInTheDocument();
+
+    const refreshed = { ...first!, lastRecordAt: new Date(now + 1_000).toISOString() };
+    rerender(<MissionView {...props} now={now + 61_000} agents={[refreshed]} />);
+    expect(within(screen.getByRole("list", { name: "Recently recorded agents" }))
+      .getByText(/codex-issue-2-tuya · Last record 1 min ago/)).toBeInTheDocument();
+    rerender(<MissionView {...props} now={now + 901_001} agents={[refreshed]} />);
+    expect(screen.queryByRole("list", { name: "Recently recorded agents" })).toBeNull();
+  });
+
   it("draws recent work in the graph while history is still loading", () => {
     render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0}
       runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} historyLoading partial />);

@@ -144,12 +144,20 @@ test('offline profile command emits JSON without loading Playwright', async () =
       samples: [1], timeDeltas: [10] }));
     const script = fileURLToPath(new URL('./measure.mjs', import.meta.url));
     const result = spawnSync(process.execPath, [script, '--mode', 'profile', '--profile', profilePath,
-      '--source-head', 'abc12345', '--start-us', '0', '--end-us', '10', '--alignment', 'same-load', '--out', outputPath],
+      '--source-head', 'abc12345', '--start-us', '0', '--end-us', '10', '--alignment', 'same-load mapping bearer sk-test-123 https://site.test/a?token=private', '--out', outputPath],
     { encoding: 'utf8', windowsHide: true });
     assert.equal(result.status, 0, result.stderr);
     const report = JSON.parse(await (await import('node:fs/promises')).readFile(outputPath, 'utf8'));
     assert.equal(report.mode, 'profile');
     assert.equal(report.observation.status, 'ok');
     assert.ok(!JSON.stringify(report).includes('private/user'));
+    assert.ok(!JSON.stringify(report).includes('sk-test-123'));
+    assert.ok(!JSON.stringify(report).includes('token=private'));
+    const unknown = reduceCpuProfile({ nodes: [{ id: 1, callFrame: { functionName: 'work' } }], samples: [1], timeDeltas: [1] }, {
+      startUs: 10, endUs: 0, sourceHead: 'abc12345', alignment: 'bearer sk-test-123 https://site.test/a?token=private',
+    });
+    assert.equal(unknown.status, 'unknown');
+    assert.ok(!JSON.stringify(unknown).includes('sk-test-123'));
+    assert.ok(!JSON.stringify(unknown).includes('token=private'));
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

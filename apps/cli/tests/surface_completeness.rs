@@ -194,7 +194,7 @@ fn read_rust_string(text: &str) -> String {
 /// AN EXCEPTION LIST IS THE HONEST HALF OF A COMPLETENESS GUARD, and it earns its keep only if
 /// adding a row is harder than adding the tool. Each entry names WHY, so a future author who wants
 /// to silence this guard has to write a false sentence rather than paste a path.
-const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 15] = [
+const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 17] = [
     (
         "GET",
         "/v1/journey-observer/setup",
@@ -215,6 +215,16 @@ const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 15] = [
         "GET",
         "/v1/journey-flows/{id}/screens/{screen}/frame",
         "a PNG of one screen from a journey's preview, drawn as a card in the Studio canvas for the owner's eyes (#519); an MCP answer is text in a model's context, and the frame is a view, never proof. An agent reads the same per-screen results from journey_preview",
+    ),
+    (
+        "GET",
+        "/v1/journey-flows/{id}/history",
+        "a journey's earlier finished runs, so the Studio can compare a screen with what it looked like before (#history); the owner reads it beside the frames. An agent reads the current run from journey_preview and its git history for what changed",
+    ),
+    (
+        "GET",
+        "/v1/journey-flows/{id}/history/{run}/screens/{screen}/frame",
+        "a PNG of one screen as an earlier run kept it, drawn beside the current frame in the Studio for the owner's eyes (#history); a frame is a view, never proof",
     ),
     (
         "GET",

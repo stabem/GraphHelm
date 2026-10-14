@@ -2840,6 +2840,71 @@ pub(super) async fn journey_screen_frame(
         .into_response()
 }
 
+/// `GET /v1/journey-flows/{id}/history` (#history): the journey's earlier finished runs.
+pub(super) async fn journey_history(
+    State(state): State<ServeState>,
+    UrlPath(id): UrlPath<String>,
+) -> Response {
+    flow_command(state, "journey.preview", move |project| {
+        crate::commands::journey_preview::history(&project, &id)
+    })
+    .await
+}
+
+/// `GET /v1/journey-flows/{id}/history/{run}/screens/{screen}/frame` (#history): one screen's
+/// frame as an earlier run kept it. 200 `image/png` (immutable: a run's frames never change);
+/// 404 `preview.no_frame` when that run kept none. A view, never proof. Owner credential only.
+pub(super) async fn journey_history_frame(
+    State(state): State<ServeState>,
+    UrlPath((id, run, screen)): UrlPath<(String, String, String)>,
+) -> Response {
+    const COMMAND: &str = "journey.preview";
+    use axum::http::header;
+    use axum::response::IntoResponse;
+    let Some(project) = state.project.as_deref().map(Path::to_path_buf) else {
+        return respond_failure(
+            COMMAND,
+            execution::execution_state(
+                "journey previews require an explicit --project on this Runtime",
+                "/project",
+            ),
+        );
+    };
+    let read = off_reactor(move || {
+        crate::commands::journey_preview::history_frame(&project, &id, &run, &screen)
+    })
+    .await
+    .flatten();
+    let Some(png) = read else {
+        return respond(
+            StatusCode::NOT_FOUND,
+            Outcome::domain(
+                COMMAND,
+                vec![Diagnostic::error(
+                    "preview.no_frame",
+                    "this screen has no frame in that run",
+                    "/screen",
+                    SOURCE,
+                )],
+            )
+            .output,
+        );
+    };
+    (
+        StatusCode::OK,
+        [
+            (
+                header::CACHE_CONTROL,
+                "private, max-age=31536000, immutable",
+            ),
+            (header::CONTENT_TYPE, "image/png"),
+            (header::HeaderName::from_static("x-preview"), "true"),
+        ],
+        png,
+    )
+        .into_response()
+}
+
 /// `GET /v1/journeys/sessions/{id}/frame` (#519): the latest frame of a watch that streams its
 /// page (the default; `window: true` plays in a window and has none). 200 `image/jpeg` with
 /// `ETag: "<seq>"` and `X-Frame-Seq`/`X-Frame-Width`/`X-Frame-Height`; `If-None-Match` with the

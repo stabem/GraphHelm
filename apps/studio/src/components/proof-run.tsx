@@ -10,6 +10,8 @@ import type { JourneyFlowView, JourneyRunView, JourneyView } from "../runtime/ty
 import { testFrames } from "../runtime/test-frames";
 import { useJourneyRun, type JourneyRunSource } from "./journey-flows";
 import { TestCanvas } from "./test-canvas";
+import { CHANGED_AT, FrameCompare, HistoryStrip, useJourneyHistory } from "./proof-history";
+import "./proof-history.css";
 
 interface Props {
   journey: JourneyView;
@@ -44,6 +46,14 @@ export function ProofRun({ journey, flow, source, selected, onSelect, frameUrl, 
     : journey.steps.findIndex((s) => !run?.screens?.[s.screen?.screenId ?? s.stepId]?.result);
   const currentId = currentIdx >= 0 ? journey.steps[currentIdx]!.stepId : null;
   const frames = testFrames(journey, run, currentId, flow);
+  const nowFrame = (stepId: string) => runFrames[screenOf(stepId)] ?? frameUrl(stepId);
+  const screenIds = journey.steps.map((s) => s.screen?.screenId ?? s.stepId);
+  const history = useJourneyHistory(journey.contractId, source, run, (screen) => runFrames[screen] ?? null, screenIds);
+  const badges: Record<string, string> = {};
+  for (const step of journey.steps) {
+    const ratio = history.changes[step.screen?.screenId ?? step.stepId];
+    if (ratio !== undefined && ratio >= CHANGED_AT) badges[step.stepId] = "changed";
+  }
   // The selection follows the step being played, until the owner clicks a frame.
   const [pinned, setPinned] = useState(false);
   useEffect(() => { if (!pinned && currentIdx >= 0) onSelect(currentIdx); }, [pinned, currentIdx, onSelect]);
@@ -85,6 +95,7 @@ export function ProofRun({ journey, flow, source, selected, onSelect, frameUrl, 
     <div className="tc-run">
       {line}
       {canRunAgain && <button type="button" className="tc-secondary" onClick={() => { setPinned(false); again(); }}>Run again</button>}
+      {source.history && run !== null && !running && <HistoryStrip history={history} />}
     </div>
   );
   // #548: the same words and the same handler as JourneyFlows' held step.
@@ -96,7 +107,10 @@ export function ProofRun({ journey, flow, source, selected, onSelect, frameUrl, 
   ) : null;
   return (
     <TestCanvas frames={frames} purpose={flow?.purpose ?? null} selected={selected} onSelect={(n) => { setPinned(true); onSelect(n); }}
-      frameUrl={(id) => runFrames[screenOf(id)] ?? frameUrl(id)} onMarkSafe={onMarkSafe}
-      {...(onSendBack ? { onSendBack } : {})} runLine={runLine} inspectorTop={held} />
+      frameUrl={nowFrame} onMarkSafe={onMarkSafe}
+      {...(onSendBack ? { onSendBack } : {})} runLine={runLine} inspectorTop={held} badges={badges}
+      inspectorStep={(stepId) => (history.baseline && !running
+        ? <FrameCompare history={history} screenId={screenOf(stepId)} nowUrl={runFrames[screenOf(stepId)] ?? null} nowStatus={frames.find((f) => f.stepId === stepId)?.status ?? "not_run"} />
+        : null)} />
   );
 }

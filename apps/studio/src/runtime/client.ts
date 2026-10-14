@@ -33,6 +33,7 @@ import type {
   JourneysView,
   JourneyFlowsView,
   JourneyFrame,
+  JourneyHistoryView,
   JourneyRunView,
   ModelRouteSummary,
   NativeChatPage,
@@ -2094,6 +2095,20 @@ export class RuntimeClient {
     const id = checkedId(flowId, "flowId");
     const screen = checkedJourneyId(screenId, "screenId");
     return this.#image(`/v1/journey-flows/${encodeURIComponent(id)}/screens/${encodeURIComponent(screen)}/frame`, "The Runtime did not return an image for this screen.", { etag });
+  }
+
+  /** A journey's earlier finished runs, newest first (#history): `GET /v1/journey-flows/{id}/history`. */
+  async journeyHistory(flowId: string): Promise<JourneyHistoryView> {
+    const id = checkedId(flowId, "flowId");
+    return this.#request<JourneyHistoryView>({ method: "GET", path: `/v1/journey-flows/${encodeURIComponent(id)}/history`, timeoutMs: RUNTIME_READ_TIMEOUT_MS });
+  }
+
+  /** One screen as an earlier run kept it (#history). `null` when that run kept no frame for it. */
+  async journeyHistoryFrame(flowId: string, run: string, screenId: string): Promise<JourneyFrame | null> {
+    const id = checkedId(flowId, "flowId");
+    const screen = checkedJourneyId(screenId, "screenId");
+    if (!/^[0-9]{20}$/.test(run)) throw new RuntimeError("Not a run id.", 400, []);
+    return this.#image(`/v1/journey-flows/${encodeURIComponent(id)}/history/${run}/screens/${encodeURIComponent(screen)}/frame`, "The Runtime did not return an image for this screen.", { etag: null });
   }
 
   /** The page a Watch is playing, as of now (#519): `GET /v1/journeys/sessions/{id}/frame`.

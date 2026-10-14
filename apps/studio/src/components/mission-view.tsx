@@ -578,7 +578,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
               const issue = m.tasks.find((t) => t.issue !== null)?.issue ?? null;
               return (
                 <div key={m.contractId} className="mv-jcard" data-selected={on}>
-                  <button type="button" className="mv-journey" aria-pressed={on} title={m.title} onClick={() => pickJourney(m.contractId)}>
+                  <button type="button" className="mv-journey" aria-pressed={on} title={m.title} onClick={() => pickProof(m.contractId)}>
                     <span className="mv-journey-title">{m.title}</span>
                     <span className="mv-journey-count">{`${m.summary.proven}/${m.summary.total}`}</span>
                   </button>

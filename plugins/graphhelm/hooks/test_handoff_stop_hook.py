@@ -1,11 +1,14 @@
 """Contract tests for the verification handoff Stop gate."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import handoff_stop_hook as hook
@@ -20,7 +23,7 @@ ML_SAAS = ("The fix passed a blind review, was merged, and is deployed on multi.
 
 def run(payload):
     out = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(payload),
-                         capture_output=True, text=True, timeout=10)
+                         capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW)
     return out.returncode, out.stdout
 
 
@@ -49,7 +52,7 @@ class HandoffStopHook(unittest.TestCase):
     def test_reentry_and_bad_input_let_turn_end(self):
         self.assertEqual(run({"last_assistant_message": ML_SAAS, "stop_hook_active": True}), (0, ""))
         out = subprocess.run([sys.executable, str(SCRIPT)], input="not json",
-                             capture_output=True, text=True, timeout=10)
+                             capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW)
         self.assertEqual((out.returncode, out.stdout), (0, ""))
 
     def test_reads_transcript_tail(self):

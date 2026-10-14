@@ -687,6 +687,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 execution,
                 keyring,
                 key_id,
+                route_proposal,
             } => keel::check(
                 &repo,
                 &diff,
@@ -702,6 +703,7 @@ pub fn run(command: TopLevel) -> Outcome {
                     keyring: keyring.unwrap_or_default(),
                     key_id: key_id.unwrap_or_default(),
                 }),
+                route_proposal.as_deref(),
             ),
             KeelCommand::Plan {
                 task,

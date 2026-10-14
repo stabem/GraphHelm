@@ -5,6 +5,7 @@
 //! function. The oracle for each case is a literal: the rule id, the exit code, the counts.
 
 use assert_cmd::Command;
+use graphhelm_events::EvidenceOpener;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -81,6 +82,327 @@ fn run(repo: &Path, card: Option<&Path>) -> (i32, Value) {
     let reply: Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|_| panic!("not JSON: {}", String::from_utf8_lossy(&output.stdout)));
     (output.status.code().unwrap(), reply)
+}
+
+/// Contract: an explicit binding turns a blocked verdict into a pending, sealed proposal.
+/// Regression: the check prints advice but never submits it, or submits the review draft.
+/// Existing check tests stop at recommendation; the HTTP admission test supplies its own signal.
+/// Cost: short local CLI processes, one temporary git repo and event store; no network.
+#[test]
+fn routed_blocked_check_records_the_selected_pending_draft() {
+    let repo = repository(&[
+        ("docs/notes.md", "outside scope\n"),
+        ("core/events/src/journal.rs", "pub fn changed() {}\n"),
+    ]);
+    let scratch = tempfile::tempdir().unwrap();
+    let scope_card = card(
+        scratch.path(),
+        &["src/lib.rs", "core/events/src/journal.rs"],
+    );
+    let events = scratch.path().join("events");
+    let keyring = scratch.path().join("keyring");
+    fs::create_dir(&keyring).unwrap();
+    let key = "0101010101010101010101010101010101010101010101010101010101010101";
+    let minted = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["gateway", "keyring", "init", "--keyring"])
+        .arg(&keyring)
+        .args(["--key-id", "route-key"])
+        .env("GRAPHHELM_EVENTS_KEY", key)
+        .output()
+        .unwrap();
+    assert!(
+        minted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&minted.stdout)
+    );
+    let graph =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/graphs/software-feature.yaml");
+    let fixtures = scratch.path().join("fixtures.json");
+    fs::write(&fixtures, br#"{"nodeOutcomes":{}}"#).unwrap();
+    let start = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "execution", "start", "--file"])
+        .arg(&graph)
+        .args(["--events"])
+        .arg(&events)
+        .args(["--fixtures"])
+        .arg(&fixtures)
+        .args([
+            "--mode",
+            "supervised",
+            "--execution",
+            "exec-keel-route",
+            "--held",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        start.status.success(),
+        "{}",
+        String::from_utf8_lossy(&start.stdout)
+    );
+    let hashed = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "graph", "hash"])
+        .arg(&graph)
+        .output()
+        .unwrap();
+    assert!(
+        hashed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&hashed.stdout)
+    );
+    let hashed: Value = serde_json::from_slice(&hashed.stdout).unwrap();
+    let graph_hash = hashed["data"]["hash"].as_str().unwrap();
+    let head = graphhelm_process::command("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let head = String::from_utf8(head.stdout).unwrap().trim().to_owned();
+    let draft = |id: &str| {
+        serde_json::json!({
+            "id": id, "expectedVersion": 1, "expectedHash": graph_hash,
+            "operations": [{"op": "patchNode", "path": "/spec/nodes/plan", "value": {"name": id}}]
+        })
+    };
+    let binding = scratch.path().join("binding.json");
+    fs::write(
+        &binding,
+        serde_json::to_vec(&serde_json::json!({
+            "expectedHead": head, "execution": "exec-keel-route", "task": "issue-1045",
+            "node": "plan", "implementDraft": draft("draft-implement"),
+            "reviewDraft": draft("draft-review")
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let check = |binding_path: Option<&Path>| {
+        let mut command = Command::cargo_bin("graphhelm").unwrap();
+        command
+            .args([
+                "--json",
+                "keel",
+                "check",
+                "--diff",
+                "HEAD~1..HEAD",
+                "--repo",
+            ])
+            .arg(repo.path())
+            .args(["--card"])
+            .arg(&scope_card)
+            .args(["--events"])
+            .arg(&events)
+            .args(["--execution", "exec-keel-route", "--keyring"])
+            .arg(&keyring)
+            .args(["--key-id", "route-key"])
+            .env("GRAPHHELM_EVENTS_KEY", key);
+        if let Some(path) = binding_path {
+            command.arg("--route-proposal").arg(path);
+        }
+        let output = command.output().unwrap();
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        (output.status.code(), reply)
+    };
+    let (plain_code, plain) = check(None);
+    assert_eq!(plain_code, Some(2), "{plain}");
+    assert!(plain["data"]["routeProposal"].is_null());
+    let (code, checked) = check(Some(&binding));
+    assert_eq!(code, Some(2), "{checked}");
+    assert_eq!(checked["data"]["recommendation"]["step"], "implement");
+    assert_eq!(checked["data"]["routeProposal"]["kind"], "keel.blocked");
+    assert_eq!(checked["data"]["recommendation"]["applied"], false);
+    let status = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "execution", "status", "--events"])
+        .arg(&events)
+        .args(["--execution", "exec-keel-route"])
+        .output()
+        .unwrap();
+    assert!(
+        status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&status.stdout)
+    );
+    let status: Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert!(
+        status["data"]["attentionReasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason["kind"] == "pending_draft"
+                && reason["draft_id"] == "draft-implement"),
+        "{status}"
+    );
+    assert_eq!(status["data"]["signalsRecorded"], 1);
+    // Read the persisted event and decrypt its sealed envelope. A response alone could claim
+    // admission while dropping the checked head or the precise scope finding.
+    struct Clock;
+    impl graphhelm_protocols::Clock for Clock {
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::Utc::now()
+        }
+    }
+    struct Ids;
+    impl graphhelm_protocols::IdGenerator for Ids {
+        fn next_id(&self, prefix: &'static str) -> String {
+            format!("{prefix}-test")
+        }
+    }
+    let store = graphhelm_events::LocalEventRepository::open(
+        &events,
+        std::sync::Arc::new(Clock),
+        std::sync::Arc::new(Ids),
+    )
+    .unwrap();
+    let (stream, history) = store.read_unique_replay_stream().unwrap();
+    let recorded = history
+        .iter()
+        .find(|event| {
+            matches!(
+                event.kind,
+                graphhelm_protocols::EventKind::SignalRecorded(_)
+            )
+        })
+        .unwrap();
+    let reference = recorded
+        .evidence_refs
+        .first()
+        .expect("signal has sealed evidence");
+    let sealed = match store
+        .sealed_evidence(&stream.scope, reference.evidence_id())
+        .unwrap()
+    {
+        graphhelm_events::EvidenceRead::Available(sealed) => sealed,
+        other => panic!("signal evidence unavailable: {other:?}"),
+    };
+    let provider = graphhelm_sealed_key_provider::SealedKeyProvider::open(
+        &keyring,
+        "route-key",
+        graphhelm_events::SecretBytes::new(vec![1; 32]),
+    )
+    .unwrap();
+    let protector = graphhelm_events::EvidenceProtector::new(provider);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let envelope = runtime
+        .block_on(protector.open(stream.scope.clone(), &sealed))
+        .unwrap();
+    let signal: Value = envelope.expose(|bytes| serde_json::from_slice(bytes).unwrap());
+    assert_eq!(signal["type"], "keel.blocked");
+    assert_eq!(signal["source"]["id"], "plan");
+    assert_eq!(signal["proposal"]["id"], "draft-implement");
+    let evidence = signal["evidence"].as_array().unwrap();
+    for exact in [
+        format!("head:{head}"),
+        "task:issue-1045".into(),
+        "node:plan".into(),
+        "finding:keel.scope.path_outside_card".into(),
+        "path:docs/notes.md".into(),
+    ] {
+        assert!(
+            evidence.iter().any(|value| value == &exact),
+            "missing {exact}: {signal}"
+        );
+    }
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| matches!(event.kind, graphhelm_protocols::EventKind::DraftProposed(_)))
+            .count(),
+        1
+    );
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| matches!(
+                event.kind,
+                graphhelm_protocols::EventKind::GraphVersionPublished(_)
+            ))
+            .count(),
+        0
+    );
+    let stale = scratch.path().join("stale.json");
+    fs::write(&stale, serde_json::to_vec(&serde_json::json!({
+        "expectedHead": "0000000000000000000000000000000000000000",
+        "execution": "exec-keel-route", "task": "issue-1045", "node": "plan",
+        "implementDraft": draft("draft-stale-implement"), "reviewDraft": draft("draft-stale-review")
+    })).unwrap()).unwrap();
+    let (stale_code, stale_reply) = check(Some(&stale));
+    assert_eq!(stale_code, Some(3), "{stale_reply}");
+    assert_eq!(stale_reply["data"]["recommendation"]["step"], "implement");
+    assert_eq!(
+        stale_reply["diagnostics"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()["path"],
+        "/routeProposal/expectedHead"
+    );
+    let passing_card = card(
+        scratch.path(),
+        &["src/lib.rs", "docs/notes.md", "core/events/src/journal.rs"],
+    );
+    assert_eq!(passing_card, scope_card);
+    let (pass_code, passed) = check(Some(&binding));
+    assert_eq!(pass_code, Some(0), "{passed}");
+    assert_eq!(passed["data"]["routeProposal"]["kind"], "keel.passed");
+    let status = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "execution", "status", "--events"])
+        .arg(&events)
+        .args(["--execution", "exec-keel-route"])
+        .output()
+        .unwrap();
+    let status: Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status["data"]["signalsRecorded"], 2, "{status}");
+    assert!(status["data"]["attentionReasons"].as_array().unwrap().iter()
+        .any(|reason| reason["kind"] == "pending_draft" && reason["draft_id"] == "draft-review"), "{status}");
+
+    let (_, history) = store.read_unique_replay_stream().unwrap();
+    let recorded = history
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.kind,
+                graphhelm_protocols::EventKind::SignalRecorded(_)
+            )
+        })
+        .nth(1)
+        .unwrap();
+    let reference = recorded.evidence_refs.first().unwrap();
+    let sealed = match store
+        .sealed_evidence(&stream.scope, reference.evidence_id())
+        .unwrap()
+    {
+        graphhelm_events::EvidenceRead::Available(sealed) => sealed,
+        other => panic!("signal evidence unavailable: {other:?}"),
+    };
+    let envelope = runtime
+        .block_on(protector.open(stream.scope.clone(), &sealed))
+        .unwrap();
+    let signal: Value = envelope.expose(|bytes| serde_json::from_slice(bytes).unwrap());
+    assert_eq!(signal["type"], "keel.passed");
+    assert!(
+        signal["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| { value == "finding:keel.invariant.persistence" }),
+        "warning finding ID missing from evidence: {signal}"
+    );
+    assert!(
+        signal["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| { value == "path:core/events/src/journal.rs" }),
+        "warning finding path missing from evidence: {signal}"
+    );
 }
 
 fn run_verdict(comments: &Path, head: &str, reviewer: &str) -> (i32, Value) {

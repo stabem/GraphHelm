@@ -607,10 +607,8 @@ pub(super) fn run_install(
             }
         }
     }
-    if !ok {
-        if let Some((exe, old)) = &moved_aside {
-            let _ = std::fs::rename(old, exe);
-        }
+    if !ok && let Some((exe, old)) = &moved_aside {
+        let _ = std::fs::rename(old, exe);
     }
     ok
 }

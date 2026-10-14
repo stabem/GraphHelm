@@ -235,7 +235,7 @@ class WindowsProcessObserver(unittest.TestCase):
                     "--timeout-seconds", "5", "--output", str(receipt)]
             def injected_open(path, *open_args, **open_kwargs):
                 output = real_open(path, *open_args, **open_kwargs)
-                return CloseFailure(output) if Path(path) == receipt else output
+                return CloseFailure(output) if Path(path) == receipt and open_args[0] == "x" else output
 
             process.stdin.write(b"1\n")
             process.stdin.flush()
@@ -246,7 +246,7 @@ class WindowsProcessObserver(unittest.TestCase):
             states = [json.loads(line)["state"] for line in receipt.read_text(encoding="utf-8").splitlines()]
             self.assertEqual(code, 2)
             self.assertEqual(error.getvalue(), "receipt_unavailable\n")
-            self.assertEqual(states, ["attached", "exited"])
+            self.assertEqual(states, ["attached", "exited", "receipt_unavailable"])
             self.assertEqual(process.wait(timeout=2), 0)
 
 class RuntimeExitObserverContract(unittest.TestCase):

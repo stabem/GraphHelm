@@ -140,6 +140,17 @@ def main(argv=None):
         kernel32.CloseHandle(handle)
         close_failed = not close_output_safely()
     if close_failed:
+        if result in (0, 3):
+            try:
+                with open(args.output, "a", encoding="utf-8", newline="\n") as failure_output:
+                    failure_output.write(json.dumps({"schema": "graphhelm.runtime-process-exit/1",
+                                                     "state": "receipt_unavailable", "pid": args.pid,
+                                                     "creationFiletime": args.creation_filetime},
+                                                    separators=(",", ":"), sort_keys=True) + "\n")
+                    failure_output.flush()
+                    os.fsync(failure_output.fileno())
+            except OSError:
+                pass
         print(ERRORS["io"], file=sys.stderr)
         return 2
     if timeout_observed:

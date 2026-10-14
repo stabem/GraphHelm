@@ -200,6 +200,11 @@ pub(crate) fn try_grant(
     }
     let decided = (|| {
         let budget = jobs_budget(admission)?;
+        // An update waiting for the machine to drain goes first: no new grant while its marker
+        // names a live process, or a steady stream of builds could keep it waiting forever.
+        if update_pending(admission, &running) {
+            return Ok(Admission::Wait);
+        }
         let mut grants = read_grants(admission)?;
         grants.retain(|grant| running(grant.pid));
         let granted: u64 = grants.iter().map(|grant| u64::from(grant.jobs)).sum();
@@ -230,6 +235,44 @@ pub(crate) fn release_grant(admission: &Path, lock: &File, token: &str) {
             let _ = write_grants(admission, &grants);
         }
         let _ = lock.unlock();
+    }
+}
+
+const UPDATE_PENDING_FILE: &str = "update-pending";
+
+/// Whether an update is waiting for the machine to drain: the marker exists and names a running
+/// process. A marker whose process is gone is removed (the caller holds the lock).
+fn update_pending(admission: &Path, running: &impl Fn(u32) -> bool) -> bool {
+    let marker = admission.join(UPDATE_PENDING_FILE);
+    let Ok(text) = std::fs::read_to_string(&marker) else {
+        return false;
+    };
+    match text.trim().parse::<u32>() {
+        Ok(pid) if running(pid) => true,
+        _ => {
+            let _ = std::fs::remove_file(&marker);
+            false
+        }
+    }
+}
+
+/// #1254 (review on #1256): an update announces that it is waiting, so new grants stop until it
+/// has run. Called with the lock held.
+pub(crate) fn mark_update_pending(admission: &Path) {
+    let _ = std::fs::write(
+        admission.join(UPDATE_PENDING_FILE),
+        std::process::id().to_string(),
+    );
+}
+
+/// Withdraws this process's update marker. Called with the lock held, when the update takes the
+/// lock for its install or gives up.
+pub(crate) fn clear_update_pending(admission: &Path) {
+    let marker = admission.join(UPDATE_PENDING_FILE);
+    if std::fs::read_to_string(&marker)
+        .is_ok_and(|text| text.trim() == std::process::id().to_string())
+    {
+        let _ = std::fs::remove_file(marker);
     }
 }
 

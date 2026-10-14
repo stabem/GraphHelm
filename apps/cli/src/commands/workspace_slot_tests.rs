@@ -762,6 +762,56 @@ fn a_dead_holder_is_reclaimed_and_a_malformed_ledger_refuses() {
     assert!(super::try_grant(&admission, &lock, 1, |_| true).is_err());
 }
 
+/// #1254 (gh-claude-opt-1's review of #1256): an update that is waiting for the machine to drain
+/// is not starved by a steady stream of builds. While its marker names a live process, no new
+/// grant is made even with the whole budget free; once it withdraws (it took the lock, or gave
+/// up) grants resume; a marker whose process is gone is ignored and removed. Cost: one exited
+/// child.
+#[test]
+fn a_waiting_update_stops_new_grants_until_it_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let admission = dir.path().join("authority");
+    let lock = open_build_admission(&admission).unwrap();
+    let marker = admission.join("update-pending");
+
+    super::mark_update_pending(&admission);
+    assert_eq!(
+        super::try_grant(&admission, &lock, 1, |_| true).unwrap(),
+        Admission::Wait,
+        "a live update marker stops new grants even with the budget free"
+    );
+    super::clear_update_pending(&admission);
+    assert!(!marker.exists());
+    let Admission::Granted(token) = super::try_grant(&admission, &lock, 1, |_| true).unwrap()
+    else {
+        panic!("grants resume once the update withdraws")
+    };
+    super::release_grant(&admission, &lock, &token);
+
+    let mut child = if cfg!(windows) {
+        graphhelm_process::command("cmd")
+            .args(["/C", "exit 0"])
+            .spawn()
+            .unwrap()
+    } else {
+        graphhelm_process::command("true").spawn().unwrap()
+    };
+    let dead = child.id();
+    child.wait().unwrap();
+    std::fs::write(&marker, dead.to_string()).unwrap();
+    assert!(matches!(
+        super::try_grant(
+            &admission,
+            &lock,
+            1,
+            graphhelm_process_tree::process_is_running
+        )
+        .unwrap(),
+        Admission::Granted(_)
+    ));
+    assert!(!marker.exists(), "a dead update's marker is removed");
+}
+
 /// #1254: the budget is the authority's to set; a request over it refuses before queueing, and a
 /// budget the authority cannot read refuses instead of falling back. Cost: filesystem only.
 #[test]

@@ -590,11 +590,17 @@ pub(super) fn run_install(
                 admission_path,
                 graphhelm_process_tree::process_is_running,
             ) {
-                Ok(false) => break,
+                Ok(false) => {
+                    super::workspace_slot::clear_update_pending(admission_path);
+                    break;
+                }
                 Ok(true) => {
+                    // Ask for priority: no new grant while this update waits (review on #1256).
+                    super::workspace_slot::mark_update_pending(admission_path);
                     let _ = admission.unlock();
                 }
                 Err(message) => {
+                    super::workspace_slot::clear_update_pending(admission_path);
                     let _ = admission.unlock();
                     Progress::say(&progress.warn(&message));
                     return false;

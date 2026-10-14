@@ -69,7 +69,7 @@ impl TaskRecordCache {
             self.head = other.head;
         }
     }
-
+}
 
 /// #1193: one `ClaimLease` per live slice that still holds a pre-PR claim (a slice with a PR, a
 /// merge or a release is not leased), judged at `now`.

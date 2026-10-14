@@ -969,5 +969,29 @@ class GithubWordsDecodeUtf8(unittest.TestCase):
         self.assertEqual(words, ("feat: say \u201chello\u201d", "The owner reads \u201cplain words\u201d \u2713"))
 
 
+class LaneDocsGuardTest(unittest.TestCase):
+    """#1197 (A8): the two pages a lane reads name every record kind the recorder writes, and keep
+    no sentence the code has outgrown. Cost: two file reads, no network."""
+
+    REPO = Path(__file__).resolve().parents[2]
+
+    def test_the_lane_docs_name_every_record_kind_the_recorder_writes(self):
+        import re
+        kinds = set(task_record.KINDS)
+        lanes = (self.REPO / "docs/process/LANES.md").read_text(encoding="utf-8")
+        section = lanes.split("## 4. Task records", 1)[1].split("\n## ", 1)[0]
+        # LANES §4: every `$T --issue N <kind>` in the command table.
+        in_lanes = set(re.findall(r"\$T --issue N (\w+)", section))
+        self.assertEqual(in_lanes, kinds, f"LANES.md §4 names {sorted(in_lanes)}, task_record.py writes {sorted(kinds)}")
+        self.assertNotIn("Until the change that does so lands", section,
+                         "#508 landed: pr_opened --reviewer records review_assigned")
+        self.assertNotIn("the Runtime cannot stop", section,
+                         "#1179 landed: a Runtime started with --require-lane-credential refuses another lane's record")
+        delivery = (self.REPO / "docs/process/DELIVERY.md").read_text(encoding="utf-8")
+        table = delivery.split("### Task records", 1)[1].split("`taskId` is `issue-<N>`", 1)[0]
+        in_delivery = set(re.findall(r"\| `task\.(\w+)` \|", table))
+        self.assertEqual(in_delivery, kinds, f"DELIVERY.md step table names {sorted(in_delivery)}, task_record.py writes {sorted(kinds)}")
+
+
 if __name__ == "__main__":
     unittest.main()

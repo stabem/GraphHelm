@@ -294,10 +294,12 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 | release the latest still-open pre-PR claim (#729) | `task.released` | `lane`, exact `claimSequence`, bounded nonempty `reason`; only that claim ends, and unreadable history or a claim with a PR refuses release |
 | release a lapsed claim of another lane (#1193) | `task.released` | the same fields naming that lane, plus `releasedBy: graphhelm`; signed only by the `graphhelm` actor (the Stop reconciler); any other signer, or `releasedBy` on a lane's own release, is refused as an identity mismatch |
 | plan it, **right after the claim** (§2) | `task.planned` | `lane`, `classes`, `reviews`, `proof`, `critic` `{mode, passScore, maxRounds}`, `summary` |
+| say an open pre-PR claim is alive (#1147; the Stop reconciler sends it on every turn end, so a live lane never has to) | `task.heartbeat` | `lane` only; the Runtime refuses one without an open pre-PR claim and limits them to one per 300 s per task; `task_record.py heartbeat` sends it by hand |
 | open the PR (§3), and **again after every push** to it | `task.pr_opened` | `pr`, `headSha`, `journeys`, `lane`, optional `repo` |
 | ask a reviewer (§4) | `task.review_assigned` | `pr`, `headSha`, `reviewer`, `ordinal` (1 or 2) |
 | post the verdict (§4) | `task.review_verdict` | `pr`, `headSha`, `reviewer`, `verdict`, `commentUrl` |
 | merge and read what landed (§5) | `task.merged` | `pr`, `mergeSha`, `closes`, `merger` |
+| a PR closed without a merge (the Stop reconciler records it as the lane; by hand only to repair) | `task.closed` | `pr`, `reason` (`superseded` or `abandoned`), `by` (the superseding PR, or the PR itself when abandoned) |
 | grade the design, once per round, when the plan says `critic: design` (#467) | `task.critic_verdict` | `round`, `score`, `passScore`, `maxRounds`, `verdict`, `designRef`, `lane`, `reasons` |
 
 `taskId` is `issue-<N>` for the whole life of the task. An issue worked in several PRs is one

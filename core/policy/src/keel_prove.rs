@@ -23,7 +23,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::keel::{Finding, changed_paths, is_test_path, parse};
+use crate::keel::{DiffFile, Finding, changed_paths, is_test_path, parse};
 
 /// One new test the diff adds, where the head declares it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,54 +139,69 @@ pub const fn verdict(parent: RunOutcome, head: RunOutcome) -> TestVerdict {
 /// first `fn` among the added lines after it. The same lines `classify_write` charges as `newTest`.
 #[must_use]
 pub fn new_rust_tests(diff: &str) -> Vec<NewTest> {
+    rust_tests_in(&parse(diff))
+}
+
+/// [`new_rust_tests`] over an already parsed diff, in one pass (#1259): an added test attribute
+/// opens a pending entry; the next added or context `fn` names it; the next added or context test
+/// attribute, or the end of the file, closes it unnamed. The scan starts on the line after the
+/// attribute, as the forward scan it replaces did.
+fn rust_tests_in(files: &[DiffFile]) -> Vec<NewTest> {
     let mut out = Vec::new();
-    for file in parse(diff) {
+    for file in files {
         if !file.path.ends_with(".rs") {
             continue;
         }
         let inline = !is_test_path(&file.path);
+        let unnamed = |line: u32| NewTest {
+            name: format!("__keel_unidentified_rust_test_{line}"),
+            path: file.path.clone(),
+            line,
+            inline,
+        };
         let mut added_line = 0u32;
-        for (index, line) in file.added_with_context.iter().enumerate() {
-            let Some(line) = line.strip_prefix('+') else {
-                continue;
+        let mut pending: Option<u32> = None;
+        for raw in &file.added_with_context {
+            let (added, line) = match (raw.strip_prefix('+'), raw.strip_prefix(' ')) {
+                (Some(line), _) => (true, line),
+                (None, Some(line)) => (false, line),
+                (None, None) => continue,
             };
-            added_line = added_line.saturating_add(1);
+            if added {
+                added_line = added_line.saturating_add(1);
+            }
             let trimmed = line.trim_start();
-            if !(trimmed.starts_with("#[test]") || trimmed.starts_with("#[tokio::test")) {
-                continue;
-            }
-            let mut name = None;
-            for next in &file.added_with_context[index + 1..] {
-                let Some(next) = next.strip_prefix('+').or_else(|| next.strip_prefix(' ')) else {
+            let attribute = trimmed.starts_with("#[test]") || trimmed.starts_with("#[tokio::test");
+            if let Some(at) = pending {
+                if attribute {
+                    out.push(unnamed(at));
+                    pending = None;
+                } else if let Some(name) = fn_name(line) {
+                    out.push(NewTest {
+                        name,
+                        path: file.path.clone(),
+                        line: at,
+                        inline,
+                    });
+                    pending = None;
                     continue;
-                };
-                let next_trimmed = next.trim_start();
-                if next_trimmed.starts_with("#[test]") || next_trimmed.starts_with("#[tokio::test")
-                {
-                    break;
-                }
-                if let Some(found) = fn_name(next) {
-                    name = Some(found);
-                    break;
                 }
             }
-            let name =
-                name.unwrap_or_else(|| format!("__keel_unidentified_rust_test_{added_line}"));
-            out.push(NewTest {
-                name,
-                path: file.path.clone(),
-                line: added_line,
-                inline,
-            });
+            if added && attribute {
+                pending = Some(added_line);
+            }
+        }
+        if let Some(at) = pending {
+            out.push(unnamed(at));
         }
     }
     out
 }
 
 /// The tests a diff adds in a language this module cannot run yet, so the report names them.
-fn unsupported_new_tests(diff: &str) -> Vec<(String, String)> {
+fn unsupported_new_tests(files: &[DiffFile]) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    for file in parse(diff) {
+    for file in files {
         let Some(language) = Language::of(&file.path) else {
             continue;
         };
@@ -420,12 +435,14 @@ pub fn prove_new_tests(
     };
     let base = resolve(&options.base)?;
     let head = resolve(&options.head)?;
-    let tests = new_rust_tests(diff);
+    // #1259: one parse feeds both finders.
+    let files = parse(diff);
+    let tests = rust_tests_in(&files);
     let mut proofs = Vec::new();
     if !tests.is_empty() {
         proofs.extend(prove_rust(diff, &tests, &base, &head, options, runner)?);
     }
-    let others = unsupported_new_tests(diff);
+    let others = unsupported_new_tests(&files);
     match options.command.as_deref() {
         Some(template) if !others.is_empty() => {
             proofs.extend(prove_with_command(
@@ -1287,6 +1304,58 @@ mod tests {
             )
             .outcome,
             RunOutcome::DidNotCompile
+        );
+    }
+
+    /// #1259: one `prove_new_tests` call parses its diff once. The diff adds no test, so nothing
+    /// is built or run; the repository is this checkout and both sides are `HEAD`.
+    #[test]
+    fn one_prove_call_parses_its_diff_once() {
+        fn never(_: Command, _: Duration) -> Result<Option<ProveOutput>, String> {
+            panic!("a diff that adds no test runs nothing")
+        }
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let options = ProveOptions {
+            repo: repo.clone(),
+            base: "HEAD".into(),
+            head: "HEAD".into(),
+            target_dir: repo.join("target-unused"),
+            scratch_root: repo.join("scratch-unused"),
+            timeout: Duration::from_secs(1),
+            command: None,
+        };
+        let diff = "diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1,2 @@\n line\n+added\n";
+        let before = crate::keel::PARSE_CALLS.with(std::cell::Cell::get);
+        let report = prove_new_tests(diff, &options, never).unwrap();
+        let parses = crate::keel::PARSE_CALLS.with(std::cell::Cell::get) - before;
+        assert!(report.proofs.is_empty());
+        assert_eq!(parses, 1, "prove_new_tests parsed its diff {parses} times");
+    }
+
+    /// #1259: the one-pass finder names the same tests at the same lines as the forward scan did,
+    /// across the attribute edge cases.
+    #[test]
+    fn the_one_pass_finder_keeps_names_lines_and_order() {
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,2 +1,11 @@\n+#[test]\n+#[test]\n+fn second() {}\n+#[test]\n #[test]\n+fn after_context_attribute() {}\n+#[tokio::test]\n fn context_named() {}\n+#[test] fn same_line() {}\n+fn named_after_same_line() {}\n+#[test]\n";
+        let found: Vec<(String, u32)> = new_rust_tests(diff)
+            .into_iter()
+            .map(|test| (test.name, test.line))
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                // An attribute followed directly by another attribute names nothing.
+                ("__keel_unidentified_rust_test_1".to_owned(), 1),
+                ("second".to_owned(), 2),
+                // A context `#[test]` line ends the scan of the added attribute before it.
+                ("__keel_unidentified_rust_test_4".to_owned(), 4),
+                // A context `fn` line names the attribute before it.
+                ("context_named".to_owned(), 6),
+                // The scan starts on the line after the attribute.
+                ("named_after_same_line".to_owned(), 7),
+                // An attribute at the end of the diff names nothing.
+                ("__keel_unidentified_rust_test_9".to_owned(), 9),
+            ]
         );
     }
 }

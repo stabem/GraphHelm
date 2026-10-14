@@ -52,6 +52,15 @@ def main(argv=None):
         output.flush()
         os.fsync(output.fileno())
 
+    def close_output():
+        try:
+            output.close()
+        except OSError:
+            return False
+        return True
+
+    close_output_safely = close_output
+
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
     kernel32.OpenProcess.restype = ctypes.c_void_p
@@ -67,9 +76,13 @@ def main(argv=None):
     # PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE; deliberately no terminate rights.
     handle = kernel32.OpenProcess(0x1000 | 0x00100000, False, args.pid)
     if not handle:
-        output.close()
+        if not close_output():
+            print(ERRORS["io"], file=sys.stderr)
+            return 2
         print(ERRORS["refused"], file=sys.stderr)
         return 2
+    result = 2
+    timeout_observed = False
     try:
         created = ctypes.c_uint64()
         exited = ctypes.c_uint64()
@@ -77,41 +90,72 @@ def main(argv=None):
         user = ctypes.c_uint64()
         if not kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited), ctypes.byref(kernel), ctypes.byref(user)):
             print(ERRORS["failed"], file=sys.stderr)
-            return 2
-        if created.value != args.creation_filetime:
+            result = 2
+        elif created.value != args.creation_filetime:
             print(ERRORS["identity"], file=sys.stderr)
-            return 2
-
-        started = time.monotonic()
-        emit({"schema": "graphhelm.runtime-process-exit/1", "state": "attached", "pid": args.pid,
-              "creationFiletime": created.value, "observedAt": utc_now()})
-        remaining = args.timeout_seconds
-        while remaining > 0:
-            wait_ms = max(1, min(1000, int(remaining * 1000)))
-            status = kernel32.WaitForSingleObject(handle, wait_ms)
-            if status == 0:
-                code = ctypes.c_uint32()
-                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-                    print(ERRORS["failed"], file=sys.stderr)
-                    return 2
-                if not kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited), ctypes.byref(kernel), ctypes.byref(user)):
-                    print(ERRORS["failed"], file=sys.stderr)
-                    return 2
-                emit({"schema": "graphhelm.runtime-process-exit/1", "state": "exited", "pid": args.pid,
-                      "creationFiletime": created.value, "exitFiletime": exited.value,
-                      "observedAt": utc_now(), "exitCode": code.value})
-                return 0
-            if status != 0x102:
-                print(ERRORS["failed"], file=sys.stderr)
-                return 2
-            remaining = args.timeout_seconds - (time.monotonic() - started)
-        emit({"schema": "graphhelm.runtime-process-exit/1", "state": "timeout", "pid": args.pid,
-              "creationFiletime": created.value, "observedAt": utc_now()})
-        print(ERRORS["timeout"], file=sys.stderr)
-        return 3
+            result = 2
+        else:
+            started = time.monotonic()
+            try:
+                emit({"schema": "graphhelm.runtime-process-exit/1", "state": "attached", "pid": args.pid,
+                      "creationFiletime": created.value, "observedAt": utc_now()})
+            except OSError:
+                print(ERRORS["io"], file=sys.stderr)
+                result = 2
+            else:
+                remaining = args.timeout_seconds
+                while remaining > 0:
+                    wait_ms = max(1, min(1000, int(remaining * 1000)))
+                    status = kernel32.WaitForSingleObject(handle, wait_ms)
+                    if status == 0:
+                        code = ctypes.c_uint32()
+                        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) or not kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited), ctypes.byref(kernel), ctypes.byref(user)):
+                            print(ERRORS["failed"], file=sys.stderr)
+                            result = 2
+                        else:
+                            try:
+                                emit({"schema": "graphhelm.runtime-process-exit/1", "state": "exited", "pid": args.pid,
+                                      "creationFiletime": created.value, "exitFiletime": exited.value,
+                                      "observedAt": utc_now(), "exitCode": code.value})
+                                result = 0
+                            except OSError:
+                                print(ERRORS["io"], file=sys.stderr)
+                                result = 2
+                        break
+                    if status != 0x102:
+                        print(ERRORS["failed"], file=sys.stderr)
+                        result = 2
+                        break
+                    remaining = args.timeout_seconds - (time.monotonic() - started)
+                else:
+                    try:
+                        emit({"schema": "graphhelm.runtime-process-exit/1", "state": "timeout", "pid": args.pid,
+                              "creationFiletime": created.value, "observedAt": utc_now()})
+                        timeout_observed = True
+                        result = 3
+                    except OSError:
+                        print(ERRORS["io"], file=sys.stderr)
+                        result = 2
     finally:
         kernel32.CloseHandle(handle)
-        output.close()
+        close_failed = not close_output_safely()
+    if close_failed:
+        if result in (0, 3):
+            try:
+                with open(args.output, "a", encoding="utf-8", newline="\n") as failure_output:
+                    failure_output.write(json.dumps({"schema": "graphhelm.runtime-process-exit/1",
+                                                     "state": "receipt_unavailable", "pid": args.pid,
+                                                     "creationFiletime": args.creation_filetime},
+                                                    separators=(",", ":"), sort_keys=True) + "\n")
+                    failure_output.flush()
+                    os.fsync(failure_output.fileno())
+            except OSError:
+                pass
+        print(ERRORS["io"], file=sys.stderr)
+        return 2
+    if timeout_observed:
+        print(ERRORS["timeout"], file=sys.stderr)
+    return result
 
 
 if __name__ == "__main__":

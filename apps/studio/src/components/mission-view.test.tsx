@@ -95,6 +95,15 @@ describe("MissionView", () => {
     expect(screen.getByRole("region", { name: "Keel cards" })).toHaveTextContent("No Keel card in the loaded history");
   });
 
+  it("shows a card as reading while its envelope has not resolved", () => {
+    const event = { sequence: 7, kind: "signal_recorded", payload: { kind: "keel.card", sourceKind: "node", sourceId: "planner" },
+      occurredAt: null, actorId: "agent", actorType: "agent", idempotencyKey: null, eventId: null, evidenceRefs: ["e-7"] };
+    render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null}
+      onMarkSafe={vi.fn()} events={[event]} envelopes={Object.assign({}, { __readingEnvelopeSequences: [7] })} />);
+    const cards = screen.getByRole("region", { name: "Keel cards" });
+    expect(cards).toHaveTextContent("Keel card recorded; reading its content");
+    expect(cards).not.toHaveTextContent("content unavailable");
+  });
   it("draws recent work in the graph while history is still loading", () => {
     render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0}
       runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} historyLoading partial />);

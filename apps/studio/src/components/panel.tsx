@@ -829,7 +829,7 @@ export function useEnvelopes(
   events: RuntimeEvent[],
   executionId: string | undefined,
   openEvidence: ((executionId: string, evidenceId: string) => Promise<EvidenceContent>) | undefined,
-): EnvelopeRecord & { __pendingEnvelopeSequences: number[] } {
+): EnvelopeRecord & { __pendingEnvelopeSequences: number[]; __readingEnvelopeSequences: number[] } {
   // TAGGED BY EXECUTION, not just keyed by sequence: sequences restart in every run, so run B's
   // signal at sequence 5 would wear run A's plaintext envelope from sequence 5 for as long as
   // B's evidence reads take - someone else's words, recipient and replyTo rendered under the
@@ -937,8 +937,8 @@ export function useEnvelopes(
   }, [eventSequence, executionId, openEvidence]);
   // A stable empty answer, not a fresh literal: downstream memos key off this identity.
   return envelopes.forId === executionId
-    ? Object.assign({ ...envelopes.map }, { __pendingEnvelopeSequences: [...new Set([...envelopes.failed, ...envelopes.pending])] })
-    : Object.assign({}, { __pendingEnvelopeSequences: [] });
+    ? Object.assign({ ...envelopes.map }, { __pendingEnvelopeSequences: [...new Set([...envelopes.failed, ...envelopes.pending])], __readingEnvelopeSequences: [...envelopes.pending] })
+    : Object.assign({}, { __pendingEnvelopeSequences: [], __readingEnvelopeSequences: [] });
 }
 
 /**

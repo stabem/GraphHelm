@@ -1,20 +1,37 @@
 import { createRequire } from 'node:module';
-import { writeFile } from 'node:fs/promises';
+import { readFile, stat, writeFile } from 'node:fs/promises';
 import { availableParallelism, cpus, platform, release } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { reduceEnvelopeObservation, summarize } from './stats.mjs';
+import { reduceCpuProfile, reduceEnvelopeObservation, summarize } from './stats.mjs';
 
 const args = process.argv.slice(2);
 const options = {};
 for (let i = 0; i < args.length; i += 2) {
-  if (!['--base', '--runs', '--out', '--mode', '--execution', '--source-head'].includes(args[i]) || !args[i + 1] || options[args[i]]) {
+  if (!['--base', '--runs', '--out', '--mode', '--execution', '--source-head', '--profile', '--start-us', '--end-us', '--alignment'].includes(args[i]) || !args[i + 1] || options[args[i]]) {
     throw new Error('Usage: node tools/studio-perf/measure.mjs --base <fixture URL> --runs <1..20> --out <file> [--mode clicks|envelopes --execution <id> --source-head <sha>]');
   }
   options[args[i]] = args[i + 1];
 }
 const runs = Number(options['--runs']);
 const mode = options['--mode'] ?? 'clicks';
+if (mode === 'profile') {
+  if (!options['--profile'] || !options['--source-head'] || !options['--start-us'] || !options['--end-us'] || !options['--alignment'] || !options['--out']) {
+    throw new Error('profile mode requires --profile, --source-head, --start-us, --end-us, --alignment, and --out');
+  }
+  const inputStat = await stat(options['--profile']);
+  if (!inputStat.isFile() || inputStat.size > 20 * 1024 * 1024) throw new Error('profile file must be a regular file no larger than 20 MiB');
+  let profile;
+  try { profile = JSON.parse(await readFile(options['--profile'], 'utf8')); }
+  catch { throw new Error('profile file is not valid JSON'); }
+  const observation = reduceCpuProfile(profile, {
+    startUs: Number(options['--start-us']), endUs: Number(options['--end-us']),
+    sourceHead: options['--source-head'], alignment: options['--alignment'],
+  });
+  await writeFile(options['--out'], JSON.stringify({ mode, observation }, null, 2) + '\n');
+  console.log(observation.status === 'ok' ? `profile: ${observation.frames.length} sampled frames in ${observation.intervalUs} us` : `profile: unknown (${observation.reason})`);
+  process.exitCode = observation.status === 'ok' ? 0 : 2;
+} else {
 if (!Number.isInteger(runs) || runs < 1 || runs > 20 || !options['--out'] || !['clicks', 'envelopes'].includes(mode)) {
   throw new Error('--runs must be an integer from 1 to 20; --out is required');
 }
@@ -243,4 +260,5 @@ try {
   }
 } finally {
   await browser.close();
+}
 }

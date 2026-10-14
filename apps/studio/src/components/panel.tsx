@@ -919,7 +919,7 @@ export function useEnvelopes(
       queueMicrotask(publish);
     };
     const cached: typeof ready = [];
-    const uncached: Array<{ carrier: (typeof carriers)[number]; page: number }> = [];
+    const uncached: Array<{ carrier: (typeof carriers)[number]; page: number; evidenceId: string }> = [];
     carriers.forEach((carrier, carrierIndex) => {
       const evidenceId = carrier.evidenceRefs[0];
       const key = `${executionId}/${evidenceId}`;

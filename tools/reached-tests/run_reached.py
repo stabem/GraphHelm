@@ -4,8 +4,9 @@
 The selector owns reachability. This runner owns only orchestration: short adjacent Cargo
 checks use one bounded slot batch by default; --no-batch-slot opts out and --batch-slot
 remains accepted for compatibility. Format, Python, and Studio steps run directly. No command is passed through a shell. Whole-package plans are expanded
-by the selector into explicit Cargo targets; targets requiring features are
-reported as unsupported and remain incomplete rather than being silently skipped.
+by the selector into explicit Cargo targets; a target requiring features runs with
+those features (#1280), and anything the selector cannot run is reported as unsupported
+and remains incomplete rather than being silently skipped.
 """
 from __future__ import annotations
 

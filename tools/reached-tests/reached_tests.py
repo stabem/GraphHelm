@@ -689,11 +689,6 @@ def expand_whole_packages(whole, packages):
         doc_added = False
         for target in targets:
             required = target.get("requiredFeatures", [])
-            if required:
-                unsupported.append({"package": name, "target": target["name"],
-                                    "kind": target["kind"],
-                                    "reason": "target requires features: " + ", ".join(required)})
-                continue
             if not target.get("harnessKnown", True):
                 unsupported.append({"package": name, "target": target["name"],
                                     "kind": target["kind"],
@@ -718,6 +713,11 @@ def expand_whole_packages(whole, packages):
                     unsupported.append({"package": name, "target": target["name"],
                                         "kind": target["kind"], "reason": "unsupported Cargo target kind"})
                 continue
+            if required:
+                # #1280: run a gated target with its features rather than refusing the plan.
+                # Cargo reads them before libtest's `--`.
+                cut = argv.index("--") if "--" in argv else len(argv)
+                argv = argv[:cut] + ["--features", ",".join(required)] + argv[cut:]
             if name == CLI and target.get("kind") == "test" and target.get("name") == "cli":
                 bundle_steps = _cli_bundle_steps(package, target)
                 if not bundle_steps:

@@ -3630,6 +3630,8 @@ fn the_tasks_route_reports_each_open_claims_lease() {
         data["now"].is_string(),
         "the reply names the clock it judged at: {data}"
     );
+    // #1235: a fresh claim has no PR, so nothing is stalled; the field is always served.
+    assert_eq!(data["stalls"], serde_json::json!([]), "{data}");
     let leases = data["leases"]
         .as_array()
         .unwrap_or_else(|| panic!("no leases array: {data}"));

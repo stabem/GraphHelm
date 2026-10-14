@@ -296,20 +296,33 @@ def reconcile(args):
         released.append(issue)
     # #1193: every open pre-PR claim the Runtime's tasks fold reads as past its lease is released
     # as graphhelm, whichever lane holds it; the claim's lane is told by `releasedBy`.
-    lapsed = release_overdue(args.url.rstrip("/"), token, credential, args.execution, args.repo)
+    base = args.url.rstrip("/")
+    try:
+        view = get(f"{base}/v1/executions/{urllib.parse.quote(args.execution, safe='')}/tasks", token)
+    except (OSError, ValueError, KeyError):
+        view = None
+    lapsed = release_overdue(view, base, credential, args.execution, args.repo)
     return {"merged": done, "closed": closed, "released": released, "heartbeat": beats,
-            "lapsed": lapsed, "inspected": len(opened)}
+            "lapsed": lapsed, "stalled": stalled(view), "inspected": len(opened)}
 
 
-def release_overdue(base, token, credential, execution, repo):
+def stalled(view):
+    """#1235: the open PRs the tasks route reports idle past its stall budget, each with the lane
+    that owes the next step. Recorded with the reconcile reply (`tasks.reconciled`), so a BLOCK
+    behind a dead fixer is on the log for the Studio and the coordinator, not silent. An older
+    Runtime without `stalls` yields an empty list."""
+    stalls = view.get("stalls") if isinstance(view, dict) else None
+    if not isinstance(stalls, list):
+        return []
+    keep = ("taskId", "pr", "reason", "owner", "idleSince", "idleSeconds")
+    return [{key: item.get(key) for key in keep} for item in stalls if isinstance(item, dict)]
+
+
+def release_overdue(view, base, credential, execution, repo):
     """Releases, as graphhelm, each lease the tasks route reports overdue (#1193). Returns
     {"released": [...], "refused": [...]}; a route that does not serve leases (older Runtime)
-    yields empty lists, never an error, so the rest of the reconcile stands."""
+    or could not be read yields empty lists, never an error, so the rest of the reconcile stands."""
     out = {"released": [], "refused": []}
-    try:
-        view = get(f"{base}/v1/executions/{urllib.parse.quote(execution, safe='')}/tasks", token)
-    except (OSError, ValueError, KeyError):
-        return out
     leases = view.get("leases") if isinstance(view, dict) else None
     if not isinstance(leases, list):
         return out

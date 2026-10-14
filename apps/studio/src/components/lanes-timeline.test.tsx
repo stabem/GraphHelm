@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { laneBarsOf } from "../test/task-fold";
 import { render, screen, within } from "@testing-library/react";
 import { LanesTimeline } from "./lanes-timeline";
 import type { MissionTask } from "../runtime/mission";
 import { fastUserEvent } from "../test/user-event";
 import css from "./lanes-timeline.css?raw";
-import { laneBars, type TimedTaskEvent } from "../runtime/lane-bars";
+import { type TimedTaskEvent } from "../runtime/lane-bars";
 
 const now = 1_000_000;
 const lanes = [
@@ -24,7 +25,7 @@ describe("LanesTimeline", () => {
       { sequence: 1, actorId: "codex-12", taskId: "issue-945", kind: "task.claimed", lane: "codex-12", issue: 945, at: new Date(at - 1000).toISOString() },
       { sequence: 2, actorId: "codex-12", taskId: "issue-945", kind: "task.pr_opened", lane: "codex-12", pr: 923, headSha: "head1", at: new Date(at).toISOString() },
     ] as TimedTaskEvent[];
-    const { container } = render(<LanesTimeline lanes={laneBars(events, at, 3_600_000)} now={at} windowMs={3_600_000} />);
+    const { container } = render(<LanesTimeline lanes={laneBarsOf(events, at, 3_600_000)} now={at} windowMs={3_600_000} />);
     const board = screen.getByRole("list", { name: "Agent board" });
     await fastUserEvent().click(screen.getByRole("button", { name: "Waiting 1" }));
     expect(within(board).getByText("codex-12").closest("li")!.querySelector(".ab-pill")).toHaveAttribute("data-status", "waiting");
@@ -92,7 +93,7 @@ describe("LanesTimeline", () => {
       { sequence: 2, actorId: "dev", taskId: "issue-809", kind: "task.pr_opened", lane: "dev", pr: 822, title: "Close false timeline bars", at: "2026-10-09T00:00:01Z" },
     ] as TimedTaskEvent[];
     const at = Date.parse("2026-10-09T00:00:10Z");
-    const { container } = render(<LanesTimeline lanes={laneBars(events, at, 1000)} now={at} windowMs={1000} />);
+    const { container } = render(<LanesTimeline lanes={laneBarsOf(events, at, 1000)} now={at} windowMs={1000} />);
     const bar = container.querySelector(".lt-bar")!;
     expect(bar).toHaveTextContent("#822 Close false timeline bars");
     expect(bar.getAttribute("title")).toContain("#822 Close false timeline bars");

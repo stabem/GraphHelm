@@ -46,6 +46,7 @@ import type {
   LiveAct,
 } from "./types";
 import { RUNTIME_UNREACHABLE_HEADER } from "./proxy-signal";
+import { tasksReply, type TasksReply } from "./tasks-route";
 
 /** The actor id the human interface records. */
 export const OPERATOR_ACTOR: Actor = { id: "studio-operator", type: "owner" };
@@ -813,6 +814,39 @@ export class RuntimeClient {
         reason instanceof RuntimeError &&
         reason.httpStatus === 404 &&
         !reason.diagnostics.some((diagnostic) => diagnostic.code === EXECUTION_NOT_FOUND)
+      ) {
+        return null;
+      }
+      throw reason;
+    }
+  }
+
+  /**
+   * #1192: the task projection the Runtime folds (`GET /v1/executions/{id}/tasks`, #1149). `null`
+   * means the Runtime predates the route: a 404 that does not carry `GHCLI028_EXECUTION_NOT_FOUND`
+   * (an older binary's `serve.not_found`), or a 401 from this route alone (an older auth layer
+   * that knows no such read). A 404 naming an unknown execution, and every other failure, still
+   * throws, so a broken store is never read as an old server. A reply that is not the known shape
+   * is an error too: the views must not draw a guess.
+   */
+  async getTasks(executionId: string): Promise<TasksReply | null> {
+    const id = checkedId(executionId, "executionId");
+    try {
+      const data = await this.#request<unknown>({
+        method: "GET",
+        path: `/v1/executions/${encodeURIComponent(id)}/tasks`,
+      });
+      const reply = tasksReply(data);
+      if (reply === null) {
+        throw new RuntimeError("The tasks route answered with a shape this Studio does not know.", 200, []);
+      }
+      return reply;
+    } catch (reason) {
+      if (
+        reason instanceof RuntimeError &&
+        ((reason.httpStatus === 404 &&
+          !reason.diagnostics.some((diagnostic) => diagnostic.code === EXECUTION_NOT_FOUND)) ||
+          reason.httpStatus === 401)
       ) {
         return null;
       }

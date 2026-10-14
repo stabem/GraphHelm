@@ -1,6 +1,7 @@
 import type { Bot } from "./team";
 import type { Lane, LaneBar } from "./lane-bars";
 import type { MissionTask } from "./mission";
+import { sameHead } from "./heads";
 import { ordinal, slotDuration, slotStatus, type SlotView } from "./slots";
 
 /** #591 Lanes board: who is free, who does what, and for how long. */
@@ -49,8 +50,8 @@ const blank = (n: string | undefined | null) => !n || n.trim() === "" || n.trim(
 /** A verdict on the task's current head: a BLOCK round on it, or the unanswered BLOCK on it. */
 function hasVerdictOnHead(t: MissionTask, names: string[]): boolean {
   if (!t.headSha) return false;
-  if (t.rounds.some((r) => names.includes(r.reviewer) && r.headSha === t.headSha)) return true;
-  return !!t.blockedBy && names.includes(t.blockedBy.reviewer) && t.blockedBy.headSha === t.headSha;
+  if (t.rounds.some((r) => names.includes(r.reviewer) && sameHead(r.headSha, t.headSha))) return true;
+  return !!t.blockedBy && names.includes(t.blockedBy.reviewer) && sameHead(t.blockedBy.headSha, t.headSha);
 }
 
 /** One row per bot, plus a row per lane no bot claims; silent first, then working (longest

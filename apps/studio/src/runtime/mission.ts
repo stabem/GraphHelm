@@ -1,6 +1,7 @@
 import type { JourneyRunView, JourneyView } from "./types";
 import type { TaskEventRecord, TaskState } from "./team-tasks";
 import { realName, realNames, type Lane } from "./lane-bars";
+import { sameHead } from "./heads";
 
 export type StepStatus = "proven" | "stale" | "failed" | "needs_you" | "preview_only" | "not_run";
 export type TrustLevel = 0 | 1 | 2 | 3 | 4 | 5;
@@ -143,7 +144,7 @@ export function withCurrentReviewer(t: MissionTask, lanes: readonly Lane[]): Mis
   for (const l of lanes) for (const b of l.bars) {
     if (b.kind !== "review") continue;
     if (!((t.pr !== null && b.label === `#${t.pr}`) || (b.taskId !== undefined && b.taskId === t.key))) continue;
-    if (t.headSha && b.headSha && b.headSha !== t.headSha) continue;
+    if (t.headSha && b.headSha && !sameHead(b.headSha, t.headSha)) continue;
     const since = b.since ?? b.start;
     if (!best || since >= best.since) best = { lane: l.lane, since };
   }

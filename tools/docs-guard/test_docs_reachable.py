@@ -32,6 +32,7 @@ def tracked_markdown(root: Path) -> set[str]:
     listed = subprocess.run(
         ["git", "ls-files", "--", "docs/*.md", "docs/**/*.md"],
         cwd=root, capture_output=True, text=True, check=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     ).stdout.split("\n")
     return {path for path in listed if path}
 

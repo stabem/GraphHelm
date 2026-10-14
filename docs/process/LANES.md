@@ -98,6 +98,10 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   `--shared-target`, or run `cargo clean`: shared mutable artifacts can vouch for another worktree's
   code (#361). The outer script may set `GRAPHHELM_TEST_TIME_SCALE=3` before invoking the slot. This
   scales child-test hang catchers, never product budgets; supported values are integers 1 through 20.
+- **Build jobs (owner rule, 2026-10-13, #1188).** One slot root may build with up to `--jobs 16`;
+  the jobs of every root building at the same time add up to at most 24. `run_reached.py --jobs N`
+  carries the choice into every slot command it queues (six when omitted). The dedicated root
+  `D:/gh/opt` runs at 16; the Codex fleet keeps its concurrent runs within the remaining 8.
 - **Where the owner set a build-directory rule, the slot picks the directory and the script does
   not export one (#360).** The rule is `<root>\.graphhelm-workspaces\slot-targets.json`:
 
@@ -175,7 +179,7 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   read-only `cargo fmt --all -- --check` before Cargo, the runner groups at most four adjacent
   Cargo steps with the same working directory. All checks remain in the plan, with their original
   indices and individual results. No other check is reordered or crossed. They execute serially
-  inside one existing slot, with six build jobs and two test threads; there is no extra holder.
+  inside one existing slot, with the runner's `--jobs` (six unless the lane passes another) and two test threads; there is no extra holder.
 
   The runner sends `GRAPHHELM_SLOT_BATCH` as a versioned JSON request (`graphhelm.slot-batch/1`):
   `commands` includes the ordinary argv command first, `budgetSeconds` is the remaining full-run
@@ -194,8 +198,8 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   checks pending and the run incomplete; an exit code alone cannot prove a batch completed.
   With `--no-batch-slot`, existing single-command behavior is unchanged.
 
-  It plans the committed diff and queues Cargo tests or clippy commands (in bounded batches by default), with six
-  build jobs and two test threads. Fmt, Python, Node, Studio checks and standalone journey tools
+  It plans the committed diff and queues Cargo tests or clippy commands (in bounded batches by default), with the
+  runner's `--jobs` build jobs (six unless the lane passes another) and two test threads. Fmt, Python, Node, Studio checks and standalone journey tools
   run outside the Cargo slot, serially. Existing root target rules remain authoritative. The
   runner does not install dependencies, clean targets, bypass the queue or add holders.
   Reached browser observers require `--include-browser` and an installed local toolchain named

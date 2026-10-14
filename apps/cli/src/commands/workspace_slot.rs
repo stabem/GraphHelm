@@ -98,6 +98,194 @@ pub(crate) fn open_build_admission(path: &Path) -> Result<File, String> {
         .map_err(|_| "the build admission lock could not be opened".to_owned())
 }
 
+/// #1254: the machine's build budget, in Cargo jobs summed over every admitted slot run (LANES.md
+/// §3: one root up to 16, all roots together up to 24). `jobs-budget` in the admission directory
+/// overrides it with another positive integer.
+pub(crate) const DEFAULT_JOBS_BUDGET: u32 = 24;
+const JOBS_BUDGET_FILE: &str = "jobs-budget";
+/// #1254: one line per admitted run, `<pid> <jobs> <token>`, rewritten whole under the lock.
+const GRANTS_FILE: &str = "granted";
+
+/// The budget in force: the default, or the authority's `jobs-budget`. Fails closed on a file that
+/// exists but cannot be read or is not a positive integer.
+pub(crate) fn jobs_budget(admission: &Path) -> Result<u32, String> {
+    match std::fs::read_to_string(admission.join(JOBS_BUDGET_FILE)) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(DEFAULT_JOBS_BUDGET),
+        Err(_) => Err("the build admission budget could not be read".to_owned()),
+        Ok(text) => text
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|budget| *budget > 0)
+            .ok_or_else(|| "the build admission budget must be a positive integer".to_owned()),
+    }
+}
+
+/// One admitted run: its process (for liveness), its jobs, and a token unique to this admission
+/// (several admissions can share a process, as the in-process tests do).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Grant {
+    pub pid: u32,
+    pub jobs: u32,
+    pub token: String,
+}
+
+fn read_grants(admission: &Path) -> Result<Vec<Grant>, String> {
+    let text = match std::fs::read_to_string(admission.join(GRANTS_FILE)) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(_) => return Err("the build admission ledger could not be read".to_owned()),
+    };
+    text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let mut parts = line.split_whitespace();
+            match (parts.next(), parts.next(), parts.next(), parts.next()) {
+                (Some(pid), Some(jobs), Some(token), None) => Some(Grant {
+                    pid: pid.parse().ok()?,
+                    jobs: jobs.parse().ok()?,
+                    token: token.to_owned(),
+                }),
+                _ => None,
+            }
+        })
+        .collect::<Option<Vec<_>>>()
+        // A ledger it cannot parse is one it cannot sum: refuse rather than guess the total.
+        .ok_or_else(|| "the build admission ledger is malformed".to_owned())
+}
+
+fn write_grants(admission: &Path, grants: &[Grant]) -> Result<(), String> {
+    let text: String = grants
+        .iter()
+        .map(|grant| format!("{} {} {}\n", grant.pid, grant.jobs, grant.token))
+        .collect();
+    let staged = admission.join(format!("{GRANTS_FILE}.{}.tmp", std::process::id()));
+    std::fs::write(&staged, text)
+        .and_then(|()| std::fs::rename(&staged, admission.join(GRANTS_FILE)))
+        .map_err(|_| "the build admission ledger could not be written".to_owned())
+}
+
+fn grant_token() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let next = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{}-{}-{next}", std::process::id(), unix_now())
+}
+
+/// What one admission attempt decided.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Admission {
+    /// Admitted; the token releases exactly this grant.
+    Granted(String),
+    /// Not now: the lock is busy (an update holds it) or the budget is spent.
+    Wait,
+}
+
+/// #1254: one attempt, under the authority's OS lock held only for this read-modify-write. Drops
+/// grants whose process is gone, then admits when the remaining total plus `jobs` fits the budget.
+/// `running` is injected so a cell can stage a dead holder; production passes
+/// `graphhelm_process_tree::process_is_running`, where a recycled pid reads as running, which errs
+/// toward waiting and never toward over-admitting.
+pub(crate) fn try_grant(
+    admission: &Path,
+    lock: &File,
+    jobs: u32,
+    running: impl Fn(u32) -> bool,
+) -> Result<Admission, String> {
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => return Ok(Admission::Wait),
+        Err(TryLockError::Error(_)) => {
+            return Err("the build admission lock could not be checked".to_owned());
+        }
+    }
+    let decided = (|| {
+        let budget = jobs_budget(admission)?;
+        // An update waiting for the machine to drain goes first: no new grant while its marker
+        // names a live process, or a steady stream of builds could keep it waiting forever.
+        if update_pending(admission, &running) {
+            return Ok(Admission::Wait);
+        }
+        let mut grants = read_grants(admission)?;
+        grants.retain(|grant| running(grant.pid));
+        let granted: u64 = grants.iter().map(|grant| u64::from(grant.jobs)).sum();
+        let decision = if granted + u64::from(jobs) <= u64::from(budget) {
+            let token = grant_token();
+            grants.push(Grant {
+                pid: std::process::id(),
+                jobs,
+                token: token.clone(),
+            });
+            Admission::Granted(token)
+        } else {
+            Admission::Wait
+        };
+        write_grants(admission, &grants)?;
+        Ok(decision)
+    })();
+    let _ = lock.unlock();
+    decided
+}
+
+/// Removes this run's grant. Best effort: a grant that cannot be removed is dropped by the next
+/// admission once this process has exited.
+pub(crate) fn release_grant(admission: &Path, lock: &File, token: &str) {
+    if lock.lock().is_ok() {
+        if let Ok(mut grants) = read_grants(admission) {
+            grants.retain(|grant| grant.token != token);
+            let _ = write_grants(admission, &grants);
+        }
+        let _ = lock.unlock();
+    }
+}
+
+const UPDATE_PENDING_FILE: &str = "update-pending";
+
+/// Whether an update is waiting for the machine to drain: the marker exists and names a running
+/// process. A marker whose process is gone is removed (the caller holds the lock).
+fn update_pending(admission: &Path, running: &impl Fn(u32) -> bool) -> bool {
+    let marker = admission.join(UPDATE_PENDING_FILE);
+    let Ok(text) = std::fs::read_to_string(&marker) else {
+        return false;
+    };
+    match text.trim().parse::<u32>() {
+        Ok(pid) if running(pid) => true,
+        _ => {
+            let _ = std::fs::remove_file(&marker);
+            false
+        }
+    }
+}
+
+/// #1254 (review on #1256): an update announces that it is waiting, so new grants stop until it
+/// has run. Called with the lock held.
+pub(crate) fn mark_update_pending(admission: &Path) {
+    let _ = std::fs::write(
+        admission.join(UPDATE_PENDING_FILE),
+        std::process::id().to_string(),
+    );
+}
+
+/// Withdraws this process's update marker. Called with the lock held, when the update takes the
+/// lock for its install or gives up.
+pub(crate) fn clear_update_pending(admission: &Path) {
+    let marker = admission.join(UPDATE_PENDING_FILE);
+    if std::fs::read_to_string(&marker)
+        .is_ok_and(|text| text.trim() == std::process::id().to_string())
+    {
+        let _ = std::fs::remove_file(marker);
+    }
+}
+
+/// #1254: whether any live run holds a grant. An update installs only when none does.
+pub(crate) fn grants_outstanding(
+    admission: &Path,
+    running: impl Fn(u32) -> bool,
+) -> Result<bool, String> {
+    Ok(read_grants(admission)?
+        .iter()
+        .any(|grant| running(grant.pid)))
+}
+
 fn slot_dir(root: &Path) -> PathBuf {
     root.join(super::workspace::LEDGER).join("slot")
 }
@@ -1013,7 +1201,22 @@ fn run_admitted_slot_core(
     {
         return refuse(&message, "/target");
     }
-    let admission = match open_build_admission(admission) {
+    let admission_dir = admission;
+    // #1254: a request the budget can never hold refuses before it queues, like the target cap.
+    match jobs_budget(admission_dir) {
+        Ok(budget) if request.jobs > budget => {
+            return refuse(
+                &format!(
+                    "--jobs {} exceeds the machine's build budget of {budget} jobs",
+                    request.jobs
+                ),
+                "/jobs",
+            );
+        }
+        Ok(_) => {}
+        Err(message) => return refuse(&message, "/admission"),
+    }
+    let admission = match open_build_admission(admission_dir) {
         Ok(lock) => lock,
         Err(message) => return refuse(&message, "/admission"),
     };
@@ -1042,7 +1245,7 @@ fn run_admitted_slot_core(
     let _ = std::fs::write(info_path(&mine), info.to_string());
     let started = Instant::now();
     let batch_started = batch.as_ref().map_or(started, |run| run.started);
-    let slot = loop {
+    let (slot, grant) = loop {
         let batch_expired = batch
             .as_ref()
             .is_some_and(|run| run.started.elapsed() >= run.spec.budget);
@@ -1086,18 +1289,22 @@ fn run_admitted_slot_core(
                 .open(dir.join("slot.lock"))
             && slot.try_lock().is_ok()
         {
-            match admission.try_lock() {
-                Ok(()) => break slot,
-                Err(TryLockError::WouldBlock) => drop(slot),
-                Err(TryLockError::Error(_)) => {
+            // #1254: admitted while the machine's granted jobs plus ours fit the budget; this
+            // root's queue keeps its order either way, since only its head asks.
+            match try_grant(
+                admission_dir,
+                &admission,
+                request.jobs,
+                graphhelm_process_tree::process_is_running,
+            ) {
+                Ok(Admission::Granted(grant)) => break (slot, grant),
+                Ok(Admission::Wait) => drop(slot),
+                Err(message) => {
                     drop(slot);
                     drop(admission);
                     drop(ticket);
                     remove_ticket(&mine);
-                    return refuse(
-                        "the build admission lock could not be checked",
-                        "/admission",
-                    );
+                    return refuse(&message, "/admission");
                 }
             }
         }
@@ -1117,7 +1324,7 @@ fn run_admitted_slot_core(
     );
     let release = |slot: File, ticket: File, admission: &File| {
         let _ = std::fs::remove_file(dir.join(HOLDER));
-        let _ = admission.unlock();
+        release_grant(admission_dir, admission, &grant);
         drop(slot);
         drop(ticket);
         remove_ticket(&mine);

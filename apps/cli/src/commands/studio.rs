@@ -579,19 +579,46 @@ pub(super) fn run_install(
             return false;
         }
     };
-    match admission.try_lock() {
-        Ok(()) => {}
-        Err(std::fs::TryLockError::WouldBlock) => {
-            Progress::say(&progress.info("waiting for the shared build admission lock"));
-            if admission.lock().is_err() {
-                Progress::say(&progress.warn("the build admission lock could not be acquired"));
+    // #1254: builds hold jobs-budget grants, not the lock. An update still never overlaps a
+    // build: it takes the lock only when no live run holds a grant, and keeps it through the
+    // install (new admissions wait while it is held). It never holds the lock while waiting, so a
+    // finishing build can always take it to release its grant.
+    let mut said = false;
+    loop {
+        match admission.try_lock() {
+            Ok(()) => match super::workspace_slot::grants_outstanding(
+                admission_path,
+                graphhelm_process_tree::process_is_running,
+            ) {
+                Ok(false) => {
+                    super::workspace_slot::clear_update_pending(admission_path);
+                    break;
+                }
+                Ok(true) => {
+                    // Ask for priority: no new grant while this update waits (review on #1256).
+                    super::workspace_slot::mark_update_pending(admission_path);
+                    let _ = admission.unlock();
+                }
+                Err(message) => {
+                    super::workspace_slot::clear_update_pending(admission_path);
+                    let _ = admission.unlock();
+                    Progress::say(&progress.warn(&message));
+                    return false;
+                }
+            },
+            Err(std::fs::TryLockError::WouldBlock) => {}
+            Err(std::fs::TryLockError::Error(_)) => {
+                Progress::say(&progress.warn("the build admission lock could not be checked"));
                 return false;
             }
         }
-        Err(std::fs::TryLockError::Error(_)) => {
-            Progress::say(&progress.warn("the build admission lock could not be checked"));
-            return false;
+        if !said {
+            Progress::say(
+                &progress.info("waiting for the builds admitted on this machine to finish"),
+            );
+            said = true;
         }
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
     let moved_aside = if cfg!(windows) {
         current_exe.and_then(|exe| {

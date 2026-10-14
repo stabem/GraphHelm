@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{
-    BatchRun, BatchSpec, SlotRequest, batch_boundary, open_build_admission, parse_slot_batch,
-    run_admitted_slot, run_admitted_slot_in, run_admitted_slot_in_with_batch,
+    Admission, BatchRun, BatchSpec, SlotRequest, batch_boundary, open_build_admission,
+    parse_slot_batch, run_admitted_slot, run_admitted_slot_in, run_admitted_slot_in_with_batch,
     run_slot_with_batch_payload, run_status, slot_dir,
 };
 
@@ -495,7 +495,9 @@ fn admitted_slot_serializes_real_children_in_arrival_order_and_cleans_tickets() 
 }
 
 /// Two independent slot roots must serialize their build children through one shared OS
-/// admission authority. Cost: two local marker children, about two seconds.
+/// admission authority when their jobs together exceed the machine budget (#1254: 16 + 16 > 24;
+/// under the budget they overlap, see `admission_grants_concurrent_runs_within_the_jobs_budget`).
+/// Cost: two local marker children, about two seconds.
 #[test]
 fn shared_admission_serializes_children_across_slot_roots() {
     let dir = tempfile::tempdir().unwrap();
@@ -535,7 +537,8 @@ fn shared_admission_serializes_children_across_slot_roots() {
     let first = std::thread::spawn({
         let cwd = cwd.clone();
         move || {
-            let request = request(&root_a, "lane-a", "cross-root-a", &command_a);
+            let mut request = request(&root_a, "lane-a", "cross-root-a", &command_a);
+            request.jobs = 16;
             super::run_admitted_slot_core(&request, &cwd, None, &first_admission)
         }
     });
@@ -555,6 +558,7 @@ fn shared_admission_serializes_children_across_slot_roots() {
     let second_admission = admission.clone();
     let mut timed = request(&second_root, "lane-b", "cross-root-b", &command_b);
     timed.max_wait = Some(0.02);
+    timed.jobs = 16;
     let timed = super::run_admitted_slot_core(&timed, &second_cwd, None, &second_admission);
     let timed_marker = std::fs::read_to_string(&log).unwrap_or_default();
     std::fs::write(&release_a, b"release").unwrap();
@@ -589,6 +593,264 @@ fn shared_admission_serializes_children_across_slot_roots() {
         child_markers.contains(&format!("b start {expected_target_b}")),
         "{child_markers}"
     );
+}
+
+/// A child that writes `<tag> start`, waits for `release` to exist (at most 10 s), then writes
+/// `<tag> end`; exits 91 if never released.
+fn held_command(log: &Path, tag: &str, release: &Path) -> Vec<String> {
+    let log = log.to_string_lossy().replace('\'', "''");
+    let release = release.to_string_lossy().replace('\'', "''");
+    if cfg!(windows) {
+        vec![
+            "powershell".into(),
+            "-NoProfile".into(),
+            "-Command".into(),
+            format!(
+                "$deadline=(Get-Date).AddSeconds(10); Add-Content -LiteralPath '{log}' '{tag} start'; while (!(Test-Path -LiteralPath '{release}') -and (Get-Date) -lt $deadline) {{ Start-Sleep -Milliseconds 10 }}; if (!(Test-Path -LiteralPath '{release}')) {{ exit 91 }}; Add-Content -LiteralPath '{log}' '{tag} end'"
+            ),
+        ]
+    } else {
+        vec![
+            "sh".into(),
+            "-c".into(),
+            format!(
+                "echo '{tag} start' >> '{log}'; i=0; while [ ! -f '{release}' ] && [ $i -lt 1000 ]; do sleep 0.01; i=$((i+1)); done; if [ ! -f '{release}' ]; then exit 91; fi; echo '{tag} end' >> '{log}'"
+            ),
+        ]
+    }
+}
+
+fn wait_for_line(log: &Path, line: &str) -> bool {
+    let started = std::time::Instant::now();
+    while started.elapsed() < Duration::from_secs(10) {
+        if std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .contains(line)
+        {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    false
+}
+
+/// #1254: admission is a jobs budget, not a mutex. Three roots on one authority: runs at 16 and 8
+/// build AT ONCE (24 fits), a third at 8 waits (32 does not), and it is admitted once one of the
+/// first two releases. Before #1254 the second run waited behind the first: "both started while
+/// neither was released" is what fails on the parent. Cost: three marker children.
+#[test]
+fn admission_grants_concurrent_runs_within_the_jobs_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let admission = dir.path().join("budget-admission");
+    let log = dir.path().join("budget.log");
+    let (release_a, release_b, release_c) = (
+        dir.path().join("release-a"),
+        dir.path().join("release-b"),
+        dir.path().join("release-c"),
+    );
+    let cwd = dir.path().to_owned();
+    let spawn = |root: &str, lane: &'static str, jobs: u32, release: &Path, tag: &str| {
+        let root = dir.path().join(root);
+        let command = held_command(&log, tag, release);
+        let (cwd, admission) = (cwd.clone(), admission.clone());
+        std::thread::spawn(move || {
+            let mut request = request(&root, lane, "budget", &command);
+            request.jobs = jobs;
+            super::run_admitted_slot_core(&request, &cwd, None, &admission)
+        })
+    };
+    let a = spawn("root-a", "lane-a", 16, &release_a, "a");
+    assert!(
+        wait_for_line(&log, "a start"),
+        "the 16-job run never started"
+    );
+    let b = spawn("root-b", "lane-b", 8, &release_b, "b");
+    let both = wait_for_line(&log, "b start");
+    let a_still_held = !std::fs::read_to_string(&log).unwrap().contains("a end");
+
+    // The third, at 8, cannot fit while 24 are granted: it gives up after a short wait, unstarted.
+    let root_c = dir.path().join("root-c");
+    let command_c = held_command(&log, "c", &release_c);
+    let mut waiting = request(&root_c, "lane-c", "budget", &command_c);
+    waiting.jobs = 8;
+    waiting.max_wait = Some(0.03);
+    let waited = super::run_admitted_slot_core(&waiting, &cwd, None, &admission);
+    let c_unstarted = !std::fs::read_to_string(&log).unwrap().contains("c start");
+
+    std::fs::write(&release_a, b"go").unwrap();
+    let a = a.join().unwrap();
+    std::fs::write(&release_c, b"go").unwrap();
+    let mut retry = request(&root_c, "lane-c", "budget", &command_c);
+    retry.jobs = 8;
+    let retry = super::run_admitted_slot_core(&retry, &cwd, None, &admission);
+    std::fs::write(&release_b, b"go").unwrap();
+    let b = b.join().unwrap();
+
+    assert!(
+        both && a_still_held,
+        "16 and 8 must build at once: {}",
+        std::fs::read_to_string(&log).unwrap()
+    );
+    assert!(
+        !waited.output.ok,
+        "the third run must wait while 24 jobs are granted"
+    );
+    assert_eq!(waited.output.diagnostics[0].path, "/slot");
+    assert!(c_unstarted, "the waiting run started anyway");
+    assert_eq!(a.exit_code, 0, "{:?}", a.output);
+    assert_eq!(b.exit_code, 0, "{:?}", b.output);
+    assert_eq!(
+        retry.exit_code, 0,
+        "admitted after one release: {:?}",
+        retry.output
+    );
+    assert_eq!(
+        std::fs::read_to_string(admission.join("granted"))
+            .unwrap()
+            .trim(),
+        "",
+        "every grant is released"
+    );
+}
+
+/// #1254: a holder that died without releasing frees its share at the next admission; a ledger
+/// the authority cannot parse refuses rather than guessing a total. Cost: one exited child.
+#[test]
+fn a_dead_holder_is_reclaimed_and_a_malformed_ledger_refuses() {
+    let dir = tempfile::tempdir().unwrap();
+    let admission = dir.path().join("authority");
+    let lock = open_build_admission(&admission).unwrap();
+
+    // A real process that has exited: its pid is in the ledger holding the whole budget.
+    let mut child = if cfg!(windows) {
+        graphhelm_process::command("cmd")
+            .args(["/C", "exit 0"])
+            .spawn()
+            .unwrap()
+    } else {
+        graphhelm_process::command("true").spawn().unwrap()
+    };
+    let dead = child.id();
+    child.wait().unwrap();
+    std::fs::write(admission.join("granted"), format!("{dead} 24 crashed\n")).unwrap();
+    // CONTROL: with the holder read as alive, nothing fits.
+    assert_eq!(
+        super::try_grant(&admission, &lock, 8, |_| true).unwrap(),
+        Admission::Wait
+    );
+    let granted = super::try_grant(
+        &admission,
+        &lock,
+        8,
+        graphhelm_process_tree::process_is_running,
+    )
+    .unwrap();
+    let Admission::Granted(token) = granted else {
+        panic!("the dead holder's 24 jobs were not reclaimed: {granted:?}")
+    };
+    let ledger = std::fs::read_to_string(admission.join("granted")).unwrap();
+    assert!(!ledger.contains("crashed"), "{ledger}");
+    super::release_grant(&admission, &lock, &token);
+    assert_eq!(
+        std::fs::read_to_string(admission.join("granted"))
+            .unwrap()
+            .trim(),
+        ""
+    );
+
+    std::fs::write(admission.join("granted"), b"not a ledger line\n").unwrap();
+    assert!(super::try_grant(&admission, &lock, 1, |_| true).is_err());
+}
+
+/// #1254 (gh-claude-opt-1's review of #1256): an update that is waiting for the machine to drain
+/// is not starved by a steady stream of builds. While its marker names a live process, no new
+/// grant is made even with the whole budget free; once it withdraws (it took the lock, or gave
+/// up) grants resume; a marker whose process is gone is ignored and removed. Cost: one exited
+/// child.
+#[test]
+fn a_waiting_update_stops_new_grants_until_it_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let admission = dir.path().join("authority");
+    let lock = open_build_admission(&admission).unwrap();
+    let marker = admission.join("update-pending");
+
+    super::mark_update_pending(&admission);
+    assert_eq!(
+        super::try_grant(&admission, &lock, 1, |_| true).unwrap(),
+        Admission::Wait,
+        "a live update marker stops new grants even with the budget free"
+    );
+    super::clear_update_pending(&admission);
+    assert!(!marker.exists());
+    let Admission::Granted(token) = super::try_grant(&admission, &lock, 1, |_| true).unwrap()
+    else {
+        panic!("grants resume once the update withdraws")
+    };
+    super::release_grant(&admission, &lock, &token);
+
+    let mut child = if cfg!(windows) {
+        graphhelm_process::command("cmd")
+            .args(["/C", "exit 0"])
+            .spawn()
+            .unwrap()
+    } else {
+        graphhelm_process::command("true").spawn().unwrap()
+    };
+    let dead = child.id();
+    child.wait().unwrap();
+    std::fs::write(&marker, dead.to_string()).unwrap();
+    assert!(matches!(
+        super::try_grant(
+            &admission,
+            &lock,
+            1,
+            graphhelm_process_tree::process_is_running
+        )
+        .unwrap(),
+        Admission::Granted(_)
+    ));
+    assert!(!marker.exists(), "a dead update's marker is removed");
+}
+
+/// #1254: the budget is the authority's to set; a request over it refuses before queueing, and a
+/// budget the authority cannot read refuses instead of falling back. Cost: filesystem only.
+#[test]
+fn the_jobs_budget_is_configurable_and_fails_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let admission = dir.path().join("authority");
+    std::fs::create_dir_all(&admission).unwrap();
+    assert_eq!(
+        super::jobs_budget(&admission).unwrap(),
+        super::DEFAULT_JOBS_BUDGET
+    );
+    std::fs::write(admission.join("jobs-budget"), b"12\n").unwrap();
+    assert_eq!(super::jobs_budget(&admission).unwrap(), 12);
+
+    let root = dir.path().join("root");
+    let command = marker_command(&dir.path().join("never.log"), "x", 0);
+    let mut over = request(&root, "lane", "over", &command);
+    over.jobs = 16;
+    let refused = super::run_admitted_slot_core(&over, dir.path(), None, &admission);
+    assert!(!refused.output.ok);
+    assert_eq!(refused.output.diagnostics[0].path, "/jobs");
+    assert!(
+        !slot_dir(&root).exists() || std::fs::read_dir(slot_dir(&root)).unwrap().next().is_none(),
+        "a request the budget can never hold must not queue a ticket"
+    );
+
+    for bad in ["0", "many", ""] {
+        std::fs::write(admission.join("jobs-budget"), bad).unwrap();
+        let refused = super::run_admitted_slot_core(
+            &request(&root, "lane", "bad", &command),
+            dir.path(),
+            None,
+            &admission,
+        );
+        assert_eq!(
+            refused.output.diagnostics[0].path, "/admission",
+            "budget {bad:?}"
+        );
+    }
 }
 
 #[test]
@@ -716,7 +978,7 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
     let update_waiting = loop {
         if std::fs::read_to_string(&stderr)
             .unwrap_or_default()
-            .contains("waiting for the shared build admission lock")
+            .contains("waiting for the builds admitted on this machine to finish")
         {
             break true;
         }

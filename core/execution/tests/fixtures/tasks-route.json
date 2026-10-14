@@ -231,7 +231,6 @@
       "ended": false,
       "id": 0,
       "state": {
-        "approvedWithRisk": null,
         "assignedBy": null,
         "assignedReviewers": [],
         "authorLastSequence": 2,
@@ -247,7 +246,6 @@
             "plan": 60000
           }
         },
-        "completionRecorded": false,
         "critic": null,
         "currentReviewer": null,
         "headSha": null,
@@ -260,7 +258,6 @@
         "leaseSeconds": 1800,
         "mergeSha": null,
         "parent": null,
-        "pendingReviewer": null,
         "plan": {
           "classes": [
             "code"
@@ -278,7 +275,6 @@
         "prSummary": null,
         "prTitle": null,
         "recordedHeads": [],
-        "releasedBy": null,
         "repoUrl": null,
         "reviewers": [],
         "rounds": [],
@@ -294,7 +290,6 @@
       "ended": false,
       "id": 1,
       "state": {
-        "approvedWithRisk": null,
         "assignedBy": null,
         "assignedReviewers": [],
         "authorLastSequence": 7,
@@ -325,7 +320,6 @@
         "leaseSeconds": 1800,
         "mergeSha": "eeeeeeee",
         "parent": null,
-        "pendingReviewer": null,
         "plan": null,
         "pr": 100,
         "prSummary": null,
@@ -334,7 +328,6 @@
           "aaaaaaaa",
           "bbbbbbbb"
         ],
-        "releasedBy": null,
         "repoUrl": "https://github.com/o/r",
         "reviewers": [
           "rev-1"
@@ -380,7 +373,6 @@
       "ended": false,
       "id": 2,
       "state": {
-        "approvedWithRisk": null,
         "assignedBy": null,
         "assignedReviewers": [],
         "authorLastSequence": null,
@@ -394,7 +386,6 @@
           "since": "2026-10-14T10:10:00Z",
           "spent": {}
         },
-        "completionRecorded": false,
         "critic": null,
         "currentReviewer": null,
         "headSha": null,
@@ -407,7 +398,6 @@
         "leaseSeconds": 1800,
         "mergeSha": null,
         "parent": null,
-        "pendingReviewer": null,
         "plan": null,
         "pr": null,
         "prSummary": null,
@@ -429,21 +419,17 @@
       "ended": true,
       "id": 3,
       "state": {
-        "approvedWithRisk": null,
         "assignedBy": null,
         "assignedReviewers": [],
         "authorLastSequence": 13,
         "blockedBy": null,
         "blockedSequence": null,
         "branch": null,
-        "claimSequence": null,
-        "claimedAt": null,
         "clock": {
           "lastAt": "2026-10-14T10:13:00Z",
           "since": "2026-10-14T10:12:00Z",
           "spent": {}
         },
-        "completionRecorded": false,
         "critic": null,
         "currentReviewer": null,
         "headSha": "dddddddd",
@@ -453,10 +439,8 @@
         "lane": "lane-c",
         "lastHeartbeatAt": null,
         "lastSequence": 13,
-        "leaseSeconds": null,
         "mergeSha": null,
         "parent": null,
-        "pendingReviewer": null,
         "plan": null,
         "pr": 120,
         "prSummary": null,
@@ -464,7 +448,6 @@
         "recordedHeads": [
           "dddddddd"
         ],
-        "releasedBy": null,
         "repoUrl": null,
         "reviewers": [],
         "rounds": [],
@@ -478,7 +461,6 @@
   ],
   "tasks": [
     {
-      "approvedWithRisk": null,
       "assignedBy": null,
       "assignedReviewers": [],
       "authorLastSequence": null,
@@ -492,7 +474,6 @@
         "since": "2026-10-14T10:10:00Z",
         "spent": {}
       },
-      "completionRecorded": false,
       "critic": null,
       "currentReviewer": null,
       "headSha": null,
@@ -505,7 +486,6 @@
       "leaseSeconds": 1800,
       "mergeSha": null,
       "parent": null,
-      "pendingReviewer": null,
       "plan": null,
       "pr": null,
       "prSummary": null,
@@ -522,7 +502,6 @@
       "title": null
     },
     {
-      "approvedWithRisk": null,
       "assignedBy": null,
       "assignedReviewers": [],
       "authorLastSequence": 7,
@@ -553,7 +532,6 @@
       "leaseSeconds": 1800,
       "mergeSha": "eeeeeeee",
       "parent": null,
-      "pendingReviewer": null,
       "plan": null,
       "pr": 100,
       "prSummary": null,
@@ -562,7 +540,6 @@
         "aaaaaaaa",
         "bbbbbbbb"
       ],
-      "releasedBy": null,
       "repoUrl": "https://github.com/o/r",
       "reviewers": [
         "rev-1"

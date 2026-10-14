@@ -262,8 +262,8 @@ merged like any other, and the review says what was not observed.
 
 ## 5. Merge, by the reviewer
 
-The reviewer who approved merges (a blind subagent included). There is no gate and no separate presser. `ci/gate.ps1` still
-exists as an optional full local check (it takes about 20 minutes); a merge never waits on it.
+The reviewer who approved merges (a blind subagent included). There is no gate and no separate presser; the gate
+runner (`ci/gate.ps1`) was deleted in #1204, so there is nothing a merge could wait on.
 
 1. Pin the head: `gh pr view <N> --json headRefOid` must equal the sha the review named, and no
    BLOCK on that head is left unanswered by the review (§4).
@@ -290,7 +290,7 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 
 | Step | Kind | Fields besides `schema`, `taskId`, `revision`, `at` |
 |---|---|---|
-| take the issue (§1) | `task.claimed` | `issue`, `lane`, `branch`, optional `plan`, optional `repo`, optional `journeys`, optional `leaseSeconds` (300..86400, #1193, never below the 300 s heartbeat cooldown: how long the claim stays live without a heartbeat; `task_record.py --lease-seconds` sends it, absent reads as 1800 and is not sent, so an older Runtime still admits the claim). #1220: refused (`GHCLI003`, "`<taskId>` is held by lane `<lane>` (claim `<sequence>`)…") while another lane holds the task as an open pre-PR claim whose lease has not lapsed, unless the claim carries `assignedBy: <holder>`; a lane's own re-claim, and a claim after the holder's release, PR or lapsed lease, are admitted |
+| take the issue (§1) | `task.claimed` | `issue`, `lane`, `branch`, optional `plan`, optional `repo`, optional `journeys`, optional `leaseSeconds` (300..86400, #1193, never below the 300 s heartbeat cooldown: how long the claim stays live without a heartbeat; `task_record.py` sends 1800 unless `--lease-seconds` says otherwise, #1223; a Runtime older than #1194 that refuses the field gets the claim once more without the DEFAULT lease, never without one the lane gave); that resend happens only for a shape refusal at `/signal/description`, never for the holder refusal below). #1220: refused (`GHCLI003`, `/signal/description/taskId`, "`<taskId>` is held by lane `<lane>` (claim `<sequence>`)…") while another lane holds the task as an open pre-PR claim whose lease has not lapsed, unless the claim carries `assignedBy: <holder>`; a lane's own re-claim, and a claim after the holder's release, PR or lapsed lease, are admitted |
 | release the latest still-open pre-PR claim (#729) | `task.released` | `lane`, exact `claimSequence`, bounded nonempty `reason`; only that claim ends, and unreadable history or a claim with a PR refuses release |
 | release a lapsed claim of another lane (#1193) | `task.released` | the same fields naming that lane, plus `releasedBy: graphhelm`; signed only by the `graphhelm` actor (the Stop reconciler); any other signer, or `releasedBy` on a lane's own release, is refused as an identity mismatch |
 | judge every live pre-PR claim's lease (#1193) | `GET /v1/executions/<id>/tasks` | the reply carries `now` (the Runtime's clock) and `leases`: per live pre-PR claim its `lane`, `claimSequence`, `leaseSeconds`, `expiresAt` (the later of the claim and its last heartbeat plus the lease) and `overdue`; the Stop reconciler releases every `overdue` one as `graphhelm` |

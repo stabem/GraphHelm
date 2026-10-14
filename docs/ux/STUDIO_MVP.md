@@ -138,7 +138,7 @@ as a claim the evidence repeats.
 
 ## 7. Known limits
 
-- **The Studio's tests run in `ci/gate.ps1`.** The gate's `apps/studio (npm)` stage runs them when a change touches `apps/studio`. Gates are advisory since 2026-09-24; run `npx vitest run` and `npx tsc -b` from `apps/studio` and list the results in the PR body.
+- **The Studio's tests are run by hand.** There is no gate (retired 2026-09-24; its runner, which had an `apps/studio (npm)` stage, was deleted in #1204). Run `npx vitest run` and `npx tsc -b` from `apps/studio` and list the results in the PR body.
 - **`resume` needs a graph file path on the Runtime host.** The Studio relays it and never reads
   it, which is the correct security posture and also means the operator must know the Runtime's
   working directory. There is no server-side "resume from the graph you started with" verb to

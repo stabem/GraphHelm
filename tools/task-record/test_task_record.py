@@ -36,6 +36,8 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
     seen = []
     # #498: a Runtime built before #486 refuses the opening records' title/summary keys.
     old = False
+    no_lease = False  # #1223: a Runtime built before #1194 refuses `leaseSeconds` (GHCLI003)
+    held_by = None  # #1220: a Runtime that refuses a claim because another lane holds the task
     reject_heartbeat = False
     history = []
     history_head = None
@@ -73,7 +75,12 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
         if len(key) > 64:
             status, reply = 400, {"ok": False, "diagnostics": [{"code": "GHCLI001_ARGUMENT_INVALID", "severity": "error",
                                                                   "path": "/idempotencyKey", "message": "Idempotency-Key must be at most 64 characters"}]}
-        elif FakeRuntime.old and ("title" in described or "summary" in described):
+        elif FakeRuntime.held_by and body["signal"]["type"] == "task.claimed":
+            status, reply = 400, {"ok": False, "diagnostics": [{"code": "GHCLI003_SIGNAL_INVALID", "severity": "error",
+                                                                  "path": "/signal/description/taskId",
+                                                                  "message": f"issue-9 is held by lane {FakeRuntime.held_by} (claim 7)"}]}
+        elif (FakeRuntime.old and ("title" in described or "summary" in described)) or \
+                (FakeRuntime.no_lease and "leaseSeconds" in described):
             status, reply = 400, {"ok": False, "diagnostics": [{"code": "GHCLI003_SIGNAL_INVALID", "severity": "error",
                                                                   "path": "/signal/description", "message": "one document for its kind"}]}
         elif FakeRuntime.reject_heartbeat and body["signal"]["type"] == "task.heartbeat":
@@ -307,6 +314,8 @@ class TaskRecordTest(unittest.TestCase):
         FakeRuntime.keys.clear()
         FakeRuntime.seen.clear()
         FakeRuntime.old = False
+        FakeRuntime.no_lease = False
+        FakeRuntime.held_by = None
         FakeRuntime.reject_heartbeat = False
         FakeRuntime.history = []
         FakeRuntime.history_head = None
@@ -495,9 +504,10 @@ class TaskRecordTest(unittest.TestCase):
     # than #1193 refuses unknown keys, and the schema reads absence as 1800); an out-of-range lease
     # is refused before anything is sent (on the parent the flag did not exist).
     def test_a_claim_carries_its_lease_and_an_out_of_range_lease_is_refused(self):
+        # #1223: the default claim states the fold's default lease, 1800 s (on the parent it sent none).
         code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", "--no-github")
         self.assertEqual(code, 0, out)
-        self.assertNotIn("leaseSeconds", json.loads(FakeRuntime.seen[-1][1]["signal"]["description"]))
+        self.assertEqual(json.loads(FakeRuntime.seen[-1][1]["signal"]["description"])["leaseSeconds"], 1800)
         code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "10", "--branch", "b", "--no-github",
                                   "--lease-seconds", "600")
         self.assertEqual(code, 0, out)
@@ -508,6 +518,40 @@ class TaskRecordTest(unittest.TestCase):
                           "--lease-seconds", "299")
         self.assertIn("--lease-seconds", str(refused.exception.code))
         self.assertEqual(len(FakeRuntime.seen), sent)
+
+    def test_a_runtime_older_than_leases_still_records_a_default_claim_but_not_a_given_lease(self):
+        # #1223: a Runtime built before #1194 refuses `leaseSeconds` (GHCLI003). A claim that carried
+        # only the DEFAULT lease is sent once more without it and lands; one whose lease the lane gave
+        # is not retried, so a requested lease is never silently dropped. Cost: three local POSTs.
+        FakeRuntime.no_lease = True
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", "--no-github")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(FakeRuntime.seen), 2)
+        self.assertEqual(json.loads(FakeRuntime.seen[0][1]["signal"]["description"])["leaseSeconds"], 1800)
+        self.assertNotIn("leaseSeconds", json.loads(FakeRuntime.seen[1][1]["signal"]["description"]))
+        self.assertIn("claim leases (#1194)", err.getvalue())
+        FakeRuntime.seen.clear()
+        with redirect_stderr(io.StringIO()):
+            code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "10", "--branch", "b", "--no-github",
+                                      "--lease-seconds", "600")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(len(FakeRuntime.seen), 1, "a given lease is not dropped and resent")
+
+    def test_a_claim_refused_as_held_is_sent_once_and_names_the_holder(self):
+        # #1220: the Runtime refuses a claim another lane holds at `/signal/description/taskId`. That
+        # is not an old Runtime refusing an unknown key, so the default-lease resend (#1223) must not
+        # fire: one POST, no old-Runtime warning, the holder's sentence reported. On the parent the
+        # resend fired on any GHCLI003 (two POSTs). Cost: one local POST.
+        FakeRuntime.held_by = "lane-b"
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", "--no-github")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(len(FakeRuntime.seen), 1, "a held claim is not resent")
+        self.assertNotIn("claim leases (#1194)", err.getvalue())
+        self.assertIn("held by lane lane-b", out + err.getvalue())
 
     def test_a_record_is_sent_with_the_lanes_credential_not_the_shared_token(self):
         code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", "--no-github")

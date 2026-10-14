@@ -227,8 +227,8 @@ try {
         -Message "the sweep read at least one script under ci/ (read $($scripts.Count))"
 
     $swept = @($scripts | ForEach-Object { $_.Name })
-    Assert-True -Condition ($swept -contains 'gate.ps1') `
-        -Message 'and gate.ps1, the file this ticket names that still exists, is IN the population, not merely near it'
+    Assert-True -Condition ($swept -contains 'closing-keywords.ps1') `
+        -Message 'and closing-keywords.ps1, a script with a live caller, is IN the population, not merely near it'
 
     Assert-True -Condition ($records.Count -gt 0) `
         -Message "and the pattern still matches something in this tree, so a clean answer below is about the tree rather than about the pattern (matched $($records.Count) statements)"

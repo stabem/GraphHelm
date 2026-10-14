@@ -1742,3 +1742,74 @@ fn the_route_fixture_matches_the_fold() {
         "the committed route fixture differs from the fold"
     );
 }
+
+/// #1211: the same fixture mechanism over REAL records: every record of the twelve tasks that had
+/// an open PR on the live gh-team run when the Lanes kanban drew nothing. The Studio reads the
+/// serialised reply through `work-groups.ts` (`open: releasedBy === undefined`), so this fixture
+/// is what the Vitest cell draws from; on the parent it carried `"releasedBy": null` on every
+/// slice and no row was open. The expected open keys are the ones `gh pr list` agreed with.
+#[test]
+fn the_live_excerpt_fixture_matches_the_fold() {
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let excerpt: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(fixtures.join("tasks-live-records.json")).unwrap(),
+    )
+    .unwrap();
+    let records: Vec<TaskEventRecord> =
+        serde_json::from_value(excerpt["records"].clone()).expect("the excerpt's records parse");
+    let expected_open: Vec<String> =
+        serde_json::from_value(excerpt["expectedOpenKeys"].clone()).unwrap();
+    assert_eq!(
+        records.len(),
+        381,
+        "the excerpt is the one cut on 2026-10-14"
+    );
+    let fold = graphhelm_execution::tasks::fold_task_events_with_routes(&records);
+    let mut open: Vec<String> = fold
+        .tasks
+        .iter()
+        .filter(|task| {
+            task.pr.is_some()
+                && task.step != graphhelm_execution::tasks::TaskStep::Merged
+                && task.released_by.is_none()
+        })
+        .map(|task| task.key.clone())
+        .collect();
+    open.sort();
+    assert_eq!(
+        open, expected_open,
+        "the fold's open PR slices are the twelve the run had"
+    );
+    let reply = json!({
+        "executionId": "gh-team",
+        "headSequence": records.last().map_or(0, |record| record.sequence),
+        "tasks": fold.tasks,
+        "records": records,
+        "slices": fold.slices,
+        "routes": fold.routes,
+        "rejected": 0,
+    });
+    // The wire shape the Studio reads: a live slice has no `releasedBy` key at all (#1211).
+    for task in reply["tasks"].as_array().unwrap() {
+        assert!(
+            task.get("releasedBy").is_none_or(|value| value.is_string()),
+            "releasedBy is a lane name or absent, never null: {task}"
+        );
+    }
+    let text = serde_json::to_string_pretty(&reply).unwrap() + "\n";
+    let path = fixtures.join("tasks-live-route.json");
+    if std::env::var_os("GRAPHHELM_WRITE_FIXTURES").is_some() {
+        std::fs::write(&path, &text).unwrap();
+    }
+    let committed = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+        panic!(
+            "missing {}; run with GRAPHHELM_WRITE_FIXTURES=1",
+            path.display()
+        )
+    });
+    assert_eq!(
+        committed.replace("\r\n", "\n"),
+        text,
+        "tests/fixtures/tasks-live-route.json is stale; run with GRAPHHELM_WRITE_FIXTURES=1"
+    );
+}

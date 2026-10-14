@@ -52,7 +52,7 @@ fn create_signal_keyring(path: &Path) {
 /// Also owns the two background threads draining the child's stdout AND stderr (#140): past the
 /// one startup line `serve_with` reads synchronously, NOTHING previously read either pipe again —
 /// a server panic under load (the storm test's own shape) died into an OS pipe nobody drained, in
-/// every run alike, regardless of what `ci/gate.ps1`'s own capture does with `cargo test`'s
+/// every run alike, regardless of what the retired gate runner's capture did with `cargo test`'s
 /// stdout (#100 fixed a different, outer level; this is a nested child process one level deeper).
 /// `Drop` prints whatever accumulated ONLY when `std::thread::panicking()` — a passing run stays
 /// exactly as quiet as before; a failing one gets the server's own diagnostic instead of a bare
@@ -774,7 +774,7 @@ const CONNECT_BUDGET: Duration = Duration::from_secs(1);
 /// 30s   0/20    0%   Wilson 95% [ 0.0%.. 16.1%]
 /// ```
 ///
-/// **Re-verified at `ci/gate.ps1`'s own invocation** (no `--test-threads` flag at all -- the
+/// **Re-verified at the retired gate runner's own invocation** (no `--test-threads` flag at all -- the
 /// machine's default parallelism, 32 on the one this was measured on, not the 4 above): the
 /// guard's own verbatim gate line, n=20, machine quiet, isolated `CARGO_TARGET_DIR` -- 0/20
 /// failures. `--test-threads=4` was this ticket's own controlled arrangement; the gate decides
@@ -1342,7 +1342,7 @@ fn harness_broke_error_recolours_only_timed_out() {
         "{message}"
     );
     // The old assertion pinned a false description of the gate: a literal "--test-threads=4"
-    // that `ci/gate.ps1`'s own invocation never passes (#736, H + Codex both caught it -- H found
+    // that the retired gate runner's invocation never passed (#736, H + Codex both caught it -- H found
     // it as a guard that would teach the wrong edit: "fixing" the message to tell the truth would
     // have reddened this exact line). Structural only, on purpose: the VALUE is
     // `test_concurrency`'s own claim to prove, with hand-built inputs, in the tests below -- this
@@ -1402,7 +1402,7 @@ fn test_concurrency_falls_back_to_the_env_var_with_no_cli_flag() {
     assert_eq!(test_concurrency(args, Some("8".to_owned())), (8, "env"));
 }
 
-/// The genuine fallback: neither the CLI flag nor the env var present, same as `ci/gate.ps1`'s own
+/// The genuine fallback: neither the CLI flag nor the env var present, same as the retired gate runner's
 /// invocation (#716/#737) -- `available_parallelism()` is the real source of truth for this arm,
 /// so checking against it here is proving the "default" arm delegates correctly, not re-deriving
 /// the function under test.
@@ -3768,6 +3768,13 @@ fn the_tasks_route_folds_the_runs_task_records_into_slices() {
     assert_eq!(task["pr"], 1150);
     assert_eq!(task["lane"], lane);
     assert_eq!(task["headSha"], "abcdef01");
+    // #1211: the Studio reads `releasedBy === undefined` as a live claim; `null` emptied its
+    // kanban. A live slice carries no key at all.
+    assert!(
+        task.get("releasedBy").is_none(),
+        "a live claim must not serialise releasedBy: {task}"
+    );
+    assert!(task.get("claimSequence").is_some(), "{task}");
     assert_eq!(task["step"], "review");
     assert_eq!(task["repoUrl"], "https://github.com/stabem/GraphHelm");
     assert!(

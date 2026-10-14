@@ -107,8 +107,6 @@ mod execution_cli;
 mod extension_cli;
 #[path = "extension_lifecycle.rs"]
 mod extension_lifecycle;
-#[path = "gate_classify_red.rs"]
-mod gate_classify_red;
 #[path = "gate_http.rs"]
 mod gate_http;
 #[path = "gateway_cli.rs"]

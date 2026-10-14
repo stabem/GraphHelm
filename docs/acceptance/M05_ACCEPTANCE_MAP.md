@@ -1,6 +1,6 @@
 # Milestone 05 acceptance map
 
-Generated from `m05-clauses.toml` by `tools/acceptance-map` — do not edit by hand; regenerate with `cargo run -p acceptance-map`. The `acceptance_map_is_grounded` test (gate: workspace tests) verifies every binding below against the real tree, so this document cannot rust silently.
+Generated from `m05-clauses.toml` by `tools/acceptance-map` — do not edit by hand; regenerate with `cargo run -p acceptance-map`. The `acceptance_map_is_grounded` test (a workspace test) verifies every binding below against the real tree, so this document cannot rust silently.
 
 ## The §8 clauses and their provers
 
@@ -47,14 +47,6 @@ The 05c hard constraint: a sentinel-laden environment runs a Tier 1 tool and the
 The §12 wait rule as a total mapping: quota-class errors land in NeedsCapacity and only them.
 
 - `capacity_class_errors_park_the_node_and_only_them` (suite: workspace tests) — fingerprint: `NeedsCapacity`
-
-### full-gate-green
-
-> The full local gate is green, both PostgreSQL locale passes included.
-
-Proven by the gate run itself, not by one test: the grounding check pins that the gate script still ends in the GREEN verdict line and still carries both PostgreSQL passes.
-
-**Proven by the gate run itself**: `./ci/gate.ps1` must end in its GREEN verdict with both PostgreSQL locale passes on the surface.
 
 ### surfaces-cannot-disagree-about-attention
 

@@ -22,9 +22,6 @@ pub struct Clause {
     pub rationale: String,
     #[serde(default)]
     pub prover: Vec<Prover>,
-    /// True for the one clause proven by the gate run itself rather than a test fn.
-    #[serde(default)]
-    pub gate: bool,
     /// Artifact provers (the manual acceptance run's committed evidence).
     #[serde(default)]
     pub artifact: Vec<ArtifactProver>,
@@ -334,23 +331,12 @@ pub fn verify_tracked(root: &Path, directory: &str) -> Vec<String> {
     problems
 }
 
-/// The CLI suite set `gate.ps1` actually invokes: every `apps/cli/tests/*.rs` base name.
-///
-/// #98's property -- a new suite is gated the day it is born, never by a hand-maintained list --
-/// is satisfied more strongly since #1053 than it was by the discovery loop this used to mirror.
-/// The gate runs `cargo nextest run -p graphhelm-cli` once, so the enumeration is CARGO'S: a new
-/// integration target is compiled and run because it exists, and there is no list anywhere that
-/// could be edited to under-gate it.
-///
-/// THE EXCLUSION SURFACE IS GONE WITH THE LOOP. `gate.ps1` used to carry an `$excludedSuites`
-/// hashtable that this module parsed; one stage over the whole package has nowhere to put such a
-/// map, and nothing consults one. `gate_excluded_suites` and its two cells were retired with it
-/// rather than left parsing a block that no longer exists -- a parser whose subject is absent
-/// returns "nothing excluded" forever, which reads exactly like a working check. If an exclusion
-/// is ever needed again it belongs in a `.config/nextest.toml` filter, and this function must be
-/// taught to read THAT rather than resurrected against the old shape.
+/// Every CLI integration suite in the tree: the `apps/cli/tests/*.rs` base names. A prover that
+/// names a suite must name one of these (#98: the set is discovered, never hand-maintained; a
+/// new suite counts the day it is born). Since #1203 there is no gate runner (AGENTS.md: there is
+/// no gate); `cargo test -p graphhelm-cli` compiles and runs every target here because it exists.
 #[must_use]
-pub fn gate_cli_suites(root: &Path) -> Vec<String> {
+pub fn cli_test_suites(root: &Path) -> Vec<String> {
     let tests_dir = root.join("apps/cli/tests");
     let mut suites: Vec<String> = std::fs::read_dir(&tests_dir)
         .into_iter()
@@ -445,7 +431,7 @@ pub fn generate(clauses: &Clauses) -> String {
     out.push_str(
         "Generated from `m05-clauses.toml` by `tools/acceptance-map` — do not edit by \
          hand; regenerate with `cargo run -p acceptance-map`. The `acceptance_map_is_grounded` \
-         test (gate: workspace tests) verifies every binding below against the real tree, so \
+         test (a workspace test) verifies every binding below against the real tree, so \
          this document cannot rust silently.\n\n",
     );
     out.push_str("## The §8 clauses and their provers\n\n");
@@ -454,12 +440,6 @@ pub fn generate(clauses: &Clauses) -> String {
             "### {}\n\n> {}\n\n{}\n\n",
             clause.id, clause.text, clause.rationale
         ));
-        if clause.gate {
-            out.push_str(
-                "**Proven by the gate run itself**: `./ci/gate.ps1` must end in its GREEN \
-                 verdict with both PostgreSQL locale passes on the surface.\n\n",
-            );
-        }
         for prover in &clause.prover {
             out.push_str(&format!(
                 "- `{}` (suite: {}) — fingerprint: `{}`\n",

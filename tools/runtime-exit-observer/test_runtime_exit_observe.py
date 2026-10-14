@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 TOOL = Path(__file__).with_name("runtime_exit_observe.py")
@@ -17,8 +18,13 @@ TOOL = Path(__file__).with_name("runtime_exit_observe.py")
 class WindowsProcessObserver(unittest.TestCase):
     def setUp(self):
         self.children = []
+        self.observers = []
 
     def tearDown(self):
+        for observer in self.observers:
+            if observer.poll() is None:
+                observer.kill()
+                observer.wait(timeout=5)
         for process in self.children:
             if process.poll() is None:
                 process.stdin.write(b"0\n")
@@ -160,13 +166,13 @@ class WindowsProcessObserver(unittest.TestCase):
                 return self.wrapped.fileno()
 
             def close(self):
-                self.wrapped.close()
                 if self.failure == "close" and not self.failed:
                     self.failed = True
                     raise OSError("SENSITIVE_MARKER")
+                self.wrapped.close()
 
         for failure, stage in (("write", "attach"), ("flush", "attach"), ("sync", "attach"),
-                               ("sync", "terminal"), ("close", "attach")):
+                               ("sync", "terminal")):
             with self.subTest(failure=failure, stage=stage), tempfile.TemporaryDirectory() as directory:
                 receipt = Path(directory) / "receipt.jsonl"
                 args = ["--pid", str(process.pid), "--creation-filetime", str(creation),
@@ -187,13 +193,61 @@ class WindowsProcessObserver(unittest.TestCase):
                         code = module.main(args)
                     return code, error.getvalue()
 
-                import unittest.mock
                 code, error = run_with_fault()
                 self.assertEqual(code, 2)
                 self.assertEqual(error, "receipt_unavailable\n")
                 self.assertNotIn("SENSITIVE_MARKER", error)
                 self.assertNotIn("Traceback", error)
                 self.assertIsNone(process.poll())
+                states = [json.loads(line)["state"] for line in receipt.read_text(encoding="utf-8").splitlines()]
+                self.assertNotIn("exited", states)
+
+    def test_terminal_close_failure_reports_error_with_synced_exit_record(self):
+        process, creation = self.child()
+        spec = importlib.util.spec_from_file_location("runtime_exit_observe", TOOL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        real_open = open
+
+        class CloseFailure:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+                self.closed = False
+
+            def write(self, value):
+                return self.wrapped.write(value)
+
+            def flush(self):
+                return self.wrapped.flush()
+
+            def fileno(self):
+                return self.wrapped.fileno()
+
+            def close(self):
+                self.wrapped.close()
+                if not self.closed:
+                    self.closed = True
+                    raise OSError("SENSITIVE_MARKER")
+
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / "receipt.jsonl"
+            args = ["--pid", str(process.pid), "--creation-filetime", str(creation),
+                    "--timeout-seconds", "5", "--output", str(receipt)]
+            def injected_open(path, *open_args, **open_kwargs):
+                output = real_open(path, *open_args, **open_kwargs)
+                return CloseFailure(output) if Path(path) == receipt else output
+
+            process.stdin.write(b"1\n")
+            process.stdin.flush()
+            from contextlib import redirect_stderr
+            error = io.StringIO()
+            with unittest.mock.patch.object(module, "open", injected_open, create=True), redirect_stderr(error):
+                code = module.main(args)
+            states = [json.loads(line)["state"] for line in receipt.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(code, 2)
+            self.assertEqual(error.getvalue(), "receipt_unavailable\n")
+            self.assertEqual(states, ["attached", "exited"])
+            self.assertEqual(process.wait(timeout=2), 0)
 
 class RuntimeExitObserverContract(unittest.TestCase):
     def test_help_exposes_bounded_identity_and_receipt_inputs(self):

@@ -12,7 +12,9 @@
 use std::path::Path;
 
 use graphhelm_events::{EvidenceOpener, EvidenceRead};
-use graphhelm_execution::tasks::{TaskEventRecord, TaskState, fold_task_events, parse_task_event};
+use graphhelm_execution::tasks::{
+    FoldSlice, Route, TaskEventRecord, TaskState, fold_task_events_with_routes, parse_task_event,
+};
 use graphhelm_protocols::{EventKind, EvidenceId};
 use serde::Serialize;
 
@@ -30,6 +32,10 @@ pub struct TasksView {
     pub tasks: Vec<TaskState>,
     pub records: Vec<TaskEventRecord>,
     pub rejected: usize,
+    /// #1192: every slice the fold created (live, ended or absorbed) with its id, and the slice
+    /// each record landed in, so the Studio's lane timeline needs no fold of its own.
+    pub slices: Vec<FoldSlice>,
+    pub routes: Vec<Route>,
 }
 
 /// Reads one execution's `task.*` records through the Runtime's keyring and folds them. An
@@ -113,13 +119,15 @@ pub(crate) fn read(
         }
         budget.check_now(walked).map_err(exceeded)?;
     }
-    let tasks = fold_task_events(&records);
+    let fold = fold_task_events_with_routes(&records);
     budget.check_now(walked).map_err(exceeded)?;
     Ok(TasksView {
         execution_id: execution.to_owned(),
         head_sequence: history.last().map_or(0, |event| event.sequence),
-        tasks,
+        tasks: fold.tasks,
         records,
         rejected,
+        slices: fold.slices,
+        routes: fold.routes,
     })
 }

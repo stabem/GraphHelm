@@ -71,7 +71,8 @@ function taskState(overrides: Partial<TaskState> & Pick<TaskState, "taskId">): T
 
 /** The tasks route reply for `executionId` with these slices and no records (the views draw slices). */
 function tasksReply(executionId: string, tasks: TaskState[], rejected = 0) {
-  return { executionId, headSequence: 134, tasks, records: [], rejected };
+  return { executionId, headSequence: 134, tasks, records: [], rejected,
+    slices: tasks.map((state, id) => ({ id, ended: false, absorbed: false, state })), routes: [] };
 }
 
 function stubClient(overrides: Record<string, unknown> = {}) {

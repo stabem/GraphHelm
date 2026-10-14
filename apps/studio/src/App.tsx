@@ -34,7 +34,7 @@ import { workConversation } from "./runtime/work-conversation";
 import { isSubagentLifecycleSignal } from "./runtime/subagents";
 import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
 import { isClaudeTaskSignal, isTaskEventSignal, readClaudeTasks, type ClaudeTaskReadModel, type TaskEventRecord, type TaskState } from "./runtime/team-tasks";
-import { RUNTIME_PREDATES_TASKS_ROUTE } from "./runtime/tasks-route";
+import { RUNTIME_PREDATES_TASKS_ROUTE, type LaneFold } from "./runtime/tasks-route";
 import { SlotPoll } from "./components/slot-poll";
 import { MissionView } from "./components/mission-view";
 import { applySessionEnds, laneBars, type TimedTaskEvent } from "./runtime/lane-bars";
@@ -1792,7 +1792,7 @@ export default function App({
   const [runTeamRead, setRunTeamRead] = useState<RunTeamReadModel | null>(null);
   const [claudeTaskRead, setClaudeTaskRead] = useState<ClaudeTaskReadModel | null>(null);
   // #391: the per-task graphs, folded from the run's `task.*` records.
-  const [taskGraphs, setTaskGraphs] = useState<{ executionId: string; tasks: TaskState[]; records: TaskEventRecord[] } | null>(null);
+  const [taskGraphs, setTaskGraphs] = useState<({ executionId: string; tasks: TaskState[]; records: TaskEventRecord[] } & LaneFold) | null>(null);
   const [historyFailure, setHistoryFailure] = useState<{ executionId: string; count: number } | null>(null);
   const [historyRetry, setHistoryRetry] = useState(0);
   // #1192: the run whose Runtime answered the tasks route with "no such route" (an older binary).
@@ -1824,16 +1824,16 @@ export default function App({
         if (cancelled || clientRef.current !== client) return;
         if (reply === null) {
           setTasksRouteMissing(run);
-          setTaskGraphs({ executionId: run, tasks: [], records: [] });
+          setTaskGraphs({ executionId: run, tasks: [], records: [], slices: [], routes: [] });
           return;
         }
         setTasksRouteMissing((current) => (current === run ? null : current));
-        setTaskGraphs({ executionId: run, tasks: reply.tasks, records: reply.records });
+        setTaskGraphs({ executionId: run, tasks: reply.tasks, records: reply.records, slices: reply.slices, routes: reply.routes });
         setHistoryFailure(reply.rejected > 0 ? { executionId: run, count: reply.rejected } : null);
       })
       .catch(() => { if (!cancelled && clientRef.current === client) {
         setHistoryFailure({ executionId: run, count: 1 });
-        setTaskGraphs((current) => (current?.executionId === run ? current : { executionId: run, tasks: [], records: [] }));
+        setTaskGraphs((current) => (current?.executionId === run ? current : { executionId: run, tasks: [], records: [], slices: [], routes: [] }));
       } });
     return () => { cancelled = true; };
   }, [selected, events, eventList, openEvidence, historyRetry]);
@@ -2366,7 +2366,7 @@ export default function App({
   const missionLanes = useMemo(() => {
     const records = currentTaskGraphs?.records ?? [];
     const timed: TimedTaskEvent[] = records.flatMap((r) => (r.occurredAt ? [{ ...r, at: r.occurredAt }] : []));
-    return applySessionEnds(laneBars(timed, clock, 14 * 3_600_000), eventList);
+    return applySessionEnds(laneBars(timed, { slices: currentTaskGraphs?.slices ?? [], routes: currentTaskGraphs?.routes ?? [] }, clock, 14 * 3_600_000), eventList);
   }, [currentTaskGraphs, clock, eventList]);
   const watchFlow = useCallback(async (flowId: string, path?: string) => {
     const client = clientRef.current;

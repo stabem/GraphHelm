@@ -6,7 +6,15 @@
  * the one source for the fold. */
 import type { TaskEventRecord, TaskState } from "./team-tasks";
 
-export interface TasksReply {
+/** One slice the Runtime's fold created, live or not: `ended` is a `task.closed`, `absorbed` a
+ * PR-less claim folded into its PR's slice. Live slices are the ones `tasks` lists. */
+export interface FoldSlice { id: number; ended: boolean; absorbed: boolean; state: TaskState }
+/** Where one record landed: the id of the slice the fold routed it to. */
+export interface Route { sequence: number; slice: number }
+/** What a lane timeline needs beside the records: every slice and every record's slice. */
+export interface LaneFold { slices: FoldSlice[]; routes: Route[] }
+
+export interface TasksReply extends LaneFold {
   executionId: string;
   headSequence: number;
   tasks: TaskState[];

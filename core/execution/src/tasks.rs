@@ -869,10 +869,43 @@ struct BlockerAt {
 }
 
 struct Slice {
+    /// Stable across removals: the key `routes` and `slices` share (#1192).
+    id: usize,
     state: TaskState,
     ended: bool,
     first_pr_opening: Option<u64>,
     blockers: Option<BTreeMap<String, BlockerAt>>,
+}
+
+/// #1192: where one record landed. `slice` is the id of a [`FoldSlice`], including slices that
+/// were later closed or absorbed, so a timeline can draw every record where the fold put it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Route {
+    pub sequence: u64,
+    pub slice: usize,
+}
+
+/// #1192: one slice the fold created, live or not. `ended` is a `task.closed`; `absorbed` is a
+/// PR-less claim a later `pr_opened` of the same lane folded into its PR's slice (it is not in
+/// `tasks`). Live slices are the ones `tasks` returns, in `tasks`' order.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FoldSlice {
+    pub id: usize,
+    pub ended: bool,
+    pub absorbed: bool,
+    pub state: TaskState,
+}
+
+/// The whole fold (#1192): the live slices the views list, every slice with its id, and the
+/// record-to-slice routes a lane timeline needs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskFold {
+    pub tasks: Vec<TaskState>,
+    pub slices: Vec<FoldSlice>,
+    pub routes: Vec<Route>,
 }
 
 fn new_state(event: &TaskEventRecord) -> TaskState {
@@ -1013,7 +1046,7 @@ fn apply_verdict(
 /// worked in several PRs; a claim on a branch no slice holds opens a slice, which that lane's next
 /// `pr_opened` joins; every later record names its PR and lands in that PR's slice, so a merge
 /// ends only its own.
-fn slice_for(slices: &mut Vec<Slice>, event: &TaskEventRecord) -> usize {
+fn slice_for(slices: &mut Vec<Slice>, next_id: &mut usize, event: &TaskEventRecord) -> usize {
     // Merge records may use `pr-N` as their task id even when the author claimed `issue-N`.
     // The PR identifies the existing slice across those task ids.
     let by_pr = event.pr.and_then(|pr| {
@@ -1055,7 +1088,10 @@ fn slice_for(slices: &mut Vec<Slice>, event: &TaskEventRecord) -> usize {
             && (s.lane.is_none() || event.lane.is_none() || s.lane == event.lane)
     };
     let add = |slices: &mut Vec<Slice>| {
+        let id = *next_id;
+        *next_id += 1;
         slices.push(Slice {
+            id,
             state: new_state(event),
             ended: false,
             first_pr_opening: None,
@@ -1084,7 +1120,10 @@ fn slice_for(slices: &mut Vec<Slice>, event: &TaskEventRecord) -> usize {
                     .copied()
                     .find(|&i| is_unclaimed_critic(&slices[i].state))
             });
-        return adopted.unwrap_or_else(|| add(slices));
+        if let Some(index) = adopted {
+            return index;
+        }
+        return add(slices);
     }
     // A PR no slice holds yet joins the latest open claim of its task (for pr_opened, the same
     // lane's). A merge recorded with no pr_opened still lands on the issue's claim instead of
@@ -1172,9 +1211,18 @@ fn issue_from_task_id(task_id: &str) -> Option<u64> {
 /// (closed) slices are dropped; the rest come back ordered by their last record.
 #[must_use]
 pub fn fold_task_events(records: &[TaskEventRecord]) -> Vec<TaskState> {
+    fold_task_events_with_routes(records).tasks
+}
+
+/// [`fold_task_events`] plus every slice and the route of every record (#1192).
+#[must_use]
+pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
     let mut ordered: Vec<&TaskEventRecord> = records.iter().collect();
     ordered.sort_by_key(|record| record.sequence);
     let mut slices: Vec<Slice> = Vec::new();
+    let mut absorbed: Vec<Slice> = Vec::new();
+    let mut routes: Vec<Route> = Vec::new();
+    let mut next_id = 0_usize;
     for event in ordered {
         if event.kind == TaskEventKind::Heartbeat {
             let claim = slices.iter_mut().rev().find(|s| {
@@ -1188,6 +1236,10 @@ pub fn fold_task_events(records: &[TaskEventRecord]) -> Vec<TaskState> {
                 && claim.state.lane.as_deref() == Some(event.actor_id.as_str())
             {
                 claim.state.last_heartbeat_at = event.occurred_at.clone();
+                routes.push(Route {
+                    sequence: event.sequence,
+                    slice: claim.id,
+                });
             }
             continue;
         }
@@ -1203,6 +1255,10 @@ pub fn fold_task_events(records: &[TaskEventRecord]) -> Vec<TaskState> {
                 && latest.state.claim_sequence == event.claim_sequence
             {
                 latest.state.released_by = event.lane.clone();
+                routes.push(Route {
+                    sequence: event.sequence,
+                    slice: latest.id,
+                });
             }
             continue;
         }
@@ -1231,12 +1287,12 @@ pub fn fold_task_events(records: &[TaskEventRecord]) -> Vec<TaskState> {
                             .claim_sequence
                             .is_some_and(|c| c > opened_at && c < event.sequence)
                     {
-                        slices.remove(index);
+                        absorbed.push(slices.remove(index));
                     }
                 }
             }
         }
-        let mut index = slice_for(&mut slices, event);
+        let mut index = slice_for(&mut slices, &mut next_id, event);
         if slices[index].blockers.is_none() {
             let mut blockers = BTreeMap::new();
             if let Some(blocked) = &slices[index].state.blocked_by {
@@ -1270,7 +1326,7 @@ pub fn fold_task_events(records: &[TaskEventRecord]) -> Vec<TaskState> {
                     && claim.step != TaskStep::Merged
                     && claim.claim_sequence.is_some_and(|c| c < claim_sequence)
                 {
-                    slices.remove(at);
+                    absorbed.push(slices.remove(at));
                     if at < index {
                         index -= 1;
                     }
@@ -1280,6 +1336,10 @@ pub fn fold_task_events(records: &[TaskEventRecord]) -> Vec<TaskState> {
         if event.kind == TaskEventKind::PrOpened && slices[index].first_pr_opening.is_none() {
             slices[index].first_pr_opening = Some(event.sequence);
         }
+        routes.push(Route {
+            sequence: event.sequence,
+            slice: slices[index].id,
+        });
         // A later opening by the same author revives this PR's closed slice. A merge remains
         // terminal.
         {
@@ -1637,11 +1697,31 @@ pub fn fold_task_events(records: &[TaskEventRecord]) -> Vec<TaskState> {
             None => format!("{}#claim-{index}", state.task_id),
         };
     }
-    let mut out: Vec<TaskState> = slices
-        .into_iter()
+    let mut tasks: Vec<TaskState> = slices
+        .iter()
         .filter(|s| !s.ended)
-        .map(|s| s.state)
+        .map(|s| s.state.clone())
         .collect();
-    out.sort_by_key(|state| state.last_sequence);
-    out
+    tasks.sort_by_key(|state| state.last_sequence);
+    let mut all: Vec<FoldSlice> = slices
+        .into_iter()
+        .map(|s| FoldSlice {
+            id: s.id,
+            ended: s.ended,
+            absorbed: false,
+            state: s.state,
+        })
+        .chain(absorbed.into_iter().map(|s| FoldSlice {
+            id: s.id,
+            ended: s.ended,
+            absorbed: true,
+            state: s.state,
+        }))
+        .collect();
+    all.sort_by_key(|slice| slice.id);
+    TaskFold {
+        tasks,
+        slices: all,
+        routes,
+    }
 }

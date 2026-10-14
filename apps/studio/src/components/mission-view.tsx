@@ -427,12 +427,14 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   const readCached = useRef(new Set<string>());
   useEffect(() => {
     if (!run || !onRun) return;
-    for (const id of runnable) {
+    // Every journey, on every tab: the rail's x/y and verdict must come from the cache on load,
+    // not only after the journey is clicked.
+    for (const id of journeys.map((j) => j.contractId)) {
       if (readCached.current.has(id) || runFor(id) !== null) continue;
       readCached.current.add(id);
       run.read(id).then((value) => onRun(id, value), () => {});
     }
-  }, [run, onRun, runnable, runFor]);
+  }, [run, onRun, journeys, runFor]);
   const verdictOf = (m: Mission): JourneyVerdict => (batch?.current === m.contractId ? "running" : journeyVerdict(m.steps.map((step) => step.status), runFor(m.contractId)));
   const verdictCount = (v: JourneyVerdict) => missions.filter((m) => runnable.includes(m.contractId) && verdictOf(m) === v).length;
   const startBatch = (ids: string[]) => {

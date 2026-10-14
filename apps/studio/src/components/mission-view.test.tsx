@@ -1,6 +1,6 @@
 import { TEST_BUDGETS } from "../test/task-fold";
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
 import { JourneyProgress, MissionView } from "./mission-view";
 import { teamModel } from "../runtime/team";
@@ -129,6 +129,15 @@ describe("MissionView", () => {
 
     expect(screen.getAllByText("Showing recent work · still reading the history")).toHaveLength(1);
     expect(screen.queryByText("Loading work…")).toBeNull();
+  });
+  it("reads every journey's cached run on load, without a click", async () => {
+    const two = [journeys[0]!, { ...journeys[0]!, contractId: "second" }];
+    const read = vi.fn(async () => ({ state: "none" }) as never);
+    const onRun = vi.fn();
+    render(<MissionView journeys={two} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()}
+      run={{ start: vi.fn(), read, screenFrame: vi.fn(), liveFrame: vi.fn() } as never} onRun={onRun} />);
+    await waitFor(() => expect(onRun).toHaveBeenCalledTimes(2));
+    expect(read.mock.calls.map((c) => (c as unknown[])[0])).toEqual([journeys[0]!.contractId, "second"]);
   });
   it("#830: a preview-only step is not counted in work even with a linked task", async () => {
     const preview = { ...journeys[0]!, contractId: "preview" };

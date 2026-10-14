@@ -473,7 +473,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   const journey = journeys.find((j) => j.contractId === (proofMode ? proofId : linkedId)) ?? null;
   const contractId = journey?.contractId ?? null;
   const flow: JourneyFlowView | undefined = contractId ? flowForContract(flows?.flows ?? [], contractId) : undefined;
-  const pendingFlows = flows?.flows.filter((item) => item.status === "draft" || item.status === "approval_stale") ?? [];
+  const pendingFlows = flows?.flows.filter((item) => item.status === "draft" || item.status === "approval_stale" || item.status === "weak") ?? [];
   const approvableCount = pendingFlows.filter((item) => {
     const contract = journeys.find((candidate) => candidate.contractId === item.id);
     return item.approvable && contract !== undefined && approvalBlockReason(item, contract, runFor(contract.contractId)) === null;

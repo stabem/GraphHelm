@@ -684,6 +684,10 @@ pub(crate) fn read_for_replay(file: &Path, project: &Path) -> Result<Value, Vec<
             "replay requires an approved flow",
         ));
     }
+    // #1287 follow-up: replay is proof, and a flow that does not say what it proves proves
+    // nothing, even one approved before the rule. It is refused with the gaps it has to close.
+    findings.retain(|f| f.code != "flow.weak_journey");
+    findings.extend(weak_journey(&value, true));
     if findings.iter().any(|f| !f.is_warning()) {
         Err(findings)
     } else {
@@ -865,10 +869,12 @@ pub(crate) fn projected_flows(project: &Path) -> ProjectedFlows {
         }
         let id = flow["id"].as_str().unwrap_or_default().to_owned();
         // #534: an approval with no owner record for its digest is a draft to keel plan too.
+        // #1287 follow-up: a weak approved flow is not proof to keel either; it plans as a draft.
         if flow["status"] != "approved"
             || owner_signature(&flow, project)
                 .iter()
                 .any(|f| !f.is_warning())
+            || !weak_journey(&flow, true).is_empty()
         {
             let scopes = flow["screens"]
                 .as_array()
@@ -1296,14 +1302,25 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
             let stale = findings.iter().any(|f| f.code == "flow.approval_stale");
             let drifted = flow["drift"].as_array().is_some_and(|d| !d.is_empty());
             let settled = flow["status"] == "approved" && !stale && !drifted;
+            // #1287 follow-up: an approved flow that does not say what it proves is not settled:
+            // `weak` with no approved digest, so no replay cached under that digest reads as proof.
+            let weak = flow["status"] == "approved" && !weak_journey(&flow, true).is_empty();
+            let settled = settled && !weak;
             let status = if stale {
                 json!("approval_stale")
+            } else if weak {
+                json!("weak")
             } else {
                 flow["status"].clone()
             };
+            let approved = if weak {
+                Value::Null
+            } else {
+                flow["approved"].clone()
+            };
             json!({"id": id, "title": flow.get("title").cloned().unwrap_or(Value::Null),
                 "purpose": flow.get("purpose").cloned().unwrap_or(Value::Null),
-                "status": status, "approved": flow["approved"], "drift": flow["drift"],
+                "status": status, "approved": approved, "drift": flow["drift"],
                 "findings": listed, "approvable": accepted && !settled,
                 "screens": flow["screens"], "edges": flow["edges"], "paths": flow["paths"]})
         })
@@ -1966,6 +1983,44 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1287 follow-up: replay is proof. Defect named: a flow approved before the rule, still
+    /// without a purpose, replays and counts as proven. Cost: one tempdir.
+    #[test]
+    fn a_weak_flow_is_never_replayed_as_proof() {
+        let project = tempfile::tempdir().unwrap();
+        let mut flow: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_flow/checkout.journey.yaml"
+        ))
+        .unwrap();
+        flow.as_object_mut().unwrap().remove("purpose");
+        let dir = project.path().join(".graphhelm/journeys");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("checkout.journey.yaml");
+        std::fs::write(&file, canonical(&flow, false)).unwrap();
+        // The Studio reads `journey flows`: a weak approved flow is `weak` with no approved
+        // digest, so a replay cached under its old digest reads as stale, never as passed.
+        let mut approved = flow.clone();
+        approved["status"] = json!("approved");
+        let digest = approval_digest(&approved);
+        approved["approved"] = json!({"revision": "a".repeat(40), "digest": digest});
+        std::fs::write(&file, canonical(&approved, false)).unwrap();
+        let listed = run_flows(&crate::args::JourneyFlowsArgs {
+            project: Some(project.path().to_path_buf()),
+        });
+        let entry = &listed.output.data.unwrap()["flows"][0];
+        assert_eq!(entry["status"], "weak", "{entry}");
+        assert!(entry["approved"].is_null(), "{entry}");
+        std::fs::write(&file, canonical(&flow, false)).unwrap();
+        let refused = read_for_replay(&file, project.path()).unwrap_err();
+        assert!(
+            refused
+                .iter()
+                .any(|f| f.code == "flow.purpose_missing" && !f.is_warning()),
+            "{:?}",
+            refused.iter().map(|f| f.code).collect::<Vec<_>>()
+        );
+    }
 
     /// #1287: a journey that clicks, submits and checks only "success" proves nothing. Defects
     /// named: a draft without a purpose, a screen without a title, a submit with no input and no

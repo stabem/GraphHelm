@@ -1858,6 +1858,82 @@ fn a_second_server_on_a_live_name_is_what_reports_pipe_busy() {
 
 #[cfg(windows)]
 #[test]
+fn a_second_signal_can_ring_while_the_first_consumption_is_not_durable() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-wake-burn-order";
+    start_execution(&events, directory.path(), execution);
+    let logical_rendezvous_id = "rvz-burn-order-1";
+    let (_guard, address, token, first) = serve_before_arming_sleeper(
+        &events,
+        execution,
+        logical_rendezvous_id,
+        &[("GRAPHHELM_TEST_WAKE_PHASE3_DELAY_MS", "5000")],
+    );
+    let before = head(&events);
+
+    let (status, reply) = post_json(
+        &address,
+        &token,
+        &format!("/v1/executions/{execution}/signal"),
+        "wake-burn-order-1",
+        &signal_body("signal-burn-order-1"),
+    );
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(first.wait().0.len(), 1, "the first signal rings");
+    let first_state = kinds_after(&events, before);
+    assert!(
+        !first_state.iter().any(|kind| kind == "wake_lease_consumed"),
+        "phase 3 is delayed, so the first ring has not durably consumed its lease: {first_state:?}"
+    );
+
+    // The durable record, not the pipe byte, decides whether this lease has been burned.
+    let second = Sleeper::arm(logical_rendezvous_id, &events);
+    let (status, reply) = post_json(
+        &address,
+        &token,
+        &format!("/v1/executions/{execution}/signal"),
+        "wake-burn-order-2",
+        &signal_body("signal-burn-order-2"),
+    );
+    assert_eq!(status, 200, "{reply}");
+    let (bytes, at_second_ring) = second.wait();
+    assert_eq!(bytes.len(), 1, "the still-live lease can ring again");
+    assert!(
+        at_second_ring.iter().any(|kind| kind == "signal_recorded"),
+        "the second signal is durable at its ring: {at_second_ring:?}"
+    );
+    assert!(
+        !at_second_ring
+            .iter()
+            .any(|kind| kind == "wake_lease_consumed"),
+        "the second ring happened before durable consumption: {at_second_ring:?}"
+    );
+
+    let receipt_deadline = Instant::now() + scaled(Duration::from_secs(10));
+    loop {
+        let after = kinds_after(&events, before);
+        if after.iter().any(|kind| kind == "wake_lease_consumed") {
+            assert_eq!(
+                after
+                    .iter()
+                    .filter(|kind| kind.as_str() == "wake_lease_consumed")
+                    .count(),
+                1,
+                "the durable lease is consumed once despite both sweeps: {after:?}"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < receipt_deadline,
+            "a ring's consumption must eventually become durable: {after:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[cfg(windows)]
+#[test]
 fn a_burned_lease_never_rings_twice_and_no_ring_without_a_fresh_append() {
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
@@ -1884,6 +1960,23 @@ fn a_burned_lease_never_rings_twice_and_no_ring_without_a_fresh_append() {
         "the first trigger rings -- {}",
         missing_ring_diagnosis(&events, before_first_signal)
     );
+
+    // Ringing precedes the durable consume append because the consume reason depends on the
+    // ring result. Do not call the lease burned until that append is visible in the store.
+    let receipt_deadline = Instant::now() + scaled(Duration::from_secs(10));
+    loop {
+        let consumed = kinds_after(&events, before_first_signal)
+            .iter()
+            .any(|kind| kind == "wake_lease_consumed");
+        if consumed {
+            break;
+        }
+        assert!(
+            Instant::now() < receipt_deadline,
+            "the first ring's consumption must become durable before the second trigger"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 
     // Re-arm the exact runner-scoped PIPE but not the lease: a second trigger must NOT ring
     // (lease burned). A concurrent runner has a different physical name; both arms here do not.

@@ -9,8 +9,9 @@
 //! that kind naming that actor. Anything else is counted in `rejected` and never drawn, which is
 //! how the Studio read its own fold (`readTaskEventRecords`), so an old log folds the same here.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 
 use graphhelm_events::{EvidenceOpener, EvidenceRead};
 use graphhelm_execution::tasks::{
@@ -69,6 +70,55 @@ impl TaskRecordCache {
             self.head = other.head;
         }
     }
+}
+
+/// #1220: the one memory this process keeps of each execution's task records, shared by the tasks
+/// route and claim admission so both read the same fold and neither reopens what the other
+/// already verified. Keyed by execution id only: `read_history` checks the remembered head's event
+/// id against the history it is given, so another store's execution of the same name (a test's
+/// tempdir, a rebuilt store) drops the memory instead of trusting it.
+fn shared_caches() -> &'static Mutex<HashMap<String, TaskRecordCache>> {
+    static CACHES: OnceLock<Mutex<HashMap<String, TaskRecordCache>>> = OnceLock::new();
+    CACHES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Runs `read` with this process's memory of `execution`, outside the lock (a cold read can take
+/// seconds), then folds what it learned back in, a refusal included (#1202, #1220). A poisoned
+/// lock reads as an empty memory: the read still runs, it only opens more.
+pub(crate) fn with_shared_cache<T>(
+    execution: &str,
+    read: impl FnOnce(&mut TaskRecordCache) -> T,
+) -> T {
+    let mut cache = shared_caches()
+        .lock()
+        .map(|map| map.get(execution).cloned().unwrap_or_default())
+        .unwrap_or_default();
+    let result = read(&mut cache);
+    if let Ok(mut map) = shared_caches().lock() {
+        map.entry(execution.to_owned()).or_default().absorb(cache);
+    }
+    result
+}
+
+/// #1220: the slice that holds `task_id` against `lane`: a pre-PR claim of another lane, not
+/// merged, not released, and whose lease (#1193) has not lapsed, so a dead lane's claim stops
+/// holding the issue the moment it is overdue, before the Stop reconciler releases it.
+pub(crate) fn holder<'a>(
+    tasks: &'a [TaskState],
+    leases: &[ClaimLease],
+    task_id: &str,
+    lane: &str,
+) -> Option<&'a TaskState> {
+    tasks.iter().find(|slice| {
+        slice.task_id == task_id
+            && slice.pr.is_none()
+            && slice.released_by.is_none()
+            && slice.step != graphhelm_execution::tasks::TaskStep::Merged
+            && slice.lane.as_deref().is_some_and(|holder| holder != lane)
+            && !leases
+                .iter()
+                .any(|lease| lease.key == slice.key && lease.overdue)
+    })
 }
 
 /// #1193: one `ClaimLease` per live slice that still holds a pre-PR claim (a slice with a PR, a
@@ -183,17 +233,31 @@ pub(crate) fn read_cached(
     // envelope opened and the fold are all inside it, so `status --tasks` cannot spend a second
     // unbounded history read after the budgeted status fold (codexrev-2 on PR #1190). The checks
     // read the clock (`check_now`), since envelope opens are not events the walk counts.
+    let store = event_store(events).map_err(|e| super::repository_failure(&e))?;
+    let (scope, _, history) = resolve_stream(&store, Some(execution))?;
+    if history.is_empty() {
+        return Err(super::not_found());
+    }
+    read_history(&store, &scope, &history, execution, keyring, budget, cache)
+}
+
+/// #1220: the read over a history the caller already loaded (claim admission holds the store and
+/// the stream), so the route and admission fold the same records the same way.
+pub(crate) fn read_history(
+    store: &graphhelm_events::LocalEventRepository,
+    scope: &graphhelm_protocols::RepositoryScope,
+    history: &[graphhelm_protocols::EventEnvelope],
+    execution: &str,
+    keyring: &SignalKeyring,
+    budget: &graphhelm_events::ReadBudget,
+    cache: &mut TaskRecordCache,
+) -> Result<TasksView, Failure> {
     let exceeded = |exceeded: graphhelm_events::ReadBudgetExceeded| {
         super::replay_failure(&graphhelm_events::ReplayError::BudgetExceeded {
             walked: exceeded.walked,
             limit_millis: exceeded.limit_millis,
         })
     };
-    let store = event_store(events).map_err(|e| super::repository_failure(&e))?;
-    let (scope, _, history) = resolve_stream(&store, Some(execution))?;
-    if history.is_empty() {
-        return Err(super::not_found());
-    }
     let walked = history.len() as u64;
     budget.check_now(walked).map_err(exceeded)?;
     // A remembered head whose event is no longer at that sequence is another store's memory.
@@ -219,7 +283,7 @@ pub(crate) fn read_cached(
     let mut records = Vec::new();
     let mut rejected = 0_usize;
     let mut opened = 0_usize;
-    for event in &history {
+    for event in history {
         let EventKind::SignalRecorded(record) = &event.kind else {
             continue;
         };
@@ -242,7 +306,7 @@ pub(crate) fn read_cached(
                 return None;
             }
             let id = EvidenceId::parse(&envelope_id).ok()?;
-            let EvidenceRead::Available(sealed) = store.sealed_evidence(&scope, &id).ok()? else {
+            let EvidenceRead::Available(sealed) = store.sealed_evidence(scope, &id).ok()? else {
                 return None;
             };
             if sealed.reference().content_sha256().as_str() != record.envelope_sha256.as_str() {
@@ -300,6 +364,41 @@ pub(crate) fn read_cached(
 #[cfg(test)]
 mod lease_tests {
     use super::*;
+
+    /// #1220 (orchestration session): a claim whose lease has lapsed no longer holds its task, even
+    /// before the Stop reconciler releases it, so a dead lane cannot block an issue until someone's
+    /// next Stop. Also: a live claim of another lane holds, the lane's own claim never holds
+    /// against itself. Cost: one fold of one record.
+    #[test]
+    fn an_overdue_claim_stops_holding_its_task() {
+        let claim = graphhelm_execution::tasks::parse_task_event(
+            "task.claimed",
+            "lane-alpha",
+            r#"{"schema":"graphhelm-task-event-v1","taskId":"issue-7","revision":1,"at":"2026-10-14T03:00:00Z","issue":7,"lane":"lane-alpha","branch":"issue-7-work"}"#,
+            1,
+            Some(at("2026-10-14T03:00:00Z")),
+        )
+        .expect("a valid claim");
+        let tasks = graphhelm_execution::tasks::fold_task_events(&[claim]);
+        let live = claim_leases(&tasks, &at("2026-10-14T03:10:00Z"));
+        assert!(
+            holder(&tasks, &live, "issue-7", "lane-beta").is_some(),
+            "a live claim holds"
+        );
+        assert!(
+            holder(&tasks, &live, "issue-7", "lane-alpha").is_none(),
+            "never against itself"
+        );
+        let lapsed = claim_leases(&tasks, &at("2026-10-14T03:30:01Z"));
+        assert!(
+            lapsed.iter().all(|lease| lease.overdue),
+            "1800 s default lapsed: {lapsed:?}"
+        );
+        assert!(
+            holder(&tasks, &lapsed, "issue-7", "lane-beta").is_none(),
+            "an overdue claim does not hold"
+        );
+    }
 
     fn at(value: &str) -> PersistedTimestamp {
         PersistedTimestamp::parse(value).unwrap()

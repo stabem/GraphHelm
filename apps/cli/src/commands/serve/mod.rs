@@ -190,9 +190,6 @@ struct ServeState {
     /// In-memory liveness only: an authenticated actor has contacted this Runtime recently.
     /// Never persisted; it is display evidence and grants no authority.
     seen_actors: Arc<std::sync::Mutex<BTreeMap<String, Instant>>>,
-    /// #1202: per execution, the `task.*` envelopes this Runtime already opened, so the tasks
-    /// route opens only what was recorded since its last read.
-    tasks_cache: Arc<std::sync::Mutex<HashMap<String, execution::tasks::TaskRecordCache>>>,
 }
 
 impl ServeState {
@@ -329,7 +326,6 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         sweep_interval: args.sweep_interval,
         native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         seen_actors: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
-        tasks_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
     };
 
     let rt =

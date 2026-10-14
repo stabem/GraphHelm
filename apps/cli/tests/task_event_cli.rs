@@ -491,7 +491,7 @@ fn a_claim_carries_a_lease_within_bounds() {
     assert_eq!(admitted["ok"], true, "{admitted}");
     let head = history(&events).len();
     for (id, lease) in [
-        ("lease-short", json!(59)),
+        ("lease-short", json!(299)),
         ("lease-long", json!(86401)),
         ("lease-text", json!("1800")),
     ] {

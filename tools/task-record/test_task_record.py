@@ -505,7 +505,7 @@ class TaskRecordTest(unittest.TestCase):
         sent = len(FakeRuntime.seen)
         with self.assertRaises(SystemExit) as refused:
             self.run_step("--lane", "lane-a", "claimed", "--issue", "11", "--branch", "b", "--no-github",
-                          "--lease-seconds", "59")
+                          "--lease-seconds", "299")
         self.assertIn("--lease-seconds", str(refused.exception.code))
         self.assertEqual(len(FakeRuntime.seen), sent)
 

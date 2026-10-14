@@ -125,7 +125,7 @@ pub struct ClaimLease {
 
 /// The lease arithmetic, total for any instants: a heartbeat before the claim (a corrupt or
 /// reordered log) cannot move expiry earlier than the claim itself, and a `now` before the claim
-/// reads as not overdue. `lease_seconds` is bounded by admission (60..86400) and the fold's
+/// reads as not overdue. `lease_seconds` is bounded by admission (300..86400, never below the heartbeat cooldown) and the fold's
 /// default; any value is accepted here.
 pub fn lease_state(
     claimed_at: &PersistedTimestamp,
@@ -139,12 +139,15 @@ pub fn lease_state(
         .filter(|heartbeat| *heartbeat > claimed)
         .unwrap_or(claimed);
     let lease = chrono::Duration::seconds(i64::try_from(lease_seconds).unwrap_or(i64::MAX));
-    let expires = since
+    // An expiry that cannot be represented (a lease past the persisted range) fails CLOSED: the
+    // claim reads as not overdue and expiry is reported as `now`, never as an earlier instant
+    // that would release a live claim (gh-claude-opt-1 on PR #1205).
+    let Some(expires_at) = since
         .checked_add_signed(lease)
-        .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC);
-    let expires_at = PersistedTimestamp::from_datetime(expires).unwrap_or_else(|_| {
-        PersistedTimestamp::from_datetime(since).expect("a persisted instant round-trips")
-    });
+        .and_then(|expires| PersistedTimestamp::from_datetime(expires).ok())
+    else {
+        return (now.clone(), false);
+    };
     let overdue = *now.as_datetime() > *expires_at.as_datetime();
     (expires_at, overdue)
 }

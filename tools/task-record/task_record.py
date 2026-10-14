@@ -208,7 +208,7 @@ def parse(argv):
     p.add_argument("--parent", type=int, help="claimed: the issue whose work turned this task up (#514)")
     p.add_argument("--assigned-by", help="claimed: who ordered the work, as reported by this lane")
     p.add_argument("--lease-seconds", type=int,
-                   help="claimed: how long the claim stays live without a heartbeat (60..86400; #1193). "
+                   help="claimed: how long the claim stays live without a heartbeat (300..86400, never below the heartbeat cooldown; #1193). "
                         "Absent means the fold's default (1800) and the field is not sent, so a Runtime older "
                         "than #1193 still admits the claim")
     p.add_argument("--pr", type=int)
@@ -380,8 +380,8 @@ def document(args, now):
         need(args, "branch")
         doc.update(issue=args.issue, lane=args.lane, branch=args.branch)
         if args.lease_seconds is not None:
-            if not 60 <= args.lease_seconds <= 86400:
-                sys.exit("task_record: --lease-seconds must be from 60 to 86400")
+            if not 300 <= args.lease_seconds <= 86400:
+                sys.exit("task_record: --lease-seconds must be from 300 (the heartbeat cooldown) to 86400")
             doc["leaseSeconds"] = args.lease_seconds
         if args.assigned_by is not None:
             if not args.assigned_by or len(args.assigned_by) > 128 or not args.assigned_by.isprintable() or args.assigned_by == args.lane:

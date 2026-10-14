@@ -20,7 +20,7 @@ use std::process::Command;
 use graphhelm_protocols::Diagnostic;
 use serde_json::json;
 
-use crate::args::{StudioStartArgs, UpdateArgs};
+use crate::args::{StudioOpenArgs, StudioStartArgs, UpdateArgs};
 use crate::commands::gateway::keyring::SEALING_KEY_ENVIRONMENT;
 
 /// The broker passphrase `serve` reads for model routes (`serve/ports.rs::gateway_passphrase`).
@@ -700,6 +700,91 @@ pub(super) fn add_project(launch: &mut Command, project: &Path) {
         .arg(plain(project.to_path_buf()));
 }
 
+/// #1264: the Studio session key, HMAC-SHA256(token, "graphhelm-studio-session-v1") in hex.
+/// The dev server (`apps/studio/vite.config.ts`, `stableNonce`) accepts the same value; only a
+/// reader of the owner-only token file can compute it, and it changes when the token rotates.
+pub(super) fn session_key(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut key = [0u8; 64];
+    if token.len() > 64 {
+        key[..32].copy_from_slice(&Sha256::digest(token.as_bytes()));
+    } else {
+        key[..token.len()].copy_from_slice(token.as_bytes());
+    }
+    let pad = |byte: u8| key.iter().map(|k| k ^ byte).collect::<Vec<u8>>();
+    let inner = Sha256::new()
+        .chain_update(pad(0x36))
+        .chain_update(b"graphhelm-studio-session-v1")
+        .finalize();
+    let outer = Sha256::new()
+        .chain_update(pad(0x5c))
+        .chain_update(inner)
+        .finalize();
+    outer.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Opens a URL in the default browser without a console window.
+fn open_browser(url: &str) -> bool {
+    let mut command = if cfg!(windows) {
+        let mut command = Command::new("rundll32");
+        command.args(["url.dll,FileProtocolHandler", url]);
+        command
+    } else if cfg!(target_os = "macos") {
+        let mut command = Command::new("open");
+        command.arg(url);
+        command
+    } else {
+        let mut command = Command::new("xdg-open");
+        command.arg(url);
+        command
+    };
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+pub fn open(args: &StudioOpenArgs) -> Outcome {
+    let project = match args.project.clone().map_or_else(std::env::current_dir, Ok) {
+        Ok(project) => project,
+        Err(_) => return refused("the current directory could not be read", "/project"),
+    };
+    let path = project.join(".graphhelm").join("events.token");
+    let token = match std::fs::read_to_string(&path) {
+        Ok(raw) if !raw.trim().is_empty() && !raw.trim().contains('\n') => raw.trim().to_owned(),
+        _ => {
+            return refused(
+                format!(
+                    "{} has no Runtime token; run `graphhelm studio start` there first",
+                    project.display()
+                ),
+                "/project",
+            );
+        }
+    };
+    let url = format!(
+        "http://127.0.0.1:{}/?session={}",
+        args.port,
+        session_key(&token)
+    );
+    let opened = !args.no_browser && open_browser(&url);
+    // The link is a credential: printed only when the browser could not take it, to the owner's
+    // own terminal (the same trust class as the token file it is derived from).
+    let data = if opened {
+        json!({ "opened": true })
+    } else {
+        json!({ "opened": false, "url": url })
+    };
+    Outcome::success(COMMAND, data)
+}
+
 pub fn start(args: &StudioStartArgs) -> Outcome {
     let project = match args.project.clone().map_or_else(std::env::current_dir, Ok) {
         Ok(project) => project,
@@ -990,6 +1075,15 @@ mod tests {
         assert!(!already_installed(Some("abc"), None));
         assert!(!already_installed(None, Some("abc")));
         assert!(!already_installed(Some(""), Some("")));
+    }
+
+    #[test]
+    fn the_session_key_matches_the_studio_dev_server() {
+        // Same value as `createHmac("sha256", "fixture-token").update("graphhelm-studio-session-v1")`.
+        assert_eq!(
+            session_key("fixture-token"),
+            "cce0290a9af90e0522bf0de80226e89b4404b2014ee57a6dd316ffd0c68d5bdf"
+        );
     }
 
     #[test]

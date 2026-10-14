@@ -62,9 +62,9 @@ export function Connect({
           </button>
         </form>
         <p className="gate-note">
-          This page opened without its session link. Open the complete link printed by{" "}
-          <code>graphhelm studio start</code> (including its <code>?session=</code> part), or paste
-          the bearer token here. The session link carries a short-lived connection nonce; never put
+          Already ran <code>graphhelm studio start</code>? Run <code>graphhelm studio open</code> in
+          the project folder: it opens this page already connected, with no token to paste. Only
+          when this PC has no token, paste the bearer token here. Never put
           the bearer token in a URL. The token stays in this tab&apos;s memory only: never storage,
           never a cookie, never a URL, never a log line.
         </p>

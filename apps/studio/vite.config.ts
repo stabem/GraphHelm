@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,14 +59,37 @@ function projectFolder(env: Record<string, string>): string | null {
  * missing or unreadable file, like a missing or wrong nonce, is a plain 404: the page then shows
  * its connect screen, which is the correct outcome and not a diagnostic surface.
  */
-/** #1264: a request the browser marked as coming from a page of this same loopback origin. */
-export function sameOriginLoopback(headers: Record<string, string | string[] | undefined>): boolean {
-  const host = String(headers.host ?? "").toLowerCase();
-  if (!/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(host)) return false;
-  if (headers["sec-fetch-site"] !== "same-origin") return false;
-  const origin = headers.origin;
-  if (origin !== undefined && origin !== `http://${host}`) return false;
-  return true;
+/** #1264: a session key that survives reloads and Studio restarts but not a token rotation. It is
+ * derived from the token itself, so only someone who can already read the owner-only token file
+ * can compute it; the dev server hands it to a page that already proved a nonce, and the page
+ * keeps it so a later load without `?session=` still connects. Never the token, never reversible. */
+export function stableNonce(token: string): string {
+  return createHmac("sha256", token).update("graphhelm-studio-session-v1").digest("hex");
+}
+
+/** Reads the one-line token file, or `null` when it is missing or is not one line. */
+function readToken(env: Record<string, string>): string | null {
+  const path = tokenPath(env);
+  if (path === null) return null;
+  try {
+    const raw = readFileSync(path, "utf8").trim();
+    // A token is one line. Anything else is not the file we meant to read, and guessing which
+    // line to take is how a stray file becomes a credential.
+    return raw.length > 0 && raw.length <= 512 && !raw.includes("\n") ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+function sameSecret(presented: string, expected: string): boolean {
+  const left = Buffer.from(presented, "utf8");
+  const right = Buffer.from(expected, "utf8");
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+/** #1264: the only gate. A missing nonce is refused whatever headers came with it. */
+export function authorized(presented: string, nonce: string, token: string): boolean {
+  return presented.length > 0 && (sameSecret(presented, nonce) || sameSecret(presented, stableNonce(token)));
 }
 
 function devSession(env: Record<string, string>): Plugin {
@@ -99,37 +122,11 @@ function devSession(env: Record<string, string>): Plugin {
           response.statusCode = 404;
           response.end(JSON.stringify({ ok: false }));
         };
-        // Either the run's nonce (constant-time compare), or #1264: a same-origin page on this
-        // loopback server. The browser sets Sec-Fetch-Site and Host itself, so another site
-        // (cross-site fetch) or a rebound DNS name (Host is not loopback) is refused. Like the
-        // page and its JS, this is reachable by any process of this machine that forges those
-        // headers; the owner chose a never-asking local Studio over that boundary.
-        const url = new URL(request.url ?? "/", "http://localhost");
-        const presented = url.searchParams.get("nonce");
-        if (presented !== null) {
-          const left = Buffer.from(presented, "utf8");
-          const right = Buffer.from(nonce, "utf8");
-          if (left.length !== right.length || !timingSafeEqual(left, right)) {
-            refuse();
-            return;
-          }
-        } else if (!sameOriginLoopback(request.headers)) {
-          refuse();
-          return;
-        }
-        const path = tokenPath(env);
-        let token: string | null = null;
-        if (path !== null) {
-          try {
-            const raw = readFileSync(path, "utf8").trim();
-            // A token is one line. Anything else is not the file we meant to read, and guessing
-            // which line to take is how a stray file becomes a credential.
-            if (raw.length > 0 && raw.length <= 512 && !raw.includes("\n")) token = raw;
-          } catch {
-            token = null;
-          }
-        }
-        if (token === null) {
+        // The nonce gate: the run's own nonce or the stable key derived from the token on disk
+        // (#1264). Headers are never evidence - any local process can forge them.
+        const presented = new URL(request.url ?? "/", "http://localhost").searchParams.get("nonce") ?? "";
+        const token = readToken(env);
+        if (token === null || !authorized(presented, nonce, token)) {
           refuse();
           return;
         }
@@ -152,6 +149,7 @@ function devSession(env: Record<string, string>): Plugin {
           project: env.GRAPHHELM_PROJECT || (folder === null ? null : basename(folder)),
           projectPath: folder,
           onDemandLanes,
+          sessionKey: stableNonce(token),
         }));
       });
     },

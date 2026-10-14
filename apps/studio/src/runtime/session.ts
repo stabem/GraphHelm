@@ -34,25 +34,66 @@ export interface DevSession {
   onDemandLanes?: string[];
 }
 
-export async function devSession(
-  fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
-  search: string = globalThis.location?.search ?? "",
-): Promise<DevSession | null> {
-  // The page presents the nonce it was OPENED with (`?session=<nonce>`) when it has one. #1264:
-  // without one it still asks; the dev server answers a same-origin loopback page on its own
-  // (Host and Sec-Fetch-Site checked there), so F5, a new tab or a `?run=` link stays connected
-  // and nothing is ever kept in the browser.
-  const nonce = new URLSearchParams(search).get("session");
-  const query = nonce !== null && nonce.length > 0 ? `?nonce=${encodeURIComponent(nonce)}` : "";
-  let response: Response;
+/** #1264: where the TAB keeps the dev server's stable session key between loads. It is not the
+ * token: it is a key derived from the token file (see `stableNonce` in `vite.config.ts`). It is in
+ * `sessionStorage`, so it dies with the tab: F5, `?run=` navigation and a Studio restart stay
+ * connected, and a new tab opens connected through `graphhelm studio open`. */
+export const SESSION_KEY_STORAGE = "graphhelm.studio.sessionKey";
+
+/** The small slice of `Storage` the session key needs; `null` when the browser refuses storage. */
+export type KeyStore = Pick<Storage, "getItem" | "setItem" | "removeItem"> | null;
+
+function browserStore(): KeyStore {
   try {
-    response = await fetchImpl(`${SESSION_PATH}${query}`, {
-      headers: { Accept: "application/json" },
-    });
+    return globalThis.sessionStorage ?? null;
   } catch {
     return null;
   }
-  if (!response.ok) return null;
+}
+
+async function ask(fetchImpl: typeof fetch, nonce: string): Promise<Response | null> {
+  try {
+    const response = await fetchImpl(`${SESSION_PATH}?nonce=${encodeURIComponent(nonce)}`, {
+      headers: { Accept: "application/json" },
+    });
+    return response.ok ? response : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function devSession(
+  fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
+  search: string = globalThis.location?.search ?? "",
+  store: KeyStore = browserStore(),
+): Promise<DevSession | null> {
+  // The page presents the nonce it was OPENED with (`?session=<nonce>`, from the URL the dev
+  // server printed or the launcher opened). #1264: failing that, it presents the stable key the
+  // dev server handed this tab on an earlier load, so F5, a `?run=` link or a Studio restart never
+  // sends the owner back to the token gate while the token on disk is unchanged.
+  // With neither there is nothing to present, and the connect gate is the answer: the endpoint
+  // refuses a bare request precisely so that a request another local user can forge earns nothing.
+  const presented = new URLSearchParams(search).get("session");
+  let remembered: string | null = null;
+  try {
+    remembered = store?.getItem(SESSION_KEY_STORAGE) ?? null;
+  } catch {
+    remembered = null;
+  }
+  const candidates = [presented, remembered].filter(
+    (nonce, index, all): nonce is string => typeof nonce === "string" && nonce.length > 0 && all.indexOf(nonce) === index,
+  );
+  let response: Response | null = null;
+  for (const nonce of candidates) {
+    response = await ask(fetchImpl, nonce);
+    if (response !== null) break;
+    // A remembered key the server now refuses belongs to an old token; keeping it only adds a
+    // doomed request to every load.
+    if (nonce === remembered) {
+      try { store?.removeItem(SESSION_KEY_STORAGE); } catch { /* storage refused: nothing kept */ }
+    }
+  }
+  if (response === null) return null;
 
   let payload: unknown;
   try {
@@ -72,6 +113,10 @@ export async function devSession(
   const projectPath = (payload as { projectPath?: unknown }).projectPath;
   const folder = typeof projectPath === "string" ? projectPath.trim() : "";
   const roster = (payload as { onDemandLanes?: unknown }).onDemandLanes;
+  const key = (payload as { sessionKey?: unknown }).sessionKey;
+  if (typeof key === "string" && /^[0-9a-f]{32,128}$/.test(key)) {
+    try { store?.setItem(SESSION_KEY_STORAGE, key); } catch { /* storage refused: F5 asks again */ }
+  }
   return {
     token: trimmed,
     // Bounded and rendered as text: it is a label from the operator's own environment, but it

@@ -1,0 +1,139 @@
+import json
+import os
+import ctypes
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+TOOL = Path(__file__).with_name("runtime_exit_observe.py")
+
+
+@unittest.skipUnless(os.name == "nt", "requires native Windows process handles")
+class WindowsProcessObserver(unittest.TestCase):
+    def setUp(self):
+        self.children = []
+
+    def tearDown(self):
+        for process in self.children:
+            if process.poll() is None:
+                process.stdin.write(b"0\n")
+                process.stdin.flush()
+                process.wait(timeout=5)
+
+    def child(self, code=None):
+        script = "import sys; sys.stdin.readline(); sys.exit(int(sys.argv[1]))"
+        process = subprocess.Popen([sys.executable, "-c", script, str(code or 0)], stdin=subprocess.PIPE,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=0x08000000)
+        self.children.append(process)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = kernel32.OpenProcess(0x1000, False, process.pid)
+        if not handle:
+            self.fail("could not query test child creation time")
+        class FILETIME(ctypes.Structure):
+            _fields_ = [("low", ctypes.c_uint32), ("high", ctypes.c_uint32)]
+        created, exited, kernel, user = FILETIME(), FILETIME(), FILETIME(), FILETIME()
+        ok = kernel32.GetProcessTimes(ctypes.c_void_p(handle), *(ctypes.byref(item) for item in (created, exited, kernel, user)))
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
+        if not ok:
+            self.fail("could not read test child creation time")
+        creation = (created.high << 32) | created.low
+        return process, creation
+
+    def start_observer(self, process, creation, timeout=5):
+        directory = tempfile.TemporaryDirectory()
+        receipt = Path(directory.name) / "receipt.jsonl"
+        observer = subprocess.Popen([sys.executable, str(TOOL), "--pid", str(process.pid), "--creation-filetime", str(creation),
+                                     "--timeout-seconds", str(timeout), "--output", str(receipt)],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, creationflags=0x08000000)
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            if receipt.exists() and receipt.stat().st_size:
+                return observer, directory, receipt
+            if observer.poll() is not None:
+                self.fail("observer exited before attachment")
+            time.sleep(0.01)
+        observer.kill()
+        observer.wait()
+        directory.cleanup()
+        self.fail("observer did not attach within bounded test wait")
+
+    def test_known_exit_codes_and_signaled_259(self):
+        for code in (0, 23, 259):
+            process, creation = self.child(code)
+            observer, directory, receipt = self.start_observer(process, creation)
+            process.stdin.write(b"1\n")
+            process.stdin.flush()
+            _, stderr = observer.communicate(timeout=8)
+            records = [json.loads(line) for line in receipt.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(observer.returncode, 0, stderr)
+            self.assertEqual([record["state"] for record in records], ["attached", "exited"])
+            self.assertEqual(records[-1]["exitCode"], code)
+            process.wait(timeout=2)
+            directory.cleanup()
+
+    def test_timeout_does_not_terminate_child_and_wrong_identity_refuses(self):
+        process, creation = self.child()
+        observer, directory, receipt = self.start_observer(process, creation, timeout=0.1)
+        _, stderr = observer.communicate(timeout=3)
+        records = [json.loads(line) for line in receipt.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(observer.returncode, 3, stderr)
+        self.assertEqual([record["state"] for record in records], ["attached", "timeout"])
+        self.assertIsNone(process.poll())
+        directory.cleanup()
+        wrong, records = self.observe_wrong_identity(process, creation + 1)
+        self.assertNotEqual(wrong.returncode, 0)
+        self.assertEqual(records, [])
+        self.assertIsNone(process.poll())
+
+    def observe_wrong_identity(self, process, creation):
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / "wrong.jsonl"
+            result = subprocess.run([sys.executable, str(TOOL), "--pid", str(process.pid), "--creation-filetime", str(creation),
+                                     "--timeout-seconds", "1", "--output", str(receipt)], capture_output=True, text=True,
+                                    timeout=3, creationflags=0x08000000)
+            return result, [json.loads(line) for line in receipt.read_text(encoding="utf-8").splitlines()] if receipt.exists() else []
+
+    def test_create_new_output_refuses_existing_file(self):
+        process, creation = self.child()
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / "existing.jsonl"
+            receipt.write_text("keep", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), "--pid", str(process.pid), "--creation-filetime", str(creation),
+                                     "--timeout-seconds", "1", "--output", str(receipt)], capture_output=True, text=True,
+                                    creationflags=0x08000000)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(receipt.read_text(encoding="utf-8"), "keep")
+
+    def test_bad_pid_has_fixed_diagnostic(self):
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / "invalid.jsonl"
+            result = subprocess.run([sys.executable, str(TOOL), "--pid", "0", "--creation-filetime", "1",
+                                     "--timeout-seconds", "1", "--output", str(receipt)], capture_output=True, text=True,
+                                    creationflags=0x08000000)
+            self.assertFalse(receipt.exists())
+        self.assertNotIn("Traceback", result.stderr)
+
+class RuntimeExitObserverContract(unittest.TestCase):
+    def test_help_exposes_bounded_identity_and_receipt_inputs(self):
+        result = subprocess.run([sys.executable, str(TOOL), "--help"], capture_output=True, text=True,
+                                creationflags=0x08000000)
+        self.assertEqual(result.returncode, 0)
+        for option in ("--pid", "--creation-filetime", "--timeout-seconds", "--output"):
+            self.assertIn(option, result.stdout)
+
+    def test_non_windows_host_refuses_without_creating_receipt(self):
+        if sys.platform == "win32":
+            self.skipTest("Windows observer behavior is covered by native child tests")
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / "receipt.jsonl"
+            result = subprocess.run([sys.executable, str(TOOL), "--pid", "1", "--creation-filetime", "1", "--timeout-seconds", "1", "--output", str(receipt)], capture_output=True, text=True,
+                                    creationflags=0x08000000)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(receipt.exists())
+            self.assertNotIn("Traceback", result.stderr)
+
+if __name__ == "__main__":
+    unittest.main()

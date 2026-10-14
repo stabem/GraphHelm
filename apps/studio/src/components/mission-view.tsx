@@ -23,6 +23,7 @@ import { laneLiveness } from "../runtime/stage-health";
 import { WORK_STAGES } from "../runtime/work-groups";
 import { LaneActions, laneRoster, type LaneNote } from "./lane-actions";
 import { laneRepliedAfterAsk } from "./lane-actions";
+import { FREE_LIVENESS_MS } from "../runtime/agent-board";
 import type { EnvelopeRecord } from "../graph/ledger";
 import type { RuntimeEvent } from "../runtime/types";
 import type { SlotView } from "../runtime/slots";
@@ -110,9 +111,20 @@ interface Props {
 }
 
 /** #647: the run's nodes and their state, each one opening the node window the Team canvas opened. */
-export function RunGraphStrip({ nodes, unassigned, onOpenNode }: { nodes: GraphNode[]; unassigned: string[]; onOpenNode?: (nodeId: string) => void }) {
+export function RunGraphStrip({ nodes, unassigned, agents = [], now, onOpenNode }: { nodes: GraphNode[]; unassigned: string[]; agents?: Bot[]; now: number; onOpenNode?: (nodeId: string) => void }) {
   const [open, setOpen] = useState(true);
   if (nodes.length === 0) return null;
+  const technical = new Set(["codex", "claude-code", "studio-operator"]);
+  const recentAgents = new Map<string, { name: string; lastAt: number }>();
+  for (const agent of agents) {
+    const actorId = agent.actorId?.trim();
+    const name = agent.name.trim();
+    const lastAt = agent.lastRecordAt === null ? NaN : Date.parse(agent.lastRecordAt);
+    const age = now - lastAt;
+    if (!actorId || agent.shared || agent.native || technical.has(actorId.toLowerCase())
+      || !name || name.toLowerCase() === "tbd" || !Number.isFinite(lastAt) || age < 0 || age > FREE_LIVENESS_MS) continue;
+    if (!recentAgents.has(actorId)) recentAgents.set(actorId, { name, lastAt });
+  }
   const free = new Set(unassigned);
   const parts = [
     { title: "Steps without a bot", nodes: nodes.filter((n) => free.has(n.id)) },
@@ -131,6 +143,12 @@ export function RunGraphStrip({ nodes, unassigned, onOpenNode }: { nodes: GraphN
           <ol>{p.nodes.map(item)}</ol>
         </div>
       ))}
+      {open && recentAgents.size > 0 && <div className="mv-run-part">
+        <h3>Recently recorded agents</h3>
+        <ul aria-label="Recently recorded agents">{[...recentAgents].map(([actorId, agent]) => (
+          <li key={actorId}>{agent.name} · Last record {ago(now - agent.lastAt)}</li>
+        ))}</ul>
+      </div>}
     </section>
   );
 }
@@ -357,7 +375,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
     <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} onDemandLanes={onDemandLanes} liveLanes={wakeListeners} seenActors={seenActors} seenActorAgesMs={seenActorAgesMs} historyLoading={lanesHistoryLoading}
       {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
   </>;
-  const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} {...(onOpenNode ? { onOpenNode } : {})} />;
+  const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} agents={agents} now={now} {...(onOpenNode ? { onOpenNode } : {})} />;
   const contentRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (sub === "test" && stepId !== null) {

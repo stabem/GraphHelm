@@ -45,6 +45,97 @@ pub struct TasksView {
     /// against it; the reconciler releases the `overdue` ones as `graphhelm`.
     pub now: PersistedTimestamp,
     pub leases: Vec<ClaimLease>,
+    /// #1234 (plan A7): lane liveness judged once, here, from the declared budgets and the
+    /// Runtime's own event times at `now`; the Studio reads it instead of keeping thresholds.
+    pub liveness: Liveness,
+}
+
+/// #1234: a lane with an open obligation is `silent` once it has recorded nothing of any kind for
+/// this long. Was the Studio's `LIVENESS_MS` (`lane-bars.ts`); declared here, once.
+pub const SILENT_AFTER_SECONDS: i64 = 30 * 60;
+/// #1234: a lane that recorded something within this long counts as live on the board. Was the
+/// Studio's `FREE_LIVENESS_MS` (`agent-board.ts`). The board's third threshold, a PR-less claim
+/// quiet for 2 h, has no twin here: a claim is stale exactly when its lease is `overdue` (#1193).
+pub const FREE_AFTER_SECONDS: i64 = 15 * 60;
+
+/// #1234: the budgets the verdicts below were judged against, served beside them so a reader
+/// never needs a copy of its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LivenessBudgets {
+    pub silent_after_seconds: i64,
+    pub free_after_seconds: i64,
+}
+
+/// #1234: one lane's liveness at the read's `now`. `last_record_at` is the Runtime's time of the
+/// lane actor's newest event of any kind in this run (absent when it has none); `owes` is whether
+/// it holds an open obligation (an unreleased, unmerged slice it authored, or the current review
+/// of an open PR); `silent` is `owes` and quiet for `silent_after_seconds`; `free` is a record
+/// within `free_after_seconds`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaneLiveness {
+    pub lane: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_record_at: Option<PersistedTimestamp>,
+    pub owes: bool,
+    pub silent: bool,
+    pub free: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Liveness {
+    pub budgets: LivenessBudgets,
+    pub lanes: Vec<LaneLiveness>,
+}
+
+/// #1234: the verdict for one lane, pure (`now` injected), so the edges are a unit cell. A lane
+/// with no record at all is not free and, if it owes, silent.
+pub fn lane_liveness(
+    lane: &str,
+    last_record_at: Option<&PersistedTimestamp>,
+    owes: bool,
+    now: &PersistedTimestamp,
+) -> LaneLiveness {
+    let quiet = last_record_at.map(|at| (*now.as_datetime() - *at.as_datetime()).num_seconds());
+    LaneLiveness {
+        lane: lane.to_owned(),
+        last_record_at: last_record_at.cloned(),
+        owes,
+        silent: owes && quiet.is_none_or(|seconds| seconds >= SILENT_AFTER_SECONDS),
+        free: quiet.is_some_and(|seconds| seconds < FREE_AFTER_SECONDS),
+    }
+}
+
+/// #1234: every lane that appears in the fold (as a slice's lane or its current reviewer), judged.
+fn liveness(
+    tasks: &[TaskState],
+    last_by_actor: &BTreeMap<String, PersistedTimestamp>,
+    now: &PersistedTimestamp,
+) -> Liveness {
+    let open = |slice: &TaskState| {
+        slice.step != graphhelm_execution::tasks::TaskStep::Merged && slice.released_by.is_none()
+    };
+    let mut owes: BTreeMap<String, bool> = BTreeMap::new();
+    for slice in tasks {
+        if let Some(lane) = &slice.lane {
+            *owes.entry(lane.clone()).or_default() |= open(slice);
+        }
+        if let Some(reviewer) = &slice.current_reviewer {
+            *owes.entry(reviewer.clone()).or_default() |= open(slice) && slice.pr.is_some();
+        }
+    }
+    Liveness {
+        budgets: LivenessBudgets {
+            silent_after_seconds: SILENT_AFTER_SECONDS,
+            free_after_seconds: FREE_AFTER_SECONDS,
+        },
+        lanes: owes
+            .into_iter()
+            .map(|(lane, owes)| lane_liveness(&lane, last_by_actor.get(&lane), owes, now))
+            .collect(),
+    }
 }
 
 /// #1202: what one Runtime remembers of an execution's `task.*` envelopes it already opened.
@@ -350,6 +441,14 @@ pub(crate) fn read_history(
     let now = PersistedTimestamp::from_datetime(chrono::Utc::now())
         .map_err(|_| super::signal_invalid("the Runtime clock is not a persisted instant", "/"))?;
     let leases = claim_leases(&fold.tasks, &now);
+    let mut last_by_actor: BTreeMap<String, PersistedTimestamp> = BTreeMap::new();
+    for event in history {
+        last_by_actor.insert(
+            event.actor.id().as_str().to_owned(),
+            event.occurred_at.clone(),
+        );
+    }
+    let liveness = liveness(&fold.tasks, &last_by_actor, &now);
     Ok(TasksView {
         execution_id: execution.to_owned(),
         head_sequence: history.last().map_or(0, |event| event.sequence),
@@ -361,12 +460,36 @@ pub(crate) fn read_history(
         opened,
         now,
         leases,
+        liveness,
     })
 }
 
 #[cfg(test)]
 mod lease_tests {
     use super::*;
+
+    /// #1234: the verdict at the budget edges. Silent needs an obligation; free needs a record;
+    /// both edges are exact (silent AT the budget, free strictly inside it). Cost: pure calls.
+    #[test]
+    fn lane_liveness_judges_silence_and_freedom_at_the_declared_edges() {
+        let now = at("2026-10-14T12:00:00Z");
+        let fresh = at("2026-10-14T11:50:00Z"); // 10 min
+        let edge_free = at("2026-10-14T11:45:00Z"); // 15 min
+        let edge_silent = at("2026-10-14T11:30:00Z"); // 30 min
+        let quiet = lane_liveness("a", Some(&fresh), true, &now);
+        assert!(quiet.free && !quiet.silent, "{quiet:?}");
+        let at_free = lane_liveness("a", Some(&edge_free), true, &now);
+        assert!(
+            !at_free.free && !at_free.silent,
+            "free is strictly inside 15 min: {at_free:?}"
+        );
+        let at_silent = lane_liveness("a", Some(&edge_silent), true, &now);
+        assert!(at_silent.silent, "silent from 30 min on: {at_silent:?}");
+        let idle = lane_liveness("a", Some(&edge_silent), false, &now);
+        assert!(!idle.silent, "no obligation, no silence: {idle:?}");
+        let never = lane_liveness("a", None, true, &now);
+        assert!(never.silent && !never.free, "no record at all: {never:?}");
+    }
 
     /// #1220 (orchestration session): a claim whose lease has lapsed no longer holds its task, even
     /// before the Stop reconciler releases it, so a dead lane cannot block an issue until someone's

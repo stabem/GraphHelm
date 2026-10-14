@@ -3768,6 +3768,22 @@ fn the_tasks_route_folds_the_runs_task_records_into_slices() {
     assert_eq!(task["pr"], 1150);
     assert_eq!(task["lane"], lane);
     assert_eq!(task["headSha"], "abcdef01");
+    // #1234: lane liveness is the Runtime's, served with the budgets it was judged against. The
+    // lane recorded seconds ago and holds an open slice: it owes, it is free, it is not silent.
+    let liveness = &data["liveness"];
+    assert_eq!(
+        liveness["budgets"]["silentAfterSeconds"], 1800,
+        "{liveness}"
+    );
+    assert_eq!(liveness["budgets"]["freeAfterSeconds"], 900, "{liveness}");
+    let lane_row = liveness["lanes"]
+        .as_array()
+        .and_then(|lanes| lanes.iter().find(|row| row["lane"] == lane))
+        .unwrap_or_else(|| panic!("no liveness row for {lane}: {liveness}"));
+    assert_eq!(lane_row["owes"], true, "{lane_row}");
+    assert_eq!(lane_row["free"], true, "{lane_row}");
+    assert_eq!(lane_row["silent"], false, "{lane_row}");
+    assert!(lane_row["lastRecordAt"].is_string(), "{lane_row}");
     // #1211: the Studio reads `releasedBy === undefined` as a live claim; `null` emptied its
     // kanban. A live slice carries no key at all.
     assert!(

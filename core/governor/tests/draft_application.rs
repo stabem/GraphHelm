@@ -576,6 +576,53 @@ fn accepted_draft_appends_assignment_approval_and_governance_atomically() {
             .unwrap(),
         )
         .unwrap();
+    // #1266: a reviewed draft that adds TWO nodes, so an acceptance can assign one and miss the
+    // other. The one-node draft above cannot tell "one proposed node unassigned" from "no
+    // assignment at all".
+    let mut two_nodes = proposed.clone();
+    two_nodes.id = "draft-two-nodes".into();
+    let DraftOperation::AddNode { node, .. } = &proposed.operations[0] else {
+        panic!("HARNESS-BROKE: the fixture draft adds a node")
+    };
+    two_nodes.operations.push(DraftOperation::AddNode {
+        id: "archive-second".into(),
+        node: node.clone(),
+    });
+    let two_nodes_digest = raw_content_sha256(&serde_json::to_vec(&two_nodes).unwrap()).unwrap();
+    repository
+        .append_atomic(
+            &PreparedAppend::new(
+                scope.clone(),
+                execution.clone(),
+                repository
+                    .next_sequence(&scope, execution.as_str())
+                    .unwrap(),
+                vec![NewEvent::new(
+                    OpaqueId::parse("proposal-two-nodes").unwrap(),
+                    PersistedActor::new(
+                        PersistedActorType::Agent,
+                        ActorId::parse("agent-reviewer").unwrap(),
+                    ),
+                    Sensitivity::Internal,
+                    EventKind::DraftProposed(graphhelm_protocols::DraftProposed {
+                        draft_id: OpaqueId::parse(&two_nodes.id).unwrap(),
+                        expected_version: two_nodes.expected_version,
+                        expected_hash: graphhelm_protocols::WireHash::parse(
+                            two_nodes.expected_hash.as_str(),
+                        )
+                        .unwrap(),
+                        operation_count: two_nodes.operations.len() as u16,
+                        proposal_sha256: Some(two_nodes_digest.clone()),
+                    }),
+                    vec![],
+                    vec![],
+                )],
+                vec![],
+                vec![],
+            )
+            .unwrap(),
+        )
+        .unwrap();
     let mut assignments = std::collections::BTreeMap::new();
     assignments.insert(
         OpaqueId::parse("archive").unwrap(),
@@ -668,6 +715,33 @@ fn accepted_draft_appends_assignment_approval_and_governance_atomically() {
             "{label} assignment must not append"
         );
     }
+    // #1266: the two-node draft with only `archive` assigned: `archive-second` is unassigned.
+    let partly = graphhelm_governor::ExecutionDraftAcceptance {
+        draft_id: OpaqueId::parse(&two_nodes.id).unwrap(),
+        proposal_sha256: two_nodes_digest,
+        ..acceptance.clone()
+    };
+    let outcome = block_on(graphhelm_governor::apply_draft_with_acceptance(
+        &base,
+        &two_nodes,
+        &services,
+        Some(&partly),
+    ));
+    assert!(
+        matches!(
+            outcome,
+            Err(graphhelm_governor::ApplyError::InvalidOperation)
+        ),
+        "a proposed node without an assignment must refuse: {outcome:?}"
+    );
+    assert_eq!(
+        repository
+            .read_replay_stream(&services.scope, services.stream_id.as_str())
+            .unwrap()
+            .len(),
+        head_before_rejected_mutation,
+        "a partly assigned acceptance must not append"
+    );
     let result = block_on(graphhelm_governor::apply_draft_with_acceptance(
         &base,
         &proposed,

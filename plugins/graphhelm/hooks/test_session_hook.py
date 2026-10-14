@@ -307,7 +307,7 @@ class SessionHookTests(unittest.TestCase):
         )
         self.assertEqual(companion_manifest["hooks"], "./hooks/codex-hooks.json")
         main_manifest = json.loads((repository / "plugins" / "graphhelm" / "plugin.json").read_text())
-        self.assertEqual(main_manifest["version"], "0.1.35")
+        self.assertEqual(main_manifest["version"], "0.1.36")
         self.assertEqual(companion_manifest["version"], main_manifest["version"])
         for host in (".claude-plugin", ".codex-plugin"):
             legacy = json.loads((repository / "plugins" / "graphhelm" / host / "plugin.json").read_text())

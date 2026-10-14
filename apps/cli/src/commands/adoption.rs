@@ -241,10 +241,10 @@ fn suggestions(inventory: &serde_json::Value) -> Vec<String> {
     if present("home/.claude.json") && !user_plugin {
         out.push("home/.claude.json=register-mcp".to_owned());
     }
-    if user_plugin && present("home/.claude.json") {
+    if user_plugin && present("home/.claude.json/mcp/graphhelm") {
         out.push("home/.claude.json=use-plugin-mcp".to_owned());
     }
-    if project_plugin && present("project/.mcp.json") {
+    if project_plugin && present("project/.mcp.json/mcp/graphhelm") {
         out.push("project/.mcp.json=use-plugin-mcp".to_owned());
     }
     for id in ["home/.claude/CLAUDE.md", "home/AGENTS.md"] {

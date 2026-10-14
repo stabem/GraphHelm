@@ -917,6 +917,60 @@ impl LocalEventRepository {
         <Self as EventRepository>::read_replay_stream(self, scope, stream_id)
     }
 
+    /// [`Self::read_replay_stream`]'s tail: the events of one stream whose sequence is greater
+    /// than `after`, in order, plus the stream's head, both read under ONE shared lock, with the
+    /// same `MAX_READ_ALL` bound on what is returned (#1226). The filter runs BEFORE the clone, so
+    /// a reader that keeps its own fold (the runtime driver's `ProjectionGeneration`) pays for the
+    /// events it has not seen, not for the whole stream on every read. `after == 0` returns the
+    /// whole stream.
+    ///
+    /// The head is what makes a kept fold safe: a tail can be EMPTY because nothing was appended,
+    /// or because the store under this path was replaced by a shorter or different history. Only
+    /// the head (next sequence and last hash, from the same locked state as the tail) tells the
+    /// two apart; a reader whose fold does not end at that head must rebuild. `None` means the
+    /// stream has no events.
+    pub fn read_stream_after(
+        &self,
+        scope: &RepositoryScope,
+        stream_id: &str,
+        after: u64,
+    ) -> Result<(Vec<EventEnvelope>, Option<StreamHead>), EventRepositoryError> {
+        OpaqueId::parse(stream_id).map_err(|_| EventRepositoryError::Invalid)?;
+        self.with_shared_lock(|| {
+            let state = self.load_state("read_stream_after")?;
+            let key = stream_key(scope, stream_id)?;
+            let head = state
+                .next_sequence
+                .get(&key)
+                .map(|next_sequence| {
+                    Ok::<_, EventRepositoryError>(StreamHead {
+                        next_sequence: *next_sequence,
+                        last_event_hash: EventHash::parse(
+                            state
+                                .last_hash
+                                .get(&key)
+                                .cloned()
+                                .unwrap_or_else(|| GENESIS_HASH.into()),
+                        )
+                        .map_err(|_| EventRepositoryError::Integrity)?,
+                    })
+                })
+                .transpose()?;
+            let events = state
+                .batches
+                .iter()
+                .filter(|batch| &batch.scope == scope && batch.stream_id == stream_id)
+                .flat_map(|batch| batch.events.iter())
+                .filter(|event| event.sequence > after)
+                .cloned()
+                .collect::<Vec<_>>();
+            if events.len() > MAX_READ_ALL {
+                return Err(EventRepositoryError::LimitExceeded);
+            }
+            Ok((events, head))
+        })
+    }
+
     pub fn next_sequence(
         &self,
         scope: &RepositoryScope,
@@ -8772,6 +8826,57 @@ mod limit_tests {
                 println!("ROW size={size} op=append_warm iter={i} wall_us={wall} loads={loads}");
             }
         }
+    }
+
+    /// #1226: a reader that keeps its own fold asks only for what it has not seen. Catches a tail
+    /// that skips or repeats the boundary event, one that returns another stream's events, and
+    /// one that is not the same events, in order, as the full read's suffix. Cost: one temporary
+    /// store, nine appends, five reads.
+    #[test]
+    fn read_stream_after_returns_exactly_the_streams_tail() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = cache_repository(directory.path());
+        repository.append_atomic(&valid_graph_request()).unwrap();
+        let scope = wake_scope();
+        for sequence in 2..=9 {
+            repository
+                .append_atomic(&wake_append(sequence, &format!("tail-{sequence}")))
+                .unwrap();
+        }
+        let full = repository.read_replay_stream(&scope, "stream-1").unwrap();
+        assert_eq!(full.len(), 9);
+        let (whole, head) = repository.read_stream_after(&scope, "stream-1", 0).unwrap();
+        assert_eq!(whole, full, "after 0 is the whole stream");
+        let head = head.expect("a stream with events has a head");
+        assert_eq!(head.next_sequence, 10);
+        assert_eq!(
+            head.last_event_hash, full[8].event_hash,
+            "the head is the last event's hash"
+        );
+        let (tail, tail_head) = repository.read_stream_after(&scope, "stream-1", 4).unwrap();
+        assert_eq!(
+            tail.iter().map(|event| event.sequence).collect::<Vec<_>>(),
+            vec![5, 6, 7, 8, 9]
+        );
+        assert_eq!(tail, full[4..].to_vec(), "the same envelopes, in order");
+        assert_eq!(
+            tail_head,
+            Some(head.clone()),
+            "the head does not depend on `after`"
+        );
+        let (empty, empty_head) = repository.read_stream_after(&scope, "stream-1", 9).unwrap();
+        assert!(empty.is_empty(), "nothing after the head");
+        assert_eq!(
+            empty_head,
+            Some(head),
+            "an empty tail still names the head it ends at"
+        );
+        let (other, other_head) = repository.read_stream_after(&scope, "stream-2", 0).unwrap();
+        assert!(
+            other.is_empty(),
+            "another stream's events are never returned"
+        );
+        assert_eq!(other_head, None, "a stream with no events has no head");
     }
 
     // --------------------------------------------------------------------------------

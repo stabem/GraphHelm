@@ -7,7 +7,7 @@
 
 use graphhelm_events::{
     EventRepositoryError, EvidenceError, EvidenceSealer, LocalEventRepository, PreparedAppend,
-    ReplayError, SealedEvidence, replay,
+    ReplayError, SealedEvidence,
 };
 use graphhelm_execution::{TransitionRequest, apply_transition};
 use graphhelm_protocols::{
@@ -69,9 +69,159 @@ pub async fn record_outcome_with_evidence(
     node: &str,
     work: &WorkOutcome,
 ) -> Result<RecordedOutcome, DriverError> {
-    let history = store.read_replay_stream(scope, stream.as_str())?;
-    let execution_start = execution_start_event(&history, execution_id)?;
-    let projection = replay(scope, stream.as_str(), &history)?;
+    // A caller outside a drive holds no fold, so this one starts from sequence 0: the same
+    // events, the same checks and the same projection a full `replay` gave it before #1226.
+    record_outcome_cached(
+        store,
+        sealer,
+        ids,
+        scope,
+        stream,
+        execution_id,
+        actor,
+        node,
+        work,
+        &ProjectionCache::default(),
+    )
+    .await
+}
+
+/// #1226: the projection one drive keeps, so each reread and each outcome write folds only the
+/// events appended since the last read, instead of cloning and replaying the whole stream (the
+/// O(head) cost per reread that made a drive O(head²)).
+///
+/// What it must never change is a DECISION. [`ProjectionCache::at_head`] returns the projection
+/// `replay` would return for the stream at the head it read: the same events, the same integrity
+/// checks (`ProjectionGeneration::apply_page` runs schema, envelope, scope, project-level,
+/// sequence, previous-hash, event-hash and idempotency checks, with ONE fold shared with
+/// `replay`), the same `stream_id`, the same `MAX_READ_ALL` refusal. Every call still reads the
+/// store's latest head under the shared lock, so an append by another writer (a pause, a
+/// proposal, an owner signal) is seen at exactly the reread that saw it before, which is what
+/// the pause and plan-gate ordering in `drive_inner` depends on.
+///
+/// FAILS CLOSED. The fold is kept only while it ends at the store's head (next sequence AND last
+/// hash, read under the same lock as the tail): a store replaced under the same path by a
+/// shorter or different history fails that check even when its tail is empty, and a longer one
+/// fails `apply_page`'s chain check. Either way the fold is thrown away and rebuilt once from
+/// sequence 0; a second refusal is the error a full replay would have returned.
+#[derive(Clone, Default)]
+pub(crate) struct ProjectionCache(Arc<std::sync::Mutex<Option<CachedFold>>>);
+
+struct CachedFold {
+    generation: graphhelm_events::ProjectionGeneration,
+    /// Every persisted `execution_started` envelope the fold has passed, for
+    /// [`execution_start_event`]: the exact envelope binds the accounting receipt.
+    started: Vec<EventEnvelope>,
+}
+
+impl CachedFold {
+    fn new(scope: &RepositoryScope, stream: &str) -> Result<Self, DriverError> {
+        Ok(Self {
+            generation: graphhelm_events::ProjectionGeneration::new(
+                scope.clone(),
+                stream.to_owned(),
+                "runtime-driver".to_owned(),
+                1,
+                1,
+            )?,
+            started: Vec::new(),
+        })
+    }
+
+    /// Folds the store's events after this fold's head; refuses unless the fold then ends at
+    /// exactly the store's head.
+    fn advance(
+        &mut self,
+        store: &LocalEventRepository,
+        scope: &RepositoryScope,
+        stream: &str,
+    ) -> Result<(), DriverError> {
+        let after = self.generation.watermark().last_sequence();
+        let (events, head) = store.read_stream_after(scope, stream, after)?;
+        let total = after
+            .checked_add(events.len() as u64)
+            .ok_or(EventRepositoryError::LimitExceeded)?;
+        if total > graphhelm_events::MAX_READ_ALL as u64 {
+            // `read_replay_stream`'s own refusal, so a stream too long to replay is refused
+            // with the same error it always was.
+            return Err(EventRepositoryError::LimitExceeded.into());
+        }
+        for page in events.chunks(graphhelm_events::MAX_READ_PAGE) {
+            self.generation.apply_page(page)?;
+        }
+        let watermark = self.generation.watermark();
+        let ends_at_head = match &head {
+            Some(head) => {
+                head.next_sequence == watermark.last_sequence() + 1
+                    && Some(&head.last_event_hash) == watermark.last_event_hash()
+            }
+            None => watermark.last_sequence() == 0,
+        };
+        if !ends_at_head {
+            return Err(ReplayError::Corrupt.into());
+        }
+        self.started.extend(
+            events
+                .iter()
+                .filter(|event| matches!(event.kind, EventKind::ExecutionStarted(_)))
+                .cloned(),
+        );
+        Ok(())
+    }
+}
+
+impl ProjectionCache {
+    /// The projection at the store's current head, and the `execution_started` envelopes seen.
+    fn at_head(
+        &self,
+        store: &LocalEventRepository,
+        scope: &RepositoryScope,
+        stream: &str,
+    ) -> Result<(ExecutionProjection, Vec<EventEnvelope>), DriverError> {
+        let mut guard = self.0.lock().map_err(|_| EventRepositoryError::StorageAt {
+            site: "driver-projection-cache:mutex-poisoned",
+            os: None,
+        })?;
+        let kept = match guard.as_mut() {
+            Some(fold) => fold.advance(store, scope, stream).is_ok(),
+            None => false,
+        };
+        if !kept {
+            // A fold that refused part-way is half-applied: never reuse it.
+            *guard = None;
+            let mut fresh = CachedFold::new(scope, stream)?;
+            fresh.advance(store, scope, stream)?;
+            *guard = Some(fresh);
+        }
+        let Some(fold) = guard.as_ref() else {
+            return Err(ReplayError::Corrupt.into());
+        };
+        let mut projection = fold.generation.projection().clone();
+        // `replay` names the stream once it has folded an event; `apply_page` leaves that to
+        // its caller.
+        if projection.stream_id.is_none() && fold.generation.watermark().last_sequence() > 0 {
+            projection.stream_id = Some(stream.to_owned());
+        }
+        Ok((projection, fold.started.clone()))
+    }
+}
+
+/// [`record_outcome_with_evidence`] against a drive's kept fold (#1226).
+#[allow(clippy::too_many_arguments)]
+async fn record_outcome_cached(
+    store: &LocalEventRepository,
+    sealer: &dyn EvidenceSealer,
+    ids: &dyn IdGenerator,
+    scope: &RepositoryScope,
+    stream: &OpaqueId,
+    execution_id: &OpaqueId,
+    actor: &PersistedActor,
+    node: &str,
+    work: &WorkOutcome,
+    cache: &ProjectionCache,
+) -> Result<RecordedOutcome, DriverError> {
+    let (projection, started) = cache.at_head(store, scope, stream.as_str())?;
+    let execution_start = execution_start_event(&started, execution_id)?;
     let current = projection
         .node_states
         .get(node)
@@ -281,6 +431,7 @@ pub type StoreOpen =
 #[allow(clippy::too_many_arguments)]
 async fn write_outcome(
     store_open: &StoreOpen,
+    cache: &ProjectionCache,
     sealer: &Arc<dyn EvidenceSealer>,
     ids: &Arc<dyn IdGenerator>,
     scope: &RepositoryScope,
@@ -291,6 +442,7 @@ async fn write_outcome(
     work: WorkOutcome,
 ) -> Result<NodeState, DriverError> {
     let store_open = store_open.clone();
+    let cache = cache.clone();
     let sealer = sealer.clone();
     let ids = ids.clone();
     let scope = scope.clone();
@@ -300,7 +452,7 @@ async fn write_outcome(
     let handle = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || {
         let store = store_open()?;
-        let recorded = handle.block_on(record_outcome_with_evidence(
+        let recorded = handle.block_on(record_outcome_cached(
             &store,
             sealer.as_ref(),
             ids.as_ref(),
@@ -310,6 +462,7 @@ async fn write_outcome(
             &actor,
             &node,
             &work,
+            &cache,
         ))?;
         Ok(recorded.next_state)
     })
@@ -458,19 +611,22 @@ async fn append_preflight_refusal(
     .expect("the writer task is never cancelled")
 }
 
-/// One serialized projection reread through `spawn_blocking`.
+/// One serialized projection reread through `spawn_blocking`: the store's latest head, folded
+/// onto the drive's kept projection (#1226), so it costs the events appended since the last
+/// reread rather than the whole stream.
 async fn reread_async(
     store_open: &StoreOpen,
+    cache: &ProjectionCache,
     scope: &RepositoryScope,
     stream: &OpaqueId,
 ) -> Result<ExecutionProjection, DriverError> {
     let store_open = store_open.clone();
+    let cache = cache.clone();
     let scope = scope.clone();
     let stream = stream.clone();
     tokio::task::spawn_blocking(move || {
         let store = store_open()?;
-        let history = store.read_replay_stream(&scope, stream.as_str())?;
-        Ok(replay(&scope, stream.as_str(), &history)?)
+        Ok(cache.at_head(&store, &scope, stream.as_str())?.0)
     })
     .await
     .expect("the writer task is never cancelled")
@@ -1024,6 +1180,9 @@ async fn drive_inner(
     context: Option<crate::context::ContextPorts>,
     receipts: Option<Arc<dyn graphhelm_events::EvidenceOpener>>,
 ) -> Result<ExecutionProjection, DriverError> {
+    // #1226: ONE kept fold for this drive. Every reread and every outcome write below folds onto
+    // it, reading only what was appended since; it never outlives the drive.
+    let cache = ProjectionCache::default();
     // Preflight, before any node effect: a retry policy that contradicts itself, and (#1065) a
     // declared `context.budgetBytes` that cannot be read. Both are graph typos, both refuse the
     // EXECUTION with a journaled diagnostic and a terminal settlement — never a node that is
@@ -1033,7 +1192,7 @@ async fn drive_inner(
     preflight_diagnostics.extend(customs_declaration_diagnostics(&spec)?);
     preflight_diagnostics.extend(delegation_declaration_diagnostics(&spec)?);
     if !preflight_diagnostics.is_empty() {
-        let projection = reread_async(&store_open, &scope, &stream).await?;
+        let projection = reread_async(&store_open, &cache, &scope, &stream).await?;
         let already_terminal = matches!(
             projection.simulation_status,
             Some(
@@ -1054,7 +1213,7 @@ async fn drive_inner(
             )
             .await?;
         }
-        return reread_async(&store_open, &scope, &stream).await;
+        return reread_async(&store_open, &cache, &scope, &stream).await;
     }
 
     let mut in_flight: tokio::task::JoinSet<(String, Option<WorkOutcome>)> =
@@ -1076,7 +1235,7 @@ async fn drive_inner(
         }
 
         // Approve every untouched node — the legal Draft -> Ready route, as 04f does.
-        let projection = reread_async(&store_open, &scope, &stream).await?;
+        let projection = reread_async(&store_open, &cache, &scope, &stream).await?;
         let pending_proposal = projection.proposed_drafts.iter().any(|draft_id| {
             !projection
                 .applied_drafts
@@ -1114,6 +1273,7 @@ async fn drive_inner(
             if state == NodeState::Draft {
                 write_outcome(
                     &store_open,
+                    &cache,
                     &sealer,
                     &ids,
                     &scope,
@@ -1127,7 +1287,7 @@ async fn drive_inner(
             }
         }
 
-        let projection = reread_async(&store_open, &scope, &stream).await?;
+        let projection = reread_async(&store_open, &cache, &scope, &stream).await?;
 
         // #123's RELEASE. Three conditions, and the third is load-bearing rather than defensive:
         // re-reading the aggregate every pass is what lets this section see a pause the operator
@@ -1158,6 +1318,7 @@ async fn drive_inner(
             {
                 write_outcome(
                     &store_open,
+                    &cache,
                     &sealer,
                     &ids,
                     &scope,
@@ -1171,14 +1332,14 @@ async fn drive_inner(
                 released_any = true;
             }
         }
-        // Re-read ONLY when a release actually appended. Unconditional here would put a full
-        // O(head) `read_replay_stream` + `replay` on EVERY pass of EVERY execution — the
-        // overwhelming majority of which release nothing — which is the exact cost term this fix
-        // exists to remove. It would also silently widen behaviour: the loop would start observing
-        // concurrent external appends mid-pass, where before it computed candidates from the
-        // projection it already held. Neither was asked for.
+        // Re-read ONLY when a release actually appended. Unconditional here cost a full O(head)
+        // read and replay on EVERY pass of EVERY execution when this was written; since #1226 a
+        // reread folds only the tail, so the cost argument is smaller, but the behaviour argument
+        // stands unchanged: an unconditional reread would silently widen behaviour, the loop
+        // starting to observe concurrent external appends mid-pass, where before it computed
+        // candidates from the projection it already held. That was not asked for.
         let projection = if released_any {
-            reread_async(&store_open, &scope, &stream).await?
+            reread_async(&store_open, &cache, &scope, &stream).await?
         } else {
             projection
         };
@@ -1297,7 +1458,7 @@ async fn drive_inner(
             // empty, and the `plan.is_empty() && in_flight.is_empty()` exit is never reached.
             // One stops a dispatch mid-plan; the other ends the pass. Removing either as
             // "covered by the other" is how this becomes a hang.
-            let at_dispatch = reread_async(&store_open, &scope, &stream).await?;
+            let at_dispatch = reread_async(&store_open, &cache, &scope, &stream).await?;
             if at_dispatch.simulation_status == Some(SimulationStatus::Paused) {
                 break;
             }
@@ -1381,6 +1542,7 @@ async fn drive_inner(
             if current == NodeState::Ready {
                 write_outcome(
                     &store_open,
+                    &cache,
                     &sealer,
                     &ids,
                     &scope,
@@ -1394,6 +1556,7 @@ async fn drive_inner(
             }
             write_outcome(
                 &store_open,
+                &cache,
                 &sealer,
                 &ids,
                 &scope,
@@ -1504,7 +1667,8 @@ async fn drive_inner(
                                 sessions.drop_all();
                             }
                             write_outcome(
-                                &store_open, &sealer, &ids, &scope, &stream,
+                                &store_open,
+                                &cache, &sealer, &ids, &scope, &stream,
                                 &execution_id, &actor, node, work,
                             )
                             .await?;
@@ -1537,6 +1701,7 @@ async fn drive_inner(
         for node in std::mem::take(&mut in_flight_nodes) {
             write_outcome(
                 &store_open,
+                &cache,
                 &sealer,
                 &ids,
                 &scope,
@@ -1570,7 +1735,7 @@ async fn drive_inner(
         // immediate mode promises over graceful, and neither half of that needs a second
         // aggregate event to be true. Skipping the append here, not skipping the abort above, is
         // what keeps the promise without touching the guard that makes a duplicate corrupt.
-        let already_paused = reread_async(&store_open, &scope, &stream)
+        let already_paused = reread_async(&store_open, &cache, &scope, &stream)
             .await?
             .simulation_status
             == Some(SimulationStatus::Paused);
@@ -1589,12 +1754,12 @@ async fn drive_inner(
             )
             .await?;
         }
-        return reread_async(&store_open, &scope, &stream).await;
+        return reread_async(&store_open, &cache, &scope, &stream).await;
     }
 
     // Quiescence: complete when every node is terminal, exactly as 04f's
     // complete_if_quiesced decides it.
-    let projection = reread_async(&store_open, &scope, &stream).await?;
+    let projection = reread_async(&store_open, &cache, &scope, &stream).await?;
     let pending_proposal = projection.proposed_drafts.iter().any(|draft_id| {
         !projection
             .applied_drafts
@@ -1650,5 +1815,136 @@ async fn drive_inner(
         )
         .await?;
     }
-    reread_async(&store_open, &scope, &stream).await
+    reread_async(&store_open, &cache, &scope, &stream).await
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use chrono::TimeZone as _;
+    use graphhelm_events::replay;
+    use graphhelm_protocols::{
+        ActorId, Clock, ExecutionId, ExecutionMode, ExecutionPaused, ExecutionStarted,
+        PersistedActorType, ProjectId, WireHash, WorkspaceId,
+    };
+
+    use super::*;
+
+    struct FixedClock;
+    impl Clock for FixedClock {
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::Utc
+                .with_ymd_and_hms(2026, 10, 14, 12, 0, 0)
+                .unwrap()
+        }
+    }
+
+    #[derive(Default)]
+    struct Ids(AtomicU64);
+    impl IdGenerator for Ids {
+        fn next_id(&self, prefix: &'static str) -> String {
+            format!("{prefix}-{}", self.0.fetch_add(1, Ordering::SeqCst) + 1)
+        }
+    }
+
+    const STREAM: &str = "stream-cache-test";
+
+    fn scope() -> RepositoryScope {
+        RepositoryScope::new(
+            WorkspaceId::parse("workspace-cache").unwrap(),
+            ProjectId::parse("project-cache").unwrap(),
+            Some(ExecutionId::parse("execution-cache").unwrap()),
+        )
+    }
+
+    fn event(key: &str, kind: EventKind) -> NewEvent {
+        NewEvent::new(
+            OpaqueId::parse(key).unwrap(),
+            PersistedActor::new(
+                PersistedActorType::System,
+                ActorId::parse("system-cache").unwrap(),
+            ),
+            Sensitivity::Internal,
+            kind,
+            vec![],
+            vec![],
+        )
+    }
+
+    /// A store holding `execution_started` and, when `paused`, `execution_paused` after it.
+    fn store(directory: &std::path::Path, tag: &str, paused: bool) -> LocalEventRepository {
+        let repository =
+            LocalEventRepository::open(directory, Arc::new(FixedClock), Arc::new(Ids::default()))
+                .unwrap();
+        let execution_id = OpaqueId::parse("execution-cache").unwrap();
+        let mut events = vec![event(
+            &format!("{tag}-started"),
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: execution_id.clone(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode: ExecutionMode::Autopilot,
+            }),
+        )];
+        if paused {
+            events.push(event(
+                &format!("{tag}-paused"),
+                EventKind::ExecutionPaused(ExecutionPaused { execution_id }),
+            ));
+        }
+        let request = PreparedAppend::new(
+            scope(),
+            OpaqueId::parse(STREAM).unwrap(),
+            1,
+            events,
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        repository.append_atomic(&request).unwrap();
+        repository
+    }
+
+    fn replayed(store: &LocalEventRepository) -> ExecutionProjection {
+        replay(
+            &scope(),
+            STREAM,
+            &store.read_replay_stream(&scope(), STREAM).unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// #1226: a kept fold that no longer matches the store it is asked about (replaced under the
+    /// same path by a shorter history, or by a different one the fold's tail read would extend)
+    /// is thrown away; the driver acts on the replayed projection, never the stale one.
+    #[test]
+    fn a_kept_fold_that_no_longer_matches_the_store_is_rebuilt() {
+        let longer_dir = tempfile::tempdir().unwrap();
+        let shorter_dir = tempfile::tempdir().unwrap();
+        let longer = store(longer_dir.path(), "first", true);
+        let shorter = store(shorter_dir.path(), "second", false);
+
+        let cache = ProjectionCache::default();
+        let (stale, _) = cache.at_head(&longer, &scope(), STREAM).unwrap();
+        assert_eq!(stale, replayed(&longer), "the first fold equals replay");
+        assert_ne!(
+            stale,
+            replayed(&shorter),
+            "HARNESS-BROKE: the two histories project alike, so a stale fold would pass unseen"
+        );
+
+        // Shorter replacement: the tail after the fold's head is empty; only the head check sees it.
+        let (projection, started) = cache.at_head(&shorter, &scope(), STREAM).unwrap();
+        assert_eq!(projection, replayed(&shorter));
+        assert_eq!(
+            started.len(),
+            1,
+            "the rebuilt fold carries only the new store's start"
+        );
+
+        // A different, longer history: the tail's first event does not chain onto the fold.
+        let (projection, _) = cache.at_head(&longer, &scope(), STREAM).unwrap();
+        assert_eq!(projection, replayed(&longer));
+    }
 }

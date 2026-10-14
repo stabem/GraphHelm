@@ -3,19 +3,23 @@ import { writeFile } from 'node:fs/promises';
 import { availableParallelism, cpus, platform, release } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { summarize } from './stats.mjs';
+import { reduceEnvelopeObservation, summarize } from './stats.mjs';
 
 const args = process.argv.slice(2);
 const options = {};
 for (let i = 0; i < args.length; i += 2) {
-  if (!['--base', '--runs', '--out'].includes(args[i]) || !args[i + 1] || options[args[i]]) {
-    throw new Error('Usage: node tools/studio-perf/measure.mjs --base <fixture URL> --runs <1..20> --out <file>');
+  if (!['--base', '--runs', '--out', '--mode', '--execution', '--source-head'].includes(args[i]) || !args[i + 1] || options[args[i]]) {
+    throw new Error('Usage: node tools/studio-perf/measure.mjs --base <fixture URL> --runs <1..20> --out <file> [--mode clicks|envelopes --execution <id> --source-head <sha>]');
   }
   options[args[i]] = args[i + 1];
 }
 const runs = Number(options['--runs']);
-if (!Number.isInteger(runs) || runs < 1 || runs > 20 || !options['--out']) {
+const mode = options['--mode'] ?? 'clicks';
+if (!Number.isInteger(runs) || runs < 1 || runs > 20 || !options['--out'] || !['clicks', 'envelopes'].includes(mode)) {
   throw new Error('--runs must be an integer from 1 to 20; --out is required');
+}
+if (mode === 'envelopes' && (!options['--execution'] || !options['--source-head'] || runs !== 1)) {
+  throw new Error('envelopes mode requires --execution, --source-head, and --runs 1');
 }
 const base = new URL(options['--base']);
 if (base.protocol !== 'http:' || !['localhost', '127.0.0.1'].includes(base.hostname)
@@ -30,6 +34,105 @@ const viewport = { width: 1440, height: 900 };
 const browser = await chromium.launch({ headless: true });
 const observations = [];
 try {
+  if (mode === 'envelopes') {
+    const context = await browser.newContext({ viewport });
+    try {
+      await context.addInitScript(({ executionId, sourceHead }) => {
+        const state = window.studioEnvelopePerf = {
+          executionId, sourceHead, requests: [], checkingStartedAt: null, settledAt: null,
+          eventHead: null, eventHeadChanged: false, eventHeadObserved: false, timingBufferLost: false, startedAt: null,
+        };
+        const mark = () => performance.timeOrigin + performance.now();
+        state.startedAt = mark();
+        const observer = new PerformanceObserver(list => {
+          for (const entry of list.getEntries()) {
+            if (entry.entryType !== 'resource' || !entry.name.includes('/v1/executions/')) continue;
+            let url;
+            try { url = new URL(entry.name, location.href); } catch { continue; }
+            if (url.searchParams.get('execution') !== executionId && !url.pathname.includes(`/executions/${executionId}/`)) continue;
+            const pathname = url.pathname;
+            const kind = pathname.includes('/evidence/') ? 'single'
+              : pathname.endsWith('/evidence') && url.searchParams.has('ids') ? 'batch' : null;
+            if (!kind) continue;
+            const prior = state.requests.find(request => request.name === entry.name && request.responseEnd === null);
+            if (prior) {
+              prior.responseEnd = entry.responseEnd > 0 ? performance.timeOrigin + entry.responseEnd : null;
+              prior.status ||= entry.responseStatus || (entry.responseEnd > 0 ? 200 : 0);
+            } else {
+              state.requests.push({ name: entry.name, kind,
+                responseEnd: entry.responseEnd > 0 ? performance.timeOrigin + entry.responseEnd : null,
+                status: entry.responseStatus || (entry.responseEnd > 0 ? 200 : 0), poll: state.checkingStartedAt !== null });
+            }
+          }
+          state.timingBufferLost ||= performance.getEntriesByType('resource').length >= 250;
+        });
+        observer.observe({ type: 'resource', buffered: true });
+        const originalFetch = window.fetch;
+        window.fetch = async (...args) => {
+          const input = args[0];
+          const raw = typeof input === 'string' ? input : input?.url;
+          let tracked;
+          if (raw) {
+            try {
+              const url = new URL(raw, location.href);
+              if (url.pathname.includes(`/executions/${executionId}/`) && url.pathname.includes('/evidence')) {
+                const kind = url.pathname.endsWith('/evidence') && url.searchParams.has('ids') ? 'batch' : 'single';
+                tracked = { name: url.href, kind, responseEnd: null, status: 0, poll: state.checkingStartedAt !== null };
+                state.requests.push(tracked);
+              }
+            } catch { /* ignore non-URL fetch inputs */ }
+          }
+          const response = await originalFetch(...args);
+          if (raw && /\/events(?:\?|$)/.test(raw)) {
+            const observed = await response.clone().json().catch(() => null);
+            const head = observed?.head;
+            if (Number.isSafeInteger(head)) {
+              state.eventHeadObserved = true;
+              if (state.eventHead !== null && state.eventHead !== head) state.eventHeadChanged = true;
+              state.eventHead = head;
+            }
+          }
+          if (tracked) {
+            tracked.status = response.status;
+            response.clone().arrayBuffer().then(() => { tracked.responseEnd = mark(); }).catch(() => { tracked.status = 0; });
+          }
+          return response;
+        };
+        const beacon = () => {
+          const candidates = [...document.querySelectorAll('[role="status"], [role="note"], p, span')];
+          const checking = candidates.some(element => element.textContent.trim() === 'Checking question envelopes');
+          const state = window.studioEnvelopePerf;
+          if (checking && state.checkingStartedAt === null) state.checkingStartedAt = mark();
+          if (!checking && state.checkingStartedAt !== null && state.settledAt === null) state.settledAt = mark();
+        };
+        new MutationObserver(beacon).observe(document, { subtree: true, childList: true, characterData: true });
+        beacon();
+        setTimeout(() => { state.cutoffAt = mark(); state.pendingRequests = state.requests.filter(request => request.responseEnd === null).length; }, 30000);
+      }, { executionId: options['--execution'], sourceHead: options['--source-head'] });
+      const page = await context.newPage();
+      page.setDefaultTimeout(30000);
+      const navigationStartedAt = await page.evaluate(url => {
+        const started = performance.timeOrigin + performance.now();
+        window.name = String(started);
+        location.assign(url);
+        return started;
+      }, base.href);
+      await page.waitForURL(url => url.origin === base.origin, { waitUntil: 'commit', timeout: 10000 });
+      await page.waitForFunction(() => window.studioEnvelopePerf?.cutoffAt != null, { timeout: 35000 });
+      const captured = await page.evaluate(() => ({ ...window.studioEnvelopePerf, navigationStartedAt: Number(window.name) }));
+      const { executionId, sourceHead, requests, checkingStartedAt, settledAt, cutoffAt, pendingRequests, eventHeadChanged, eventHeadObserved, timingBufferLost } = captured;
+      const result = reduceEnvelopeObservation({ executionId, sourceHead, navigationStartedAt,
+        requests: requests.map(({ kind, responseEnd, status, poll }) => ({ executionId, kind, responseEnd, status, poll })),
+        checkingStartedAt, settledAt, cutoffAt, pendingRequests, eventHeadChanged: eventHeadObserved ? eventHeadChanged : null, timingBufferLost });
+      const report = { mode, base: base.origin, observation: result,
+        totalNavigationMs: settledAt === null ? null : settledAt - navigationStartedAt,
+        note: 'The post-evidence gap includes browser scheduling and rendering; it is not pure CPU time.' };
+      await writeFile(options['--out'], JSON.stringify(report, null, 2) + '\n');
+      console.log(result.status === 'ok'
+        ? `envelopes: ${result.postEvidenceGapMs.toFixed(1)} ms after evidence bodies; navigation ${report.totalNavigationMs?.toFixed(1) ?? 'unknown'} ms`
+        : `envelopes: unknown (${result.reason})`);
+    } finally { await context.close(); }
+  } else {
   for (let run = 1; run <= runs; run++) {
     // A fresh context per run resets session/UI state; one browser, no parallel work.
     const context = await browser.newContext({ viewport });
@@ -130,6 +233,7 @@ try {
   console.log(Object.entries(interactions).map(([name, result]) => result.milliseconds
     ? `${name}: median/p90/max ${Object.values(result.milliseconds).map(ms => ms.toFixed(1)).join('/')} ms`
     : `${name}: ${result.timeouts} timeout, ${result.skipped} skipped`).join('; '));
+  }
 } finally {
   await browser.close();
 }

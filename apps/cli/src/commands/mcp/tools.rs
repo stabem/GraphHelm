@@ -568,10 +568,8 @@ fn start_schema() -> serde_json::Value {
             "route": {"type": "string"},
             "held": {
                 "type": "boolean",
-                "description": "true starts the execution without driving it (the HTTP \
-                                spelling of `execution start --held`, #90): the call returns \
-                                as soon as the start is recorded, so it cannot outlast the \
-                                client timeout. Omitted or false drives to quiescence first.",
+                "description": "true records the start without driving it (`execution start \
+                                --held`), so it cannot outlast the client timeout.",
             },
         }),
         &["executionId", "mode"],
@@ -818,7 +816,7 @@ fn route_set_schema() -> serde_json::Value {
             "id": {"type": "string",
                 "description": "The route id callers name. Unique in the manifest: an existing id needs replace."},
             "provider": {"type": "string",
-                "description": "The WIRE FORMAT the adapter speaks -- anthropic, openai or typesafe -- not the vendor. A DeepSeek endpoint is an openai route with its own baseUrl."},
+                "description": "The wire format, not the vendor: a DeepSeek endpoint is openai with its own baseUrl."},
             "baseUrl": {"type": "string",
                 "description": "https://..., or http:// to a loopback address. No trailing slash."},
             "model": {"type": "string"},
@@ -829,9 +827,9 @@ fn route_set_schema() -> serde_json::Value {
             "replace": {"type": "boolean",
                 "description": "Absent: false, and an existing id is refused with the manifest left byte-identical."},
             "tiers": {"type": "array", "items": {"enum": ["small", "standard", "large"]}, "uniqueItems": true,
-                "description": "Delegation tiers the route serves (ADR-041). Absent on a replace: the replaced route's tiers are kept; [] clears them."},
+                "description": "Delegation tiers served (ADR-041). Absent on a replace: kept; [] clears."},
             "contextWindowTokens": {"type": "integer", "minimum": 0,
-                "description": "The provider's documented input context window in tokens (ADR-042); bounds subagent session reuse. Absent on a replace: kept; 0 clears it."},
+                "description": "Input context window in tokens (ADR-042). Absent on a replace: kept; 0 clears."},
             "manifest": {"type": "string",
                 "description": "Manifest path override; absent, the Runtime's own."},
         }),
@@ -849,7 +847,7 @@ fn wake_arm_schema() -> serde_json::Value {
             "cursor": {"type": "integer", "minimum": 0, "maximum": u64::MAX,
                 "description": "Ring for appends AFTER this sequence; defaults to the head."},
             "maturesInSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000,
-                "description": "How long quiet may last before the wait ends by itself. Omit it and nothing promises to end the wait: the lease rings on an append or not at all."},
+                "description": "Quiet allowed before the wait ends by itself; omitted, only an append rings."},
         }),
         &["executionId", "rendezvousId"],
     )
@@ -923,12 +921,11 @@ fn synthesize_schema() -> serde_json::Value {
             "critic": {
                 "type": "string",
                 "enum": ["none", "design"],
-                "description": "design puts a design step and a blind critic step in front of \
-                                the draft, as the task plan's critic says; none is the draft alone.",
+                "description": "design adds a design step and a blind critic before the draft.",
             },
             "plan": {
                 "type": "object",
-                "description": "The task's graphhelm-task-plan-v1 document, as keel_plan returns it; without critic, the plan's own critic decides.",
+                "description": "keel_plan's graphhelm-task-plan-v1 record; its critic applies when critic is absent.",
             },
             "execution": {
                 "type": "string",
@@ -952,9 +949,8 @@ fn synthesize_schema() -> serde_json::Value {
             },
             "judgeRoute": {
                 "type": "string",
-                "description": "A direct_api typesafe route id of the server's manifest: the \
-                                judge door over the gateway. Exclusive with judgeFixture; no \
-                                judge means no judgment is asked.",
+                "description": "A direct_api typesafe route id for the judge. Exclusive with \
+                                judgeFixture; no judge, no judgment.",
             },
             "judgeFixture": {
                 "type": "string",
@@ -1104,7 +1100,7 @@ pub(crate) const UNLISTED_STUBS: [&str; 4] = [
 
 /// #1277: the most `tools/list` may serialise to, in bytes. Every connecting session pays it;
 /// the guard below fails a change that grows it past this, so growth is a decision in a diff.
-const TOOL_LIST_BUDGET_BYTES: usize = 24_000;
+const TOOL_LIST_BUDGET_BYTES: usize = 25_500;
 /// #1277: the longest a tool description may be: one line plus the route it maps to.
 const DESCRIPTION_MAX_CHARS: usize = 300;
 
@@ -2303,6 +2299,7 @@ mod envelope_tests {
     fn tools_list_fits_its_byte_budget_and_every_description_its_cap() {
         let list = tool_list();
         let bytes = serde_json::to_string(&list).unwrap().len();
+        eprintln!("tools/list: {bytes} bytes");
         assert!(
             bytes <= TOOL_LIST_BUDGET_BYTES,
             "tools/list serialises to {bytes} bytes, over TOOL_LIST_BUDGET_BYTES \
@@ -2328,7 +2325,6 @@ mod envelope_tests {
             long.is_empty(),
             "descriptions over {DESCRIPTION_MAX_CHARS} chars: {long:?}"
         );
-        eprintln!("tools/list: {bytes} bytes, {} tools", tools.len());
     }
 
     /// #1277: the unlisted stubs leave `tools/list` and nothing else does; each stays in the

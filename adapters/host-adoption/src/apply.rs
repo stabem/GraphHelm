@@ -92,7 +92,7 @@ fn apply_engine(
 ) -> Result<Value, AdoptionError> {
     storage::diagnostic_reset();
     storage::diagnostic_stage("apply.preflight");
-    let operations = preflight(plan, accepted_digest)?;
+    let operations = preflight(project, home, plan, accepted_digest)?;
     storage::diagnostic_stage("apply.open_roots");
     let project = Root::open(project, false)?;
     let home = Root::open(home, false)?;
@@ -475,7 +475,12 @@ fn compensate(
 pub(crate) fn receipt(record: &journal::Journal) -> Value {
     json!({"apiVersion":"p50.dev/adoption/v1","kind":"ApplyReceipt","id":record.transaction_id,"spec":{"transactionId":record.transaction_id,"planDigest":record.plan_digest,"backupId":record.backup_id,"state":record.state}})
 }
-fn preflight(plan: &Value, accepted: &str) -> Result<Vec<Operation>, AdoptionError> {
+fn preflight(
+    project: &Path,
+    home: &Path,
+    plan: &Value,
+    accepted: &str,
+) -> Result<Vec<Operation>, AdoptionError> {
     let actual = plan["digest"].as_str().unwrap_or("");
     if !approval_matches(actual, accepted) {
         return Err(AdoptionError {
@@ -633,6 +638,81 @@ fn preflight(plan: &Value, accepted: &str) -> Result<Vec<Operation>, AdoptionErr
                 return Err(AdoptionError {
                     reason: AdoptionReason::ReviewRequired,
                 });
+            }
+            let inputs = guard["settingsInputs"].as_object().ok_or(AdoptionError {
+                reason: AdoptionReason::ReviewRequired,
+            })?;
+            if inputs.len() != 3 {
+                return Err(AdoptionError {
+                    reason: AdoptionReason::ReviewRequired,
+                });
+            }
+            for (key, base, relative) in [
+                ("home", home, ".claude/settings.json"),
+                ("project", project, ".claude/settings.json"),
+                ("local", project, ".claude/settings.local.json"),
+            ] {
+                let expected = inputs.get(key).ok_or(AdoptionError {
+                    reason: AdoptionReason::ReviewRequired,
+                })?;
+                let path = base.join(relative);
+                let mut parent = path.parent();
+                while let Some(directory) = parent {
+                    match std::fs::symlink_metadata(directory) {
+                        Ok(metadata) if metadata.file_type().is_symlink() => {
+                            return Err(AdoptionError {
+                                reason: AdoptionReason::ReviewRequired,
+                            });
+                        }
+                        Ok(_) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(_) => {
+                            return Err(AdoptionError {
+                                reason: AdoptionReason::ReviewRequired,
+                            });
+                        }
+                    }
+                    parent = directory.parent();
+                }
+                match std::fs::symlink_metadata(&path) {
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::NotFound && expected.is_null() => {}
+                    Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                        let digest = expected
+                            .as_str()
+                            .and_then(|v| v.strip_prefix("sha256:"))
+                            .ok_or(AdoptionError {
+                                reason: AdoptionReason::ReviewRequired,
+                            })?;
+                        if metadata.len() > 1024 * 1024 {
+                            return Err(AdoptionError {
+                                reason: AdoptionReason::ReviewRequired,
+                            });
+                        }
+                        let mut bytes = Vec::new();
+                        std::fs::File::open(&path)
+                            .map_err(|_| AdoptionError {
+                                reason: AdoptionReason::ReviewRequired,
+                            })?
+                            .take(1024 * 1024 + 1)
+                            .read_to_end(&mut bytes)
+                            .map_err(|_| AdoptionError {
+                                reason: AdoptionReason::ReviewRequired,
+                            })?;
+                        if bytes.len() > 1024 * 1024
+                            || hex::encode(Sha256::digest(&bytes)) != digest
+                        {
+                            return Err(AdoptionError {
+                                reason: AdoptionReason::ReviewRequired,
+                            });
+                        }
+                    }
+                    _ => {
+                        return Err(AdoptionError {
+                            reason: AdoptionReason::ReviewRequired,
+                        });
+                    }
+                }
             }
             let read_guard = |path: &str, expected: &str| -> Result<Vec<u8>, AdoptionError> {
                 let mut parent = Path::new(path).parent();

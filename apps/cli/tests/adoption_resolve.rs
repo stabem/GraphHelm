@@ -612,7 +612,8 @@ fn enabled_graphhelm_plugin_gets_explicit_duplicate_cleanup_with_freshness_guard
             .as_array()
             .unwrap()
             .iter()
-            .any(|v| v == "project/.mcp.json=use-plugin-mcp"),
+            .any(|v| v == "project/.mcp.json=use-plugin-mcp"
+                || v == "home/.claude.json=use-plugin-mcp"),
         "{disabled_preview}"
     );
     let (ok, disabled_resolution) = json(

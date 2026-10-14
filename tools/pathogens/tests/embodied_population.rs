@@ -2,10 +2,12 @@
 //!
 //! `measurable_binary` refuses when a source is newer than the binary. That question is only
 //! meaningful over sources the binary CONTAINS. Comparing against every `src/*.rs` in the
-//! workspace answered a wider question, and the wider question has a standing false positive
-//! here: the gate's canary rewrites `tools/ci-canary/src/nonce.rs` at the start of every run,
-//! and `ci-canary` is not a dependency of `apps/cli`. Cold, everything is rebuilt after that
-//! write and nothing is noticed; warm, a correctly reused binary reads as stale.
+//! workspace answered a wider question, and the wider question had a standing false positive:
+//! the gate's canary rewrote `tools/ci-canary/src/nonce.rs` at the start of every run, and
+//! `ci-canary` was not a dependency of `apps/cli`. Cold, everything was rebuilt after that write
+//! and nothing was noticed; warm, a correctly reused binary read as stale. The canary is gone
+//! (#1225); the outsider these cells use is `tools/acceptance-map`, a workspace crate the binary
+//! does not link either.
 //!
 //! These cells assert the POPULATION, because that is where the defect lived. The refusal's own
 //! behaviour is asserted by `subject_refusals.rs`, which still ages a source INSIDE the closure
@@ -31,27 +33,28 @@ fn population_contains(population: &[PathBuf], relative: &Path) -> bool {
 }
 
 #[test]
-fn the_canarys_nonce_is_not_in_the_population_and_the_file_it_is_absent_from_exists() {
+fn a_crate_the_binary_does_not_link_is_not_in_the_population_and_its_file_exists() {
     let root = workspace_root();
 
     // PRESENCE FIRST. An absence assertion over a file that does not exist passes for the wrong
-    // reason and would keep passing if `ci-canary` were deleted, renamed, or moved -- at which
-    // point this cell would be guarding nothing while still reporting green.
-    let nonce = root
+    // reason and would keep passing if the outsider were deleted, renamed, or moved -- at which
+    // point this cell would be guarding nothing while still reporting green. (The first
+    // outsider, `tools/ci-canary`, was deleted in #1225; this one was chosen to replace it.)
+    let outsider = root
         .join("tools")
-        .join("ci-canary")
+        .join("acceptance-map")
         .join("src")
-        .join("nonce.rs");
+        .join("lib.rs");
     assert!(
-        nonce.is_file(),
+        outsider.is_file(),
         "the subject of this absence must exist, or the absence proves nothing: {}",
-        nonce.display()
+        outsider.display()
     );
 
     let population = pathogens::subject::embodied_sources();
     assert!(
-        !population_contains(&population, Path::new("tools/ci-canary/src/nonce.rs")),
-        "the binary does not link ci-canary, so rewriting its nonce must not age the binary"
+        !population_contains(&population, Path::new("tools/acceptance-map/src/lib.rs")),
+        "the binary does not link acceptance-map, so ageing its source must not age the binary"
     );
 }
 

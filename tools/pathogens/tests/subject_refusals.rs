@@ -97,15 +97,15 @@ fn fresh_measures_stale_refuses_and_the_refusal_is_not_unconditional() {
     // refusal still fires for a source the binary contains; this proves it does NOT fire for one
     // it does not. Together they say the predicate discriminates, which neither says alone.
     //
-    // `ci-canary` is the real subject, not a stand-in: `ci/gate.ps1` rewrites this exact file at
-    // the start of every run, and `apps/cli` does not depend on the crate. Cold that was invisible
-    // because everything was rebuilt after the write; with artifact reuse the binary keeps its
-    // mtime and every warm run refused.
+    // The outsider is a real workspace crate `apps/cli` does not depend on. It used to be
+    // `tools/ci-canary`, whose nonce the retired gate rewrote at the start of every run (cold that
+    // was invisible; with artifact reuse every warm run refused); the canary was deleted in #1225
+    // and `tools/acceptance-map` plays the same part.
     let outsider = root
         .join("tools")
-        .join("ci-canary")
+        .join("acceptance-map")
         .join("src")
-        .join("nonce.rs");
+        .join("lib.rs");
     assert!(
         outsider.is_file(),
         "the outsider must exist, or ageing it proves nothing: {}",

@@ -29,7 +29,6 @@ members = [
   "tools/pathogens",
   "tools/development-benchmark",
   "tools/keel-contract-index",
-  "tools/ci-canary",
 ]
 
 [workspace.package]

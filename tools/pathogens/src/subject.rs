@@ -96,12 +96,13 @@ fn normalised(path: &Path) -> PathBuf {
 /// WHY THIS IS NOT "EVERY CRATE IN THE WORKSPACE": the staleness question is whether the binary
 /// contains today's sources, and a crate the binary never links cannot make it stale. Comparing
 /// against the whole workspace answers a wider question than the one asked, and the wider question
-/// has a standing false positive in this repository: `ci/gate.ps1`'s canary REWRITES
-/// `tools/ci-canary/src/nonce.rs` at the start of every run, and `ci-canary` is not a dependency of
-/// `apps/cli`. In a cold run every artifact is rebuilt after that write, so the binary is newer and
-/// nothing is noticed. With content-addressed artifact reuse the binary is not rebuilt -- its inputs
-/// did not change -- so it keeps the previous run's mtime and the instrument refuses to measure a
-/// product that is perfectly current (#1044).
+/// had a standing false positive in this repository: the retired gate's canary REWROTE
+/// `tools/ci-canary/src/nonce.rs` at the start of every run, and `ci-canary` was not a dependency
+/// of `apps/cli`. In a cold run every artifact was rebuilt after that write, so the binary was
+/// newer and nothing was noticed. With content-addressed artifact reuse the binary was not rebuilt
+/// -- its inputs did not change -- so it kept the previous run's mtime and the instrument refused
+/// to measure a product that was perfectly current (#1044). The canary is gone (#1225); any crate
+/// the binary does not link raises the same question.
 ///
 /// The same mistake, one level out, is already recorded below: the first draft collected every
 /// `.rs` in the workspace, so writing a TEST aged the instrument against itself. `src/` of a crate

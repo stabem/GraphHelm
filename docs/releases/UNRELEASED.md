@@ -17,3 +17,6 @@
   `find-culture-comparisons`, `crate-input-hash`, `manifest-name`, `required-features` (each with
   its suite) and `tool-versions.json`. `ci/` keeps `closing-keywords`, `normalize-script-eol`,
   `postgres` and `test-count`. #1231.
+- The gate-freeze rule: `graphhelm_quality::freeze_violation`, `freeze_violation_with_lockfile`
+  and `GateManifestChange`, their tests, and the charter `docs/gates/freeze.md`; and the
+  `tools/ci-canary` workspace member the retired gate rewrote before every run. #1225.

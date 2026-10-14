@@ -8,10 +8,10 @@
 // drift." By the time the extraction was scheduled there were EIGHT guards, and the twin
 // pointers each still claimed a byte-identical partner that had already diverged.
 //
-// Why this path is inside GATE_MACHINERY: a predicate is not an input to a gate, it IS
-// the gate. Left outside the freeze, one pull request could edit what the pathogen guard
-// DETECTS in the same breath as the code that guard judges, and `freeze_violation` would
-// see an all-non-gate path set and wave it through.
+// This path was inside the gate-freeze rule's GATE_MACHINERY until the freeze was retired
+// with the gate (#1225): a predicate is not an input to a gate, it IS the gate, so a change
+// to what it detects deserves its own review rather than riding in with the code it judges.
+// No mechanism enforces that any more; the review does.
 //
 // The comments here are `//` and NOT `//!` on purpose: an included file is spliced into
 // the MIDDLE of the including file, so an inner doc comment is E0753 in every adopting
@@ -33,10 +33,9 @@
 // guards exempts comments. (Constraint named by L.)
 //
 // DECLARED EXCEPTION, under the rule directly above. `shared_predicate_self_path` is
-// consumed only by the compile carrier in core/quality, which is the one adopter that can
-// ask `freeze_violation` anything -- every other adopter reaches this file by `include!`
-// precisely so that it needs no dependency on that crate. It therefore carries
-// `#[allow(dead_code)]` here, once, rather than nine `allow`s in nine adopters.
+// consumed only by the workspace authored-strings sweep in core/protocols (it exempts this
+// file by its own path); the other adopters do not use it. It therefore carries
+// `#[allow(dead_code)]` here, once, rather than an `allow` in every adopter that skips it.
 
 /// Whether this line carries a run of three or more spaces inside a STRING LITERAL.
 ///

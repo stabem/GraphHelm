@@ -78,6 +78,8 @@ interface Props {
   /** #1192: the Runtime answered the tasks route with "no such route" (an older binary); the
    * Lanes board and the kanban are replaced by one sentence saying so, never left empty. */
   tasksRouteMissing?: boolean;
+  /** #1192: the Runtime's code and sentence when the tasks route failed (null when it answered). */
+  tasksRouteFailure?: string | null;
   /** Recent task history is ready for Lanes while the complete history is still loading. */
   lanesHistoryLoading?: boolean;
   historyFailedCount?: number;
@@ -255,7 +257,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], tasksRouteMissing = false, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, seenActors, seenActorAgesMs, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
+export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], tasksRouteMissing = false, tasksRouteFailure = null, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, seenActors, seenActorAgesMs, onDemandLanes = [], slots = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot }: Props) {
   const journeys = useMemo(() => {
     const known = new Set(compiledJourneys.map((journey) => journey.contractId));
     return [...compiledJourneys, ...(flows?.flows ?? []).filter((flow) => !known.has(flow.id)).map((flow): JourneyView => ({
@@ -348,6 +350,8 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
     setChosen({ kind: "group", key: groupKey }); setStepId(null); setStageCol(null); setTaskKey(key); setSub("graph");
   };
   const routeMissing = <p className="mv-none mv-pad" role="alert">{RUNTIME_PREDATES_TASKS_ROUTE}</p>;
+  const routeFailed = tasksRouteFailure === null ? null
+    : <div role="alert">Tasks route failed · {tasksRouteFailure} · <button type="button" onClick={onRetryHistory}>Retry</button></div>;
   const lanesView = tasksRouteMissing ? routeMissing : <>
     <WorkKanban items={kanbanItems} onOpen={openOnGraph} historyLoading={lanesHistoryLoading} />
     <LanesTimeline lanes={lanes} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} onDemandLanes={onDemandLanes} liveLanes={wakeListeners} seenActors={seenActors} seenActorAgesMs={seenActorAgesMs} historyLoading={lanesHistoryLoading}
@@ -355,7 +359,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   </>;
   const runGraph = <RunGraphStrip nodes={runNodes} unassigned={unassignedNodeIds ?? []} {...(onOpenNode ? { onOpenNode } : {})} />;
   if (sel === null) return <div className="mv" data-wide="true" data-page={page}>
-    {historyFailedCount > 0 && <div role="alert">History partly loaded · {historyFailedCount} records could not be read · <button type="button" onClick={onRetryHistory}>Retry</button></div>}{header}
+    {routeFailed}{historyFailedCount > 0 && <div role="alert">History partly loaded · {historyFailedCount} records could not be read · <button type="button" onClick={onRetryHistory}>Retry</button></div>}{header}
     {sub === "lanes" ? <div className="mv-pad">{lanesView}</div>
       : <>{sub === "graph" && runGraph}{tasksRouteMissing ? routeMissing : <p className="mv-none mv-pad" role={historyLoading ? "status" : undefined}>{historyLoading ? "Showing recent work · still reading the history" : "No journeys in this project yet"}</p>}</>}</div>;
   const rawGroup: WorkGroup | null = sel.kind === "group" ? groups.find((g) => g.key === sel.key)! : null;
@@ -462,6 +466,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   return (
     // data-wide: the Studio layout gives the mission view the whole main area (mission-view.css).
     <div className="mv" data-wide="true" data-page={page}>
+      {routeFailed}
       {historyFailedCount > 0 && <div role="alert">History partly loaded · {historyFailedCount} records could not be read · <button type="button" onClick={onRetryHistory}>Retry</button></div>}
       {header}
       {page !== "full" && summary}

@@ -1798,6 +1798,10 @@ export default function App({
   // #1192: the run whose Runtime answered the tasks route with "no such route" (an older binary).
   // The Team, Graph and Lanes views then say so in one sentence instead of drawing an empty board.
   const [tasksRouteMissing, setTasksRouteMissing] = useState<string | null>(null);
+  // #1192: the run whose Runtime refused the tasks route (seen live: GHE013_READ_BUDGET_EXCEEDED
+  // on a run with 4307 task envelopes). The Runtime's own code and sentence are shown; "N records
+  // could not be read" is a different failure (envelopes that did not verify) and stays for that.
+  const [tasksRouteFailure, setTasksRouteFailure] = useState<{ executionId: string; text: string } | null>(null);
   useEffect(() => {
     if (!selected || events === null) {
       setRunTeamRead(null);
@@ -1808,6 +1812,7 @@ export default function App({
     const run = selected;
     const client = clientRef.current;
     setHistoryFailure(null);
+    setTasksRouteFailure((current) => (current?.executionId === run ? null : current));
     void readRunTeam(run, eventList, openEvidence)
       .then((result) => { if (!cancelled) setRunTeamRead(result); })
       .catch(() => { if (!cancelled) setRunTeamRead({ executionId: run, members: [], messages: [], rejected: 0, unavailable: true }); });
@@ -1831,8 +1836,11 @@ export default function App({
         setTaskGraphs({ executionId: run, tasks: reply.tasks, records: reply.records, slices: reply.slices, routes: reply.routes });
         setHistoryFailure(reply.rejected > 0 ? { executionId: run, count: reply.rejected } : null);
       })
-      .catch(() => { if (!cancelled && clientRef.current === client) {
-        setHistoryFailure({ executionId: run, count: 1 });
+      .catch((error: unknown) => { if (!cancelled && clientRef.current === client) {
+        const text = error instanceof RuntimeError && error.code !== ""
+          ? `${error.code} · ${error.diagnostics[0]?.message ?? error.message}`
+          : error instanceof Error ? error.message : String(error);
+        setTasksRouteFailure({ executionId: run, text });
         setTaskGraphs((current) => (current?.executionId === run ? current : { executionId: run, tasks: [], records: [], slices: [], routes: [] }));
       } });
     return () => { cancelled = true; };
@@ -3132,6 +3140,9 @@ export default function App({
             {canvasTab === "team" && tasksRouteMissing === selected && (
               <p className="mv-none mv-pad" role="alert">{RUNTIME_PREDATES_TASKS_ROUTE}</p>
             )}
+            {canvasTab === "team" && tasksRouteFailure?.executionId === selected && (
+              <div className="mv-pad" role="alert">Tasks route failed · {tasksRouteFailure.text} · <button type="button" onClick={() => setHistoryRetry((value) => value + 1)}>Retry</button></div>
+            )}
             {canvasTab === "team" && taskGraphs?.executionId === selected && tasksRouteMissing !== selected && (
               <DelegationTree tasks={taskGraphs.tasks} />
             )}
@@ -3157,7 +3168,7 @@ export default function App({
             </div>
             {(canvasTab === "graph" || canvasTab === "journey") && (
               <div id="studio-panel-graph" role="tabpanel" aria-label={canvasTab === "journey" ? "Proof" : "Graph"}>
-                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} events={eventList} envelopes={envelopes} wakeListeners={status?.wakeListeners ?? []} seenActors={status?.seenActors ?? []} seenActorAgesMs={status?.seenActorAgesMs ?? {}} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} tasksRouteMissing={tasksRouteMissing === selected} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && currentTaskGraphs === null} historyFailedCount={historyFailure?.executionId === selected ? historyFailure.count : 0} onRetryHistory={() => setHistoryRetry((value) => value + 1)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
+                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} events={eventList} envelopes={envelopes} wakeListeners={status?.wakeListeners ?? []} seenActors={status?.seenActors ?? []} seenActorAgesMs={status?.seenActorAgesMs ?? {}} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} tasksRouteMissing={tasksRouteMissing === selected} tasksRouteFailure={tasksRouteFailure?.executionId === selected ? tasksRouteFailure.text : null} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && currentTaskGraphs === null} historyFailedCount={historyFailure?.executionId === selected ? historyFailure.count : 0} onRetryHistory={() => setHistoryRetry((value) => value + 1)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
                   initialView={canvasTab === "journey" ? "proof" : "graph"} focusJourneyId={journeyContract}
                   flows={flowsRead.view} onApprove={approveFlow} onWatch={watchFlow}
 

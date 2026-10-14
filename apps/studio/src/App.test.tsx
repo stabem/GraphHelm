@@ -4356,6 +4356,27 @@ describe("the exchange", () => {
     await waitFor(() => expect(within(mission).queryByRole("alert")).not.toBeInTheDocument());
   });
 
+  /* Seen live on the gh-team run (8795 events, 4307 task envelopes): the route answers 500
+   * GHE013_READ_BUDGET_EXCEEDED. The Studio must show the Runtime's own sentence, not "1 records
+   * could not be read", which names a different failure (one envelope out of many). Catches the
+   * catch-all that counted every route failure as one rejected envelope. */
+  it("shows the Runtime's diagnostic when the tasks route fails, on Graph and Team (#1192)", async () => {
+    const message = "replay exceeded its 5000 ms budget after folding 8795 events; this stream is longer than the read can fold within that budget";
+    const client = stubClient({
+      getTasks: vi.fn(async () => { throw new RuntimeError(message, 500, [{ code: "GHE013_READ_BUDGET_EXCEEDED", severity: "error", message, path: "/events", source: "execution-cli" }]); }),
+    });
+    await open(client, null, false);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    const team = await screen.findByRole("tabpanel", { name: "Team" });
+    expect(await within(team).findByRole("alert")).toHaveTextContent(`Tasks route failed · GHE013_READ_BUDGET_EXCEEDED · ${message}`);
+    await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
+    const mission = await screen.findByRole("region", { name: "Canvas" });
+    const alert = await within(mission).findByRole("alert");
+    expect(alert).toHaveTextContent("Tasks route failed · GHE013_READ_BUDGET_EXCEEDED");
+    expect(alert).not.toHaveTextContent("records could not be read");
+    expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
   /* The orchestration session's condition for this slice: a Runtime that predates the route (the
    * live `:8793` on an older binary answers 404 or 401) must say so where the lanes and the kanban
    * would be, never an empty board and never a silent "Offline". Catches a Studio that draws an
@@ -5198,6 +5219,8 @@ describe("execution reads preserve newer observed state", () => {
       else if (parsed.pathname === "/v1/executions/read-order") data = {
         ...STATUS, ...row(), attentionReasons: [], nodeStateCounts: { ready: 1 },
       };
+      // #1192: the run's task projection is a route of its own; an empty fold here.
+      else if (parsed.pathname.endsWith("/tasks")) data = tasksReply("read-order", []);
       else throw new Error(`unexpected fixture read: ${url}`);
       const pending = hold(parsed.pathname, capturedHead);
       return { ok: true, status: 200, json: async () => { if (pending) await pending; return { ok: true, data, diagnostics: [] }; } } as Response;

@@ -138,7 +138,7 @@ describe("MissionView", () => {
       frameUrl={() => null} onMarkSafe={vi.fn()} />);
     await fastUserEvent().click(screen.getByRole("tab", { name: "Proof" }));
     const rail = screen.getByRole("navigation", { name: "Journeys" });
-    expect(within(rail).getByText("1 step · 0 proven · 0 in work · 0 merged, not proven · 1 not proven")).toBeInTheDocument();
+    expect(within(rail).getByRole("img", { name: "1 step · 0 proven · 0 in work · 0 merged, not proven · 1 not proven" })).toBeInTheDocument();
   });
 
   it("#830: a stale contract keeps the flow title wide and shows its id", async () => {
@@ -192,11 +192,14 @@ describe("MissionView", () => {
     await fastUserEvent().click(screen.getByRole("tab", { name: "Proof" }));
     const rail = screen.getByRole("navigation", { name: "Journeys" });
     const first = rail.querySelectorAll<HTMLElement>(".mv-jcard")[0]!;
-    expect(first).toHaveTextContent("1 in work");
-    expect(first).toHaveTextContent("1 merged, not proven");
-    const before = first.querySelector(".mv-progress-text")!.textContent;
+    const bar = first.querySelector(".mv-progress-bar")!;
+    expect(bar.getAttribute("aria-label")).toContain("1 in work");
+    expect(bar.getAttribute("aria-label")).toContain("1 merged, not proven");
+    // The owner asked the rail to drop the caption line: the bar keeps the words for readers.
+    expect(first.querySelector(".mv-progress-text")).toBeNull();
+    const before = bar.getAttribute("aria-label");
     await fastUserEvent().click(within(rail).getByRole("button", { name: /Watch plays/ }));
-    expect(first.querySelector(".mv-progress-text")!.textContent).toBe(before);
+    expect(first.querySelector(".mv-progress-bar")!.getAttribute("aria-label")).toBe(before);
     expect(first.querySelector('[data-progress="proven"]')).toHaveStyle({ flexGrow: "0" });
     expect(first.querySelector('[data-progress="work"]')).not.toHaveStyle({ background: "#4ADE9B" });
   });
@@ -394,7 +397,7 @@ describe("MissionView", () => {
       .toEqual(["Watch plays inside the Studio0/1", "Add a model2/2"]);
     // No linked journey: the one with a recorded run is preselected.
     expect(within(rail).getByRole("button", { name: /Add a model/ })).toHaveAttribute("aria-pressed", "true");
-    expect(within(rail).getByText("2 steps · 2 proven · 0 in work · 0 merged, not proven · 0 not proven")).toBeInTheDocument();
+    expect(within(rail).getByRole("img", { name: "2 steps · 2 proven · 0 in work · 0 merged, not proven · 0 not proven" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Open the test canvas for step 2" }));
     const browser = screen.getByRole("region", { name: "Emulated browser" });
     expect(within(browser).getByRole("img")).toHaveAttribute("src", "/frames/add/save.png");

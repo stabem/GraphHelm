@@ -684,6 +684,10 @@ pub(crate) fn read_for_replay(file: &Path, project: &Path) -> Result<Value, Vec<
             "replay requires an approved flow",
         ));
     }
+    // #1287 follow-up: replay is proof, and a flow that does not say what it proves proves
+    // nothing, even one approved before the rule. It is refused with the gaps it has to close.
+    findings.retain(|f| f.code != "flow.weak_journey");
+    findings.extend(weak_journey(&value, true));
     if findings.iter().any(|f| !f.is_warning()) {
         Err(findings)
     } else {
@@ -865,10 +869,12 @@ pub(crate) fn projected_flows(project: &Path) -> ProjectedFlows {
         }
         let id = flow["id"].as_str().unwrap_or_default().to_owned();
         // #534: an approval with no owner record for its digest is a draft to keel plan too.
+        // #1287 follow-up: a weak approved flow is not proof to keel either; it plans as a draft.
         if flow["status"] != "approved"
             || owner_signature(&flow, project)
                 .iter()
                 .any(|f| !f.is_warning())
+            || !weak_journey(&flow, true).is_empty()
         {
             let scopes = flow["screens"]
                 .as_array()
@@ -1966,6 +1972,30 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1287 follow-up: replay is proof. Defect named: a flow approved before the rule, still
+    /// without a purpose, replays and counts as proven. Cost: one tempdir.
+    #[test]
+    fn a_weak_flow_is_never_replayed_as_proof() {
+        let project = tempfile::tempdir().unwrap();
+        let mut flow: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_flow/checkout.journey.yaml"
+        ))
+        .unwrap();
+        flow.as_object_mut().unwrap().remove("purpose");
+        let dir = project.path().join(".graphhelm/journeys");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("checkout.journey.yaml");
+        std::fs::write(&file, canonical(&flow, false)).unwrap();
+        let refused = read_for_replay(&file, project.path()).unwrap_err();
+        assert!(
+            refused
+                .iter()
+                .any(|f| f.code == "flow.purpose_missing" && !f.is_warning()),
+            "{:?}",
+            refused.iter().map(|f| f.code).collect::<Vec<_>>()
+        );
+    }
 
     /// #1287: a journey that clicks, submits and checks only "success" proves nothing. Defects
     /// named: a draft without a purpose, a screen without a title, a submit with no input and no

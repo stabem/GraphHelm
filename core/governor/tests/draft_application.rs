@@ -632,6 +632,42 @@ fn accepted_draft_appends_assignment_approval_and_governance_atomically() {
         head_before_rejected_mutation,
         "existing-node mutation must not append or change the execution head"
     );
+    // #1239: the assignment map must name exactly the proposed AddNode ids. An extra assignment
+    // to a node the draft does not add, and a missing assignment, each refuse with nothing
+    // appended.
+    let mut extra = acceptance.clone();
+    extra.assignments.insert(
+        OpaqueId::parse("docs").unwrap(),
+        PersistedActor::new(
+            PersistedActorType::Agent,
+            ActorId::parse("agent-reviewer").unwrap(),
+        ),
+    );
+    let mut missing = acceptance.clone();
+    missing.assignments.clear();
+    for (label, refused) in [("extra", &extra), ("missing", &missing)] {
+        let outcome = block_on(graphhelm_governor::apply_draft_with_acceptance(
+            &base,
+            &proposed,
+            &services,
+            Some(refused),
+        ));
+        assert!(
+            matches!(
+                outcome,
+                Err(graphhelm_governor::ApplyError::InvalidOperation)
+            ),
+            "{label} assignment must refuse: {outcome:?}"
+        );
+        assert_eq!(
+            repository
+                .read_replay_stream(&services.scope, services.stream_id.as_str())
+                .unwrap()
+                .len(),
+            head_before_rejected_mutation,
+            "{label} assignment must not append"
+        );
+    }
     let result = block_on(graphhelm_governor::apply_draft_with_acceptance(
         &base,
         &proposed,

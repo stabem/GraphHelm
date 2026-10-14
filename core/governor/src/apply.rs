@@ -217,23 +217,17 @@ pub fn apply_draft_with_acceptance<'a>(
             }) {
                 return Err(ApplyError::InvalidOperation);
             }
+            // #1239: membership through the AddNode id set, not a scan of every operation.
             for (node_id, actor) in &acceptance.assignments {
                 if actor.actor_type() != PersistedActorType::Agent
-                    || !draft.operations.iter().any(|operation| {
-                        matches!(operation, graphhelm_protocols::DraftOperation::AddNode { id, .. } if id == node_id.as_str())
-                    })
+                    || !proposed_nodes.contains(node_id.as_str())
                 {
                     return Err(ApplyError::InvalidOperation);
                 }
             }
-            if proposed_nodes.len() != acceptance.assignments.len()
-                || proposed_nodes.iter().any(|node_id| {
-                    !acceptance
-                        .assignments
-                        .keys()
-                        .any(|key| key.as_str() == *node_id)
-                })
-            {
+            // Every assignment names a proposed node (above) and map keys are distinct, so equal
+            // sizes mean every proposed node is assigned.
+            if proposed_nodes.len() != acceptance.assignments.len() {
                 return Err(ApplyError::InvalidOperation);
             }
         }
@@ -847,6 +841,8 @@ fn validate_committed_outcome_grammar(
         return invalid_committed_outcome();
     }
     let mut obligations = Vec::new();
+    // #1239: one set of requirement ids seen, instead of rescanning prior obligations.
+    let mut seen_requirements = BTreeSet::new();
     let legacy_proposal = matches!(
         &first.kind,
         EventKind::DraftProposed(payload) if payload.proposal_sha256.is_none()
@@ -872,9 +868,7 @@ fn validate_committed_outcome_grammar(
             || event.idempotency_key != expected_key
             || !event.evidence_refs.is_empty()
             || !event.artifact_refs.is_empty()
-            || obligations.iter().any(|prior: &PolicyObligationEvaluated| {
-                prior.requirement_id == payload.requirement_id
-            })
+            || !seen_requirements.insert(payload.requirement_id.clone())
         {
             return invalid_committed_outcome();
         }
@@ -989,6 +983,14 @@ fn validate_committed_outcome_grammar(
                 )
                 .map_err(|_| ApplyError::InvalidOperation)?;
                 let mut assigned = BTreeMap::new();
+                let proposed_nodes: BTreeSet<&str> = draft
+                    .operations
+                    .iter()
+                    .filter_map(|operation| match operation {
+                        DraftOperation::AddNode { id, .. } => Some(id.as_str()),
+                        _ => None,
+                    })
+                    .collect();
                 let mut outcomes = BTreeSet::new();
                 for event in &atomic {
                     match &event.kind {
@@ -997,14 +999,14 @@ fn validate_committed_outcome_grammar(
                                 || event.idempotency_key
                                     != governor_event_key(
                                         request_identity,
-                                        format!("assignment:{}", payload.node_id.as_str()).as_bytes(),
+                                        format!("assignment:{}", payload.node_id.as_str())
+                                            .as_bytes(),
                                     )?
-                                || payload.assigned_actor.actor_type()
-                                    != PersistedActorType::Agent
-                                || !draft.operations.iter().any(|operation| {
-                                    matches!(operation, DraftOperation::AddNode { id, .. } if id == payload.node_id.as_str())
-                                })
-                                || assigned.insert(payload.node_id.clone(), payload.assigned_actor.clone()).is_some()
+                                || payload.assigned_actor.actor_type() != PersistedActorType::Agent
+                                || !proposed_nodes.contains(payload.node_id.as_str())
+                                || assigned
+                                    .insert(payload.node_id.clone(), payload.assigned_actor.clone())
+                                    .is_some()
                             {
                                 return invalid_committed_outcome();
                             }
@@ -1017,14 +1019,14 @@ fn validate_committed_outcome_grammar(
                                 || event.idempotency_key
                                     != acceptance
                                         .and_then(|value| {
-                                            (value.decision_node.as_ref()
-                                                == Some(&payload.node_id))
+                                            (value.decision_node.as_ref() == Some(&payload.node_id))
                                                 .then(|| value.decision_key.clone())
                                                 .flatten()
                                         })
                                         .unwrap_or(governor_event_key(
                                             request_identity,
-                                            format!("approval:{}", payload.node_id.as_str()).as_bytes(),
+                                            format!("approval:{}", payload.node_id.as_str())
+                                                .as_bytes(),
                                         )?)
                                 || !assigned.contains_key(&payload.node_id)
                                 || !outcomes.insert(payload.node_id.clone())

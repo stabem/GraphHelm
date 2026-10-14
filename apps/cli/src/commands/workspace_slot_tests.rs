@@ -879,6 +879,7 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
             crate::progress::Progress::decide("update-test"),
             Path::new(&admission),
             Some(Path::new(&exe)),
+            None,
         );
         assert!(ok);
         assert!(Path::new(&log).exists());
@@ -889,6 +890,10 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
     let log = dir.path().join("update-v-slot.log");
     let release = dir.path().join("release");
     let admission = dir.path().join("shared-test-admission");
+    // #1186: an update builds alongside admitted runs when its jobs fit the budget. A budget of
+    // 16 leaves no room beside the slot's 3, so this cell still observes the update waiting.
+    std::fs::create_dir_all(&admission).unwrap();
+    std::fs::write(admission.join("jobs-budget"), b"16\n").unwrap();
     let log_text = log.to_string_lossy().replace('\'', "''");
     let release_text = release.to_string_lossy().replace('\'', "''");
     let slot_command = if cfg!(windows) {
@@ -978,7 +983,7 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
     let update_waiting = loop {
         if std::fs::read_to_string(&stderr)
             .unwrap_or_default()
-            .contains("waiting for the builds admitted on this machine to finish")
+            .contains("waiting for room in this machine's build budget")
         {
             break true;
         }
@@ -1310,4 +1315,59 @@ fn failed_clean_never_starts_the_marker_child_and_releases_the_slot() {
             .flatten()
             .all(|entry| entry.path().extension().is_none_or(|ext| ext != "ticket"))
     );
+}
+
+#[test]
+fn update_grant_builds_beside_admitted_runs_and_goes_first_when_full() {
+    let dir = tempfile::tempdir().unwrap();
+    let admission = dir.path().join("authority");
+    std::fs::create_dir_all(&admission).unwrap();
+    let lock = super::open_build_admission(&admission).unwrap();
+    // A long `--jobs 1` build and a `--jobs 4` batch leave room for the update's 16 of 24.
+    let Admission::Granted(small) = super::try_grant(&admission, &lock, 1, |_| true).unwrap()
+    else {
+        panic!("first build not admitted");
+    };
+    let Admission::Granted(batch) = super::try_grant(&admission, &lock, 4, |_| true).unwrap()
+    else {
+        panic!("second build not admitted");
+    };
+    let (update, jobs) = super::try_grant_update(&admission, &lock, |_| true)
+        .unwrap()
+        .expect("the update fits beside 5 granted jobs");
+    assert_eq!(jobs, super::UPDATE_JOBS);
+    super::release_grant(&admission, &lock, &update);
+
+    // Full: the update waits, and its marker stops new grants until it is admitted.
+    let Admission::Granted(big) = super::try_grant(&admission, &lock, 16, |_| true).unwrap() else {
+        panic!("third build not admitted");
+    };
+    assert_eq!(
+        super::try_grant_update(&admission, &lock, |_| true).unwrap(),
+        None
+    );
+    assert_eq!(
+        super::try_grant(&admission, &lock, 1, |_| true).unwrap(),
+        Admission::Wait,
+        "a waiting update goes first"
+    );
+    super::release_grant(&admission, &lock, &big);
+    let (update, _) = super::try_grant_update(&admission, &lock, |_| true)
+        .unwrap()
+        .expect("admitted once room frees");
+    assert!(matches!(
+        super::try_grant(&admission, &lock, 1, |_| true).unwrap(),
+        Admission::Granted(_)
+    ));
+    for token in [small, batch, update] {
+        super::release_grant(&admission, &lock, &token);
+    }
+
+    // A budget smaller than the update's share grants the whole budget.
+    std::fs::write(admission.join("jobs-budget"), b"6\n").unwrap();
+    std::fs::remove_file(admission.join("granted")).unwrap();
+    let (_, jobs) = super::try_grant_update(&admission, &lock, |_| true)
+        .unwrap()
+        .unwrap();
+    assert_eq!(jobs, 6);
 }

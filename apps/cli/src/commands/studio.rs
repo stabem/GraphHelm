@@ -417,13 +417,12 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
         &progress
             .info("installing the CLI (cargo install --locked --profile update --path apps/cli)"),
     );
-    // #1140: the managed clone builds into its own cache, `~/.graphhelm/target`. A shared
+    // #1140: the update builds into its own cache, `~/.graphhelm/target`. A shared
     // `CARGO_TARGET_DIR` (the owner's agents build in one) holds cargo's lock while any agent
-    // compiles, and the update then waited there silently (owner run, 2026-10-13).
-    let target = match (managed, managed_target(user_home())) {
-        (true, Some(own)) => own,
-        _ => target_dir(std::env::var_os("CARGO_TARGET_DIR"), &source),
-    };
+    // compiles, and the update then waited there silently (owner run, 2026-10-13). #1186: this
+    // holds for a source the owner pointed at too, which still used `D:\codex-targets`.
+    let target = managed_target(user_home())
+        .unwrap_or_else(|| target_dir(std::env::var_os("CARGO_TARGET_DIR"), &source));
     Progress::say(&progress.info(&format!("reusing build cache {}", target.display())));
     let mut install = graphhelm_process::command("cargo");
     install
@@ -438,18 +437,29 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
             "--target-dir",
         ])
         .arg(&target);
+    // #1186: cargo installs into a staging root beside the cache, and the new binary replaces
+    // this one only once it is built, so `graphhelm` stays callable while the update compiles
+    // alongside admitted builds.
+    let current_exe = std::env::current_exe().ok();
+    let staging = target.join("update-install");
+    let staged = staging.join("bin").join(if cfg!(windows) {
+        "graphhelm.exe"
+    } else {
+        "graphhelm"
+    });
     if let Some(root) = &root {
         Progress::say(&progress.info(&format!("into {}", root.join("bin").display())));
         // `--force`: cargo refuses to overwrite a binary it did not install itself, and a
         // versioned directory's binary was placed there by another installer (#281 review).
-        install.arg("--root").arg(root).arg("--force");
+        install.arg("--root").arg(&staging).arg("--force");
     }
     let installed = run_install(
         &mut install,
         &source,
         progress,
         &admission_path,
-        std::env::current_exe().ok().as_deref(),
+        current_exe.as_deref().filter(|_| root.is_some()),
+        root.is_some().then_some(staged.as_path()),
     );
     if !installed {
         return refused_as(
@@ -570,8 +580,8 @@ pub(super) fn run_install(
     progress: Progress,
     admission_path: &Path,
     current_exe: Option<&Path>,
+    staged: Option<&Path>,
 ) -> bool {
-    use std::io::{BufRead, BufReader, Write};
     let admission = match super::workspace_slot::open_build_admission(admission_path) {
         Ok(lock) => lock,
         Err(message) => {
@@ -579,67 +589,82 @@ pub(super) fn run_install(
             return false;
         }
     };
-    // #1254: builds hold jobs-budget grants, not the lock. An update still never overlaps a
-    // build: it takes the lock only when no live run holds a grant, and keeps it through the
-    // install (new admissions wait while it is held). It never holds the lock while waiting, so a
-    // finishing build can always take it to release its grant.
+    // #1186: the update takes a jobs grant like any build and builds alongside the ones already
+    // admitted, within the budget. While it does not fit, its marker stops new grants, so it is
+    // the next run admitted. It never holds the lock while waiting, so a finishing build can
+    // always take it to release its grant.
     let mut said = false;
-    loop {
-        match admission.try_lock() {
-            Ok(()) => match super::workspace_slot::grants_outstanding(
-                admission_path,
-                graphhelm_process_tree::process_is_running,
-            ) {
-                Ok(false) => {
-                    super::workspace_slot::clear_update_pending(admission_path);
-                    break;
-                }
-                Ok(true) => {
-                    // Ask for priority: no new grant while this update waits (review on #1256).
-                    super::workspace_slot::mark_update_pending(admission_path);
-                    let _ = admission.unlock();
-                }
-                Err(message) => {
-                    super::workspace_slot::clear_update_pending(admission_path);
-                    let _ = admission.unlock();
-                    Progress::say(&progress.warn(&message));
-                    return false;
-                }
-            },
-            Err(std::fs::TryLockError::WouldBlock) => {}
-            Err(std::fs::TryLockError::Error(_)) => {
-                Progress::say(&progress.warn("the build admission lock could not be checked"));
+    let (grant, jobs) = loop {
+        match super::workspace_slot::try_grant_update(
+            admission_path,
+            &admission,
+            graphhelm_process_tree::process_is_running,
+        ) {
+            Ok(Some(granted)) => break granted,
+            Ok(None) => {}
+            Err(message) => {
+                Progress::say(&progress.warn(&message));
                 return false;
             }
         }
         if !said {
             Progress::say(
-                &progress.info("waiting for the builds admitted on this machine to finish"),
+                &progress.info("waiting for room in this machine's build budget (it goes next)"),
             );
             said = true;
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
-    }
-    let moved_aside = if cfg!(windows) {
-        current_exe.and_then(|exe| {
-            let old = exe.with_file_name("graphhelm.old.exe");
-            let _ = std::fs::remove_file(&old);
-            std::fs::rename(exe, &old)
-                .ok()
-                .map(|()| (exe.to_owned(), old))
-        })
-    } else {
-        None
     };
+    Progress::say(&progress.info(&format!("building with {jobs} jobs")));
+    let ok = run_granted(
+        install.arg("--jobs").arg(jobs.to_string()),
+        source,
+        progress,
+    );
+    super::workspace_slot::release_grant(admission_path, &admission, &grant);
+    if ok && let Some(exe) = current_exe {
+        return swap_in(exe, staged, progress);
+    }
+    ok
+}
+
+/// Puts the staged build in place of the running binary (#1186). The build went to a staging
+/// root so the old binary stayed callable the whole time; only these two renames leave a gap.
+/// Windows cannot overwrite a running executable but can rename it, so it is moved aside first
+/// and put back if the new one cannot be moved in.
+fn swap_in(exe: &Path, staged: Option<&Path>, progress: Progress) -> bool {
+    let Some(staged) = staged else {
+        return true;
+    };
+    let old = exe.with_file_name(if cfg!(windows) {
+        "graphhelm.old.exe"
+    } else {
+        "graphhelm.old"
+    });
+    let _ = std::fs::remove_file(&old);
+    let moved = exe.exists() && std::fs::rename(exe, &old).is_ok();
+    if std::fs::rename(staged, exe).is_ok() {
+        return true;
+    }
+    if moved {
+        let _ = std::fs::rename(&old, exe);
+    }
+    Progress::say(&progress.warn(&format!(
+        "the new graphhelm is built at {} but could not replace {}",
+        staged.display(),
+        exe.display()
+    )));
+    false
+}
+
+fn run_granted(install: &mut std::process::Command, source: &Path, progress: Progress) -> bool {
+    use std::io::{BufRead, BufReader, Write};
     install
         .arg("--message-format")
         .arg("json-render-diagnostics")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     let Ok(mut child) = install.spawn() else {
-        if let Some((exe, old)) = &moved_aside {
-            let _ = std::fs::rename(old, exe);
-        }
         Progress::say(&progress.warn("cargo could not be started; is it installed?"));
         return false;
     };
@@ -689,9 +714,6 @@ pub(super) fn run_install(
                 eprintln!("{line}");
             }
         }
-    }
-    if !ok && let Some((exe, old)) = &moved_aside {
-        let _ = std::fs::rename(old, exe);
     }
     ok
 }

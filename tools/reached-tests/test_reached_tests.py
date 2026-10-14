@@ -499,6 +499,26 @@ class Reach(unittest.TestCase):
             "--features", "special,other", "--", "--test-threads=2",
         ]])
 
+    def test_a_single_gated_target_runs_with_its_features(self):
+        # #1280: a touched gated test file is a single-target step; it needs the same features
+        # the whole-package path adds, in both the executable step and the printed command.
+        metadata = [{"name": "graphhelm-postgres-event-store", "targets": [
+            {"name": "concurrency", "kind": "test", "test": True, "doctest": False,
+             "requiredFeatures": ["test-support"]},
+            {"name": "plain", "kind": "test", "test": True, "doctest": False, "requiredFeatures": []},
+        ]}]
+        single = {("graphhelm-postgres-event-store", "concurrency", None),
+                  ("graphhelm-postgres-event-store", "plain", None)}
+        argvs = [step["argv"] for step in rt.steps(set(), single, [], package_metadata=metadata)
+                 if "graphhelm-postgres-event-store" in step["argv"] and "--test" in step["argv"]]
+        gated = next(argv for argv in argvs if "concurrency" in argv)
+        plain = next(argv for argv in argvs if "plain" in argv)
+        self.assertEqual(gated[gated.index("--features") + 1], "test-support")
+        self.assertLess(gated.index("--features"), gated.index("--"))
+        self.assertNotIn("--features", plain)
+        printed = rt.commands(set(), single, [], package_metadata=metadata)
+        self.assertTrue(any("--test concurrency --features test-support --" in line for line in printed), printed)
+
     def test_the_postgres_event_store_plans_its_gated_targets_on_the_real_workspace(self):
         # #1280, the case seen live on #1279: graphhelm-postgres-event-store declares two test
         # targets with required-features = ["test-support"].

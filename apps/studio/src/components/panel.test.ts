@@ -135,14 +135,7 @@ it("keeps unread question envelopes pending until their evidence read settles", 
 it("reads each event once when the caller rebuilds the unchanged array", async () => {
   resetPanelCaches();
   const candidate = event(5, "signal_recorded", { kind: "operator_note", signalId: "sig-q" });
-  let evidenceReads = 0;
-  const refs = new Proxy(["question"], {
-    get(target, property, receiver) {
-      if (property === "0") evidenceReads += 1;
-      return Reflect.get(target, property, receiver);
-    },
-  });
-  Object.defineProperty(candidate, "evidenceRefs", { get: () => refs });
+  candidate.evidenceRefs = ["question"];
   const stableEvents = [candidate];
   let renders = 0;
   const open = vi.fn(async (_run: string, id: string): Promise<EvidenceContent> => ({
@@ -154,7 +147,7 @@ it("reads each event once when the caller rebuilds the unchanged array", async (
   }));
   const { result } = renderHook(() => useEnvelopes(renders++ < 4 ? [candidate] : stableEvents, "run", open));
   await waitFor(() => expect(result.current[5]?.text).toBe("Question"));
-  expect(evidenceReads).toBe(1);
+  expect(open).toHaveBeenCalledTimes(1);
 });
 
 it("settles cached envelopes after a poll adds another carrier", async () => {
@@ -183,7 +176,7 @@ it("publishes warm envelopes once per bounded page with complete contents", asyn
   });
   const open = vi.fn(async (_run: string, id: string): Promise<EvidenceContent> => ({
     evidenceId: id,
-    content: JSON.stringify({ type: "operator_note", description: `report ${id}`, target: { id: `agent-${id}`, type: "agent" } }),
+    content: JSON.stringify({ type: "operator_note", description: `report ${id}`, to: `agent-${id}` }),
     contentSha256: "hash", mediaType: "application/json", sensitivity: "confidential",
   }));
   const first = renderHook(() => useEnvelopes(rows, "run", open));

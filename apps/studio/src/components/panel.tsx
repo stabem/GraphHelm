@@ -921,11 +921,12 @@ export function useEnvelopes(
     const cached: typeof ready = [];
     const uncached: Array<{ carrier: (typeof carriers)[number]; page: number }> = [];
     carriers.forEach((carrier, carrierIndex) => {
-      const key = `${executionId}/${carrier.evidenceRefs[0]}`;
+      const evidenceId = carrier.evidenceRefs[0];
+      const key = `${executionId}/${evidenceId}`;
       const content = RESOLVED_EVIDENCE.get(key);
       const page = Math.floor(carrierIndex / 50);
       if (content !== undefined) cached.push({ page, sequence: carrier.sequence, value: openedEnvelope(content) });
-      else uncached.push({ carrier, page });
+      else uncached.push({ carrier, page, evidenceId });
     });
     // Cached content has no I/O dependency, so publish it now in groups of fifty.
     const cachedPages = new Map<number, typeof cached>();
@@ -938,10 +939,9 @@ export function useEnvelopes(
       ready.push(...page);
       publish();
     }
-    const read = async ({ carrier, page }: (typeof uncached)[number]) => {
-      const key = `${executionId}/${carrier.evidenceRefs[0]}`;
+    const read = async ({ carrier, page, evidenceId }: (typeof uncached)[number]) => {
       try {
-        const content = RESOLVED_EVIDENCE.get(key) ?? await openSealed(executionId, carrier.evidenceRefs[0], openEvidence);
+        const content = RESOLVED_EVIDENCE.get(`${executionId}/${evidenceId}`) ?? await openSealed(executionId, evidenceId, openEvidence);
         if (live) ready.push({ page, sequence: carrier.sequence, value: openedEnvelope(content) });
       } catch {
         if (live) failed.push(carrier.sequence);

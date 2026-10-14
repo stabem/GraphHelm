@@ -66,14 +66,14 @@ export function reduceCpuProfile(profile, options = {}) {
       leaf = byId.get(parents.get(leaf.id));
     }
     const frame = sampledNode.callFrame;
-    const name = String(frame.functionName ?? '').trim();
+    const name = sanitizeProfileFunctionName(frame.functionName);
     if (!name || name === '(idle)') { idleTimeUs += clipped; continue; }
     if (name === '(garbage collector)') { garbageCollectionTimeUs += clipped; continue; }
     if (frame.scriptId === '0') { nativeTimeUs += clipped; continue; }
     if (name === '(program)' || name === '(root)') { unassignedTimeUs += clipped; continue; }
     const url = sanitizeProfileUrl(frame.url);
     const key = `${name}\0${url}\0${Number.isSafeInteger(frame.lineNumber) ? frame.lineNumber + 1 : null}`;
-    const prior = totals.get(key) ?? { functionName: sanitizeText(name), url, line: Number.isSafeInteger(frame.lineNumber) && frame.lineNumber >= 0 ? frame.lineNumber + 1 : null, selfTimeUs: 0, samples: 0 };
+    const prior = totals.get(key) ?? { functionName: name, url, line: Number.isSafeInteger(frame.lineNumber) && frame.lineNumber >= 0 ? frame.lineNumber + 1 : null, selfTimeUs: 0, samples: 0 };
     prior.selfTimeUs += clipped;
     prior.samples += 1;
     totals.set(key, prior);
@@ -86,7 +86,12 @@ export function reduceCpuProfile(profile, options = {}) {
     note: 'Sample weights estimate self time; they are not exact durations or causal proof.' };
 }
 
-function sanitizeText(value) { return String(value).replace(/(?:[A-Za-z]:)?[\\/](?:[^\\/\s]+[\\/])+[^\\/\s]*/g, '[path]').slice(0, 160); }
+function sanitizeProfileFunctionName(value) {
+  const name = String(value ?? '').trim();
+  if (!name || name === '(idle)' || name === '(garbage collector)' || name === '(program)' || name === '(root)') return name;
+  if (/(?:bearer\s+\S+|\bsk-[A-Za-z0-9_-]{8,}|[?&](?:token|api[_-]?key|secret|password)=)/i.test(name)) return '[redacted frame]';
+  return name.replace(/(?:[A-Za-z]:)?[\\/](?:[^\\/\s]+[\\/])+[^\\/\s]*/g, '[path]').slice(0, 160);
+}
 function sanitizeProfileUrl(value) {
   if (typeof value !== 'string' || !value) return null;
   try {

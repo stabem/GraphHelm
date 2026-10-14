@@ -103,6 +103,16 @@ test('profile samples are clipped and attributed to leaf self time', () => {
   assert.ok(result.frames.every(frame => !JSON.stringify(frame).includes('secret')));
 });
 
+test('profile frame names do not copy sensitive text into the report', () => {
+  const profile = {
+    nodes: [{ id: 1, callFrame: { functionName: 'render bearer sk-test-123', url: 'https://site.test/app.js' } }],
+    samples: [1], timeDeltas: [10],
+  };
+  const result = reduceCpuProfile(profile, { startUs: 0, endUs: 10, sourceHead: 'abc12345', alignment: 'same-load' });
+  assert.equal(result.status, 'ok');
+  assert.ok(!JSON.stringify(result).includes('sk-test-123'));
+});
+
 test('profile reducer refuses missing alignment and malformed or oversized data', () => {
   const valid = { startTime: 0, endTime: 10, nodes: [{ id: 1, callFrame: { functionName: 'x' } }], samples: [1], timeDeltas: [10] };
   assert.equal(reduceCpuProfile(valid, { startUs: 0, endUs: 10, sourceHead: 'abc12345' }).status, 'unknown');

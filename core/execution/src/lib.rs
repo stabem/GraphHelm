@@ -18,6 +18,7 @@ mod progress;
 mod ready;
 mod recovery;
 mod signal;
+pub mod tasks;
 mod transition;
 
 pub use attention::{

@@ -1445,6 +1445,20 @@ pub enum ExecutionCommand {
         /// a newer one was published, is refused.
         #[arg(long)]
         file: Option<PathBuf>,
+        /// #1149: also fold the execution's `task.*` records into `tasks`, the same projection
+        /// `GET /v1/executions/{id}/tasks` and the MCP tool `tasks` serve. Needs `--execution`
+        /// and the sealing keyring (`--keyring`, `--key-id`) that opens the envelopes.
+        #[arg(
+            long,
+            requires = "execution",
+            requires = "keyring",
+            requires = "key_id"
+        )]
+        tasks: bool,
+        #[arg(long)]
+        keyring: Option<PathBuf>,
+        #[arg(long)]
+        key_id: Option<String>,
     },
     /// Replays a stream and reports the resume briefing: what the execution is for, every
     /// decision with its actor in order, the work done, what is pending, and the next step.

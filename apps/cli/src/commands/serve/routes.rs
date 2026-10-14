@@ -1857,6 +1857,43 @@ pub(super) async fn project_journeys(State(state): State<ServeState>) -> Respons
     journeys_over(state, None).await
 }
 
+/// `GET /v1/executions/{id}/tasks` (#1149): the task projection of one run, exactly
+/// `graphhelm execution status --tasks`'s `tasks` block: every task slice with its lit step,
+/// lane, PR, head, claim sequence and last heartbeat, folded in the Runtime from the run's
+/// verified `task.*` envelopes (opened with the Runtime's own keyring). Read-only; an agent
+/// session token reaches it like every other `GET /v1/executions/...`.
+pub(super) async fn tasks(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+) -> Response {
+    const COMMAND: &str = "execution.tasks";
+    let Some(keyring) = state.sealing.clone() else {
+        return respond_failure(
+            COMMAND,
+            execution::execution_state("the task projection requires a sealed keyring", "/keyring"),
+        );
+    };
+    let events = state.events.clone();
+    let Some(result) = off_reactor(move || {
+        // The operator-facing read budget (#750), the same one `status` declares: the walk, the
+        // envelope opens and the fold share it.
+        let budget = crate::commands::status_read_budget();
+        execution::tasks::read(&events, &execution_id, &keyring, &budget)
+            .map(|view| serde_json::to_value(view).expect("a view of serializable fold types"))
+    })
+    .await
+    else {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(COMMAND, "the tasks task failed").output,
+        );
+    };
+    match result {
+        Ok(value) => respond(StatusCode::OK, Outcome::success(COMMAND, value).output),
+        Err(failure) => respond_failure(COMMAND, failure),
+    }
+}
+
 /// `POST /v1/keel/plan` (#382 phase B): exactly `graphhelm keel plan` (without recording) over
 /// the Runtime's `--project`; the body names the task, its paths and promise, never a directory.
 /// Owner credentials only (`agent_route_allowed` admits no `/v1/keel`).

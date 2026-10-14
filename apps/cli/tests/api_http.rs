@@ -3160,6 +3160,126 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
     );
 }
 
+/// #1149: `GET /v1/executions/{id}/tasks` serves the Runtime's own fold of the run's `task.*`
+/// records. Catches a route that folds nothing (an empty `tasks` for a run with a claim and a
+/// PR), one that draws a non-task signal as a task, and one that leaves the step on `plan` after
+/// the PR opened. The records go in through the real sealed signal door (the CLI's, with the same
+/// keyring the server is then started with, as `task_event_cli` does), so the route verifies the
+/// same envelopes a lane writes. Cost: three CLI signals, one sealed server, two GETs.
+#[test]
+fn the_tasks_route_folds_the_runs_task_records_into_slices() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-tasks";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = events.with_extension("keyring");
+    create_signal_keyring(&keyring);
+    let record = |id: &str, kind: &str, lane: &str, description: &str| {
+        let envelope = serde_json::json!({
+            "id": id,
+            "source": {"type": "user", "id": lane},
+            "type": kind,
+            "severity": "low",
+            "description": description,
+            "evidence": ["task"],
+            "emittedAt": "2026-10-13T12:00:00Z"
+        });
+        let path = directory.path().join(format!("{id}.json"));
+        std::fs::write(&path, serde_json::to_vec(&envelope).unwrap()).unwrap();
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
+            .args(["execution", "signal", "--events"])
+            .arg(&events)
+            .args(["--execution", execution, "--signal"])
+            .arg(&path)
+            .arg("--evidence-out")
+            .arg(directory.path().join(format!("{id}-evidence.json")))
+            .arg("--keyring")
+            .arg(&keyring)
+            .args(["--key-id", "signal-key"])
+            .output()
+            .unwrap();
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["ok"], Value::Bool(true), "{kind}: {reply}");
+    };
+    // The CLI door records as `owner-cli`, so the lane these records name is that actor.
+    let lane = "owner-cli";
+    record(
+        "record-claim",
+        "task.claimed",
+        lane,
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1149", "revision": 1,
+            "at": "2026-10-13T12:00:00Z", "issue": 1149, "lane": lane, "branch": "issue-1149-tasks",
+            "repo": "stabem/GraphHelm"})
+        .to_string(),
+    );
+    // A plain signal between the records: the projection must not draw it as a task.
+    record(
+        "record-plain",
+        "no_progress",
+        lane,
+        "the deploy stage needs a manual review",
+    );
+    record(
+        "record-pr",
+        "task.pr_opened",
+        lane,
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1149", "revision": 3,
+            "at": "2026-10-13T12:10:00Z", "pr": 1150, "headSha": "abcdef01", "journeys": [], "lane": lane})
+        .to_string(),
+    );
+
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let reply = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks"),
+        Some(&token),
+    );
+    assert_eq!(reply["ok"], Value::Bool(true), "{reply}");
+    assert_eq!(reply["command"], "execution.tasks");
+    let data = &reply["data"];
+    assert_eq!(data["executionId"], execution);
+    assert_eq!(data["rejected"], 0, "{data}");
+    assert_eq!(data["records"].as_array().map(Vec::len), Some(2), "{data}");
+    let tasks = data["tasks"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no tasks array: {data}"));
+    assert_eq!(tasks.len(), 1, "{data}");
+    let task = &tasks[0];
+    assert_eq!(task["key"], "issue-1149#pr-1150");
+    assert_eq!(task["issue"], 1149);
+    assert_eq!(task["pr"], 1150);
+    assert_eq!(task["lane"], lane);
+    assert_eq!(task["headSha"], "abcdef01");
+    assert_eq!(task["step"], "review");
+    assert_eq!(task["repoUrl"], "https://github.com/stabem/GraphHelm");
+    assert!(
+        task["clock"]["since"].is_string(),
+        "the Runtime's append time drives the clock: {task}"
+    );
+    assert_eq!(
+        data["headSequence"],
+        head_sequence(&base, &token, execution),
+        "the tasks reply names the same head as status"
+    );
+    assert_eq!(
+        get_status(
+            &format!("{base}/v1/executions/no-such-run/tasks"),
+            Some(&token)
+        ),
+        404
+    );
+}
+
 /// The plan's second Task 3 test: an identical retry (same `Idempotency-Key`, same body) is 200,
 /// not 409, and appends nothing — the store's own `GHE003_IDEMPOTENCY_CONFLICT` on the
 /// freshly-recomputed-sequence collision (the checkpoint this task verified empirically) is

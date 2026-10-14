@@ -7,7 +7,7 @@
 //! control*.
 //!
 //! This test is the enforcement. It runs inside the workspace-test stage the gate already
-//! had, so wiring it needed no edit to the gate runner — which matters, because `ci/` is NOT
+//! has, so wiring it needs no edit to `ci/gate.ps1` — which matters, because `ci/` is NOT
 //! gate machinery by the rule's own list, and adding the stage there would have made the
 //! enforcing commit violate the very rule it enforces.
 //!

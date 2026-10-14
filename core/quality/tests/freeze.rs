@@ -449,8 +449,8 @@ fn every_frozen_prefix_matches_at_least_one_tracked_file() {
 /// `this_branch_does_not_move_the_judge_and_the_judged_together` from its SECOND run on, and a
 /// gate-machinery change could never carry the GREEN manifest `merge-proof` (retired
 /// 2026-09-24) required. The rule condemned its own receipt. Measured on #859's third gate
-/// (manifest `c6887f05`). Receipts are no longer committed and the runner is deleted (#1204); old
-/// local manifests may still sit under that prefix, so the exemption stays.
+/// (manifest `c6887f05`). Receipts are no longer committed, but `ci/gate.ps1` still writes its
+/// manifests under that prefix, so the exemption stays.
 ///
 /// The exemption is the store's prefix and nothing wider, and the three controls below are what
 /// keep it from becoming a bypass: the real pairing still refuses, code-only stays clean, and a

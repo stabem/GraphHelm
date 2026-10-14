@@ -476,8 +476,8 @@ pub fn freeze_violation(changed_paths: &[&str]) -> Option<(String, String)> {
     // path -- every `core/quality/` or `tools/pathogens/` branch went RED at the freeze cell
     // from its second run, and no gate-machinery change could carry the GREEN manifest
     // `merge-proof` (retired 2026-09-24) required. The rule was condemning its own receipt.
-    // Receipts are no longer committed and the runner is deleted (#1204); old local manifests may
-    // still sit under this prefix, so the exemption stays. The exemption is this prefix and nothing wider: a
+    // Receipts are no longer committed, but `ci/gate.ps1` still writes its manifests under this
+    // prefix, so the exemption stays. The exemption is this prefix and nothing wider: a
     // non-manifest file under `.factory/` still counts as code.
     const RUN_MANIFEST_STORE: &str = ".factory/gate-runs/";
     let is_gate = |path: &str| GATE_MACHINERY.iter().any(|prefix| path.starts_with(prefix));

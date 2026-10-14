@@ -293,7 +293,7 @@ pub(crate) fn validate_task_event(
                 && (document.get("journeys").is_none() || ids("journeys"))
                 // #1193: the lease, 60 s to a day; absent means the fold's default (1800 s).
                 && document.get("leaseSeconds").is_none_or(|value| {
-                    value.as_u64().is_some_and(|n| (60..=86400).contains(&n))
+                    value.as_u64().is_some_and(|n| (300..=86400).contains(&n))
                 }),
             &[
                 "issue",

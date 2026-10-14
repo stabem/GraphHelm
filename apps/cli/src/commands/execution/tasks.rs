@@ -16,7 +16,7 @@ use graphhelm_events::{EvidenceOpener, EvidenceRead};
 use graphhelm_execution::tasks::{
     FoldSlice, Route, TaskEventRecord, TaskState, fold_task_events_with_routes, parse_task_event,
 };
-use graphhelm_protocols::{EventKind, EvidenceId};
+use graphhelm_protocols::{EventKind, EvidenceId, PersistedTimestamp};
 use serde::Serialize;
 
 use super::signal::SignalKeyring;
@@ -40,6 +40,10 @@ pub struct TasksView {
     /// #1202: how many sealed envelopes THIS read opened. A Runtime that remembers the run opens
     /// none on an unchanged head and one per `task.*` record since the last read.
     pub opened: usize,
+    /// #1193: the Runtime's clock at this read, and the lease of every live pre-PR claim judged
+    /// against it; the reconciler releases the `overdue` ones as `graphhelm`.
+    pub now: PersistedTimestamp,
+    pub leases: Vec<ClaimLease>,
 }
 
 /// #1202: what one Runtime remembers of an execution's `task.*` envelopes it already opened.
@@ -65,6 +69,87 @@ impl TaskRecordCache {
             self.head = other.head;
         }
     }
+}
+
+/// #1193: one `ClaimLease` per live slice that still holds a pre-PR claim (a slice with a PR, a
+/// merge or a release is not leased), judged at `now`.
+pub fn claim_leases(tasks: &[TaskState], now: &PersistedTimestamp) -> Vec<ClaimLease> {
+    tasks
+        .iter()
+        .filter(|state| {
+            state.pr.is_none()
+                && state.released_by.is_none()
+                && state.step != graphhelm_execution::tasks::TaskStep::Merged
+        })
+        .filter_map(|state| {
+            let (lane, claim_sequence, claimed_at) = (
+                state.lane.as_ref()?,
+                state.claim_sequence?,
+                state.claimed_at.as_ref()?,
+            );
+            let lease_seconds = state.lease_seconds.unwrap_or(1800);
+            let (expires_at, overdue) = lease_state(
+                claimed_at,
+                state.last_heartbeat_at.as_ref(),
+                lease_seconds,
+                now,
+            );
+            Some(ClaimLease {
+                key: state.key.clone(),
+                task_id: state.task_id.clone(),
+                lane: lane.clone(),
+                claim_sequence,
+                lease_seconds,
+                expires_at,
+                overdue,
+            })
+        })
+        .collect()
+}
+
+/// #1193 (plan A2): the lease of one open pre-PR claim, read at `now`. `expires_at` is the later
+/// of the claim and its last heartbeat plus the lease; `overdue` is `now` past it. Computed here,
+/// beside the Runtime's clock, never in the pure fold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimLease {
+    /// The slice key the lease belongs to (`TaskState.key`).
+    pub key: String,
+    pub task_id: String,
+    pub lane: String,
+    pub claim_sequence: u64,
+    pub lease_seconds: u64,
+    pub expires_at: PersistedTimestamp,
+    pub overdue: bool,
+}
+
+/// The lease arithmetic, total for any instants: a heartbeat before the claim (a corrupt or
+/// reordered log) cannot move expiry earlier than the claim itself, and a `now` before the claim
+/// reads as not overdue. `lease_seconds` is bounded by admission (300..86400, never below the heartbeat cooldown) and the fold's
+/// default; any value is accepted here.
+pub fn lease_state(
+    claimed_at: &PersistedTimestamp,
+    last_heartbeat_at: Option<&PersistedTimestamp>,
+    lease_seconds: u64,
+    now: &PersistedTimestamp,
+) -> (PersistedTimestamp, bool) {
+    let claimed = *claimed_at.as_datetime();
+    let since = last_heartbeat_at
+        .map(|at| *at.as_datetime())
+        .filter(|heartbeat| *heartbeat > claimed)
+        .unwrap_or(claimed);
+    let lease = chrono::Duration::seconds(i64::try_from(lease_seconds).unwrap_or(i64::MAX));
+    // An expiry that cannot be represented (a lease past the persisted range) fails CLOSED: the
+    // claim reads as not overdue and expiry is reported as `now`, never as an earlier instant
+    // that would release a live claim (gh-claude-opt-1 on PR #1205).
+    let Some(expires_at) = since
+        .checked_add_signed(lease)
+        .and_then(|expires| PersistedTimestamp::from_datetime(expires).ok())
+    else {
+        return (now.clone(), false);
+    };
+    let overdue = *now.as_datetime() > *expires_at.as_datetime();
+    (expires_at, overdue)
 }
 
 /// Reads one execution's `task.*` records through the Runtime's keyring and folds them. An
@@ -195,6 +280,9 @@ pub(crate) fn read_cached(
     }
     let fold = fold_task_events_with_routes(&records);
     budget.check_now(walked).map_err(exceeded)?;
+    let now = PersistedTimestamp::from_datetime(chrono::Utc::now())
+        .map_err(|_| super::signal_invalid("the Runtime clock is not a persisted instant", "/"))?;
+    let leases = claim_leases(&fold.tasks, &now);
     Ok(TasksView {
         execution_id: execution.to_owned(),
         head_sequence: history.last().map_or(0, |event| event.sequence),
@@ -204,5 +292,43 @@ pub(crate) fn read_cached(
         slices: fold.slices,
         routes: fold.routes,
         opened,
+        now,
+        leases,
     })
+}
+
+#[cfg(test)]
+mod lease_tests {
+    use super::*;
+
+    fn at(value: &str) -> PersistedTimestamp {
+        PersistedTimestamp::parse(value).unwrap()
+    }
+
+    /// #1193: the plan's cell. A claim at T with no heartbeat is overdue at T+lease+1s and not at
+    /// T+lease-1s; a heartbeat at T+lease-1s moves expiry to that instant plus the lease.
+    #[test]
+    fn a_claim_goes_overdue_one_second_past_its_lease_and_a_heartbeat_moves_expiry() {
+        let claimed = at("2026-10-14T03:00:00Z");
+        let (expires, overdue) = lease_state(&claimed, None, 1800, &at("2026-10-14T03:29:59Z"));
+        assert_eq!(expires, at("2026-10-14T03:30:00Z"));
+        assert!(!overdue, "one second inside the lease");
+        let (_, overdue) = lease_state(&claimed, None, 1800, &at("2026-10-14T03:30:01Z"));
+        assert!(overdue, "one second past the lease");
+        let heartbeat = at("2026-10-14T03:29:59Z");
+        let (expires, overdue) = lease_state(
+            &claimed,
+            Some(&heartbeat),
+            1800,
+            &at("2026-10-14T03:30:01Z"),
+        );
+        assert_eq!(expires, at("2026-10-14T03:59:59Z"));
+        assert!(!overdue, "the heartbeat moved expiry");
+        // Exactly at expiry is not yet overdue; a heartbeat older than the claim counts for nothing.
+        let (_, overdue) = lease_state(&claimed, None, 1800, &at("2026-10-14T03:30:00Z"));
+        assert!(!overdue);
+        let stale = at("2026-10-14T02:00:00Z");
+        let (expires, _) = lease_state(&claimed, Some(&stale), 60, &at("2026-10-14T03:00:30Z"));
+        assert_eq!(expires, at("2026-10-14T03:01:00Z"));
+    }
 }

@@ -326,6 +326,42 @@ class LaneStopTests(unittest.TestCase):
             answer = json.load(response)
             self.assertTrue(answer["ok"], answer)
 
+    def test_reconcile_releases_an_overdue_claim_as_graphhelm_and_skips_live_ones(self):
+        # #1193: the tasks route reports each open pre-PR claim's lease; the reconciler releases
+        # the overdue ones as graphhelm (releasedBy), with the lane's credential never involved,
+        # and leaves live leases and malformed entries alone. On the parent `release_overdue`
+        # does not exist. Cost: no Runtime, two mocked calls.
+        view = {"executionId": "lane-test", "headSequence": 9, "tasks": [], "records": [], "rejected": 0,
+                "leases": [
+                    {"key": "issue-766#claim-1", "taskId": "issue-766", "lane": "codex-4", "claimSequence": 7,
+                     "leaseSeconds": 1800, "expiresAt": "2026-10-14T03:30:00Z", "overdue": True},
+                    {"key": "issue-767#claim-1", "taskId": "issue-767", "lane": "codex-5", "claimSequence": 8,
+                     "leaseSeconds": 1800, "expiresAt": "2026-10-14T04:30:00Z", "overdue": False},
+                    {"key": "bad", "taskId": "issue-768", "lane": "codex-6", "claimSequence": "9", "overdue": True}]}
+        credentials = {}
+        with mock.patch.object(tasks_reconcile, "get", return_value=view) as get, \
+                mock.patch.object(tasks_reconcile, "post_end") as post_end:
+            out = tasks_reconcile.release_overdue("http://127.0.0.1:1", "shared", lambda actor: credentials.setdefault(actor, f"cred-{actor}"),
+                                                  "lane-test", "stabem/GraphHelm")
+        self.assertEqual(get.call_args.args, ("http://127.0.0.1:1/v1/executions/lane-test/tasks", "shared"))
+        self.assertEqual(out, {"released": [{"taskId": "issue-766", "lane": "codex-4", "claimSequence": 7}], "refused": []})
+        self.assertEqual(post_end.call_count, 1)
+        args = post_end.call_args.args
+        self.assertEqual(args[:2], ("http://127.0.0.1:1", "cred-graphhelm"))
+        self.assertEqual(args[2:7], ("lane-test", "released", "issue-766", "stabem/GraphHelm", "graphhelm"))
+        self.assertEqual(args[7]["lane"], "codex-4")
+        self.assertEqual(args[7]["claimSequence"], 7)
+        self.assertEqual(args[7]["releasedBy"], "graphhelm")
+        self.assertIn("1800 s lapsed at 2026-10-14T03:30:00Z", args[7]["reason"])
+        self.assertEqual(list(credentials), ["graphhelm"])
+        # An older Runtime without leases, or an unreachable route, releases nothing and raises nothing.
+        with mock.patch.object(tasks_reconcile, "get", return_value={"tasks": []}):
+            self.assertEqual(tasks_reconcile.release_overdue("http://127.0.0.1:1", "shared", lambda a: "c", "lane-test", "r"),
+                             {"released": [], "refused": []})
+        with mock.patch.object(tasks_reconcile, "get", side_effect=OSError("down")):
+            self.assertEqual(tasks_reconcile.release_overdue("http://127.0.0.1:1", "shared", lambda a: "c", "lane-test", "r"),
+                             {"released": [], "refused": []})
+
     def test_stop_reconcile_heartbeats_an_open_claim_and_the_runtime_owns_the_cooldown(self):
         # #1147: a live lane heartbeats without being told. The first Stop reconcile lands one
         # task.heartbeat for the open pre-PR claim; the second, inside 300 s, is refused by the

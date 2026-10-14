@@ -3298,6 +3298,125 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
     );
 }
 
+/// #1193 (plan A2): the tasks route judges each live pre-PR claim's lease at the Runtime's
+/// clock. Before: the reply had no `leases` and no `now`, so no reader could say which claim had
+/// lapsed. Catches a reply that leases a slice with a PR, one that ignores `leaseSeconds`, and one
+/// whose `expiresAt` is not the claim's Runtime time plus the lease. The claim is seconds old, so
+/// `overdue` reads false; the arithmetic past the lease is the unit cell beside `lease_state`.
+/// Cost: two CLI signals, one sealed server, one GET.
+#[test]
+fn the_tasks_route_reports_each_open_claims_lease() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-leases";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = events.with_extension("keyring");
+    create_signal_keyring(&keyring);
+    let record = |id: &str, kind: &str, description: &str| {
+        let envelope = serde_json::json!({"id": id, "source": {"type": "user", "id": "owner-cli"},
+            "type": kind, "severity": "low", "description": description, "evidence": ["task"],
+            "emittedAt": "2026-10-14T03:00:00Z"});
+        let path = directory.path().join(format!("{id}.json"));
+        std::fs::write(&path, serde_json::to_vec(&envelope).unwrap()).unwrap();
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
+            .args(["execution", "signal", "--events"])
+            .arg(&events)
+            .args(["--execution", execution, "--signal"])
+            .arg(&path)
+            .arg("--evidence-out")
+            .arg(directory.path().join(format!("{id}-evidence.json")))
+            .arg("--keyring")
+            .arg(&keyring)
+            .args(["--key-id", "signal-key"])
+            .output()
+            .unwrap();
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["ok"], Value::Bool(true), "{kind}: {reply}");
+    };
+    // A leased claim, and a second claim that already has a PR (not leased).
+    record(
+        "lease-claim",
+        "task.claimed",
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1193", "revision": 1,
+            "at": "2026-10-14T03:00:00Z", "issue": 1193, "lane": "owner-cli", "branch": "issue-1193-lease",
+            "repo": "stabem/GraphHelm", "leaseSeconds": 600})
+        .to_string(),
+    );
+    record(
+        "pr-claim",
+        "task.claimed",
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1194", "revision": 1,
+            "at": "2026-10-14T03:00:00Z", "issue": 1194, "lane": "owner-cli", "branch": "issue-1194-x",
+            "repo": "stabem/GraphHelm"})
+        .to_string(),
+    );
+    record(
+        "pr-open",
+        "task.pr_opened",
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1194", "revision": 2,
+            "at": "2026-10-14T03:01:00Z", "pr": 1195, "headSha": "abcdef01", "journeys": [], "lane": "owner-cli"})
+        .to_string(),
+    );
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let reply = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks"),
+        Some(&token),
+    );
+    assert_eq!(reply["ok"], Value::Bool(true), "{reply}");
+    let data = &reply["data"];
+    assert!(
+        data["now"].is_string(),
+        "the reply names the clock it judged at: {data}"
+    );
+    let leases = data["leases"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no leases array: {data}"));
+    assert_eq!(leases.len(), 1, "only the pre-PR claim is leased: {data}");
+    let lease = &leases[0];
+    assert_eq!(lease["taskId"], "issue-1193");
+    assert_eq!(lease["lane"], "owner-cli");
+    assert_eq!(lease["leaseSeconds"], 600);
+    assert_eq!(
+        lease["overdue"], false,
+        "a claim seconds old is live: {lease}"
+    );
+    let claimed_at = data["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["taskId"] == "issue-1193")
+        .map(|task| task["claimedAt"].as_str().unwrap().to_owned())
+        .unwrap_or_else(|| panic!("no leased task: {data}"));
+    let claimed = chrono::DateTime::parse_from_rfc3339(&claimed_at).unwrap();
+    let expires =
+        chrono::DateTime::parse_from_rfc3339(lease["expiresAt"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        expires - claimed,
+        chrono::Duration::seconds(600),
+        "expiry is the claim's Runtime time plus its lease: {lease}"
+    );
+    assert_eq!(
+        lease["claimSequence"],
+        data["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["taskId"] == "issue-1193")
+            .unwrap()["claimSequence"]
+    );
+}
+
 /// #1149: `GET /v1/executions/{id}/tasks` serves the Runtime's own fold of the run's `task.*`
 /// records. Catches a route that folds nothing (an empty `tasks` for a run with a claim and a
 /// PR), one that draws a non-task signal as a task, and one that leaves the step on `plan` after

@@ -24,7 +24,7 @@
         "summary": {"$ref": "#/$defs/summary"},
         "parent": {"description": "The issue whose work turned this task up (#514); the Studio draws this task inside that issue's card.", "$ref": "#/$defs/positive"},
         "journeys": {"description": "The journey contract ids the issue serves (#577); the Studio Graph tab links the task to them from the claim on.", "type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/taskId"}},
-        "leaseSeconds": {"description": "#1193: how long the claim stays live without a heartbeat, in seconds. The tasks fold reads the claim as overdue once the later of the claim and its last heartbeat plus this lease has passed; absent means 1800.", "type": "integer", "minimum": 60, "maximum": 86400}
+        "leaseSeconds": {"description": "#1193: how long the claim stays live without a heartbeat, in seconds, never below the 300 s heartbeat cooldown (a shorter lease could not be kept alive). The tasks fold reads the claim as overdue once the later of the claim and its last heartbeat plus this lease has passed; absent means 1800.", "type": "integer", "minimum": 300, "maximum": 86400}
       }
     },
     {

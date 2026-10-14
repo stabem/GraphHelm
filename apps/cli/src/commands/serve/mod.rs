@@ -833,6 +833,7 @@ fn build_router(state: ServeState) -> Router {
         )
         .route("/v1/executions/{id}/briefing", get(routes::briefing))
         .route("/v1/executions/{id}/journeys", get(routes::journeys))
+        .route("/v1/executions/{id}/tasks", get(routes::tasks))
         .route("/v1/journeys", get(routes::project_journeys))
         .route("/v1/keel/plan", post(routes::keel_plan))
         .route("/v1/workspaces", get(routes::workspaces))
@@ -1235,6 +1236,9 @@ fn journey_review_route(request: &Request) -> bool {
         )
 }
 
+/// The routes a scoped agent credential reaches: reads of its own execution (status, briefing,
+/// events and, since #1149, the task projection `tasks`, which the lanes' MCP tool reads) and the
+/// signal route. Everything else is the owner's or the shared session token's.
 fn agent_route_allowed(request: &Request) -> bool {
     let path = request.uri().path();
     let method = request.method();
@@ -1244,7 +1248,7 @@ fn agent_route_allowed(request: &Request) -> bool {
             && segments.get(2) == Some(&"executions")
             && (segments.len() == 4
                 || (segments.len() == 5
-                    && (segments[4] == "briefing" || segments[4] == "events")));
+                    && matches!(segments[4], "briefing" | "events" | "tasks")));
     }
     let segments: Vec<_> = path.split('/').collect();
     method == axum::http::Method::POST

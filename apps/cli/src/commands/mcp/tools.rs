@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 44] = [
+const TOOLS: [ToolSpec; 45] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start). Minimal \
@@ -94,6 +94,15 @@ const TOOLS: [ToolSpec; 44] = [
                       fresh, stale (naming the changed files) or unknown (naming the cause), and \
                       the walked arrows between steps. Identical on CLI, HTTP and MCP. Read-only.",
         schema: optional_execution_schema,
+    },
+    ToolSpec {
+        name: "tasks",
+        description: "Read the task projection of a run (GET /v1/executions/{executionId}/tasks): \
+                      every task slice with its lit delivery step (plan, critic, implement, \
+                      review, merge, merged), lane, issue, PR, head, open BLOCK, claim sequence \
+                      and last heartbeat, folded by the Runtime from the run's verified task.* \
+                      records. Identical on CLI (execution status --tasks), HTTP and MCP. Read-only.",
+        schema: execution_only_schema,
     },
     ToolSpec {
         name: "keel_plan",
@@ -1668,6 +1677,15 @@ pub(crate) fn call(
             None,
             None,
         )),
+        "tasks" => require(arguments, "executionId").map(|id| {
+            api.request(
+                "GET",
+                &url::segment_path(&["v1", "executions", id, "tasks"]),
+                None,
+                None,
+                None,
+            )
+        }),
         "journeys" => {
             let path = match str_arg(arguments, "executionId") {
                 Some(id) => url::segment_path(&["v1", "executions", id, "journeys"]),

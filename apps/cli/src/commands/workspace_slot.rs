@@ -276,14 +276,53 @@ pub(crate) fn clear_update_pending(admission: &Path) {
     }
 }
 
-/// #1254: whether any live run holds a grant. An update installs only when none does.
-pub(crate) fn grants_outstanding(
+/// The jobs `graphhelm update` asks for: one root's share of the machine (LANES.md §3), capped by
+/// the budget in force.
+pub(crate) const UPDATE_JOBS: u32 = 16;
+
+/// An update's admission (#1186): a grant like any build's, so it shares the machine within the
+/// budget instead of waiting for every admitted build to finish (owner run, 2026-10-14: a 35-minute
+/// `--jobs 1` build held a 3-minute update). It still goes first: while it does not fit, its
+/// marker stops new grants, so the ledger drains until it does. Returns the token and the jobs
+/// granted (`UPDATE_JOBS`, or the whole budget when that is smaller).
+pub(crate) fn try_grant_update(
     admission: &Path,
+    lock: &File,
     running: impl Fn(u32) -> bool,
-) -> Result<bool, String> {
-    Ok(read_grants(admission)?
-        .iter()
-        .any(|grant| running(grant.pid)))
+) -> Result<Option<(String, u32)>, String> {
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => return Ok(None),
+        Err(TryLockError::Error(_)) => {
+            return Err("the build admission lock could not be checked".to_owned());
+        }
+    }
+    let decided = (|| {
+        let budget = jobs_budget(admission)?;
+        let jobs = UPDATE_JOBS.min(budget);
+        let mut grants = read_grants(admission)?;
+        grants.retain(|grant| running(grant.pid));
+        let granted: u64 = grants.iter().map(|grant| u64::from(grant.jobs)).sum();
+        if granted + u64::from(jobs) > u64::from(budget) {
+            mark_update_pending(admission);
+            write_grants(admission, &grants)?;
+            return Ok(None);
+        }
+        let token = grant_token();
+        grants.push(Grant {
+            pid: std::process::id(),
+            jobs,
+            token: token.clone(),
+        });
+        write_grants(admission, &grants)?;
+        clear_update_pending(admission);
+        Ok(Some((token, jobs)))
+    })();
+    if decided.is_err() {
+        clear_update_pending(admission);
+    }
+    let _ = lock.unlock();
+    decided
 }
 
 fn slot_dir(root: &Path) -> PathBuf {

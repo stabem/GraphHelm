@@ -1758,6 +1758,71 @@ fn every_event_variant_round_trips_here_too() {
     );
 }
 
+/// No event wire tag is declared twice, on either side of the wire (#1233).
+///
+/// Every other cell here compares `EventKind::EVERY_WIRE_NAME` with the envelope schema AS SETS,
+/// and a set cannot see a duplicate: a tag listed twice in the macro, or two `eventKind` variants in
+/// the schema carrying the same `const` with different payloads, both collapse to one member and
+/// stay green. On the schema side that second case is the journal fork the retired
+/// `ci/event-contract-sweep.ps1` hunted across branches: whichever variant a validator matches
+/// first decides what an old record means. Once two such branches merge, the duplicate is in ONE
+/// tree, and this cell is where it goes red.
+///
+/// Case-insensitively too: `task_claimed` and `Task_Claimed` are two tags to serde and one tag to
+/// a reader that folds case, so the sweep counted case-only differences as collisions and so does
+/// this.
+#[test]
+fn no_event_wire_tag_is_declared_twice() {
+    fn duplicates<'a>(tags: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+        let mut seen_exact = std::collections::BTreeSet::new();
+        let mut seen_folded = std::collections::BTreeSet::new();
+        let mut twice = Vec::new();
+        for tag in tags {
+            if !seen_exact.insert(tag.to_owned()) {
+                twice.push(tag.to_owned());
+            } else if !seen_folded.insert(tag.to_lowercase()) {
+                twice.push(format!("{tag} (differs from another only by case)"));
+            }
+        }
+        twice
+    }
+
+    let rust = duplicates(EventKind::EVERY_WIRE_NAME.iter().copied());
+    assert!(
+        rust.is_empty(),
+        "EventKind::EVERY_WIRE_NAME lists these tags more than once: {rust:?}"
+    );
+
+    let envelope: Value =
+        serde_json::from_str(include_str!("../../../schemas/event-envelope.schema.json"))
+            .expect("the envelope schema parses");
+    let variants = envelope["$defs"]["eventKind"]["oneOf"]
+        .as_array()
+        .expect("the envelope schema declares $defs/eventKind/oneOf");
+    let schema_tags: Vec<&str> = variants
+        .iter()
+        .map(|variant| {
+            variant["properties"]["type"]["const"]
+                .as_str()
+                .unwrap_or_else(|| panic!("an eventKind variant without a type const: {variant}"))
+        })
+        .collect();
+    // CONTROL: the walk read the vocabulary, not an empty or renamed node.
+    assert_eq!(
+        schema_tags.len(),
+        EventKind::EVERY_WIRE_NAME.len(),
+        "the schema's eventKind variants and EVERY_WIRE_NAME differ in COUNT, which a set comparison \
+         cannot see: {} vs {}",
+        schema_tags.len(),
+        EventKind::EVERY_WIRE_NAME.len()
+    );
+    let schema = duplicates(schema_tags.iter().copied());
+    assert!(
+        schema.is_empty(),
+        "schemas/event-envelope.schema.json declares these eventKind tags more than once: {schema:?}"
+    );
+}
+
 /// The refusal registry is a CLOSED vocabulary and every entry must satisfy the grammar the wire
 /// enforces (blueprint §2d asks the implementation lane to freeze it with a conformance test).
 ///

@@ -1,6 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: cleanup
 title: Client deletes the items
+purpose: A client deletes its items and the service confirms they are gone.
 status: draft
 approved: null
 base: http://127.0.0.1:8765
@@ -9,11 +10,13 @@ secrets: []
 risks: [irreversible_effect]
 screens:
   - id: deleted
+    title: The confirmation that the items are gone
     url: /
     state: success
     expect: [{role: status, name: "204"}]
     scope: unknown
   - id: start
+    title: The service status before any request
     url: /status.json
     state: stable
     expect: [{role: status, name: "200"}]

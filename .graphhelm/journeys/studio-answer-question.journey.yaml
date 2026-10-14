@@ -1,6 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: studio-answer-question
 title: Answer an agent from the run panel
+purpose: The owner answers a waiting agent from the run panel and the run continues with that answer.
 status: draft
 approved: null
 base: http://127.0.0.1:5184

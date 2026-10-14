@@ -1,6 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: first-login
 title: First login to a configured store
+purpose: "A new seller signs in with Mercado Livre, finishes store setup and lands on their dashboard."
 status: draft
 approved: null
 base: http://localhost:3000
@@ -9,16 +10,19 @@ secrets: []
 risks: [authentication]
 screens:
   - id: dashboard
+    title: "The seller dashboard, reached only after setup"
     url: /dashboard
     state: success
     expect: [{role: heading, name: Dashboard}]
     scope: [apps/web/app/dashboard/page.tsx]
   - id: entrar
+    title: The sign-in page
     url: /entrar
     state: stable
     expect: [{role: button, name: Entrar com Mercado Livre}]
     scope: [apps/web/app/entrar/page.tsx, apps/web/src/screens/entrar-screen.tsx]
   - id: onboarding
+    title: Store setup for a first-time seller
     url: /onboarding
     state: stable
     expect: [{role: heading, name: Configure your store}, {role: button, name: Finish}]
@@ -32,6 +36,7 @@ edges:
   - id: onboarding.finish
     from: onboarding
     to: dashboard
+    intent: Finish setup with the defaults the store already has; nothing is typed
     acts:
       - {kind: submit, role: button, name: Finish}
 paths:

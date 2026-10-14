@@ -54,6 +54,7 @@ Without it, `keel check` with records refuses with
 schema: graphhelm.journey-flow/1
 id: checkout
 title: Shopper pays for the cart
+purpose: A shopper with items in the cart reaches the payment step and is asked for their password.
 status: draft
 approved: null
 base: http://localhost:3000
@@ -62,11 +63,13 @@ secrets: [shopper_password]
 risks: [money]
 screens:
   - id: cart
+    title: The cart with its items and the checkout button
     url: /cart
     state: stable
     expect: [{role: heading, name: Cart}, {role: button, name: Checkout}]
     scope: [app/cart/page.tsx]
   - id: pay
+    title: The payment step that asks for the password
     url: /checkout
     state: stable
     expect: [{role: textbox, name: Password}]
@@ -90,6 +93,18 @@ allowed** (`flow.not_canonical`); `journey compile --fmt` rewrites a flow canoni
 | `status`, `approved` | `draft` and `null` while you author; only `journey approve` sets `approved` and fills `{digest, revision}` |
 | `secrets` | names only; replay reads each value from `GRAPHHELM_SECRET_<name>` |
 | `scope` | repo-relative files or directories that render the screen, or `unknown` |
+| `purpose` | what the journey proves for the user, in one sentence |
+| screen `title` | what the screen is for |
+| edge `intent` | optional: what the user does on the edge and why, including what is left as-is |
+
+A journey must say what it proves (#1287). The draft writer and `journey approve` refuse a flow
+with no `purpose` (`flow.purpose_missing`), a screen with no `title`
+(`flow.screen_title_missing`), a `submit` with no `enter_text`, `select` or `upload` before it
+and no edge `intent` (`flow.submit_without_input`), or a path whose last screen expects nothing
+its previous screen did not already show (`flow.outcome_unchecked`): click, click, submit and
+"success" is not a test. `validate` reports the same gaps on an existing flow as
+`flow.weak_journey` warnings, and the Studio test view shows the purpose, each step's inputs and
+every check. For a save, end the path on the same page after a reload and expect the saved value.
 
 Rules: ids match `^[a-z0-9][a-z0-9._-]{0,127}$`; acts and expectations name an ARIA role and
 accessible name, never a CSS selector; secrets are names, never values. Bounds: 32 KiB file,

@@ -1025,7 +1025,7 @@
           "id": "skill/journey-contract",
           "kind": "skill",
           "path": "skills/journey-contract/SKILL.md",
-          "sha256": "sha256:462d8d766e0c2fbc9faf8824b065d4dc4cfa25d2ab602a6b4bbfe353738ce0e9",
+          "sha256": "sha256:f5cc8d325e63dd2e7f746a75691788a3e624e7fbf0a5788565b7d8db0c0e2071",
           "effects": [
             "artifact.local.write",
             "artifact.propose",
@@ -1058,7 +1058,7 @@
           "id": "skill/journey-map",
           "kind": "skill",
           "path": "skills/journey-map/SKILL.md",
-          "sha256": "sha256:662c6130fea9450d1525cb009bab16e763d744cd5047120095b8d63220d612b7",
+          "sha256": "sha256:d2f8aff2cfcb76dca8788a68df2732952fd1b0fd2c27cacab1569c6fe8fa25d6",
           "effects": [
             "artifact.local.write",
             "artifact.propose"

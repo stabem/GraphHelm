@@ -1,6 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: studio-delegation-label
 title: See the recorded delegation choice on a node
+purpose: "The owner sees, on each graph node, which delegation choice was recorded for it."
 status: draft
 approved: null
 base: http://127.0.0.1:5184

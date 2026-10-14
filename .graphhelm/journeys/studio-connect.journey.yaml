@@ -1,6 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: studio-connect
 title: Connect the Studio with the access token
+purpose: The owner opens the Studio with the access token and sees their projects; a wrong token is refused.
 status: draft
 approved: null
 base: http://127.0.0.1:5184

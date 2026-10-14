@@ -7,6 +7,8 @@ const MARK: Record<FrameStatus, string> = { running: "…", passed: "✓", faile
 
 interface Props {
   frames: TestFrame[];
+  /** #1287: what the journey proves for the user, from the flow source. */
+  purpose?: string | null;
   selected: number;
   onSelect(n: number): void;
   frameUrl(stepId: string): string | null;
@@ -20,7 +22,7 @@ interface Props {
   inspectorTop?: ReactNode;
 }
 
-export function TestCanvas({ frames, selected, onSelect, frameUrl, onMarkSafe, onSendBack, runLine, inspectorTop }: Props) {
+export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUrl, onMarkSafe, onSendBack, runLine, inspectorTop }: Props) {
   const cur = frames[selected];
   const [failure, setFailure] = useState<{ stepId: string; message: string } | null>(null);
   if (!cur) return <p className="tc-empty">This journey has no steps to test</p>;
@@ -37,6 +39,9 @@ export function TestCanvas({ frames, selected, onSelect, frameUrl, onMarkSafe, o
           <span><b data-status="not_run">{count("not_run")}</b> not run</span>
         </span>
       </div>
+      {purpose
+        ? <p className="tc-purpose"><span className="tc-cap">PROVES</span> {purpose}</p>
+        : <p className="tc-purpose tc-weak" role="note">This journey does not say what it proves</p>}
       {runLine}
       <div className="tc-frame-bar">
         <div className="tc-scrub" aria-label="Frames">
@@ -95,11 +100,18 @@ export function TestCanvas({ frames, selected, onSelect, frameUrl, onMarkSafe, o
             <h3>{cur.text}</h3>
             <code className="tc-code">{`step ${cur.stepId}\n${cur.verb.toLowerCase()} ${cur.text}`}</code>
           </div>
+          {(cur.inputs.length > 0 || cur.intent) && (
+            <div className="tc-ins-block">
+              <span className="tc-cap">WHAT IT DID</span>
+              {cur.intent && <p className="tc-intent">{cur.intent}</p>}
+              {cur.inputs.length > 0 && <ul aria-label="Inputs" className="tc-asserts">{cur.inputs.map((x, i) => <li key={i}>{x}</li>)}</ul>}
+            </div>
+          )}
           <div className="tc-ins-block">
             <span className="tc-cap">ASSERTIONS</span>
-            {cur.expected.length > 0 ? (
+            {cur.expected.length + cur.checks.length > 0 ? (
               <ul aria-label="Assertions" className="tc-asserts">
-                {cur.expected.map((e) => <li key={e}><span aria-hidden="true" className="tc-mark" data-status={cur.status}>{MARK[cur.status]}</span> {e}</li>)}
+                {[...cur.checks, ...cur.expected.map((e) => `state is ${e}`)].map((e) => <li key={e}><span aria-hidden="true" className="tc-mark" data-status={cur.status}>{MARK[cur.status]}</span> {e}</li>)}
               </ul>
             ) : <p className="tc-muted">No assertion written for this step</p>}
             {cur.reason && <p className="tc-reason">{cur.reason}</p>}

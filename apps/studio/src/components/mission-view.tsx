@@ -682,11 +682,11 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
             />
             : <p className="mv-empty">No journeys in this project yet</p>)}
           {sub === "test" && journey && contractId && (run
-            ? <ProofRun key={contractId} journey={journey} source={run} selected={frame} onSelect={setFrame}
+            ? <ProofRun key={contractId} journey={journey} flow={flow} source={run} selected={frame} onSelect={setFrame}
               frameUrl={(id) => frameUrl(id, contractId)} onMarkSafe={(id) => onMarkSafe(id, contractId)}
               {...(onRun ? { onRun: (r: JourneyRunView) => onRun(contractId, r) } : {})}
               {...(onSendBack ? { onSendBack: (id: string) => onSendBack(id, contractId) } : {})} />
-            : <TestCanvas frames={testFrames(journey, runFor(contractId))} selected={frame} onSelect={setFrame}
+            : <TestCanvas frames={testFrames(journey, runFor(contractId), null, flow)} purpose={flow?.purpose ?? null} selected={frame} onSelect={setFrame}
               frameUrl={(id) => frameUrl(id, contractId)} onMarkSafe={(id) => onMarkSafe(id, contractId)}
               {...(onSendBack ? { onSendBack: (id: string) => onSendBack(id, contractId) } : {})} />)}
           {sub === "lanes" && lanesView}

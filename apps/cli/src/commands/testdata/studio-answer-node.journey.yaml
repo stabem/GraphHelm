@@ -1,6 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: studio-answer-node
 title: Answer a step that is waiting for you
+purpose: The owner answers a step waiting on them and the step moves on.
 status: draft
 approved: null
 base: http://127.0.0.1:5184

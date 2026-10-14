@@ -1,6 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: checkout
 title: Shopper pays for the cart
+purpose: A shopper pays for the cart with their password and sees the order confirmed.
 status: draft
 approved: null
 base: http://localhost:3000
@@ -9,16 +10,19 @@ secrets: [shopper_password]
 risks: [money]
 screens:
   - id: cart
+    title: The cart with its items
     url: /cart
     state: stable
     expect: [{role: heading, name: Cart}, {role: button, name: Checkout}]
     scope: [app/cart/page.tsx]
   - id: done
+    title: The order confirmation
     url: /orders/:id
     state: success
     expect: [{role: heading, name: Order placed}]
     scope: unknown
   - id: pay
+    title: The payment step that asks for the password
     url: /checkout
     state: stable
     expect: [{role: textbox, name: Password}]

@@ -65,15 +65,29 @@ the main create/edit flow, the money or data path). Pick 3-5 journeys that a use
 if broken. For each write `.graphhelm/journeys/<id>.journey.yaml` (the worked example below):
 
 - `schema: graphhelm.journey-flow/1`, `id` (also the file name), optional `title`,
-  `status: draft`, `approved: null`, `base` (the app origin; every `url` is a path under it).
+  `purpose` (what the journey proves for the user, in one sentence: "the owner tags a store and
+  the tag is still there after a reload", not "test the stores page"), `status: draft`, `approved: null`, `base` (the app origin; every `url` is a path under it).
 - `actors`, `secrets` (names only; values come from `GRAPHHELM_SECRET_<NAME>`, never the file)
   and `risks` (the contract's risk enum, for example `authentication`, `money`, `personal_data`).
-- `screens`: one per screen from (a) on the journey: `id`, `url` (a path pattern; numeric, uuid
+- `screens`: one per screen from (a) on the journey: `id`, `title` (what the screen is for), `url` (a path pattern; numeric, uuid
   or hex segments become `:id`), `state` (the contract's expected-state enum), `expect` (1-8
   `{role, name}` pairs with the exact accessible name the screen must show) and `scope` (the
   `scopePaths` list from (a), or the string `unknown`; never an empty list).
-- `edges`: `id` (`<from>.<verb>`), `from`, `to`, and `acts`, each `{kind, role, name}` with the
-  contract's semantic action kinds; `enter_text` takes `secret: <name>` (or a non-secret `text`).
+- `edges`: `id` (`<from>.<verb>`), `from`, `to`, optional `intent` (what the user does and why,
+  including what is left as-is), and `acts`, each `{kind, role, name}` with the contract's
+  semantic action kinds; `enter_text` takes `secret: <name>` (or a non-secret `text`). Write
+  every input the user gives before a submit (`enter_text`, `select`, `upload`) as its own act.
+- What it proves (#1287): a journey that clicks, submits and checks only a state word proves
+  nothing. The draft writer and approval refuse a flow with no `purpose`
+  (`flow.purpose_missing`), a screen with no `title` (`flow.screen_title_missing`), a `submit`
+  with no input act before it and no edge `intent` saying what is submitted as-is
+  (`flow.submit_without_input`), or a path whose last screen expects nothing its previous screen
+  did not already show (`flow.outcome_unchecked`). The end screen must expect the outcome: the
+  saved value, the new row, the confirmation. For a save, the strongest outcome is the value
+  still there after a reload (end the path on the same `url`, reached by a `navigate` act, and
+  expect the saved value). `validate` reports the same gaps on an existing flow as
+  `flow.weak_journey` warnings, and the Studio test view shows the purpose, each step's inputs
+  and every check.
 - `paths`: `main` is the journey in one line, a list of edge ids; other named paths are
   alternatives. No path may revisit a screen.
 - `drift: []`.
@@ -195,6 +209,7 @@ specs under `e2e/specs/`. Step (a) reads its `page.tsx` files and yields screens
 schema: graphhelm.journey-flow/1
 id: first-login
 title: First login to a configured store
+purpose: "A new seller signs in with Mercado Livre, finishes store setup and lands on their dashboard."
 status: draft
 approved: null
 base: http://localhost:3000
@@ -203,16 +218,19 @@ secrets: []
 risks: [authentication]
 screens:
   - id: dashboard
+    title: "The seller dashboard, reached only after setup"
     url: /dashboard
     state: success
     expect: [{role: heading, name: Dashboard}]
     scope: [apps/web/app/dashboard/page.tsx]
   - id: entrar
+    title: The sign-in page
     url: /entrar
     state: stable
     expect: [{role: button, name: Entrar com Mercado Livre}]
     scope: [apps/web/app/entrar/page.tsx, apps/web/src/screens/entrar-screen.tsx]
   - id: onboarding
+    title: Store setup for a first-time seller
     url: /onboarding
     state: stable
     expect: [{role: heading, name: Configure your store}, {role: button, name: Finish}]
@@ -226,6 +244,7 @@ edges:
   - id: onboarding.finish
     from: onboarding
     to: dashboard
+    intent: Finish setup with the defaults the store already has; nothing is typed
     acts:
       - {kind: submit, role: button, name: Finish}
 paths:

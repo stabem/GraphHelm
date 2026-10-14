@@ -1,6 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: keel-pinned-verdict-merge
 title: A reviewer verdict belongs to the exact Git head
+purpose: A reviewer verdict only merges the exact Git head it reviewed; a newer head needs a new verdict.
 status: draft
 approved: null
 base: http://127.0.0.1:5184

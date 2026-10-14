@@ -57,6 +57,12 @@ promise (`docs/keel/RECORDS.md` in the GraphHelm repository).
 8. Use ids that satisfy the journey id rule, `^[a-z0-9][a-z0-9._-]{0,127}$` with no `..`, for the
    contract, every step and every screen; the schema alone also allows `:` and `/`, which journey
    records refuse. A step id is also the exact title of the Playwright test that captures it.
+8a. Say what the journey proves (#1287). In a flow: a `purpose` sentence, a `title` per screen,
+   every input before a submit as its own act (or an edge `intent` saying what is submitted
+   as-is), and an end screen that expects the outcome (the saved value, ideally after a reload),
+   not only what the previous screen already showed. The draft writer and approval refuse a flow
+   that does not (`flow.purpose_missing`, `flow.screen_title_missing`,
+   `flow.submit_without_input`, `flow.outcome_unchecked`).
 9. Where the journey lives decides how it is saved. If `.graphhelm/journeys/` already holds a
    flow (`<id>.journey.yaml`) for this journey, change the flow (its screens, edges and paths, as
    the `journey-map` skill describes), run `cli:journey validate` with `--all` and

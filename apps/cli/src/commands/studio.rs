@@ -727,7 +727,7 @@ pub(super) fn add_project(launch: &mut Command, project: &Path) {
         .arg(plain(project.to_path_buf()));
 }
 
-/// #1267: the one-shot ticket `graphhelm studio open` leaves for the Studio dev server, next to the
+/// #1264: the one-shot ticket `graphhelm studio open` leaves for the Studio dev server, next to the
 /// token file (`<events>.token` -> `<events>.studio-ticket`). The dev server accepts it once and
 /// deletes it (`apps/studio/vite.config.ts`), so the link in browser history is dead after use.
 pub(super) fn ticket_path(events: &Path) -> PathBuf {

@@ -1,6 +1,5 @@
 use serde::Serialize;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use crate::EventRepositoryError;
 use graphhelm_protocols::EventEnvelope;
@@ -57,13 +56,8 @@ fn canonical_value(value: Value) -> Value {
     }
 }
 
-pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
-}
-
-pub(crate) fn wire_sha256(bytes: &[u8]) -> String {
-    format!("sha256:{}", sha256_hex(bytes))
-}
+// #1272: the one pair, re-exported under the names this crate already uses.
+pub(crate) use graphhelm_protocols::hash::{sha256_hex, wire_sha256};
 
 pub(crate) fn event_hash(
     event: &EventEnvelope,

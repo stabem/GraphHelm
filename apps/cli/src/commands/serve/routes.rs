@@ -34,7 +34,6 @@ use graphhelm_runtime::fixture::FixtureAsyncExecutor;
 use graphhelm_runtime::ports::ModelPort;
 use graphhelm_simulation::FixtureExecutor;
 use graphhelm_tool_broker::lease::{Capability, ToolLease};
-use sha2::Digest as _;
 
 use graphhelm_gateway::manifest::{ModelRoute, RouteManifest, Transport};
 use graphhelm_model_gateway::systemone::TYPESAFE_PROVIDER;
@@ -5710,7 +5709,7 @@ pub(super) async fn development_memory_propose(
             );
         }
     };
-    let digest = hex::encode(sha2::Sha256::digest(candidate.content().as_bytes()));
+    let digest = graphhelm_protocols::hash::sha256_hex(candidate.content().as_bytes());
     let source_execution_id = match graphhelm_protocols::OpaqueId::parse(source_execution_id) {
         Ok(value) => value,
         Err(_) => {
@@ -5820,7 +5819,7 @@ pub(super) async fn development_memory_propose(
     let (receipt, receipt_digest) = plaintext.expose(|bytes| {
         (
             serde_json::from_slice::<serde_json::Value>(bytes).ok(),
-            hex::encode(sha2::Sha256::digest(bytes)),
+            graphhelm_protocols::hash::sha256_hex(bytes),
         )
     });
     if sealed.reference().content_sha256().as_str() != receipt_digest {
@@ -5918,9 +5917,9 @@ pub(super) async fn development_memory_propose(
         "sourceSnapshotEvidenceId": snapshot_reference.evidence_id().as_str(),
         "sourceSnapshotContentSha256": snapshot_reference.content_sha256().as_str(),
     });
-    let intent_digest = hex::encode(sha2::Sha256::digest(
-        serde_json::to_vec(&intent).expect("memory intent is serializable"),
-    ));
+    let intent_digest = graphhelm_protocols::hash::sha256_hex(
+        &serde_json::to_vec(&intent).expect("memory intent is serializable"),
+    );
     let evidence_id =
         EvidenceId::parse(format!("memory-evidence-{intent_digest}")).expect("bounded evidence id");
     let record_id = graphhelm_protocols::OpaqueId::parse(format!("memory-record-{intent_digest}"))
@@ -6155,7 +6154,7 @@ pub(super) async fn development_compile_context(
                 if !retrieved.is_empty() {
                     let joined = retrieved.join("\n");
                     durable_memory_digest =
-                        Some(hex::encode(sha2::Sha256::digest(joined.as_bytes())));
+                        Some(graphhelm_protocols::hash::sha256_hex(joined.as_bytes()));
                 }
                 require.extend(retrieved);
             }

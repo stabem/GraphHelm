@@ -544,9 +544,7 @@ pub struct RetrievalHit {
 /// operator would (the arming-site guards need a CORRECT digest to isolate the check under test).
 #[must_use]
 pub fn sha256_hex_of(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hex::encode(hasher.finalize())
+    graphhelm_protocols::hash::sha256_hex(bytes)
 }
 
 /// Decode a provider page's `cols` and `rows` BY SHAPE, refusing anything that does not fit.

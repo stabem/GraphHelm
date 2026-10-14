@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 
 use graphhelm_protocols::Diagnostic;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::MAX_JSON_DEPTH;
@@ -75,9 +74,8 @@ pub fn canonical_json(value: &Value) -> Result<Vec<u8>, EvolutionError> {
 /// document itself could move the digest, and `canonical_json` fixes both.
 pub fn schema_digest(value: &Value) -> Result<SchemaDigest, EvolutionError> {
     let canonical = canonical_json(value)?;
-    Ok(SchemaDigest(format!(
-        "sha256:{}",
-        hex::encode(Sha256::digest(canonical))
+    Ok(SchemaDigest(graphhelm_protocols::hash::wire_sha256(
+        canonical.as_ref(),
     )))
 }
 

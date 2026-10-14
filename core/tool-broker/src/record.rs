@@ -13,8 +13,7 @@ use std::collections::BTreeSet;
 /// empty-input vector so it can never silently change.
 #[must_use]
 pub fn digest_hex(bytes: &[u8]) -> String {
-    use sha2::Digest as _;
-    hex::encode(sha2::Sha256::digest(bytes))
+    graphhelm_protocols::hash::sha256_hex(bytes)
 }
 
 /// How a tool call ended. Internally tagged as `kind` so a reader can dispatch without

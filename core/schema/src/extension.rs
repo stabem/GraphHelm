@@ -3130,7 +3130,7 @@ fn valid_sha256(value: &str) -> bool {
 }
 
 fn sha256(bytes: &[u8]) -> String {
-    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
+    graphhelm_protocols::hash::wire_sha256(bytes)
 }
 
 fn package_digest(manifest: &serde_json::Value, records: &[PackageRecord]) -> String {

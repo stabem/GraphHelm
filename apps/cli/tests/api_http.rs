@@ -2454,6 +2454,59 @@ fn scoped_agent_bearer_binds_execution_and_actor_attribution() {
     assert_eq!(foreign_status, 401, "{foreign_reply}");
 }
 
+/// #1149 (gh-claude-opt-2's BLOCK on PR #1190): the lanes' MCP tool `tasks` reads
+/// `GET /v1/executions/{id}/tasks` with a scoped agent credential, so that route is on the
+/// scoped allow-list beside `briefing` and `events`; an unlisted GET under the same execution
+/// (`journeys`) stays 401 with the same bearer, and another execution's `tasks` too. Cost: one
+/// served Runtime, three GETs.
+#[test]
+fn a_scoped_agent_credential_reads_its_runs_tasks_route_and_nothing_wider() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-scoped-tasks";
+    cli_start(&events, &all_success_fixtures(directory.path()), execution);
+    let credential = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let binding = format!("{credential}=agent-planner|project-local|{execution}");
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, _owner_token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[
+            ("GRAPHHELM_AGENT_CREDENTIALS", binding.as_str()),
+            ("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX),
+        ],
+    );
+    let reply = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks"),
+        Some(credential),
+    );
+    assert_eq!(reply["ok"], Value::Bool(true), "{reply}");
+    assert_eq!(reply["data"]["executionId"], execution);
+    assert_eq!(reply["data"]["tasks"].as_array().map(Vec::len), Some(0));
+    assert_eq!(
+        get_status(
+            &format!("{base}/v1/executions/{execution}/journeys"),
+            Some(credential)
+        ),
+        401,
+        "an unlisted GET under the execution stays owner-only"
+    );
+    assert_eq!(
+        get_status(
+            &format!("{base}/v1/executions/exec-http-other/tasks"),
+            Some(credential)
+        ),
+        401,
+        "the credential is bound to its execution"
+    );
+}
+
 /// Native chat routes are owner-only surfaces. A scoped agent credential is allowed to read its
 /// execution status and post ordinary signals, but it must not discover native chats, inspect
 /// native-chat receipts, or start a native turn. This protects the host bridge from being reached

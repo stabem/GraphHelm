@@ -1181,6 +1181,9 @@ fn journey_review_route(request: &Request) -> bool {
         )
 }
 
+/// The routes a scoped agent credential reaches: reads of its own execution (status, briefing,
+/// events and, since #1149, the task projection `tasks`, which the lanes' MCP tool reads) and the
+/// signal route. Everything else is the owner's or the shared session token's.
 fn agent_route_allowed(request: &Request) -> bool {
     let path = request.uri().path();
     let method = request.method();
@@ -1190,7 +1193,7 @@ fn agent_route_allowed(request: &Request) -> bool {
             && segments.get(2) == Some(&"executions")
             && (segments.len() == 4
                 || (segments.len() == 5
-                    && (segments[4] == "briefing" || segments[4] == "events")));
+                    && matches!(segments[4], "briefing" | "events" | "tasks")));
     }
     let segments: Vec<_> = path.split('/').collect();
     method == axum::http::Method::POST

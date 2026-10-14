@@ -78,8 +78,8 @@ REPO = runner.REPO
 
 PREFIX = """Work only in this checkout; it is the only source of truth (no GitHub, remote or other
 clone exists for this task). Make the change the task below defines and leave it on disk. Verify it
-with the smallest check that observes it; do NOT run `ci/gate.ps1`, a workspace-wide build or the
-full test suite. If what the task asks you to prove cannot be observed from this checkout and
+with the smallest check that observes it; do NOT run a workspace-wide build or the full test
+suite. If what the task asks you to prove cannot be observed from this checkout and
 machine, change nothing and end your answer with `OBSERVER_MISSING: <what is missing>`.
 
 Task:

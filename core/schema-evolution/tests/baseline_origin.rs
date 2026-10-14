@@ -1,6 +1,6 @@
 //! #229: where the compatibility baseline comes from, and what it can therefore refuse.
 //!
-//! `ci/gate.ps1` runs one stage as `schema check --baseline schemas/releases/1.0.0/catalog.json
+//! The retired gate runner ran one stage as `schema check --baseline schemas/releases/1.0.0/catalog.json
 //! --candidate schemas/catalog.json`. Read alone that is a release gate. Measured, its two inputs
 //! held BYTE-IDENTICAL for the fifteen schemas published in `1.0.0` by a sibling test in the same
 //! gate. The current catalog is now a real candidate: `1.1.0` adds the execution-accounting receipt
@@ -474,7 +474,7 @@ fn d037_customs_budget_exception_rejects_every_near_miss() {
 // graph-signal 1.1.0 became the first declared evolution - exactly as designed - and its job
 // changed: the release baseline is now FROZEN HISTORY, and what must hold is that the live
 // candidate diverges from it only compatibly, with every divergent schema declaring itself in its
-// own documentVersion. The stage in ci/gate.ps1 is no longer a tautology; this is the property it
+// own documentVersion. That stage was no longer a tautology; this is the property it
 // actually gates.
 //
 // MERGED INTENT (rebase over main, 2026-08-30): main's version of this test pinned the deliberate

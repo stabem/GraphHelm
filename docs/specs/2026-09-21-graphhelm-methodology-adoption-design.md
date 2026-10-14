@@ -41,7 +41,7 @@ Reconcile stale implementation descriptions in `docs/harness/JOURNEY_PROVEN_DEVE
 - Unknown evidence never becomes proven evidence.
 - Subscription exhaustion pauses; no automatic paid fallback.
 - Offline tests require no network, browser session, credentials, or provider account.
-- `ci/gate.ps1` is the authoritative local gate; GitHub Actions stays disabled.
+- `ci/gate.ps1` is the authoritative local gate; GitHub Actions stays disabled. (Superseded: the gate was retired on 2026-09-24 and its runner deleted in #1204; the evidence is the change-directed checks of `docs/process/DELIVERY.md`. GitHub Actions stays disabled.)
 - Issue-first implementation; no production code before an assigned GitHub issue exists.
 - Preserve unrelated user changes; no blanket replacement of existing configuration.
 - No secrets in prompts, logs, public plans, receipts, fixtures, or exported manifests.

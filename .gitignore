@@ -22,9 +22,9 @@ target/
 !/.graphhelm/journey-fixture.json
 /.graphhelm/journeys/*
 !/.graphhelm/journeys/*.journey.yaml
-# The optional full check (ci/gate.ps1) writes its run manifests under .factory/gate-runs/. The
-# receipt store and the runners that committed it were retired on 2026-09-24; a local run's
-# manifest is scratch and never committed.
+# The retired gate runner (deleted in #1204) wrote its run manifests under .factory/gate-runs/;
+# the receipt store and the runners that committed it were retired on 2026-09-24. The prefix stays
+# ignored so an old local run's manifest is never committed.
 /.factory/
 **/evals/results/
 

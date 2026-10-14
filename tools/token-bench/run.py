@@ -14,7 +14,7 @@ Arms:
   c  the GraphHelm MCP plus the checked-in Keel skill and its contract-first workflow
 
 Usage:
-  python tools/token-bench/run.py run  --task 1145 --arm a [--model <id>] [--timeout-min 30]
+  python tools/token-bench/run.py run  --task 1044 --arm a [--model <id>] [--timeout-min 30]
   python tools/token-bench/run.py table
 
 Results append to tools/token-bench/results.jsonl - one JSON object per run, never rewritten.
@@ -51,8 +51,8 @@ COMMON_PREFIX = """This issue is OPEN and UNFIXED. This checkout is the only sou
 GitHub, any remote, or any other clone - they do not exist for this task. Fix the defect in this
 checkout and add the test that proves it. Do not stop at analysis: the task is done when the change
 is on disk. Verify with the targeted tests of the crate or script you touched only: do NOT run
-`ci/gate.ps1`, the full workspace test suite, or any other repository-wide gate - the bench runs
-its own oracle afterwards, and a gate run inside this checkout measures the gate, not you.
+the full workspace test suite or any other repository-wide check - the bench runs its own oracle
+afterwards, and a repository-wide run inside this checkout measures the suite, not you.
 
 """
 

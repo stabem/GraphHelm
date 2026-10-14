@@ -51,22 +51,33 @@ class KeelStopHook(unittest.TestCase):
         calls = []
 
         def fake_run(cmd, *args, **kwargs):
-            if cmd[0] == "graphhelm":
+            if cmd[0].endswith("-graphhelm"):
                 calls.append(cmd)
                 return mock.Mock(returncode=2, stdout=json.dumps(envelope))
             return real_run(cmd, *args, **kwargs)
 
-        with mock.patch.object(keel_stop_hook.shutil, "which", return_value="graphhelm"), \
+        cli = self.repo.parent / f"{self.repo.name}-graphhelm"
+        cli.write_text("v1")
+        self.addCleanup(cli.unlink)
+        with mock.patch.object(keel_stop_hook.shutil, "which", return_value=str(cli)), \
              mock.patch.object(keel_stop_hook.subprocess, "run", side_effect=fake_run), \
              mock.patch.object(keel_record, "record_check") as record:
             first = keel_stop_hook.decide(self.repo, {})
+            self.assertFalse(keel_stop_hook.LAST_FROM_CACHE)
             second = keel_stop_hook.decide(self.repo, {})
+            self.assertTrue(keel_stop_hook.LAST_FROM_CACHE)  # main() skips record_block on this
             self.assertEqual(first, second)
             self.assertIn("R1 a.py", first)
             self.assertEqual((len(calls), record.call_count), (1, 1))
             (self.repo / "a.py").write_text("changed\n")
             self.assertIn("R1 a.py", keel_stop_hook.decide(self.repo, {}))
             self.assertEqual((len(calls), record.call_count), (2, 2))
+            with mock.patch.object(keel_stop_hook, "_execution", return_value="other-run"):
+                keel_stop_hook.decide(self.repo, {})  # another execution records its own signal
+            self.assertEqual((len(calls), record.call_count), (3, 3))
+            cli.write_text("v2, new rules")  # `graphhelm update` must not reuse an old verdict
+            keel_stop_hook.decide(self.repo, {})
+            self.assertEqual((len(calls), record.call_count), (4, 4))
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

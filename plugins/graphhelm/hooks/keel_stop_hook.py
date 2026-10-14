@@ -70,12 +70,31 @@ def code_lines_changed(repo: Path, base: str) -> int:
 
 
 CACHE = "graphhelm-keel-stop.json"
+LAST_FROM_CACHE = False  # set by decide(): the verdict came from the cache, already recorded
 
 
-def _fingerprint(repo: Path, base: str, card: Path) -> str | None:
+def _tool_stamp(path: str) -> str:
+    """Path, size and mtime of a file, so a new CLI or hook version misses the cache."""
+    stat = os.stat(path)
+    return f"{os.path.realpath(path)}:{stat.st_size}:{stat.st_mtime_ns}"
+
+
+def _execution(payload: dict) -> str:
+    """The bound execution, so a cached verdict never stands in for another execution's signal."""
+    try:
+        import session_hook
+        bound = session_hook.binding(payload)
+        return bound[0] if bound else ""
+    except Exception:  # noqa: BLE001 - an unknown binding just means a narrower cache key
+        return os.environ.get("GRAPHHELM_EXECUTION_ID", "")
+
+
+def _fingerprint(repo: Path, base: str, card: Path, cli: str, payload: dict) -> str | None:
     """A digest of everything the check reads, or None when it cannot be computed."""
     try:
         digest = hashlib.sha256()
+        digest.update(f"{_execution(payload)}\0".encode())
+        digest.update(f"{_tool_stamp(cli)}\0{_tool_stamp(__file__)}\0".encode())
         for part in (base, _git(repo, "rev-parse", "HEAD"), _git(repo, "diff", "--binary", base),
                      _git(repo, "ls-files", "--others", "--exclude-standard")):
             digest.update(part.encode() + b"\0")
@@ -118,6 +137,8 @@ def _store(repo: Path, fingerprint: str | None, returncode: int, stdout: str) ->
 
 def decide(repo: Path, payload: dict | None = None) -> str | None:
     """The reason to block, or None to let the turn end."""
+    global LAST_FROM_CACHE
+    LAST_FROM_CACHE = False
     base = _merge_base(repo)
     if base is None or code_lines_changed(repo, base) <= TRIVIAL_LINES:
         return None
@@ -129,7 +150,7 @@ def decide(repo: Path, payload: dict | None = None) -> str | None:
     cli = shutil.which("graphhelm")
     if cli is None:
         return None
-    fingerprint = _fingerprint(repo, base, card)
+    fingerprint = _fingerprint(repo, base, card, cli, payload or {})
     hit = _cached(repo, fingerprint)
     if hit is None:
         result = subprocess.run([cli, "--json", "keel", "check", "--diff", f"{base}..HEAD",
@@ -145,6 +166,7 @@ def decide(repo: Path, payload: dict | None = None) -> str | None:
             _store(repo, fingerprint, returncode, stdout)
     else:
         returncode, stdout = hit
+        LAST_FROM_CACHE = True
     if returncode != 2:
         return None
     codes = []
@@ -175,6 +197,8 @@ def main() -> int:
         return 0
     if reason:
         print(json.dumps({"decision": "block", "reason": reason}))
+        if LAST_FROM_CACHE:  # this exact refusal was already recorded on this execution (#1228)
+            return 0
         # The decision is already printed: recording comes after it and can never undo it.
         try:
             from keel_record import record_block

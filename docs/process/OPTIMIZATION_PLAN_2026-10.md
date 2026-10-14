@@ -1,5 +1,7 @@
 # Optimization plan, October 2026
 
+Windows update build measurements: [October report](../operations/update-build-windows-2026-10.md).
+
 Summary: one ordered list of tickets that removes dead code, fixes the measured O(n²) paths,
 shrinks what every agent must read or send, and makes agent status a single machine-verified
 source. Written from six read-only audits of head `c90cd4de` (2026-10-13). Nothing here was

@@ -178,7 +178,7 @@ fn graphhelm_plugin_contributions(home: &Path, project: &Path, claude: &Value) -
                     let parent = items.iter().find(|candidate| {
                         candidate["root"] == root
                             && candidate["path"] == path
-                            && candidate["kind"] == path
+                            && candidate["kind"] == "settings"
                     })?;
                     item["enabled"].as_bool().and_then(|enabled| {
                         parent["digest"]

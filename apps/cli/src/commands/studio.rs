@@ -582,6 +582,8 @@ pub(super) fn run_install(
     current_exe: Option<&Path>,
     staged: Option<&Path>,
 ) -> bool {
+    use super::workspace_slot::UpdateAdmission;
+    use std::io::Write;
     let admission = match super::workspace_slot::open_build_admission(admission_path) {
         Ok(lock) => lock,
         Err(message) => {
@@ -593,28 +595,45 @@ pub(super) fn run_install(
     // admitted, within the budget. While it does not fit, its marker stops new grants, so it is
     // the next run admitted. It never holds the lock while waiting, so a finishing build can
     // always take it to release its grant.
-    let mut said = false;
+    let waited = std::time::Instant::now();
+    let mut last_said: Option<(u64, u32, usize)> = None;
+    let mut last_plain = std::time::Instant::now();
     let (grant, jobs) = loop {
         match super::workspace_slot::try_grant_update(
             admission_path,
             &admission,
             graphhelm_process_tree::process_is_running,
         ) {
-            Ok(Some(granted)) => break granted,
-            Ok(None) => {}
+            Ok(UpdateAdmission::Granted { token, jobs }) => break (token, jobs),
+            Ok(UpdateAdmission::Busy) => {}
+            Ok(UpdateAdmission::Wait {
+                in_use,
+                budget,
+                runs,
+            }) => {
+                // #1186 follow-up: say what it waits on, live, not one silent line.
+                let line = waiting_line(waited.elapsed().as_secs(), in_use, budget, runs);
+                if progress.redraws() {
+                    eprint!("\r{}{line:<90}", " ".repeat(6));
+                    let _ = std::io::stderr().flush();
+                } else if last_said != Some((in_use, budget, runs))
+                    || last_plain.elapsed() >= std::time::Duration::from_secs(30)
+                {
+                    Progress::say(&progress.info(&line));
+                    last_plain = std::time::Instant::now();
+                }
+                last_said = Some((in_use, budget, runs));
+            }
             Err(message) => {
                 Progress::say(&progress.warn(&message));
                 return false;
             }
         }
-        if !said {
-            Progress::say(
-                &progress.info("waiting for room in this machine's build budget (it goes next)"),
-            );
-            said = true;
-        }
         std::thread::sleep(std::time::Duration::from_millis(500));
     };
+    if last_said.is_some() && progress.redraws() {
+        eprintln!();
+    }
     Progress::say(&progress.info(&format!("building with {jobs} jobs")));
     let ok = run_granted(
         install.arg("--jobs").arg(jobs.to_string()),
@@ -626,6 +645,31 @@ pub(super) fn run_install(
         return swap_in(exe, staged, progress);
     }
     ok
+}
+
+/// Cargo's pre-build status lines (index check, downloads), trimmed, or `None` for anything else.
+fn cargo_status(line: &str) -> Option<&str> {
+    let line = line.trim();
+    [
+        "Updating ",
+        "Downloading ",
+        "Downloaded ",
+        "Locking ",
+        "Installing ",
+    ]
+    .iter()
+    .any(|prefix| line.starts_with(prefix))
+    .then_some(line)
+}
+
+/// One frame of the admission wait: how long, how full the machine is, and that it goes next.
+fn waiting_line(seconds: u64, in_use: u64, budget: u32, runs: usize) -> String {
+    let needs = super::workspace_slot::MIN_UPDATE_JOBS.min(budget);
+    format!(
+        "waiting {}m{:02}s: {in_use}/{budget} build jobs in use by {runs} build(s); starts when {needs} are free (it goes next)",
+        seconds / 60,
+        seconds % 60
+    )
 }
 
 /// Puts the staged build in place of the running binary (#1186). The build went to a staging
@@ -659,6 +703,7 @@ fn swap_in(exe: &Path, staged: Option<&Path>, progress: Progress) -> bool {
 
 fn run_granted(install: &mut std::process::Command, source: &Path, progress: Progress) -> bool {
     use std::io::{BufRead, BufReader, Write};
+    let started = std::time::Instant::now();
     install
         .arg("--message-format")
         .arg("json-render-diagnostics")
@@ -683,6 +728,15 @@ fn run_granted(install: &mut std::process::Command, source: &Path, progress: Pro
                         "{} (another build holds this cache; it continues when that one ends)",
                         line.trim()
                     )));
+                } else if let Some(status) = cargo_status(&line) {
+                    // #1186 follow-up: before the first crate compiles cargo checks the index and
+                    // downloads for up to a minute; say so instead of a silent screen.
+                    eprint!(
+                        "\r{}{:<90}",
+                        " ".repeat(6),
+                        format!("{}s  {status}", started.elapsed().as_secs())
+                    );
+                    let _ = std::io::stderr().flush();
                 }
                 kept.push(line);
             }
@@ -695,7 +749,8 @@ fn run_granted(install: &mut std::process::Command, source: &Path, progress: Pro
             if let Some(name) = compiled_crate(&line) {
                 done += 1;
                 if progress.redraws() {
-                    eprint!("{}", progress.bar(done, total.max(done + 1), &name));
+                    let label = format!("{}s {name}", started.elapsed().as_secs());
+                    eprint!("{}", progress.bar(done, total.max(done + 1), &label));
                     let _ = std::io::stderr().flush();
                 }
             }
@@ -707,7 +762,8 @@ fn run_granted(install: &mut std::process::Command, source: &Path, progress: Pro
         .unwrap_or_default();
     if progress.redraws() {
         if ok {
-            eprintln!("{}", progress.bar(done, done.max(1), "done"));
+            let label = format!("done in {}s", started.elapsed().as_secs());
+            eprintln!("{}", progress.bar(done, done.max(1), &label));
         } else {
             eprintln!();
             for line in &kept {
@@ -1144,6 +1200,23 @@ mod tests {
             None
         );
         assert_eq!(install_root(None), None);
+    }
+
+    #[test]
+    fn update_says_what_it_waits_on_and_what_cargo_does_first() {
+        assert_eq!(
+            waiting_line(83, 21, 24, 3),
+            "waiting 1m23s: 21/24 build jobs in use by 3 build(s); starts when 4 are free (it goes next)"
+        );
+        assert_eq!(
+            cargo_status("    Updating crates.io index"),
+            Some("Updating crates.io index")
+        );
+        assert_eq!(
+            cargo_status("  Downloaded serde v1.0.229"),
+            Some("Downloaded serde v1.0.229")
+        );
+        assert_eq!(cargo_status("warning: unused variable"), None);
     }
 
     #[test]

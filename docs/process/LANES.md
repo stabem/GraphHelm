@@ -109,8 +109,8 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   otherwise. The lock is held only to read and rewrite the ledger of grants (`granted`, one
   `<pid> <jobs> <token>` line per admitted run); a grant whose process is gone is dropped at the next
   admission, and a request whose `--jobs` alone exceeds the budget refuses before it queues. An
-  update (#1186) takes a grant like any run, `--jobs 16` or the whole budget when smaller, and
-  builds beside the runs already admitted; while it does not fit, its `update-pending` marker stops
+  update (#1186) takes a grant like any run, the free room up to `--jobs 16` once at least 4 jobs
+  are free (or the whole budget, when smaller), and builds beside the runs already admitted; while it does not fit, its `update-pending` marker stops
   new grants, so it is admitted next. It builds into `~/.graphhelm/target` and a staging root, and
   replaces the running binary only after the build succeeds. Older binaries and raw Cargo invocations take no grant. The
   lock order is root-local queue then shared authority; a waiter releases a root candidate before

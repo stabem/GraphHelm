@@ -279,34 +279,58 @@ pub(crate) fn clear_update_pending(admission: &Path) {
 /// The jobs `graphhelm update` asks for: one root's share of the machine (LANES.md §3), capped by
 /// the budget in force.
 pub(crate) const UPDATE_JOBS: u32 = 16;
+/// The fewest jobs an update starts with (#1186 follow-up): it takes whatever room is free, up to
+/// `UPDATE_JOBS`, instead of waiting for a full 16 beside a `--jobs 16` lane.
+pub(crate) const MIN_UPDATE_JOBS: u32 = 4;
+
+/// What one update admission attempt decided.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum UpdateAdmission {
+    /// Admitted with these jobs; the token releases the grant.
+    Granted { token: String, jobs: u32 },
+    /// Not enough room: `in_use` of `budget` jobs are held by `runs` live builds.
+    Wait {
+        in_use: u64,
+        budget: u32,
+        runs: usize,
+    },
+    /// The authority lock was busy for this attempt.
+    Busy,
+}
 
 /// An update's admission (#1186): a grant like any build's, so it shares the machine within the
 /// budget instead of waiting for every admitted build to finish (owner run, 2026-10-14: a 35-minute
-/// `--jobs 1` build held a 3-minute update). It still goes first: while it does not fit, its
-/// marker stops new grants, so the ledger drains until it does. Returns the token and the jobs
-/// granted (`UPDATE_JOBS`, or the whole budget when that is smaller).
+/// `--jobs 1` build held a 3-minute update). It takes the free room up to `UPDATE_JOBS` once at
+/// least `MIN_UPDATE_JOBS` (or the whole budget, when smaller) is free. It still goes first: while
+/// it does not fit, its marker stops new grants, so the ledger drains until it does.
 pub(crate) fn try_grant_update(
     admission: &Path,
     lock: &File,
     running: impl Fn(u32) -> bool,
-) -> Result<Option<(String, u32)>, String> {
+) -> Result<UpdateAdmission, String> {
     match lock.try_lock() {
         Ok(()) => {}
-        Err(TryLockError::WouldBlock) => return Ok(None),
+        Err(TryLockError::WouldBlock) => return Ok(UpdateAdmission::Busy),
         Err(TryLockError::Error(_)) => {
             return Err("the build admission lock could not be checked".to_owned());
         }
     }
     let decided = (|| {
         let budget = jobs_budget(admission)?;
-        let jobs = UPDATE_JOBS.min(budget);
         let mut grants = read_grants(admission)?;
         grants.retain(|grant| running(grant.pid));
-        let granted: u64 = grants.iter().map(|grant| u64::from(grant.jobs)).sum();
-        if granted + u64::from(jobs) > u64::from(budget) {
+        let in_use: u64 = grants.iter().map(|grant| u64::from(grant.jobs)).sum();
+        let free = u64::from(budget).saturating_sub(in_use);
+        let jobs = u32::try_from(free.min(u64::from(UPDATE_JOBS))).unwrap_or(UPDATE_JOBS);
+        if jobs < MIN_UPDATE_JOBS.min(budget) {
             mark_update_pending(admission);
+            let runs = grants.len();
             write_grants(admission, &grants)?;
-            return Ok(None);
+            return Ok(UpdateAdmission::Wait {
+                in_use,
+                budget,
+                runs,
+            });
         }
         let token = grant_token();
         grants.push(Grant {
@@ -316,7 +340,7 @@ pub(crate) fn try_grant_update(
         });
         write_grants(admission, &grants)?;
         clear_update_pending(admission);
-        Ok(Some((token, jobs)))
+        Ok(UpdateAdmission::Granted { token, jobs })
     })();
     if decided.is_err() {
         clear_update_pending(admission);

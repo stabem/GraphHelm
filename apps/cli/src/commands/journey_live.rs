@@ -1348,12 +1348,30 @@ pub(super) fn launch_within(
     let deadline = Instant::now() + ready;
     // The `up` script is bounded too: one that hangs is killed at `ready` and reads as a failed
     // launch, never as a run that waits for ever.
-    let started = run_within(command, ready).unwrap_or(false);
+    let up = run_within(command, ready);
+    let started = up.unwrap_or(false);
     while started && !base_reachable(&answers_on) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(250));
     }
     if !started || !base_reachable(&answers_on) {
         launched.stop();
+        // #1298: the launcher's own output may name no error (it seeded, then `stop` tore it
+        // down). Say which half failed: `up` itself, or the app never answering on its base.
+        let why = match up {
+            None => format!(
+                "graphhelm: the launcher's `up` did not finish within {}s",
+                ready.as_secs()
+            ),
+            Some(false) => "graphhelm: the launcher's `up` exited with an error".to_owned(),
+            Some(true) => format!(
+                "graphhelm: `up` finished, but nothing answered on {answers_on} within {}s",
+                ready.as_secs()
+            ),
+        };
+        if let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(&log_path) {
+            use std::io::Write;
+            let _ = writeln!(file, "{why}");
+        }
         record_launch_log(&log_path);
         return Err(failure("watch.launch_failed", "/launcher", 1));
     }
@@ -2171,6 +2189,14 @@ mod launch_tests {
                 .as_str()
                 .unwrap()
                 .contains("ERR_MODULE_NOT_FOUND"),
+            "{log}"
+        );
+        // #1298: the tail also says which half failed.
+        assert!(
+            log["tail"]
+                .as_str()
+                .unwrap()
+                .contains("`up` exited with an error"),
             "{log}"
         );
     }

@@ -3517,6 +3517,13 @@ fn the_tasks_route_folds_the_runs_task_records_into_slices() {
     assert_eq!(task["pr"], 1150);
     assert_eq!(task["lane"], lane);
     assert_eq!(task["headSha"], "abcdef01");
+    // #1211: the Studio reads `releasedBy === undefined` as a live claim; `null` emptied its
+    // kanban. A live slice carries no key at all.
+    assert!(
+        task.get("releasedBy").is_none(),
+        "a live claim must not serialise releasedBy: {task}"
+    );
+    assert!(task.get("claimSequence").is_some(), "{task}");
     assert_eq!(task["step"], "review");
     assert_eq!(task["repoUrl"], "https://github.com/stabem/GraphHelm");
     assert!(

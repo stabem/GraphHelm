@@ -830,6 +830,12 @@ pub enum StrayVerdict {
 
 /// One slice of a task (#460: its PR once one is recorded, else its claim), with the step that is
 /// lit and everything a view needs to draw it.
+///
+/// #1211: the wire shape is the Studio's `TaskState` contract (`apps/studio/src/runtime/team-tasks.ts`).
+/// Fields that type declares `| null` serialise `null` when absent; fields it declares optional
+/// (`?:`) and never writes as `null` — `pendingReviewer`, `approvedWithRisk`, `completionRecorded`,
+/// `claimSequence`, `releasedBy` — are OMITTED when absent, because the views read
+/// `releasedBy === undefined` as "the claim is live"; a `null` there emptied the Lanes kanban.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskState {
@@ -846,6 +852,7 @@ pub struct TaskState {
     pub assigned_reviewers: Vec<String>,
     /// Assignment on the current head only; older reviewers remain in `reviewers`.
     pub current_reviewer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_reviewer: Option<PendingReviewer>,
     pub head_sha: Option<String>,
     pub journeys: Vec<String>,
@@ -854,6 +861,7 @@ pub struct TaskState {
     /// The step that is lit.
     pub step: TaskStep,
     pub blocked_by: Option<Blocker>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approved_with_risk: Option<RiskApproval>,
     /// Sequence of the current unanswered BLOCK.
     pub blocked_sequence: Option<u64>,
@@ -864,6 +872,7 @@ pub struct TaskState {
     pub reviewers: Vec<String>,
     pub merge_sha: Option<String>,
     /// True only when this slice's own PR was merged, not when a sibling merge cascaded over it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub completion_recorded: bool,
     /// `https://github.com/<owner>/<repo>`; links need it.
     pub repo_url: Option<String>,
@@ -884,13 +893,18 @@ pub struct TaskState {
     pub clock: StepClock,
     pub last_sequence: u64,
     /// #729: sequence of this slice's original claim, used to reject releases of another claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claim_sequence: Option<u64>,
     /// The lane that ended the claim: the lane itself, or `graphhelm` (#1193) when the Stop
-    /// reconciler released it as lapsed.
+    /// reconciler released it as lapsed. Absent, never `null`, while the claim is live (#1211).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub released_by: Option<String>,
     /// #1193: the Runtime's time of this slice's original claim, and that claim's lease in
-    /// seconds; the overdue state is computed where the Runtime's clock is, never here.
+    /// seconds; the overdue state is computed where the Runtime's clock is, never here. Not in
+    /// the Studio's type: omitted when absent so the reply adds nothing the fold never writes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claimed_at: Option<PersistedTimestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_seconds: Option<u64>,
 }
 

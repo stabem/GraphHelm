@@ -1,0 +1,4814 @@
+{
+ "source": "GET /v1/executions/gh-team/tasks on the live Runtime at 0f0ee6d6, 2026-10-14: every record of the tasks that had an open PR (pr set, step != merged) plus every record the run's fold routed into one of their slices; public repository data (lanes, PR numbers, comment URLs)",
+ "expectedOpenKeys": [
+  "issue-1005#pr-1013",
+  "issue-1041#pr-1125",
+  "issue-1045#pr-1115",
+  "issue-1127#pr-1136",
+  "issue-1137#pr-1209",
+  "issue-1138#pr-1210",
+  "issue-1139#pr-1142",
+  "issue-1160#pr-1164",
+  "issue-1193#pr-1205",
+  "issue-1203#pr-1207",
+  "issue-41#pr-1174",
+  "issue-988#pr-991"
+ ],
+ "records": [
+  {
+   "actorId": "codex-2",
+   "branch": "issue-41-crash-site",
+   "issue": 41,
+   "kind": "task.claimed",
+   "lane": "codex-2",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-10T07:06:26.629479100Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 4415,
+   "summary": "The owner learns why the Runtime died and every native Codex attempt failed in a live run.",
+   "taskId": "issue-41",
+   "title": "Runtime: find why it exits and Codex runs fail"
+  },
+  {
+   "actorId": "codex-2",
+   "kind": "task.planned",
+   "lane": "codex-2",
+   "occurredAt": "2026-10-10T07:06:27.904755300Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Record closed crash sites without changing retry policy; prove each observable site with fake runtime."
+   },
+   "sequence": 4416,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-2",
+   "kind": "task.planned",
+   "lane": "codex-2",
+   "occurredAt": "2026-10-10T07:07:58.426602600Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Record closed crash sites without changing retry policy; fake-runtime proof plus two pure I/O error unit cells."
+   },
+   "sequence": 4419,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-2",
+   "headSha": "f54d81c5257e3fc905cb3849cf78d12b49eb1fa4",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-2",
+   "occurredAt": "2026-10-10T07:20:39.325063400Z",
+   "pr": 659,
+   "repo": "stabem/GraphHelm",
+   "sequence": 4424,
+   "summary": "Runtime failure outcomes name the crash site without changing retry policy.",
+   "taskId": "issue-41",
+   "title": "feat(runtime): show where a runtime crash happened"
+  },
+  {
+   "actorId": "codex-2",
+   "headSha": "f54d81c5257e3fc905cb3849cf78d12b49eb1fa4",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-10T07:20:40.239944400Z",
+   "pr": 659,
+   "reviewer": "gh-claude-1",
+   "sequence": 4425,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "gh-claude-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/659#issuecomment-6095179365",
+   "headSha": "f54d81c5257e3fc905cb3849cf78d12b49eb1fa4",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-10T07:36:21.149992400Z",
+   "pr": 659,
+   "reviewer": "gh-claude-1",
+   "sequence": 4438,
+   "taskId": "issue-41",
+   "verdict": "APPROVE"
+  },
+  {
+   "actorId": "gh-claude-1",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "81c6ad26715d3a006c49f96e3eaa41c6e2315606",
+   "occurredAt": "2026-10-10T07:36:22.291239400Z",
+   "pr": 659,
+   "sequence": 4439,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-2",
+   "branch": "issue-41-runtime-lifecycle",
+   "issue": 41,
+   "kind": "task.claimed",
+   "lane": "codex-2",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-10T07:39:04.197086500Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 4445,
+   "summary": "The owner learns why the Runtime died and every native Codex attempt failed in a live run.",
+   "taskId": "issue-41",
+   "title": "Runtime: find why it exits and Codex runs fail"
+  },
+  {
+   "actorId": "codex-2",
+   "kind": "task.planned",
+   "lane": "codex-2",
+   "occurredAt": "2026-10-10T07:39:15.226448200Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Record Runtime endings and expose the previous exit through health"
+   },
+   "sequence": 4446,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-2",
+   "kind": "task.planned",
+   "lane": "codex-2",
+   "occurredAt": "2026-10-10T07:47:16.404287200Z",
+   "plan": {
+    "classes": [
+     "docs",
+     "code",
+     "invariant"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "design",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Persist Runtime lifecycle with sanitized previous exit on health; isolated restart proofs"
+   },
+   "sequence": 4451,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-2",
+   "headSha": "ba0df11215a9459a76907c4560850247d7a0505b",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-2",
+   "occurredAt": "2026-10-10T08:05:02.013177700Z",
+   "pr": 663,
+   "repo": "stabem/GraphHelm",
+   "sequence": 4454,
+   "summary": "Draft blocked: the requested lifecycle file violates the Event Store root layout.",
+   "taskId": "issue-41",
+   "title": "feat(runtime): report how the previous run ended"
+  },
+  {
+   "actorId": "codex-2",
+   "headSha": "ba0df11215a9459a76907c4560850247d7a0505b",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-10T08:05:03.002965700Z",
+   "pr": 663,
+   "reviewer": "gh-claude-1",
+   "sequence": 4455,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-2",
+   "kind": "task.planned",
+   "lane": "codex-2",
+   "occurredAt": "2026-10-10T08:07:29.343215200Z",
+   "plan": {
+    "classes": [
+     "docs",
+     "code",
+     "invariant"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "design",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Move lifecycle records beside the Event Store and restore reached HTTP tests"
+   },
+   "sequence": 4456,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-2",
+   "headSha": "bef99b0df0ead9ca25169632580d3d1af726e40a",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-2",
+   "occurredAt": "2026-10-10T08:12:12.053111200Z",
+   "pr": 663,
+   "repo": "stabem/GraphHelm",
+   "sequence": 4459,
+   "summary": "Runtime health reports how the previous run ended without changing the Event Store.",
+   "taskId": "issue-41",
+   "title": "feat(runtime): report how the previous run ended"
+  },
+  {
+   "actorId": "codex-2",
+   "headSha": "bef99b0df0ead9ca25169632580d3d1af726e40a",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-10T08:12:12.999403400Z",
+   "pr": 663,
+   "reviewer": "gh-claude-1",
+   "sequence": 4460,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "gh-claude-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/663#issuecomment-6095607599",
+   "headSha": "bef99b0df0ead9ca25169632580d3d1af726e40a",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-10T08:18:46.503893800Z",
+   "pr": 663,
+   "reviewer": "gh-claude-1",
+   "sequence": 4466,
+   "taskId": "issue-41",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-2",
+   "kind": "task.planned",
+   "lane": "codex-2",
+   "occurredAt": "2026-10-10T08:20:04.325177400Z",
+   "plan": {
+    "classes": [
+     "docs",
+     "code",
+     "invariant"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "design",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Correct restart truth after nonfatal panic and remove PID reuse refusal; prove both RED then GREEN in isolated Runtime tests."
+   },
+   "sequence": 4470,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-2",
+   "headSha": "a7ac24bf759ebe8b28e851a3b58214b9b61b3736",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-2",
+   "occurredAt": "2026-10-10T08:25:10.824947400Z",
+   "pr": 663,
+   "repo": "stabem/GraphHelm",
+   "sequence": 4476,
+   "summary": "Runtime health reports how the previous run ended without changing the Event Store.",
+   "taskId": "issue-41",
+   "title": "feat(runtime): report how the previous run ended"
+  },
+  {
+   "actorId": "codex-2",
+   "headSha": "a7ac24bf759ebe8b28e851a3b58214b9b61b3736",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-10T08:25:11.940284100Z",
+   "pr": 663,
+   "reviewer": "gh-claude-1",
+   "sequence": 4477,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "gh-claude-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/663#issuecomment-6096716081",
+   "headSha": "a7ac24bf759ebe8b28e851a3b58214b9b61b3736",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-10T10:49:18.939805300Z",
+   "pr": 663,
+   "reviewer": "gh-claude-1",
+   "sequence": 4490,
+   "taskId": "issue-41",
+   "verdict": "APPROVE"
+  },
+  {
+   "actorId": "gh-claude-1",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "94f2800ec3e4ac03055ed4132d9d4a538d61073c",
+   "occurredAt": "2026-10-10T10:49:20.286024100Z",
+   "pr": 663,
+   "sequence": 4491,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-10",
+   "branch": "issue-41-next",
+   "issue": 41,
+   "kind": "task.claimed",
+   "lane": "codex-10",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-11T20:40:59.057470400Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 5315,
+   "summary": "The owner learns why the Runtime died and every native Codex attempt failed in a live run.",
+   "taskId": "issue-41",
+   "title": "Runtime: find why it exits and Codex runs fail"
+  },
+  {
+   "actorId": "codex-10",
+   "kind": "task.planned",
+   "lane": "codex-10",
+   "occurredAt": "2026-10-11T20:41:04.278065900Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Make vanished Runtime exits truthful in Studio: cause unknown and timestamp is the prior start"
+   },
+   "sequence": 5316,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-10",
+   "headSha": "aef65ecf33a8704c5261b8e383b09b5109908ff8",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-10",
+   "occurredAt": "2026-10-11T20:47:45.191610300Z",
+   "pr": 842,
+   "repo": "stabem/GraphHelm",
+   "sequence": 5345,
+   "summary": "Studio labels an unrecorded Runtime exit as unknown and shows the prior run's start time.",
+   "taskId": "issue-41",
+   "title": "fix(studio): report unknown Runtime exit cause"
+  },
+  {
+   "actorId": "codex-10",
+   "headSha": "aef65ecf33a8704c5261b8e383b09b5109908ff8",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-11T20:47:46.488708900Z",
+   "pr": 842,
+   "reviewer": "codex-review",
+   "sequence": 5347,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "aef65ecf33a8704c5261b8e383b09b5109908ff8",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-11T20:53:12.078237200Z",
+   "pr": 842,
+   "reviewer": "codexrev-2",
+   "sequence": 5365,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/842#pullrequestreview-5484925287",
+   "headSha": "aef65ecf33a8704c5261b8e383b09b5109908ff8",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-11T20:59:06.506026100Z",
+   "pr": 842,
+   "reviewer": "codexrev-2",
+   "sequence": 5376,
+   "taskId": "issue-41",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "codexrev-2",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "13e4ad27cf3723bb233245b227cdfbbddeec4477",
+   "occurredAt": "2026-10-11T20:59:25.154009Z",
+   "pr": 842,
+   "sequence": 5377,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "coordinator",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "13e4ad27cf3723bb233245b227cdfbbddeec4477",
+   "occurredAt": "2026-10-11T20:59:48.634811800Z",
+   "pr": 842,
+   "sequence": 5380,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-10",
+   "branch": "issue-41-next-slice",
+   "issue": 41,
+   "kind": "task.claimed",
+   "lane": "codex-10",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-12T02:46:33.777583100Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 5721,
+   "summary": "The owner learns why the Runtime died and every native Codex attempt failed in a live run.",
+   "taskId": "issue-41",
+   "title": "Runtime: find why it exits and Codex runs fail"
+  },
+  {
+   "actorId": "codex-10",
+   "kind": "task.planned",
+   "lane": "codex-10",
+   "occurredAt": "2026-10-12T02:46:37.372109500Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Clarify that native route failures do not prove server exit"
+   },
+   "sequence": 5723,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-10",
+   "headSha": "a39e2b4defda280d9e7aa179416e5eaf61fe677f",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-10",
+   "occurredAt": "2026-10-12T02:59:04.549740500Z",
+   "pr": 890,
+   "repo": "stabem/GraphHelm",
+   "sequence": 5749,
+   "summary": "Studio names native route failures without implying the server exited.",
+   "taskId": "issue-41",
+   "title": "fix(studio): clarify native route failures"
+  },
+  {
+   "actorId": "codex-10",
+   "headSha": "a39e2b4defda280d9e7aa179416e5eaf61fe677f",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T02:59:06.256814200Z",
+   "pr": 890,
+   "reviewer": "codex-review",
+   "sequence": 5750,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "a39e2b4defda280d9e7aa179416e5eaf61fe677f",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T03:01:20.685236Z",
+   "pr": 890,
+   "reviewer": "codexrev-1",
+   "sequence": 5751,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codexrev-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/890#issuecomment-6117032653",
+   "headSha": "a39e2b4defda280d9e7aa179416e5eaf61fe677f",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-12T03:08:44.619019700Z",
+   "pr": 890,
+   "reviewer": "codexrev-1",
+   "sequence": 5752,
+   "taskId": "issue-41",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-6",
+   "headSha": "a39e2b4defda280d9e7aa179416e5eaf61fe677f",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T03:26:28.896791900Z",
+   "pr": 890,
+   "reviewer": "gh-claude-6",
+   "sequence": 5758,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "coordinator",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "d3688782e971c91daf9b4b93db6f97f25f6163ba",
+   "occurredAt": "2026-10-12T03:31:46.219894100Z",
+   "pr": 890,
+   "sequence": 5760,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-10",
+   "branch": "issue-41-slice-3",
+   "issue": 41,
+   "kind": "task.claimed",
+   "lane": "codex-10",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-12T07:11:34.499871900Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 5805,
+   "summary": "The owner learns why the Runtime died and every native Codex attempt failed in a live run.",
+   "taskId": "issue-41",
+   "title": "Runtime: find why it exits and Codex runs fail"
+  },
+  {
+   "actorId": "codex-10",
+   "kind": "task.planned",
+   "lane": "codex-10",
+   "occurredAt": "2026-10-12T07:11:55.424191100Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Bind lifecycle health and persisted record to the same runtime instance"
+   },
+   "sequence": 5806,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-10",
+   "headSha": "fb1f7490ec401ca21ae3b247b27ed4f26f25908c",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-10",
+   "occurredAt": "2026-10-12T12:31:56.641400900Z",
+   "pr": 905,
+   "repo": "stabem/GraphHelm",
+   "sequence": 5848,
+   "summary": "Bind Runtime lifecycle history to the instance that actually started.",
+   "taskId": "issue-41",
+   "title": "feat(serve): bind lifecycle to Runtime instance"
+  },
+  {
+   "actorId": "codex-10",
+   "headSha": "fb1f7490ec401ca21ae3b247b27ed4f26f25908c",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T12:31:58.382809700Z",
+   "pr": 905,
+   "reviewer": "codex-review",
+   "sequence": 5849,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "fb1f7490ec401ca21ae3b247b27ed4f26f25908c",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T12:32:36.543836200Z",
+   "pr": 905,
+   "reviewer": "codexrev-1",
+   "sequence": 5850,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codexrev-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/905#issuecomment-6124347906",
+   "headSha": "fb1f7490ec401ca21ae3b247b27ed4f26f25908c",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-12T12:33:59.304169100Z",
+   "pr": 905,
+   "reviewer": "codexrev-1",
+   "sequence": 5851,
+   "taskId": "issue-41",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "headSha": "fb1f7490ec401ca21ae3b247b27ed4f26f25908c",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T13:06:40.094014600Z",
+   "pr": 905,
+   "reviewer": "gh-claude-7",
+   "sequence": 5903,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/905#issuecomment-6124878647",
+   "headSha": "fb1f7490ec401ca21ae3b247b27ed4f26f25908c",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-12T13:06:45.700049100Z",
+   "pr": 905,
+   "reviewer": "gh-claude-7",
+   "sequence": 5904,
+   "taskId": "issue-41",
+   "verdict": "APPROVE"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "ed453b7aa48c61334f9dad64741f6463cbabc96f",
+   "occurredAt": "2026-10-12T13:07:04.124620300Z",
+   "pr": 905,
+   "sequence": 5905,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-10",
+   "branch": "issue-41-slice-5",
+   "issue": 41,
+   "kind": "task.claimed",
+   "lane": "codex-10",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-12T15:50:30.901005700Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 6027,
+   "summary": "The owner learns why the Runtime died and every native Codex attempt failed in a live run.",
+   "taskId": "issue-41",
+   "title": "Runtime: find why it exits and Codex runs fail"
+  },
+  {
+   "actorId": "codex-10",
+   "kind": "task.planned",
+   "lane": "codex-10",
+   "occurredAt": "2026-10-12T15:50:37.240637900Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Show the prior Runtime instance in Studio's restart notice"
+   },
+   "sequence": 6028,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-10",
+   "headSha": "c8f6567898b849dde3e9b4e141dc3b41e7affd68",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-10",
+   "occurredAt": "2026-10-12T15:59:18.770613300Z",
+   "pr": 938,
+   "repo": "stabem/GraphHelm",
+   "sequence": 6054,
+   "summary": "Studio shows the prior Runtime instance in the restart notice.",
+   "taskId": "issue-41",
+   "title": "feat(studio): show prior instance in restart notice"
+  },
+  {
+   "actorId": "codex-10",
+   "headSha": "c8f6567898b849dde3e9b4e141dc3b41e7affd68",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T15:59:20.005622800Z",
+   "pr": 938,
+   "reviewer": "codex-review",
+   "sequence": 6055,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "c8f6567898b849dde3e9b4e141dc3b41e7affd68",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T15:59:58.576984200Z",
+   "pr": 938,
+   "reviewer": "codexrev-2",
+   "sequence": 6057,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/938#issuecomment-6127940079",
+   "headSha": "c8f6567898b849dde3e9b4e141dc3b41e7affd68",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-12T16:03:50.157707900Z",
+   "pr": 938,
+   "reviewer": "codexrev-2",
+   "sequence": 6064,
+   "taskId": "issue-41",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "headSha": "c8f6567898b849dde3e9b4e141dc3b41e7affd68",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T16:30:20.084755800Z",
+   "pr": 938,
+   "reviewer": "gh-claude-7",
+   "sequence": 6072,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/938#issuecomment-6128373896",
+   "headSha": "c8f6567898b849dde3e9b4e141dc3b41e7affd68",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-12T16:30:23.644509800Z",
+   "pr": 938,
+   "reviewer": "gh-claude-7",
+   "sequence": 6073,
+   "taskId": "issue-41",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "00d03f8b25cec2331a0052792820e55e26440b23",
+   "occurredAt": "2026-10-12T16:30:38.167826600Z",
+   "pr": 938,
+   "sequence": 6074,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-10",
+   "branch": "issue-41-slice-6",
+   "issue": 41,
+   "kind": "task.claimed",
+   "lane": "codex-10",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-12T17:02:45.260303900Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 6090,
+   "summary": "The owner learns why the Runtime died and every native Codex attempt failed in a live run.",
+   "taskId": "issue-41",
+   "title": "Runtime: find why it exits and Codex runs fail"
+  },
+  {
+   "actorId": "codex-10",
+   "kind": "task.planned",
+   "lane": "codex-10",
+   "occurredAt": "2026-10-12T17:02:47.049942500Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Measure startup journal verification and lifecycle start in health"
+   },
+   "sequence": 6091,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-10",
+   "headSha": "39b68b2a2fde1a68263b1a7f9c4769a7a733b175",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-10",
+   "occurredAt": "2026-10-12T17:06:30.370878400Z",
+   "pr": 952,
+   "repo": "stabem/GraphHelm",
+   "sequence": 6109,
+   "summary": "Report measured startup journal and lifecycle costs in Runtime health.",
+   "taskId": "issue-41",
+   "title": "feat(cli): measure Runtime startup work"
+  },
+  {
+   "actorId": "codex-10",
+   "headSha": "39b68b2a2fde1a68263b1a7f9c4769a7a733b175",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T17:06:31.741265900Z",
+   "pr": 952,
+   "reviewer": "codex-review",
+   "sequence": 6110,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "39b68b2a2fde1a68263b1a7f9c4769a7a733b175",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T17:07:14.001907100Z",
+   "pr": 952,
+   "reviewer": "codexrev-1",
+   "sequence": 6114,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codexrev-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/952#issuecomment-6128953748",
+   "headSha": "39b68b2a2fde1a68263b1a7f9c4769a7a733b175",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-12T17:08:16.346411200Z",
+   "pr": 952,
+   "reviewer": "codexrev-1",
+   "sequence": 6118,
+   "taskId": "issue-41",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "headSha": "39b68b2a2fde1a68263b1a7f9c4769a7a733b175",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T17:41:07.752039900Z",
+   "pr": 952,
+   "reviewer": "gh-claude-7",
+   "sequence": 6164,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/952#issuecomment-6129465376",
+   "headSha": "39b68b2a2fde1a68263b1a7f9c4769a7a733b175",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-12T17:41:35.111533900Z",
+   "pr": 952,
+   "reviewer": "gh-claude-7",
+   "sequence": 6165,
+   "taskId": "issue-41",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "coordinator",
+   "closeReason": "abandoned",
+   "kind": "task.closed",
+   "occurredAt": "2026-10-12T17:44:26.083091Z",
+   "pr": 952,
+   "sequence": 6166,
+   "supersededBy": 952,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "767b4bc7",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-12T21:43:29.943928200Z",
+   "pr": 972,
+   "repo": "stabem/GraphHelm",
+   "sequence": 6316,
+   "taskId": "issue-41",
+   "title": "feat(cli): report measured startup work"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "767b4bc7",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T21:43:31.128998500Z",
+   "pr": 972,
+   "reviewer": "codex-review",
+   "sequence": 6317,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "767b4bc7c6bfc9291759158fb1474c00139450fa",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T21:44:09.530545Z",
+   "pr": 972,
+   "reviewer": "codexrev-2",
+   "sequence": 6320,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/972#issuecomment-6133181365",
+   "headSha": "767b4bc7c6bfc9291759158fb1474c00139450fa",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-12T21:45:30.135236700Z",
+   "pr": 972,
+   "reviewer": "codexrev-2",
+   "sequence": 6323,
+   "taskId": "issue-41",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "94120338158c1d41f37b6b8357f6f58f8e9db757",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-12T22:06:34.204393500Z",
+   "pr": 972,
+   "repo": "stabem/GraphHelm",
+   "sequence": 6344,
+   "summary": "Report measured journal verification and lifecycle startup times in health.",
+   "taskId": "issue-41",
+   "title": "feat(cli): report measured startup work"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "94120338158c1d41f37b6b8357f6f58f8e9db757",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T22:06:36.465696Z",
+   "pr": 972,
+   "reviewer": "codex-review",
+   "sequence": 6345,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "94120338158c1d41f37b6b8357f6f58f8e9db757",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T22:07:21.488141700Z",
+   "pr": 972,
+   "reviewer": "codexrev-2",
+   "sequence": 6350,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/972#issuecomment-6133769106",
+   "headSha": "94120338158c1d41f37b6b8357f6f58f8e9db757",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-12T22:26:11.890520500Z",
+   "pr": 972,
+   "reviewer": "codexrev-2",
+   "sequence": 6389,
+   "taskId": "issue-41",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "8442830f9fc454b766250be71d7e31ae2a589388",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-12T22:34:34.100560700Z",
+   "pr": 972,
+   "repo": "stabem/GraphHelm",
+   "sequence": 6405,
+   "summary": "Report measured journal verification and lifecycle startup times in health.",
+   "taskId": "issue-41",
+   "title": "feat(cli): report measured startup work"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "8442830f9fc454b766250be71d7e31ae2a589388",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T22:34:35.232473700Z",
+   "pr": 972,
+   "reviewer": "codex-review",
+   "sequence": 6406,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "8442830f9fc454b766250be71d7e31ae2a589388",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T22:40:34.039983400Z",
+   "pr": 972,
+   "reviewer": "codexrev-2",
+   "sequence": 6414,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/972#issuecomment-6134052119",
+   "headSha": "8442830f9fc454b766250be71d7e31ae2a589388",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-12T22:44:40.692548600Z",
+   "pr": 972,
+   "reviewer": "codexrev-2",
+   "sequence": 6417,
+   "taskId": "issue-41",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-1",
+   "branch": "issue-988-auto-5020",
+   "issue": 988,
+   "kind": "task.claimed",
+   "lane": "codex-1",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-12T22:48:31.225342100Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 6421,
+   "summary": "A journey's test view opens with its result bar below the fold and its header scrolled away.",
+   "taskId": "issue-988",
+   "title": "Studio: test view opens with its result bar hidden"
+  },
+  {
+   "actorId": "codex-1",
+   "kind": "task.planned",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-12T22:48:53.486807500Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Show the test header and frame bar on open"
+   },
+   "sequence": 6422,
+   "taskId": "issue-988"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "c7eadc18",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-12T22:51:22.512651800Z",
+   "pr": 991,
+   "repo": "stabem/GraphHelm",
+   "sequence": 6426,
+   "summary": "Show the test header and frame bar as soon as a step test opens.",
+   "taskId": "issue-988",
+   "title": "fix(studio): show test frame bar on open"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "c7eadc18",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T22:51:28.189456200Z",
+   "pr": 991,
+   "reviewer": "codex-review",
+   "sequence": 6427,
+   "taskId": "issue-988"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "c7eadc18896174a5d09df67dd5dac0babf0d51b2",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T23:22:31.652237800Z",
+   "pr": 991,
+   "reviewer": "codexrev-2",
+   "sequence": 6477,
+   "taskId": "issue-988"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "293b9069fdfd8db3726c8b9060cdcf11f3433a92",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-12T23:26:47.691119200Z",
+   "pr": 972,
+   "repo": "stabem/GraphHelm",
+   "sequence": 6484,
+   "summary": "Report measured journal verification and lifecycle startup times in health.",
+   "taskId": "issue-41",
+   "title": "feat(cli): report measured startup work"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "293b9069fdfd8db3726c8b9060cdcf11f3433a92",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T23:26:53.870940900Z",
+   "pr": 972,
+   "reviewer": "codex-review",
+   "sequence": 6485,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/991#issuecomment-6134570581",
+   "headSha": "c7eadc18896174a5d09df67dd5dac0babf0d51b2",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-12T23:27:20.219025500Z",
+   "pr": 991,
+   "reviewer": "codexrev-2",
+   "sequence": 6487,
+   "taskId": "issue-988",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-7",
+   "branch": "issue-1005-slot-poll-recovery",
+   "issue": 1005,
+   "kind": "task.claimed",
+   "lane": "codex-7",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-12T23:30:55.558227500Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 6499,
+   "taskId": "issue-1005",
+   "title": "Studio: Runtime down reads as no build slots; one miss breaks every slot"
+  },
+  {
+   "actorId": "codex-7",
+   "kind": "task.planned",
+   "lane": "codex-7",
+   "occurredAt": "2026-10-12T23:30:58.293023500Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Keep slot data trustworthy across failed reads and hidden tabs"
+   },
+   "sequence": 6501,
+   "taskId": "issue-1005"
+  },
+  {
+   "actorId": "codex-7",
+   "headSha": "e1369fc37769117eed9f10a2ede76e866579e47a",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-7",
+   "occurredAt": "2026-10-12T23:37:15.882568900Z",
+   "pr": 1013,
+   "repo": "stabem/GraphHelm",
+   "sequence": 6517,
+   "summary": "Studio keeps build queue status clear through transient Runtime failures.",
+   "taskId": "issue-1005",
+   "title": "fix(studio): recover slot polling after misses"
+  },
+  {
+   "actorId": "codex-7",
+   "headSha": "e1369fc37769117eed9f10a2ede76e866579e47a",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T23:37:19.936841700Z",
+   "pr": 1013,
+   "reviewer": "codex-review",
+   "sequence": 6518,
+   "taskId": "issue-1005"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "293b9069fdfd8db3726c8b9060cdcf11f3433a92",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T23:49:14.862725600Z",
+   "pr": 972,
+   "reviewer": "codexrev-2",
+   "sequence": 6540,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "79f3394ee7ec00008414245bf392a4b4a819dcc5",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-12T23:50:03.951333600Z",
+   "pr": 991,
+   "repo": "stabem/GraphHelm",
+   "sequence": 6543,
+   "summary": "Show the test header and frame bar as soon as a step test opens.",
+   "taskId": "issue-988",
+   "title": "fix(studio): show test frame bar on open"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "79f3394ee7ec00008414245bf392a4b4a819dcc5",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-12T23:50:06.318700100Z",
+   "pr": 991,
+   "reviewer": "codex-review",
+   "sequence": 6544,
+   "taskId": "issue-988"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "e1369fc37769117eed9f10a2ede76e866579e47a",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T00:35:02.029723200Z",
+   "pr": 1013,
+   "reviewer": "codexrev-3",
+   "sequence": 6572,
+   "taskId": "issue-1005"
+  },
+  {
+   "actorId": "codexrev-3",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1013#issuecomment-6135594601",
+   "headSha": "e1369fc37769117eed9f10a2ede76e866579e47a",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T00:50:45.160838100Z",
+   "pr": 1013,
+   "reviewer": "codexrev-3",
+   "sequence": 6593,
+   "taskId": "issue-1005",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-7",
+   "headSha": "4ac56608e3f5ef9fc6b07399bdb41ad567a86229",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-7",
+   "occurredAt": "2026-10-13T01:22:02.543100400Z",
+   "pr": 1013,
+   "repo": "stabem/GraphHelm",
+   "sequence": 6607,
+   "summary": "Studio keeps build queue status clear through transient Runtime failures.",
+   "taskId": "issue-1005",
+   "title": "fix(studio): recover slot polling after misses"
+  },
+  {
+   "actorId": "codex-7",
+   "headSha": "4ac56608e3f5ef9fc6b07399bdb41ad567a86229",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T01:22:03.764108Z",
+   "pr": 1013,
+   "reviewer": "codex-review",
+   "sequence": 6608,
+   "taskId": "issue-1005"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "79f3394ee7ec00008414245bf392a4b4a819dcc5",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T01:29:41.502346700Z",
+   "pr": 991,
+   "reviewer": "codexrev-3",
+   "sequence": 6610,
+   "taskId": "issue-988"
+  },
+  {
+   "actorId": "codexrev-3",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/991#issuecomment-6136170874",
+   "headSha": "79f3394ee7ec00008414245bf392a4b4a819dcc5",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T01:36:26.734975500Z",
+   "pr": 991,
+   "reviewer": "codexrev-3",
+   "sequence": 6625,
+   "taskId": "issue-988",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "293b9069fdfd8db3726c8b9060cdcf11f3433a92",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T01:48:43.527878400Z",
+   "pr": 972,
+   "reviewer": "codexrev-1",
+   "sequence": 6648,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "gh-claude-9",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/991#issuecomment-6136321964",
+   "headSha": "79f3394ee7ec00008414245bf392a4b4a819dcc5",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T01:50:32.170159600Z",
+   "pr": 991,
+   "reviewer": "gh-claude-9",
+   "sequence": 6651,
+   "taskId": "issue-988",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codexrev-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/972#issuecomment-6136355394",
+   "headSha": "293b9069fdfd8db3726c8b9060cdcf11f3433a92",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T01:53:56.132813600Z",
+   "pr": 972,
+   "reviewer": "codexrev-1",
+   "sequence": 6659,
+   "taskId": "issue-41",
+   "verdict": "APPROVE"
+  },
+  {
+   "actorId": "codexrev-1",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "533208bbbcb22f69dc8b25b5af440bcbebaa6367",
+   "occurredAt": "2026-10-13T01:54:01.083259500Z",
+   "pr": 972,
+   "sequence": 6660,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "4ac56608e3f5ef9fc6b07399bdb41ad567a86229",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T01:54:21.077099400Z",
+   "pr": 1013,
+   "reviewer": "codexrev-4",
+   "sequence": 6661,
+   "taskId": "issue-1005"
+  },
+  {
+   "actorId": "codexrev-4",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1013#issuecomment-6136434576",
+   "headSha": "4ac56608e3f5ef9fc6b07399bdb41ad567a86229",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T01:59:10.951098900Z",
+   "pr": 1013,
+   "reviewer": "codexrev-4",
+   "sequence": 6671,
+   "taskId": "issue-1005",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "23dadd014ebcc25921efc7c78b5a392c403fe712",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-13T02:05:40.824924900Z",
+   "pr": 991,
+   "repo": "stabem/GraphHelm",
+   "sequence": 6691,
+   "summary": "Show the test header and frame bar as soon as a step test opens.",
+   "taskId": "issue-988",
+   "title": "fix(studio): show test frame bar on open"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "23dadd014ebcc25921efc7c78b5a392c403fe712",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T02:05:42.948371300Z",
+   "pr": 991,
+   "reviewer": "codex-review",
+   "sequence": 6692,
+   "taskId": "issue-988"
+  },
+  {
+   "actorId": "codex-7",
+   "headSha": "f6ce006b8445f457997b5cec615798567f36057e",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-7",
+   "occurredAt": "2026-10-13T02:16:33.700403600Z",
+   "pr": 1013,
+   "repo": "stabem/GraphHelm",
+   "sequence": 6734,
+   "summary": "Studio keeps build queue status clear through transient Runtime failures.",
+   "taskId": "issue-1005",
+   "title": "fix(studio): recover slot polling after misses"
+  },
+  {
+   "actorId": "codex-7",
+   "headSha": "f6ce006b8445f457997b5cec615798567f36057e",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T02:16:35.068100100Z",
+   "pr": 1013,
+   "reviewer": "codex-review",
+   "sequence": 6735,
+   "taskId": "issue-1005"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "f6ce006b8445f457997b5cec615798567f36057e",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T02:17:18.259260900Z",
+   "pr": 1013,
+   "reviewer": "codexrev-1",
+   "sequence": 6739,
+   "taskId": "issue-1005"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "264a7429ca92e448e04212b7e881ee782064ad46",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-13T02:17:57.804749400Z",
+   "pr": 1036,
+   "repo": "stabem/GraphHelm",
+   "sequence": 6740,
+   "summary": "Studio shows validated Runtime startup phase timings.",
+   "taskId": "issue-41",
+   "title": "feat(studio): show Runtime startup timings"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "264a7429ca92e448e04212b7e881ee782064ad46",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T02:17:59.183722800Z",
+   "pr": 1036,
+   "reviewer": "codex-review",
+   "sequence": 6741,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "264a7429ca92e448e04212b7e881ee782064ad46",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T02:18:27.833584300Z",
+   "pr": 1036,
+   "reviewer": "codexrev-2",
+   "sequence": 6742,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codexrev-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1013#issuecomment-6136789893",
+   "headSha": "f6ce006b8445f457997b5cec615798567f36057e",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T02:20:27.359731900Z",
+   "pr": 1013,
+   "reviewer": "codexrev-1",
+   "sequence": 6746,
+   "taskId": "issue-1005",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-9",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/972#issuecomment-6136798724",
+   "headSha": "293b9069fdfd8db3726c8b9060cdcf11f3433a92",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T02:21:35.532555100Z",
+   "pr": 972,
+   "reviewer": "gh-claude-9",
+   "sequence": 6748,
+   "taskId": "issue-41",
+   "verdict": "APPROVE"
+  },
+  {
+   "actorId": "gh-claude-9",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "533208bbbcb22f69dc8b25b5af440bcbebaa6367",
+   "occurredAt": "2026-10-13T02:21:37.897908Z",
+   "pr": 972,
+   "sequence": 6749,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1036#issuecomment-6136815856",
+   "headSha": "264a7429ca92e448e04212b7e881ee782064ad46",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T02:22:52.838283300Z",
+   "pr": 1036,
+   "reviewer": "codexrev-2",
+   "sequence": 6752,
+   "taskId": "issue-41",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "23dadd014ebcc25921efc7c78b5a392c403fe712",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T02:23:06.444956100Z",
+   "pr": 991,
+   "reviewer": "codexrev-4",
+   "sequence": 6757,
+   "taskId": "issue-988"
+  },
+  {
+   "actorId": "gh-claude-9",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/991#issuecomment-6136831139",
+   "headSha": "23dadd014ebcc25921efc7c78b5a392c403fe712",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T02:24:13.802438200Z",
+   "pr": 991,
+   "reviewer": "gh-claude-9",
+   "sequence": 6759,
+   "taskId": "issue-988",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codexrev-4",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/991#issuecomment-6136872547",
+   "headSha": "23dadd014ebcc25921efc7c78b5a392c403fe712",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T02:28:03.324436100Z",
+   "pr": 991,
+   "reviewer": "codexrev-4",
+   "sequence": 6785,
+   "taskId": "issue-988",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-10",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1036#issuecomment-6136902702",
+   "headSha": "264a7429ca92e448e04212b7e881ee782064ad46",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T02:31:02.091501500Z",
+   "pr": 1036,
+   "reviewer": "gh-claude-10",
+   "sequence": 6797,
+   "taskId": "issue-41",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "a3b7cc1e1b58335bc2cc6e0076a0832113a7226f",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-13T02:38:03.334254400Z",
+   "pr": 1036,
+   "repo": "stabem/GraphHelm",
+   "sequence": 6810,
+   "summary": "Studio shows validated Runtime startup phase timings.",
+   "taskId": "issue-41",
+   "title": "feat(studio): show Runtime startup timings"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "a3b7cc1e1b58335bc2cc6e0076a0832113a7226f",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T02:38:05.301025800Z",
+   "pr": 1036,
+   "reviewer": "codex-review",
+   "sequence": 6811,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "b2558148740f4f56604e96c00d873be9776c6761",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-13T02:38:05.333821200Z",
+   "pr": 991,
+   "repo": "stabem/GraphHelm",
+   "sequence": 6812,
+   "summary": "Open a step test with its header in view on narrow and wide screens.",
+   "taskId": "issue-988",
+   "title": "fix(studio): show test frame bar on open"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "b2558148740f4f56604e96c00d873be9776c6761",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T02:38:07.606172300Z",
+   "pr": 991,
+   "reviewer": "codex-review",
+   "sequence": 6813,
+   "taskId": "issue-988"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "b2558148740f4f56604e96c00d873be9776c6761",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T02:38:46.992112700Z",
+   "pr": 991,
+   "reviewer": "codexrev-2",
+   "sequence": 6815,
+   "taskId": "issue-988"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "a3b7cc1e1b58335bc2cc6e0076a0832113a7226f",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T02:38:58.829282900Z",
+   "pr": 1036,
+   "reviewer": "codexrev-4",
+   "sequence": 6818,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codexrev-4",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1036#issuecomment-6137053431",
+   "headSha": "a3b7cc1e1b58335bc2cc6e0076a0832113a7226f",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T02:44:22.873871Z",
+   "pr": 1036,
+   "reviewer": "codexrev-4",
+   "sequence": 6834,
+   "taskId": "issue-41",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/991#issuecomment-6137068958",
+   "headSha": "b2558148740f4f56604e96c00d873be9776c6761",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T02:45:46.045247Z",
+   "pr": 991,
+   "reviewer": "codexrev-2",
+   "sequence": 6836,
+   "taskId": "issue-988",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-10",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1036#issuecomment-6137116361",
+   "headSha": "a3b7cc1e1b58335bc2cc6e0076a0832113a7226f",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T02:50:11.342394700Z",
+   "pr": 1036,
+   "reviewer": "gh-claude-10",
+   "sequence": 6843,
+   "taskId": "issue-41",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-10",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "cbc5b613bf40b29cccc5a33fc7698463e37e4bbf",
+   "occurredAt": "2026-10-13T02:50:24.606781600Z",
+   "pr": 1036,
+   "sequence": 6847,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-5",
+   "branch": "issue-1045-keel-next-step",
+   "issue": 1045,
+   "kind": "task.claimed",
+   "lane": "codex-5",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T03:53:36.204568600Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 6985,
+   "taskId": "issue-1045",
+   "title": "Journey: a watchdog verdict routes the task, not just reports it"
+  },
+  {
+   "actorId": "codex-5",
+   "kind": "task.planned",
+   "lane": "codex-5",
+   "occurredAt": "2026-10-13T03:53:45.031016900Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Add head-bound keel check routing recommendations."
+   },
+   "sequence": 6988,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "codex-9",
+   "headSha": "2506ccfa6e559a7128aec51fd0dc4e5bc1f53311",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-9",
+   "occurredAt": "2026-10-13T03:55:55.037813500Z",
+   "pr": 1051,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7001,
+   "summary": "Retires the first three draft Studio journey flows.",
+   "taskId": "issue-1041",
+   "title": "chore(journeys): retire three draft Studio flows"
+  },
+  {
+   "actorId": "codex-9",
+   "headSha": "2506ccfa6e559a7128aec51fd0dc4e5bc1f53311",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T03:56:02.491709300Z",
+   "pr": 1051,
+   "reviewer": "codex-review",
+   "sequence": 7002,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "2506ccfa6e559a7128aec51fd0dc4e5bc1f53311",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T03:56:55.828181400Z",
+   "pr": 1051,
+   "reviewer": "codexrev-2",
+   "sequence": 7003,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1051#issuecomment-6137913865",
+   "headSha": "2506ccfa6e559a7128aec51fd0dc4e5bc1f53311",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T03:59:03.789343900Z",
+   "pr": 1051,
+   "reviewer": "codexrev-2",
+   "sequence": 7009,
+   "taskId": "issue-1041",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "headSha": "2506ccfa6e559a7128aec51fd0dc4e5bc1f53311",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T04:19:46.214576200Z",
+   "pr": 1051,
+   "reviewer": "gh-claude-7",
+   "sequence": 7044,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1051#issuecomment-6138160720",
+   "headSha": "2506ccfa6e559a7128aec51fd0dc4e5bc1f53311",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T04:21:33.266958800Z",
+   "pr": 1051,
+   "reviewer": "gh-claude-7",
+   "sequence": 7045,
+   "taskId": "issue-1041",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "86a85483bc371cb71a856dc5ad7daa0f98309682",
+   "occurredAt": "2026-10-13T04:21:41.213861600Z",
+   "pr": 1051,
+   "sequence": 7047,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-5",
+   "headSha": "ee87cb4f6a24009c295d481cbbc85daff654b264",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-5",
+   "occurredAt": "2026-10-13T04:30:45.996987700Z",
+   "pr": 1059,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7079,
+   "summary": "Add a head-bound next-step recommendation to keel check.",
+   "taskId": "issue-1045",
+   "title": "feat(cli): recommend keel check next step"
+  },
+  {
+   "actorId": "codex-5",
+   "headSha": "ee87cb4f6a24009c295d481cbbc85daff654b264",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T04:30:47.529406600Z",
+   "pr": 1059,
+   "reviewer": "codex-review",
+   "sequence": 7080,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "ee87cb4f6a24009c295d481cbbc85daff654b264",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T04:31:21.925778600Z",
+   "pr": 1059,
+   "reviewer": "codexrev-4",
+   "sequence": 7087,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "codex-1",
+   "branch": "issue-41-auto-7027",
+   "issue": 41,
+   "kind": "task.claimed",
+   "lane": "codex-1",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T04:51:33.190500800Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 7143,
+   "summary": "The owner learns why the Runtime died and every native Codex attempt failed in a live run.",
+   "taskId": "issue-41",
+   "title": "Runtime: find why it exits and Codex runs fail"
+  },
+  {
+   "actorId": "codex-1",
+   "kind": "task.planned",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-13T04:51:38.723920400Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Show the connected Runtime identity beside startup timing"
+   },
+   "sequence": 7146,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "63585344f09b34e8edac0e63a13bf3c256a9bbfc",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-13T05:03:40.513229500Z",
+   "pr": 1070,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7184,
+   "summary": "Studio shows which Runtime supplied startup timing at connection.",
+   "taskId": "issue-41",
+   "title": "feat(studio): show Runtime identity at connection"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "63585344f09b34e8edac0e63a13bf3c256a9bbfc",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T05:03:42.682625300Z",
+   "pr": 1070,
+   "reviewer": "codex-review",
+   "sequence": 7185,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "63585344f09b34e8edac0e63a13bf3c256a9bbfc",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T05:16:57.243766200Z",
+   "pr": 1070,
+   "reviewer": "codexrev-3",
+   "sequence": 7216,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codexrev-3",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1070#issuecomment-6138853353",
+   "headSha": "63585344f09b34e8edac0e63a13bf3c256a9bbfc",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T05:22:15.957413800Z",
+   "pr": 1070,
+   "reviewer": "codexrev-3",
+   "sequence": 7229,
+   "taskId": "issue-41",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "codexrev-4",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1059#issuecomment-6138910924",
+   "headSha": "ee87cb4f6a24009c295d481cbbc85daff654b264",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T05:27:11.748856600Z",
+   "pr": 1059,
+   "reviewer": "codexrev-4",
+   "sequence": 7247,
+   "taskId": "issue-1045",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-5",
+   "headSha": "697276290ddc87787d5b741419669183f82b9600",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-5",
+   "occurredAt": "2026-10-13T05:41:46.972308500Z",
+   "pr": 1059,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7285,
+   "summary": "Add a head-bound next-step recommendation to keel check.",
+   "taskId": "issue-1045",
+   "title": "feat(cli): recommend keel check next step"
+  },
+  {
+   "actorId": "codex-5",
+   "headSha": "697276290ddc87787d5b741419669183f82b9600",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T05:41:48.024185600Z",
+   "pr": 1059,
+   "reviewer": "codex-review",
+   "sequence": 7286,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "697276290ddc87787d5b741419669183f82b9600",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T05:42:10.959418500Z",
+   "pr": 1059,
+   "reviewer": "codexrev-2",
+   "sequence": 7287,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "codex-3",
+   "branch": "issue-1041-auto-961",
+   "issue": 1041,
+   "kind": "task.claimed",
+   "lane": "codex-3",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T05:56:49.967534500Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 7324,
+   "taskId": "issue-1041",
+   "title": "Journeys: retire or rewrite off-focus Studio journeys"
+  },
+  {
+   "actorId": "codex-3",
+   "kind": "task.planned",
+   "lane": "codex-3",
+   "occurredAt": "2026-10-13T05:56:52.160747700Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Retire studio-answer-node and studio-disconnect source flows, replay entries, and answer-node-only fixture seed"
+   },
+   "sequence": 7326,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-3",
+   "headSha": "881cf912e5b70a44293cf20e80c5c8a79c328218",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-3",
+   "occurredAt": "2026-10-13T05:59:47.049253400Z",
+   "pr": 1075,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7334,
+   "summary": "Retires two draft Studio journeys and their fixture hooks.",
+   "taskId": "issue-1041",
+   "title": "chore(journeys): retire two draft Studio flows"
+  },
+  {
+   "actorId": "codex-3",
+   "headSha": "881cf912e5b70a44293cf20e80c5c8a79c328218",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T05:59:48.085587200Z",
+   "pr": 1075,
+   "reviewer": "codex-review",
+   "sequence": 7335,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1059#issuecomment-6139336452",
+   "headSha": "697276290ddc87787d5b741419669183f82b9600",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T06:02:01.836293200Z",
+   "pr": 1059,
+   "reviewer": "codexrev-2",
+   "sequence": 7340,
+   "taskId": "issue-1045",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "881cf912e5b70a44293cf20e80c5c8a79c328218",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T06:06:44.597714200Z",
+   "pr": 1075,
+   "reviewer": "codexrev-2",
+   "sequence": 7345,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-5",
+   "headSha": "814fffe2677edc739a73d0103609b2f49883b4b7",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-5",
+   "occurredAt": "2026-10-13T06:07:19.319532200Z",
+   "pr": 1059,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7348,
+   "summary": "Add a head-bound next-step recommendation to keel check.",
+   "taskId": "issue-1045",
+   "title": "feat(cli): recommend keel check next step"
+  },
+  {
+   "actorId": "codex-5",
+   "headSha": "814fffe2677edc739a73d0103609b2f49883b4b7",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T06:07:20.465841200Z",
+   "pr": 1059,
+   "reviewer": "codex-review",
+   "sequence": 7349,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1075#issuecomment-6139429728",
+   "headSha": "881cf912e5b70a44293cf20e80c5c8a79c328218",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T06:09:33.049496100Z",
+   "pr": 1075,
+   "reviewer": "codexrev-2",
+   "sequence": 7358,
+   "taskId": "issue-1041",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "814fffe2677edc739a73d0103609b2f49883b4b7",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T06:15:54.901010700Z",
+   "pr": 1059,
+   "reviewer": "codexrev-2",
+   "sequence": 7374,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "headSha": "881cf912e5b70a44293cf20e80c5c8a79c328218",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T06:16:37.774533400Z",
+   "pr": 1075,
+   "reviewer": "gh-claude-7",
+   "sequence": 7377,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "headSha": "814fffe2677edc739a73d0103609b2f49883b4b7",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T06:16:39.530757900Z",
+   "pr": 1059,
+   "reviewer": "gh-claude-7",
+   "sequence": 7379,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "codex-3",
+   "headSha": "89c862a5b9fc02a9edb536527b70cd6e2a652f19",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-3",
+   "occurredAt": "2026-10-13T06:16:44.349945700Z",
+   "pr": 1075,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7380,
+   "summary": "Retires two draft Studio journeys and their fixture hooks.",
+   "taskId": "issue-1041",
+   "title": "chore(journeys): retire two draft Studio flows"
+  },
+  {
+   "actorId": "codex-3",
+   "headSha": "89c862a5b9fc02a9edb536527b70cd6e2a652f19",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T06:16:45.351192100Z",
+   "pr": 1075,
+   "reviewer": "codex-review",
+   "sequence": 7381,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "89c862a5b9fc02a9edb536527b70cd6e2a652f19",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T06:17:22.201234400Z",
+   "pr": 1075,
+   "reviewer": "codexrev-3",
+   "sequence": 7382,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "headSha": "89c862a5b9fc02a9edb536527b70cd6e2a652f19",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T06:18:57.112356Z",
+   "pr": 1075,
+   "reviewer": "gh-claude-7",
+   "sequence": 7385,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1075#issuecomment-6139552537",
+   "headSha": "89c862a5b9fc02a9edb536527b70cd6e2a652f19",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T06:18:58.806058500Z",
+   "pr": 1075,
+   "reviewer": "gh-claude-7",
+   "sequence": 7386,
+   "taskId": "issue-1041",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "c17e2ddd1a6643ac2fc702fab6754d4b0a696417",
+   "occurredAt": "2026-10-13T06:19:05.691600Z",
+   "pr": 1075,
+   "sequence": 7387,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codexrev-3",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1075#issuecomment-6139584794",
+   "headSha": "89c862a5b9fc02a9edb536527b70cd6e2a652f19",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T06:21:17.029195700Z",
+   "pr": 1075,
+   "reviewer": "codexrev-3",
+   "sequence": 7390,
+   "taskId": "issue-1041",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-5",
+   "branch": "issue-1041-auto-2476",
+   "issue": 1041,
+   "kind": "task.claimed",
+   "lane": "codex-5",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T06:22:19.267741300Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 7401,
+   "taskId": "issue-1041",
+   "title": "Journeys: retire or rewrite off-focus Studio journeys"
+  },
+  {
+   "actorId": "codex-5",
+   "kind": "task.planned",
+   "lane": "codex-5",
+   "occurredAt": "2026-10-13T06:22:20.681827200Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Retire three draft Studio journeys from discovery and replay order"
+   },
+   "sequence": 7402,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-5",
+   "headSha": "bfb594047216620e281fdbea339d7071101fb3b3",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-5",
+   "occurredAt": "2026-10-13T06:25:42.405973100Z",
+   "pr": 1082,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7414,
+   "summary": "Retires three draft Studio journeys from source discovery and replay order.",
+   "taskId": "issue-1041",
+   "title": "chore(journeys): retire three draft Studio flows"
+  },
+  {
+   "actorId": "codex-5",
+   "headSha": "bfb594047216620e281fdbea339d7071101fb3b3",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T06:25:43.457775200Z",
+   "pr": 1082,
+   "reviewer": "codex-review",
+   "sequence": 7415,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1059#issuecomment-6139761137",
+   "headSha": "814fffe2677edc739a73d0103609b2f49883b4b7",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T06:33:14.917493300Z",
+   "pr": 1059,
+   "reviewer": "gh-claude-7",
+   "sequence": 7420,
+   "taskId": "issue-1045",
+   "verdict": "APPROVE"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "16f7192d442677c2463b94ad7eb1966597681183",
+   "occurredAt": "2026-10-13T06:33:21.142079100Z",
+   "pr": 1059,
+   "sequence": 7423,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "headSha": "bfb594047216620e281fdbea339d7071101fb3b3",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T06:34:50.332517100Z",
+   "pr": 1082,
+   "reviewer": "gh-claude-7",
+   "sequence": 7426,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1082#issuecomment-6139794500",
+   "headSha": "bfb594047216620e281fdbea339d7071101fb3b3",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T06:35:22.634998900Z",
+   "pr": 1082,
+   "reviewer": "gh-claude-7",
+   "sequence": 7429,
+   "taskId": "issue-1041",
+   "verdict": "APPROVE"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "7d7e7c3409750d6a109a943dd5151cc9faf41082",
+   "occurredAt": "2026-10-13T06:35:28.680933300Z",
+   "pr": 1082,
+   "sequence": 7430,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "coordinator",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "7d7e7c3409750d6a109a943dd5151cc9faf41082",
+   "occurredAt": "2026-10-13T06:35:30.313705200Z",
+   "pr": 1082,
+   "sequence": 7431,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-1",
+   "branch": "issue-1045-auto-3344",
+   "issue": 1045,
+   "kind": "task.claimed",
+   "lane": "codex-1",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T06:36:49.788618Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 7434,
+   "taskId": "issue-1045",
+   "title": "Journey: a watchdog verdict routes the task, not just reports it"
+  },
+  {
+   "actorId": "codex-1",
+   "kind": "task.planned",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-13T06:36:54.116201900Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Carry Keel check recommendations into bound execution signals; split Studio display per card."
+   },
+   "sequence": 7435,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "93594852955afbdbc1c1a31b00c5cccac400546f",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-13T06:41:26.688869Z",
+   "pr": 1085,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7442,
+   "summary": "Bound Keel checks record head-bound recommendations as execution signals.",
+   "taskId": "issue-1045",
+   "title": "feat(keel): record check recommendations"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "93594852955afbdbc1c1a31b00c5cccac400546f",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T06:41:27.741967200Z",
+   "pr": 1085,
+   "reviewer": "codex-review",
+   "sequence": 7443,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "codex-3",
+   "headSha": "e99aa52cffc201fb00dc786d84625aefde8a7340",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-3",
+   "occurredAt": "2026-10-13T06:49:18.912502300Z",
+   "pr": 1086,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7455,
+   "summary": "The Studio journey scope guard accepts retired flows without going empty.",
+   "taskId": "issue-1084",
+   "title": "test(journeys): allow retired studio flows"
+  },
+  {
+   "actorId": "codex-3",
+   "headSha": "e99aa52cffc201fb00dc786d84625aefde8a7340",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T06:49:19.876657100Z",
+   "pr": 1086,
+   "reviewer": "codex-review",
+   "sequence": 7456,
+   "taskId": "issue-1084"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "headSha": "93594852955afbdbc1c1a31b00c5cccac400546f",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T06:58:44.645867300Z",
+   "pr": 1085,
+   "reviewer": "gh-claude-7",
+   "sequence": 7467,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1085#issuecomment-6140161353",
+   "headSha": "93594852955afbdbc1c1a31b00c5cccac400546f",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T07:01:17.313137200Z",
+   "pr": 1085,
+   "reviewer": "gh-claude-7",
+   "sequence": 7473,
+   "taskId": "issue-1045",
+   "verdict": "APPROVE"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "d4782b405767e3956391a88fdc73bd307ccee47a",
+   "occurredAt": "2026-10-13T07:01:43.729057600Z",
+   "pr": 1085,
+   "sequence": 7477,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "gh-claude-11",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "7e1a8ee13521219d335730280a740b73a0aff518",
+   "occurredAt": "2026-10-13T07:23:24.504320700Z",
+   "pr": 1070,
+   "sequence": 7515,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "headSha": "e99aa52cffc201fb00dc786d84625aefde8a7340",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T07:23:31.861137400Z",
+   "pr": 1086,
+   "reviewer": "gh-claude-7",
+   "sequence": 7519,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "headSha": "e99aa52cffc201fb00dc786d84625aefde8a7340",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T07:37:19.463620300Z",
+   "pr": 1086,
+   "reviewer": "gh-claude-7",
+   "sequence": 7539,
+   "taskId": "issue-1084"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1086#issuecomment-6140698777",
+   "headSha": "e99aa52cffc201fb00dc786d84625aefde8a7340",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T07:37:21.639280Z",
+   "pr": 1086,
+   "reviewer": "gh-claude-7",
+   "sequence": 7540,
+   "taskId": "issue-1084",
+   "verdict": "APPROVE"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "closes": [
+    1084
+   ],
+   "kind": "task.merged",
+   "mergeSha": "6bc617a13e118519420284e2c1d110e828564ad3",
+   "occurredAt": "2026-10-13T07:37:45.014690900Z",
+   "pr": 1086,
+   "sequence": 7541,
+   "taskId": "issue-1084"
+  },
+  {
+   "actorId": "codex-4",
+   "branch": "issue-1045-auto-7163",
+   "issue": 1045,
+   "kind": "task.claimed",
+   "lane": "codex-4",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T07:48:12.441945200Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 7559,
+   "taskId": "issue-1045",
+   "title": "Journey: a watchdog verdict routes the task, not just reports it"
+  },
+  {
+   "actorId": "codex-4",
+   "kind": "task.planned",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-13T07:48:14.283620700Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Render node-scoped Keel check evidence in Studio without treating passes as blocks or proof."
+   },
+   "sequence": 7560,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "codex-3",
+   "branch": "issue-41-auto-7766",
+   "issue": 41,
+   "kind": "task.claimed",
+   "lane": "codex-3",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T07:51:18.172806900Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 7561,
+   "summary": "The owner learns why the Runtime died and every native Codex attempt failed in a live run.",
+   "taskId": "issue-41",
+   "title": "Runtime: find why it exits and Codex runs fail"
+  },
+  {
+   "actorId": "codex-3",
+   "kind": "task.planned",
+   "lane": "codex-3",
+   "occurredAt": "2026-10-13T07:51:19.814209400Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Add an explicit connection-scoped Runtime health refresh to the Studio startup disclosure."
+   },
+   "sequence": 7562,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "2561fc66df18e18db424fbbe7a2e71e3baefd4cc",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-13T07:51:49.019229200Z",
+   "pr": 1091,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7563,
+   "summary": "Show node-scoped Keel check evidence in the Studio chain.",
+   "taskId": "issue-1045",
+   "title": "feat(studio): show Keel check evidence"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "2561fc66df18e18db424fbbe7a2e71e3baefd4cc",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T07:51:50.435856100Z",
+   "pr": 1091,
+   "reviewer": "codex-review",
+   "sequence": 7564,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "2561fc66df18e18db424fbbe7a2e71e3baefd4cc",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T07:52:10.120996400Z",
+   "pr": 1091,
+   "reviewer": "codexrev-3",
+   "sequence": 7565,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "codexrev-3",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1091#issuecomment-6141045130",
+   "headSha": "2561fc66df18e18db424fbbe7a2e71e3baefd4cc",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T07:59:15.453149300Z",
+   "pr": 1091,
+   "reviewer": "codexrev-3",
+   "sequence": 7573,
+   "taskId": "issue-1045",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-3",
+   "headSha": "5fd45d3cb4d9c5f87261fd2adcc0dc9fa8e4dc23",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-3",
+   "occurredAt": "2026-10-13T08:04:12.763009800Z",
+   "pr": 1092,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7581,
+   "summary": "Studio lets operators refresh Runtime details without reconnecting.",
+   "taskId": "issue-41",
+   "title": "feat(studio): refresh Runtime details on demand"
+  },
+  {
+   "actorId": "codex-3",
+   "headSha": "5fd45d3cb4d9c5f87261fd2adcc0dc9fa8e4dc23",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T08:04:14.313427Z",
+   "pr": 1092,
+   "reviewer": "codex-review",
+   "sequence": 7582,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "5fd45d3cb4d9c5f87261fd2adcc0dc9fa8e4dc23",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T08:04:51.080087300Z",
+   "pr": 1092,
+   "reviewer": "codexrev-1",
+   "sequence": 7586,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "c145afbda5bdebd30e97342f2d930df989b7c345",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-13T08:05:39.148706800Z",
+   "pr": 1091,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7587,
+   "summary": "Show node-scoped Keel check evidence in the Studio chain.",
+   "taskId": "issue-1045",
+   "title": "feat(studio): show Keel check evidence"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "c145afbda5bdebd30e97342f2d930df989b7c345",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T08:05:40.604428Z",
+   "pr": 1091,
+   "reviewer": "codex-review",
+   "sequence": 7588,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "c145afbda5bdebd30e97342f2d930df989b7c345",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T08:06:28.832566500Z",
+   "pr": 1091,
+   "reviewer": "codexrev-3",
+   "sequence": 7589,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "codexrev-3",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1091#issuecomment-6141198551",
+   "headSha": "c145afbda5bdebd30e97342f2d930df989b7c345",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T08:08:58.660809800Z",
+   "pr": 1091,
+   "reviewer": "codexrev-3",
+   "sequence": 7595,
+   "taskId": "issue-1045",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "codexrev-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1092",
+   "headSha": "5fd45d3cb4d9c5f87261fd2adcc0dc9fa8e4dc23",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T08:09:50.968146400Z",
+   "pr": 1092,
+   "reviewer": "codexrev-1",
+   "sequence": 7598,
+   "taskId": "issue-41",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "headSha": "5fd45d3cb4d9c5f87261fd2adcc0dc9fa8e4dc23",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T08:23:43.337041100Z",
+   "pr": 1092,
+   "reviewer": "gh-claude-7",
+   "sequence": 7617,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1092#issuecomment-6141481426",
+   "headSha": "5fd45d3cb4d9c5f87261fd2adcc0dc9fa8e4dc23",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T08:26:53.671407200Z",
+   "pr": 1092,
+   "reviewer": "gh-claude-7",
+   "sequence": 7625,
+   "taskId": "issue-41",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "caf83683a8bf5c3b3f9da786ecca2c044a964c46",
+   "occurredAt": "2026-10-13T08:27:01.359349500Z",
+   "pr": 1092,
+   "sequence": 7628,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "gh-claude-10",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1091#issuecomment-6141507064",
+   "headSha": "c145afbda5bdebd30e97342f2d930df989b7c345",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T08:28:17.892732700Z",
+   "pr": 1091,
+   "reviewer": "gh-claude-10",
+   "sequence": 7632,
+   "taskId": "issue-1045",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-10",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "863c8c1366dcf1e6b7c82dedbf8f095c2dc4bb1b",
+   "occurredAt": "2026-10-13T08:28:20.055031900Z",
+   "pr": 1091,
+   "sequence": 7633,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "codex-4",
+   "branch": "issue-1041-auto-2815",
+   "issue": 1041,
+   "kind": "task.claimed",
+   "lane": "codex-4",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T09:14:16.740014900Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 7725,
+   "taskId": "issue-1041",
+   "title": "Journeys: retire or rewrite off-focus Studio journeys"
+  },
+  {
+   "actorId": "codex-4",
+   "kind": "task.planned",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-13T09:14:43.114628500Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Retire the next three draft Studio journeys and remove their replay and stale comment references."
+   },
+   "sequence": 7728,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-6",
+   "branch": "issue-1045-keel-proposal-admission",
+   "issue": 1045,
+   "kind": "task.claimed",
+   "lane": "codex-6",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T09:19:24.085403400Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 7734,
+   "taskId": "issue-1045",
+   "title": "Journey: a watchdog verdict routes the task, not just reports it"
+  },
+  {
+   "actorId": "codex-6",
+   "kind": "task.planned",
+   "lane": "codex-6",
+   "occurredAt": "2026-10-13T09:19:25.580678600Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Admit explicit governed drafts on keel check signals without publishing them"
+   },
+   "sequence": 7736,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "53a30ae93c46ae4b0006ab7072fe9134a94c3aae",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-13T09:23:43.429522700Z",
+   "pr": 1100,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7741,
+   "summary": "Retires three draft Studio journeys from source discovery.",
+   "taskId": "issue-1041",
+   "title": "chore(journeys): retire three draft Studio flows"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "53a30ae93c46ae4b0006ab7072fe9134a94c3aae",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T09:23:44.605774500Z",
+   "pr": 1100,
+   "reviewer": "codex-review",
+   "sequence": 7742,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "53a30ae93c46ae4b0006ab7072fe9134a94c3aae",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T09:25:12.159803600Z",
+   "pr": 1100,
+   "reviewer": "codexrev-2",
+   "sequence": 7745,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1100#issuecomment-6142508053",
+   "headSha": "53a30ae93c46ae4b0006ab7072fe9134a94c3aae",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T09:27:21.680909200Z",
+   "pr": 1100,
+   "reviewer": "codexrev-2",
+   "sequence": 7752,
+   "taskId": "issue-1041",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "codex-6",
+   "headSha": "c56f445f911a8d07fcafd05445690590759d2680",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-6",
+   "occurredAt": "2026-10-13T09:36:12.622689Z",
+   "pr": 1102,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7771,
+   "summary": "Admit explicit Keel check proposals through Governor review.",
+   "taskId": "issue-1045",
+   "title": "feat(execution): admit Keel check proposals"
+  },
+  {
+   "actorId": "codex-6",
+   "headSha": "c56f445f911a8d07fcafd05445690590759d2680",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T09:36:13.790448200Z",
+   "pr": 1102,
+   "reviewer": "codex-review",
+   "sequence": 7772,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "c56f445f911a8d07fcafd05445690590759d2680",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T09:37:01.981985800Z",
+   "pr": 1102,
+   "reviewer": "codexrev-3",
+   "sequence": 7777,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "gh-claude-9",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1100#issuecomment-6142890915",
+   "headSha": "53a30ae93c46ae4b0006ab7072fe9134a94c3aae",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T09:50:15.553927300Z",
+   "pr": 1100,
+   "reviewer": "gh-claude-9",
+   "sequence": 7788,
+   "taskId": "issue-1041",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-9",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "74e93b72f3773285fcddbabe1ff2e4b02c45de72",
+   "occurredAt": "2026-10-13T09:50:17.457504300Z",
+   "pr": 1100,
+   "sequence": 7789,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-1",
+   "branch": "issue-1041-retire-last-draft-flows",
+   "issue": 1041,
+   "kind": "task.claimed",
+   "lane": "codex-1",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T09:54:36.761767100Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 7794,
+   "taskId": "issue-1041",
+   "title": "Journeys: retire or rewrite off-focus Studio journeys"
+  },
+  {
+   "actorId": "codex-1",
+   "kind": "task.planned",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-13T09:54:43.980338400Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Retire the final four draft Studio flow sources and their fixture hooks"
+   },
+   "sequence": 7798,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "71a0c063ef3d8d4d5b438dff5f27d0a21a7cc5e5",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-13T09:56:54.418496400Z",
+   "pr": 1104,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7801,
+   "summary": "Retire the final four draft Studio journeys from source discovery and default replay order.",
+   "taskId": "issue-1041",
+   "title": "chore(journeys): retire final four draft flows"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "71a0c063ef3d8d4d5b438dff5f27d0a21a7cc5e5",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T09:56:55.497134100Z",
+   "pr": 1104,
+   "reviewer": "codex-review",
+   "sequence": 7802,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "71a0c063ef3d8d4d5b438dff5f27d0a21a7cc5e5",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T09:57:25.628460400Z",
+   "pr": 1104,
+   "reviewer": "codexrev-1",
+   "sequence": 7805,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codexrev-3",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1102#issuecomment-6143220178",
+   "headSha": "c56f445f911a8d07fcafd05445690590759d2680",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T10:09:32.020780800Z",
+   "pr": 1102,
+   "reviewer": "codexrev-3",
+   "sequence": 7814,
+   "taskId": "issue-1045",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "codexrev-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1104#issuecomment-6143678098",
+   "headSha": "71a0c063ef3d8d4d5b438dff5f27d0a21a7cc5e5",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T10:36:55.983542900Z",
+   "pr": 1104,
+   "reviewer": "codexrev-1",
+   "sequence": 7852,
+   "taskId": "issue-1041",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-10",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1104#issuecomment-6143770349",
+   "headSha": "71a0c063ef3d8d4d5b438dff5f27d0a21a7cc5e5",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T10:42:29.408167500Z",
+   "pr": 1104,
+   "reviewer": "gh-claude-10",
+   "sequence": 7855,
+   "taskId": "issue-1041",
+   "verdict": "APPROVE"
+  },
+  {
+   "actorId": "gh-claude-10",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "4c4d655dafce0e7b3b715acaeff9a99689fa7536",
+   "occurredAt": "2026-10-13T10:42:31.155515700Z",
+   "pr": 1104,
+   "sequence": 7858,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-1",
+   "branch": "issue-1041-auto-8279",
+   "issue": 1041,
+   "kind": "task.claimed",
+   "lane": "codex-1",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T10:46:18.086518Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 7866,
+   "taskId": "issue-1041",
+   "title": "Journeys: retire or rewrite off-focus Studio journeys"
+  },
+  {
+   "actorId": "codex-1",
+   "kind": "task.planned",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-13T10:46:23.550285400Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Rewrite studio-new-task to require visible Keel card fields; keep missing UI proof explicit"
+   },
+   "sequence": 7869,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "f983f84133c99df7d949e923eccfa48f09b64c7e",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-13T10:48:31.093567600Z",
+   "pr": 1109,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7871,
+   "summary": "Make the draft new-task journey require visible Keel card fields after task start.",
+   "taskId": "issue-1041",
+   "title": "chore(journeys): expect Keel card on new task"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "f983f84133c99df7d949e923eccfa48f09b64c7e",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T10:48:32.111797700Z",
+   "pr": 1109,
+   "reviewer": "codex-review",
+   "sequence": 7872,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "f983f84133c99df7d949e923eccfa48f09b64c7e",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T10:49:23.904213Z",
+   "pr": 1109,
+   "reviewer": "codexrev-1",
+   "sequence": 7873,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codexrev-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1109#issuecomment-6144041871",
+   "headSha": "f983f84133c99df7d949e923eccfa48f09b64c7e",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T10:58:54.045051300Z",
+   "pr": 1109,
+   "reviewer": "codexrev-1",
+   "sequence": 7880,
+   "taskId": "issue-1041",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-9",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1102#issuecomment-6144078151",
+   "headSha": "c56f445f911a8d07fcafd05445690590759d2680",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T11:01:08.746860300Z",
+   "pr": 1102,
+   "reviewer": "gh-claude-9",
+   "sequence": 7884,
+   "taskId": "issue-1045",
+   "verdict": "APPROVE"
+  },
+  {
+   "actorId": "gh-claude-9",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "451e2f47bd806796a89f5ea34616f5e2314d0269",
+   "occurredAt": "2026-10-13T11:01:11.101311600Z",
+   "pr": 1102,
+   "sequence": 7888,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "codex-1",
+   "branch": "issue-1045-auto-1296",
+   "issue": 1045,
+   "kind": "task.claimed",
+   "lane": "codex-1",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T11:36:06.957014500Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 7923,
+   "taskId": "issue-1045",
+   "title": "Journey: a watchdog verdict routes the task, not just reports it"
+  },
+  {
+   "actorId": "codex-1",
+   "kind": "task.planned",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-13T11:36:12.466453800Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Add opt-in, head-bound Keel verdict proposal submission through existing signal admission"
+   },
+   "sequence": 7926,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "gh-claude-11",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "4512daa1b66846263d0a86abbcdf326a51e57b1a",
+   "occurredAt": "2026-10-13T11:43:20.478705400Z",
+   "pr": 1109,
+   "sequence": 7928,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-4",
+   "branch": "issue-1041-auto-2185",
+   "issue": 1041,
+   "journeys": [
+    "studio-journey-tab"
+   ],
+   "kind": "task.claimed",
+   "lane": "codex-4",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T11:50:43.687186800Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 7939,
+   "taskId": "issue-1041",
+   "title": "Journeys: retire or rewrite off-focus Studio journeys"
+  },
+  {
+   "actorId": "codex-4",
+   "kind": "task.planned",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-13T11:50:45.085156400Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Rewrite the draft journey to specify owner review of the promise and its observer evidence."
+   },
+   "sequence": 7940,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "c460f6d81faead46bd0f005baf7016ab305f98e1",
+   "journeys": [
+    "studio-journey-tab"
+   ],
+   "kind": "task.pr_opened",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-13T11:54:20.580679400Z",
+   "pr": 1110,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7945,
+   "summary": "Make the draft Proof journey require the promise and observer evidence before review.",
+   "taskId": "issue-1041",
+   "title": "chore(journeys): specify promise observer review"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "c460f6d81faead46bd0f005baf7016ab305f98e1",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T11:54:21.716877100Z",
+   "pr": 1110,
+   "reviewer": "codex-review",
+   "sequence": 7946,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "headSha": "c460f6d81faead46bd0f005baf7016ab305f98e1",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T12:06:45.487418400Z",
+   "pr": 1110,
+   "reviewer": "gh-claude-7",
+   "sequence": 7961,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1110#issuecomment-6145179836",
+   "headSha": "c460f6d81faead46bd0f005baf7016ab305f98e1",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T12:07:45.507273600Z",
+   "pr": 1110,
+   "reviewer": "gh-claude-7",
+   "sequence": 7962,
+   "taskId": "issue-1041",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "43d8a2721f56460785e6a6b92921d3ca55683f91",
+   "occurredAt": "2026-10-13T12:07:52.778051500Z",
+   "pr": 1110,
+   "sequence": 7963,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-4",
+   "branch": "issue-1041-proof-observer-evidence",
+   "issue": 1041,
+   "kind": "task.claimed",
+   "lane": "codex-4",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T12:12:06.999501700Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 7970,
+   "taskId": "issue-1041",
+   "title": "Journeys: retire or rewrite off-focus Studio journeys"
+  },
+  {
+   "actorId": "codex-4",
+   "kind": "task.planned",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-13T12:12:08.412770200Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Render accessible promise and observer evidence sections in the Studio Proof view."
+   },
+   "sequence": 7971,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "a15a3400e8842aceb690cc5e3d06932d82a695c1",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-13T12:14:38.994616500Z",
+   "pr": 1111,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7973,
+   "summary": "The Proof view shows journey promises and observer evidence.",
+   "taskId": "issue-1041",
+   "title": "feat(studio): show journey promise and evidence"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "a15a3400e8842aceb690cc5e3d06932d82a695c1",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T12:14:40.095206Z",
+   "pr": 1111,
+   "reviewer": "codex-review",
+   "sequence": 7974,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "a15a3400e8842aceb690cc5e3d06932d82a695c1",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T12:15:23.046925500Z",
+   "pr": 1111,
+   "reviewer": "codexrev-2",
+   "sequence": 7975,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1111#issuecomment-6145416911",
+   "headSha": "a15a3400e8842aceb690cc5e3d06932d82a695c1",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T12:21:16.089029900Z",
+   "pr": 1111,
+   "reviewer": "codexrev-2",
+   "sequence": 7983,
+   "taskId": "issue-1041",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "cef4e5b281277f5449cef4ef8ec001eebe11ff20",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-13T12:26:00.441828600Z",
+   "pr": 1111,
+   "repo": "stabem/GraphHelm",
+   "sequence": 7990,
+   "summary": "The Proof view shows journey promises and observer evidence.",
+   "taskId": "issue-1041",
+   "title": "feat(studio): show journey promise and evidence"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "cef4e5b281277f5449cef4ef8ec001eebe11ff20",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T12:26:01.521260600Z",
+   "pr": 1111,
+   "reviewer": "codex-review",
+   "sequence": 7991,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "cef4e5b281277f5449cef4ef8ec001eebe11ff20",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T12:27:17.886348700Z",
+   "pr": 1111,
+   "reviewer": "codexrev-3",
+   "sequence": 7992,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codexrev-3",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1111#issuecomment-6145786201",
+   "headSha": "cef4e5b281277f5449cef4ef8ec001eebe11ff20",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T12:42:12.562652Z",
+   "pr": 1111,
+   "reviewer": "codexrev-3",
+   "sequence": 8018,
+   "taskId": "issue-1041",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "df74e58d3a37a30404f2f8eb21a3142f42250c74",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-13T12:47:28.946320600Z",
+   "pr": 1115,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8022,
+   "summary": "Add the opt-in Keel verdict-to-proposal producer (slice 2b.2). A check with an explicit binding selects a graph-specific implement or review draft and submits it through sealed signal admission. Ordinary checks remain read-only. This PR supplies pending proposals; the routing journey and Governor pu",
+   "taskId": "issue-1045",
+   "title": "feat(keel): submit explicit verdict proposals"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "df74e58d3a37a30404f2f8eb21a3142f42250c74",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T12:47:30.031140800Z",
+   "pr": 1115,
+   "reviewer": "codex-review",
+   "sequence": 8023,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "df74e58d3a37a30404f2f8eb21a3142f42250c74",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T12:49:19.058817800Z",
+   "pr": 1115,
+   "reviewer": "codexrev-1",
+   "sequence": 8025,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "gh-claude-11",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "a71d0f70326a1aee75cc6317dc3ca22c9a59c851",
+   "occurredAt": "2026-10-13T13:04:01.364085500Z",
+   "pr": 1111,
+   "sequence": 8050,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-1",
+   "branch": "issue-1041-auto-9550",
+   "issue": 1041,
+   "kind": "task.claimed",
+   "lane": "codex-1",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T13:53:34.401537100Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 8126,
+   "taskId": "issue-1041",
+   "title": "Journeys: retire or rewrite off-focus Studio journeys"
+  },
+  {
+   "actorId": "codex-1",
+   "kind": "task.planned",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-13T13:53:37.954438300Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Show node-authored Keel card records on the selected run Graph view"
+   },
+   "sequence": 8130,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "f3511353f9e8ea672d6fdfe1ab81d419efa5a727",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-13T14:16:15.958096500Z",
+   "pr": 1125,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8145,
+   "summary": "Show node-authored Keel card records on the selected run's Graph view.",
+   "taskId": "issue-1041",
+   "title": "feat(studio): show recorded Keel cards on Graph"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "f3511353f9e8ea672d6fdfe1ab81d419efa5a727",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T14:16:17.519599600Z",
+   "pr": 1125,
+   "reviewer": "codex-review",
+   "sequence": 8146,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "f3511353f9e8ea672d6fdfe1ab81d419efa5a727",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T14:17:19.543615700Z",
+   "pr": 1125,
+   "reviewer": "codexrev-2",
+   "sequence": 8150,
+   "taskId": "issue-1041"
+  },
+  {
+   "actorId": "codex-1",
+   "branch": "issue-1127-auto-1372",
+   "issue": 1127,
+   "kind": "task.claimed",
+   "lane": "codex-1",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T14:24:34.869300500Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 8162,
+   "taskId": "issue-1127",
+   "title": "Main red: authored-strings guard fails on progress.rs (from #1117)"
+  },
+  {
+   "actorId": "codex-1",
+   "kind": "task.planned",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-13T14:24:45.594206Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Keep progress output unchanged while removing collapsed literals; confirm CLI changes select the guard"
+   },
+   "sequence": 8164,
+   "taskId": "issue-1127"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1125#issuecomment-6147799314",
+   "headSha": "f3511353f9e8ea672d6fdfe1ab81d419efa5a727",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T14:25:28.567909600Z",
+   "pr": 1125,
+   "reviewer": "codexrev-2",
+   "sequence": 8165,
+   "taskId": "issue-1041",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "codexrev-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1115#issuecomment-6148176289",
+   "headSha": "df74e58d3a37a30404f2f8eb21a3142f42250c74",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T14:44:01.540045500Z",
+   "pr": 1115,
+   "reviewer": "codexrev-1",
+   "sequence": 8182,
+   "taskId": "issue-1045",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "3b4501ac02f2a3f5b6fe74097fd0e4b108cdf6ce",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-1",
+   "occurredAt": "2026-10-13T14:56:01.671817600Z",
+   "pr": 1136,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8195,
+   "summary": "Keep CLI progress output unchanged while its authored strings pass the workspace guard.",
+   "taskId": "issue-1127",
+   "title": "fix(cli): keep progress text within authored-strings guard"
+  },
+  {
+   "actorId": "codex-1",
+   "headSha": "3b4501ac02f2a3f5b6fe74097fd0e4b108cdf6ce",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T14:56:03.207358700Z",
+   "pr": 1136,
+   "reviewer": "codex-review",
+   "sequence": 8196,
+   "taskId": "issue-1127"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "3b4501ac02f2a3f5b6fe74097fd0e4b108cdf6ce",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T14:57:26.050148800Z",
+   "pr": 1136,
+   "reviewer": "codexrev-4",
+   "sequence": 8199,
+   "taskId": "issue-1127"
+  },
+  {
+   "actorId": "gh-claude-9",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1125#issuecomment-6148520504",
+   "headSha": "f3511353f9e8ea672d6fdfe1ab81d419efa5a727",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T15:00:56.610794500Z",
+   "pr": 1125,
+   "reviewer": "gh-claude-9",
+   "sequence": 8201,
+   "taskId": "issue-1041",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-7",
+   "headSha": "7b298c998be2ad7452b205ceaa2c4c40d1a97beb",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-7",
+   "occurredAt": "2026-10-13T15:05:07.570487600Z",
+   "pr": 1115,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8210,
+   "summary": "Add the opt-in Keel verdict-to-proposal producer (slice 2b.2). A check with an explicit binding selects a graph-specific implement or review draft and submits it through sealed signal admission. Ordinary checks remain read-only. This PR supplies pending proposals; the routing journey and Governor pu",
+   "taskId": "issue-1045",
+   "title": "feat(keel): submit explicit verdict proposals"
+  },
+  {
+   "actorId": "codex-7",
+   "headSha": "7b298c998be2ad7452b205ceaa2c4c40d1a97beb",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T15:05:09.912801800Z",
+   "pr": 1115,
+   "reviewer": "codex-review",
+   "sequence": 8211,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "7b298c998be2ad7452b205ceaa2c4c40d1a97beb",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T15:07:24.366919300Z",
+   "pr": 1115,
+   "reviewer": "codexrev-3",
+   "sequence": 8218,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "codex-7",
+   "branch": "issue-1138-auto-4725",
+   "issue": 1138,
+   "kind": "task.claimed",
+   "lane": "codex-7",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T15:19:46.014550200Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 8222,
+   "taskId": "issue-1138",
+   "title": "Lanes and Graph: agents in projects without task records never appear"
+  },
+  {
+   "actorId": "codex-7",
+   "kind": "task.planned",
+   "lane": "codex-7",
+   "occurredAt": "2026-10-13T15:19:48.004876200Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Show note-only agents on Studio Lanes and Graph without inventing task bars."
+   },
+   "sequence": 8223,
+   "taskId": "issue-1138"
+  },
+  {
+   "actorId": "codex-memory-adoption",
+   "branch": "issue-1138-native-lane-visibility",
+   "issue": 1138,
+   "kind": "task.claimed",
+   "lane": "codex-memory-adoption",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T15:24:38.013566400Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 8226,
+   "taskId": "issue-1138",
+   "title": "Lanes and Graph: agents in projects without task records never appear"
+  },
+  {
+   "actorId": "codex-memory-adoption",
+   "branch": "issue-1139-mcp-adoption",
+   "issue": 1139,
+   "kind": "task.claimed",
+   "lane": "codex-memory-adoption",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T16:11:43.344011700Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 8239,
+   "summary": "Prevent duplicate GraphHelm MCP registrations and cross-project routing during product adoption.",
+   "taskId": "issue-1139",
+   "title": "Adoption: deduplicate MCP providers and preserve project routing"
+  },
+  {
+   "actorId": "codex-review-1142",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1142#issuecomment-6150110264",
+   "headSha": "e246a341e3b74eda295cf2c13765920a65926ac1",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T16:22:30.848211700Z",
+   "pr": 1142,
+   "reviewer": "codex-review-1142",
+   "sequence": 8249,
+   "taskId": "issue-1139",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-memory-adoption",
+   "claimSequence": 8226,
+   "kind": "task.released",
+   "lane": "codex-memory-adoption",
+   "occurredAt": "2026-10-13T16:22:44.542142500Z",
+   "reason": "supervisor: lane moved to issue #1139",
+   "sequence": 8250,
+   "taskId": "issue-1138"
+  },
+  {
+   "actorId": "codex-mcp-1139",
+   "headSha": "e246a341e3b74eda295cf2c13765920a65926ac1",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-mcp-1139",
+   "occurredAt": "2026-10-13T16:22:51.749658100Z",
+   "pr": 1142,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8251,
+   "taskId": "issue-1139",
+   "title": "fix(adoption): review duplicate plugin MCP registrations"
+  },
+  {
+   "actorId": "codex-mcp-1139",
+   "headSha": "e246a341e3b74eda295cf2c13765920a65926ac1",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T16:22:53.365514900Z",
+   "pr": 1142,
+   "reviewer": "codex-review",
+   "sequence": 8252,
+   "taskId": "issue-1139"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "e246a341e3b74eda295cf2c13765920a65926ac1",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T16:29:06.855553600Z",
+   "pr": 1142,
+   "reviewer": "codexrev-2",
+   "sequence": 8254,
+   "taskId": "issue-1139"
+  },
+  {
+   "actorId": "codex-memory-adoption",
+   "headSha": "f378b74e2c5c9b34d555a6917ce326ba71f52698",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-memory-adoption",
+   "occurredAt": "2026-10-13T16:33:47.136262100Z",
+   "pr": 1142,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8258,
+   "summary": "Local duplicate cleanup applied; draft product prevention blocked by missing Cargo evidence and amended-head review.",
+   "taskId": "issue-1139",
+   "title": "Prevent duplicate plugin MCP registrations"
+  },
+  {
+   "actorId": "codex-memory-adoption",
+   "headSha": "f378b74e2c5c9b34d555a6917ce326ba71f52698",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T16:33:58.340653200Z",
+   "pr": 1142,
+   "reviewer": "codex-review-1142",
+   "sequence": 8259,
+   "taskId": "issue-1139"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1142#issuecomment-6150547571",
+   "headSha": "e246a341e3b74eda295cf2c13765920a65926ac1",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T16:46:01.627113Z",
+   "pr": 1142,
+   "reviewer": "codexrev-2",
+   "sequence": 8265,
+   "taskId": "issue-1139",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "codexrev-4",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1136#issuecomment-6150779732",
+   "headSha": "3b4501ac02f2a3f5b6fe74097fd0e4b108cdf6ce",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T16:58:56.715950Z",
+   "pr": 1136,
+   "reviewer": "codexrev-4",
+   "sequence": 8278,
+   "taskId": "issue-1127",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-10",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1142#issuecomment-6150920590",
+   "headSha": "f378b74e2c5c9b34d555a6917ce326ba71f52698",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T17:06:35.371238600Z",
+   "pr": 1142,
+   "reviewer": "gh-claude-10",
+   "sequence": 8282,
+   "taskId": "issue-1139",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "headSha": "3b4501ac02f2a3f5b6fe74097fd0e4b108cdf6ce",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T17:06:48.952585500Z",
+   "pr": 1136,
+   "reviewer": "gh-claude-7",
+   "sequence": 8285,
+   "taskId": "issue-1127"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "3b4501ac02f2a3f5b6fe74097fd0e4b108cdf6ce",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T17:08:04.386804500Z",
+   "pr": 1136,
+   "reviewer": "codexrev-2",
+   "sequence": 8289,
+   "taskId": "issue-1127"
+  },
+  {
+   "actorId": "codexrev-3",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1115#issuecomment-6151135697",
+   "headSha": "7b298c998be2ad7452b205ceaa2c4c40d1a97beb",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T17:18:31.924583700Z",
+   "pr": 1115,
+   "reviewer": "codexrev-3",
+   "sequence": 8293,
+   "taskId": "issue-1045",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1136#issuecomment-6151186280",
+   "headSha": "3b4501ac02f2a3f5b6fe74097fd0e4b108cdf6ce",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T17:21:21.021729300Z",
+   "pr": 1136,
+   "reviewer": "gh-claude-7",
+   "sequence": 8297,
+   "taskId": "issue-1127",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-7",
+   "branch": "issue-1137-auto-2828",
+   "issue": 1137,
+   "journeys": [
+    "studio-answer-question"
+   ],
+   "kind": "task.claimed",
+   "lane": "codex-7",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T17:34:49.697709100Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 8318,
+   "taskId": "issue-1137",
+   "title": "Studio: envelopes are opened and committed one at a time, so loading takes minutes after the network is done"
+  },
+  {
+   "actorId": "codex-7",
+   "kind": "task.planned",
+   "lane": "codex-7",
+   "occurredAt": "2026-10-13T17:34:51.845483400Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Batch cached envelope publication newest-first in pages of 50"
+   },
+   "sequence": 8319,
+   "taskId": "issue-1137"
+  },
+  {
+   "actorId": "gh-claude-7",
+   "headSha": "7b298c998be2ad7452b205ceaa2c4c40d1a97beb",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T17:43:15.593645500Z",
+   "pr": 1115,
+   "reviewer": "gh-claude-7",
+   "sequence": 8336,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "7b298c998be2ad7452b205ceaa2c4c40d1a97beb",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T17:55:35.602226600Z",
+   "pr": 1115,
+   "reviewer": "codexrev-1",
+   "sequence": 8346,
+   "taskId": "issue-1045"
+  },
+  {
+   "actorId": "gh-claude-10",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1142#issuecomment-6151862883",
+   "headSha": "fe63516200f7f2f4f9003ec6ce0d23b394ef2520",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T17:59:22.855437300Z",
+   "pr": 1142,
+   "reviewer": "gh-claude-10",
+   "sequence": 8348,
+   "taskId": "issue-1139",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "fe63516200f7f2f4f9003ec6ce0d23b394ef2520",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T18:03:40.296810100Z",
+   "pr": 1142,
+   "reviewer": "codexrev-4",
+   "sequence": 8358,
+   "taskId": "issue-1139"
+  },
+  {
+   "actorId": "codexrev-1",
+   "commentUrl": "placeholder",
+   "headSha": "7b298c998be2ad7452b205ceaa2c4c40d1a97beb",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T18:08:52.704879400Z",
+   "pr": 1115,
+   "reviewer": "codexrev-1",
+   "sequence": 8361,
+   "taskId": "issue-1045",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "codexrev-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1115#issuecomment-6152038150",
+   "headSha": "7b298c998be2ad7452b205ceaa2c4c40d1a97beb",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T18:09:16.890923400Z",
+   "pr": 1115,
+   "reviewer": "codexrev-1",
+   "sequence": 8363,
+   "taskId": "issue-1045",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "codex-memory-runtime",
+   "branch": "issue-1160-discovery-budget",
+   "issue": 1160,
+   "kind": "task.claimed",
+   "lane": "codex-memory-runtime",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T18:15:15.172435400Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 8366,
+   "summary": "Eight delayed stale records reproduced an 8.14s MCP wait; cap aggregate health probing at five seconds.",
+   "taskId": "issue-1160",
+   "title": "Bound Runtime discovery health probes"
+  },
+  {
+   "actorId": "codexrev-4",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1142#issuecomment-6152156861",
+   "headSha": "fe63516200f7f2f4f9003ec6ce0d23b394ef2520",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T18:16:22.877666200Z",
+   "pr": 1142,
+   "reviewer": "codexrev-4",
+   "sequence": 8368,
+   "taskId": "issue-1139",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "codex-4",
+   "branch": "issue-1160-auto-5291",
+   "issue": 1160,
+   "kind": "task.claimed",
+   "lane": "codex-4",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T18:17:50.468262100Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 8369,
+   "summary": "bound the total network health-probing window during project Runtime discovery.",
+   "taskId": "issue-1160",
+   "title": "Bound aggregate project Runtime discovery health checks"
+  },
+  {
+   "actorId": "codex-4",
+   "kind": "task.planned",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-13T18:18:06.881262200Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Bound project Runtime discovery health probes to five seconds aggregate."
+   },
+   "sequence": 8370,
+   "taskId": "issue-1160"
+  },
+  {
+   "actorId": "codex-memory-runtime",
+   "headSha": "d56449a8b5a9e23e918fd6a261644cccdb8116c2",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-memory-runtime",
+   "occurredAt": "2026-10-13T18:40:28.992024800Z",
+   "pr": 1164,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8387,
+   "summary": "Cap Runtime discovery health probing and refuse partial selection",
+   "taskId": "issue-1160",
+   "title": "Bound aggregate project discovery health probes"
+  },
+  {
+   "actorId": "codex-memory-runtime",
+   "headSha": "d56449a8b5a9e23e918fd6a261644cccdb8116c2",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T18:40:34.323244100Z",
+   "pr": 1164,
+   "reviewer": "/root/blind_review_1164",
+   "sequence": 8389,
+   "taskId": "issue-1160"
+  },
+  {
+   "actorId": "codex-memory-runtime",
+   "headSha": "9e6efb87abaa9293ea674ce82768500514d241b9",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-memory-runtime",
+   "occurredAt": "2026-10-13T18:50:17.625264600Z",
+   "pr": 1164,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8391,
+   "summary": "Cap Runtime discovery health probing and refuse partial selection",
+   "taskId": "issue-1160",
+   "title": "Bound aggregate project discovery health probes"
+  },
+  {
+   "actorId": "codex-memory-runtime",
+   "headSha": "9e6efb87abaa9293ea674ce82768500514d241b9",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T18:50:20.560689500Z",
+   "pr": 1164,
+   "reviewer": "/root/blind_review_1164",
+   "sequence": 8392,
+   "taskId": "issue-1160"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1136#issuecomment-REPLACE",
+   "headSha": "3b4501ac02f2a3f5b6fe74097fd0e4b108cdf6ce",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T18:54:35.072569700Z",
+   "pr": 1136,
+   "reviewer": "codexrev-2",
+   "sequence": 8395,
+   "taskId": "issue-1127",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "9e6efb87abaa9293ea674ce82768500514d241b9",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T19:00:59.962368400Z",
+   "pr": 1164,
+   "reviewer": "codexrev-1",
+   "sequence": 8404,
+   "taskId": "issue-1160"
+  },
+  {
+   "actorId": "codex-7",
+   "claimSequence": 8222,
+   "kind": "task.released",
+   "lane": "codex-7",
+   "occurredAt": "2026-10-13T19:13:23.826640600Z",
+   "reason": "supervisor: lane moved to issue #1137",
+   "sequence": 8408,
+   "taskId": "issue-1138"
+  },
+  {
+   "actorId": "codexrev-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1164#issuecomment-6153206431",
+   "headSha": "9e6efb87abaa9293ea674ce82768500514d241b9",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T19:13:55.097784Z",
+   "pr": 1164,
+   "reviewer": "codexrev-1",
+   "sequence": 8409,
+   "taskId": "issue-1160",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-7",
+   "branch": "issue-1138-native-lane-timeline",
+   "issue": 1138,
+   "kind": "task.claimed",
+   "lane": "codex-7",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T19:16:46.375407Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 8412,
+   "taskId": "issue-1138",
+   "title": "Lanes and Graph: agents in projects without task records never appear"
+  },
+  {
+   "actorId": "codex-7",
+   "kind": "task.planned",
+   "lane": "codex-7",
+   "occurredAt": "2026-10-13T19:16:48.828997400Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Show recent named note-only actors in the Lanes timeline without inventing task history"
+   },
+   "sequence": 8413,
+   "taskId": "issue-1138"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "9e6efb87abaa9293ea674ce82768500514d241b9",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T19:18:34.254897500Z",
+   "pr": 1164,
+   "reviewer": "codexrev-4",
+   "sequence": 8418,
+   "taskId": "issue-1160"
+  },
+  {
+   "actorId": "codexrev-4",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1164#issuecomment-6153457512",
+   "headSha": "9e6efb87abaa9293ea674ce82768500514d241b9",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T19:27:45.532541Z",
+   "pr": 1164,
+   "reviewer": "codexrev-4",
+   "sequence": 8421,
+   "taskId": "issue-1160",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "codex-7",
+   "claimSequence": 8318,
+   "kind": "task.released",
+   "lane": "codex-7",
+   "occurredAt": "2026-10-13T19:37:40.640711200Z",
+   "reason": "supervisor: lane moved to issue #1138",
+   "sequence": 8431,
+   "taskId": "issue-1137"
+  },
+  {
+   "actorId": "codex-7",
+   "claimSequence": 8412,
+   "kind": "task.released",
+   "lane": "codex-7",
+   "occurredAt": "2026-10-13T20:07:59.350054400Z",
+   "reason": "supervisor: lane moved to issue #1171",
+   "sequence": 8454,
+   "taskId": "issue-1138"
+  },
+  {
+   "actorId": "codex-12",
+   "branch": "issue-41-windows-exit-observer",
+   "issue": 41,
+   "kind": "task.claimed",
+   "lane": "codex-12",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T20:31:33.250759200Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 8470,
+   "summary": "The owner learns why the Runtime died and every native Codex attempt failed in a live run.",
+   "taskId": "issue-41",
+   "title": "Runtime: find why it exits and Codex runs fail"
+  },
+  {
+   "actorId": "codex-12",
+   "kind": "task.planned",
+   "lane": "codex-12",
+   "occurredAt": "2026-10-13T20:31:35.208656600Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Add a bounded read-only Windows process exit observer with truthful receipts."
+   },
+   "sequence": 8471,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codex-12",
+   "headSha": "f8c5522fba84e9954e3f57bb9cc5631136cc18dd",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-12",
+   "occurredAt": "2026-10-13T20:44:44.198619500Z",
+   "pr": 1174,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8477,
+   "summary": "Operators can record the observed exit of one exact Windows process.",
+   "taskId": "issue-41",
+   "title": "feat(tools): observe Windows process exits"
+  },
+  {
+   "actorId": "codex-12",
+   "headSha": "f8c5522fba84e9954e3f57bb9cc5631136cc18dd",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T20:44:45.896148900Z",
+   "pr": 1174,
+   "reviewer": "codex-review",
+   "sequence": 8478,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "f8c5522fba84e9954e3f57bb9cc5631136cc18dd",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T20:48:19.001456900Z",
+   "pr": 1174,
+   "reviewer": "codexrev-2",
+   "sequence": 8479,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1174#issuecomment-6154978877",
+   "headSha": "f8c5522fba84e9954e3f57bb9cc5631136cc18dd",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T20:53:23.392444500Z",
+   "pr": 1174,
+   "reviewer": "codexrev-2",
+   "sequence": 8485,
+   "taskId": "issue-41",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-9",
+   "branch": "issue-1137-auto-2285",
+   "issue": 1137,
+   "kind": "task.claimed",
+   "lane": "codex-9",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-13T21:00:33.378199400Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 8493,
+   "taskId": "issue-1137",
+   "title": "Studio: envelopes are opened and committed one at a time, so loading takes minutes after the network is done"
+  },
+  {
+   "actorId": "codex-9",
+   "kind": "task.planned",
+   "lane": "codex-9",
+   "occurredAt": "2026-10-13T21:00:36.202818300Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Batch cached envelope publication in pages of 50 while preserving complete results and ready-message behavior"
+   },
+   "sequence": 8494,
+   "taskId": "issue-1137"
+  },
+  {
+   "actorId": "codex-4",
+   "claimSequence": 8369,
+   "kind": "task.released",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-13T21:02:01.515678300Z",
+   "reason": "supervisor: run ended without a PR; issue is free to claim again",
+   "sequence": 8503,
+   "taskId": "issue-1160"
+  },
+  {
+   "actorId": "codex-12",
+   "headSha": "c4eafa62659ac838ab4fb07b09ae2cc96ea972a6",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-12",
+   "occurredAt": "2026-10-13T21:09:04.705382200Z",
+   "pr": 1174,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8504,
+   "summary": "Operators can record the observed exit of one exact Windows process.",
+   "taskId": "issue-41",
+   "title": "feat(tools): observe Windows process exits"
+  },
+  {
+   "actorId": "codex-12",
+   "headSha": "c4eafa62659ac838ab4fb07b09ae2cc96ea972a6",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T21:09:28.411370700Z",
+   "pr": 1174,
+   "reviewer": "codex-review",
+   "sequence": 8505,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "c4eafa62659ac838ab4fb07b09ae2cc96ea972a6",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T21:17:05.454471500Z",
+   "pr": 1174,
+   "reviewer": "codexrev-1",
+   "sequence": 8507,
+   "taskId": "issue-41"
+  },
+  {
+   "actorId": "codexrev-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1174#issuecomment-6155564424",
+   "headSha": "c4eafa62659ac838ab4fb07b09ae2cc96ea972a6",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T21:27:28.389736200Z",
+   "pr": 1174,
+   "reviewer": "codexrev-1",
+   "sequence": 8508,
+   "taskId": "issue-41",
+   "verdict": "APPROVE-WITH-RISK"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "7c546fe2a16175fcdc3a85dd0a2142c740919e5f",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-13T22:17:02.921826400Z",
+   "pr": 1142,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8552,
+   "taskId": "issue-1139",
+   "title": "fix(adoption): review duplicate plugin MCP registrations"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "7c546fe2a16175fcdc3a85dd0a2142c740919e5f",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T22:17:04.738156900Z",
+   "pr": 1142,
+   "reviewer": "codex-review",
+   "sequence": 8553,
+   "taskId": "issue-1139"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "7c546fe2a16175fcdc3a85dd0a2142c740919e5f",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T22:18:43.456247300Z",
+   "pr": 1142,
+   "reviewer": "codexrev-2",
+   "sequence": 8557,
+   "taskId": "issue-1139"
+  },
+  {
+   "actorId": "codexrev-2",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1142#issuecomment-6157320946",
+   "headSha": "7c546fe2a16175fcdc3a85dd0a2142c740919e5f",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-13T23:24:24.020166300Z",
+   "pr": 1142,
+   "reviewer": "codexrev-2",
+   "sequence": 8591,
+   "taskId": "issue-1139",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "6df715dee32f57bf05b584cb6799c5e69e6e5861",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-13T23:33:42.082074300Z",
+   "pr": 1142,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8600,
+   "summary": "Adoption fixtures now pass serialized bytes to file writes.",
+   "taskId": "issue-1139",
+   "title": "fix(adoption): review duplicate plugin MCP registrations"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "6df715dee32f57bf05b584cb6799c5e69e6e5861",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-13T23:33:43.745585Z",
+   "pr": 1142,
+   "reviewer": "codex-review",
+   "sequence": 8601,
+   "taskId": "issue-1139"
+  },
+  {
+   "actorId": "codex-9",
+   "claimSequence": 8493,
+   "kind": "task.released",
+   "lane": "codex-9",
+   "occurredAt": "2026-10-13T23:42:24.196059200Z",
+   "reason": "supervisor: run ended without a PR; issue is free to claim again",
+   "sequence": 8606,
+   "taskId": "issue-1137"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "76a5fa387da8110485cd0d8e56e1c6a6e4e85e28",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-4",
+   "occurredAt": "2026-10-14T00:19:17.244454100Z",
+   "pr": 1142,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8641,
+   "summary": "Adoption fixtures now pass serialized bytes to file writes.",
+   "taskId": "issue-1139",
+   "title": "fix(adoption): review duplicate plugin MCP registrations"
+  },
+  {
+   "actorId": "codex-4",
+   "headSha": "76a5fa387da8110485cd0d8e56e1c6a6e4e85e28",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-14T00:19:18.791052300Z",
+   "pr": 1142,
+   "reviewer": "codex-review",
+   "sequence": 8642,
+   "taskId": "issue-1139"
+  },
+  {
+   "actorId": "gh-claude-opt-3",
+   "assignedBy": "Plano de otimiza\u00e7\u00e3o GraphHelm",
+   "branch": "issue-1193-claim-lease",
+   "issue": 1193,
+   "kind": "task.claimed",
+   "lane": "gh-claude-opt-3",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-14T01:32:56.065144500Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 8710,
+   "summary": "a claim that stops heartbeating inside its lease reads as overdue on the tasks route, and the reconciler releases it as `graphhelm`, never as the lane.",
+   "taskId": "issue-1193",
+   "title": "Runtime: claims carry a lease and go overdue"
+  },
+  {
+   "actorId": "gh-claude-opt-3",
+   "kind": "task.planned",
+   "lane": "gh-claude-opt-3",
+   "occurredAt": "2026-10-14T01:32:58.273171500Z",
+   "plan": {
+    "classes": [
+     "docs",
+     "code",
+     "invariant"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "design",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "leaseSeconds on task.claimed; task.released by graphhelm with releasedBy; overdue in the A1 fold; reconciler releases overdue claims as graphhelm"
+   },
+   "sequence": 8711,
+   "taskId": "issue-1193"
+  },
+  {
+   "actorId": "gh-claude-opt-3",
+   "headSha": "d9d2b155",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "gh-claude-opt-3",
+   "occurredAt": "2026-10-14T02:07:52.589978500Z",
+   "pr": 1194,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8740,
+   "summary": "a claim says how long it stays live without a heartbeat, and the reconciler may release a lapsed claim as graphhelm.",
+   "taskId": "issue-1193",
+   "title": "feat(runtime): claims carry a lease; graphhelm may release"
+  },
+  {
+   "actorId": "gh-claude-opt-3",
+   "headSha": "d9d2b155",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-14T02:07:56.155617300Z",
+   "pr": 1194,
+   "reviewer": "gh-claude-opt-1",
+   "sequence": 8741,
+   "taskId": "issue-1193"
+  },
+  {
+   "actorId": "gh-claude-opt-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1194#issuecomment-6159386407",
+   "headSha": "d9d2b1556a5d685576f61094d9a69014a90a3ad7",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-14T02:15:54.724390300Z",
+   "pr": 1194,
+   "reviewer": "gh-claude-opt-1",
+   "sequence": 8743,
+   "taskId": "issue-1193",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "gh-claude-opt-3",
+   "headSha": "2030515a",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "gh-claude-opt-3",
+   "occurredAt": "2026-10-14T02:17:15.568258100Z",
+   "pr": 1194,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8744,
+   "summary": "a claim says how long it stays live without a heartbeat, and the reconciler may release a lapsed claim as graphhelm.",
+   "taskId": "issue-1193",
+   "title": "feat(runtime): claims carry a lease; graphhelm may release"
+  },
+  {
+   "actorId": "gh-claude-opt-3",
+   "headSha": "2030515a",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-14T02:17:17.396146300Z",
+   "pr": 1194,
+   "reviewer": "gh-claude-opt-1",
+   "sequence": 8745,
+   "taskId": "issue-1193"
+  },
+  {
+   "actorId": "gh-claude-opt-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1194#issuecomment-6159595970",
+   "headSha": "2030515ae86a7a5e0658112eaa5723766c31219d",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-14T02:34:17.054941800Z",
+   "pr": 1194,
+   "reviewer": "gh-claude-opt-1",
+   "sequence": 8762,
+   "taskId": "issue-1193",
+   "verdict": "APPROVE"
+  },
+  {
+   "actorId": "gh-claude-opt-1",
+   "closes": [],
+   "kind": "task.merged",
+   "mergeSha": "09544bdeb149ebc705e843915eb2f2a827cd8112",
+   "occurredAt": "2026-10-14T02:35:01.486483800Z",
+   "pr": 1194,
+   "sequence": 8763,
+   "taskId": "issue-1193"
+  },
+  {
+   "actorId": "gh-claude-opt-2",
+   "assignedBy": "Plano de otimiza\u00e7\u00e3o GraphHelm [7192d3]",
+   "branch": "issue-1203-remove-gate-classify-red",
+   "issue": 1203,
+   "kind": "task.claimed",
+   "lane": "gh-claude-opt-2",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-14T03:43:28.679876200Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 8831,
+   "summary": "the gate-era Rust goes: `graphhelm gate classify-red`, the RED-banner classifier it alone used, and the two tests that read `ci/gate.ps1` at run time.",
+   "taskId": "issue-1203",
+   "title": "Build: remove gate classify-red and its classifier"
+  },
+  {
+   "actorId": "gh-claude-opt-2",
+   "kind": "task.planned",
+   "lane": "gh-claude-opt-2",
+   "occurredAt": "2026-10-14T03:43:30.627457Z",
+   "plan": {
+    "classes": [
+     "docs",
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "design",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Remove gate classify-red, judgment::red and the two tests that read ci/gate.ps1; releases note"
+   },
+   "sequence": 8832,
+   "taskId": "issue-1203"
+  },
+  {
+   "actorId": "gh-claude-opt-3",
+   "headSha": "272fb589",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "gh-claude-opt-3",
+   "occurredAt": "2026-10-14T03:57:24.124352900Z",
+   "pr": 1205,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8838,
+   "summary": "the tasks route says which claims have lapsed, and the Stop reconciler releases them as graphhelm.",
+   "taskId": "issue-1193",
+   "title": "feat(runtime): tasks route judges claim leases; overdue released"
+  },
+  {
+   "actorId": "gh-claude-opt-3",
+   "headSha": "272fb589",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-14T03:57:25.831850300Z",
+   "pr": 1205,
+   "reviewer": "gh-claude-opt-1",
+   "sequence": 8839,
+   "taskId": "issue-1193"
+  },
+  {
+   "actorId": "gh-claude-opt-1",
+   "headSha": "272fb589",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-14T04:01:00.326072100Z",
+   "pr": 1205,
+   "reviewer": "gh-claude-opt-1",
+   "sequence": 8842,
+   "taskId": "issue-1193"
+  },
+  {
+   "actorId": "gh-claude-opt-2",
+   "kind": "task.planned",
+   "lane": "gh-claude-opt-2",
+   "occurredAt": "2026-10-14T04:08:38.118462Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "design",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "B1 first PR: remove graphhelm gate classify-red, judgment::red, red_banner_producer and the acceptance map's live read of ci/gate.ps1"
+   },
+   "sequence": 8847,
+   "taskId": "issue-1203"
+  },
+  {
+   "actorId": "gh-claude-opt-2",
+   "assignedBy": "Plano de otimizacao GraphHelm [7192d3]",
+   "branch": "issue-1203-remove-gate-classify-red",
+   "issue": 1203,
+   "kind": "task.claimed",
+   "lane": "gh-claude-opt-2",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-14T04:08:53.289956900Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 8848,
+   "summary": "the gate-era Rust goes: `graphhelm gate classify-red`, the RED-banner classifier it alone used, and the two tests that read `ci/gate.ps1` at run time.",
+   "taskId": "issue-1203",
+   "title": "Build: remove gate classify-red and its classifier"
+  },
+  {
+   "actorId": "gh-claude-opt-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1205#issuecomment-6160768604",
+   "headSha": "272fb589",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-14T04:17:42.037099100Z",
+   "pr": 1205,
+   "reviewer": "gh-claude-opt-1",
+   "sequence": 8857,
+   "taskId": "issue-1193",
+   "verdict": "BLOCK"
+  },
+  {
+   "actorId": "gh-claude-opt-3",
+   "headSha": "ebf4bb21",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "gh-claude-opt-3",
+   "occurredAt": "2026-10-14T04:20:05.396365800Z",
+   "pr": 1205,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8863,
+   "summary": "the tasks route says which claims have lapsed, and the Stop reconciler releases them as graphhelm.",
+   "taskId": "issue-1193",
+   "title": "feat(runtime): tasks route judges claim leases; overdue released"
+  },
+  {
+   "actorId": "gh-claude-opt-3",
+   "headSha": "ebf4bb21",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-14T04:20:07.152515200Z",
+   "pr": 1205,
+   "reviewer": "gh-claude-opt-1",
+   "sequence": 8864,
+   "taskId": "issue-1193"
+  },
+  {
+   "actorId": "gh-claude-opt-2",
+   "headSha": "ebafd85df3602d8302683a86f3f1322841d28892",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "gh-claude-opt-2",
+   "occurredAt": "2026-10-14T04:30:23.538894Z",
+   "pr": 1207,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8865,
+   "summary": "the gate-era Rust goes: `graphhelm gate classify-red` (command id `gate.classify-red`), the RED-banner classifier `judgment::red` it alone used, the banner-producer guard, and the acceptance map's live read of `ci/gate.ps1` with the one clause only the gate proved.",
+   "taskId": "issue-1203",
+   "title": "refactor(cli): remove gate classify-red and the RED-banner classifier"
+  },
+  {
+   "actorId": "gh-claude-opt-2",
+   "headSha": "ebafd85df3602d8302683a86f3f1322841d28892",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-14T04:30:25.238979900Z",
+   "pr": 1207,
+   "reviewer": "gh-claude-opt-3",
+   "sequence": 8866,
+   "taskId": "issue-1203"
+  },
+  {
+   "actorId": "codex-7",
+   "branch": "issue-1138-auto-2938",
+   "issue": 1138,
+   "kind": "task.claimed",
+   "lane": "codex-7",
+   "leaseSeconds": 1800,
+   "occurredAt": "2026-10-14T04:44:49.601279900Z",
+   "repo": "stabem/GraphHelm",
+   "sequence": 8882,
+   "taskId": "issue-1138",
+   "title": "Lanes and Graph: agents in projects without task records never appear"
+  },
+  {
+   "actorId": "codex-7",
+   "kind": "task.planned",
+   "lane": "codex-7",
+   "occurredAt": "2026-10-14T04:44:51.708162100Z",
+   "plan": {
+    "classes": [
+     "code"
+    ],
+    "critic": {
+     "maxRounds": 3,
+     "mode": "none",
+     "passScore": 8
+    },
+    "proof": "tests",
+    "reviews": 1,
+    "summary": "Add recent note-only agents to the Lanes timeline without task intervals"
+   },
+   "sequence": 8883,
+   "taskId": "issue-1138"
+  },
+  {
+   "actorId": "codex-12",
+   "headSha": "263f1941fe317d21294562401af51fefbb833ef0",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-12",
+   "occurredAt": "2026-10-14T04:58:41.759520100Z",
+   "pr": 1209,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8896,
+   "summary": "Studio batches envelope reads and publishes ready results without serial waits.",
+   "taskId": "issue-1137",
+   "title": "fix(studio): batch envelope publication"
+  },
+  {
+   "actorId": "codex-12",
+   "headSha": "263f1941fe317d21294562401af51fefbb833ef0",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-14T04:58:43.540144200Z",
+   "pr": 1209,
+   "reviewer": "codex-review",
+   "sequence": 8897,
+   "taskId": "issue-1137"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "263f1941fe317d21294562401af51fefbb833ef0",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-14T04:59:22.491707400Z",
+   "pr": 1209,
+   "reviewer": "codexrev-1",
+   "sequence": 8898,
+   "taskId": "issue-1137"
+  },
+  {
+   "actorId": "codex-7",
+   "headSha": "f6cb9253d5802ed42e35292c34bbd6c3ccb111e1",
+   "journeys": [],
+   "kind": "task.pr_opened",
+   "lane": "codex-7",
+   "occurredAt": "2026-10-14T05:05:12.540635500Z",
+   "pr": 1210,
+   "repo": "stabem/GraphHelm",
+   "sequence": 8900,
+   "summary": "Recent note-only agents appear in Lanes without invented task history.",
+   "taskId": "issue-1138",
+   "title": "feat(studio): show note-only agents in Lanes"
+  },
+  {
+   "actorId": "codex-7",
+   "headSha": "f6cb9253d5802ed42e35292c34bbd6c3ccb111e1",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-14T05:05:14.327364600Z",
+   "pr": 1210,
+   "reviewer": "codex-review",
+   "sequence": 8901,
+   "taskId": "issue-1138"
+  },
+  {
+   "actorId": "coordinator",
+   "headSha": "f6cb9253d5802ed42e35292c34bbd6c3ccb111e1",
+   "kind": "task.review_assigned",
+   "occurredAt": "2026-10-14T05:06:36.095234Z",
+   "pr": 1210,
+   "reviewer": "codexrev-2",
+   "sequence": 8904,
+   "taskId": "issue-1138"
+  },
+  {
+   "actorId": "codexrev-1",
+   "commentUrl": "https://github.com/stabem/GraphHelm/pull/1209#issuecomment-6161356187",
+   "headSha": "263f1941fe317d21294562401af51fefbb833ef0",
+   "kind": "task.review_verdict",
+   "occurredAt": "2026-10-14T05:07:45.307491500Z",
+   "pr": 1209,
+   "reviewer": "codexrev-1",
+   "sequence": 8906,
+   "taskId": "issue-1137",
+   "verdict": "APPROVE-WITH-RISK"
+  }
+ ]
+}

@@ -1,6 +1,5 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import fixtureJson from "../../../../core/execution/tests/fixtures/tasks-route.json";
 import { foldForTests } from "../test/task-fold";
 import { RUNTIME_PREDATES_TASKS_ROUTE, tasksReply, type TasksReply } from "./tasks-route";
 
@@ -12,8 +11,9 @@ import { RUNTIME_PREDATES_TASKS_ROUTE, tasksReply, type TasksReply } from "./tas
  * Studio cell that trusts the helper is drawing a graph the Runtime would not serve. Cost: one JSON
  * read, milliseconds. */
 describe("the tasks route reply and the test fold agree on one corpus (#1192)", () => {
-  // Vitest runs with `apps/studio` as its working directory; the fixture is the Rust test's output.
-  const fixture = tasksReply(JSON.parse(readFileSync(resolve(process.cwd(), "../../core/execution/tests/fixtures/tasks-route.json"), "utf8")));
+  // The fixture is the Rust test's output, imported as JSON (resolveJsonModule) so the browser
+  // tsconfig needs no Node types.
+  const fixture = tasksReply(fixtureJson);
 
   it("is a reply this Studio reads", () => {
     expect(fixture).not.toBeNull();

@@ -1874,21 +1874,15 @@ pub(super) async fn tasks(
         );
     };
     let events = state.events.clone();
-    let caches = state.tasks_cache.clone();
     let Some(result) = off_reactor(move || {
-        // #1202: read with what this Runtime remembers of the run, outside the lock (a read can
-        // take seconds cold); fold what was learned back in afterwards, refusal included.
-        let mut cache = caches
-            .lock()
-            .map(|map| map.get(&execution_id).cloned().unwrap_or_default())
-            .unwrap_or_default();
+        // #1202/#1220: read with what this process remembers of the run (the memory claim
+        // admission shares), outside the lock; what was learned is folded back, refusal included.
         let budget = crate::commands::tasks_read_budget();
-        let result =
-            execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, &mut cache);
-        if let Ok(mut map) = caches.lock() {
-            map.entry(execution_id).or_default().absorb(cache);
-        }
-        result.map(|view| serde_json::to_value(view).expect("a view of serializable fold types"))
+        let key = execution::tasks::cache_key(&events, &execution_id);
+        execution::tasks::with_shared_cache(&key, |cache| {
+            execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, cache)
+        })
+        .map(|view| serde_json::to_value(view).expect("a view of serializable fold types"))
     })
     .await
     else {
@@ -6856,7 +6850,6 @@ pub(super) mod tests {
             gateway_manifest: None,
             native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             seen_actors: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
-            tasks_cache: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         };
         (directory, state)
     }

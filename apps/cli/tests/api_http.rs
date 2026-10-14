@@ -2599,6 +2599,257 @@ fn graphhelm_releases_another_lanes_claim_only_with_released_by() {
     assert_eq!(reply["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID");
 }
 
+/// #1220: a lane cannot claim a task another lane holds as an open pre-PR claim, unless the claim
+/// names that holder in `assignedBy` (the holder hands it over). Before: admission never looked at
+/// other lanes' claims, so two lanes worked one issue (the Codex dispatcher, 2026-10-13). Catches
+/// an admission that refuses a lane's own re-claim, one that keeps a released or PR'd claim as
+/// held, and one that ignores `assignedBy`. Through the HTTP door with the owner token, whose
+/// actor headers are honoured (D-058). Cost: one served Runtime, eleven POSTs.
+#[test]
+fn a_second_lane_cannot_claim_a_task_another_lane_holds() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-claim-holder";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let post = |id: &str, actor: &str, kind: &str, document: &Value| {
+        let body = serde_json::json!({"signal": {"id": id, "source": {"type": "user", "id": actor},
+            "type": kind, "severity": "low", "description": document.to_string(),
+            "evidence": ["task"], "emittedAt": "2026-10-14T03:00:00Z"}});
+        post_json(
+            &format!("{base}/v1/executions/{execution}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", id),
+                ("X-GraphHelm-Actor", actor),
+                ("X-GraphHelm-Actor-Type", "agent"),
+            ],
+            &body,
+        )
+    };
+    let claim = |task: &str, issue: u64, lane: &str| {
+        serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": task, "revision": 1,
+            "at": "2026-10-14T03:00:00Z", "issue": issue, "lane": lane,
+            "branch": format!("{task}-work"), "repo": "stabem/GraphHelm"})
+    };
+    let ok =
+        |label: &str, (status, reply): (u16, Value)| assert_eq!(status, 200, "{label}: {reply}");
+
+    ok(
+        "alpha claims",
+        post(
+            "hold-a1",
+            "lane-alpha",
+            "task.claimed",
+            &claim("issue-1220", 1220, "lane-alpha"),
+        ),
+    );
+    ok(
+        "alpha re-claims its own task",
+        post(
+            "hold-a2",
+            "lane-alpha",
+            "task.claimed",
+            &claim("issue-1220", 1220, "lane-alpha"),
+        ),
+    );
+    let before = head_sequence(&base, &token, execution);
+    let (status, reply) = post(
+        "hold-b1",
+        "lane-beta",
+        "task.claimed",
+        &claim("issue-1220", 1220, "lane-beta"),
+    );
+    assert_eq!(status, 400, "beta on alpha's open claim: {reply}");
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID");
+    assert!(
+        reply["diagnostics"][0]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("lane-alpha")),
+        "the refusal names the holder: {reply}"
+    );
+    assert_eq!(
+        reply["diagnostics"][0]["path"],
+        "/signal/description/taskId"
+    );
+    assert_eq!(
+        head_sequence(&base, &token, execution),
+        before,
+        "a refused claim appends nothing"
+    );
+    let mut handed = claim("issue-1220", 1220, "lane-beta");
+    handed["assignedBy"] = serde_json::json!("lane-gamma");
+    let (status, reply) = post("hold-b2", "lane-beta", "task.claimed", &handed);
+    assert_eq!(
+        status, 400,
+        "assignedBy naming someone else is no handover: {reply}"
+    );
+    handed["assignedBy"] = serde_json::json!("lane-alpha");
+    ok(
+        "alpha hands it to beta",
+        post("hold-b3", "lane-beta", "task.claimed", &handed),
+    );
+
+    // A released claim is not held.
+    ok(
+        "alpha claims 2",
+        post(
+            "rel-a1",
+            "lane-alpha",
+            "task.claimed",
+            &claim("issue-2", 2, "lane-alpha"),
+        ),
+    );
+    let claim_sequence = head_sequence(&base, &token, execution);
+    ok(
+        "alpha releases 2",
+        post(
+            "rel-a2",
+            "lane-alpha",
+            "task.released",
+            &serde_json::json!({
+        "schema": "graphhelm-task-event-v1", "taskId": "issue-2", "revision": 2,
+        "at": "2026-10-14T03:05:00Z", "lane": "lane-alpha", "claimSequence": claim_sequence,
+        "reason": "Handed back"}),
+        ),
+    );
+    ok(
+        "beta claims released 2",
+        post(
+            "rel-b1",
+            "lane-beta",
+            "task.claimed",
+            &claim("issue-2", 2, "lane-beta"),
+        ),
+    );
+
+    // A claim whose PR is open is no longer a pre-PR claim.
+    ok(
+        "alpha claims 3",
+        post(
+            "pr-a1",
+            "lane-alpha",
+            "task.claimed",
+            &claim("issue-3", 3, "lane-alpha"),
+        ),
+    );
+    ok(
+        "alpha opens its PR",
+        post(
+            "pr-a2",
+            "lane-alpha",
+            "task.pr_opened",
+            &serde_json::json!({
+        "schema": "graphhelm-task-event-v1", "taskId": "issue-3", "revision": 3,
+        "at": "2026-10-14T03:06:00Z", "pr": 30, "headSha": "abcdef01", "journeys": [],
+        "lane": "lane-alpha"}),
+        ),
+    );
+    ok(
+        "beta claims 3 after the PR",
+        post(
+            "pr-b1",
+            "lane-beta",
+            "task.claimed",
+            &claim("issue-3", 3, "lane-beta"),
+        ),
+    );
+}
+
+/// #1220 (gh-claude-opt-2 on PR #1221): two lanes claiming one free task at the same instant
+/// cannot both land. Each claim is validated against a journal head and appended at that head's
+/// next sequence, so the second writer's append is refused instead of slipping in after the first.
+/// Five rounds on five tasks, both posts released by one barrier; whichever interleaving happens,
+/// exactly one claim per task is recorded. Before: both passed admission on head H and both landed.
+/// Cost: one served Runtime, ten concurrent POSTs.
+#[test]
+fn two_concurrent_claims_on_one_task_record_exactly_one() {
+    use std::sync::{Arc, Barrier};
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-claim-race";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let base = Arc::new(base);
+    let token = Arc::new(token);
+    for round in 1..=5_u64 {
+        let task = format!("issue-90{round}");
+        let barrier = Arc::new(Barrier::new(3));
+        let threads: Vec<_> = ["lane-alpha", "lane-beta"]
+            .into_iter()
+            .map(|lane| {
+                let (barrier, base, token, task) =
+                    (Arc::clone(&barrier), Arc::clone(&base), Arc::clone(&token), task.clone());
+                std::thread::spawn(move || {
+                    let id = format!("race-{task}-{lane}");
+                    let document = serde_json::json!({"schema": "graphhelm-task-event-v1",
+                        "taskId": task, "revision": 1, "at": "2026-10-14T04:00:00Z",
+                        "issue": 900 + round, "lane": lane, "branch": format!("{task}-{lane}")});
+                    let body = serde_json::json!({"signal": {"id": id, "source": {"type": "user", "id": lane},
+                        "type": "task.claimed", "severity": "low", "description": document.to_string(),
+                        "evidence": ["task"], "emittedAt": "2026-10-14T04:00:00Z"}});
+                    barrier.wait();
+                    post_json(
+                        &format!("{base}/v1/executions/{execution}/signal"),
+                        &token,
+                        &[
+                            ("Idempotency-Key", id.as_str()),
+                            ("X-GraphHelm-Actor", lane),
+                            ("X-GraphHelm-Actor-Type", "agent"),
+                        ],
+                        &body,
+                    )
+                })
+            })
+            .collect();
+        barrier.wait();
+        let replies: Vec<(u16, Value)> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+        let landed = replies.iter().filter(|(status, _)| *status == 200).count();
+        assert_eq!(
+            landed, 1,
+            "round {round}: exactly one claim lands: {replies:?}"
+        );
+        let tasks = get_json(
+            &format!("{base}/v1/executions/{execution}/tasks"),
+            Some(&token),
+        );
+        let claims = tasks["data"]["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|record| record["taskId"] == task.as_str() && record["kind"] == "task.claimed")
+            .count();
+        assert_eq!(
+            claims, 1,
+            "round {round}: one recorded claim for {task}: {tasks}"
+        );
+    }
+}
+
 /// #1148, the rollout half: without `--require-lane-credential` (the default) the shared agent
 /// session token still records a `task.*` as it does today, so a Runtime upgraded before the
 /// owner has minted every lane's credential loses no record; the lane credential is accepted

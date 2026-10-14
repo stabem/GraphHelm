@@ -657,7 +657,11 @@ def send_opening(args, doc, now):
     # retry; a lease the lane asked for is never silently dropped.
     if getattr(args, "lease_defaulted", False) and "leaseSeconds" in doc:
         words.append("leaseSeconds")
-    if code == 1 and errors == {"GHCLI003_SIGNAL_INVALID"} and words:
+    # #1220: an old Runtime refuses an unknown key as a refusal of the whole document, at
+    # `/signal/description`; a refusal that points at a field (the holder refusal, at
+    # `/signal/description/taskId`) is about this claim, not the Runtime's age, and is not resent.
+    paths = {d.get("path") for d in reply.get("diagnostics", []) if d.get("severity") == "error"}
+    if code == 1 and errors == {"GHCLI003_SIGNAL_INVALID"} and paths == {"/signal/description"} and words:
         # #498: a Runtime built before #486 refuses these keys. The step itself matters more than
         # its words, so it is sent again without them, loudly: an old Runtime must be noticed.
         print(f"task_record: warning: the Runtime refused {signal_id} with GHCLI003. It may predate task "

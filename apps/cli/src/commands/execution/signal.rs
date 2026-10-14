@@ -390,8 +390,71 @@ fn refuse_unpreservable(
     Ok(())
 }
 
+/// #1220: how many times a claim is validated and appended before a sequence conflict is
+/// reported. A claim appends at the head it was validated on, so any unrelated append (a
+/// heartbeat, a signal, a wake) that lands in between costs it one conflict; it is then
+/// revalidated against the new head, where a real competing claim is refused by the holder rule
+/// and an unrelated event changes nothing (orchestration session on PR #1221).
+const CLAIM_ATTEMPTS: u32 = 3;
+
+/// Runs `attempt` until it succeeds, fails for another reason, or `CLAIM_ATTEMPTS` sequence
+/// conflicts have happened. Only a claim retries; every other record reports its first conflict.
+fn retry_claim_on_conflict(
+    is_claim: bool,
+    mut attempt: impl FnMut() -> Result<serde_json::Value, Failure>,
+) -> Result<serde_json::Value, Failure> {
+    let mut tries = 1;
+    loop {
+        let result = attempt();
+        match &result {
+            Err(failure)
+                if is_claim
+                    && failure.code == "GHE001_SEQUENCE_CONFLICT"
+                    && tries < CLAIM_ATTEMPTS =>
+            {
+                tries += 1;
+            }
+            _ => return result,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn record_on(
+    store: &LocalEventRepository,
+    execution: Option<&str>,
+    signal: &[u8],
+    evidence_out: Option<&Path>,
+    actor: PersistedActor,
+    key: OpaqueId,
+    sealing: Option<&SignalKeyring>,
+    scoped_agent_authenticated: bool,
+    allow_native: bool,
+    attachments: &[ImageAttachment],
+) -> Result<serde_json::Value, Failure> {
+    let is_claim = serde_json::from_slice::<serde_json::Value>(signal)
+        .ok()
+        .is_some_and(|envelope| {
+            envelope.get("type").and_then(serde_json::Value::as_str) == Some("task.claimed")
+        });
+    retry_claim_on_conflict(is_claim, || {
+        record_once(
+            store,
+            execution,
+            signal,
+            evidence_out,
+            actor.clone(),
+            key.clone(),
+            sealing,
+            scoped_agent_authenticated,
+            allow_native,
+            attachments,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_once(
     store: &LocalEventRepository,
     execution: Option<&str>,
     signal: &[u8],
@@ -438,23 +501,27 @@ fn record_on(
     let task_history = if envelope
         .get("type")
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|kind| matches!(kind, "task.released" | "task.heartbeat"))
+        .is_some_and(|kind| matches!(kind, "task.claimed" | "task.released" | "task.heartbeat"))
     {
         Some(super::resolve_stream(store, execution)?.2)
     } else {
         None
     };
-    // A heartbeat's claim and cooldown are checked against this exact journal head. Carry its
-    // next sequence to append_atomic so another writer cannot change eligibility in between.
-    let heartbeat_sequence =
-        if envelope.get("type").and_then(serde_json::Value::as_str) == Some("task.heartbeat") {
-            task_history
-                .as_ref()
-                .and_then(|history| history.last())
-                .and_then(|event| event.sequence.checked_add(1))
-        } else {
-            None
-        };
+    // A heartbeat's claim and cooldown, and a claim's holder (#1220), are checked against this
+    // exact journal head. Carry its next sequence to append_atomic so another writer cannot change
+    // eligibility in between: two lanes' claims validated on the same head cannot both land
+    // (gh-claude-opt-2 on PR #1221).
+    let heartbeat_sequence = if matches!(
+        envelope.get("type").and_then(serde_json::Value::as_str),
+        Some("task.heartbeat" | "task.claimed")
+    ) {
+        task_history
+            .as_ref()
+            .and_then(|history| history.last())
+            .and_then(|event| event.sequence.checked_add(1))
+    } else {
+        None
+    };
     super::documents::validate_task_event(
         &envelope,
         &actor,
@@ -853,6 +920,58 @@ fn rejection_label(decision: MutationDecision) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1220 (orchestration session on PR #1221): an unrelated append between a claim's validation
+    /// and its append costs one `GHE001_SEQUENCE_CONFLICT`; the claim is revalidated and admitted
+    /// on the second attempt instead of reaching the lane as a false refusal. Bounded: the third
+    /// conflict is reported. Any other refusal, and any non-claim record, is reported at once.
+    /// Cost: closures only.
+    #[test]
+    fn a_claim_retries_a_sequence_conflict_and_nothing_else_does() {
+        let conflict = || Failure {
+            code: "GHE001_SEQUENCE_CONFLICT",
+            message: "sequence conflict".to_owned(),
+            pointer: "/repository".to_owned(),
+        };
+        let mut calls = 0;
+        let admitted = retry_claim_on_conflict(true, || {
+            calls += 1;
+            if calls == 1 {
+                Err(conflict())
+            } else {
+                Ok(serde_json::json!({"ok": true}))
+            }
+        });
+        assert!(
+            admitted.is_ok(),
+            "an unrelated append in between: admitted on the second attempt"
+        );
+        assert_eq!(calls, 2);
+        let mut calls = 0;
+        let bounded = retry_claim_on_conflict(true, || {
+            calls += 1;
+            Err(conflict())
+        });
+        assert_eq!(bounded.unwrap_err().code, "GHE001_SEQUENCE_CONFLICT");
+        assert_eq!(
+            calls, CLAIM_ATTEMPTS,
+            "bounded at {CLAIM_ATTEMPTS} attempts"
+        );
+        let mut calls = 0;
+        let refused = retry_claim_on_conflict(true, || {
+            calls += 1;
+            Err(super::signal_invalid("held", "/signal/description/taskId"))
+        });
+        assert!(refused.is_err());
+        assert_eq!(calls, 1, "a holder refusal is not retried");
+        let mut calls = 0;
+        let heartbeat = retry_claim_on_conflict(false, || {
+            calls += 1;
+            Err(conflict())
+        });
+        assert!(heartbeat.is_err());
+        assert_eq!(calls, 1, "only a claim retries");
+    }
 
     #[test]
     fn attachments_without_a_keyring_are_refused_before_the_store_opens() {

@@ -443,6 +443,9 @@ pub(crate) fn validate_task_event(
         })
     });
     if common && fields && known {
+        if kind == "task.claimed" {
+            validate_claim_holder(&document, actor_id, history, evidence)?;
+        }
         if kind == "task.heartbeat" {
             validate_heartbeat(&document, actor_id, history, evidence, chrono::Utc::now())?;
         }
@@ -615,6 +618,63 @@ pub(crate) fn validate_task_event(
 /// #1193: a `task.released` recorded by the `graphhelm` actor (the Stop reconciler releasing a
 /// lapsed claim). Both claim folds admit it beside the lane's own records and keep it only when
 /// its document names the lane being folded.
+/// #1220: a lane cannot claim a task another lane holds as an open pre-PR claim, unless the claim
+/// names that holder in `assignedBy` (the holder hands it over). "Holds" is the projection's: the
+/// fold the tasks route serves and the board draws (`graphhelm_execution::tasks`), read through the
+/// process's shared record cache, so admission never disagrees with the board about who has an
+/// issue. A run with no task records has nothing to hold; one with records needs the keyring to
+/// read them, and a read that fails refuses the claim (fail closed, like release and heartbeat).
+fn validate_claim_holder(
+    document: &serde_json::Value,
+    lane: &str,
+    history: &[graphhelm_protocols::EventEnvelope],
+    evidence: Option<(
+        &graphhelm_events::LocalEventRepository,
+        &graphhelm_protocols::RepositoryScope,
+        &signal::SignalKeyring,
+    )>,
+) -> Result<(), Failure> {
+    let pointer = "/signal/description/taskId";
+    let any_task_record = history.iter().any(|event| {
+        matches!(&event.kind, EventKind::SignalRecorded(recorded) if recorded.kind.starts_with("task."))
+    });
+    if !any_task_record {
+        return Ok(());
+    }
+    let Some((store, scope, keyring)) = evidence else {
+        return Err(super::signal_invalid(
+            "claim admission requires the sealed task records",
+            pointer,
+        ));
+    };
+    let execution = history
+        .first()
+        .map(|event| event.stream_id.as_str().to_owned())
+        .unwrap_or_default();
+    let budget = crate::commands::tasks_read_budget();
+    let key = super::tasks::cache_key(store.root(), &execution);
+    let view = super::tasks::with_shared_cache(&key, |cache| {
+        super::tasks::read_history(store, scope, history, &execution, keyring, &budget, cache)
+    })
+    .map_err(|_| super::signal_invalid("task history cannot be read; claim refused", pointer))?;
+    let task_id = document["taskId"].as_str().unwrap_or_default();
+    if let Some(slice) = super::tasks::holder(&view.tasks, &view.leases, task_id, lane) {
+        let holder = slice.lane.as_deref().unwrap_or_default();
+        if document["assignedBy"].as_str() != Some(holder) {
+            let claim = slice
+                .claim_sequence
+                .map_or_else(String::new, |sequence| format!(" (claim {sequence})"));
+            return Err(super::signal_invalid(
+                &format!(
+                    "{task_id} is held by lane {holder}{claim}; a second lane's claim needs assignedBy: {holder}, the holder handing it over"
+                ),
+                pointer,
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn graphhelm_released(event: &graphhelm_protocols::EventEnvelope) -> bool {
     event.actor.id().as_str() == "graphhelm"
         && matches!(&event.kind, EventKind::SignalRecorded(recorded) if recorded.kind == "task.released")

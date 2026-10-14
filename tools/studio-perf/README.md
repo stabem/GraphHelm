@@ -112,9 +112,10 @@ node tools/studio-perf/measure.mjs --mode profile --profile D:/gh/codex-7/captur
 
 `--start-us` and `--end-us` are offsets in the profile's monotonic microsecond clock. Supply an
 explicit same-load mapping from the browser observer; epoch timestamps such as
-`performance.timeOrigin` must not be subtracted directly from these offsets. The reducer clips
-sample-delta weights to the requested interval and attributes each weight to the sampled leaf
-frame, so inclusive parent stacks are not counted again. Idle and program/GC samples and uncovered
+`performance.timeOrigin` must not be subtracted directly from these offsets. The report records
+that a mapping was supplied but never echoes its text, which could contain private data. The
+reducer clips sample-delta weights to the requested interval and attributes each weight to the
+sampled leaf frame, so inclusive parent stacks are not counted again. Idle and program/GC samples and uncovered
 interval time stay in separate totals. Output frame names and relative URL locations are sanitized;
 profile contents, URL query strings and local absolute paths are not emitted. Input is limited to
 20 MiB, 100,000 nodes, 1,000,000 samples and a stack depth of 256. Invalid data or missing alignment

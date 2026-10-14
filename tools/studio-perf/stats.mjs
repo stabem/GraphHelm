@@ -17,8 +17,10 @@ const PROFILE_LIMITS = Object.freeze({ maxBytes: 20 * 1024 * 1024, maxNodes: 100
 /** Attribute clipped Chromium CPU-profile sample weights without double-counting stacks. */
 export function reduceCpuProfile(profile, options = {}) {
   const limits = { ...PROFILE_LIMITS, ...(options.limits ?? {}) };
+  const alignment = typeof options.alignment === 'string' && options.alignment.trim()
+    ? 'explicit same-load profile-clock mapping supplied' : null;
   const unknown = reason => ({ status: 'unknown', reason, sourceHead: options.sourceHead ?? null,
-    alignment: options.alignment ?? null, frames: [], idleTimeUs: 0, unassignedTimeUs: 0, intervalUs: null });
+    alignment, frames: [], idleTimeUs: 0, garbageCollectionTimeUs: 0, nativeTimeUs: 0, unassignedTimeUs: 0, intervalUs: null });
   if (!options.alignment || typeof options.alignment !== 'string' || !options.alignment.trim()) return unknown('profile interval alignment was not supplied');
   if (!/^[a-f0-9]{8,64}$/i.test(options.sourceHead ?? '') || !Number.isSafeInteger(options.startUs)
       || !Number.isSafeInteger(options.endUs) || options.startUs < 0 || options.endUs <= options.startUs) return unknown('profile interval or source head is invalid');
@@ -78,7 +80,7 @@ export function reduceCpuProfile(profile, options = {}) {
   }
   if (cursor < options.endUs) unassignedTimeUs += options.endUs - Math.max(cursor, options.startUs);
   const frames = [...totals.values()].sort((a, b) => b.selfTimeUs - a.selfTimeUs || a.functionName.localeCompare(b.functionName));
-  return { status: 'ok', reason: null, sourceHead: options.sourceHead, alignment: sanitizeText(options.alignment),
+  return { status: 'ok', reason: null, sourceHead: options.sourceHead, alignment,
     startUs: options.startUs, endUs: options.endUs, intervalUs: options.endUs - options.startUs,
     frames, idleTimeUs, garbageCollectionTimeUs, nativeTimeUs, unassignedTimeUs, sampleCount: profile.samples.length,
     note: 'Sample weights estimate self time; they are not exact durations or causal proof.' };

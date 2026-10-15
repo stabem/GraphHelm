@@ -170,7 +170,7 @@ def main(argv=None):
                 pass
         if not receipt_error_reported:
             print(ERRORS["io"], file=sys.stderr)
-        return 2
+            return 2
     if receipt_error_reported:
         print(ERRORS["io"], file=sys.stderr)
         return 2

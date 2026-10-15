@@ -394,11 +394,11 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
     if let Some(proof) = proof_args(args, &flow, &project) {
         command
             .arg("--events")
-            .arg(proof.events.as_ref().unwrap())
-            .args(["--execution", proof.execution.as_deref().unwrap()])
+            .arg(proof.record.events.as_ref().unwrap())
+            .args(["--execution", proof.record.execution.as_deref().unwrap()])
             .arg("--keyring")
-            .arg(proof.keyring.as_ref().unwrap())
-            .args(["--key-id", proof.key_id.as_deref().unwrap()]);
+            .arg(proof.record.keyring.as_ref().unwrap())
+            .args(["--key-id", proof.record.key_id.as_deref().unwrap()]);
     }
     command
         .stdin(Stdio::null())
@@ -600,10 +600,12 @@ fn proof_args(
     Some(JourneyReplayArgs {
         id: args.id.clone(),
         project: Some(project.to_path_buf()),
-        events: Some(args.events.clone()?),
-        execution: Some(args.execution.clone()?),
-        keyring: Some(args.keyring.clone()?),
-        key_id: Some(args.key_id.clone()?),
+        record: crate::args::OptionalRecordArgs {
+            events: Some(args.events.clone()?),
+            execution: Some(args.execution.clone()?),
+            keyring: Some(args.keyring.clone()?),
+            key_id: Some(args.key_id.clone()?),
+        },
         allow_origin: Vec::new(),
         replay_worker: false,
         heal: false,
@@ -1795,7 +1797,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         let approved = json!({"status":"approved"});
         let proof = proof_args(&full, &approved, project).expect("approved + execution records");
         assert_eq!(proof.id, "checkout");
-        assert_eq!(proof.execution.as_deref(), Some("x"));
+        assert_eq!(proof.record.execution.as_deref(), Some("x"));
         assert!(proof_args(&full, &json!({"status":"draft"}), project).is_none());
         let partial = JourneyPreviewArgs {
             key_id: None,

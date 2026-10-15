@@ -103,7 +103,11 @@ def _steps(plan: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
             return [], f"invalid selector step {index}"
         if any(not isinstance(arg, str) or not arg for arg in step["argv"]):
             return [], f"invalid argv in selector step {index}"
-        if step["argv"][0].lower() in _SHELL_EXECUTABLES or any(
+        observer_argv = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                         "-File", "tools/no-window/test_observe.ps1"]
+        allowed_observer = (step["argv"] == observer_argv and step.get("cwd", ".") == "."
+                            and step.get("slot") is False)
+        if (step["argv"][0].lower() in _SHELL_EXECUTABLES and not allowed_observer) or any(
             any(marker in arg for marker in _SHELL_MARKERS) for arg in step["argv"]
         ):
             return [], f"shell syntax is forbidden in selector step {index}; use argv entries"

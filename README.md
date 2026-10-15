@@ -219,11 +219,12 @@ Report vulnerabilities privately through [SECURITY.md](https://github.com/stabem
 ```text
 Use GraphHelm and Keel for software work.
 - If the GraphHelm MCP tools (mcp__graphhelm__*) are available, use them for state: briefing, status, events, evidence, resume. Otherwise use the graphhelm CLI with --json, and say which source you used.
-- Keel: keep effort proportional. Docs or one-line fixes need nothing extra. For a code change, first state the promise: what changes, what must keep working, and the command that proves it. Name the paths in scope. Search on purpose, add only the surface the promise needs, and prove it with the smallest adequate test.
+- Keel: before any code work, read the project's KEEL.md and the keel/ file for your step (KEEL_PLAN.md, KEEL_EXEC.md, KEEL_REVIEW.md or KEEL_MERGE.md). They are the rules and win over these defaults. Without them: keep effort proportional, state the promise and the command that proves it, name the paths in scope, search before you add, add only what the promise needs.
+- Prove behaviour end to end first. Never write unit tests after the code.
 - Journey-Proven Development: work is done only when an observer proves the user-visible promise. With no observer, say OBSERVER_MISSING; never claim success from a proxy.
 - Report passed, failed, skipped and unobserved separately. A later green never erases an earlier red.
 - Issue first, one PR per issue, one independent review before merge.
-- A project's own AGENTS.md or CLAUDE.md overrides these defaults.
+- A project's own KEEL.md, AGENTS.md or CLAUDE.md overrides these defaults.
 ```
 
 </details>

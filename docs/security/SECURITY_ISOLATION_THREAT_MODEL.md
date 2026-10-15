@@ -50,6 +50,19 @@ Boundaries:
 8. Dreams ↔ canonical knowledge;
 9. user override ↔ policy obligations.
 
+### Journey credential provisioning (proposed by RFC-1309)
+
+Journey author and reviewer credentials require exact project, flow, lane and purpose binding.
+Only a trusted provisioning service may mint them after authenticating the lane from trusted
+execution state; caller-supplied lane identifiers are not sufficient. Prefer random per-scope
+tokens whose keyed digests, status and immutable scope are held in a registry. The owner may grant
+and revoke scope; a coordinator may request only within that grant. Credential delivery is not
+OS isolation: D-058's shared-user limitation still applies until a host-level observer proves
+cross-lane unreadability under separate OS identities or equivalent enforced process boundaries.
+See [RFC-1309](../rfcs/RFC-1309-JOURNEY-CREDENTIAL-PROVISIONING.md) for the proposed flow,
+refusal behavior, lifecycle, authority conflict and required observers. This is a design proposal,
+not an accepted change to journey approval authority or current Runtime behavior.
+
 ## 4. Adversaries and failure modes
 
 - malicious code in the repository;

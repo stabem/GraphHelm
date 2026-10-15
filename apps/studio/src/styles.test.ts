@@ -65,6 +65,16 @@ const SET_ELSEWHERE: Record<string, string> = {
  * why the wrapper remains readable through its styled descendants or an ancestor rule. */
 const NO_RULE_NEEDED: Record<string, string> = {};
 
+/** Class prefixes completed at runtime (`prefix-${value}`), so no source holds the whole class
+ * name. Each names where it is built. */
+const INTERPOLATED_PREFIXES: Record<string, string> = {
+  "beacon-": "beacon.tsx: one class per beacon state",
+  "delivery-outcome-": "deliveries.tsx: one class per delivery outcome",
+  "native-chat-request-": "native-chats.tsx: one class per native chat request state",
+  "task-node-": "task-graphs.tsx: one class per task node state",
+  "team-bot-": "team-canvas.tsx: one class per bot state",
+};
+
 // #86: these handoff-tree classes are included by the component/CSS globs below:
 // delegation-tree, delegation-note, delegation-roots, delegation-label, delegation-source.
 
@@ -228,6 +238,38 @@ describe("the stylesheet and the components agree", () => {
    * So: a class rendered on its own must have at least one rule that is unconditional - a base
    * rule, or a descendant rule whose ancestors are plain elements rather than states.
    */
+  /**
+   * THE REVERSE DIRECTION (#1377): every class a rule styles is one some code can put on an
+   * element. The checks above go from component to rule, so a rule whose class nothing renders any
+   * more (`.journey-live-*`, `.tones`, `.said-body` - 21 of them at once) passed every check and
+   * shipped as dead weight. A class counts as rendered when its name appears as a whole word in
+   * any non-test `.ts`/`.tsx` source: classes are also built in helpers and `classList` calls, not
+   * only in `className=`.
+   *
+   * What a whole word cannot see is a class that only exists as `prefix-${value}`. Those prefixes
+   * are listed with where they are built; an entry whose prefix no source interpolates any more
+   * fails here too, so the list cannot outlive the code it excuses.
+   */
+  it("renders every class a rule styles", () => {
+    const sources = import.meta.glob<string>(["./**/*.ts", "./**/*.tsx", "!./**/*.test.ts", "!./**/*.test.tsx"], {
+      query: "?raw", import: "default", eager: true,
+    });
+    const source = Object.values(sources).join("\n");
+    const styled = new Set(
+      [...CODE.matchAll(/(^|[{}])\s*([^{}@]+?)\s*\{/g)].flatMap((match) =>
+        [...(match[2] as string).matchAll(/\.([a-z][a-z0-9_-]*)/g)].map((name) => name[1] as string),
+      ),
+    );
+    const stale = Object.keys(INTERPOLATED_PREFIXES).filter((prefix) => !source.includes(`${prefix}\${`));
+    expect(stale, "these prefixes are no longer interpolated by any source").toEqual([]);
+    const unrendered = [...styled].filter(
+      (name) =>
+        !Object.keys(INTERPOLATED_PREFIXES).some((prefix) => name.startsWith(prefix))
+        && !new RegExp(`(?<![a-z0-9_-])${name}(?![a-z0-9_-])`).test(source),
+    );
+    expect(unrendered, "a rule styles these classes and no source renders them").toEqual([]);
+  });
+
   it("styles every solo class with a rule that always applies", () => {
     const source = componentSource();
     const solo = new Set(

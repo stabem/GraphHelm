@@ -189,11 +189,11 @@ struct ServeState {
     native_chat_busy: Arc<tokio::sync::Mutex<std::collections::HashMap<String, String>>>,
     /// In-memory liveness only: an authenticated actor has contacted this Runtime recently.
     /// Never persisted; it is display evidence and grants no authority.
-    seen_actors: Arc<std::sync::Mutex<BTreeMap<String, Instant>>>,
+    seen_actors: Arc<std::sync::Mutex<BTreeMap<String, (Instant, &'static str)>>>,
 }
 
 impl ServeState {
-    fn record_seen_actor(&self, headers: &HeaderMap, now: Instant) {
+    fn record_seen_actor(&self, headers: &HeaderMap, now: Instant, source: &'static str) {
         let Some(actor) = headers
             .get("x-graphhelm-actor")
             .and_then(|value| value.to_str().ok())
@@ -205,12 +205,13 @@ impl ServeState {
             .seen_actors
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        seen.retain(|_, at| now.saturating_duration_since(*at) <= SEEN_ACTOR_TTL);
-        seen.insert(actor.to_owned(), now);
+        seen.retain(|_, (at, _)| now.saturating_duration_since(*at) <= SEEN_ACTOR_TTL);
+        let source = if source == "verified" || seen.get(actor).is_some_and(|(_, previous)| *previous == "verified") { "verified" } else { "claimed" };
+        seen.insert(actor.to_owned(), (now, source));
         while seen.len() > SEEN_ACTOR_LIMIT {
             let oldest = seen
                 .iter()
-                .min_by_key(|(actor, at)| (**at, actor.as_str()))
+                .min_by_key(|(actor, (at, _))| (*at, actor.as_str()))
                 .map(|(actor, _)| actor.clone());
             let Some(oldest) = oldest else { break };
             seen.remove(&oldest);
@@ -222,7 +223,7 @@ impl ServeState {
             .seen_actors
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        seen.retain(|_, at| now.saturating_duration_since(*at) <= SEEN_ACTOR_TTL);
+        seen.retain(|_, (at, _)| now.saturating_duration_since(*at) <= SEEN_ACTOR_TTL);
         seen.keys().cloned().collect()
     }
 
@@ -237,7 +238,7 @@ impl ServeState {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
-            .map(|(actor, at)| {
+            .map(|(actor, (at, _))| {
                 (
                     actor.clone(),
                     now.saturating_duration_since(*at)
@@ -246,6 +247,12 @@ impl ServeState {
                 )
             })
             .collect()
+    }
+
+    fn seen_actor_sources(&self) -> BTreeMap<String, &'static str> {
+        self.seen_actors_at(Instant::now());
+        self.seen_actors.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter().map(|(actor, (_, source))| (actor.clone(), *source)).collect()
     }
 }
 
@@ -1147,6 +1154,7 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
         request
             .headers_mut()
             .insert(SHARED_SESSION_HEADER, HeaderValue::from_static("shared"));
+        state.record_seen_actor(request.headers(), Instant::now(), "claimed");
         return next.run(request).await;
     }
     // #1148: a per-lane credential, derived from the owner token, the execution in the path and
@@ -1174,7 +1182,7 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
             .insert("x-graphhelm-actor-type", HeaderValue::from_static("agent"));
         request.headers_mut().remove("x-graphhelm-agent-credential");
         request.headers_mut().remove(SHARED_SESSION_HEADER);
-        state.record_seen_actor(request.headers(), Instant::now());
+        state.record_seen_actor(request.headers(), Instant::now(), "verified");
         return next.run(request).await;
     }
     // Agent credentials are bearer principals in their own right. They are never accepted as
@@ -1202,7 +1210,7 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
         HeaderValue::from_str(&presented).unwrap_or_else(|_| HeaderValue::from_static("invalid")),
     );
     request.headers_mut().remove(SHARED_SESSION_HEADER);
-    state.record_seen_actor(request.headers(), Instant::now());
+    state.record_seen_actor(request.headers(), Instant::now(), "verified");
     next.run(request).await
 }
 
@@ -3572,12 +3580,14 @@ mod tests {
         shared.write_all(b"GET /v1/executions/execution-known HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer shared-token\r\nX-GraphHelm-Actor: lane-a\r\nConnection: close\r\n\r\n").await.unwrap();
         let mut shared_response = Vec::new();
         shared.read_to_end(&mut shared_response).await.unwrap();
-        assert!(state_for_expiry.seen_actors().is_empty());
+        assert_eq!(state_for_expiry.seen_actors(), vec!["lane-a"]);
+        assert_eq!(state_for_expiry.seen_actor_sources()["lane-a"], "claimed");
         let mut scoped = tokio::net::TcpStream::connect(address).await.unwrap();
         scoped.write_all(b"GET /v1/executions/execution-known HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer scoped-token\r\nX-GraphHelm-Actor: forged-lane\r\nConnection: close\r\n\r\n").await.unwrap();
         let mut scoped_response = Vec::new();
         scoped.read_to_end(&mut scoped_response).await.unwrap();
         assert_eq!(state_for_expiry.seen_actors(), vec!["lane-a"]);
+        assert_eq!(state_for_expiry.seen_actor_sources()["lane-a"], "verified");
         let mut liveness = tokio::net::TcpStream::connect(address).await.unwrap();
         liveness.write_all(b"GET /v1/seen-actors HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer test-token\r\nConnection: close\r\n\r\n").await.unwrap();
         let mut liveness_response = Vec::new();
@@ -3594,6 +3604,7 @@ mod tests {
             liveness_body["data"]["seenActors"],
             serde_json::json!(["lane-a"])
         );
+        assert_eq!(liveness_body["data"]["seenActorSources"]["lane-a"], "verified");
         assert!(
             liveness_body["data"]["seenActorAgesMs"]["lane-a"]
                 .as_u64()

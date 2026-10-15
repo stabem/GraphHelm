@@ -36,6 +36,13 @@ describe("agentBoard", () => {
     const seen = agentBoard([], [old], [], now, [], [], [], ["idle"], { idle: 3 * M })[0]!;
     expect(seen).toMatchObject({ status: "free", latest: "last seen 3m ago · authenticated request" });
   });
+  it("shows whether a seen actor was claimed or verified", () => {
+    const idle = { ...lane("idle", []), lastEventAt: now - 10 * 3_600_000 };
+    const claimed = agentBoard([], [idle], [], now, [], [], [], ["idle"], { idle: 3 * M }, TEST_FREE_MS, { idle: "claimed" })[0]!;
+    const verified = agentBoard([], [idle], [], now, [], [], [], ["idle"], { idle: 3 * M }, TEST_FREE_MS, { idle: "verified" })[0]!;
+    expect(claimed.latest).toBe("last seen 3m ago · claimed");
+    expect(verified.latest).toBe("last seen 3m ago · verified");
+  });
   it("uses the slot's PR label, never an older review assignment", () => {
     const old = { ...lane("rev", []), lastRecord: { kind: "review_assigned", pr: 720, at: now - M } };
     const slots = [{ root: "D:/gh/b", ok: true as const, holder: { lane: "rev", label: "#806", pid: 1, worktree: "D:/gh/rev/wt", heldSeconds: 10 }, waiting: [] }];

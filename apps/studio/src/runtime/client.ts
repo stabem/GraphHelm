@@ -716,7 +716,7 @@ export class RuntimeClient {
     });
     if (!includeSeenActors || this.#seenActorsUnsupported) return status;
     try {
-      const seen = await this.#request<Pick<ExecutionStatus, "seenActors" | "seenActorAgesMs">>({
+      const seen = await this.#request<Pick<ExecutionStatus, "seenActors" | "seenActorAgesMs" | "seenActorSources">>({
         method: "GET", path: "/v1/seen-actors", timeoutMs: RUNTIME_READ_TIMEOUT_MS,
       });
       return { ...status, ...seen };

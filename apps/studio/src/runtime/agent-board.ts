@@ -57,7 +57,7 @@ function hasVerdictOnHead(t: MissionTask, names: string[]): boolean {
  * first), then waiting, then free. Silent is the lane-bars STALL rule (`Lane.silent`). */
 /** `freeAfterMs` is the Runtime's free budget (#1234); it defaults to the one the lanes carry, so a
  * caller that holds the served budgets passes it even when the run has no task lanes yet. */
-export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now: number, slots: SlotView[] = [], onDemand: readonly string[] = [], live: readonly string[] = [], seenActors: readonly string[] = [], seenActorAgesMs: Readonly<Record<string, number>> = {}, freeAfterMs: number = laneBudgets(lanes).freeAfterMs): AgentRow[] {
+export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now: number, slots: SlotView[] = [], onDemand: readonly string[] = [], live: readonly string[] = [], seenActors: readonly string[] = [], seenActorAgesMs: Readonly<Record<string, number>> = {}, freeAfterMs: number = laneBudgets(lanes).freeAfterMs, seenActorSources: Readonly<Record<string, "claimed" | "verified">> = {}): AgentRow[] {
   bots = bots.filter((b) => !blank(b.name));
   lanes = lanes.filter((l) => !blank(l.lane));
   const used = new Set<Lane>();
@@ -135,7 +135,8 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
       const actor = seenActors.find((name) => ids.includes(name));
       if (actor) {
         const age = seenActorAgesMs[actor];
-        return { ...r, latest: Number.isFinite(age) && age >= 0 ? `last seen ${span(age)} ago · authenticated request` : "seen within 15m · authenticated request", forMs: Number.isFinite(age) && age >= 0 ? age : null };
+        const source = seenActorSources[actor] ?? "authenticated request";
+        return { ...r, latest: Number.isFinite(age) && age >= 0 ? `last seen ${span(age)} ago · ${source}` : `seen within 15m · ${source}`, forMs: Number.isFinite(age) && age >= 0 ? age : null };
       }
       if (live.some((name) => ids.includes(name))) return { ...r, latest: "live now · wake listener", forMs: 0 };
       const seen = Math.max(pairs[i]!.lane?.lastEventAt ?? 0,

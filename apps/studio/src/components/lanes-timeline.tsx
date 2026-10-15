@@ -50,7 +50,7 @@ export interface BotActions {
 
 /** `freeAfterMs` is the Runtime's free budget (#1234), passed by the parent that holds the reply;
  * without it, the one the lanes carry. */
-interface Props extends BotActions { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[]; agents?: Bot[]; slots?: SlotView[]; onDemandLanes?: readonly string[]; liveLanes?: readonly string[]; seenActors?: readonly string[]; seenActorAgesMs?: Readonly<Record<string, number>>; historyLoading?: boolean; freeAfterMs?: number }
+interface Props extends BotActions { lanes: Lane[]; now: number; windowMs: number; tasks?: MissionTask[]; agents?: Bot[]; slots?: SlotView[]; onDemandLanes?: readonly string[]; liveLanes?: readonly string[]; seenActors?: readonly string[]; seenActorAgesMs?: Readonly<Record<string, number>>; seenActorSources?: Readonly<Record<string, "claimed" | "verified">>; historyLoading?: boolean; freeAfterMs?: number }
 
 /** #647: the Team canvas's rename control (same gate, labels and save path), on a board row. */
 export function NameBot({ bot, onSave }: { bot: Bot; onSave: (actorId: string, displayName: string) => void | Promise<unknown> }) {
@@ -199,14 +199,14 @@ function useTrackWidth(ref: RefObject<HTMLElement | null>): number {
   return w;
 }
 
-export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], slots = [], onDemandLanes = [], liveLanes = [], seenActors = [], seenActorAgesMs = {}, historyLoading = false, onOpenBotDetails, onNameBot, freeAfterMs }: Props) {
+export function LanesTimeline({ lanes, now, windowMs, tasks = [], agents = [], slots = [], onDemandLanes = [], liveLanes = [], seenActors = [], seenActorAgesMs = {}, seenActorSources = {}, historyLoading = false, onOpenBotDetails, onNameBot, freeAfterMs }: Props) {
   const free = freeAfterMs ?? laneBudgets(lanes).freeAfterMs;
   const listRef = useRef<HTMLUListElement>(null);
   const trackW = useTrackWidth(listRef);
   if (historyLoading) return <section className="lt-loading" role="status">Loading the team's history…</section>;
   lanes = lanes.filter((l) => !placeholderLane(l.lane));
   if (lanes.length === 0 && agents.length === 0 && onDemandLanes.length === 0) return <>{<SlotStrip slots={slots} />}<p className="lt-empty">No agent has recorded work in this window</p></>;
-  const board = agentBoard(agents, lanes, tasks, now, slots, onDemandLanes, liveLanes, seenActors, seenActorAgesMs, free);
+  const board = agentBoard(agents, lanes, tasks, now, slots, onDemandLanes, liveLanes, seenActors, seenActorAgesMs, free, seenActorSources);
   const noteRows = noteOnlyLanes(lanes, agents, now, free);
   const rank = new Map<string, number>();
   board.forEach((r, i) => rank.set(r.name, i));

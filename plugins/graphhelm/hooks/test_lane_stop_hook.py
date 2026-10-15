@@ -835,8 +835,8 @@ class LaneStopTests(unittest.TestCase):
         self.note("request-2", to="codex-4")
         self.assertTrue(any(d.get("decision") == "block" for d in self.stop(MANIFESTS[0])))
 
-    def test_shell_launched_waiter_survives_parent_and_expires_without_heartbeat(self):
-        """A dead launcher cannot end a live session; stale activity must end it."""
+    def test_shell_launched_waiter_survives_parent_and_stale_heartbeat_until_session_end(self):
+        """A quiet live session stays armed; SessionEnd, not heartbeat age, stops its waiter."""
         script = HERE / "session_hook.py"
         payload = json.dumps({"hook_event_name": "SessionStart", "session_id": "shell-host"})
         for shell in (["cmd", "/c"] if os.name == "nt" else ["bash", "-c"] for _ in (0,)):
@@ -863,16 +863,28 @@ class LaneStopTests(unittest.TestCase):
             self.assertTrue(session_hook._pid_alive(pid), "waiter died with launcher")
             heartbeat = pid_files[0].with_suffix(".alive")
             os.utime(heartbeat, (time.time() - 1900, time.time() - 1900))
-            self.note("heartbeat-expired", to="codex-5")
-            deadline = time.monotonic() + 65
+            self.note("heartbeat-aged-wake", to="codex-5")
+            request = urllib.request.Request(self.url + "/v1/executions/lane-test",
+                      headers={"Authorization": "Bearer " + self.owner_token})
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    if "codex-4" in json.load(response)["data"]["wakeListeners"]:
+                        break
+                time.sleep(0.05)
+            else:
+                self.fail("live lane lost its wake listener after heartbeat age")
+            self.assertTrue(session_hook._pid_alive(pid), "waiter stopped because heartbeat aged")
+
+            ended = subprocess.run([sys.executable, str(script), "end", "--host", "codex"],
+                                   input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "shell-host"}),
+                                   text=True, env=self.env, capture_output=True, timeout=8,
+                                   creationflags=NO_WINDOW)
+            self.assertEqual(ended.returncode, 0, ended.stderr)
+            deadline = time.monotonic() + 5
             while session_hook._pid_alive(pid) and time.monotonic() < deadline:
                 time.sleep(0.05)
-            self.assertFalse(session_hook._pid_alive(pid), "waiter outlived heartbeat")
-            pid_files[0].unlink(missing_ok=True)
-            self.assertEqual(self.stop(MANIFESTS[1], session="shell-host"), [])
-            replacement = int(pid_files[0].read_text())
-            self.assertNotEqual(replacement, pid)
-            self.addCleanup(lambda p=replacement: self.stop_waiter_pid(p))
+            self.assertFalse(session_hook._pid_alive(pid), "SessionEnd did not stop waiter")
 
     def test_only_own_reply_clears_pending_note(self):
         self.note("request-1", to="codex-4")

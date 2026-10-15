@@ -21,10 +21,12 @@ param(
   [string]$Root = (Join-Path $env:TEMP 'gh-nowindow-root'),
   [string]$Lane = 'nowindow',
   [string]$Base = 'origin/main',
+  [string]$Exe,
+  [string[]]$Arguments,
   [Parameter(ValueFromRemainingArguments = $true)][string[]]$Command
 )
 $ErrorActionPreference = 'Stop'
-if ($env:OS -ne 'Windows_NT') { Write-Output 'SKIP: the observer needs Windows'; exit 2 }
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) { Write-Output 'SKIP: the observer needs Windows'; exit 2 }
 
 Add-Type -TypeDefinition @'
 using System;
@@ -97,6 +99,27 @@ public static class ConsoleWindowWatch {
     CloseHandle(pi.process); CloseHandle(pi.thread); CloseHandle(file);
     return (int)code;
   }
+  public static string QuoteArgument(string value) {
+    if (value.Length > 0 && value.IndexOfAny(new char[] { ' ', '\t', '\n', '\v', '"' }) < 0) return value;
+    var result = new StringBuilder();
+    result.Append('"');
+    int slashes = 0;
+    foreach (char ch in value) {
+      if (ch == '\\') { slashes++; continue; }
+      if (ch == '"') {
+        result.Append('\\', slashes * 2 + 1);
+        result.Append('"');
+        slashes = 0;
+        continue;
+      }
+      result.Append('\\', slashes);
+      slashes = 0;
+      result.Append(ch);
+    }
+    result.Append('\\', slashes * 2);
+    result.Append('"');
+    return result.ToString();
+  }
   public static string[] Stop() {
     PostThreadMessage(LoopThread, 0x0012, IntPtr.Zero, IntPtr.Zero);
     Worker.Join(2000);
@@ -112,11 +135,15 @@ if (-not $Command -or $Command.Count -eq 0) {
   $Command = @($python, (Join-Path $repo 'tools/reached-tests/run_reached.py'), '--repo', $repo,
     '--base', $Base, '--head', 'HEAD', '--root', $Root, '--lane', $Lane, '--output', $out)
 }
+if ($Exe) {
+  $Command = @($Exe) + @($Arguments)
+}
+if (-not $Command -or $Command.Count -eq 0) { throw 'Provide -Exe and -Arguments, or a command after the observer options.' }
 Write-Output ("observing: " + ($Command -join ' '))
 [ConsoleWindowWatch]::Start()
 $started = Get-Date
 $log = Join-Path $env:TEMP 'gh-nowindow-observe.log'
-$line = ($Command | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
+$line = ($Command | ForEach-Object { [ConsoleWindowWatch]::QuoteArgument($_) }) -join ' '
 $exit = [ConsoleWindowWatch]::RunDetached($line, $repo, $log)
 Get-Content $log -Tail 20
 Start-Sleep -Milliseconds 500
@@ -124,6 +151,8 @@ $windows = [ConsoleWindowWatch]::Stop()
 $seconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
 $windows | ForEach-Object { Write-Output "  shown: $_" }
 Write-Output "command exit: $exit; seconds: $seconds; console windows shown: $($windows.Count)"
-if ($windows.Count -eq 0) { Write-Output 'PASS: no console window opened'; exit 0 }
-Write-Output 'FAIL: console windows opened during the run'
-exit 1
+if ($windows.Count -gt 0) { Write-Output 'FAIL: console windows opened during the run'; exit 1 }
+if ($exit -ne 0) { Write-Output 'ERROR: observed command exited non-zero'; exit 1 }
+Write-Output 'Coverage: new top-level console windows only; new tabs in an existing Windows Terminal were not observed.'
+Write-Output 'PASS: no console window opened'
+exit 0

@@ -263,22 +263,6 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
     let (plain_code, plain) = check(None);
     assert_eq!(plain_code, Some(2), "{plain}");
     assert!(plain["data"]["routeProposal"].is_null());
-    let repository = graphhelm_events::LocalEventRepository::open(
-        &events,
-        std::sync::Arc::new(Clock),
-        std::sync::Arc::new(Ids),
-    )
-    .unwrap();
-    let (_, history) = repository.read_unique_replay_stream().unwrap();
-    let publications_before_proposal = history
-        .iter()
-        .filter(|event| {
-            matches!(
-                event.kind,
-                graphhelm_protocols::EventKind::GraphVersionPublished(_)
-            )
-        })
-        .count();
     let (code, checked) = check(Some(&binding));
     assert_eq!(code, Some(2), "{checked}");
     assert_eq!(checked["data"]["recommendation"]["step"], "implement");
@@ -307,6 +291,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         "{status}"
     );
     assert_eq!(status["data"]["signalsRecorded"], 1);
+    assert_eq!(status["data"]["currentGraph"]["number"], 1);
     let digest = status["data"]["proposalDigests"]["draft-implement"]
         .as_str()
         .expect("status exposes the exact pending proposal digest");
@@ -418,16 +403,6 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
             .filter(|event| matches!(event.kind, graphhelm_protocols::EventKind::DraftProposed(_)))
             .count(),
         1
-    );
-    assert_eq!(
-        history
-            .iter()
-            .filter(|event| matches!(
-                event.kind,
-                graphhelm_protocols::EventKind::GraphVersionPublished(_)
-            ))
-            .count(),
-        publications_before_proposal
     );
     let stale = scratch.path().join("stale.json");
     fs::write(&stale, serde_json::to_vec(&serde_json::json!({

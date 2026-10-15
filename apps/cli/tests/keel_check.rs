@@ -192,13 +192,13 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         .output()
         .unwrap();
     let head = String::from_utf8(head.stdout).unwrap().trim().to_owned();
-    let draft = |id: &str| {
+    let draft = |id: &str, version: u64, hash: &str, node: &str| {
         serde_json::json!({
-            "id": id, "expectedVersion": 1, "expectedHash": graph_hash,
+            "id": id, "expectedVersion": version, "expectedHash": hash,
             "operations": [{
-                "op": "addNode", "path": "/spec/nodes/route-correction",
+                "op": "addNode", "path": format!("/spec/nodes/{node}"),
                 "value": {
-                    "type": "agent", "name": id, "objective": "Correct the blocked scope",
+                    "type": "agent", "name": node, "objective": "Correct the blocked scope",
                     "optionality": "required",
                     "agent": {"ephemeral": {
                         "purpose": "Correct the blocked scope",
@@ -222,13 +222,13 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         &binding,
         serde_json::to_vec(&serde_json::json!({
             "expectedHead": head, "execution": "exec_feature", "task": "issue-1045",
-            "node": "plan", "implementDraft": draft("draft-implement"),
-            "reviewDraft": draft("draft-review")
+            "node": "plan", "implementDraft": draft("draft-implement", 1, graph_hash, "route-correction"),
+            "reviewDraft": draft("draft-review", 1, graph_hash, "route-review")
         }))
         .unwrap(),
     )
     .unwrap();
-    let check = |binding_path: Option<&Path>| {
+    let check = |binding_path: Option<&Path>, card_path: &Path| {
         let mut command = Command::cargo_bin("graphhelm").unwrap();
         let check_events = if binding_path.is_some() {
             &events
@@ -246,7 +246,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
             ])
             .arg(repo.path())
             .args(["--card"])
-            .arg(&scope_card)
+            .arg(card_path)
             .args(["--events"])
             .arg(check_events)
             .args(["--execution", "exec_feature", "--keyring"])
@@ -260,10 +260,10 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
         (output.status.code(), reply)
     };
-    let (plain_code, plain) = check(None);
+    let (plain_code, plain) = check(None, &scope_card);
     assert_eq!(plain_code, Some(2), "{plain}");
     assert!(plain["data"]["routeProposal"].is_null());
-    let (code, checked) = check(Some(&binding));
+    let (code, checked) = check(Some(&binding), &scope_card);
     assert_eq!(code, Some(2), "{checked}");
     assert_eq!(checked["data"]["recommendation"]["step"], "implement");
     assert_eq!(checked["data"]["routeProposal"]["kind"], "keel.blocked");
@@ -336,6 +336,46 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         approval.status.success(),
         "the selected implementation proposal should apply: {}",
         String::from_utf8_lossy(&approval.stdout)
+    );
+    let published = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "graph", "replay", "--events"])
+        .arg(&events)
+        .output()
+        .unwrap();
+    assert!(
+        published.status.success(),
+        "{}",
+        String::from_utf8_lossy(&published.stdout)
+    );
+    let published: Value = serde_json::from_slice(&published.stdout).unwrap();
+    assert_eq!(
+        published["data"]["currentGraph"]["number"], 2,
+        "{published}"
+    );
+    let published_hash = published["data"]["currentGraph"]["semanticHash"]
+        .as_str()
+        .expect("replay exposes the approved graph hash");
+    let first_status = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "execution", "status", "--events"])
+        .arg(&events)
+        .args(["--execution", "exec_feature"])
+        .output()
+        .unwrap();
+    assert!(
+        first_status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first_status.stdout)
+    );
+    let first_status: Value = serde_json::from_slice(&first_status.stdout).unwrap();
+    assert_eq!(
+        first_status["data"]["nodeStates"]["route-correction"], "ready",
+        "{first_status}"
+    );
+    assert!(
+        first_status["data"]["nodeStates"]["route-review"].is_null(),
+        "{first_status}"
     );
     // Read the persisted event and decrypt its sealed envelope. A response alone could claim
     // admission while dropping the checked head or the precise scope finding.
@@ -417,12 +457,18 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         1
     );
     let stale = scratch.path().join("stale.json");
-    fs::write(&stale, serde_json::to_vec(&serde_json::json!({
-        "expectedHead": "0000000000000000000000000000000000000000",
-        "execution": "exec_feature", "task": "issue-1045", "node": "route-correction",
-        "implementDraft": draft("draft-stale-implement"), "reviewDraft": draft("draft-stale-review")
-    })).unwrap()).unwrap();
-    let (stale_code, stale_reply) = check(Some(&stale));
+    fs::write(
+        &stale,
+        serde_json::to_vec(&serde_json::json!({
+            "expectedHead": "0000000000000000000000000000000000000000",
+            "execution": "exec_feature", "task": "issue-1045", "node": "route-correction",
+            "implementDraft": draft("draft-stale-implement", 1, graph_hash, "stale-implement"),
+            "reviewDraft": draft("draft-stale-review", 1, graph_hash, "stale-review")
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let (stale_code, stale_reply) = check(Some(&stale), &scope_card);
     assert_eq!(stale_code, Some(3), "{stale_reply}");
     assert_eq!(stale_reply["data"]["recommendation"]["step"], "implement");
     assert_eq!(
@@ -433,14 +479,58 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
             .unwrap()["path"],
         "/routeProposal/expectedHead"
     );
+    fs::write(repo.path().join("docs/notes.md"), "corrected scope\n").unwrap();
+    fs::write(
+        repo.path().join("core/events/src/journal.rs"),
+        "pub fn changed() {}\npub fn corrected() {}\n",
+    )
+    .unwrap();
+    git(repo.path(), &["add", "docs/notes.md"]);
+    git(repo.path(), &["add", "core/events/src/journal.rs"]);
+    git(repo.path(), &["commit", "-q", "-m", "correct scope"]);
+    let corrected_head = graphhelm_process::command("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let corrected_head = String::from_utf8(corrected_head.stdout)
+        .unwrap()
+        .trim()
+        .to_owned();
     let passing_card = card(
         scratch.path(),
         &["src/lib.rs", "docs/notes.md", "core/events/src/journal.rs"],
     );
-    assert_eq!(passing_card, scope_card);
-    let (pass_code, passed) = check(Some(&binding));
+    fs::write(
+        &binding,
+        serde_json::to_vec(&serde_json::json!({
+            "expectedHead": corrected_head,
+            "execution": "exec_feature",
+            "task": "issue-1045",
+            "node": "route-correction",
+            "implementDraft": draft("draft-implement-next", 2, published_hash, "route-correction-next"),
+            "reviewDraft": draft("draft-review", 2, published_hash, "route-review")
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let (pass_code, passed) = check(Some(&binding), &passing_card);
     assert_eq!(pass_code, Some(0), "{passed}");
     assert_eq!(passed["data"]["routeProposal"]["kind"], "keel.passed");
+    let before_review_approval = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "graph", "replay", "--events"])
+        .arg(&events)
+        .output()
+        .unwrap();
+    assert!(before_review_approval.status.success());
+    let before_review_approval: Value =
+        serde_json::from_slice(&before_review_approval.stdout).unwrap();
+    assert_eq!(
+        before_review_approval["data"]["currentGraph"]["number"], 2,
+        "{before_review_approval}"
+    );
     let status = Command::cargo_bin("graphhelm")
         .unwrap()
         .args(["--json", "execution", "status", "--events"])
@@ -452,9 +542,6 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
     assert_eq!(status["data"]["signalsRecorded"], 2, "{status}");
     assert!(status["data"]["attentionReasons"].as_array().unwrap().iter()
         .any(|reason| reason["kind"] == "pending_draft" && reason["draft_id"] == "draft-review"), "{status}");
-
-    // RED fixture check: the second proposal still targets the original graph version and
-    // attempts to add the same node. It must not be mistaken for a completed review route.
     let review_digest = status["data"]["proposalDigests"]["draft-review"]
         .as_str()
         .expect("status exposes the exact pending review proposal digest");
@@ -466,7 +553,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
             "--execution",
             "exec_feature",
             "--node",
-            "route-correction",
+            "route-review",
             "--keyring",
         ])
         .arg(&keyring)
@@ -488,8 +575,47 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         "review proposal should apply after its own exact approval: {}",
         String::from_utf8_lossy(&review_approval.stdout)
     );
+    let reviewed_graph = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "graph", "replay", "--events"])
+        .arg(&events)
+        .output()
+        .unwrap();
+    assert!(reviewed_graph.status.success());
+    let reviewed_graph: Value = serde_json::from_slice(&reviewed_graph.stdout).unwrap();
+    assert_eq!(
+        reviewed_graph["data"]["currentGraph"]["number"], 3,
+        "{reviewed_graph}"
+    );
+    let final_status = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "execution", "status", "--events"])
+        .arg(&events)
+        .args(["--execution", "exec_feature"])
+        .output()
+        .unwrap();
+    assert!(final_status.status.success());
+    let final_status: Value = serde_json::from_slice(&final_status.stdout).unwrap();
+    assert_eq!(
+        final_status["data"]["nodeStates"]["route-correction"], "ready",
+        "{final_status}"
+    );
+    assert_eq!(
+        final_status["data"]["nodeStates"]["route-review"], "ready",
+        "{final_status}"
+    );
 
     let (_, history) = store.read_unique_replay_stream().unwrap();
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| matches!(
+                event.kind,
+                graphhelm_protocols::EventKind::SignalRecorded(_)
+            ))
+            .count(),
+        2
+    );
     let recorded = history
         .iter()
         .filter(|event| {

@@ -67,6 +67,19 @@ and listed as `to build` until its check exists.
 | `keel.scope` | Write surface | A change touches only the paths its card lists. | `graphhelm keel check --card` | blocks |
 | `keel.test.e2e_first` | Proof | Behaviour is proven end to end first; see `KEEL_EXEC.md`. | proof kind in the plan record | to build |
 
+## Talking to GraphHelm
+
+- **State goes through the GraphHelm MCP tools.** Read the run with `status`, `briefing`, `tasks`,
+  `events` and `evidence`, never by scripting the CLI or HTTP for the same answer. The reply is
+  already structured, and the server already knows the Runtime and the actor.
+- **Task records** (`claimed`, `pr_opened`, `review_verdict`, `merged`) are written with
+  `tools/task-record/task_record.py --lane <you>` until the MCP can sign a record as the lane
+  (#1407). The Runtime refuses a record signed by anyone but the lane.
+- **The CLI is for work on the machine:** builds and the slot (`graphhelm workspace slot`,
+  `tools/reached-tests/run_reached.py`), `graphhelm keel check`, setup and anything that runs for
+  minutes or touches local files.
+- When the MCP server is not connected, use the CLI with `--json` and say so.
+
 ## Force and exceptions
 
 - A rule with a working mechanism blocks the merge. A rule marked `to build` is checked by the

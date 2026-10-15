@@ -56,8 +56,8 @@ orchestrator calls this once per agent. The orchestrator itself never takes a la
 4. **Reuse before you spawn.** When a lane of the same role already finished a task on the same
    scope, hand it the next one instead of a new agent (agent reuse, ADR-041/042). An author lane
    is never reused as the reviewer of its own work.
-5. **Watch through the Studio, not the chat.** Read progress with `mcp__graphhelm__status` /
-   `events`. A lane silent past its heartbeat is shown stale there; re-brief or release it
+5. **Watch through the Studio, not the chat.** Read progress with `mcp__graphhelm__tasks` (every lane's step,
+   PR, head and heartbeat), `status` and `events`; never script the CLI or HTTP for the same answer. A lane silent past its heartbeat is shown stale there; re-brief or release it
    (`task_record.py ... released --claim-sequence <seq> --release-reason "<why>"`).
 
 ## Never

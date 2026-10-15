@@ -131,6 +131,10 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         .arg(&events)
         .args(["--fixtures"])
         .arg(&fixtures)
+        .args(["--keyring"])
+        .arg(&keyring)
+        .args(["--key-id", "route-key"])
+        .env("GRAPHHELM_EVENTS_KEY", key)
         .args([
             "--mode",
             "supervised",

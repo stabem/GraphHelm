@@ -132,7 +132,12 @@ mod off_reactor_witness {
     }
 }
 
-pub(super) async fn graph_topology(body: Bytes) -> Response {
+pub(super) async fn graph_topology(State(state): State<ServeState>, body: Bytes) -> Response {
+    topology_reply(state.path_roots.as_deref(), body).await
+}
+
+/// The topology read itself, given the roots a `file` must resolve under (`None`: unconfined).
+async fn topology_reply(roots: Option<&[PathBuf]>, body: Bytes) -> Response {
     let payload: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(value) => value,
         Err(_) => {
@@ -146,6 +151,9 @@ pub(super) async fn graph_topology(body: Bytes) -> Response {
             "/file",
         );
     };
+    if let Err(response) = confine_to_project(roots, Path::new(file), TOPOLOGY_COMMAND, "file") {
+        return response;
+    }
 
     // Open, read (bounded), parse, validate, hash: file work, off the reactor (#559).
     let file = file.to_owned();
@@ -408,6 +416,19 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
             );
         }
     };
+    // #1328: each of the three names a host path the Runtime reads.
+    for (path, field) in [
+        (fixture.as_deref(), "fixture"),
+        (judge_fixture.as_deref(), "judgeFixture"),
+        (library.as_deref(), "library"),
+    ] {
+        if let Some(path) = path
+            && let Err(response) =
+                confine_to_project(state.path_roots.as_deref(), path, SYNTHESIZE_COMMAND, field)
+        {
+            return response;
+        }
+    }
 
     let model: Box<dyn DraftModel + Send> = match fixture {
         Some(path) => {
@@ -3199,6 +3220,55 @@ enum GraphSource {
     Snapshot,
 }
 
+/// #1328: with `--confine-paths`, a host path a request names must resolve under one of the
+/// allowed roots (`--project` and every `--path-root`).
+///
+/// Canonical against canonical, the comparison `refuse_protected_project` makes, so a relative
+/// spelling, `..` or a link cannot step outside. A path that does not exist yet is judged by its
+/// canonical parent, so a missing file under a root still reaches the handler's own "not found"
+/// refusal; one whose parent cannot be resolved either is left to that refusal too, since nothing
+/// can be read through it. Off (`None`, the default) the path passes, as it always has; on with no
+/// root at all every path is refused, so a misconfiguration fails closed.
+#[allow(clippy::result_large_err)] // the refusal IS a built response, as in `graph_source`
+fn confine_to_project(
+    roots: Option<&[PathBuf]>,
+    path: &Path,
+    command: &'static str,
+    field: &'static str,
+) -> Result<(), Response> {
+    let Some(roots) = roots else {
+        return Ok(());
+    };
+    let resolved = path.canonicalize().ok().or_else(|| {
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty());
+        let parent = parent.map_or_else(|| Path::new(".").canonicalize(), Path::canonicalize);
+        parent
+            .ok()
+            .zip(path.file_name())
+            .map(|(parent, name)| parent.join(name))
+    });
+    let Some(resolved) = resolved else {
+        return Ok(());
+    };
+    let inside = roots.iter().any(|root| {
+        root.canonicalize()
+            .is_ok_and(|root| resolved.starts_with(root))
+    });
+    if inside {
+        Ok(())
+    } else {
+        Err(bad_request(
+            command,
+            &format!(
+                "\"{field}\" must name a path under the project or a --path-root this Runtime serves"
+            ),
+            &format!("/{field}"),
+        ))
+    }
+}
+
 /// Reads the request body's graph, refusing every shape that could be read two ways.
 ///
 /// BOTH FIELDS PRESENT IS A REFUSAL, not a precedence rule. A caller that sends `"file"` and
@@ -3212,6 +3282,7 @@ enum GraphSource {
 fn graph_source(
     payload: &serde_json::Value,
     command: &'static str,
+    roots: Option<&[PathBuf]>,
 ) -> Result<GraphSource, Response> {
     let file = payload.get("file");
     let graph = payload.get("graph");
@@ -3233,7 +3304,11 @@ fn graph_source(
             "/file",
         )),
         (true, false) => match file {
-            Some(serde_json::Value::String(path)) => Ok(GraphSource::File(PathBuf::from(path))),
+            Some(serde_json::Value::String(path)) => {
+                let path = PathBuf::from(path);
+                confine_to_project(roots, &path, command, "file")?;
+                Ok(GraphSource::File(path))
+            }
             _ => Err(bad_request(
                 command,
                 "\"file\" must be a string naming a graph document",
@@ -3354,7 +3429,7 @@ pub(super) async fn start(
         Ok(identity) => identity,
         Err(response) => return response,
     };
-    let source = match graph_source(&payload, START_COMMAND) {
+    let source = match graph_source(&payload, START_COMMAND, state.path_roots.as_deref()) {
         Ok(source) => source,
         Err(response) => return response,
     };
@@ -3362,6 +3437,12 @@ pub(super) async fn start(
         .get("fixtures")
         .and_then(serde_json::Value::as_str)
         .map(PathBuf::from);
+    if let Some(path) = &fixtures
+        && let Err(response) =
+            confine_to_project(state.path_roots.as_deref(), path, START_COMMAND, "fixtures")
+    {
+        return response;
+    }
     let Some(mode) = payload.get("mode").and_then(serde_json::Value::as_str) else {
         return bad_request(
             START_COMMAND,
@@ -3775,6 +3856,17 @@ pub(super) async fn signal(
             );
         }
     };
+    // #1328: a path the Runtime writes, so it is confined like the ones it reads.
+    if let Some(path) = &evidence_out
+        && let Err(response) = confine_to_project(
+            state.path_roots.as_deref(),
+            path,
+            SIGNAL_COMMAND,
+            "evidenceOut",
+        )
+    {
+        return response;
+    }
     if identity.actor.actor_type() == PersistedActorType::Agent && evidence_out.is_some() {
         return bad_request(
             SIGNAL_COMMAND,
@@ -4456,7 +4548,7 @@ pub(super) async fn resume(
         Err(response) => return response,
     };
     let source = if payload.get("file").is_some() {
-        match graph_source(&payload, RESUME_COMMAND) {
+        match graph_source(&payload, RESUME_COMMAND, state.path_roots.as_deref()) {
             Ok(source) => Some(source),
             Err(response) => return response,
         }
@@ -4467,6 +4559,16 @@ pub(super) async fn resume(
         .get("fixtures")
         .and_then(serde_json::Value::as_str)
         .map(PathBuf::from);
+    if let Some(path) = &fixtures
+        && let Err(response) = confine_to_project(
+            state.path_roots.as_deref(),
+            path,
+            RESUME_COMMAND,
+            "fixtures",
+        )
+    {
+        return response;
+    }
     let drive_state = state.clone();
     // #1066: the drive's own copy of the id — the closure below moves what it captures, and the
     // mutation runner still borrows `execution_id` for its own journalling.
@@ -4718,7 +4820,7 @@ pub(super) async fn claim(
         Ok(identity) => identity,
         Err(response) => return response,
     };
-    let source = match graph_source(&payload, CLAIM_COMMAND) {
+    let source = match graph_source(&payload, CLAIM_COMMAND, state.path_roots.as_deref()) {
         Ok(source) => source,
         Err(response) => return response,
     };
@@ -4849,7 +4951,7 @@ pub(super) async fn clear(
         Ok(identity) => identity,
         Err(response) => return response,
     };
-    let source = match graph_source(&payload, CLEAR_COMMAND) {
+    let source = match graph_source(&payload, CLEAR_COMMAND, state.path_roots.as_deref()) {
         Ok(source) => source,
         Err(response) => return response,
     };
@@ -4945,6 +5047,12 @@ pub(super) async fn clear(
         .get("fixtures")
         .and_then(serde_json::Value::as_str)
         .map(PathBuf::from);
+    if let Some(path) = &fixtures
+        && let Err(response) =
+            confine_to_project(state.path_roots.as_deref(), path, CLEAR_COMMAND, "fixtures")
+    {
+        return response;
+    }
     let drive_state = state.clone();
     // #1066: the drive's own copy of the id — the closure below moves what it captures, and the
     // mutation runner still borrows `execution_id` for its own journalling.
@@ -5395,6 +5503,11 @@ async fn prepare_drive(
                     )));
                 }
             };
+            // #1328: a requested workspace root is a host path the drive reads and writes.
+            if let Some(path) = &requested_project {
+                confine_to_project(state.path_roots.as_deref(), path, command, "project")
+                    .map_err(MutationError::Prepared)?;
+            }
             let project = requested_project
                 .or_else(|| wiring.tools.as_ref().and_then(|tools| tools.project.clone()))
                 .or_else(|| std::env::current_dir().ok())
@@ -5714,6 +5827,16 @@ pub(super) async fn gateway_routes(
     let manifest = query_pairs(&query)
         .find(|(key, _)| *key == "manifest")
         .map(|(_, value)| PathBuf::from(value));
+    if let Some(path) = &manifest
+        && let Err(response) = confine_to_project(
+            state.path_roots.as_deref(),
+            path,
+            GATEWAY_ROUTES_COMMAND,
+            "manifest",
+        )
+    {
+        return response;
+    }
     let Some(manifest) = effective_manifest(&state, manifest) else {
         return respond(
             StatusCode::OK,
@@ -5763,6 +5886,22 @@ pub(super) async fn gateway_probe(
             "keyring" => keyring = Some(PathBuf::from(value)),
             "keyId" => key_id = Some(value.to_owned()),
             _ => {}
+        }
+    }
+    for (path, field) in [
+        (manifest.as_deref(), "manifest"),
+        (broker.as_deref(), "broker"),
+        (keyring.as_deref(), "keyring"),
+    ] {
+        if let Some(path) = path
+            && let Err(response) = confine_to_project(
+                state.path_roots.as_deref(),
+                path,
+                GATEWAY_PROBE_COMMAND,
+                field,
+            )
+        {
+            return response;
         }
     }
     let Some(manifest) = effective_manifest(&state, manifest) else {
@@ -6994,8 +7133,8 @@ pub(super) mod tests {
     };
 
     use super::{
-        MutationError, graph_topology, list_executions_over, off_reactor, off_reactor_witness,
-        resolve_requested_route,
+        MutationError, list_executions_over, off_reactor, off_reactor_witness,
+        resolve_requested_route, topology_reply,
     };
     use crate::commands::serve::ports::{ModelWiring, RuntimeWiring, ToolWiring};
 
@@ -7084,6 +7223,7 @@ pub(super) mod tests {
             sweep_interval: None,
             read_audit: None,
             require_lane_credential: false,
+            path_roots: None,
             gateway_manifest: None,
             native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             seen_actors: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
@@ -7321,7 +7461,7 @@ pub(super) mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let reactor = std::thread::current().id();
         let body = serde_json::json!({ "file": example_graph().to_str().unwrap() }).to_string();
-        let (response, runs) = measured(graph_topology(Bytes::from(body)));
+        let (response, runs) = measured(topology_reply(None, Bytes::from(body)));
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             runs.len(),
@@ -7346,7 +7486,7 @@ pub(super) mod tests {
         std::fs::create_dir(&path).unwrap();
         let body = serde_json::json!({ "file": path.to_str().unwrap() }).to_string();
         let (text, _) = measured(async {
-            let response = graph_topology(Bytes::from(body)).await;
+            let response = topology_reply(None, Bytes::from(body)).await;
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
             body_text(response).await
         });

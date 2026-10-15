@@ -12124,3 +12124,173 @@ fn lane_row_owes_since_is_set(liveness: &Value, lane: &str) -> bool {
         .and_then(|lanes| lanes.iter().find(|row| row["lane"] == lane))
         .is_some_and(|row| row["owesSince"].is_string())
 }
+
+/// #1328: with `--confine-paths`, a host path a request names must resolve under `--project` or a
+/// `--path-root`; a second Runtime without the flag still reads an outside path (default unchanged).
+/// The same graph and fixtures are refused from outside the project with the route's ordinary
+/// `GHCLI001` at the field, before anything is read or appended, and accepted from inside it; a
+/// `..` spelling that climbs out is refused too. Cost: one local server and temporary files.
+#[test]
+fn a_path_outside_the_served_project_is_refused_with_the_existing_code() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("project");
+    let outside = directory.path().join("outside");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let graph = root().join("examples/graphs/software-feature.yaml");
+    let inside_graph = project.join("graph.yaml");
+    let outside_graph = outside.join("graph.yaml");
+    std::fs::copy(&graph, &inside_graph).unwrap();
+    std::fs::copy(&graph, &outside_graph).unwrap();
+    let inside_fixtures = all_success_fixtures(&project);
+    let outside_fixtures = all_success_fixtures(&outside);
+    let extra_root = directory.path().join("lane-worktree");
+    std::fs::create_dir_all(&extra_root).unwrap();
+    let extra_graph = extra_root.join("graph.yaml");
+    std::fs::copy(&graph, &extra_graph).unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve_with(
+        &events,
+        &[
+            "--project",
+            project.to_str().unwrap(),
+            "--confine-paths",
+            "--path-root",
+            extra_root.to_str().unwrap(),
+        ],
+    );
+    let refused = |reply: &Value, field: &str| {
+        assert_eq!(reply["ok"], false, "{reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["code"], "GHCLI001_ARGUMENT_INVALID",
+            "{reply}"
+        );
+        assert_eq!(
+            reply["diagnostics"][0]["path"],
+            format!("/{field}"),
+            "{reply}"
+        );
+    };
+
+    // topology: outside refused, a `..` climb refused, inside answered.
+    let url = format!("{base}/v1/graph/topology");
+    let (status, reply) = post_json(
+        &url,
+        &token,
+        &[],
+        &serde_json::json!({ "file": outside_graph }),
+    );
+    assert_eq!(status, 400, "{reply}");
+    refused(&reply, "file");
+    let climb = project.join("..").join("outside").join("graph.yaml");
+    let (status, reply) = post_json(&url, &token, &[], &serde_json::json!({ "file": climb }));
+    assert_eq!(status, 400, "{reply}");
+    refused(&reply, "file");
+    let (status, reply) = post_json(
+        &url,
+        &token,
+        &[],
+        &serde_json::json!({ "file": inside_graph }),
+    );
+    assert_eq!(status, 200, "{reply}");
+    // A --path-root widens the boundary beyond --project.
+    let (status, reply) = post_json(
+        &url,
+        &token,
+        &[],
+        &serde_json::json!({ "file": extra_graph }),
+    );
+    assert_eq!(status, 200, "a --path-root is inside the boundary: {reply}");
+
+    // start: an outside file, then outside fixtures, each refused with nothing appended.
+    let start = |execution: &str, key: &'static str, file: &Path, fixtures: &Path| {
+        post_json(
+            &format!("{base}/v1/executions/{execution}/start"),
+            &token,
+            &customs_headers(key),
+            &serde_json::json!({ "file": file, "fixtures": fixtures, "mode": "supervised" }),
+        )
+    };
+    let (status, reply) = start(
+        "exec-outside-file",
+        "confine-file",
+        &outside_graph,
+        &inside_fixtures,
+    );
+    assert_eq!(status, 400, "{reply}");
+    refused(&reply, "file");
+    let (status, reply) = start(
+        "exec-outside-fixtures",
+        "confine-fixtures",
+        &inside_graph,
+        &outside_fixtures,
+    );
+    assert_eq!(status, 400, "{reply}");
+    refused(&reply, "fixtures");
+    for execution in ["exec-outside-file", "exec-outside-fixtures"] {
+        let status = get_json(
+            &format!("{base}/v1/executions/{execution}/status"),
+            Some(&token),
+        );
+        assert_eq!(
+            status["ok"], false,
+            "a refused start appended nothing: {status}"
+        );
+    }
+    let (status, reply) = start(
+        "exec-inside",
+        "confine-inside",
+        &inside_graph,
+        &inside_fixtures,
+    );
+    assert_eq!(
+        status, 200,
+        "the same request from inside the project runs: {reply}"
+    );
+
+    // evidenceOut is a path the Runtime WRITES: confined the same way, before the envelope lands.
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/exec-inside/signal"),
+        &token,
+        &[
+            ("Idempotency-Key", "confine-evidence-out"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "signal": {"type": "finding.root_cause", "severity": "high",
+                "description": "d", "evidence": ["e"]},
+            "evidenceOut": outside.join("envelope.json"),
+        }),
+    );
+    assert_eq!(status, 400, "{reply}");
+    refused(&reply, "evidenceOut");
+    assert!(
+        !outside.join("envelope.json").exists(),
+        "nothing was written outside"
+    );
+
+    // A manifest named in the query is a host path too (the query is not percent-decoded).
+    let manifest = outside.join("manifest.json");
+    std::fs::write(&manifest, "{}").unwrap();
+    let reply = get_json(
+        &format!(
+            "{base}/v1/gateway/routes?manifest={}",
+            manifest.to_str().unwrap().replace('\\', "/")
+        ),
+        Some(&token),
+    );
+    refused(&reply, "manifest");
+
+    // Without --confine-paths nothing changes: the outside graph is read as it always was.
+    let open_events = directory.path().join("events-open");
+    let (_open_guard, open_base, open_token) =
+        serve_with(&open_events, &["--project", project.to_str().unwrap()]);
+    let (status, reply) = post_json(
+        &format!("{open_base}/v1/graph/topology"),
+        &open_token,
+        &[],
+        &serde_json::json!({ "file": outside_graph }),
+    );
+    assert_eq!(status, 200, "the default is unchanged: {reply}");
+}

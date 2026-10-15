@@ -25,18 +25,21 @@ import os
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
-def get(url, token):
-    request = urllib.request.Request(url, headers={"Authorization": "Bearer " + token})
+def get(url, token, lane=None):
+    headers = {"Authorization": "Bearer " + token}
+    if lane is not None:
+        headers["X-GraphHelm-Actor"] = lane
+    request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=2) as reply:
         return json.load(reply)["data"]
 
 
-def records(base, token, execution):
+def records(base, token, execution, lane=None):
     path = f"{base}/v1/executions/{urllib.parse.quote(execution, safe='')}"
     after = 0
     events = []
     while True:
-        page = get(f"{path}/events?after={after}&limit=512", token)
+        page = get(f"{path}/events?after={after}&limit=512", token, lane)
         batch = page["events"]
         if not batch:
             if after < page["head"]:
@@ -59,7 +62,7 @@ def records(base, token, execution):
 
     def open_record(item):
         event, detail, evidence_id = item
-        evidence = get(f"{path}/evidence/{urllib.parse.quote(evidence_id, safe='')}", token)
+        evidence = get(f"{path}/evidence/{urllib.parse.quote(evidence_id, safe='')}", token, lane)
         content = evidence["content"]
         digest = hashlib.sha256(content.encode()).hexdigest()
         if digest != detail.get("envelopeSha256") or digest != evidence.get("contentSha256"):
@@ -225,7 +228,7 @@ def reconcile(args):
     finished = set()
     claims = {}
     releases = {}
-    for kind, doc, event in records(args.url.rstrip("/"), token, args.execution):
+    for kind, doc, event in records(args.url.rstrip("/"), token, args.execution, args.lane):
         task_id = doc.get("taskId")
         lane = doc.get("lane")
         if kind == "task.claimed" and lane == args.lane and doc.get("repo") == args.repo and re.fullmatch(r"issue-[1-9][0-9]*", str(task_id)):

@@ -191,6 +191,23 @@ class LaneStopTests(unittest.TestCase):
         result = subprocess.run([self.cli, *args], env=self.env, capture_output=True, text=True, timeout=15, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_reconcile_reads_send_the_bound_lane_actor_header(self):
+        self.claim(766)
+        token = Path(self.env["GRAPHHELM_TOKEN_FILE"]).read_text(encoding="utf-8").strip()
+        requests = []
+        urlopen = tasks_reconcile.urllib.request.urlopen
+
+        def capture(request, *args, **kwargs):
+            requests.append(request)
+            return urlopen(request, *args, **kwargs)
+
+        with mock.patch.object(tasks_reconcile.urllib.request, "urlopen", side_effect=capture):
+            tasks_reconcile.records(self.url, token, "lane-test", "codex-4")
+
+        self.assertGreaterEqual(len(requests), 2, "reconcile should read events and their sealed evidence")
+        self.assertTrue(all(request.get_header("X-graphhelm-actor") == "codex-4" for request in requests),
+                        [request.headers for request in requests])
+
     def note(self, signal_id, to=None, reply=None, actor="owner"):
         signal = {"id": signal_id, "source": {"type": "user", "id": actor}, "type": "operator_note",
                   "severity": "low", "description": "Status please" if not reply else "Status recorded",

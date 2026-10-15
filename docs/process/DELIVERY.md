@@ -242,7 +242,7 @@ decision (approve a design, choose an option) goes to the user. The plugin's Sto
 
 ## 5. Merge, by the reviewer
 
-The reviewer who approved merges (a blind subagent included). There is no gate and no separate presser.
+The reviewer who approved merges (a blind subagent included). There is no separate gate run and no separate presser: the Keel checks the reviewer runs (`KEEL.md`) are what block, and a blocking finding is a `BLOCK`.
 
 1. Pin the head: `gh pr view <N> --json headRefOid` must equal the sha the review named, and no
    BLOCK on that head is left unanswered by the review (§4).

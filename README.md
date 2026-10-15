@@ -143,7 +143,7 @@ Keel says how the code inside that change is written and proved.
                          ▼     └────────────────┬─────────────────┘
                  back to review                 ▼
                                     Delivered = merged into main
-                                    (no gates, no presser)
+                                    (Keel checks block; no presser)
 ```
 
 Every comment, review and merge starts with `Session: <name> · Head: <sha8>`. Long form:

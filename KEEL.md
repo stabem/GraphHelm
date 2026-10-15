@@ -72,13 +72,14 @@ and listed as `to build` until its check exists.
 - A rule with a working mechanism blocks the merge. A rule marked `to build` is checked by the
   reviewer against this table until its mechanism lands.
 - An exception is written in the code, next to what it excuses: the rule id, the reason, and an
-  expiry date or issue. The blind reviewer accepts or refuses it. The exception list is printed by
-  the check and can only shrink.
+  expiry date or issue. The blind reviewer accepts or refuses it, and the list can only shrink.
+  Each mechanism prints the exceptions it honoured once it lands (#1404 is the first).
 - There is no penalty beyond the block. An agent that breaks a rule fixes the change.
 - A rule that is wrong is fixed in its own pull request, never worked around in a feature.
 
 ## In other projects
 
-`graphhelm setup` installs this file and the `keel/` folder in a project. The values are the same
-everywhere; a project switches a single rule off in its Keel configuration, with a reason, and the
-check reports every rule it skipped.
+Planned, not built yet: `graphhelm setup` will install this file and the `keel/` folder in a
+project, and a project will switch a single rule off in its Keel configuration, with a reason,
+while the check reports every rule it skipped. The values are the same everywhere. Until then,
+a project without these files follows the `keel` skill's digest.

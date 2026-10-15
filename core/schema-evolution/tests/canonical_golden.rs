@@ -1,57 +1,36 @@
-//! #1378 (plan wave E, Canonical JSON): this crate's canonical JSON is byte-identical to
-//! `graphhelm_protocols::canonical_json` (whose absolute digests are pinned in
-//! `core/protocols/tests/fixtures/canonical-goldens.json`), and it keeps its depth refusal at
-//! exactly `MAX_JSON_DEPTH`. Written before the writers merge, so the merge has a fixed target.
+//! #1378 (plan wave E, Canonical JSON): the live schema digests are pinned absolutely, and this
+//! crate keeps its depth refusal at exactly `MAX_JSON_DEPTH`.
+//!
+//! Since the writers merged, `canonical_json` here is the protocols writer behind a depth check,
+//! so comparing the two proved nothing. The pin below compares each committed `sha256` in
+//! `schemas/catalog.json` with the digest of the file it names: those strings were written by the
+//! writer as it was, so a writer change that moves one byte of any live schema goes red here.
+//! (Release 1.0.0 is pinned the same way by `frozen_releases.rs`.) Cost: 24 small file reads.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use graphhelm_schema_evolution::canonical_json;
-
-fn protocols_fixtures() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../protocols/tests/fixtures")
-}
-
-fn inputs() -> Vec<(String, serde_json::Value)> {
-    let mut out = Vec::new();
-    let tricky: Vec<serde_json::Value> = serde_json::from_str(
-        &std::fs::read_to_string(protocols_fixtures().join("canonical-tricky.json"))
-            .expect("canonical-tricky.json"),
-    )
-    .expect("canonical-tricky.json is a JSON array");
-    for (index, value) in tricky.into_iter().enumerate() {
-        out.push((format!("tricky/{index:02}"), value));
-    }
-    let schemas = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
-    let mut files: Vec<_> = std::fs::read_dir(&schemas)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "json")
-        })
-        .collect();
-    files.sort();
-    for path in files {
-        let value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        out.push((
-            path.file_name().unwrap().to_string_lossy().into_owned(),
-            value,
-        ));
-    }
-    out
-}
+use graphhelm_schema_evolution::{SchemaCatalog, canonical_json, schema_digest};
 
 #[test]
-fn schema_canonical_json_is_byte_identical_to_the_protocols_writer() {
-    let inputs = inputs();
-    assert!(inputs.len() > 30, "HARNESS-BROKE: {} inputs", inputs.len());
-    for (name, value) in inputs {
-        let ours = canonical_json(&value).unwrap();
-        let theirs = graphhelm_protocols::canonical_json(&value);
+fn every_live_catalog_digest_is_the_digest_of_its_schema_file() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let catalog: SchemaCatalog = serde_json::from_slice(
+        &std::fs::read(root.join("schemas/catalog.json")).expect("schemas/catalog.json"),
+    )
+    .expect("the live catalog parses");
+    assert!(
+        catalog.schemas.len() > 20,
+        "HARNESS-BROKE: {} catalog entries",
+        catalog.schemas.len()
+    );
+    for (name, entry) in &catalog.schemas {
+        let document: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join(&entry.path)).unwrap()).unwrap();
         assert_eq!(
-            ours,
-            theirs.as_bytes(),
-            "{name}: the two canonical writers disagree"
+            schema_digest(&document).unwrap(),
+            entry.sha256,
+            "{name}: the committed digest no longer matches {}",
+            entry.path
         );
     }
 }

@@ -100,6 +100,91 @@ GraphHelm includes two complementary development methods:
 
 The specifications distinguish guidance from implemented checks. See the [delivery process](https://github.com/stabem/GraphHelm/blob/main/docs/process/DELIVERY.md).
 
+## How work flows
+
+Two processes, one inside the other. GraphHelm says how a change travels from an issue to `main`;
+Keel says how the code inside that change is written and proved.
+
+### GraphHelm delivery
+
+```text
+                 ┌──────────────────────────────────────┐
+                 │  GitHub issue                        │
+                 │  one label: current-wave | in-flight │
+                 │  | tech-debt | product-vision        │
+                 └──────────────────┬───────────────────┘
+                                    │ branch issue-<N>-<desc>
+                                    ▼
+                 ┌──────────────────────────────────────┐
+                 │  Keel card, sized to the change      │
+                 │  (see Keel below)                    │
+                 └──────────────────┬───────────────────┘
+                                    ▼
+                 ┌──────────────────────────────────────┐
+                 │  Work: start from the promise,       │
+                 │  add only what it needs, prove it    │
+                 │  PR body lists every test run        │
+                 └──────────────────┬───────────────────┘
+                                    ▼
+                 ┌──────────────────────────────────────┐
+                 │  One review                          │
+                 │  another session or a blind subagent │
+                 │  reads earlier comments, runs the    │
+                 │  reached tests + keel check          │
+                 └───────┬──────────────────────┬───────┘
+                         │                      │
+                       BLOCK         APPROVE | APPROVE-WITH-RISK
+                         │                      │
+          fix (new head) │                      ▼
+          or answer why  │     ┌──────────────────────────────────┐
+          it does not    │     │  Merge by the approving reviewer │
+          hold           │     │  head pinned to the reviewed sha │
+                         │     │  squash, delete branch           │
+                         ▼     └────────────────┬─────────────────┘
+                 back to review                 ▼
+                                    Delivered = merged into main
+                                    (no gates, no presser)
+```
+
+Every comment, review and merge starts with `Session: <name> · Head: <sha8>`. Long form:
+[delivery process](https://github.com/stabem/GraphHelm/blob/main/docs/process/DELIVERY.md).
+
+### Keel
+
+```text
+                    What does the change touch?
+                                │
+   ┌──────────────┬─────────────┼───────────────┬──────────────────────┐
+   ▼              ▼             ▼               ▼                      ▼
+ docs, config,  bounded       a screen       new public            persistence,
+ one line,      code          (journey       surface               permissions,
+ test only      change        scope)         (module, type,        security,
+                                             fn, dep, test)        external effects
+   │              │             │               │                      │
+ summary        3-line card:  3-line card     full card,            full card
+ only           paths,        + journeys:     new surface           + JPD flow
+                promise,      replayed        named                 + named-defect
+                proof command green                                 test
+   └──────────────┴─────────────┴───────┬───────┴──────────────────────┘
+                                        ▼
+        ┌─────────────────────────────────────────────────────────┐
+        │ Law 1  Promise and consumer: nothing without both       │
+        │ Law 2  Write surface declared, spent, refused by name   │
+        │ Law 3  A test is born against a named defect            │
+        │ Law 4  Penalty is a routing state (ladder, off today)   │
+        │ Law 5  The enforcer is versioned and receipted          │
+        │ Law 6  Verify only what the change can reach            │
+        └───────────────────────────┬─────────────────────────────┘
+                                    ▼
+                  graphhelm keel check --diff <base>..<head> --card <card>
+                  path outside the card → widen the card or drop the change
+                                    ▼
+                  An observer proves the promise
+                  no observer → OBSERVER_MISSING, never "done"
+```
+
+Long form: [Keel specification](https://github.com/stabem/GraphHelm/blob/main/docs/keel/KEEL_SPEC.md).
+
 ## Control and trust
 
 - Runtime endpoints bind to loopback; protected API operations use bearer-token authentication

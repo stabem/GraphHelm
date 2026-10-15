@@ -6,60 +6,74 @@ The normative architecture is language-independent. This document began as a pre
 reference; later accepted ADRs record the implementation that now exists. The reference stack stays
 coherent with security, portability, community, and extensibility.
 
-## 2. Reference stack
+## 2. Stack
 
-### Studio
+### 2.1 Built today
 
-- Tauri 2;
-- React + TypeScript;
-- React Flow or a canvas compatible via adapter;
-- event-sourced state management/local cache;
-- Monaco editor for DSL/schemas;
-- Markdown/Mermaid renderers;
-- OS keychain for local identity.
+What the code in this repository uses, as of 2026-10-15. The workspace pins Rust 1.97.1,
+edition 2024 (`Cargo.toml`, `rust-toolchain.toml`).
 
-### Runtime core
+**Rust core (`core/`)** — domain crates, no OS or network access of their own:
 
-- Rust for daemon, Graph Engine, Policy Engine, Tool Broker, Credential Broker and sandbox orchestration;
-- async runtime;
-- gRPC/Connect-compatible API with Protobuf as the binary contract and JSON mapping;
-- WebSocket/SSE-compatible event streaming.
+| Crate | Owns |
+|---|---|
+| `protocols`, `schema`, `schema-evolution` | Typed contracts, JSON Schema validation (`jsonschema`), schema migration |
+| `graph`, `simulation` | Graph DSL (YAML via `serde_yaml_ng`, JSON), validation, versions, dry runs |
+| `policy` | Deterministic policy engine (ADR-004), including the Keel classifier (`keel.rs`) |
+| `governor`, `architect` | Graph mutation through the Governor (ADR-014), drafts and proposals |
+| `events` | Append-only event model (ADR-005) |
+| `execution`, `runtime` | Execution state machine, retries (ADR-030), async Runtime ports |
+| `process` | The one way GraphHelm starts a child process (hidden, no console window) |
+| `gateway` | Model gateway contracts and accounting (ADR-029) |
+| `tool-broker` | Pure effect taxonomy and isolation-tier rule |
+| `extension-host` | Atomic extension install, activation, rollback and discovery |
+| `quality` | Deterministic quality evaluators: content manifest and layout grammar over rendered HTML |
 
-### SDKs
+**Adapters (`adapters/`)** — the impure edges:
 
-- TypeScript;
-- Python;
-- cross-platform CLI;
-- generated clients from schemas/protocols.
+| Crate | Does |
+|---|---|
+| `postgres-event-store` | PostgreSQL event store over `sqlx` + `tokio` (ADR-021) |
+| `sealed-key-provider` | Durable local keyring with authenticated sealed metadata (ChaCha20-Poly1305) |
+| `model-gateway` | BYOK model calls over `ureq` (ADR-025) |
+| `tool-host` | Runs what the Tool Broker decided: scrubbed env, deadlines, output caps, Tier 1 workspaces |
+| `process-tree` | Kills a process and everything it spawned, on Windows and Unix |
+| `host-adoption` | Installs GraphHelm into a project and its agent hosts |
+| `codebase-memory-mcp` | Code-index provider sessions (ADR-028) |
 
-### Extensions
+**Entry points (`apps/`)**
 
-- OCI containers as the universal format;
-- WASI/WASM for lightweight, more restricted components;
-- MCP/HTTP/gRPC adapters;
-- pure-data packages for skills/policies/schemas.
+- `apps/cli` — one `graphhelm` binary (`clap`). It also hosts the Runtime HTTP API
+  (`graphhelm serve`, `axum`, JSON over loopback with a bearer token; ADR-024, ADR-039) and the
+  MCP server (hand-rolled JSON-RPC 2.0 over stdio; ADR-026).
+- `apps/studio` — a web app: React 19 + TypeScript + Vite, tested with Vitest. It talks only to
+  the Runtime API. The graph view is drawn in-house; there is no desktop shell.
 
-### Persistence
+**Persistence** — a local file event store (not encrypted at rest), or PostgreSQL; content-addressed artifacts by
+hash (ADR-007); Git for repositories and docs.
 
-- PostgreSQL + JSONB + full-text + pgvector;
-- content-addressed artifact store on filesystem, with S3-compatible adapter;
-- Git for repositories and docs;
-- encrypted local vault with adapter for Vault/KMS.
+**Delivery** — release binaries for Windows x86-64 and Ubuntu x86-64; a `Dockerfile` and
+`docker-compose.yml`; a systemd VPS install with backup, restore and upgrade scripts in `deploy/`
+(ADR-037).
 
-### Observability
+**Integrations** — agent-host plugins in `plugins/` (Claude Code and Codex: skills, hooks, MCP config).
 
-- OpenTelemetry;
-- structured logs;
-- Prometheus-compatible metrics;
-- optional external exporters.
+### 2.2 Planned, not built
 
-### Isolation
+Kept from the pre-implementation reference so the direction stays visible. None of these is in the
+code today; each needs its own accepted ADR before it lands.
 
-- Docker/Podman rootless for Tier 1/2;
-- seccomp/AppArmor/SELinux;
-- gVisor/Kata/Firecracker adapter for Tier 3;
-- Git worktrees/snapshots;
-- egress proxy.
+- A desktop shell for Studio (Tauri 2) and the OS keychain for identity.
+- Protobuf as the binary contract and a gRPC/Connect API (ADR-009); today contracts are JSON
+  Schema and the API is HTTP + JSON.
+- mTLS for remote production (ADR-002); today the Runtime binds to loopback and is reached by SSH
+  tunnel (ADR-039).
+- OpenTelemetry, Prometheus metrics and external exporters.
+- Container isolation for Tier 2/3 (rootless Docker/Podman, seccomp/AppArmor/SELinux,
+  gVisor/Kata/Firecracker) and an egress proxy.
+- WASI/WASM components and OCI extension packaging.
+- pgvector and full-text search; an S3-compatible artifact adapter; Vault/KMS secret adapters.
+- TypeScript and Python SDKs generated from the schemas.
 
 ## 3. ADR-001 — Local Studio, Runtime on the VPS
 

@@ -2388,6 +2388,44 @@ mod envelope_tests {
         }
     }
 
+    /// #1361 (opt-2's #1371 review): the other half of the body column. A key-sending route
+    /// forwards the arguments as its body exactly when its schema carries a field the path does
+    /// not consume and that is not `ifMatch`; otherwise it sends `{}`. `memory_propose` turned
+    /// `Arguments`→`Empty` would drop its whole payload and fail here.
+    #[test]
+    fn a_key_sending_route_forwards_arguments_exactly_when_it_has_a_body_field() {
+        for route in ROUTES {
+            if matches!(route.body, RouteBody::None) {
+                continue;
+            }
+            let tool = TOOLS.iter().find(|tool| tool.name == route.tool).unwrap();
+            let schema = (tool.schema)();
+            let path_args: Vec<&str> = route
+                .path
+                .iter()
+                .filter_map(|segment| match segment {
+                    Seg::Arg(name) => Some(*name),
+                    Seg::Lit(_) => None,
+                })
+                .collect();
+            let body_fields: Vec<&String> = schema["properties"]
+                .as_object()
+                .map(|properties| properties.keys().collect::<Vec<_>>())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|field| field.as_str() != "ifMatch" && !path_args.contains(&field.as_str()))
+                .collect();
+            let forwards = matches!(route.body, RouteBody::Arguments);
+            assert_eq!(
+                forwards,
+                !body_fields.is_empty(),
+                "{}: body {:?} fields {body_fields:?}",
+                route.tool,
+                if forwards { "Arguments" } else { "Empty" }
+            );
+        }
+    }
+
     /// #1330 (plan D2): `schemas/mcp-tools.json` is `tools/list` as served, emitted from this
     /// table. The Studio's WebMCP adapter imports it instead of hand-copying schemas, so a schema
     /// change here that is not re-emitted fails this cell rather than drifting. Rewrite with

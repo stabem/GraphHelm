@@ -127,7 +127,6 @@ function budgetSecondsLegal(typed: string | undefined): boolean {
   return Number.isSafeInteger(seconds) && seconds >= MIN_NODE_TIMEOUT_SECONDS && seconds <= MAX_NODE_TIMEOUT_SECONDS;
 }
 
-/** Big enough that the board sees the whole roster on a normal run, and still one page. */
 /** The Runtime's own page ceiling (`MAX_EVENTS_LIMIT` in `serve/routes.rs`). Every page costs the
  * Runtime a fresh store open plus a full stream replay, so fewer, larger pages are what make a
  * big run open fast: 200 per page made a 5,000-event run cost 25 serial full replays. */

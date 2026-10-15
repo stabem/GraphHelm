@@ -104,7 +104,7 @@ import { DRAFT_NODE_ID, draftGraph, newExecutionId } from "./graph/draft";
 import { isGeneratedRunId, readable, runLabel, verdictOf } from "./components/format";
 import { dockReserve } from "./dock-reserve";
 import { actionLegality, hasEnded } from "./components/legality";
-import { loadProjectName, loadRemovedRuns, saveProjectName, saveRemovedRuns, validProjectName } from "./studio-preferences";
+import { useProjectPrefs } from "./runtime/use-project-prefs";
 
 
 function rawSha256(digest: string): string {
@@ -203,14 +203,6 @@ export default function App({
   const [runtimeDetailsRefreshError, setRuntimeDetailsRefreshError] = useState("");
   const runtimeDetailsRefreshClient = useRef<RuntimeClient | null>(null);
   /** What the rail calls this folder. Named by the operator; absent, the rail says what it can. */
-  const [project, setProject] = useState<string | null>(null);
-  const [projectPath, setProjectPath] = useState<string | null>(null);
-  const [onDemandLanes, setOnDemandLanes] = useState<string[]>([]);
-  const [projectIdentity, setProjectIdentity] = useState<string | null>(null);
-  const [removedRuns, setRemovedRuns] = useState<string[]>([]);
-  const removedRunsRef = useRef<string[]>([]);
-  removedRunsRef.current = removedRuns;
-  const [projectPreferenceNotice, setProjectPreferenceNotice] = useState("");
   const [openDocument, setOpenDocument] = useState<{executionId: string; reference: DocumentReference} | null>(null);
   const documentAttention = useRef<"clean" | "draft" | "pending_notice" | "uncertain_save">("clean");
   const documentDraftDirty = useRef(false);
@@ -258,6 +250,10 @@ export default function App({
   const executionsRef = useRef<ExecutionSummary[]>([]);
   /** Restored rows outside the explicitly paged prefix must not expand background paging. */
   const restoredOutsidePage = useRef(new Set<string>());
+  const {
+    project, projectPath, onDemandLanes, removedRuns, removedRunsRef, projectPreferenceNotice,
+    openProject, resetProject, renameProject, removeRunFromView, restoreRun,
+  } = useProjectPrefs({ clientRef, executionsRef, restoredOutsidePage, setExecutions, listPageSize: LIST_PAGE_SIZE });
   useEffect(() => {
     executionsRef.current = executions;
   }, [executions]);
@@ -1368,14 +1364,7 @@ export default function App({
           roster = opened?.token === token ? opened.onDemandLanes ?? [] : [];
         }
         if (connectionGeneration.current !== generation) { client.dispose(); return; }
-        setProjectIdentity(identity);
-        setProject(identity === null ? null : loadProjectName(`${location.origin}:${identity}`, identity));
-        setProjectPath(folder);
-        setOnDemandLanes(roster);
-        const removed = identity === null ? [] : loadRemovedRuns(`${location.origin}:${identity}`);
-        removedRunsRef.current = removed;
-        setRemovedRuns(removed);
-        setProjectPreferenceNotice("");
+        openProject(identity, folder, roster);
         await openWith(client);
       } catch (reason) {
         if (connectionGeneration.current !== generation) { client.dispose(); return; }
@@ -1465,12 +1454,7 @@ export default function App({
     setRuntimeDetailsRefreshing(false);
     setRuntimeDetailsRefreshError("");
     runtimeDetailsRefreshClient.current = null;
-    setProject(null);
-    setProjectPath(null);
-    setProjectIdentity(null);
-    setRemovedRuns([]);
-    removedRunsRef.current = [];
-    setProjectPreferenceNotice("");
+    resetProject();
     setExecutions([]);
     restoredOutsidePage.current.clear();
     setNextCursor(null);
@@ -2408,78 +2392,10 @@ export default function App({
       ? (journalTopology ? topologyNote(journalTopology) : topologyError || topologyNote(visibleTopology))
       : "Verify the graph to connect work nodes.",
   ].join(" · ");
-  const runtimePreferenceKey = projectIdentity === null ? null : `${location.origin}:${projectIdentity}`;
   const visibleExecutions = executions.filter((run) => !removedRuns.includes(run.executionId));
-  const renameProject = (name: string): boolean => {
-    const valid = validProjectName(name);
-    if (valid === null) return false;
-    if (runtimePreferenceKey === null) {
-      setProject(valid);
-      setProjectPreferenceNotice("Project name changed for this browser view only; this Runtime has no public project identity.");
-      return true;
-    }
-    const saved = saveProjectName(runtimePreferenceKey, valid);
-    if (!saved) {
-      setProjectPreferenceNotice("Project name changed for this view only; browser storage is unavailable.");
-      setProject(valid);
-      return true;
-    }
-    setProject(valid);
-    setProjectPreferenceNotice("");
-    return true;
-  };
   const removeRun = (id: string) => {
-    const next = [...new Set([...removedRuns, id])];
-    setRemovedRuns(next);
-    if (runtimePreferenceKey === null) {
-      setProjectPreferenceNotice("Removed from this browser view only; this Runtime has no public project identity.");
-    } else if (!saveRemovedRuns(runtimePreferenceKey, next)) {
-      setProjectPreferenceNotice("Removed from this view only; browser storage is unavailable or full.");
-    }
+    removeRunFromView(id);
     if (selected === id) select("");
-  };
-  const restoreRun = async (id: string) => {
-    const client = clientRef.current;
-    if (!client) return;
-    if (!executionsRef.current.some((run) => run.executionId === id)) {
-      try {
-        // Read a bounded prefix to find the row. Keep the restore
-        // entry until the Runtime has actually returned that run; an absent row is not success.
-        let cursor: string | null = null;
-        let restored: ExecutionSummary | undefined;
-        for (let pageNumber = 0; pageNumber < 50; pageNumber += 1) {
-          const page = await client.listExecutions({ limit: LIST_PAGE_SIZE, after: cursor ?? undefined });
-          if (clientRef.current !== client) return;
-          cursor = page.hasMore ? page.nextCursor : null;
-          restored = page.executions.find((run) => run.executionId === id);
-          if (restored || cursor === null) break;
-        }
-        if (!restored) {
-          setProjectPreferenceNotice(cursor === null
-            ? "This run is not in the Runtime list. It remains in the removed list; try restoring it again later."
-            : "This run was not found in the first 50 pages. It remains in the removed list; try restoring it again later.");
-          return;
-        }
-        // Restoring one run must not page every traversed row into the live rail: polling
-        // follows its loaded row count. Preserve concurrent rows and the Show more cursor.
-        const target = restored;
-        if (!executionsRef.current.some((run) => run.executionId === id)) restoredOutsidePage.current.add(id);
-        setExecutions((previous) => previous.some((run) => run.executionId === id)
-          ? previous
-          : [...previous, target]);
-      } catch {
-        if (clientRef.current === client) setProjectPreferenceNotice("The run could not be loaded. It remains in the removed list; try restoring it again.");
-        return;
-      }
-    }
-    const next = removedRunsRef.current.filter((runId) => runId !== id);
-    removedRunsRef.current = next;
-    setRemovedRuns(next);
-    if (runtimePreferenceKey === null) {
-      setProjectPreferenceNotice("Restored for this browser view only; this Runtime has no public project identity.");
-    } else if (!saveRemovedRuns(runtimePreferenceKey, next)) {
-      setProjectPreferenceNotice("Restored for this view only; browser storage is unavailable or full.");
-    }
   };
 
   const conversationVisible = talkOpen && (draft !== null || !["node", "agent", "talk"].includes(focus.kind));

@@ -76,17 +76,17 @@ hashing nor transport protection changes the shared-user filesystem boundary.
 | Revocation | `serve/mod.rs`, `ServeState.agent_credentials` loads once | No restart-free update boundary. |
 | Authority | `serve/routes.rs::journey_flow_review` calls `journey_flow::review_approve`, which calls `approve_as`; `journey_flow_surfaces.rs::a_reviewer_agent_approves_only_with_its_own_credential_and_never_its_own_draft` expects persisted status `approved` | Current behavior lets an agent reviewer perform and persist final approval, while `docs/guides/journeys.md` says approval belongs to the owner. The RFC's earlier claim that review is never final approval is false. |
 | OS isolation | D-058 in `docs/DECISION_REGISTER.md` | No cross-lane unreadability guarantee. |
+| Bootstrap authorization | `serve/mod.rs::lane_credential_subject` verifies a bearer for the execution path and declared lane; `execution/assign.rs::execute` writes `NodeAssigned` only for a sealed ghost node and `core/events/src/projection.rs` replays it into `node_assignments` | Bearer possession, a task claim and a node assignment do not authorize an arbitrary journey flow. No flow grant exists today. |
 
 This is documentary RED, not an executed failing test. The protocol below is proposed behavior.
 
 ## Proposed trust and request flow
 
-1. The coordinator creates an explicit grant for a known execution and lane, naming the exact
+1. The owner creates an explicit grant for a known execution and lane, naming the exact
    project, flow and purpose. A lane cannot choose or widen these fields.
-2. A trusted Runtime-side provisioning service authenticates the requesting lane through the
-   existing execution identity and its authenticated session. It verifies the execution belongs
-   to the named project and that the grant names that exact lane and scope. Caller-provided lane
-   strings alone are not identity proof.
+2. A trusted Runtime-side provisioning service verifies the path-bound execution/lane task bearer.
+   It verifies the execution belongs to the named project and that the owner grant names the
+   authenticated lane and exact scope. Caller-provided lane strings alone are not identity proof.
 3. Only the trusted provisioning service may mint. The owner may create or revoke grants through
    the owner-authenticated control path. A coordinator may request provisioning only within an
    owner-approved grant; it cannot approve a journey or create broader grants.
@@ -109,25 +109,43 @@ diagnostic without disclosing whether another lane or flow exists.
 
 The owner-side coordinator uses today's owner-authenticated `tasks credential` command to mint
 an execution-and-lane task bearer and delivers only that bearer to its assigned lane. The lane
-never reads the owner token. The Runtime verifies the bearer against the execution path and lane
-subject using the existing task-authentication rule, then checks the lane's assignment in trusted
-execution state. The shared agent session token, a caller-supplied actor header, or a lane field
-in the request cannot substitute. A stolen task bearer remains a bearer credential; the shared
-OS-user limitation in D-058 remains.
+never reads the owner token. The Runtime verifies the bearer against the path-bound execution and
+declared lane by recomputing the derived credential in constant time, as `serve/mod.rs` does for
+task routes. This proves possession for that `(execution, lane)`; it does not prove assignment or
+journey entitlement. The broker also requires the owner-issued journey grant below. The shared
+agent session token, an actor header alone, an agent-authored task claim, and a bearer for another
+execution or lane cannot substitute. A stolen task bearer remains a bearer credential; the
+shared OS-user limitation in D-058 remains.
 
-Only an owner-authenticated control route creates or revokes a grant. Its record has `grantId`,
+The existing owner-only `POST /v1/executions/{executionId}/assign` writes `NodeAssigned` for one
+approved ghost node and sealed proposal digest. Replay stores its actor by node in
+`node_assignments`; it contains no journey flow or purpose. It cannot represent journey scope,
+and a node assigned to the same lane is neither necessary nor sufficient for a journey grant.
+Provisioning does not infer permission from that projection or from task-record acceptance. The
+owner directly authorizes a lane for a journey through a **new**, proposed
+`JourneyCredentialGrant` event; no trusted flow-grant store exists in the current Runtime.
+
+The proposed owner-authenticated `POST /v1/executions/{executionId}/journey-credential-grants`
+creates a grant; its owner-only revoke operation names the grant id. Its immutable event record
+has `grantId`,
 canonical `projectId`, `executionId`, `laneId`, `flowId`, `purpose` (`author` or `reviewer`),
-`expiresAt`, `generation`, `state` and `issuer=owner`. The issuer verifies the execution belongs
-to the Runtime project, the lane is assigned to it and the flow exists. Identifiers pass their
-checked parsers and are compared byte for byte after canonicalization at creation. Assignment
-removal revokes the grant under the shared transaction rule below. `approve` is not a grant
-purpose. A coordinator may request a grant
-from the owner but cannot issue one by itself.
+`expiresAt`, `generation`, `state` and `issuer=owner`. The owner is the authorization source for
+the named lane; a node assignment is not required. The writer verifies the execution belongs to
+the Runtime project and the flow exists. Identifiers pass their
+checked parsers and are compared byte for byte after canonicalization at creation. Grant
+revocation revokes its credentials under the shared transaction rule below. Removing an unrelated
+ghost-node assignment has no effect on a journey grant. `approve` is not a grant purpose. A
+coordinator may request a grant from the owner but cannot issue one by itself. The grant writer
+appends the owner-authenticated event to the execution's durable store; replay rejects a duplicate
+id, wrong project/execution, non-owner issuer or malformed scope, and builds an active grant
+projection keyed by id and exact scope. The broker reads that projection under the shared
+transaction lock. A missing, revoked, unrelated or ambiguous grant refuses issuance without a
+credential or journey write.
 
-The lane calls the broker with its task bearer and
+The lane calls proposed `POST /v1/executions/{executionId}/journey-credentials` with its task bearer and
 `{grantId, projectId, executionId, flowId, purpose}`; there is no authoritative `laneId` request
 field. The broker checks the authenticated lane and every field against one active, unexpired
-grant. Wrong scope, missing assignment or ambiguous grants return one stable authorization
+grant. Wrong scope, missing or revoked grant, or ambiguous grants return one stable authorization
 diagnostic before any write, without revealing whether another scope exists. On success, the
 broker draws 32 random bytes from the OS CSPRNG, stores their keyed digest and returns
 `{credentialId, token, expiresAt, generation}` once to that lane on the authenticated response.
@@ -144,17 +162,17 @@ Each durable credential record stores `credentialId`, `grantId`, immutable canon
 collisions or corrupt records refuse all journey use and provisioning. Key rotation explicitly
 reissues tokens; there is no fallback key. Registry and key backups require protection together.
 
-One Runtime owns the project registry and trusted assignment state. It holds an exclusive process
-lease against a second writer. Assignment changes, grant changes and credential issue, rotation
+One Runtime owns the project registry and trusted grant state. It holds an exclusive process
+lease against a second writer. Grant changes and credential issue, rotation
 or revocation share one transaction lock and one durable journal. Provisioning holds that lock
-from assignment and grant validation through credential commit. Assignment removal holds the
-same lock and commits the removal and revocation of its grants and credentials as one journal
-transaction; it cannot acknowledge removal while an earlier issue is in flight. The transaction
+from grant validation through credential commit. Grant revocation holds the same lock and commits
+the revocation of its credentials as one journal transaction; it cannot acknowledge while an
+earlier issue is in flight. The transaction
 is one complete versioned record with length and checksum, flushed and durable-synced before
-publishing the new immutable in-memory snapshot or acknowledging either operation. If removal
+publishing the new immutable in-memory snapshot or acknowledging either operation. If revocation
 commits first, later provisioning refuses with the same stable authorization diagnostic and no
-credential record. If issue commits first, removal revokes that credential before acknowledging.
-Neither path may read assignment state from a separate unsynchronized cache or commit it to a
+credential record. If issue commits first, revocation disables that credential before acknowledging.
+Neither path may read grant state from a separate unsynchronized cache or commit it to a
 separate store outside this atomic boundary. Startup
 replay refuses a corrupt or truncated record rather than guessing an earlier state. A crash
 before sync is unacknowledged; a crash after sync is recovered on replay. A lost response after
@@ -216,22 +234,23 @@ route as owner-only or silently treat its persisted approval as a mere review.
 
 ## Security review disposition
 
-No independent security reviewer has yet recorded a disposition on this design head. The table
-below makes the six required questions and their evidence explicit for that review; `PENDING`
-means the question is not security-approved and cannot authorize implementation.
+The independent review of PR #1344 at head `1b20121c` recorded six dispositions in
+[#1344's security review](https://github.com/stabem/GraphHelm/pull/1344#issuecomment-6186277965).
+Those dispositions apply to that head. This revision addresses only its bootstrap blocker and
+needs a new independent disposition on the exact head; it does not clear the other blockers.
 
 | Question | Evidence and current proposal | Independent disposition |
 |---|---|---|
-| Bootstrap identity: can execution identity be authenticated without a caller-supplied lane name? | The concrete bootstrap requires the owner-issued execution-and-lane task bearer and checks trusted assignment state; caller fields and the shared session token are insufficient. | PENDING; reviewer must verify the existing task-authentication consumer and assignment source can establish this identity. |
-| Scope/purpose refusal: do wrong scope or purpose fail before writes? | The proposal checks project, execution, flow, lane and purpose before handler entry and specifies a stable refusal with unchanged state. | PENDING; route ordering and every write boundary need security review. |
-| Revocation ordering: can a race accept a revoked token after acknowledgement? | The proposal serializes assignment, grant and credential changes and journey writes under one transaction boundary, with durable sync before acknowledgement. | PENDING; reviewer must validate the lock/journal boundary against actual storage and crash recovery. |
-| Secret exposure: can token material reach logs, errors, events or task records? | The proposal returns plaintext once, stores a keyed digest, and excludes token and digest from recorded output. | PENDING; all output and failure paths require review. |
-| Approval authority: does reviewer approval conflict with policy? | `review_approve -> approve_as` persists an agent approval; `a_distinct_reviewer_can_approve` expects approved status. The standing target is owner-only final approval. | PENDING; reviewer must explicitly disposition the conflict and compatibility path. |
-| Host isolation: is there a real observer for cross-lane unreadability? | D-058 places owner and agent files under one OS user; this proposal does not establish unreadability. | BLOCKED; no real-host observer or separate enforced OS/process identity is delivered by this documentation slice. |
+| Bootstrap identity and authorization | `serve/mod.rs` verifies the execution/lane bearer but grants task-route access only. `NodeAssigned` has no flow/purpose scope. Proposed `JourneyCredentialGrant` is owner-issued and exact-scope. | BLOCKED on #1344 head; new independent review of this narrowed grant contract pending. |
+| Scope/purpose refusal | Exact checks and unchanged-state refusal are specified, but no Runtime route or observer exists. | DESIGN SPECIFIED on #1344 head; Runtime unobserved. |
+| Revocation ordering | The proposed shared journal/lock has no concrete store or crash/replay implementation. | BLOCKED for implementation on #1344 head. |
+| Secret exposure | A protected response channel and success/error/crash/log paths have not been reviewed. | BLOCKED for implementation on #1344 head. |
+| Approval authority | `review_approve -> approve_as` persists agent approval; `a_reviewer_agent_approves_only_with_its_own_credential_and_never_its_own_draft` expects approved status. | BLOCKED pending an accepted policy decision and compatibility plan on #1344 head. |
+| Host isolation | D-058 places owner and agent files under one OS user; no real-host unreadability observer exists. | BLOCKED as a separate host obligation on #1344 head. |
 
-Only the independent security reviewer can fill the disposition column on the reviewed head.
-Routine document approval is not security sign-off. Any unresolved blocker remains visible and
-prevents the credential implementation from starting.
+Only an independent security reviewer can disposition the revised bootstrap contract on this
+head. Routine document approval is not security sign-off. The other blockers still prevent
+credential implementation.
 
 ## OS and process isolation boundary
 
@@ -248,26 +267,34 @@ supported host. Until that real observer passes, report OS isolation as unimplem
 unobserved. The narrower no-secret-handoff guarantee may be implemented earlier, but must not be
 described as OS isolation.
 
-## First implementation card (conditional on security review and accepted authority)
+## Conditional implementation dependency order
 
-Do not start this card until an independent security reviewer has dispositioned all six questions
+Dependency order: (1) obtain independent security disposition of the exact owner-grant bootstrap
+rule above; (2) choose and review the concrete durable grant/credential transaction, protected
+delivery channel and failure paths; (3) accept the approval-authority and persisted approval
+compatibility decision; (4) split implementation into a grant producer/replay slice, then
+credential issue and journey-route enforcement slices, each with its own exact-file card and
+isolated observers. Host isolation remains separate. Documentation approval authorizes no code.
+
+Do not start implementation until an independent security reviewer has dispositioned all six questions
 above, every blocker affecting the application protocol is resolved, and any owner-only approval
 authority decision is accepted in the decision register with the required governing-rule update.
 The host-isolation blocker may remain only if the implementation is explicitly limited to
-no-secret-handoff and claims no OS isolation. This is a bounded first slice, not authorization
-from this RFC:
+no-secret-handoff and claims no OS isolation. The following earlier five-file sketch is a later
+integration target, not the first implementation slice or authorization from this RFC:
 
 - **Exact files:** `apps/cli/src/commands/serve/mod.rs`,
   `apps/cli/src/commands/serve/routes.rs`, `apps/cli/src/commands/tasks.rs`,
   `apps/cli/src/commands/journey_flow.rs`,
   `apps/cli/tests/journey_flow_surfaces.rs`.
 - **Promise:** replace startup-only `ServeState.agent_credentials` use for journey routes with a
-  trusted, owner-granted credential registry; authenticate the execution-and-lane task bearer,
+  trusted, owner-granted credential registry; authenticate the execution-and-lane task bearer
+  separately from checking the new owner grant,
   enforce project/flow/lane/purpose and revocation before writes, and keep final approval behavior
   aligned with the authority decision.
 - **Storage/auth consumers:** `ServeState` and `load_agent_credentials` in `serve/mod.rs`, the
   journey draft/review handlers in `serve/routes.rs`, and owner-token task credential issuance in
-  `tasks.rs`. The implementation must identify and reuse or add the durable transaction store
+  `tasks.rs`. A prior grant producer/replay slice must name its exact source files. The implementation must identify and reuse or add the durable transaction store
   named by security review; it may not claim atomicity by adding an in-memory cache alone.
 - **Compatibility:** existing `GRAPHHELM_AGENT_CREDENTIALS` consumers and the persisted approved
   status produced by reviewer credentials need an explicit migration/refusal policy. Do not
@@ -276,11 +303,11 @@ from this RFC:
   preserve the existing digest and previous-writer coverage.
 - **Proof:** isolated HTTP tests in `journey_flow_surfaces.rs` cover wrong scope/purpose, spoofed
   lane, execution bearer refusal on journey routes, former-writer review, exact digest binding,
-  revocation without restart and unchanged state on refusal. Assignment-removal races and durable
+  revocation without restart and unchanged state on refusal. Grant-revocation races and durable
   replay need separate observers if the selected store path reaches them. Real-host OS isolation
   remains a separate deliverable.
 
-The independent reviewer may reject or narrow this card. No code is authorized by this proposal.
+The independent reviewer may reject or narrow this sequence. No code is authorized by this proposal.
 
 ## Required implementation observers
 
@@ -295,8 +322,11 @@ Runtime. They must show:
 - rejected requests preserve the draft, review and event state.
 - spoofed lane identity and a task bearer on journey routes are rejected;
 - post-revocation use is refused before writes, including on the same Runtime process.
-- concurrent assignment removal and provisioning serialize in either order: removal first refuses
-  issuance, while issuance first is revoked before removal acknowledgement, including after replay.
+- concurrent grant revocation and provisioning serialize in either order: revocation first refuses
+  issuance, while issuance first is revoked before revocation acknowledgement, including after replay;
+- a valid task bearer without a grant, one for another lane or execution, a wrong flow, an
+  unrelated `NodeAssigned`, an agent-authored task claim and a revoked grant all refuse with
+  unchanged persisted state.
 
 These HTTP tests establish application authentication and behavior only. A separate real-host
 observer must show one lane cannot read another lane's token or the owner's token under the

@@ -8,6 +8,7 @@ mod execution;
 mod extension;
 mod gateway;
 mod hash;
+mod hex_key;
 mod init;
 mod journey;
 mod journey_backend;

@@ -278,23 +278,26 @@ fn reject_insecure_permissions(_: &std::fs::Metadata, _: &str) -> Result<(), Sec
     Ok(())
 }
 
-/// Hand-rolled to match `events/config.rs`'s own house style: that file validates and decodes
-/// hexadecimal by hand (`hex_value`, the sha256 pin check) rather than pulling in the `hex`
-/// crate for a few lines of work, even though `hex` is already an approved, pinned workspace
-/// dependency used elsewhere. Encoding here follows the same convention.
+/// Lowercase hex, two digits per byte. #1325: `hex::encode` (a pinned workspace dependency the
+/// crate already uses) replaces the hand-rolled table; the cell below pins the same output.
 fn encode_hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(DIGITS[(byte >> 4) as usize] as char);
-        out.push(DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    out
+    hex::encode(bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1325: pinned BEFORE `encode_hex` becomes `hex::encode`: lowercase, two digits per byte,
+    /// no separators, every byte value.
+    #[test]
+    fn hex_encode_matches_known_strings_for_every_byte() {
+        assert_eq!(encode_hex(&[0x00, 0x0f, 0xf0, 0xff, 0xab]), "000ff0ffab");
+        assert_eq!(encode_hex(&[]), "");
+        let all: Vec<u8> = (0_u8..=255).collect();
+        let expected: String = all.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(encode_hex(&all), expected);
+    }
 
     #[test]
     fn token_path_is_a_sibling_named_after_the_events_directory() {

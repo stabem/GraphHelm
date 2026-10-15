@@ -240,10 +240,7 @@ pub fn run(args: &McpArgs) -> Outcome {
     if getrandom::fill(&mut nonce_bytes).is_err() {
         return Outcome::internal(COMMAND, "the OS random source is unavailable");
     }
-    let nonce = nonce_bytes
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
+    let nonce = hex::encode(nonce_bytes);
 
     let api = match build_client(args, nonce.clone()) {
         Ok(api) => api,

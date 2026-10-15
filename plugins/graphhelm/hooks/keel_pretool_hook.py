@@ -14,7 +14,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from keel_stop_hook import CARD, TRIVIAL_LINES, _git, _is_doc, _merge_base, code_lines_changed
+from keel_stop_hook import CARD, TRIVIAL_LINES, _is_doc, _merge_base, code_lines_changed, toplevel
 
 
 def _edit_lines(tool_input: dict) -> int:
@@ -51,7 +51,7 @@ def main() -> int:
             return 0
         cwd = Path(payload.get("cwd") or os.getcwd())
         target = Path(path) if os.path.isabs(path) else cwd / path
-        repo = Path(_git(cwd, "rev-parse", "--show-toplevel").strip())
+        repo = toplevel(cwd)
         reason = decide(repo, target, tool_input)
     except (subprocess.SubprocessError, OSError, ValueError, AttributeError):
         return 0

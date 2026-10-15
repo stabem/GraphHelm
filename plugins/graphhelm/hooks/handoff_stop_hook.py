@@ -87,17 +87,22 @@ def decide(message: str) -> str | None:
     return REASON.format(phrase=match.group(0)) if match else None
 
 
+def evaluate(payload: dict) -> str | None:
+    """#1278: the gate for one Stop payload, callable in-process by `stop_hook.py`."""
+    if not isinstance(payload, dict) or payload.get("stop_hook_active"):
+        return None
+    try:
+        return decide(last_message(payload))
+    except Exception:  # noqa: BLE001 - a broken gate never traps the turn
+        return None
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
     except ValueError:
         return 0
-    if not isinstance(payload, dict) or payload.get("stop_hook_active"):
-        return 0
-    try:
-        reason = decide(last_message(payload))
-    except Exception:  # noqa: BLE001 - a broken gate never traps the turn
-        return 0
+    reason = evaluate(payload)
     if reason:
         print(json.dumps({"decision": "block", "reason": reason}))
     return 0

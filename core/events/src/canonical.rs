@@ -79,6 +79,61 @@ pub(crate) fn event_hash(
 mod tests {
     use super::*;
 
+    /// #1378: the event chain hash is persisted, so its canonical bytes are history. Every event
+    /// in the committed fixture store is re-hashed here and must equal the `eventHash` it was
+    /// written with (an absolute golden: these bytes came from the store, not from this code).
+    #[test]
+    fn event_hash_reproduces_every_persisted_hash_of_the_fixture_store() {
+        let journal = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/graph-version-published/events/journal.jsonl"),
+        )
+        .expect("fixture journal");
+        let mut checked = 0;
+        for line in journal.lines().filter(|line| !line.trim().is_empty()) {
+            let record: Value = serde_json::from_str(line).unwrap();
+            for event in record["events"].as_array().into_iter().flatten() {
+                let envelope: EventEnvelope = serde_json::from_value(event.clone()).unwrap();
+                let recomputed = event_hash(&envelope, envelope.previous_hash.as_str()).unwrap();
+                assert_eq!(
+                    recomputed,
+                    envelope.event_hash.as_str(),
+                    "{}",
+                    envelope.event_id
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked > 0,
+            "HARNESS-BROKE: no event in the fixture journal"
+        );
+    }
+
+    /// #1378: this crate's canonical bytes equal the protocols writer's on the shared tricky set,
+    /// whose absolute digests `core/protocols/tests/canonical_golden.rs` pins.
+    #[test]
+    fn canonical_bytes_equal_the_protocols_writer_on_the_tricky_set() {
+        let tricky: Vec<Value> = serde_json::from_str(
+            &std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../protocols/tests/fixtures/canonical-tricky.json"),
+            )
+            .expect("canonical-tricky.json"),
+        )
+        .expect("canonical-tricky.json is a JSON array");
+        let mut checked = 0;
+        for value in &tricky {
+            assert_eq!(
+                canonical_bytes(value).unwrap(),
+                graphhelm_protocols::canonical_json(value).into_bytes(),
+                "{value}"
+            );
+            checked += 1;
+        }
+        assert!(checked > 20, "HARNESS-BROKE: {checked} tricky documents");
+    }
+
     #[test]
     fn bounded_counter_is_inclusive_at_exact_serialized_byte_limits() {
         let limit = 1024_usize;

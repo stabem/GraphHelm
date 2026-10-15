@@ -1,0 +1,27 @@
+[
+{},
+[],
+null,
+true,
+0,
+-0,
+1.0,
+1.5e-7,
+1e21,
+18446744073709551615,
+-9223372036854775808,
+0.30000000000000004,
+"",
+"/slash/and\\backslash",
+"quote\"inside",
+"tab\tnewline\nreturn\rbell\u0007unit\u001f",
+"del\u007f and nbsp  and é and é",
+"emoji 😀 and cjk 中文",
+"line separator paragraph",
+{"b":1,"a":2,"A":3,"_":4,"aa":5,"":6},
+{"z":{"y":{"x":[3,2,1,{"w":"v","c":"d"}]}},"a":[[],[{}],[[[]]]]},
+{"é":1,"e":2,"é":3,"😀":4},
+{"nested":{"keys":{"sort":{"at":{"every":{"depth":{"b":true,"a":false}}}}}}},
+[1,1.0,1.10,100,1e2,-1,-1.0],
+{"numbers":{"big":12345678901234567890,"neg":-12345678901234567,"frac":123.456789}}
+]

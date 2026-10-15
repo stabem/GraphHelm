@@ -745,6 +745,24 @@ async function open(client: ReturnType<typeof stubClient>, modelContext: ModelCo
 }
 
 describe("opening", () => {
+  // #1385: the live tail's miss counter. One failed background read stays quiet; three in a row
+  // turn the rail's badge to "stale"; the next good read turns it back to "live".
+  it("marks the rail stale after three failed polls in a row and live again after one good one", async () => {
+    let failing = false;
+    const base = stubClient();
+    const getStatus = vi.fn(async (...args: Parameters<typeof base.getStatus>) => {
+      if (failing) throw new Error("runtime down");
+      return base.getStatus(...args);
+    });
+    // 200 ms ticks and a 2 s wait: room for the three misses, not for ten.
+    await open(stubClient({ getStatus }), null, true, 200);
+    expect(await screen.findByText("live", { exact: true })).toBeVisible();
+    failing = true;
+    expect(await screen.findByText("stale", { exact: true }, { timeout: 2000 })).toBeVisible();
+    failing = false;
+    expect(await screen.findByText("live", { exact: true })).toBeVisible();
+  });
+
   // #1380: with a run selected the Studio holds ONE interval per period: the main tick (which also
   // reads the native chat requests), one shared clock per cadence, one slot poll. A second timer
   // at any period is a poll or a clock that went its own way again.

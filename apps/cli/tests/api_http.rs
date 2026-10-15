@@ -32,6 +32,7 @@ type SpawnObserver = Box<dyn FnOnce(&Child)>;
 mod support;
 use support::time_scale::scaled;
 use support::{RawResponse, parse_response, split_url};
+use support::{read_token, token_path};
 
 const SIGNAL_KEY_HEX: &str = "0101010101010101010101010101010101010101010101010101010101010101";
 
@@ -203,24 +204,6 @@ fn drain_lines<R: Read + Send + 'static>(
             lines.push(line);
         }
     })
-}
-
-/// The token's path: a *sibling* of the events directory (`<events-directory-name>.token` in the
-/// same parent), never a child of it. Mirrors `commands::serve::token_path` exactly — this test
-/// binary cannot import it directly (`apps/cli` is bin-only, no `[lib]` target), so this is a
-/// second copy, same as every other cross-process assertion in this file. Kept out of the events
-/// directory itself because `LocalEventRepository::open`'s `classify_layout`
-/// (`core/events/src/local.rs`) refuses the *entire* repository the moment it finds an entry
-/// outside its own closed allowlist — a real bug this suite caught empirically in Task 2 when the
-/// token originally lived at `events/token` and every subsequent read started failing
-/// `GHE007_UNSUPPORTED_FORMAT`, CLI included.
-fn token_path(events: &Path) -> PathBuf {
-    let mut name = events.file_name().map_or_else(
-        || std::ffi::OsString::from("events"),
-        std::ffi::OsStr::to_os_string,
-    );
-    name.push(".token");
-    events.with_file_name(name)
 }
 
 /// Spawns `graphhelm serve` on an ephemeral port (`--bind 127.0.0.1:0`) against a fresh events
@@ -700,25 +683,6 @@ fn server_guard_sabotage_is_platform_portable() {
         "the sabotage cell no longer spawns another instance of this binary — if the fix for \
          #150 changed shape, update this guard to match rather than deleting it"
     );
-}
-
-/// The token file is written by the server before it prints the startup line, so by the time
-/// `serve()` calls this the file is guaranteed to already exist; the short retry loop is defense
-/// in depth against filesystem-visibility edge cases rather than a real race (the server calls
-/// `sync_all` on it).
-fn read_token(path: &Path) -> String {
-    let deadline = Instant::now() + scaled(Duration::from_secs(5));
-    loop {
-        if let Ok(contents) = std::fs::read_to_string(path)
-            && !contents.is_empty()
-        {
-            return contents;
-        }
-        if Instant::now() >= deadline {
-            panic!("the server never wrote a readable token file at {path:?}");
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
 }
 
 /// `RETRY_LOOP_DEADLINE`'s "several genuine passes" guarantee (`budget_leaves_room_for_the_

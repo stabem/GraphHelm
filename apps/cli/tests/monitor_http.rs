@@ -3,11 +3,14 @@
 //! structure (405 to every mutating verb), CSP on every 200. The harness mirrors
 //! `api_http.rs`'s spawn pattern (bin-only crate: second copy by design).
 
+#[path = "support/mod.rs"]
+mod support;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
+use support::token_path;
 
 #[path = "support/time_scale.rs"]
 mod time_scale;
@@ -22,15 +25,6 @@ impl Drop for ServerGuard {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-fn token_path(events: &Path) -> PathBuf {
-    let mut name = events.file_name().map_or_else(
-        || std::ffi::OsString::from("events"),
-        std::ffi::OsStr::to_os_string,
-    );
-    name.push(".token");
-    events.with_file_name(name)
 }
 
 fn serve(events: &Path) -> (ServerGuard, String, String) {

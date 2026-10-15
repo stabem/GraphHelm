@@ -9,11 +9,14 @@
 //! and the uncontrolled load variable the three original reproductions shared). Not re-adding
 //! that test here — it was locking in a reproduction of a bug that isn't one.
 
+#[path = "support/mod.rs"]
+mod support;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
+use support::read_token;
 
 #[path = "support/time_scale.rs"]
 mod time_scale;
@@ -102,21 +105,6 @@ fn token_file_path(events: &Path) -> std::path::PathBuf {
     );
     name.push(".token");
     events.with_file_name(name)
-}
-
-fn read_token(path: &Path) -> String {
-    let deadline = Instant::now() + scaled(Duration::from_secs(5));
-    loop {
-        if let Ok(contents) = std::fs::read_to_string(path)
-            && !contents.is_empty()
-        {
-            return contents;
-        }
-        if Instant::now() >= deadline {
-            panic!("the server never wrote a readable token file at {path:?}");
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
 }
 
 /// One full request/response round trip: connects, sends `body` in full, reads the whole

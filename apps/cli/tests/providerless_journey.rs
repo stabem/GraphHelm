@@ -23,12 +23,15 @@
 //! — the startup announcement, each socket connect/read/write, the health poll — is bounded by
 //! the deadline it advertises, so a wedged server ends this test red instead of hanging the gate.
 
+#[path = "support/mod.rs"]
+mod support;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+use support::token_path;
 
 const DOCUMENT: &str = include_str!("../../../docs/product/PROVIDER_LESS_MODE.md");
 
@@ -125,15 +128,6 @@ impl Drop for ServerGuard {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-fn token_path(events: &Path) -> PathBuf {
-    let mut name = events.file_name().map_or_else(
-        || std::ffi::OsString::from("events"),
-        std::ffi::OsStr::to_os_string,
-    );
-    name.push(".token");
-    events.with_file_name(name)
 }
 
 /// `serve --events <dir> --bind 127.0.0.1:0` and NOTHING else: no manifest, no broker, no

@@ -22,6 +22,7 @@ use serde_json::Value;
 mod support;
 use support::time_scale::scaled;
 use support::{RawResponse, parse_response, raw_request, split_url};
+use support::{get_json, read_token, token_path, wait_for_health};
 
 // -------------------------------------------------------------------------------------------
 // Harness (mirrors `api_http.rs`'s own — duplicated per this task's instruction).
@@ -56,15 +57,6 @@ impl Drop for ServerGuard {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-fn token_path(events: &Path) -> PathBuf {
-    let mut name = events.file_name().map_or_else(
-        || std::ffi::OsString::from("events"),
-        std::ffi::OsStr::to_os_string,
-    );
-    name.push(".token");
-    events.with_file_name(name)
 }
 
 /// Extra CLI args appended to `serve` beyond `--events`/`--bind` — the real-executor group, when a
@@ -471,36 +463,6 @@ fn server_guard_closes_a_descendant_holding_stdout() {
     );
 }
 
-fn read_token(path: &Path) -> String {
-    let deadline = Instant::now() + scaled(Duration::from_secs(5));
-    loop {
-        if let Ok(contents) = std::fs::read_to_string(path)
-            && !contents.is_empty()
-        {
-            return contents;
-        }
-        if Instant::now() >= deadline {
-            panic!("the server never wrote a readable token file at {path:?}");
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-fn wait_for_health(base: &str) {
-    let deadline = Instant::now() + scaled(Duration::from_secs(5));
-    loop {
-        if let Ok(response) = raw_request(&format!("{base}/health"), None)
-            && response.status == 200
-        {
-            return;
-        }
-        if Instant::now() >= deadline {
-            panic!("the server never answered /health at {base}");
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
 /// The budget one connection may spend across bounded attempts. The runtime HTTP tests run
 /// alongside other integration suites, so a transiently full Windows accept backlog must not
 /// turn the caller's read timeout into an unbounded `TcpStream::connect` wait. The 30-second
@@ -675,12 +637,6 @@ fn post_json_within(
 fn json_body(response: &RawResponse) -> Value {
     serde_json::from_str(&response.body)
         .unwrap_or_else(|error| panic!("response body was not JSON ({error}): {:?}", response.body))
-}
-
-fn get_json(url: &str, token: Option<&str>) -> Value {
-    let response =
-        raw_request(url, token).unwrap_or_else(|error| panic!("request to {url} failed: {error}"));
-    json_body(&response)
 }
 
 /// The events tail's `data.events`, or a failure that says WHAT came back instead.

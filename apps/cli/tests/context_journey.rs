@@ -13,14 +13,15 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::Value;
 
 #[path = "support/mod.rs"]
 mod support;
 use support::time_scale::scaled;
-use support::{RawResponse, parse_response, raw_request, split_url};
+use support::{RawResponse, parse_response, split_url};
+use support::{get_json, read_token, token_path, wait_for_health};
 
 // -------------------------------------------------------------------------------------------
 // Harness
@@ -35,15 +36,6 @@ impl Drop for ServerGuard {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-fn token_path(events: &Path) -> PathBuf {
-    let mut name = events.file_name().map_or_else(
-        || std::ffi::OsString::from("events"),
-        std::ffi::OsStr::to_os_string,
-    );
-    name.push(".token");
-    events.with_file_name(name)
 }
 
 fn serve_with(
@@ -104,36 +96,6 @@ fn serve_with(
     (server, base, token)
 }
 
-fn read_token(path: &Path) -> String {
-    let deadline = Instant::now() + scaled(Duration::from_secs(5));
-    loop {
-        if let Ok(contents) = std::fs::read_to_string(path)
-            && !contents.is_empty()
-        {
-            return contents;
-        }
-        if Instant::now() >= deadline {
-            panic!("the server never wrote a readable token file at {path:?}");
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-fn wait_for_health(base: &str) {
-    let deadline = Instant::now() + scaled(Duration::from_secs(5));
-    loop {
-        if let Ok(response) = raw_request(&format!("{base}/health"), None)
-            && response.status == 200
-        {
-            return;
-        }
-        if Instant::now() >= deadline {
-            panic!("the server never answered /health at {base}");
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
 fn post_json(url: &str, token: &str, extra_headers: &[(&str, &str)], body: &Value) -> (u16, Value) {
     let (host, port, path) = split_url(url);
     let mut stream = TcpStream::connect((host.as_str(), port)).unwrap();
@@ -163,12 +125,6 @@ fn post_json(url: &str, token: &str, extra_headers: &[(&str, &str)], body: &Valu
 fn json_body(response: &RawResponse) -> Value {
     serde_json::from_str(&response.body)
         .unwrap_or_else(|error| panic!("response body was not JSON ({error}): {:?}", response.body))
-}
-
-fn get_json(url: &str, token: Option<&str>) -> Value {
-    let response =
-        raw_request(url, token).unwrap_or_else(|error| panic!("request to {url} failed: {error}"));
-    json_body(&response)
 }
 
 fn gateway_key() -> String {

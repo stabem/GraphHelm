@@ -133,6 +133,11 @@ mod off_reactor_witness {
 }
 
 pub(super) async fn graph_topology(State(state): State<ServeState>, body: Bytes) -> Response {
+    topology_reply(state.path_roots.as_deref(), body).await
+}
+
+/// The topology read itself, given the roots a `file` must resolve under (`None`: unconfined).
+async fn topology_reply(roots: Option<&[PathBuf]>, body: Bytes) -> Response {
     let payload: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(value) => value,
         Err(_) => {
@@ -146,12 +151,7 @@ pub(super) async fn graph_topology(State(state): State<ServeState>, body: Bytes)
             "/file",
         );
     };
-    if let Err(response) = confine_to_project(
-        state.project.as_deref(),
-        Path::new(file),
-        TOPOLOGY_COMMAND,
-        "file",
-    ) {
+    if let Err(response) = confine_to_project(roots, Path::new(file), TOPOLOGY_COMMAND, "file") {
         return response;
     }
 
@@ -3227,9 +3227,14 @@ fn confine_to_project(
         return Ok(());
     };
     let resolved = path.canonicalize().ok().or_else(|| {
-        let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty());
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty());
         let parent = parent.map_or_else(|| Path::new(".").canonicalize(), Path::canonicalize);
-        parent.ok().zip(path.file_name()).map(|(parent, name)| parent.join(name))
+        parent
+            .ok()
+            .zip(path.file_name())
+            .map(|(parent, name)| parent.join(name))
     });
     let Some(resolved) = resolved else {
         return Ok(());
@@ -4531,8 +4536,12 @@ pub(super) async fn resume(
         .and_then(serde_json::Value::as_str)
         .map(PathBuf::from);
     if let Some(path) = &fixtures
-        && let Err(response) =
-            confine_to_project(state.path_roots.as_deref(), path, RESUME_COMMAND, "fixtures")
+        && let Err(response) = confine_to_project(
+            state.path_roots.as_deref(),
+            path,
+            RESUME_COMMAND,
+            "fixtures",
+        )
     {
         return response;
     }
@@ -7089,8 +7098,8 @@ pub(super) mod tests {
     };
 
     use super::{
-        MutationError, graph_topology, list_executions_over, off_reactor, off_reactor_witness,
-        resolve_requested_route,
+        MutationError, list_executions_over, off_reactor, off_reactor_witness,
+        resolve_requested_route, topology_reply,
     };
     use crate::commands::serve::ports::{ModelWiring, RuntimeWiring, ToolWiring};
 
@@ -7417,7 +7426,7 @@ pub(super) mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let reactor = std::thread::current().id();
         let body = serde_json::json!({ "file": example_graph().to_str().unwrap() }).to_string();
-        let (response, runs) = measured(graph_topology(Bytes::from(body)));
+        let (response, runs) = measured(topology_reply(None, Bytes::from(body)));
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             runs.len(),
@@ -7442,7 +7451,7 @@ pub(super) mod tests {
         std::fs::create_dir(&path).unwrap();
         let body = serde_json::json!({ "file": path.to_str().unwrap() }).to_string();
         let (text, _) = measured(async {
-            let response = graph_topology(Bytes::from(body)).await;
+            let response = topology_reply(None, Bytes::from(body)).await;
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
             body_text(response).await
         });

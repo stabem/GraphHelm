@@ -4544,6 +4544,12 @@ Options:
       --require-lane-credential
           #1148: refuse a `task.*` record authenticated by the shared agent session token, so only a lane's own credential (`graphhelm tasks credential`) can sign one. Off by default: the owner flips it after minting one credential per lane, so no record is lost in between
 
+      --confine-paths
+          #1328: refuse a `file`, `fixtures` or query `manifest` path that resolves outside the allowed roots (`--project` and every `--path-root`). Off by default: lanes post paths from worktrees outside the project, so the owner turns it on with their roots after a restart, the same way `--require-lane-credential` is flipped
+
+      --path-root <PATH_ROOTS>
+          #1328: a directory a request path may also resolve under while `--confine-paths` is on, beside `--project`; repeatable (for example `D:/gh` and `D:/gh/b`)
+
       --tests-runner <TESTS_RUNNER>
           The bare program name a `tests` tool node runs, resolved on the child's PATH (see `--path-prepend`). Host configuration, never caller input
           

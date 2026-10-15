@@ -132,18 +132,26 @@ mod off_reactor_witness {
     }
 }
 
+/// #1328 PR 2: the request body as JSON, or an early return with the route's standard refusal:
+/// 400, `GHCLI001_ARGUMENT_INVALID`, "the request body is not valid JSON", pointer `/`. One
+/// spelling for the 19 routes that used to write it out; the two that refuse a non-object body
+/// with their own shape message keep their own parse.
+macro_rules! json_body {
+    ($command:expr, $body:expr) => {
+        match serde_json::from_slice::<serde_json::Value>(&$body) {
+            Ok(value) => value,
+            Err(_) => return bad_request($command, "the request body is not valid JSON", "/"),
+        }
+    };
+}
+
 pub(super) async fn graph_topology(State(state): State<ServeState>, body: Bytes) -> Response {
     topology_reply(state.path_roots.as_deref(), body).await
 }
 
 /// The topology read itself, given the roots a `file` must resolve under (`None`: unconfined).
 async fn topology_reply(roots: Option<&[PathBuf]>, body: Bytes) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => {
-            return bad_request(TOPOLOGY_COMMAND, "the request body is not valid JSON", "/");
-        }
-    };
+    let payload = json_body!(TOPOLOGY_COMMAND, body);
     let Some(file) = payload.get("file").and_then(serde_json::Value::as_str) else {
         return bad_request(
             TOPOLOGY_COMMAND,
@@ -232,16 +240,7 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
         "plan",
         "execution",
     ];
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => {
-            return bad_request(
-                SYNTHESIZE_COMMAND,
-                "the request body is not valid JSON",
-                "/",
-            );
-        }
-    };
+    let payload = json_body!(SYNTHESIZE_COMMAND, body);
     let Some(object) = payload.as_object() else {
         return bad_request(
             SYNTHESIZE_COMMAND,
@@ -2247,10 +2246,7 @@ pub(super) async fn open_journey(
     body: Bytes,
 ) -> Response {
     const COMMAND: &str = "journey.open";
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(COMMAND, "the request body is not valid JSON", "/"),
-    };
+    let payload = json_body!(COMMAND, body);
     let Some(step) = payload["stepId"].as_str().map(str::to_owned) else {
         return bad_request(COMMAND, "the request body must carry \"stepId\"", "/stepId");
     };
@@ -2389,10 +2385,7 @@ pub(super) async fn act_journey(
     body: Bytes,
 ) -> Response {
     const COMMAND: &str = "journey.act";
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(COMMAND, "the request body is not valid JSON", "/"),
-    };
+    let payload = json_body!(COMMAND, body);
     let text = |key: &str| payload[key].as_str().map(str::to_owned);
     let (Some(kind), Some(role), Some(name)) = (text("kind"), text("role"), text("name")) else {
         return bad_request(
@@ -3415,10 +3408,7 @@ pub(super) async fn start(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(START_COMMAND, "the request body is not valid JSON", "/"),
-    };
+    let payload = json_body!(START_COMMAND, body);
     let identity = match parse_mutation_headers(
         &headers,
         START_COMMAND,
@@ -3685,10 +3675,7 @@ pub(super) async fn signal(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(SIGNAL_COMMAND, "the request body is not valid JSON", "/"),
-    };
+    let payload = json_body!(SIGNAL_COMMAND, body);
     let identity = match parse_mutation_headers(
         &headers,
         SIGNAL_COMMAND,
@@ -3952,10 +3939,7 @@ pub(super) async fn approve(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(APPROVE_COMMAND, "the request body is not valid JSON", "/"),
-    };
+    let payload = json_body!(APPROVE_COMMAND, body);
     let identity = match parse_mutation_headers(
         &headers,
         APPROVE_COMMAND,
@@ -4114,10 +4098,7 @@ pub(super) async fn assign(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(ASSIGN_COMMAND, "the request body is not valid JSON", "/"),
-    };
+    let payload = json_body!(ASSIGN_COMMAND, body);
     let identity = match parse_mutation_headers(
         &headers,
         ASSIGN_COMMAND,
@@ -4185,16 +4166,7 @@ pub(super) async fn amend_budget(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => {
-            return bad_request(
-                AMEND_BUDGET_COMMAND,
-                "the request body is not valid JSON",
-                "/",
-            );
-        }
-    };
+    let payload = json_body!(AMEND_BUDGET_COMMAND, body);
     let identity = match parse_mutation_headers(
         &headers,
         AMEND_BUDGET_COMMAND,
@@ -4295,10 +4267,7 @@ pub(super) async fn pause(
     let payload: serde_json::Value = if body.is_empty() {
         serde_json::Value::Null
     } else {
-        match serde_json::from_slice(&body) {
-            Ok(value) => value,
-            Err(_) => return bad_request(PAUSE_COMMAND, "the request body is not valid JSON", "/"),
-        }
+        json_body!(PAUSE_COMMAND, body)
     };
     let immediate = payload.get("mode").and_then(serde_json::Value::as_str) == Some("immediate");
 
@@ -4533,10 +4502,7 @@ pub(super) async fn resume(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(RESUME_COMMAND, "the request body is not valid JSON", "/"),
-    };
+    let payload = json_body!(RESUME_COMMAND, body);
     let identity = match parse_mutation_headers(
         &headers,
         RESUME_COMMAND,
@@ -4735,10 +4701,7 @@ pub(super) async fn sweep(
     let payload: serde_json::Value = if body.is_empty() {
         serde_json::Value::Object(serde_json::Map::new())
     } else {
-        match serde_json::from_slice(&body) {
-            Ok(value) => value,
-            Err(_) => return bad_request(SWEEP_COMMAND, "the request body is not valid JSON", "/"),
-        }
+        json_body!(SWEEP_COMMAND, body)
     };
 
     let as_of = match payload.get("asOf") {
@@ -4806,10 +4769,7 @@ pub(super) async fn claim(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(CLAIM_COMMAND, "the request body is not valid JSON", "/"),
-    };
+    let payload = json_body!(CLAIM_COMMAND, body);
     let identity = match parse_mutation_headers(
         &headers,
         CLAIM_COMMAND,
@@ -4937,10 +4897,7 @@ pub(super) async fn clear(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(CLEAR_COMMAND, "the request body is not valid JSON", "/"),
-    };
+    let payload = json_body!(CLEAR_COMMAND, body);
     let identity = match parse_mutation_headers(
         &headers,
         CLEAR_COMMAND,
@@ -5991,10 +5948,7 @@ pub(super) async fn development_memory_propose(
     body: Bytes,
 ) -> Response {
     const COMMAND: &str = "development.memory-propose";
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(COMMAND, "the request body is not valid JSON", "/"),
-    };
+    let payload = json_body!(COMMAND, body);
     let identity = match parse_mutation_headers(&headers, COMMAND, "memory", &payload, &["memory"])
     {
         Ok(value) => value,
@@ -6461,16 +6415,7 @@ pub(super) async fn development_compile_context(
     let payload: serde_json::Value = if body.is_empty() {
         serde_json::Value::Object(serde_json::Map::new())
     } else {
-        match serde_json::from_slice(&body) {
-            Ok(value) => value,
-            Err(_) => {
-                return bad_request(
-                    "development.compile-context",
-                    "the request body is not valid JSON",
-                    "/",
-                );
-            }
-        }
+        json_body!("development.compile-context", body)
     };
     let budget = usize::try_from(payload["budget"].as_u64().unwrap_or(0)).unwrap_or(usize::MAX);
     let mut require: Vec<String> = payload["require"]
@@ -6576,16 +6521,7 @@ pub(super) async fn wake_lease(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => {
-            return bad_request(
-                WAKE_LEASE_COMMAND,
-                "the request body is not valid JSON",
-                "/",
-            );
-        }
-    };
+    let payload = json_body!(WAKE_LEASE_COMMAND, body);
     let identity = match parse_mutation_headers(
         &headers,
         WAKE_LEASE_COMMAND,
@@ -7168,6 +7104,34 @@ pub(super) mod tests {
             .await
             .unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    /// #1328 PR 2: `json_body!` refuses an unparsable body with exactly the reply each route used
+    /// to build inline, `bad_request(command, "the request body is not valid JSON", "/")`, and
+    /// hands a parsable one through untouched.
+    #[test]
+    fn json_body_refuses_exactly_as_the_inline_parse_did() {
+        use super::{START_COMMAND, bad_request};
+        use axum::response::IntoResponse as _;
+        // The macro returns from the function it sits in, as it does inside a route handler.
+        fn parse(body: Bytes) -> axum::response::Response {
+            let value = json_body!(START_COMMAND, body);
+            (axum::http::StatusCode::OK, value.to_string()).into_response()
+        }
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let refused = parse(Bytes::from_static(b"{not json"));
+        let expected = bad_request(START_COMMAND, "the request body is not valid JSON", "/");
+        assert_eq!(refused.status(), expected.status());
+        assert_eq!(
+            runtime.block_on(body_text(refused)),
+            runtime.block_on(body_text(expected)),
+            "the refusal body must be byte-identical"
+        );
+        let passed = parse(Bytes::from_static(br#"{"a":1}"#));
+        assert_eq!(passed.status(), axum::http::StatusCode::OK);
+        assert_eq!(runtime.block_on(body_text(passed)), r#"{"a":1}"#);
     }
 
     pub(in crate::commands::serve) fn known_execution_state()
@@ -7855,16 +7819,7 @@ pub(super) async fn gateway_route_set(
             "/manifest",
         );
     };
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => {
-            return bad_request(
-                GATEWAY_ROUTE_SET_COMMAND,
-                "the request body is not valid JSON",
-                "/",
-            );
-        }
-    };
+    let payload = json_body!(GATEWAY_ROUTE_SET_COMMAND, body);
 
     let mut fields = Vec::new();
     for field in ["id", "provider", "baseUrl", "model"] {
@@ -8060,16 +8015,7 @@ pub(super) async fn gateway_credential_set(
     let keyring = wiring.keyring_dir.clone();
     let key_id = wiring.key_id.clone();
 
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => {
-            return bad_request(
-                GATEWAY_CREDENTIAL_SET_COMMAND,
-                "the request body is not valid JSON",
-                "/",
-            );
-        }
-    };
+    let payload = json_body!(GATEWAY_CREDENTIAL_SET_COMMAND, body);
     let Some(provider) = payload.get("provider").and_then(serde_json::Value::as_str) else {
         return bad_request(
             GATEWAY_CREDENTIAL_SET_COMMAND,

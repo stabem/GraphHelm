@@ -263,6 +263,13 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         "{status}"
     );
     assert_eq!(status["data"]["signalsRecorded"], 1);
+    let repository = graphhelm_events::LocalEventRepository::open(
+        &events,
+        std::sync::Arc::new(Clock),
+        std::sync::Arc::new(Ids),
+    )
+    .unwrap();
+    let (_, history) = repository.read_unique_replay_stream().unwrap();
     let publications_before_proposal = history
         .iter()
         .filter(|event| {

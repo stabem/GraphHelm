@@ -84,6 +84,38 @@ class Reach(unittest.TestCase):
         self.assertEqual(tools, [expected])
         self.assertEqual(other, [])
 
+    def test_no_window_observer_paths_select_one_fixed_powershell_step(self):
+        observer = "tools/no-window/test_observe.ps1"
+        expected = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                    "-File", observer]
+        with tempfile.TemporaryDirectory() as repo:
+            paths = ["tools/no-window/observe.ps1", observer]
+            for relative in paths:
+                path = Path(repo, relative)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("", encoding="utf-8")
+
+            for changed in paths:
+                *_, tools, _, other = reach(changed, repo=repo)
+                self.assertEqual(tools, ["powershell.exe -NoProfile -ExecutionPolicy Bypass -File " + observer])
+                self.assertEqual(rt.steps(set(), set(), [], tools, repo=Path(repo)), [
+                    {"argv": expected, "cwd": ".", "slot": False}])
+                self.assertEqual(other, [])
+
+            *_, tools, _, other = reach(*paths, repo=repo)
+            self.assertEqual(rt.steps(set(), set(), [], tools, repo=Path(repo)), [
+                {"argv": expected, "cwd": ".", "slot": False}])
+            self.assertEqual(other, [])
+
+            *_, unrelated, _, other = reach("tools/no-window/README.md", repo=repo)
+            self.assertEqual(unrelated, [])
+            self.assertEqual(other, [])
+
+            Path(repo, observer).unlink()
+            *_, missing_tools, _, missing = reach(paths[0], repo=repo)
+            self.assertEqual(missing_tools, [])
+            self.assertIn({"path": observer, "reason": "no-window observer test is missing"}, missing)
+
     def test_task_handoff_fixture_selects_its_offline_scenario_once(self):
         """Reach the real isolated handoff observer for fixture-only diffs.
 

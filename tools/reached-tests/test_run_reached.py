@@ -281,8 +281,74 @@ class RunnerContracts(unittest.TestCase):
                                            "cwd": ".", "slot": True}]})
         self.assertIn("explicit target", error)
         _, error = rr._steps({"steps": [{"argv": ["cmd", "/c", "echo bad"],
-                                           "cwd": ".", "slot": False}]})
+                                          "cwd": ".", "slot": False}]})
         self.assertIn("shell syntax", error)
+
+    def test_only_fixed_no_window_powershell_observer_is_admitted(self):
+        allowed = {"argv": ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                            "-File", "tools/no-window/test_observe.ps1"], "cwd": ".", "slot": False}
+        steps, error = rr._steps({"steps": [allowed]})
+        self.assertIsNone(error)
+        self.assertEqual(steps, [{**allowed, "observer": None}])
+
+        unsafe = [
+            {**allowed, "argv": ["powershell.exe", "-Command", "Write-Host bad"]},
+            {**allowed, "argv": ["powershell.exe", "-EncodedCommand", "YQ=="]},
+            {**allowed, "argv": ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                                  "-File", "tools/other.ps1"]},
+            {**allowed, "argv": allowed["argv"] + ["extra"]},
+            {**allowed, "cwd": "apps/studio"},
+            {**allowed, "slot": True},
+        ]
+        for step in unsafe:
+            with self.subTest(step=step):
+                _, error = rr._steps({"steps": [step]})
+                self.assertIsNotNone(error)
+
+        syntax = {**allowed, "argv": allowed["argv"] + ["one|two"]}
+        _, error = rr._steps({"steps": [syntax]})
+        self.assertIn("shell syntax", error)
+
+    def test_no_window_selector_step_runs_and_records_child_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp) / "repo"
+            repo.mkdir()
+            observer = repo / "tools/no-window/test_observe.ps1"
+            observer.parent.mkdir(parents=True)
+            observer.write_text("", encoding="utf-8")
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            (repo / "x").write_text("x", encoding="utf-8")
+            subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "add", "tools/no-window/test_observe.ps1"], cwd=repo, check=True,
+                           creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "fixture"],
+                           cwd=repo, check=True, creationflags=NO_WINDOW)
+            output = Path(temp) / "feedback.json"
+            plan = {"steps": [{"argv": ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                                           "-File", "tools/no-window/test_observe.ps1"],
+                                "cwd": ".", "slot": False}]}
+            calls = []
+            real_run = rr.subprocess.run
+
+            def child(command, **kwargs):
+                if command and command[0].lower() == "powershell.exe":
+                    calls.append(command)
+                    kwargs["stdout"].write("command exit: 7\n")
+                    return subprocess.CompletedProcess(command, 7, "", "")
+                return real_run(command, **kwargs)
+
+            args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
+                                      "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                                      "allow_whole_package": None, "plan": False, "min_free_gb": 0.0})()
+            with patch.object(rr, "_selector", return_value=plan), patch.object(rr.subprocess, "run", side_effect=child):
+                self.assertEqual(rr.run(args), 1)
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(report["status"], "failed")
+            self.assertEqual(report["completed"][0]["returncode"], 7)
+            log = Path(report["completed"][0]["log"])
+            self.assertIn("command exit: 7", log.read_text(encoding="utf-8"))
 
     def test_slot_telemetry_uses_final_envelope_after_child_output(self):
         with tempfile.TemporaryDirectory() as temp:

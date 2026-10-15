@@ -477,6 +477,14 @@ def reach(changed, packages, embedded, repo=None):
             js = sorted(f.relative_to(root).as_posix() for f in tool.glob("*.test.mjs") if ".browser." not in f.name)
             tools |= {python_test_tool(root, f) for f in py} | ({f"node --test {' '.join(js)}"} if js else set())
             hit = hit or bool(py or js)
+        if path in ("tools/no-window/observe.ps1", "tools/no-window/test_observe.ps1"):
+            observer = "tools/no-window/test_observe.ps1"
+            if root is not None and (root / observer).is_file():
+                tools.add(f"powershell.exe -NoProfile -ExecutionPolicy Bypass -File {observer}")
+                hit = True
+            elif root is not None:
+                other.append({"path": observer, "reason": "no-window observer test is missing"})
+                hit = True
         if path.endswith(".py") and root is not None:
             observer = "tools/reached-tests/test_no_console_window.py"
             if (root / observer).is_file():
@@ -882,6 +890,12 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
         elif tool.startswith("python -m pytest "):
             test_path = tool[len("python -m pytest "):]
             out.append({"argv": ["python", "-m", "pytest", test_path], "cwd": ".", "slot": False})
+        elif tool == "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/no-window/test_observe.ps1":
+            observer = "tools/no-window/test_observe.ps1"
+            if repo is None or not (Path(repo) / observer).is_file():
+                raise ValueError(f"PowerShell observer script is missing: {observer}")
+            out.append({"argv": ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                                  "-File", observer], "cwd": ".", "slot": False})
         elif tool.startswith("python "):
             parts = tool[len("python "):].split(" ")
             script, args = parts[0], parts[1:]

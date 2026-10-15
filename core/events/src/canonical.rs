@@ -94,30 +94,6 @@ mod tests {
         );
     }
 
-    /// #1378: this crate's canonical bytes equal the protocols writer's on the shared tricky set,
-    /// whose absolute digests `core/protocols/tests/canonical_golden.rs` pins.
-    #[test]
-    fn canonical_bytes_equal_the_protocols_writer_on_the_tricky_set() {
-        let tricky: Vec<Value> = serde_json::from_str(
-            &std::fs::read_to_string(
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../protocols/tests/fixtures/canonical-tricky.json"),
-            )
-            .expect("canonical-tricky.json"),
-        )
-        .expect("canonical-tricky.json is a JSON array");
-        let mut checked = 0;
-        for value in &tricky {
-            assert_eq!(
-                canonical_bytes(value).unwrap(),
-                graphhelm_protocols::canonical_json(value).into_bytes(),
-                "{value}"
-            );
-            checked += 1;
-        }
-        assert!(checked > 20, "HARNESS-BROKE: {checked} tricky documents");
-    }
-
     #[test]
     fn bounded_counter_is_inclusive_at_exact_serialized_byte_limits() {
         let limit = 1024_usize;

@@ -1,4 +1,5 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from "react";
+import { useNow } from "../runtime/use-now";
 
 import { duration, pace, typicalStep, type TimedStep } from "../runtime/step-timing";
 import { isUnclaimedCritic, timingSamples, type CriticRound, type TaskState } from "../runtime/team-tasks";
@@ -27,13 +28,8 @@ interface Timing {
   samples: Record<TimedStep, number>;
 }
 
-function useNow(fixed: number | undefined): number {
-  const [now, setNow] = useState(() => fixed ?? Date.now());
-  useEffect(() => {
-    if (fixed !== undefined) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
-    return () => window.clearInterval(timer);
-  }, [fixed]);
+function useBoardNow(fixed: number | undefined): number {
+  const now = useNow(fixed === undefined ? 30_000 : null);
   return fixed ?? now;
 }
 
@@ -340,7 +336,7 @@ function CardView({ card, changed, onOpenJourney, timing }: { card: Card; change
 
 export function TaskGraphs({ tasks, onOpenJourney, now: fixedNow }: TaskGraphsProps) {
   const changed = useChanged(tasks);
-  const now = useNow(fixedNow);
+  const now = useBoardNow(fixedNow);
   if (tasks.length === 0) return null;
   // #562: a critic round for a task nobody claimed is not a task card.
   const unclaimed = tasks.filter(isUnclaimedCritic);

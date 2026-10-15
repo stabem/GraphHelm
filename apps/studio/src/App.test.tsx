@@ -745,6 +745,40 @@ async function open(client: ReturnType<typeof stubClient>, modelContext: ModelCo
 }
 
 describe("opening", () => {
+  // #1380: with a run selected the Studio holds ONE interval per period: the main tick (which also
+  // reads the native chat requests), one shared clock per cadence, one slot poll. A second timer
+  // at any period is a poll or a clock that went its own way again.
+  it("holds one live interval per period while a run is selected", async () => {
+    const live = new Map<unknown, number>();
+    const targets = window.setInterval === globalThis.setInterval ? [globalThis] : [globalThis, window];
+    const spies = targets.flatMap((target) => {
+      const set = target.setInterval.bind(target);
+      const clear = target.clearInterval.bind(target);
+      return [
+        vi.spyOn(target, "setInterval").mockImplementation(((handler: () => void, ms?: number) => {
+          const id = set(handler, ms);
+          live.set(id, ms ?? 0);
+          return id;
+        }) as typeof setInterval),
+        vi.spyOn(target, "clearInterval").mockImplementation(((id?: ReturnType<typeof setInterval>) => {
+          live.delete(id);
+          clear(id);
+        }) as typeof clearInterval),
+      ];
+    });
+    try {
+      const listNativeChatRequests = vi.fn(async () => ({ requests: [] }));
+      await open(stubClient({ listNativeChatRequests }), null, true, 4321);
+      await waitFor(() => expect(listNativeChatRequests).toHaveBeenCalled());
+      const periods = [...live.values()].sort((a, b) => a - b);
+      expect(periods.filter((ms) => ms === 4321), "the main tick, with the native request read folded in").toHaveLength(1);
+      expect(periods.filter((ms) => ms === 30_000), "the shared 30 s clock").toHaveLength(1);
+      expect(new Set(periods).size, `one interval per period, got ${periods.join(", ")}`).toBe(periods.length);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  });
+
   // #1291 reads each journey's cached run once on load so the rail shows x/y and the verdict;
   // selecting a journey refreshes only that journey's run (#917), and no frame is read before it.
   it("reads each journey's cached run once on load and no frame before the owner selects a journey", async () => {
@@ -3142,22 +3176,34 @@ describe("round-2: the ledger settles debts honestly", () => {
       idempotencyKey: "k13", eventId: "event-13", evidenceRefs: ["ev-question"],
     };
     const newer = { ...old, sequence: 14, idempotencyKey: "k14", eventId: "event-14", evidenceRefs: ["ev-reply"] };
+    // #1380: the refusal is kept by the client's evidence cache, so evidence goes through a real
+    // RuntimeClient here; the counted fetches are what reaches the Runtime.
+    const evidenceFetches: string[] = [];
+    const runtime = new ReadClient("local-token", { fetch: (async (url: string) => {
+      const evidenceId = decodeURIComponent(new URL(url, "http://runtime").pathname.split("/").at(-1) ?? "");
+      evidenceFetches.push(evidenceId);
+      if (evidenceId === "ev-question") {
+        return new Response(JSON.stringify({ ok: false, command: "execution.evidence", data: null, diagnostics: [
+          { code: "GHCLI001_ARGUMENT_INVALID", severity: "error", message: "invalid evidence id", path: "/", source: "runtime" },
+        ] }), { status: 400 });
+      }
+      return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: {
+        evidenceId, mediaType: "application/json", sensitivity: "confidential", contentSha256: "sha256:whatever", content: "{}",
+      }, diagnostics: [] }), { status: 200 });
+    }) as typeof fetch });
     const client = askedClient({
       getEvents: vi.fn(async (_id: string, options: { after: number }) => ({
         head: 14, events: options.after === 0 ? [old] : [newer],
       })),
-      readEvidence: vi.fn(async (_id: string, evidenceId: string) => {
-        if (evidenceId === "ev-question") throw new RuntimeError("invalid evidence id", 400, []);
-        return { evidenceId, mediaType: "application/json", sensitivity: "confidential", contentSha256: "sha256:whatever", content: "{}" };
-      }),
+      readEvidence: vi.fn((executionId: string, evidenceId: string) => runtime.readEvidence(executionId, evidenceId)),
     });
     render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null}
       session={async () => ({ token: "local-token", project: "dale-api-base" })} pollIntervalMs={40} />);
     await screen.findByLabelText("Projects");
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     await waitFor(() => expect(client.readEvidence).toHaveBeenCalledWith("demo-deploy", "ev-question"));
-    await waitFor(() => expect(client.readEvidence).toHaveBeenCalledWith("demo-deploy", "ev-reply"));
-    expect(client.readEvidence.mock.calls.filter((call) => (call as unknown[])[1] === "ev-question")).toHaveLength(1);
+    await waitFor(() => expect(evidenceFetches).toContain("ev-reply"));
+    expect(evidenceFetches.filter((id) => id === "ev-question")).toHaveLength(1);
   });
 
   it("reads past the first page, so event 201 exists on screen", async () => {

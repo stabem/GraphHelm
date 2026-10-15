@@ -1,4 +1,5 @@
 //! Bounded flow source files; frozen JSON contracts remain the reader boundary.
+use super::atomic::atomic_write;
 use super::journey_validate::Finding;
 use crate::output::{CommandOutput, Outcome};
 use graphhelm_protocols::Diagnostic;
@@ -1035,31 +1036,6 @@ pub(crate) fn record_drift(
     })?;
     atomic_write(file, text.as_bytes()).map_err(|_| "replay.drift_unpersisted")?;
     Ok(flow)
-}
-
-pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
-        return Err(std::io::Error::other("output symlink refused"));
-    }
-    let temp = path.with_extension(format!("{}.tmp", std::process::id()));
-    let mut owned = false;
-    let result = (|| {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)?;
-        owned = true;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&temp, path)
-    })();
-    // Remove only this invocation's temporary file, never a pre-existing one.
-    if owned && result.is_err() {
-        let _ = std::fs::remove_file(&temp);
-    }
-    result
 }
 
 pub(crate) fn run_compile(args: &crate::args::JourneyCompileArgs) -> Outcome {

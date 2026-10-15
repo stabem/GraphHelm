@@ -1698,7 +1698,7 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
         return Err(failure("replay.cache_changed", "/cache", 2));
     }
     safe_directory(&directory, false)?;
-    super::journey_flow::atomic_write(&target, &bytes)
+    super::atomic::atomic_write(&target, &bytes)
         .map_err(|_| failure("replay.cache_write_refused", "/cache", 1))?;
     if load_cache(&target, &flow)? != Some(cache) {
         return Err(failure("replay.cache_write_refused", "/cache", 1));

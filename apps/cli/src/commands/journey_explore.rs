@@ -481,7 +481,7 @@ fn publish_new(path: &Path, bytes: &[u8]) -> Result<()> {
         return Err(refused("explore.id_conflict", "/publication", 2));
     }
     let staged = path.with_file_name(format!(".graphhelm-explore-{}.tmp", uuid::Uuid::new_v4()));
-    journey_flow::atomic_write(&staged, bytes)
+    super::atomic::atomic_write(&staged, bytes)
         .map_err(|_| refused("explore.write_refused", "/publication", 1))?;
     // A same-directory hard link creates the destination without replacing a
     // concurrent creator. Flow and cache remain separate, explicit publications.

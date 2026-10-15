@@ -121,7 +121,7 @@ fn read_state(dir: &Path) -> Option<Value> {
 fn save_state(dir: &Path, state: &Value) {
     let mut bytes = serde_json::to_vec_pretty(state).unwrap();
     bytes.push(b'\n');
-    let _ = super::journey_flow::atomic_write(&dir.join(STATE), &bytes);
+    let _ = super::atomic::atomic_write(&dir.join(STATE), &bytes);
 }
 
 /// Whether a `running` state still has a runner. The runner writes its own pid when it starts;
@@ -868,7 +868,7 @@ fn play(
                 |stop| {
                     // A dead runner cannot clean up itself, even if it dies before up returns.
                     run.state["launched"] = stop.record();
-                    super::journey_flow::atomic_write(
+                    super::atomic::atomic_write(
                         &run.dir.join(STATE),
                         &serde_json::to_vec_pretty(&run.state).unwrap(),
                     )

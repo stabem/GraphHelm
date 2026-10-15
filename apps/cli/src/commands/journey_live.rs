@@ -1616,7 +1616,7 @@ impl Progress {
 fn save_record(path: &Path, record: &Value) -> Result<()> {
     let mut bytes = serde_json::to_vec_pretty(record).unwrap();
     bytes.push(b'\n');
-    super::journey_flow::atomic_write(path, &bytes)
+    super::atomic::atomic_write(path, &bytes)
         .map_err(|_| failure("live.session_unwritable", "/session", 1))
 }
 

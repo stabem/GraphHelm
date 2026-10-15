@@ -206,7 +206,15 @@ impl ServeState {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         seen.retain(|_, (at, _)| now.saturating_duration_since(*at) <= SEEN_ACTOR_TTL);
-        let source = if source == "verified" || seen.get(actor).is_some_and(|(_, previous)| *previous == "verified") { "verified" } else { "claimed" };
+        let source = if source == "verified"
+            || seen
+                .get(actor)
+                .is_some_and(|(_, previous)| *previous == "verified")
+        {
+            "verified"
+        } else {
+            "claimed"
+        };
         seen.insert(actor.to_owned(), (now, source));
         while seen.len() > SEEN_ACTOR_LIMIT {
             let oldest = seen
@@ -251,8 +259,12 @@ impl ServeState {
 
     fn seen_actor_sources(&self) -> BTreeMap<String, &'static str> {
         self.seen_actors_at(Instant::now());
-        self.seen_actors.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter().map(|(actor, (_, source))| (actor.clone(), *source)).collect()
+        self.seen_actors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|(actor, (_, source))| (actor.clone(), *source))
+            .collect()
     }
 }
 
@@ -3576,6 +3588,16 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&response[body_start..]).unwrap();
         assert!(body["data"].get("seenActors").is_none());
         assert!(state_for_expiry.seen_actors().is_empty());
+        for actor_header in ["", "X-GraphHelm-Actor: invalid actor\r\n"] {
+            let mut invalid = tokio::net::TcpStream::connect(address).await.unwrap();
+            let request = format!(
+                "GET /v1/executions/execution-known HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer shared-token\r\n{actor_header}Connection: close\r\n\r\n"
+            );
+            invalid.write_all(request.as_bytes()).await.unwrap();
+            let mut invalid_response = Vec::new();
+            invalid.read_to_end(&mut invalid_response).await.unwrap();
+            assert!(state_for_expiry.seen_actors().is_empty());
+        }
         let mut shared = tokio::net::TcpStream::connect(address).await.unwrap();
         shared.write_all(b"GET /v1/executions/execution-known HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer shared-token\r\nX-GraphHelm-Actor: lane-a\r\nConnection: close\r\n\r\n").await.unwrap();
         let mut shared_response = Vec::new();
@@ -3604,7 +3626,10 @@ mod tests {
             liveness_body["data"]["seenActors"],
             serde_json::json!(["lane-a"])
         );
-        assert_eq!(liveness_body["data"]["seenActorSources"]["lane-a"], "verified");
+        assert_eq!(
+            liveness_body["data"]["seenActorSources"]["lane-a"],
+            "verified"
+        );
         assert!(
             liveness_body["data"]["seenActorAgesMs"]["lane-a"]
                 .as_u64()

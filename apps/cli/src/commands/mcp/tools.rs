@@ -594,7 +594,8 @@ fn events_schema() -> serde_json::Value {
         serde_json::json!({
             "executionId": {"type": "string"},
             "after": {"type": "integer", "minimum": 0, "maximum": u64::MAX},
-            "limit": {"type": "integer", "minimum": 0, "maximum": u64::MAX},
+            // #1330: the HTTP route's bound (1..=1000), so MCP, HTTP and WebMCP agree.
+            "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
         }),
         &["executionId"],
     )
@@ -610,7 +611,10 @@ fn signal_schema() -> serde_json::Value {
     mutating_schema(
         serde_json::json!({
             "executionId": {"type": "string"},
-            "signal": {"type": "object"},
+            // #1330: the envelope's schema, named by its `$id` rather than `$ref`d: the Runtime
+            // fills `id`, `emittedAt` and `source` (#1284), which that schema requires, and a
+            // client that cannot resolve a remote `$ref` would refuse the tool outright.
+            "signal": {"type": "object", "description": "https://p50.dev/schemas/graph-signal.schema.json; id, emittedAt, source optional"},
             "evidenceOut": {"type": "string"},
             // #313: images beside the signal, never inside the envelope. The Runtime re-checks
             // every cap and the magic bytes; this schema only closes the wire shape.
@@ -2350,6 +2354,28 @@ mod envelope_tests {
         assert!(
             long.is_empty(),
             "descriptions over {DESCRIPTION_MAX_CHARS} chars: {long:?}"
+        );
+    }
+
+    /// #1330 (plan D2): `schemas/mcp-tools.json` is `tools/list` as served, emitted from this
+    /// table. The Studio's WebMCP adapter imports it instead of hand-copying schemas, so a schema
+    /// change here that is not re-emitted fails this cell rather than drifting. Rewrite with
+    /// `GRAPHHELM_WRITE_FIXTURES=1`; a rewrite is a surface change and belongs in the PR's diff.
+    #[test]
+    fn the_committed_tool_catalog_is_the_emitted_one() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/mcp-tools.json");
+        let emitted = format!("{}\n", serde_json::to_string_pretty(&tool_list()).unwrap());
+        if std::env::var_os("GRAPHHELM_WRITE_FIXTURES").is_some() {
+            std::fs::write(path, &emitted).unwrap();
+        }
+        let committed = std::fs::read_to_string(path)
+            .expect("schemas/mcp-tools.json exists")
+            .replace("\r\n", "\n");
+        assert!(
+            committed == emitted,
+            "schemas/mcp-tools.json is not tools/list as this table serves it; re-emit with \
+             GRAPHHELM_WRITE_FIXTURES=1 cargo test -p graphhelm-cli --bin graphhelm -- \
+             the_committed_tool_catalog_is_the_emitted_one"
         );
     }
 

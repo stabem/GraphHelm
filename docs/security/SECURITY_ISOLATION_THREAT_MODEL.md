@@ -63,6 +63,16 @@ See [RFC-1309](../rfcs/RFC-1309-JOURNEY-CREDENTIAL-PROVISIONING.md) for the prop
 refusal behavior, lifecycle, authority conflict and required observers. This is a design proposal,
 not an accepted change to journey approval authority or current Runtime behavior.
 
+The proposed broker authenticates an assigned lane with its execution-and-lane task bearer,
+issued through an owner-side coordinator. The shared agent session token or a declared actor
+header cannot request a journey token. An owner-authenticated grant fixes the canonical project,
+execution, lane, flow and author/reviewer purpose. The lane receives only its newly issued token;
+the broker retains a keyed digest and serializes durable registry updates with journey writes.
+Revocation is acknowledged only after durable sync and publication; later requests on that same
+Runtime must fail without restart. A task bearer is not a journey credential. This design still
+cannot protect secrets from a process running as the same OS user and does not let a reviewer
+perform the owner-only final approval.
+
 ## 4. Adversaries and failure modes
 
 - malicious code in the repository;

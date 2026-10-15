@@ -67,6 +67,18 @@ It gives independent revocation and limits the blast radius of one leaked token.
 the plaintext once over an authenticated protected channel to the requesting lane. Neither registry
 hashing nor transport protection changes the shared-user filesystem boundary.
 
+## Documentary RED: unresolved protocol decisions
+
+| Decision | Current source | Missing guarantee |
+|---|---|---|
+| Lane bootstrap | `apps/cli/src/commands/tasks.rs`, `credential` reads the owner token | No owner-free lane request protocol. |
+| Grant and scope | `serve/mod.rs`, `load_agent_credentials` parses `credential=actor|project|execution` | No authenticated grant or flow/purpose binding. |
+| Revocation | `serve/mod.rs`, `ServeState.agent_credentials` loads once | No restart-free update boundary. |
+| Authority | `serve/routes.rs`, `journey_flow_draft`, `journey_flow_review`, `approve_journey_flow` | Review and final approval need separate policy statements. |
+| OS isolation | D-058 in `docs/DECISION_REGISTER.md` | No cross-lane unreadability guarantee. |
+
+This is documentary RED, not an executed failing test. The protocol below is proposed behavior.
+
 ## Proposed trust and request flow
 
 1. The coordinator creates an explicit grant for a known execution and lane, naming the exact
@@ -93,19 +105,73 @@ that token identifies a capability class, not a specific lane. If the Runtime ca
 the lane from trusted execution state, provisioning refuses and reports a stable authorization
 diagnostic without disclosing whether another lane or flow exists.
 
+### Concrete bootstrap and grant
+
+The owner-side coordinator uses today's owner-authenticated `tasks credential` command to mint
+an execution-and-lane task bearer and delivers only that bearer to its assigned lane. The lane
+never reads the owner token. The Runtime verifies the bearer against the execution path and lane
+subject using the existing task-authentication rule, then checks the lane's assignment in trusted
+execution state. The shared agent session token, a caller-supplied actor header, or a lane field
+in the request cannot substitute. A stolen task bearer remains a bearer credential; the shared
+OS-user limitation in D-058 remains.
+
+Only an owner-authenticated control route creates or revokes a grant. Its record has `grantId`,
+canonical `projectId`, `executionId`, `laneId`, `flowId`, `purpose` (`author` or `reviewer`),
+`expiresAt`, `generation`, `state` and `issuer=owner`. The issuer verifies the execution belongs
+to the Runtime project, the lane is assigned to it and the flow exists. Identifiers pass their
+checked parsers and are compared byte for byte after canonicalization at creation. Assignment
+removal revokes the grant. `approve` is not a grant purpose. A coordinator may request a grant
+from the owner but cannot issue one by itself.
+
+The lane calls the broker with its task bearer and
+`{grantId, projectId, executionId, flowId, purpose}`; there is no authoritative `laneId` request
+field. The broker checks the authenticated lane and every field against one active, unexpired
+grant. Wrong scope, missing assignment or ambiguous grants return one stable authorization
+diagnostic before any write, without revealing whether another scope exists. On success, the
+broker draws 32 random bytes from the OS CSPRNG, stores their keyed digest and returns
+`{credentialId, token, expiresAt, generation}` once to that lane on the authenticated response.
+There is no token recovery endpoint. If delivery is uncertain, the owner revokes that
+`credentialId` and issues a new one. Plaintext tokens and digests are excluded from events,
+logs, errors, prompts, crash output and task records; audit carries identifiers and outcome only.
+
+### Registry and commit point
+
+The Runtime broker holds a separate versioned HMAC key outside the registry. It computes a
+domain-separated HMAC over all 32 token bytes and compares presented digests in constant time.
+Each durable credential record stores `credentialId`, `grantId`, immutable canonical scope,
+`generation`, `expiresAt`, `status` and digest, never plaintext. Missing keys, unknown versions,
+collisions or corrupt records refuse all journey use and provisioning. Key rotation explicitly
+reissues tokens; there is no fallback key. Registry and key backups require protection together.
+
+One Runtime owns the project registry. It holds an exclusive process lease against a second
+writer. For each issue, rotate or revoke operation, it takes a write lock, validates current
+state, appends one complete versioned record with length and checksum, flushes and durable-syncs
+the file, then publishes the new immutable in-memory snapshot before acknowledging. Startup
+replay refuses a corrupt or truncated record rather than guessing an earlier state. A crash
+before sync is unacknowledged; a crash after sync is recovered on replay. A lost response after
+commit requires revocation by `credentialId` before retry. A journey request holds the registry
+read lock from authentication through its state mutation. Thus revocation cannot be acknowledged
+while an earlier authorized write remains in flight; every request begun after acknowledgement
+refuses the old token without a restart. Storage or lock failure refuses before writing.
+
+The route checks active status, expiration, grant generation and exact project, flow and purpose
+before invoking a handler. It takes lane and execution from the registry, never actor headers.
+An author token may draft only its flow. A reviewer token may review only that flow's current
+recorded digest and only if its lane has never written that flow. Neither can call owner approval.
+An execution task bearer authenticates provisioning and task routes, but is rejected on journey
+draft and review routes. Invalid scope, unknown token, ambiguity and concurrent update
+uncertainty refuse without changing flow files or the Event Store.
+
 ## Lifecycle
 
-- **Rotation:** owner or authorized coordinator revokes the old token and requests a replacement
-  under the same grant. The new token has a distinct version and digest. Rotation does not widen
-  scope. By default, revocation takes effect immediately; any overlap must be explicit, bounded,
-  and audited.
+- **Rotation:** the owner revokes the old generation and authorizes a replacement under the same
+  grant. It has a new credential id, generation and digest. The first implementation permits no
+  overlap; a coordinator cannot rotate by claiming authority.
 - **Revocation:** owner can revoke a token or its grant. A revoked token is refused on the next
   request. Deleting a plaintext file is not considered revocation while the registry still accepts
   it.
-- **Restart-free loading:** requests consult a concurrency-safe registry that observes committed
-  changes before acknowledging a provision, rotation or revocation. The implementation must
-  define atomic update and read consistency. A stale in-memory cache that accepts a revoked token
-  is a failure. Startup snapshots may initialize the registry, but cannot be its only update path.
+- **Restart-free loading:** synced operations are published before acknowledgement. The read/write
+  lock rule above prevents stale authorization after revocation.
 - **Failure:** storage errors, authentication uncertainty, duplicate active grants, digest
   collisions, malformed registry state or unavailable update notifications cause refusal. No
   fallback to the owner token, shared agent token or an older credential is permitted.
@@ -117,14 +183,14 @@ records the credential identity and scope with each draft and review. A reviewer
 the author, and the review must bind to the exact recorded draft digest. A former author token,
 execution token, owner token or token scoped to another flow cannot satisfy the reviewer check.
 
-There is an authority conflict to resolve before implementation: the standing repository rule
-states that only the owner approves journeys, while this issue's requested future flow proposes an
-independent reviewer credential. Credential design cannot grant that authority by implication.
-This RFC recommends keeping owner-only approval in force until a security-reviewed decision
-explicitly chooses whether an independently authenticated reviewer may submit a review and
-whether that review is advisory or constitutes approval. Any change must update the decision
-register and the governing journey instruction. Even if independent review is authorized, the
-owner's final approval path remains owner-authenticated and separate from the review token.
+Current `POST /v1/journey-flows/{id}/draft` and `/review` accept a registered scoped agent
+credential; it is not yet flow- or purpose-bound. The review handler records a blind review of
+the current digest and refuses a previous writer. Current
+`POST /v1/journey-flows/{id}/approve` is owner-authenticated. The standing rule that only the
+owner approves journeys remains in force. This RFC's `reviewer` purpose means a separate review
+operation, never final approval. Whether independent review should count as approval remains an
+unresolved authority change requiring an accepted decision-register entry and a governing-rule
+update. D-058 concerns credential handoff and its shared-user limit, not approval authority.
 
 ## OS and process isolation boundary
 
@@ -151,8 +217,8 @@ described as OS isolation.
    through the authorized broker contract.
 4. `apps/cli/tests/journey_flow_surfaces.rs` — observe the HTTP scope, author/reviewer and
    no-write refusal cases below using isolated temporary stores.
-5. `apps/cli/tests/` — add one focused provisioning lifecycle observer for rotation and revocation
-   without Runtime restart, in the existing appropriate test target.
+5. `apps/cli/tests/api_http.rs` — add an isolated HTTP observer for provisioning, rotation and
+   revocation without Runtime restart.
 
 The OS isolation observer is a separate host-level deliverable and must not be claimed by these
 HTTP tests. Security review may narrow or revise these paths before implementation; no code is
@@ -169,6 +235,8 @@ Runtime. They must show:
 - a distinct authorized reviewer is accepted only for the exact recorded draft digest;
 - provisioning, rotation and revocation take effect without restarting the Runtime;
 - rejected requests preserve the draft, review and event state.
+- spoofed lane identity and a task bearer on journey routes are rejected;
+- post-revocation use is refused before writes, including on the same Runtime process.
 
 These HTTP tests establish application authentication and behavior only. A separate real-host
 observer must show one lane cannot read another lane's token or the owner's token under the

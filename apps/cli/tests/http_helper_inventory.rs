@@ -28,10 +28,10 @@ use std::path::{Path, PathBuf};
 /// it may define. A CLOSED list: adding to it is an edit a reviewer sees.
 ///
 /// #1313 (plan wave E, HTTP test harness) widened the guard to the ten helper names the plan
-/// counted. `token_path`, `read_token`, `wait_for_health` and `get_json` now live in
-/// `support/mod.rs`; every copy left below is either a DIFFERENT function under the same name (the
-/// reason is on its group) or a copy a later slice of #1313 moves (marked so). The second test
-/// fails on an exemption whose copy is gone, so a slice that moves a copy must also strike it here.
+/// counted. `token_path`, `read_token`, `wait_for_health`, `get_json`, `repository_root` and
+/// `owner_token` live in `support/mod.rs`; every copy left below is a DIFFERENT function under
+/// the same name, with the reason on its group. The second test fails on an exemption whose
+/// copy is gone, so moving a copy also strikes it here.
 const EXEMPTIONS: &[(&str, &str)] = &[
     // Bounded connect (connect_with_retry + hang guard); see the module doc.
     ("api_http.rs", "fn raw_request("),
@@ -85,36 +85,21 @@ const EXEMPTIONS: &[(&str, &str)] = &[
     ("mcp_capability.rs", "fn cli("),
     ("resume_atomicity.rs", "fn cli("),
     // `credential_set`: architect_cli and gateway_cli take a provider/value and use assert_cmd;
-    // the four `--usable-by` copies move in a later slice of #1313.
+    // the four `--usable-by` copies each seal with their own gateway key and stdin secret, so
+    // one helper would add two arguments to 24 call sites to save about 25 lines (#1313).
     ("architect_cli.rs", "fn credential_set("),
     ("gateway_cli.rs", "fn credential_set("),
     ("context_journey.rs", "fn credential_set("),
     ("gate_http.rs", "fn credential_set("),
     ("resume_project_default.rs", "fn credential_set("),
     ("runtime_http.rs", "fn credential_set("),
-    // `repository_root`: moves in a later slice of #1313 (canonicalized and plain forms).
-    ("development_cli.rs", "fn repository_root("),
-    ("development_journey.rs", "fn repository_root("),
-    ("development_sabotage.rs", "fn repository_root("),
+    // `repository_root` without `canonicalize` (`join("../..")`, `ancestors().nth(2)`): these
+    // suites compare against non-canonical paths, which the canonical form would prefix.
     ("event_store_local_backup.rs", "fn repository_root("),
     ("extension_cli.rs", "fn repository_root("),
-    ("jpd_capsule_authority.rs", "fn repository_root("),
-    ("jpd_graph_contract.rs", "fn repository_root("),
-    ("jpd_observer_trust.rs", "fn repository_root("),
-    ("jpd_plugin.rs", "fn repository_root("),
-    ("jpd_promotion_policy.rs", "fn repository_root("),
-    ("jpd_retry_semantics.rs", "fn repository_root("),
     ("schema_cli.rs", "fn repository_root("),
     ("shipped_package_coverage.rs", "fn repository_root("),
     ("test_support_has_no_dead_helpers.rs", "fn repository_root("),
-    // `owner_token`: seven byte-identical copies; move in a later slice of #1313.
-    ("journey_flow_cli.rs", "fn owner_token("),
-    ("journey_flow_surfaces.rs", "fn owner_token("),
-    ("journey_live_browser.rs", "fn owner_token("),
-    ("journey_live_cli.rs", "fn owner_token("),
-    ("journey_replay_browser.rs", "fn owner_token("),
-    ("journey_replay_cli.rs", "fn owner_token("),
-    ("keel_check.rs", "fn owner_token("),
 ];
 
 const HELPERS: &[&str] = &[

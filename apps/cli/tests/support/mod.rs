@@ -171,3 +171,46 @@ pub fn get_json(url: &str, token: Option<&str>) -> serde_json::Value {
         )
     })
 }
+
+/// The repository root, canonicalized, for naming fixtures that live in-tree (#1313: one copy,
+/// was nine). The uncanonicalized forms stay in their files: a suite that compares against
+/// non-canonical paths would see a `\\?\` prefix on Windows.
+pub fn repository_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
+}
+
+/// #534: approving is the owner's; `graphhelm init` makes the project's owner store and token.
+/// Returns the token's PATH, not its contents (#1313: one copy, was seven).
+pub fn owner_token(project: &std::path::Path) -> String {
+    // init ignores all of `.graphhelm/`; a real project keeps its flows tracked and its owner
+    // store (events, token, keys, owner records) out of git, so the test ignores exactly that.
+    let gitignore = project.join(".gitignore");
+    let kept = std::fs::read(&gitignore).ok();
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["--json", "init", "--project"])
+        .arg(project)
+        .args(["--harness", "claude-code"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let mut ignore = kept.unwrap_or_default();
+    ignore.extend_from_slice(
+        b"
+.graphhelm/*
+!.graphhelm/journeys/
+/.mcp.json
+",
+    );
+    std::fs::write(&gitignore, ignore).unwrap();
+    project
+        .join(".graphhelm/events.token")
+        .to_string_lossy()
+        .into_owned()
+}

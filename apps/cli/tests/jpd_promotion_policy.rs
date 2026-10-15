@@ -1,16 +1,11 @@
+#[path = "support/mod.rs"]
+mod support;
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use support::repository_root;
 
 use graphhelm_schema::OfflineSchemaSet;
 use serde_json::Value;
-
-fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
-}
 
 #[test]
 fn first_failure_provenance_rule_targets_failure_bearing_outcomes() {

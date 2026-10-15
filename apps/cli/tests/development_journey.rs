@@ -13,19 +13,15 @@
 //! it parses, validates against the checked-in schemas, and types the result, so this file tests
 //! the graph by the same door the runtime uses instead of by a second one built to agree.
 
+#[path = "support/mod.rs"]
+mod support;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use support::repository_root;
 
 use graphhelm_schema::load_graph;
 use serde_json::Value;
-
-fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
-}
 
 fn graph_path() -> PathBuf {
     repository_root().join("extensions/builtin/graphhelm-development-contracts/graphs/development-contracts-self-validation.yaml")

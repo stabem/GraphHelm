@@ -15,9 +15,12 @@
 //! refused" if the result is only tested for emptiness. That is a broken harness wearing a
 //! verdict's clothes, and `judge` below separates the two rather than trusting the count.
 
+#[path = "support/mod.rs"]
+mod support;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use support::repository_root;
 
 use graphhelm_protocols::Diagnostic;
 use graphhelm_schema::OfflineSchemaSet;
@@ -40,13 +43,6 @@ enum Verdict {
     Refused(Vec<Diagnostic>),
     /// The schema set never examined the document. NOT a refusal.
     HarnessBroke(String),
-}
-
-fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
 }
 
 fn load_json(path: &Path) -> Value {

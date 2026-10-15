@@ -1,16 +1,12 @@
+#[path = "support/mod.rs"]
+mod support;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use support::repository_root;
 
 use graphhelm_schema::OfflineSchemaSet;
 use serde_json::Value;
-
-fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
-}
 
 fn package_root() -> PathBuf {
     repository_root().join("extensions/builtin/graphhelm-jpd")

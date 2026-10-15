@@ -30,43 +30,17 @@ struct ToolSpec {
 const TOOLS: [ToolSpec; 47] = [
     ToolSpec {
         name: "start",
-        description: "Start an execution (POST /v1/executions/{executionId}/start). Minimal \
-                      call: {executionId: <an id YOU choose, new on this store>, mode: \
-                      \"supervised\", file: <graph path on the RUNTIME's host, e.g. \
-                      examples/graphs/software-feature.yaml>} - or \"graph\" (an inline graph \
-                      object) instead of \"file\"; one of the two is required. Pass held: true \
-                      to start WITHOUT driving: the Runtime otherwise drives the graph to \
-                      quiescence before it answers, which with a model-backed executor can \
-                      outlast this client's 30 s timeout - the start then DID happen, and a \
-                      retry is refused as \"already started\"; read \"status\" instead of \
-                      retrying. Optionally a fixtures file. Mode governs graph-mutation \
-                      autonomy only (autopilot accepts proposals automatically, supervised \
-                      holds a proposal queued until the owner approves it, manual rejects every \
-                      proposal outright with nothing queued) - it does NOT hold dispatch, a \
-                      ready node runs the same way in every mode; use \"pause\" to hold \
-                      dispatch.",
+        description: "Start an execution (POST /v1/executions/{executionId}/start): a new executionId, mode, and file (a graph path on the Runtime host) or inline graph. held: true starts without driving. After a client timeout it may have started: read status, never retry. Mode governs proposals; pause holds dispatch.",
         schema: start_schema,
     },
     ToolSpec {
         name: "list",
-        description: "List the executions this store holds (GET /v1/executions): one \
-                      summary row per stream - execution id, mode, status, attention, head \
-                      sequence, and the start/last-event instants - ordered by execution id. \
-                      \"after\" is an EXCLUSIVE cursor naming the last id already read; \
-                      \"limit\" is 1..=100 and defaults to 20. A larger limit is refused rather \
-                      than clamped, so a short page always means a short store. Read-only: it \
-                      appends nothing.",
+        description: "List executions (GET /v1/executions): one row per stream (id, mode, status, attention, head, start and last instants), by id. after is an exclusive cursor; limit is 1..=100, default 20, and a larger one is refused, not clamped. Read-only.",
         schema: list_schema,
     },
     ToolSpec {
         name: "topology",
-        description: "Read a graph file's shape (POST /v1/graph/topology): entrypoints, \
-                      nodes and edges, plus the semantic hash that says WHICH graph it is. The \
-                      hash is the point - an execution's log records its graph's hash and never \
-                      its topology, so before claiming these edges belong to a run, compare this \
-                      hash against the graphHash in that run's execution_started event. \
-                      \"file\" is a path on the RUNTIME's host, not yours. Nodes carry identity \
-                      only: no objectives, agents or completion controls. Read-only.",
+        description: "Read a graph file's shape (POST /v1/graph/topology): entrypoints, nodes, edges and the semantic hash. Compare the hash with a run's execution_started graphHash before claiming these edges are that run's. file is on the Runtime host. Read-only.",
         schema: topology_schema,
     },
     ToolSpec {
@@ -76,43 +50,22 @@ const TOOLS: [ToolSpec; 47] = [
     },
     ToolSpec {
         name: "briefing",
-        description: "Read an execution's resume briefing (GET /v1/executions/{executionId}/briefing): \
-                      what the run is for (name, objective), what runs its nodes, the graph \
-                      hash to verify the file `resume` needs, every decision in order with the \
-                      actor that made it, the work done, what is pending, and the next step. \
-                      Call this FIRST when picking up an execution another session or harness \
-                      drove - it is derived from the store alone and is identical on CLI, HTTP \
-                      and MCP. Read-only: it appends nothing.",
+        description: "Read an execution's resume briefing (GET /v1/executions/{executionId}/briefing): purpose, executors, graph hash, decisions with their actors, work done, pending, next step. Call it FIRST when picking up a run another session drove. Read-only.",
         schema: execution_only_schema,
     },
     ToolSpec {
         name: "journeys",
-        description: "Read the project's proven-journey map (GET /v1/journeys; with executionId, \
-                      GET /v1/executions/{executionId}/journeys, which must name an existing run): \
-                      for every journey contract in the Runtime's project, each step with its \
-                      newest screen capture from ANY run (naming the run it came from) marked \
-                      fresh, stale (naming the changed files) or unknown (naming the cause), and \
-                      the walked arrows between steps. Identical on CLI, HTTP and MCP. Read-only.",
+        description: "Read the proven-journey map (GET /v1/journeys, or GET /v1/executions/{executionId}/journeys for an existing run): each step's newest capture from any run, marked fresh, stale or unknown with the reason, and the walked arrows. Read-only.",
         schema: optional_execution_schema,
     },
     ToolSpec {
         name: "tasks",
-        description: "Read the task projection of a run (GET /v1/executions/{executionId}/tasks): \
-                      every task slice with its lit delivery step (plan, critic, implement, \
-                      review, merge, merged), lane, issue, PR, head, open BLOCK, claim sequence \
-                      and last heartbeat, folded by the Runtime from the run's verified task.* \
-                      records. Identical on CLI (execution status --tasks), HTTP and MCP. Read-only.",
+        description: "Read a run's task projection (GET /v1/executions/{executionId}/tasks): each task's delivery step, lane, issue, PR, head, open BLOCK, claim sequence and last heartbeat, folded from the run's verified task.* records. Read-only.",
         schema: execution_only_schema,
     },
     ToolSpec {
         name: "keel_plan",
-        description: "Plan one task under the shipped keel.yaml (POST /v1/keel/plan; \
-                      `graphhelm keel plan`): classifies its paths (invariant class, user-visible \
-                      screen, code, docs) and returns the graphhelm-task-plan-v1 record with the \
-                      review count, proof type, skills, delegation and shortest path to done. \
-                      With judgeRoute, Jev decides a task the rules find ambiguous. \
-                      Read-only. The briefing carries only a plan the owner \
-                      recorded (`graphhelm keel plan --events ...`).",
+        description: "Plan one task under keel.yaml (POST /v1/keel/plan; `graphhelm keel plan`): classifies its paths and returns the graphhelm-task-plan-v1 record (reviews, proof, skills, delegation, shortest path). judgeRoute lets Jev decide an ambiguous task. Read-only.",
         schema: keel_plan_schema,
     },
     ToolSpec {
@@ -133,11 +86,7 @@ const TOOLS: [ToolSpec; 47] = [
     },
     ToolSpec {
         name: "journey_flows",
-        description: "List the Runtime project's journey-flow sources for review \
-                      (GET /v1/journey-flows; `graphhelm journey flows`): each flow's status \
-                      (draft, approved, approval_stale), drift, validate findings, whether \
-                      journey_approve would accept it, and its screens, edges and paths. \
-                      Identical on CLI, HTTP and MCP. Read-only.",
+        description: "List journey-flow sources (GET /v1/journey-flows; `graphhelm journey flows`): each flow's status, drift, validate findings, whether journey_approve would accept it, and its screens, edges and paths. Read-only.",
         schema: no_arguments_schema,
     },
     ToolSpec {
@@ -156,22 +105,12 @@ const TOOLS: [ToolSpec; 47] = [
     },
     ToolSpec {
         name: "journey_approve",
-        description: "Approve one journey flow (POST /v1/journey-flows/{id}/approve; exactly \
-                      `graphhelm journey approve <id>`): binds it to the project's HEAD, clears \
-                      drift and writes its compiled contracts. Refused, writing nothing, while \
-                      validate reports findings. Owner sessions only: an agent-typed MCP session \
-                      is refused, because only the owner approves a journey.",
+        description: "Approve one journey flow (POST /v1/journey-flows/{id}/approve; `graphhelm journey approve`): binds it to HEAD, clears drift and writes its contracts. Refused, writing nothing, while validate reports findings. Owner sessions only.",
         schema: journey_approve_schema,
     },
     ToolSpec {
         name: "journey_open",
-        description: "Open an approved journey live at one step (POST \
-                      /v1/journeys/{contractId}/open; exactly `graphhelm journey open`): a \
-                      visible browser on the Runtime host replays the cached acts of the earlier \
-                      edges, without a model, and reports the step's state (pass, fail, or the \
-                      drift edge where the walk stopped). The browser stays open; the reply's \
-                      sessionId addresses journey_act and journey_close. Optional executionId \
-                      records the step's `phase: live` capture. Owner credential only.",
+        description: "Open an approved journey live at one step (POST /v1/journeys/{contractId}/open): a visible browser replays the earlier edges' cached acts and reports the step's state. The reply's sessionId addresses journey_act and journey_close. Owner credential only.",
         schema: journey_open_schema,
     },
     ToolSpec {
@@ -185,23 +124,12 @@ const TOOLS: [ToolSpec; 47] = [
     },
     ToolSpec {
         name: "journey_watch",
-        description: "Play a journey flow, draft or approved, paced for a person to follow \
-                      (POST /v1/journey-flows/{id}/watch; exactly `graphhelm journey watch`). By \
-                      default the browser is headless and the Studio shows its frames; window: \
-                      true plays in a visible window instead. Optional path, paceMs. It answers \
-                      when the play ends; journey_sessions shows it while it plays (mode watch, \
-                      state playing, the screen and act it is at). Never proof and never an \
-                      approval. Owner credential only.",
+        description: "Play a journey flow paced for a person (POST /v1/journey-flows/{id}/watch): headless with frames in the Studio, or window: true. Optional path, paceMs. Answers when play ends; journey_sessions shows it meanwhile. Never proof or approval. Owner only.",
         schema: journey_watch_schema,
     },
     ToolSpec {
         name: "journey_preview",
-        description: "Run a journey flow, draft or approved, headless along every path and keep, \
-                      per screen and per edge, whether it passed and why (POST \
-                      /v1/journey-flows/{id}/preview; exactly `graphhelm journey preview`). It \
-                      answers the kept result when it is for this flow and commit, else starts a \
-                      run and answers state running; force runs anew. read: true only reads it \
-                      (GET /v1/journey-flows/{id}/preview). Never proof. Owner credential only.",
+        description: "Run a journey flow headless on every path, keeping per screen and edge whether it passed (POST /v1/journey-flows/{id}/preview). Answers the kept result or starts a run; force reruns; read: true only reads (GET /v1/journey-flows/{id}/preview). Never proof. Owner only.",
         schema: journey_preview_schema,
     },
     ToolSpec {
@@ -288,17 +216,17 @@ const TOOLS: [ToolSpec; 47] = [
     },
     ToolSpec {
         name: "amend_budget",
-        description: "Declare how long one node may stay silent before it needs you (POST /v1/executions/{executionId}/amend-budget), valid from that point forward. Use it when `status` answers `unknown` for a node: the answer names this operation as its remedy. Replies with the recomputed verdict, so you do not have to read again to find out what changed.",
+        description: "Declare how long one node may stay silent before it needs you (POST /v1/executions/{executionId}/amend-budget), from now on. It is the remedy status names for a node it reads as unknown. Replies with the recomputed verdict.",
         schema: amend_budget_schema,
     },
     ToolSpec {
         name: "wake_wait",
-        description: "Block until THIS session's armed lease rings, or until the deadline that lease declared. Reads GET /v1/executions/{executionId}/wake-lease first and takes BOTH the rendezvous and the deadline from it -- the caller supplies an identity, never a duration, so arming with one horizon and waiting on another cannot be expressed. Then it blocks locally; the block itself is NOT an API call, which is why this tool alone names the request it consults rather than the one it performs. Content-free by construction: the reply says THAT something happened, never what -- re-read the log to learn anything.",
+        description: "Block until this session's armed wake lease rings or its deadline passes, both read from GET /v1/executions/{executionId}/wake-lease: pass an identity, never a duration. The block is local and is NOT an API call. The reply says that something happened, never what.",
         schema: wake_wait_schema,
     },
     ToolSpec {
         name: "route_set",
-        description: "Add or replace one direct_api route in the gateway manifest (PUT /v1/gateway/routes). Writes the route's declaration only -- its API key is never an argument here, because a value passed as a tool argument lands in the harness's own transcript; key the route with `gateway credential set` or the HTTP body.",
+        description: "Add or replace one direct_api route in the gateway manifest (PUT /v1/gateway/routes). Declaration only: the API key is never an argument, since it would land in the transcript; key the route with `gateway credential set` or the HTTP body.",
         schema: route_set_schema,
     },
     ToolSpec {
@@ -349,50 +277,22 @@ const TOOLS: [ToolSpec; 47] = [
     },
     ToolSpec {
         name: "sweep",
-        description: "Evaluate an execution's customs stages and journal the result (POST \
-                      /v1/executions/{executionId}/sweep): one \"sweep_performed\", plus one \
-                      \"overdue_exception\" per episode found lapsed, appended together. A sweep \
-                      that finds nothing STILL writes its record - otherwise \"no exceptions\" \
-                      and \"no sweep ever ran\" are the same absence in the log. Optional \
-                      \"asOf\" asks about a past instant and defaults to now; THE FUTURE IS \
-                      REFUSED, because a future-dated answer is indistinguishable from a real one \
-                      while permanently spending the episodes it touches.",
+        description: "Evaluate an execution's customs stages and journal the result (POST /v1/executions/{executionId}/sweep): one sweep_performed plus one overdue_exception per lapsed episode; an empty sweep still records. asOf asks about a past instant (default now); the future is refused.",
         schema: sweep_schema,
     },
     ToolSpec {
         name: "claim",
-        description: "Claim that a waiting_input node's external work is done, presenting \
-                      evidence (POST /v1/executions/{executionId}/claim). Testimony only: nothing \
-                      is released until \"clear\" countersigns. A claim the pipeline cannot accept \
-                      is journaled as \"completion_refused\" with its registry code, and the reply \
-                      says so under \"claim\". Requires the graph the execution started from \
-                      (\"file\" or inline \"graph\"); \"evidence\" is an array of \
-                      {kind, contentHash, size}; \"waitSeq\" names the exact wait and defaults to \
-                      the node's open one; \"asserter\" defaults to the calling actor.",
+        description: "Claim a waiting_input node's external work is done (POST /v1/executions/{executionId}/claim). Testimony only: nothing releases until clear countersigns. Needs the start graph (file or graph) and evidence [{kind, contentHash, size}]; waitSeq and asserter default.",
         schema: claim_schema,
     },
     ToolSpec {
         name: "clear",
-        description: "Countersign a claim by machine replay (POST /v1/executions/{executionId}/clear): \
-                      present \"manifestHash\" or the \"evidence\" bundle whose digest is computed \
-                      here. A match clears the node and drives its dependents; a mismatch is \
-                      journaled as a rejection and drives nothing. \"countersign\" is refused at \
-                      the door until the wire carries a signature (#529). Requires the graph \
-                      (\"file\" or \"graph\") and the \"claimSeq\" the claim reply named.",
+        description: "Countersign a claim by machine replay (POST /v1/executions/{executionId}/clear) with manifestHash or the evidence bundle: a match clears the node and drives dependents, a mismatch is journaled. Needs the graph and the claim's claimSeq. countersign is refused (#529).",
         schema: clear_schema,
     },
     ToolSpec {
         name: "synthesize",
-        description: "Compile a goal into a graph document (POST /v1/graphs/synthesize): the \
-                      Graph Architect asks a model for ONE draft, validates it through the \
-                      same schema, lint and executor checks an authored file takes, repairs at \
-                      most twice, and returns the document with the compiler's rationale - or \
-                      refuses with the diagnostics. It publishes nothing and starts nothing: \
-                      the document is what \"start\" takes as an inline \"graph\". \
-                      \"allowPrograms\" is the allowlist a shell node may name; it defaults to \
-                      the server's own and is never widened by the compiler. \"fixture\" is a \
-                      recorded-replies file on the RUNTIME's host (the keyless door); without \
-                      it the server's model route, or \"route\", answers.",
+        description: "Compile a goal into a graph document (POST /v1/graphs/synthesize): one model draft, validated like an authored file, repaired at most twice, or refused with diagnostics. Starts nothing: pass it to start as graph. allowPrograms never widens; fixture is a replies file on the Runtime host.",
         schema: synthesize_schema,
     },
     ToolSpec {
@@ -422,8 +322,7 @@ fn mutating_schema(mut properties: serde_json::Value, required: &[&str]) -> serd
         "type": "integer",
         "minimum": 0,
         "maximum": u64::MAX,
-        "description": "Optional head-sequence pin (the If-Match header): the mutation is \
-                        refused with 409 and the current head when the store moved past it.",
+        "description": "Optional If-Match head pin: 409 if the store moved past it.",
     });
     object_schema(properties, required)
 }
@@ -669,10 +568,8 @@ fn start_schema() -> serde_json::Value {
             "route": {"type": "string"},
             "held": {
                 "type": "boolean",
-                "description": "true starts the execution without driving it (the HTTP \
-                                spelling of `execution start --held`, #90): the call returns \
-                                as soon as the start is recorded, so it cannot outlast the \
-                                client timeout. Omitted or false drives to quiescence first.",
+                "description": "true records the start without driving it (`execution start \
+                                --held`), so it cannot outlast the client timeout.",
             },
         }),
         &["executionId", "mode"],
@@ -919,7 +816,7 @@ fn route_set_schema() -> serde_json::Value {
             "id": {"type": "string",
                 "description": "The route id callers name. Unique in the manifest: an existing id needs replace."},
             "provider": {"type": "string",
-                "description": "The WIRE FORMAT the adapter speaks -- anthropic, openai or typesafe -- not the vendor. A DeepSeek endpoint is an openai route with its own baseUrl."},
+                "description": "The wire format, not the vendor: a DeepSeek endpoint is openai with its own baseUrl."},
             "baseUrl": {"type": "string",
                 "description": "https://..., or http:// to a loopback address. No trailing slash."},
             "model": {"type": "string"},
@@ -930,9 +827,9 @@ fn route_set_schema() -> serde_json::Value {
             "replace": {"type": "boolean",
                 "description": "Absent: false, and an existing id is refused with the manifest left byte-identical."},
             "tiers": {"type": "array", "items": {"enum": ["small", "standard", "large"]}, "uniqueItems": true,
-                "description": "Delegation tiers the route serves (ADR-041). Absent on a replace: the replaced route's tiers are kept; [] clears them."},
+                "description": "Delegation tiers served (ADR-041). Absent on a replace: kept; [] clears."},
             "contextWindowTokens": {"type": "integer", "minimum": 0,
-                "description": "The provider's documented input context window in tokens (ADR-042); bounds subagent session reuse. Absent on a replace: kept; 0 clears it."},
+                "description": "Input context window in tokens (ADR-042). Absent on a replace: kept; 0 clears."},
             "manifest": {"type": "string",
                 "description": "Manifest path override; absent, the Runtime's own."},
         }),
@@ -950,7 +847,7 @@ fn wake_arm_schema() -> serde_json::Value {
             "cursor": {"type": "integer", "minimum": 0, "maximum": u64::MAX,
                 "description": "Ring for appends AFTER this sequence; defaults to the head."},
             "maturesInSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000,
-                "description": "How long quiet may last before the wait ends by itself. Omit it and nothing promises to end the wait: the lease rings on an append or not at all."},
+                "description": "Quiet allowed before the wait ends by itself; omitted, only an append rings."},
         }),
         &["executionId", "rendezvousId"],
     )
@@ -1024,12 +921,11 @@ fn synthesize_schema() -> serde_json::Value {
             "critic": {
                 "type": "string",
                 "enum": ["none", "design"],
-                "description": "design puts a design step and a blind critic step in front of \
-                                the draft, as the task plan's critic says; none is the draft alone.",
+                "description": "design adds a design step and a blind critic before the draft.",
             },
             "plan": {
                 "type": "object",
-                "description": "The task's graphhelm-task-plan-v1 document, as keel_plan returns it; without critic, the plan's own critic decides.",
+                "description": "keel_plan's graphhelm-task-plan-v1 record; its critic applies when critic is absent.",
             },
             "execution": {
                 "type": "string",
@@ -1053,9 +949,8 @@ fn synthesize_schema() -> serde_json::Value {
             },
             "judgeRoute": {
                 "type": "string",
-                "description": "A direct_api typesafe route id of the server's manifest: the \
-                                judge door over the gateway. Exclusive with judgeFixture; no \
-                                judge means no judgment is asked.",
+                "description": "A direct_api typesafe route id for the judge. Exclusive with \
+                                judgeFixture; no judge, no judgment.",
             },
             "judgeFixture": {
                 "type": "string",
@@ -1193,10 +1088,29 @@ fn matured_reply(already_past: bool) -> HandlerOutcome {
     }))
 }
 
-/// The `tools/list` reply body: the closed table, verbatim.
+/// #1277 (plan D1): the existence-slice stubs (#223) that take no argument and do nothing yet.
+/// They stay callable by name and keep their HTTP routes, but leave `tools/list` until they do
+/// something: each costs every connecting session its description and schema for nothing.
+pub(crate) const UNLISTED_STUBS: [&str; 4] = [
+    "resolve_contract",
+    "present",
+    "compile_context",
+    "accounting",
+];
+
+/// #1277: the most `tools/list` may serialise to, in bytes. Every connecting session pays it;
+/// the guard below fails a change that grows it past this, so growth is a decision in a diff.
+#[cfg(test)]
+const TOOL_LIST_BUDGET_BYTES: usize = 25_500;
+/// #1277: the longest a tool description may be: one line plus the route it maps to.
+#[cfg(test)]
+const DESCRIPTION_MAX_CHARS: usize = 300;
+
+/// The `tools/list` reply body: the closed table, minus the unlisted stubs.
 pub(crate) fn tool_list() -> serde_json::Value {
     let tools: Vec<serde_json::Value> = TOOLS
         .iter()
+        .filter(|tool| !UNLISTED_STUBS.contains(&tool.name))
         .map(|tool| {
             serde_json::json!({
                 "name": tool.name,
@@ -2378,6 +2292,64 @@ mod envelope_tests {
         ]
         .iter()
         .any(|phrase| folded.contains(phrase))
+    }
+
+    /// #1277 (plan D1): every connecting session pays for `tools/list`, so its serialised size
+    /// answers to a named budget and no description runs past one line plus its route. A cell
+    /// for each half, so a long description cannot hide under a budget other tools left slack in.
+    #[test]
+    fn tools_list_fits_its_byte_budget_and_every_description_its_cap() {
+        let list = tool_list();
+        let bytes = serde_json::to_string(&list).unwrap().len();
+        eprintln!("tools/list: {bytes} bytes");
+        assert!(
+            bytes <= TOOL_LIST_BUDGET_BYTES,
+            "tools/list serialises to {bytes} bytes, over TOOL_LIST_BUDGET_BYTES \
+             ({TOOL_LIST_BUDGET_BYTES}); shorten a description or raise the budget in the diff"
+        );
+        let tools = list["tools"].as_array().unwrap();
+        assert!(
+            !tools.is_empty(),
+            "HARNESS-BROKE: tools/list listed nothing"
+        );
+        let long: Vec<(String, usize)> = tools
+            .iter()
+            .map(|tool| {
+                let text = tool["description"].as_str().unwrap();
+                (
+                    tool["name"].as_str().unwrap().to_owned(),
+                    text.chars().count(),
+                )
+            })
+            .filter(|(_, chars)| *chars > DESCRIPTION_MAX_CHARS)
+            .collect();
+        assert!(
+            long.is_empty(),
+            "descriptions over {DESCRIPTION_MAX_CHARS} chars: {long:?}"
+        );
+    }
+
+    /// #1277: the unlisted stubs leave `tools/list` and nothing else does; each stays in the
+    /// table, so `tools/call` still reaches it by name.
+    #[test]
+    fn the_unlisted_stubs_are_callable_but_not_listed() {
+        let listed: Vec<String> = tool_list()["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect();
+        for stub in UNLISTED_STUBS {
+            assert!(
+                !listed.iter().any(|name| name == stub),
+                "{stub} is still listed"
+            );
+            assert!(
+                TOOLS.iter().any(|tool| tool.name == stub),
+                "{stub} left the table, so it is no longer callable"
+            );
+        }
+        assert_eq!(listed.len() + UNLISTED_STUBS.len(), TOOLS.len());
     }
 
     /// Every tool's minimal example carries every field its own schema requires - the invariant

@@ -1405,13 +1405,25 @@ fn real_mcp_tool_names() -> Vec<String> {
 #[test]
 fn every_mcp_tools_entry_names_a_tool_the_binary_actually_serves() {
     let (_, mcp_tools) = graphhelm_schema::__surface_allowlists_for_testing();
-    let real = real_mcp_tool_names();
+    let mut real = real_mcp_tool_names();
 
     assert!(
         real.len() > 1,
         "HARNESS-BROKE: the binary listed {} tools, so the subset check below would be nearly \
          vacuous. tools/list did not answer with the real table: {real:?}",
         real.len()
+    );
+    // #1277: these #223 stubs are served (callable by name) but left out of tools/list; the
+    // same set as `UNLISTED_STUBS` in commands/mcp/tools.rs, whose own cell proves each is
+    // still in the table. Added after the harness check so they cannot mask an empty listing.
+    real.extend(
+        [
+            "resolve_contract",
+            "present",
+            "compile_context",
+            "accounting",
+        ]
+        .map(str::to_owned),
     );
 
     let dead: Vec<&str> = mcp_tools

@@ -118,6 +118,16 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
     },
 ];
 
+/// #1277 (plan D1): the #223 existence-slice stubs that leave `tools/list` until they do
+/// something. Hand-written, the same set as `UNLISTED_STUBS` in `src/commands/mcp/tools.rs`
+/// (unreachable from here: the crate is bin-only). They keep their CLI leaf and HTTP route.
+const UNLISTED_MCP_STUBS: [&str; 4] = [
+    "resolve_contract",
+    "present",
+    "compile_context",
+    "accounting",
+];
+
 /// CLI-only development leaves are explicit exceptions because they intentionally have no MCP or
 /// HTTP transport. The reverse checks below keep this declaration closed in both directions.
 const CLI_ONLY_DEVELOPMENT_LEAVES: &[&str] = &["dream-shadow"];
@@ -574,12 +584,22 @@ fn every_declared_development_operation_family_exists_on_all_three_surfaces() {
              subcommand. Real subcommands seen: {cli_leaves:?}"
         );
 
-        assert!(
-            mcp_tools.contains(&family.mcp.to_owned()),
-            "{name:?} is declared but the real MCP tools/list has no {:?} entry. \
-             Real tools seen: {mcp_tools:?}",
-            family.mcp
-        );
+        // #1277: an unlisted stub is still a family (CLI and HTTP below), callable by name but
+        // absent from tools/list; listing it again is as much a drift as dropping a real tool.
+        if UNLISTED_MCP_STUBS.contains(&family.mcp) {
+            assert!(
+                !mcp_tools.contains(&family.mcp.to_owned()),
+                "{name:?} is an unlisted stub, but tools/list lists {:?}",
+                family.mcp
+            );
+        } else {
+            assert!(
+                mcp_tools.contains(&family.mcp.to_owned()),
+                "{name:?} is declared but the real MCP tools/list has no {:?} entry. \
+                 Real tools seen: {mcp_tools:?}",
+                family.mcp
+            );
+        }
 
         probe_http_route_exists(&format!(
             "{} {}",

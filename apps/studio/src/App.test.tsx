@@ -22,6 +22,7 @@ import type { RuntimeClient } from "./runtime/client";
 import { MAX_NODE_TIMEOUT_SECONDS, RuntimeError, RuntimeClient as ReadClient, RUNTIME_REQUEST_TIMEOUT_MS } from "./runtime/client";
 import type { GraphTopology, MutationEvidence } from "./runtime/types";
 import type { ModelContextLike, WebMcpToolDescriptor } from "./webmcp/adapter";
+import { DEPRECATED_ALIASES } from "./webmcp/adapter";
 import { digestOf } from "./runtime/customs";
 import type { TaskState } from "./runtime/team-tasks";
 import { RUNTIME_PREDATES_TASKS_ROUTE } from "./runtime/tasks-route";
@@ -1716,7 +1717,7 @@ describe("the shared surface", () => {
     expect(screen.queryByText("no site tools")).not.toBeInTheDocument();
   });
 
-  it("registers the thirteen site tools once a connection exists, and not before", async () => {
+  it("registers the thirteen site tools (and two deprecated aliases) once a connection exists, and not before", async () => {
     const { modelContext, registered } = fakeModelContext();
     render(
       <App
@@ -1732,7 +1733,9 @@ describe("the shared surface", () => {
     await userEvent.click(screen.getByRole("button", { name: /connect/i }));
     await screen.findByLabelText("Projects");
 
-    expect(registered).toHaveLength(13);
+    // #1356: the thirteen, plus graphhelm_approve_node and graphhelm_amend_node_budget kept as
+    // deprecated aliases of graphhelm_approve and graphhelm_amend_budget for one release.
+    expect(registered).toHaveLength(13 + Object.keys(DEPRECATED_ALIASES).length);
     expect(await screen.findByText("pause_execution")).toBeInTheDocument();
   });
 

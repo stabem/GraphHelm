@@ -676,11 +676,9 @@ mod tests {
         WorkspaceId,
     };
 
-    struct FrozenClock;
-    impl Clock for FrozenClock {
-        fn now(&self) -> chrono::DateTime<Utc> {
-            Utc.with_ymd_and_hms(2026, 9, 3, 12, 0, 0).unwrap()
-        }
+    /// #1357: the shared fixed-instant fake.
+    fn frozen_clock() -> graphhelm_protocols::FixedClock {
+        graphhelm_protocols::FixedClock(Utc.with_ymd_and_hms(2026, 9, 3, 12, 0, 0).unwrap())
     }
     /// Start instant once - the read `starting_now` spends on the deadline - then an hour on.
     struct LapsingClock(AtomicU64);
@@ -712,9 +710,12 @@ mod tests {
             PersistedActorType::System,
             ActorId::parse("system-test").unwrap(),
         );
-        let store =
-            LocalEventRepository::open(directory, Arc::new(FrozenClock), Arc::new(Ids::default()))
-                .unwrap();
+        let store = LocalEventRepository::open(
+            directory,
+            Arc::new(frozen_clock()),
+            Arc::new(Ids::default()),
+        )
+        .unwrap();
         let mut next = 1_u64;
         while next <= count {
             let size = 50.min(count - next + 1);
@@ -832,7 +833,8 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         seed(directory.path(), 400);
 
-        let ample = ReadBudget::starting_now(Arc::new(FrozenClock), chrono::Duration::seconds(5));
+        let ample =
+            ReadBudget::starting_now(Arc::new(frozen_clock()), chrono::Duration::seconds(5));
         // `Failure` carries no `Debug`, so the error arm names itself rather than being unwrapped.
         let Ok(value) =
             super::execute_within(directory.path(), Some("execution-budget"), ample, None)
@@ -871,7 +873,8 @@ mod tests {
             "a refused snapshot must leave no file behind: the write is gated on the check"
         );
 
-        let ample = ReadBudget::starting_now(Arc::new(FrozenClock), chrono::Duration::seconds(5));
+        let ample =
+            ReadBudget::starting_now(Arc::new(frozen_clock()), chrono::Duration::seconds(5));
         // `Failure` carries no `Debug`, so the error arm names itself rather than being unwrapped.
         let Ok(()) =
             super::write_snapshot(directory.path(), Some("execution-budget"), &html, ample)
@@ -906,7 +909,8 @@ mod tests {
                 .expect_err("a lapsed budget must refuse the task read");
         assert_eq!(failure.code, "GHE013_READ_BUDGET_EXCEEDED");
 
-        let ample = ReadBudget::starting_now(Arc::new(FrozenClock), chrono::Duration::seconds(5));
+        let ample =
+            ReadBudget::starting_now(Arc::new(frozen_clock()), chrono::Duration::seconds(5));
         let failure =
             super::super::tasks::read(directory.path(), "execution-budget", &keyring, &ample)
                 .expect_err("control: the missing keyring refuses once the budget check is passed");

@@ -1,3 +1,4 @@
+use graphhelm_protocols::FixedClock;
 use std::{
     collections::BTreeMap,
     future::Future,
@@ -13,11 +14,11 @@ use std::{
 use graphhelm_events::{
     AuthenticateRequest, AuthenticationTag, CleanupReceipt, EvidencePriorAvailability,
     FinalizedRetention, KeyError, KeyProvider, KeyProviderMetadata, LegalHoldChange,
-    PreparedRetention, RepositoryFuture, RetentionAuthority, RetentionBlockReason, RetentionClock,
-    RetentionError, RetentionPlan, RetentionPlanTarget, RetentionPolicy, RetentionRepository,
-    RetentionRequest, RetentionService, RetentionTarget, RevocationReceipt, RevokeKeyRequest,
-    SecretBytes, VerifyAuthenticationRequest, WrapKeyRequest, WrappedKey,
-    provider_revocation_idempotency_key, retention_request_digest,
+    PreparedRetention, RepositoryFuture, RetentionAuthority, RetentionBlockReason, RetentionError,
+    RetentionPlan, RetentionPlanTarget, RetentionPolicy, RetentionRepository, RetentionRequest,
+    RetentionService, RetentionTarget, RevocationReceipt, RevokeKeyRequest, SecretBytes,
+    VerifyAuthenticationRequest, WrapKeyRequest, WrappedKey, provider_revocation_idempotency_key,
+    retention_request_digest,
 };
 use static_assertions::assert_obj_safe;
 
@@ -138,14 +139,6 @@ fn request() -> RetentionRequest {
         vec![target("evidence-a")],
     )
     .unwrap()
-}
-
-#[derive(Clone)]
-struct FixedClock(PersistedTimestamp);
-impl RetentionClock for FixedClock {
-    fn now(&self) -> PersistedTimestamp {
-        self.0.clone()
-    }
 }
 
 #[derive(Default)]
@@ -396,7 +389,7 @@ fn unauthenticated_provider_receipt_never_finalizes() {
     let service = RetentionService::new(
         repository.clone(),
         provider,
-        Arc::new(FixedClock(
+        Arc::new(FixedClock::from(
             PersistedTimestamp::parse("2026-08-11T12:00:00Z").unwrap(),
         )),
     );
@@ -415,7 +408,7 @@ fn multi_target_revocation_uses_one_stable_provider_identity_per_target() {
     let service = RetentionService::new(
         repository,
         provider.clone(),
-        Arc::new(FixedClock(
+        Arc::new(FixedClock::from(
             PersistedTimestamp::parse("2026-08-11T12:00:00Z").unwrap(),
         )),
     );
@@ -471,7 +464,7 @@ fn crash_after_provider_revoke_retries_without_a_second_logical_revoke() {
     let service = RetentionService::new(
         repository.clone(),
         provider.clone(),
-        Arc::new(FixedClock(
+        Arc::new(FixedClock::from(
             PersistedTimestamp::parse("2026-08-11T12:00:00Z").unwrap(),
         )),
     );
@@ -498,7 +491,7 @@ fn provider_failure_stays_pending_and_exact_retry_finalizes_once() {
     let service = RetentionService::new(
         repository.clone(),
         provider.clone(),
-        Arc::new(FixedClock(
+        Arc::new(FixedClock::from(
             PersistedTimestamp::parse("2026-08-11T12:00:00Z").unwrap(),
         )),
     );

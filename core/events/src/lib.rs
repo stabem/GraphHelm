@@ -65,9 +65,9 @@ pub use repository::{
 pub use retention::{
     CleanupReceipt, CleanupRequest, EvidencePriorAvailability, FinalizedRetention, LegalHoldChange,
     LegalHoldReceipt, PreparedRetention, PreparedRetentionTarget, RetentionAuthority,
-    RetentionBlockReason, RetentionClock, RetentionError, RetentionPlan, RetentionPlanTarget,
-    RetentionPolicy, RetentionPrepareOutcome, RetentionRepository, RetentionRequest,
-    RetentionService, RetentionTarget, cleanup_request_digest, finalized_authentication_bytes,
+    RetentionBlockReason, RetentionError, RetentionPlan, RetentionPlanTarget, RetentionPolicy,
+    RetentionPrepareOutcome, RetentionRepository, RetentionRequest, RetentionService,
+    RetentionTarget, cleanup_request_digest, finalized_authentication_bytes,
     legal_hold_authentication_bytes, prepared_authentication_bytes,
     provider_revocation_idempotency_key, retention_authority_authentication_bytes,
     retention_request_digest, revocation_receipt_authentication_bytes,

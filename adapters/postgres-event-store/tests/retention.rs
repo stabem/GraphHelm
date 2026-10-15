@@ -1,5 +1,6 @@
 mod support;
 
+use graphhelm_protocols::FixedClock;
 use std::{
     collections::BTreeMap,
     sync::{
@@ -13,11 +14,10 @@ use chrono::Utc;
 use graphhelm_events::{
     AsyncEventRepository, AuthenticateRequest, AuthenticationTag, CleanupRequest, EvidenceRead,
     EvidenceRepository, KeyError, KeyProvider, KeyProviderMetadata, LegalHoldChange,
-    PreparedAppend, PreparedRetention, RepositoryFuture, RetentionAuthority, RetentionClock,
-    RetentionError, RetentionPolicy, RetentionRepository, RetentionRequest, RetentionService,
-    RetentionTarget, RevocationReceipt, RevokeKeyRequest, SecretBytes, VerifyAuthenticationRequest,
-    WrapKeyRequest, WrappedKey, legal_hold_authentication_bytes,
-    retention_authority_authentication_bytes,
+    PreparedAppend, PreparedRetention, RepositoryFuture, RetentionAuthority, RetentionError,
+    RetentionPolicy, RetentionRepository, RetentionRequest, RetentionService, RetentionTarget,
+    RevocationReceipt, RevokeKeyRequest, SecretBytes, VerifyAuthenticationRequest, WrapKeyRequest,
+    WrappedKey, legal_hold_authentication_bytes, retention_authority_authentication_bytes,
 };
 use graphhelm_postgres_event_store::PostgresEventStore;
 use graphhelm_protocols::{
@@ -26,13 +26,6 @@ use graphhelm_protocols::{
 };
 use sha2::{Digest, Sha256};
 use sqlx::Row;
-
-struct Clock(PersistedTimestamp);
-impl RetentionClock for Clock {
-    fn now(&self) -> PersistedTimestamp {
-        self.0.clone()
-    }
-}
 
 #[test]
 #[ignore = "requires GRAPHHELM_TEST_ADMIN_URL"]
@@ -375,7 +368,7 @@ fn committed_hold_wins_a_prepare_snapshot_race() {
         let provider = Arc::new(RetentionKeyProvider::default());
         let store = Arc::new(PostgresEventStore::from_pool(database.runtime_pool.clone(),provider.clone()).await.unwrap());
         let request = retention_request(&scope,evidence_id.clone(),"race-operation","race-idempotency");
-        let service = Arc::new(RetentionService::new(store,provider,Arc::new(Clock(PersistedTimestamp::from_datetime(Utc::now()).unwrap()))));
+        let service = Arc::new(RetentionService::new(store,provider,Arc::new(FixedClock::from(PersistedTimestamp::from_datetime(Utc::now()).unwrap()))));
         let changed_at = PersistedTimestamp::from_datetime(Utc::now()).unwrap();
         let hold = legal_hold_change(scope.clone(),OpaqueId::parse("race-hold").unwrap(),evidence_id.clone(),OpaqueId::parse("authority-legal").unwrap(),SafeCode::parse("legal_request").unwrap(),true,changed_at);
 
@@ -426,7 +419,7 @@ fn concurrent_prepare_finalize_has_one_durable_outcome() {
         let provider = Arc::new(RetentionKeyProvider::default());
         let store = Arc::new(PostgresEventStore::from_pool(database.runtime_pool.clone(),provider.clone()).await.unwrap());
         let request = retention_request(&scope,evidence_id,"concurrent-operation","concurrent-idempotency");
-        let service = Arc::new(RetentionService::new(store,provider.clone(),Arc::new(Clock(PersistedTimestamp::from_datetime(Utc::now()).unwrap()))));
+        let service = Arc::new(RetentionService::new(store,provider.clone(),Arc::new(FixedClock::from(PersistedTimestamp::from_datetime(Utc::now()).unwrap()))));
         let first = { let service=service.clone(); let request=request.clone(); tokio::spawn(async move { service.execute(request).await }) };
         let second = { let service=service.clone(); let request=request.clone(); tokio::spawn(async move { service.execute(request).await }) };
         let outcomes = [first.await.unwrap(),second.await.unwrap()];
@@ -458,11 +451,11 @@ fn recreated_service_reconciles_revoked_but_unfinalized_operation() {
         provider.fail_finalize_auth_once.store(true,Ordering::SeqCst);
         let store = Arc::new(PostgresEventStore::from_pool(database.runtime_pool.clone(),provider.clone()).await.unwrap());
         let request = retention_request(&scope,evidence_id,"revoke-crash-operation","revoke-crash-idempotency");
-        let service = RetentionService::new(store,provider.clone(),Arc::new(Clock(PersistedTimestamp::from_datetime(Utc::now()).unwrap())));
+        let service = RetentionService::new(store,provider.clone(),Arc::new(FixedClock::from(PersistedTimestamp::from_datetime(Utc::now()).unwrap())));
         assert_eq!(service.execute(request).await.unwrap_err(),RetentionError::KeyUnavailable);
         assert_eq!(provider.epoch.load(Ordering::SeqCst),1);
         let recreated_store=Arc::new(PostgresEventStore::from_pool(database.runtime_pool.clone(),provider.clone()).await.unwrap());
-        let recreated=RetentionService::new(recreated_store,provider.clone(),Arc::new(Clock(PersistedTimestamp::from_datetime(Utc::now()).unwrap())));
+        let recreated=RetentionService::new(recreated_store,provider.clone(),Arc::new(FixedClock::from(PersistedTimestamp::from_datetime(Utc::now()).unwrap())));
         let finalized=recreated.reconcile(scope,10).await.unwrap();
         assert_eq!(finalized.len(),1);
         assert_eq!(provider.epoch.load(Ordering::SeqCst),1);
@@ -506,7 +499,11 @@ fn nonzero_cleanup_delay_blocks_early_physical_deletion() {
                 .unwrap(),
         );
         let now = PersistedTimestamp::from_datetime(Utc::now()).unwrap();
-        let service = RetentionService::new(store.clone(), provider, Arc::new(Clock(now.clone())));
+        let service = RetentionService::new(
+            store.clone(),
+            provider,
+            Arc::new(FixedClock::from(now.clone())),
+        );
         let finalized = service
             .execute(retention_request_with_cleanup_delay(
                 &scope,
@@ -586,7 +583,7 @@ fn restart_reconciles_pending_and_late_hold_cannot_resurrect() {
         let service = RetentionService::new(
             store.clone(),
             provider.clone(),
-            Arc::new(Clock(now.clone())),
+            Arc::new(FixedClock::from(now.clone())),
         );
         let request = retention_request(
             &evidence_scope,
@@ -625,8 +622,11 @@ fn restart_reconciles_pending_and_late_hold_cannot_resurrect() {
                 .await
                 .unwrap(),
         );
-        let restarted_service =
-            RetentionService::new(restarted.clone(), provider.clone(), Arc::new(Clock(now)));
+        let restarted_service = RetentionService::new(
+            restarted.clone(),
+            provider.clone(),
+            Arc::new(FixedClock::from(now)),
+        );
         assert_eq!(
             restarted_service
                 .reconcile(evidence_scope.clone(), 10)
@@ -688,7 +688,7 @@ fn committed_hold_blocks_prepare_and_release_restores_eligibility() {
                 .unwrap(),
         );
         let now = PersistedTimestamp::from_datetime(Utc::now()).unwrap();
-        let service = RetentionService::new(store.clone(), provider, Arc::new(Clock(now.clone())));
+        let service = RetentionService::new(store.clone(), provider, Arc::new(FixedClock::from(now.clone())));
         let hold = legal_hold_change(
             evidence_scope.clone(),
             OpaqueId::parse("hold-one").unwrap(),
@@ -757,12 +757,12 @@ fn erasure_is_pending_before_revoke_and_finalizes_once() {
         let authority_id=OpaqueId::parse("authority-compliance").unwrap();
         let authority_tag=AuthenticationTag::new("retention-key","hmac-sha256",tag(&retention_authority_authentication_bytes(&authority_id,&evidence_scope,&policy))).unwrap();
         let request=RetentionRequest::new(evidence_scope.clone(),OpaqueId::parse("erase-operation").unwrap(),OpaqueId::parse("erase-idempotency").unwrap(),policy.clone(),RetentionAuthority::new(authority_id,evidence_scope.clone(),policy.id().clone(),policy.version().clone(),authority_tag),SafeCode::parse("scheduled_expiry").unwrap(),vec![RetentionTarget::new(evidence_id.clone()).unwrap()]).unwrap();
-        let service=RetentionService::new(store.clone(),provider.clone(),Arc::new(Clock(now.clone())));
+        let service=RetentionService::new(store.clone(),provider.clone(),Arc::new(FixedClock::from(now.clone())));
         let plan=service.dry_run(request.clone()).await.unwrap();
         assert!(plan.is_eligible());
         let first=match service.execute(request.clone()).await { Ok(value)=>value,Err(error)=>{let operations:i64=sqlx::query_scalar("SELECT count(*) FROM graphhelm_retention_operations").fetch_one(database.admin_pool()).await.unwrap();let events:i64=sqlx::query_scalar("SELECT count(*) FROM graphhelm_events WHERE stream_id='retention-events'").fetch_one(database.admin_pool()).await.unwrap();let pending=store.pending(evidence_scope.clone(),10).await;panic!("execute failed: {error:?}; operations={operations}; events={events}; epoch={}; pending={pending:?}",provider.epoch.load(Ordering::SeqCst));}};
         let retry_store=Arc::new(PostgresEventStore::from_pool(database.runtime_pool.clone(),provider.clone()).await.unwrap());
-        let retry_service=RetentionService::new(retry_store,provider.clone(),Arc::new(Clock(now.clone())));
+        let retry_service=RetentionService::new(retry_store,provider.clone(),Arc::new(FixedClock::from(now.clone())));
         let retry=retry_service.execute(request).await.unwrap();
         assert_eq!(first,retry);
         assert_eq!(provider.epoch.load(Ordering::SeqCst),1);

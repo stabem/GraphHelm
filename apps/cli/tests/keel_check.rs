@@ -124,6 +124,28 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/graphs/software-feature.yaml");
     let fixtures = scratch.path().join("fixtures.json");
     fs::write(&fixtures, br#"{"nodeOutcomes":{}}"#).unwrap();
+    let unbound_start = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "execution", "start", "--file"])
+        .arg(&graph)
+        .args(["--events"])
+        .arg(&unbound_events)
+        .args(["--fixtures"])
+        .arg(&fixtures)
+        .args([
+            "--mode",
+            "supervised",
+            "--execution",
+            "exec_feature",
+            "--held",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        unbound_start.status.success(),
+        "{}",
+        String::from_utf8_lossy(&unbound_start.stdout)
+    );
     let start = Command::cargo_bin("graphhelm")
         .unwrap()
         .args(["--json", "execution", "start", "--file"])
@@ -149,28 +171,6 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         start.status.success(),
         "{}",
         String::from_utf8_lossy(&start.stdout)
-    );
-    let unbound_start = Command::cargo_bin("graphhelm")
-        .unwrap()
-        .args(["--json", "execution", "start", "--file"])
-        .arg(&graph)
-        .args(["--events"])
-        .arg(&unbound_events)
-        .args(["--fixtures"])
-        .arg(&fixtures)
-        .args([
-            "--mode",
-            "supervised",
-            "--execution",
-            "exec_feature",
-            "--held",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        unbound_start.status.success(),
-        "{}",
-        String::from_utf8_lossy(&unbound_start.stdout)
     );
     let hashed = Command::cargo_bin("graphhelm")
         .unwrap()

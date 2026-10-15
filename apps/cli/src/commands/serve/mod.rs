@@ -265,6 +265,22 @@ pub fn run(args: &ServeArgs) -> Outcome {
     }
 }
 
+/// #1298: an agent's worktree started `serve --events <main>/.graphhelm/events --project
+/// <worktree>`. The events directory has one Runtime (its lifecycle lock), so that Runtime took
+/// the owner's Studio, and every journey replay built the worktree's code. An events directory
+/// that sits in a project's `.graphhelm` belongs to that project: the folder it names, when it is
+/// not `project`. An events directory anywhere else is left alone.
+fn foreign_events_owner(events: &Path, project: &Path) -> Option<PathBuf> {
+    let canonical =
+        |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let state = events.parent()?;
+    if state.file_name()? != ".graphhelm" {
+        return None;
+    }
+    let owner = canonical(state.parent()?);
+    (owner != canonical(project)).then_some(owner)
+}
+
 fn execute(args: &ServeArgs) -> Result<(), Failure> {
     if args.workspace_sweep_seconds != 0 && !(60..=86400).contains(&args.workspace_sweep_seconds) {
         return Err(argument(
@@ -280,6 +296,19 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         args.workspace_sweep_test_seconds.unwrap_or(seconds)
     };
     let address = parse_loopback_bind(&args.bind)?;
+    if let Some(owner) = args
+        .project
+        .as_deref()
+        .and_then(|project| foreign_events_owner(&args.events, project))
+    {
+        return Err(serve_invalid(
+            &format!(
+                "--events belongs to another checkout ({}); a Runtime for --project uses that project's own .graphhelm/events",
+                owner.display()
+            ),
+            "/events",
+        ));
+    }
     std::fs::create_dir_all(&args.events)
         .map_err(|_| serve_invalid("the events directory could not be created", "/events"))?;
     // One implementation with `init` (#1062): the token `init` minted is the one `serve` reads.
@@ -3386,6 +3415,28 @@ fn append_audit_line(path: &Path, line: &serde_json::Value) -> std::io::Result<(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// #1298: a worktree's Runtime on the main checkout's events took the owner's Studio. The
+    /// events of a project's `.graphhelm` belong to that project only; others are left alone.
+    /// Cost: three temporary directories.
+    #[test]
+    fn a_runtime_for_one_checkout_refuses_another_checkouts_events() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("main");
+        let worktree = main.join(".claude").join("worktrees").join("mutacao");
+        std::fs::create_dir_all(main.join(".graphhelm")).unwrap();
+        std::fs::create_dir_all(&worktree).unwrap();
+        let events = main.join(".graphhelm").join("events");
+        assert_eq!(
+            foreign_events_owner(&events, &worktree),
+            Some(std::fs::canonicalize(&main).unwrap())
+        );
+        assert_eq!(foreign_events_owner(&events, &main), None);
+        assert_eq!(
+            foreign_events_owner(&root.path().join("custom-events"), &worktree),
+            None
+        );
+    }
 
     /// Promise: a scoped agent status read identifies its admitted actor without advancing the
     /// event head, and that observation expires after the 15-minute liveness window. Regression:

@@ -42,6 +42,7 @@ public static class ConsoleWindowWatch {
   [DllImport("user32.dll")] static extern bool PostThreadMessage(uint tid, uint msg, IntPtr w, IntPtr l);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder name, int max);
   [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
   [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
   [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr h; public uint m; public IntPtr w; public IntPtr l; public uint t; public int x; public int y; }
   static readonly object Gate = new object();
@@ -71,7 +72,10 @@ public static class ConsoleWindowWatch {
     GetClassName(hwnd, name, name.Capacity);
     var cls = name.ToString();
     if (cls == "ConsoleWindowClass" || cls == "CASCADIA_HOSTING_WINDOW_CLASS") {
-      lock (Gate) { Seen.Add(DateTime.Now.ToString("HH:mm:ss.fff") + " " + cls + " 0x" + hwnd.ToString("x")); }
+      uint pid;
+      uint ownerThread = GetWindowThreadProcessId(hwnd, out pid);
+      string owner = ownerThread != 0 && pid != 0 ? pid.ToString() : "unknown";
+      lock (Gate) { Seen.Add(DateTime.Now.ToString("HH:mm:ss.fff") + " " + cls + " 0x" + hwnd.ToString("x") + " pid=" + owner); }
     }
   }
   // Agent harnesses start tools with no console at all. Reproduce that: DETACHED_PROCESS, stdout and

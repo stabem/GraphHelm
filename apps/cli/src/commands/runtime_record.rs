@@ -316,6 +316,18 @@ fn reject_insecure_permissions(_: &std::fs::Metadata) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    /// #1325: pinned BEFORE `new_instance` encodes with `hex::encode`: 32 lowercase hex digits.
+    #[test]
+    fn hex_new_instance_is_32_lowercase_hex_digits() {
+        let id = new_instance().unwrap();
+        assert_eq!(id.len(), 32, "{id}");
+        assert!(
+            id.bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+            "{id}"
+        );
+    }
+
     fn record(instance: &str) -> Record {
         Record::new(
             "http://127.0.0.1:8791".into(),

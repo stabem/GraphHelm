@@ -324,6 +324,42 @@ const fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
+/// #1325: the gateway key decoder, pinned on known keys BEFORE it moves to a shared helper.
+#[cfg(test)]
+mod hex_key_vectors {
+    use super::decode_key;
+
+    const KEY: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+
+    #[test]
+    fn hex_gateway_key_decodes_known_keys_byte_for_byte() {
+        let decoded = decode_key(KEY.as_bytes(), "GRAPHHELM_GATEWAY_KEY")
+            .unwrap_or_else(|failure| panic!("refused: {}", failure.message));
+        assert_eq!(
+            decoded.expose(<[u8]>::to_vec),
+            (0_u8..32).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn hex_gateway_key_refuses_what_it_refused_naming_the_variable() {
+        let upper = KEY.replace('f', "F");
+        let long = format!("{KEY}0");
+        let newline = format!("{}\n", &KEY[..63]);
+        for encoded in [&KEY[..63], &long, &upper, &newline, ""] {
+            let failure = decode_key(encoded.as_bytes(), "serve.key")
+                .err()
+                .unwrap_or_else(|| panic!("{encoded:?} was accepted"));
+            assert_eq!(failure.code, super::CREDENTIAL_CODE);
+            assert_eq!(
+                failure.message,
+                "serve.key must supply 64 lowercase hexadecimal characters"
+            );
+            assert_eq!(failure.pointer, "/keyring");
+        }
+    }
+}
+
 /// Maps any broker failure onto the credential failure class. Covers both "the broker mechanism
 /// itself could not be used" (open/store/revoke I/O, corrupt store, sealing failure) and "the
 /// reference was malformed" (`BrokerError::InvalidReference`) — both are the broker refusing the

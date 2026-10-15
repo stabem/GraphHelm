@@ -296,6 +296,17 @@ fn encode_hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
+    /// #1325: pinned BEFORE `encode_hex` becomes `hex::encode`: lowercase, two digits per byte,
+    /// no separators, every byte value.
+    #[test]
+    fn hex_encode_matches_known_strings_for_every_byte() {
+        assert_eq!(encode_hex(&[0x00, 0x0f, 0xf0, 0xff, 0xab]), "000ff0ffab");
+        assert_eq!(encode_hex(&[]), "");
+        let all: Vec<u8> = (0_u8..=255).collect();
+        let expected: String = all.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(encode_hex(&all), expected);
+    }
+
     #[test]
     fn token_path_is_a_sibling_named_after_the_events_directory() {
         let events = Path::new("/srv/graphhelm/events");

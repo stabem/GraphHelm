@@ -745,7 +745,9 @@ async function open(client: ReturnType<typeof stubClient>, modelContext: ModelCo
 }
 
 describe("opening", () => {
-  it("does not read journey runs or frames before the owner selects a journey", async () => {
+  // #1291 reads each journey's cached run once on load so the rail shows x/y and the verdict;
+  // selecting a journey refreshes only that journey's run (#917), and no frame is read before it.
+  it("reads each journey's cached run once on load and no frame before the owner selects a journey", async () => {
     const journeyRun = vi.fn(async () => ({ state: "none", screens: {} }));
     const journeyScreenFrame = vi.fn(async () => null);
     const journeys = vi.fn(async () => ({ journeys: ["first", "second"].map((contractId) => ({
@@ -754,11 +756,12 @@ describe("opening", () => {
     await open(stubClient({ journeys, journeyRun, journeyScreenFrame }));
     await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
     await screen.findByRole("button", { name: /^first/ });
-    expect(journeyRun).not.toHaveBeenCalled();
+    await waitFor(() => expect(journeyRun).toHaveBeenCalledTimes(2));
+    expect(journeyRun.mock.calls.map((call: unknown[]) => call[0]).sort()).toEqual(["first", "second"]);
     expect(journeyScreenFrame).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: /^second/ }));
-    await waitFor(() => expect(journeyRun).toHaveBeenCalledWith("second"));
-    expect(journeyRun).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(journeyRun).toHaveBeenCalledTimes(3));
+    expect(journeyRun).toHaveBeenLastCalledWith("second");
   });
   // Runtime I/O only; protects the Lanes -> Details alias handoff missed by control-only tests.
   it("shows the saved bot name in Details after renaming in Lanes", async () => {

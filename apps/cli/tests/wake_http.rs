@@ -4,6 +4,9 @@
 //! — the byte may only arrive after the append that caused it is readable in the store —
 //! and a consumed lease never rings twice.
 
+#[path = "support/mod.rs"]
+mod support;
+use support::token_path;
 #[path = "support/time_scale.rs"]
 mod time_scale;
 use time_scale::scaled;
@@ -26,15 +29,6 @@ impl Drop for ServerGuard {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-fn token_path(events: &Path) -> PathBuf {
-    let mut name = events.file_name().map_or_else(
-        || std::ffi::OsString::from("events"),
-        std::ffi::OsStr::to_os_string,
-    );
-    name.push(".token");
-    events.with_file_name(name)
 }
 
 fn serve(events: &Path) -> (ServerGuard, String, String) {

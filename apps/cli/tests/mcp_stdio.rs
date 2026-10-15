@@ -4,6 +4,9 @@
 //! `CommandOutput` envelope carries no `"jsonrpc"` member and is filtered out — stdout is
 //! shared between the protocol stream and the house CLI contract's closing envelope).
 
+#[path = "support/mod.rs"]
+mod support;
+use support::token_path;
 #[path = "support/time_scale.rs"]
 mod time_scale;
 use time_scale::scaled;
@@ -303,17 +306,6 @@ impl Drop for ServerGuard {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-/// Mirrors `commands::serve::token_path` (sibling `<events>.token`) — the same second copy
-/// `api_http.rs` keeps, for the same bin-only reason.
-fn token_path(events: &Path) -> PathBuf {
-    let mut name = events.file_name().map_or_else(
-        || std::ffi::OsString::from("events"),
-        std::ffi::OsStr::to_os_string,
-    );
-    name.push(".token");
-    events.with_file_name(name)
 }
 
 /// Spawns `graphhelm serve` on an ephemeral port and returns (guard, base URL, token) — the

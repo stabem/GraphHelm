@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -17,6 +17,7 @@ use serde_json::Value;
 mod support;
 use support::time_scale::scaled;
 use support::{parse_response, raw_request, split_url};
+use support::{read_token, token_path, wait_for_health};
 
 struct ServerGuard {
     child: Child,
@@ -27,15 +28,6 @@ impl Drop for ServerGuard {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-fn token_path(events: &Path) -> PathBuf {
-    let mut name = events.file_name().map_or_else(
-        || std::ffi::OsString::from("events"),
-        std::ffi::OsStr::to_os_string,
-    );
-    name.push(".token");
-    events.with_file_name(name)
 }
 
 struct ServeExtra {
@@ -86,32 +78,6 @@ fn serve_with(events: &Path, extra: &ServeExtra) -> (ServerGuard, String, String
     let base = format!("http://{address}");
     wait_for_health(&base);
     (server, base, token)
-}
-
-fn read_token(path: &Path) -> String {
-    let deadline = Instant::now() + scaled(Duration::from_secs(5));
-    loop {
-        if let Ok(contents) = std::fs::read_to_string(path)
-            && !contents.is_empty()
-        {
-            return contents;
-        }
-        assert!(Instant::now() < deadline, "no token file at {path:?}");
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-fn wait_for_health(base: &str) {
-    let deadline = Instant::now() + scaled(Duration::from_secs(5));
-    loop {
-        if let Ok(response) = raw_request(&format!("{base}/health"), None)
-            && response.status == 200
-        {
-            return;
-        }
-        assert!(Instant::now() < deadline, "no /health at {base}");
-        std::thread::sleep(Duration::from_millis(20));
-    }
 }
 
 fn post_json(url: &str, token: &str, key: &str, actor_type: &str, body: &Value) -> (u16, Value) {

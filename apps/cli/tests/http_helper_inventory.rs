@@ -26,13 +26,113 @@ use std::path::{Path, PathBuf};
 
 /// The one file allowed to define a helper that `support/mod.rs` also defines, and the one helper
 /// it may define. A CLOSED list: adding to it is an edit a reviewer sees.
-const EXEMPTIONS: &[(&str, &str)] = &[("api_http.rs", "fn raw_request(")];
+///
+/// #1313 (plan wave E, HTTP test harness) widened the guard to the ten helper names the plan
+/// counted. `token_path`, `read_token`, `wait_for_health` and `get_json` now live in
+/// `support/mod.rs`; every copy left below is either a DIFFERENT function under the same name (the
+/// reason is on its group) or a copy a later slice of #1313 moves (marked so). The second test
+/// fails on an exemption whose copy is gone, so a slice that moves a copy must also strike it here.
+const EXEMPTIONS: &[(&str, &str)] = &[
+    // Bounded connect (connect_with_retry + hang guard); see the module doc.
+    ("api_http.rs", "fn raw_request("),
+    // api_http's own client: its health wait and GET go through the hardened `raw_request`.
+    ("api_http.rs", "fn wait_for_health("),
+    ("api_http.rs", "fn get_json("),
+    // Bare `host:port` forms (a raw TcpStream / the file's own `request`), not a URL.
+    ("mcp_stdio.rs", "fn wait_for_health("),
+    ("monitor_http.rs", "fn wait_for_health("),
+    // Bare address, mandatory Bearer token, Null on a non-JSON body.
+    ("wake_http.rs", "fn get_json("),
+    // `post_json`: six signatures (fixed idempotency/actor headers, bare addresses, chunked-body
+    // trimming, a `Server` handle, different timeouts); each file's own request shape.
+    ("api_http.rs", "fn post_json("),
+    ("context_journey.rs", "fn post_json("),
+    ("development_context_budget.rs", "fn post_json("),
+    ("documents_http.rs", "fn post_json("),
+    ("gate_http.rs", "fn post_json("),
+    ("mcp_stdio.rs", "fn post_json("),
+    ("resume_atomicity.rs", "fn post_json("),
+    ("resume_project_default.rs", "fn post_json("),
+    ("runtime_http.rs", "fn post_json("),
+    ("wake_http.rs", "fn post_json("),
+    // `serve`: each starts the server its suite needs (env, keyring, extra flags, journeys,
+    // project registries) and returns its own guard type; several are methods.
+    ("api_http.rs", "fn serve("),
+    ("documents_http.rs", "fn serve("),
+    ("journey_flow_surfaces.rs", "fn serve("),
+    ("journeys_surfaces.rs", "fn serve("),
+    ("mcp_discovery.rs", "fn serve("),
+    ("mcp_stdio.rs", "fn serve("),
+    ("monitor_http.rs", "fn serve("),
+    ("providerless_journey.rs", "fn serve("),
+    ("runtime_http.rs", "fn serve("),
+    ("signal_image_evidence_http.rs", "fn serve("),
+    ("wake_http.rs", "fn serve("),
+    ("workspace_cli.rs", "fn serve("),
+    // `cli`: six shapes (envelope or `data`, exit code or assert, secret env, `Command` builders).
+    ("amend_budget.rs", "fn cli("),
+    ("api_http.rs", "fn cli("),
+    ("documents_http.rs", "fn cli("),
+    ("journey_explore_browser.rs", "fn cli("),
+    ("journey_flow_surfaces.rs", "fn cli("),
+    ("journey_live_browser.rs", "fn cli("),
+    ("journey_live_cli.rs", "fn cli("),
+    ("journey_preview_browser.rs", "fn cli("),
+    ("journey_preview_cli.rs", "fn cli("),
+    ("journey_replay_browser.rs", "fn cli("),
+    ("journey_replay_cli.rs", "fn cli("),
+    ("journeys_surfaces.rs", "fn cli("),
+    ("mcp_capability.rs", "fn cli("),
+    ("resume_atomicity.rs", "fn cli("),
+    // `credential_set`: architect_cli and gateway_cli take a provider/value and use assert_cmd;
+    // the four `--usable-by` copies move in a later slice of #1313.
+    ("architect_cli.rs", "fn credential_set("),
+    ("gateway_cli.rs", "fn credential_set("),
+    ("context_journey.rs", "fn credential_set("),
+    ("gate_http.rs", "fn credential_set("),
+    ("resume_project_default.rs", "fn credential_set("),
+    ("runtime_http.rs", "fn credential_set("),
+    // `repository_root`: moves in a later slice of #1313 (canonicalized and plain forms).
+    ("development_cli.rs", "fn repository_root("),
+    ("development_journey.rs", "fn repository_root("),
+    ("development_sabotage.rs", "fn repository_root("),
+    ("event_store_local_backup.rs", "fn repository_root("),
+    ("extension_cli.rs", "fn repository_root("),
+    ("jpd_capsule_authority.rs", "fn repository_root("),
+    ("jpd_graph_contract.rs", "fn repository_root("),
+    ("jpd_observer_trust.rs", "fn repository_root("),
+    ("jpd_plugin.rs", "fn repository_root("),
+    ("jpd_promotion_policy.rs", "fn repository_root("),
+    ("jpd_retry_semantics.rs", "fn repository_root("),
+    ("schema_cli.rs", "fn repository_root("),
+    ("shipped_package_coverage.rs", "fn repository_root("),
+    ("test_support_has_no_dead_helpers.rs", "fn repository_root("),
+    // `owner_token`: seven byte-identical copies; move in a later slice of #1313.
+    ("journey_flow_cli.rs", "fn owner_token("),
+    ("journey_flow_surfaces.rs", "fn owner_token("),
+    ("journey_live_browser.rs", "fn owner_token("),
+    ("journey_live_cli.rs", "fn owner_token("),
+    ("journey_replay_browser.rs", "fn owner_token("),
+    ("journey_replay_cli.rs", "fn owner_token("),
+    ("keel_check.rs", "fn owner_token("),
+];
 
 const HELPERS: &[&str] = &[
     "fn raw_request(",
     "fn split_url(",
     "fn parse_response(",
     "struct RawResponse ",
+    // #1313: the plan row's helper names.
+    "fn token_path(",
+    "fn read_token(",
+    "fn wait_for_health(",
+    "fn get_json(",
+    "fn post_json(",
+    "fn serve(",
+    "fn cli(",
+    "fn credential_set(",
+    "fn repository_root(",
+    "fn owner_token(",
 ];
 
 fn tests_directory() -> PathBuf {

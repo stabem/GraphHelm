@@ -2,12 +2,15 @@
 //! under the four locked-down headers; refusals over HTTP append nothing; a scoped agent can attach
 //! but cannot read; and the CLI `--attach` and MCP `signal` paths seal the same PNG identically.
 
+#[path = "support/mod.rs"]
+mod support;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use support::token_path;
 
 #[path = "support/time_scale.rs"]
 mod time_scale;
@@ -174,12 +177,6 @@ fn prepared() -> Harness {
         base: String::new(),
         token: String::new(),
     }
-}
-
-fn token_path(events: &Path) -> PathBuf {
-    let mut name = events.file_name().unwrap().to_os_string();
-    name.push(".token");
-    events.with_file_name(name)
 }
 
 impl Harness {

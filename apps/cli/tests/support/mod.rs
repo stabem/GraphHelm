@@ -111,3 +111,63 @@ pub fn parse_response(text: &str) -> std::io::Result<RawResponse> {
         body: body.to_owned(),
     })
 }
+
+/// Where `graphhelm serve` writes its bearer token: beside the events directory, as
+/// `<events>.token`. Beside, not inside: `LocalEventRepository::open` refuses a store directory
+/// that holds an entry outside its own allowlist (#1313: one copy, was eleven).
+pub fn token_path(events: &std::path::Path) -> std::path::PathBuf {
+    let mut name = events.file_name().map_or_else(
+        || std::ffi::OsString::from("events"),
+        std::ffi::OsStr::to_os_string,
+    );
+    name.push(".token");
+    events.with_file_name(name)
+}
+
+/// The token the server wrote at `path`, polled until the file is non-empty (the server writes
+/// it after binding). Returned as written, untrimmed (#1313: one copy, was eight).
+pub fn read_token(path: &std::path::Path) -> String {
+    let deadline = std::time::Instant::now() + time_scale::scaled(Duration::from_secs(5));
+    loop {
+        if let Ok(contents) = std::fs::read_to_string(path)
+            && !contents.is_empty()
+        {
+            return contents;
+        }
+        if std::time::Instant::now() >= deadline {
+            panic!("the server never wrote a readable token file at {path:?}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Polls `GET {base}/health` (base is `http://host:port`) through [`raw_request`] until it
+/// answers 200 (#1313: one copy, was five). The bare-address forms in `mcp_stdio.rs` and
+/// `monitor_http.rs`, and `api_http.rs`'s hardened one, are different functions and stay.
+pub fn wait_for_health(base: &str) {
+    let deadline = std::time::Instant::now() + time_scale::scaled(Duration::from_secs(5));
+    loop {
+        if let Ok(response) = raw_request(&format!("{base}/health"), None)
+            && response.status == 200
+        {
+            return;
+        }
+        if std::time::Instant::now() >= deadline {
+            panic!("the server never answered /health at {base}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// `GET url` through [`raw_request`], the body parsed as JSON; panics naming the URL on a failed
+/// request or a non-JSON body (#1313: one copy, was four).
+pub fn get_json(url: &str, token: Option<&str>) -> serde_json::Value {
+    let response =
+        raw_request(url, token).unwrap_or_else(|error| panic!("request to {url} failed: {error}"));
+    serde_json::from_str(&response.body).unwrap_or_else(|error| {
+        panic!(
+            "response body from {url} was not JSON ({error}): {:?}",
+            response.body
+        )
+    })
+}

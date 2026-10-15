@@ -453,6 +453,36 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
     assert!(status["data"]["attentionReasons"].as_array().unwrap().iter()
         .any(|reason| reason["kind"] == "pending_draft" && reason["draft_id"] == "draft-review"), "{status}");
 
+    // RED fixture check: the second proposal still targets the original graph version and
+    // attempts to add the same node. It must not be mistaken for a completed review route.
+    let review_digest = status["data"]["proposalDigests"]["draft-review"]
+        .as_str()
+        .expect("status exposes the exact pending review proposal digest");
+    let review_approval = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["execution", "approve", "--events"])
+        .arg(&events)
+        .args(["--execution", "exec_feature", "--node", "route-correction", "--keyring"])
+        .arg(&keyring)
+        .args([
+            "--key-id",
+            "route-key",
+            "--actor-id",
+            "route-agent",
+            "--proposal-digest",
+            review_digest,
+            "--draft-id",
+            "draft-review",
+        ])
+        .env("GRAPHHELM_EVENTS_KEY", key)
+        .output()
+        .unwrap();
+    assert!(
+        review_approval.status.success(),
+        "review proposal should apply after its own exact approval: {}",
+        String::from_utf8_lossy(&review_approval.stdout)
+    );
+
     let (_, history) = store.read_unique_replay_stream().unwrap();
     let recorded = history
         .iter()

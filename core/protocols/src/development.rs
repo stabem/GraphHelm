@@ -608,41 +608,11 @@ pub fn verify_binding(
     Ok(())
 }
 
-/// Canonical JSON: object keys sorted, no insignificant whitespace.
-///
-/// THE SORT IS EXPLICIT AND THAT IS DELIBERATE, even though it is redundant today. This workspace
-/// builds `serde_json` without `preserve_order`, so its object map is a `BTreeMap` and parsing
-/// already sorts — measured, not inferred: two documents differing only in textual key order
-/// serialise identically before this function is reached.
-///
-/// So key-order determinism is currently supplied by the dependency, NOT by this code, and no
-/// mutation of this function can be observed to break it. Sorting here anyway is what makes the
-/// property survive someone enabling `preserve_order` later, which would otherwise change
-/// canonical output silently and invalidate every digest already published.
+/// Canonical JSON as a string: the one writer in [`crate::canonical`] (#1378), whose rules and
+/// pinned goldens live there.
 #[must_use]
 pub fn canonical_json(value: &serde_json::Value) -> String {
-    match value {
-        serde_json::Value::Object(map) => {
-            let mut entries: Vec<_> = map.iter().collect();
-            entries.sort_by(|left, right| left.0.cmp(right.0));
-            let body: Vec<String> = entries
-                .into_iter()
-                .map(|(key, nested)| {
-                    format!(
-                        "{}:{}",
-                        serde_json::Value::String(key.clone()),
-                        canonical_json(nested)
-                    )
-                })
-                .collect();
-            format!("{{{}}}", body.join(","))
-        }
-        serde_json::Value::Array(items) => {
-            let body: Vec<String> = items.iter().map(canonical_json).collect();
-            format!("[{}]", body.join(","))
-        }
-        other => other.to_string(),
-    }
+    String::from_utf8(crate::canonical::canonical_bytes(value)).expect("serde_json writes UTF-8")
 }
 
 /// Normalise a path-like value to forward slashes before it enters a digest.

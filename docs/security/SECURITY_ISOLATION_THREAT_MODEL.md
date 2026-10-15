@@ -53,8 +53,10 @@ Boundaries:
 ### Journey credential provisioning (proposed by RFC-1309)
 
 Journey author and reviewer credentials require exact project, flow, lane and purpose binding.
-Only a trusted provisioning service may mint them after authenticating the lane from trusted
-execution state; caller-supplied lane identifiers are not sufficient. Prefer random per-scope
+Only a trusted provisioning service may mint them after verifying the execution/lane task bearer
+and a separate owner-issued journey grant. The bearer proves possession for its path-bound
+execution and declared lane; it is not permission for a flow. `NodeAssigned` authorizes a sealed
+ghost node, not a journey. A task claim cannot mint a grant. Prefer random per-scope
 tokens whose keyed digests, status and immutable scope are held in a registry. The owner may grant
 and revoke scope; a coordinator may request only within that grant. Credential delivery is not
 OS isolation: D-058's shared-user limitation still applies until a host-level observer proves
@@ -62,6 +64,28 @@ cross-lane unreadability under separate OS identities or equivalent enforced pro
 See [RFC-1309](../rfcs/RFC-1309-JOURNEY-CREDENTIAL-PROVISIONING.md) for the proposed flow,
 refusal behavior, lifecycle, authority conflict and required observers. This is a design proposal,
 not an accepted change to journey approval authority or current Runtime behavior.
+
+Current behavior has a separate unresolved authority mismatch: the journey review route calls
+`journey_flow::review_approve`, which calls `approve_as` and persists an agent reviewer as the
+approver; `apps/cli/tests/journey_flow_surfaces.rs` asserts the resulting flow status is
+`approved`. This conflicts with the owner-only approval policy documented in
+[`docs/guides/journeys.md`](../guides/journeys.md). The target
+recommendation is to retain owner-only final approval, but no authority decision or implementation
+change has been accepted. An independent security disposition is still required; see the RFC's
+six-question table. Until then, treat this as a documented implementation/policy conflict, not as
+proof that current behavior is owner-only.
+
+The proposed broker authenticates a lane with its execution-and-lane task bearer,
+issued through an owner-side coordinator. The shared agent session token or a declared actor
+header cannot request a journey token. An owner-authenticated grant fixes the canonical project,
+execution, lane, flow and author/reviewer purpose. That grant is a proposed new durable record;
+no current assignment projection supplies it. Missing, unrelated, revoked or ambiguous grants
+must refuse before writes. The lane receives only its newly issued token;
+the broker retains a keyed digest and serializes durable registry updates with journey writes.
+Revocation is acknowledged only after durable sync and publication; later requests on that same
+Runtime must fail without restart. A task bearer is not a journey credential. This design still
+cannot protect secrets from a process running as the same OS user and does not let a reviewer
+perform the owner-only final approval.
 
 ## 4. Adversaries and failure modes
 

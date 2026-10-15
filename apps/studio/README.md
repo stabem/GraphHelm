@@ -67,18 +67,20 @@ destructive one says so in its first word and still passes the host's own confir
 | `graphhelm_list_executions` | Read. One summary row per run; exclusive `after` cursor, `limit` 1–100. |
 | `graphhelm_get_attention` | Read. The attention verdict and the reasons behind it. |
 | `graphhelm_get_execution_status` | Read. Aggregate state and the sixteen lifecycle state counts. |
-| `graphhelm_get_execution_events` | Read. A page of the event log; exclusive `after` cursor. |
+| `graphhelm_get_execution_events` | Read. A page of the event log; exclusive `after` cursor, `limit` 1–1000. |
 | `graphhelm_read_evidence` | Read. Opens one sealed content item by id. |
 | `graphhelm_pause_execution` | **Write.** The runtime's two pauses by explicit `mode`: `graceful` (default — in-flight work finishes and is joined) or `immediate` (interrupts). |
-| `graphhelm_approve_node` | **Write.** Readies one blocked or proposed node. |
+| `graphhelm_approve` | **Write.** Readies one blocked or proposed node. (`graphhelm_approve_node` still answers, deprecated, for one release.) |
 | `graphhelm_resume_execution` | **Write.** Lifts the hold, given the graph path on the Runtime host. |
 | `graphhelm_start_task` | **Write.** Starts a new supervised run from an objective. |
 | `graphhelm_send_message` | **Write.** Posts a signal into the run's thread, with optional `to` / `replyTo` addressing. |
 | `graphhelm_cancel_execution` | **Write, destructive.** Cancels the run; every unfinished node is recorded Cancelled. No undo on an append-only log. |
 | `graphhelm_sweep_execution` | **Write.** Evaluates the run's customs stages now (`asOf` optional) and journals the result. |
-| `graphhelm_amend_node_budget` | **Write.** Declares a silence budget for one node — the attention verdict's own remedy; `seconds` has no default anywhere on the path. |
+| `graphhelm_amend_budget` | **Write.** Declares a silence budget for one node — the attention verdict's own remedy; `seconds` has no default anywhere on the path. (`graphhelm_amend_node_budget` still answers, deprecated, for one release.) |
 
-Every schema is closed (`additionalProperties: false`) with bounded inputs. **A write tool never
+Every schema is closed (`additionalProperties: false`) with bounded inputs. A tool that wraps an
+MCP tool keeps that tool's required fields and bounds: `schemas/mcp-tools.json` is emitted from the
+Rust tool table and `src/webmcp/mcp-tools.test.ts` holds the page tools to it (#1330). **A write tool never
 claims success it has not verified**: each one reads the head, mutates, then reads the status and
 the new events back, and returns `result` as `succeeded`, `refused` (with the diagnostic, and
 nothing changed), or `unknown` (accepted but unverified — **not** done; re-read before acting).

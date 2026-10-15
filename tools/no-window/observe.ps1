@@ -31,6 +31,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -42,6 +43,13 @@ public static class ConsoleWindowWatch {
   [DllImport("user32.dll")] static extern bool PostThreadMessage(uint tid, uint msg, IntPtr w, IntPtr l);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder name, int max);
   [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);
+  [DllImport("kernel32.dll", EntryPoint = "CloseHandle", SetLastError = true)] static extern bool CloseProcessHandle(IntPtr handle);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder name, ref int size);
+  [StructLayout(LayoutKind.Sequential)] struct PROCESS_BASIC_INFORMATION { public IntPtr reserved1, pebBaseAddress, reserved2a, reserved2b, uniquePid, inheritedPid; }
+  [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr process, int infoClass, out PROCESS_BASIC_INFORMATION info, int length, out int returned);
   [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
   [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr h; public uint m; public IntPtr w; public IntPtr l; public uint t; public int x; public int y; }
   static readonly object Gate = new object();
@@ -50,6 +58,40 @@ public static class ConsoleWindowWatch {
   static uint LoopThread;
   static Thread Worker;
   static readonly ManualResetEvent Ready = new ManualResetEvent(false);
+  const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+  static string Identity(uint pid, long expectedCreation) {
+    IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+    if (process == IntPtr.Zero) return "pid=" + pid + " status=unknown(open-process)";
+    try {
+      long creation, exit, kernel, user;
+      if (!GetProcessTimes(process, out creation, out exit, out kernel, out user)) return "pid=" + pid + " status=unknown(process-times)";
+      if (expectedCreation != 0 && creation != expectedCreation) return "pid=" + pid + " status=unknown(pid-reused)";
+      var path = new StringBuilder(1024);
+      int size = path.Capacity;
+      if (!QueryFullProcessImageName(process, 0, path, ref size)) return "pid=" + pid + " created=" + creation + " status=unknown(image-name)";
+      PROCESS_BASIC_INFORMATION info;
+      int returned;
+      if (NtQueryInformationProcess(process, 0, out info, Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)), out returned) < 0)
+        return "pid=" + pid + " created=" + creation + " name=" + System.IO.Path.GetFileName(path.ToString()) + " status=unknown(parent)";
+      return "pid=" + pid + " created=" + creation + " name=" + System.IO.Path.GetFileName(path.ToString()) + " parent=" + info.inheritedPid.ToInt64();
+    } finally { CloseProcessHandle(process); }
+  }
+  static string Chain(uint pid) {
+    var rows = new List<string>();
+    var visited = new HashSet<uint>();
+    for (int depth = 0; depth < 16 && pid != 0; depth++) {
+      if (!visited.Add(pid)) { rows.Add("pid=" + pid + " status=unknown(cycle)"); return String.Join(" <- ", rows.ToArray()); }
+      string row = Identity(pid, 0);
+      rows.Add(row);
+      int marker = row.IndexOf(" parent=", StringComparison.Ordinal);
+      if (marker < 0) return String.Join(" <- ", rows.ToArray());
+      uint parent;
+      if (!UInt32.TryParse(row.Substring(marker + 8), out parent) || parent == 0) return String.Join(" <- ", rows.ToArray());
+      if (depth == 15) { rows.Add("pid=" + parent + " status=unknown(depth-limit-16)"); return String.Join(" <- ", rows.ToArray()); }
+      pid = parent;
+    }
+    return String.Join(" <- ", rows.ToArray());
+  }
   public static void Start() {
     Worker = new Thread(() => {
       LoopThread = GetCurrentThreadId();
@@ -71,7 +113,11 @@ public static class ConsoleWindowWatch {
     GetClassName(hwnd, name, name.Capacity);
     var cls = name.ToString();
     if (cls == "ConsoleWindowClass" || cls == "CASCADIA_HOSTING_WINDOW_CLASS") {
-      lock (Gate) { Seen.Add(DateTime.Now.ToString("HH:mm:ss.fff") + " " + cls + " 0x" + hwnd.ToString("x")); }
+      uint pid;
+      uint ownerThread = GetWindowThreadProcessId(hwnd, out pid);
+      string owner = ownerThread != 0 && pid != 0 ? pid.ToString() : "unknown";
+      string identity = owner == "unknown" ? "pid=unknown status=unknown(window-owner)" : Chain(pid);
+      lock (Gate) { Seen.Add(DateTime.Now.ToString("HH:mm:ss.fff") + " " + cls + " 0x" + hwnd.ToString("x") + " pid=" + owner + " ancestry=" + identity); }
     }
   }
   // Agent harnesses start tools with no console at all. Reproduce that: DETACHED_PROCESS, stdout and

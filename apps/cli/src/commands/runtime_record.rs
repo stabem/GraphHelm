@@ -98,7 +98,7 @@ fn project_record_path(dir: &Path, project_id: &str, instance: &str) -> PathBuf 
 pub(crate) fn new_instance() -> Result<String, String> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes).map_err(|_| "the OS random source is unavailable".to_owned())?;
-    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+    Ok(hex::encode(bytes))
 }
 
 fn refuse_symlink(path: &Path, what: &str) -> Result<(), String> {
@@ -315,6 +315,18 @@ fn reject_insecure_permissions(_: &std::fs::Metadata) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1325: pinned BEFORE `new_instance` encodes with `hex::encode`: 32 lowercase hex digits.
+    #[test]
+    fn hex_new_instance_is_32_lowercase_hex_digits() {
+        let id = new_instance().unwrap();
+        assert_eq!(id.len(), 32, "{id}");
+        assert!(
+            id.bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+            "{id}"
+        );
+    }
 
     fn record(instance: &str) -> Record {
         Record::new(

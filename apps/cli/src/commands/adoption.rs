@@ -213,6 +213,41 @@ fn merge_registration(
 /// What `--dry-run` proposes on this machine: the user-scope MCP registration and the GraphHelm +
 /// Keel block in each user instruction file that exists. Suggestions only; nothing is resolved
 /// until the owner passes them back as `--resolve`.
+fn eligible_plugin_contribution<'a>(
+    inventory: &'a serde_json::Value,
+    target_scope: &str,
+) -> Option<&'a serde_json::Value> {
+    let contributions = inventory["spec"]["hosts"]
+        .as_array()?
+        .iter()
+        .find(|host| host["host"] == "claude")?["pluginContributions"]
+        .as_array()?;
+    let user = contributions
+        .iter()
+        .filter(|item| item["scope"] == "user")
+        .collect::<Vec<_>>();
+    let project = contributions
+        .iter()
+        .filter(|item| item["scope"] == "project")
+        .collect::<Vec<_>>();
+    if user.len() > 1 || (target_scope == "project" && project.len() > 1) {
+        return None;
+    }
+    if target_scope == "user" {
+        return user.first().copied();
+    }
+    let selected = project.first().or_else(|| user.first()).copied()?;
+    let selected_name = selected["pluginName"].as_str()?;
+    if user
+        .iter()
+        .chain(project.iter())
+        .any(|item| item["pluginName"] != selected_name)
+    {
+        return None;
+    }
+    Some(selected)
+}
+
 fn suggestions(inventory: &serde_json::Value) -> Vec<String> {
     let present = |id: &str| {
         inventory["spec"]["hosts"].as_array().is_some_and(|hosts| {
@@ -226,18 +261,8 @@ fn suggestions(inventory: &serde_json::Value) -> Vec<String> {
         })
     };
     let mut out = Vec::new();
-    let has_plugin_scope = |scope: &str| {
-        inventory["spec"]["hosts"].as_array().is_some_and(|hosts| {
-            hosts.iter().any(|host| {
-                host["host"] == "claude"
-                    && host["pluginContributions"]
-                        .as_array()
-                        .is_some_and(|v| v.iter().any(|item| item["scope"] == scope))
-            })
-        })
-    };
-    let user_plugin = has_plugin_scope("user");
-    let project_plugin = has_plugin_scope("project") || has_plugin_scope("user");
+    let user_plugin = eligible_plugin_contribution(inventory, "user").is_some();
+    let project_plugin = eligible_plugin_contribution(inventory, "project").is_some();
     if present("home/.claude.json") && !user_plugin {
         out.push("home/.claude.json=register-mcp".to_owned());
     }
@@ -363,25 +388,8 @@ fn parse_resolution(
             } else {
                 "project"
             };
-            let contribution = inventory["spec"]["hosts"]
-                .as_array()
-                .and_then(|hosts| hosts.iter().find(|h| h["host"] == "claude"))
-                .and_then(|h| h["pluginContributions"].as_array())
-                .and_then(|v| {
-                    let matches = v
-                        .iter()
-                        .filter(|item| item["scope"] == target_scope)
-                        .collect::<Vec<_>>();
-                    let matches = if matches.is_empty() && target_scope == "project" {
-                        v.iter()
-                            .filter(|item| item["scope"] == "user")
-                            .collect::<Vec<_>>()
-                    } else {
-                        matches
-                    };
-                    (matches.len() == 1).then(|| matches[0])
-                })
-                .ok_or_else(invalid)?;
+            let contribution =
+                eligible_plugin_contribution(inventory, target_scope).ok_or_else(invalid)?;
             let before = read_bytes(&item_path(item, args).ok_or_else(invalid)?)?;
             let after = remove_registration(&before)?.ok_or_else(invalid)?;
             let mut guard = contribution.clone();

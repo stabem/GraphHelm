@@ -92,6 +92,11 @@ checked head, task, node, and blocking finding IDs and paths. The reply reports 
 `data.routeProposal`; `recommendation.applied` stays false. Submission does not approve or
 publish the draft. Without this option, checks and capture reads do not submit proposals.
 
+The supervised route is check, proposal, explicit approval, then a fresh status read. A blocked
+check may propose an implementation draft; after it is approved and applied, rerun the check
+against the corrected commit before proposing review. The operator approves each exact proposal.
+Nothing is approved or applied automatically.
+
 `surface` puts the counts beside the card: `changedFiles`, `newFiles`, `newTestFiles`, `newTests`,
 `newModules`, `newPublicSymbols`, `newDependencies`, `cardScopePaths`, `cardExportedSymbols`, and
 `undeclaredPublicSymbols` (public symbols the diff adds that the card does not name; reported,

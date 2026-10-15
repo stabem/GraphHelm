@@ -1,0 +1,1248 @@
+{
+  "tools": [
+    {
+      "description": "Start an execution (POST /v1/executions/{executionId}/start): a new executionId, mode, and file (a graph path on the Runtime host) or inline graph. held: true starts without driving. After a client timeout it may have started: read status, never retry. Mode governs proposals; pause holds dispatch.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "executionId": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "fixtures": {
+            "type": "string"
+          },
+          "graph": {
+            "type": "object"
+          },
+          "held": {
+            "description": "true records the start without driving it (`execution start --held`), so it cannot outlast the client timeout.",
+            "type": "boolean"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "autopilot",
+              "supervised",
+              "manual"
+            ],
+            "type": "string"
+          },
+          "route": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId",
+          "mode"
+        ],
+        "type": "object"
+      },
+      "name": "start"
+    },
+    {
+      "description": "List executions (GET /v1/executions): one row per stream (id, mode, status, attention, head, start/last instants), by id. after: exclusive cursor; limit 1..=100 (default 20; larger refused). Read-only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "description": "Exclusive cursor: the last execution id already read.",
+            "type": "string"
+          },
+          "limit": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "list"
+    },
+    {
+      "description": "Read a graph file's shape (POST /v1/graph/topology): entrypoints, nodes, edges and the semantic hash. Match it to a run's execution_started graphHash before calling these edges that run's. file is on the Runtime host. Read-only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "description": "Graph file path on the Runtime host.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "type": "object"
+      },
+      "name": "topology"
+    },
+    {
+      "description": "Read an execution's status (GET /v1/executions/{executionId}).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "executionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId"
+        ],
+        "type": "object"
+      },
+      "name": "status"
+    },
+    {
+      "description": "Read an execution's resume briefing (GET /v1/executions/{executionId}/briefing): purpose, executors, graph hash, decisions with their actors, work done, pending, next step. Call it FIRST when picking up a run another session drove. Read-only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "executionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId"
+        ],
+        "type": "object"
+      },
+      "name": "briefing"
+    },
+    {
+      "description": "Read the proven-journey map (GET /v1/journeys, or GET /v1/executions/{executionId}/journeys for an existing run): each step's newest capture from any run, marked fresh, stale or unknown with the reason, and the walked arrows. Read-only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "executionId": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "journeys"
+    },
+    {
+      "description": "Read a run's task projection (GET /v1/executions/{executionId}/tasks): each task's delivery step, lane, issue, PR, head, open BLOCK, claim sequence and last heartbeat, folded from the run's verified task.* records. Read-only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "executionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId"
+        ],
+        "type": "object"
+      },
+      "name": "tasks"
+    },
+    {
+      "description": "Plan one task under keel.yaml (POST /v1/keel/plan; `graphhelm keel plan`): classifies its paths and returns the graphhelm-task-plan-v1 record (reviews, proof, skills, delegation, shortest path). judgeRoute lets Jev decide an ambiguous task. Read-only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "judgeRoute": {
+            "type": "string"
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "promise": {
+            "type": "string"
+          },
+          "task": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "paths"
+        ],
+        "type": "object"
+      },
+      "name": "keel_plan"
+    },
+    {
+      "description": "List the agent workspaces under the Runtime's --workspace-root (GET /v1/workspaces; `graphhelm workspace list`): lane, task, branch, state (claimed, released, swept), size on disk, and live git facts (head, dirty). Identical on CLI, HTTP and MCP. Read-only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "workspace_list"
+    },
+    {
+      "description": "Remove released agent workspaces that are clean and still at the released commit (POST /v1/workspaces/sweep; `graphhelm workspace sweep --apply`). Never touches a path the ledger did not create and never follows a link. Owner sessions only: an agent-typed MCP session is refused.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "workspace_sweep"
+    },
+    {
+      "description": "List journey-flow sources (GET /v1/journey-flows; `graphhelm journey flows`): each flow's status, drift, validate findings, whether journey_approve would accept it, and its screens, edges and paths. Read-only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "journey_flows"
+    },
+    {
+      "description": "Write a journey-flow draft through the Runtime (POST /v1/journey-flows/{id}/draft). The Runtime records the authenticated scoped agent as writer; unscoped and owner-only credentials are refused.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "yaml": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "yaml"
+        ],
+        "type": "object"
+      },
+      "name": "journey_draft"
+    },
+    {
+      "description": "Review a journey-flow draft through the Runtime (POST /v1/journey-flows/{id}/review). The Runtime requires a different scoped agent from every writer of the current digest.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "checked": {
+            "type": "string"
+          },
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "journey_review"
+    },
+    {
+      "description": "Approve one journey flow (POST /v1/journey-flows/{id}/approve; `graphhelm journey approve`): binds it to HEAD, clears drift and writes its contracts. Refused, writing nothing, while validate reports findings. Owner sessions only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "journey_approve"
+    },
+    {
+      "description": "Open an approved journey live at one step (POST /v1/journeys/{contractId}/open): a visible browser replays the earlier edges' cached acts and reports the step's state. The reply's sessionId addresses journey_act and journey_close. Owner credential only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "contractId": {
+            "type": "string"
+          },
+          "executionId": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "stepId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contractId",
+          "stepId"
+        ],
+        "type": "object"
+      },
+      "name": "journey_open"
+    },
+    {
+      "description": "Send one act to an open live journey session (POST /v1/journeys/sessions/{sessionId}/act; exactly `graphhelm journey act`) and report the screen it lands on and that screen's state. Destructive-looking names are refused unless the approved flow has that act. Owner credential only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "activate",
+              "submit",
+              "enter_text",
+              "navigate",
+              "wait_for",
+              "inspect"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "kind",
+          "role",
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "journey_act"
+    },
+    {
+      "description": "Play a journey flow paced for a person (POST /v1/journey-flows/{id}/watch): headless with frames in the Studio, or window: true. Optional path, paceMs. Answers when play ends; journey_sessions shows it meanwhile. Never proof or approval. Owner only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "paceMs": {
+            "maximum": 10000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          },
+          "window": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "journey_watch"
+    },
+    {
+      "description": "Run a journey flow headless on every path, keeping per screen and edge whether it passed (POST /v1/journey-flows/{id}/preview). Answers the kept result or starts a run; force reruns; read: true only reads (GET /v1/journey-flows/{id}/preview). Never proof. Owner only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "force": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "read": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "journey_preview"
+    },
+    {
+      "description": "Close an open live journey session and its browser (DELETE /v1/journeys/sessions/{sessionId}; exactly `graphhelm journey close`). Owner credential only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "journey_close"
+    },
+    {
+      "description": "List the Runtime project's open live journey sessions (GET /v1/journeys/sessions; exactly `graphhelm journey sessions`): each session's contract, step, state (pass, fail, drift, unknown), code, the screen it is on and when it last acted. Read-only. Owner credential only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "journey_sessions"
+    },
+    {
+      "description": "Read an execution's event tail (GET /v1/executions/{executionId}/events with after/limit passed straight through; the API's bounds are the bounds).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "executionId": {
+            "type": "string"
+          },
+          "limit": {
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "executionId"
+        ],
+        "type": "object"
+      },
+      "name": "events"
+    },
+    {
+      "description": "Open the content behind an evidence reference (GET /v1/executions/{executionId}/evidence/{evidenceId}); for up to eight references in one execution, use GET /v1/executions/{executionId}/evidence?ids=<JSON array>.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "evidenceId": {
+            "type": "string"
+          },
+          "executionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId",
+          "evidenceId"
+        ],
+        "type": "object"
+      },
+      "name": "evidence"
+    },
+    {
+      "description": "Record a signal envelope (POST /v1/executions/{executionId}/signal).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "attachments": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "base64": {
+                  "type": "string"
+                },
+                "mediaType": {
+                  "enum": [
+                    "image/png",
+                    "image/jpeg",
+                    "image/webp"
+                  ]
+                }
+              },
+              "required": [
+                "mediaType",
+                "base64"
+              ],
+              "type": "object"
+            },
+            "maxItems": 4,
+            "type": "array"
+          },
+          "evidenceOut": {
+            "type": "string"
+          },
+          "executionId": {
+            "type": "string"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "signal": {
+            "description": "schemas/graph-signal.schema.json; id, emittedAt, source optional",
+            "type": "object"
+          }
+        },
+        "required": [
+          "executionId",
+          "signal"
+        ],
+        "type": "object"
+      },
+      "name": "signal"
+    },
+    {
+      "description": "Read registered project text (POST /v1/executions/{executionId}/documents/read). Uses a delivery evidence reference; no arbitrary path or project root is accepted.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "document": {
+            "additionalProperties": false,
+            "properties": {
+              "evidenceId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "index": {
+                "maximum": 31,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "evidenceId",
+              "index"
+            ],
+            "type": "object"
+          },
+          "executionId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId",
+          "document"
+        ],
+        "type": "object"
+      },
+      "name": "document_read"
+    },
+    {
+      "description": "Save an owner edit (POST /v1/executions/{executionId}/documents/save). Requires an owner-configured MCP session and expectedSha256; preserves session actor headers. Retry the same RPC id for the same edit. Notifications report recording, not agent acknowledgment.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "maxLength": 131072,
+            "type": "string"
+          },
+          "document": {
+            "additionalProperties": false,
+            "properties": {
+              "evidenceId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "index": {
+                "maximum": 31,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "evidenceId",
+              "index"
+            ],
+            "type": "object"
+          },
+          "executionId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "expectedSha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId",
+          "document",
+          "content",
+          "expectedSha256",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "name": "document_save"
+    },
+    {
+      "description": "Approve a blocked or ghost node (POST /v1/executions/{executionId}/approve).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "executionId": {
+            "type": "string"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "node": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId",
+          "node"
+        ],
+        "type": "object"
+      },
+      "name": "approve"
+    },
+    {
+      "description": "Pause an execution (POST /v1/executions/{executionId}/pause; mode \"immediate\" interrupts in-flight work, absent is the graceful default).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "executionId": {
+            "type": "string"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "immediate"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId"
+        ],
+        "type": "object"
+      },
+      "name": "pause"
+    },
+    {
+      "description": "Resume a paused execution (POST /v1/executions/{executionId}/resume) against the graph file it started from.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "executionId": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "fixtures": {
+            "type": "string"
+          },
+          "graph": {
+            "type": "object"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "route": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId"
+        ],
+        "type": "object"
+      },
+      "name": "resume"
+    },
+    {
+      "description": "Cancel an execution (POST /v1/executions/{executionId}/cancel).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "executionId": {
+            "type": "string"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "executionId"
+        ],
+        "type": "object"
+      },
+      "name": "cancel"
+    },
+    {
+      "description": "List the gateway's routes (GET /v1/gateway/routes, optional manifest override).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "manifest": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "routes"
+    },
+    {
+      "description": "Arm THIS session's wake lease (POST /v1/executions/{executionId}/wake-lease): one content-free ring when the log moves past the cursor. A session can only ever arm itself; no tool rings another session.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "description": "Ring for appends AFTER this sequence; defaults to the head.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "executionId": {
+            "type": "string"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maturesInSeconds": {
+            "description": "Quiet allowed before the wait ends by itself; omitted, only an append rings.",
+            "maximum": 315576000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "rendezvousId": {
+            "description": "Opaque rendezvous identity — never a filesystem path; the sidecar derives the platform rendezvous from it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId",
+          "rendezvousId"
+        ],
+        "type": "object"
+      },
+      "name": "wake_arm"
+    },
+    {
+      "description": "Read THIS session's live wake lease (GET /v1/executions/{executionId}/wake-lease).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "executionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId"
+        ],
+        "type": "object"
+      },
+      "name": "wake_status"
+    },
+    {
+      "description": "Declare how long one node may stay silent before it needs you (POST /v1/executions/{executionId}/amend-budget), from now on. It is the remedy status names for a node it reads as unknown. Replies with the recomputed verdict.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "computedAtSequence": {
+            "description": "The frontier the verdict you are answering was computed at. A stale amendment is refused with the current one.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "executionId": {
+            "type": "string"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "node": {
+            "type": "string"
+          },
+          "seconds": {
+            "description": "The bound YOU decide. Nothing here suggests one.",
+            "maximum": 315576000,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "executionId",
+          "node",
+          "seconds",
+          "computedAtSequence"
+        ],
+        "type": "object"
+      },
+      "name": "amend_budget"
+    },
+    {
+      "description": "Block until this session's armed wake lease rings or its deadline passes, both read from GET /v1/executions/{executionId}/wake-lease: pass an identity, never a duration. The block is local and is NOT an API call. The reply says that something happened, never what.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "executionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId"
+        ],
+        "type": "object"
+      },
+      "name": "wake_wait"
+    },
+    {
+      "description": "Add or replace one direct_api route in the gateway manifest (PUT /v1/gateway/routes). Declaration only: the API key is never an argument, since it would land in the transcript; key the route with `gateway credential set` or the HTTP body.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "baseUrl": {
+            "description": "https://..., or http:// to a loopback address. No trailing slash.",
+            "type": "string"
+          },
+          "contextWindowTokens": {
+            "description": "Input context window in tokens (ADR-042). Absent on a replace: kept; 0 clears.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "credentialRef": {
+            "description": "The broker reference holding this route's key. Absent: secret_<id>.",
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Absent: true. False parks the route: listed, and refused at dispatch.",
+            "type": "boolean"
+          },
+          "id": {
+            "description": "The route id callers name. Unique in the manifest: an existing id needs replace.",
+            "type": "string"
+          },
+          "manifest": {
+            "description": "Manifest path override; absent, the Runtime's own.",
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "provider": {
+            "description": "The wire format, not the vendor: a DeepSeek endpoint is openai with its own baseUrl.",
+            "type": "string"
+          },
+          "replace": {
+            "description": "Absent: false, and an existing id is refused with the manifest left byte-identical.",
+            "type": "boolean"
+          },
+          "tiers": {
+            "description": "Delegation tiers served (ADR-041). Absent on a replace: kept; [] clears.",
+            "items": {
+              "enum": [
+                "small",
+                "standard",
+                "large"
+              ]
+            },
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "baseUrl",
+          "model"
+        ],
+        "type": "object"
+      },
+      "name": "route_set"
+    },
+    {
+      "description": "Probe one gateway route's health (GET /v1/gateway/probe).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "manifest": {
+            "type": "string"
+          },
+          "route": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "route"
+        ],
+        "type": "object"
+      },
+      "name": "probe"
+    },
+    {
+      "description": "Report the governed memory states, transitions, and the moves policy allows (GET /v1/development/memory). Reads the shipped transition policy; no record id, because nothing persists a memory record yet.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "memory_status"
+    },
+    {
+      "description": "Publish opt-in durable memory through POST /v1/development/memory. Requires content, exact workspace/project, expiry, sourceExecutionId and a separately authenticated validatorSignalId. Returns committed record and sealed Evidence ids; missing or mismatched validation is refused.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "maxLength": 65536,
+            "minLength": 1,
+            "type": "string"
+          },
+          "expiresAtUnix": {
+            "type": "integer"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "optIn": {
+            "type": "boolean"
+          },
+          "projectId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "sourceExecutionId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "validatorSignalId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "workspaceId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "workspaceId",
+          "projectId",
+          "optIn",
+          "expiresAtUnix",
+          "sourceExecutionId",
+          "validatorSignalId"
+        ],
+        "type": "object"
+      },
+      "name": "memory_propose"
+    },
+    {
+      "description": "Evaluate an execution's customs stages and journal the result (POST /v1/executions/{executionId}/sweep): one sweep_performed plus one overdue_exception per lapsed episode; an empty sweep still records. asOf asks about a past instant (default now); the future is refused.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "asOf": {
+            "type": "string"
+          },
+          "executionId": {
+            "type": "string"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "executionId"
+        ],
+        "type": "object"
+      },
+      "name": "sweep"
+    },
+    {
+      "description": "Claim a waiting_input node's external work is done (POST /v1/executions/{executionId}/claim). Testimony only: nothing releases until clear countersigns. Graph optional; waitSeq and asserter default.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "asserter": {
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "contentHash": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "contentHash",
+                "size"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "executionId": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "graph": {
+            "type": "object"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "node": {
+            "type": "string"
+          },
+          "waitSeq": {
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "executionId",
+          "node"
+        ],
+        "type": "object"
+      },
+      "name": "claim"
+    },
+    {
+      "description": "Countersign a claim by machine replay (POST /v1/executions/{executionId}/clear) with manifestHash or the evidence bundle: a match clears the node and drives dependents, a mismatch is journaled. Graph optional; claimSeq defaults to the open claim. countersign is refused (#529).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "claimSeq": {
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "evidence": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "executionId": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "fixtures": {
+            "type": "string"
+          },
+          "graph": {
+            "type": "object"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "manifestHash": {
+            "type": "string"
+          },
+          "route": {
+            "type": "string"
+          },
+          "verifier": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId"
+        ],
+        "type": "object"
+      },
+      "name": "clear"
+    },
+    {
+      "description": "Compile a goal into a graph document (POST /v1/graphs/synthesize): one model draft, validated like an authored file, repaired at most twice, or refused with diagnostics. Starts nothing: pass it to start as graph. allowPrograms never widens; fixture is a replies file on the Runtime host.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "allowPrograms": {
+            "description": "Programs a shell node may name; defaults to the server's own allowlist and is never widened by the compiler.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "critic": {
+            "description": "design adds a design step and a blind critic before the draft.",
+            "enum": [
+              "none",
+              "design"
+            ],
+            "type": "string"
+          },
+          "drafts": {
+            "description": "How many drafts to ask for and rank; more than one needs a judge.",
+            "maximum": 3,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "execution": {
+            "description": "The run this graph is built for; without critic and plan, the run's newest trusted keel.plan record decides.",
+            "type": "string"
+          },
+          "fixture": {
+            "description": "Recorded-replies file path on the Runtime host: the keyless model door.",
+            "type": "string"
+          },
+          "goal": {
+            "description": "What the graph must achieve, in the operator's words.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "judgeFixture": {
+            "description": "Recorded-answers file path on the Runtime host: the keyless judge door.",
+            "type": "string"
+          },
+          "judgeRoute": {
+            "description": "A direct_api typesafe route id for the judge. Exclusive with judgeFixture; no judge, no judgment.",
+            "type": "string"
+          },
+          "library": {
+            "description": "A template directory path on the Runtime host the judge may choose to reuse or adapt.",
+            "type": "string"
+          },
+          "maxNodes": {
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "autopilot",
+              "supervised",
+              "manual"
+            ],
+            "type": "string"
+          },
+          "plan": {
+            "description": "keel_plan's graphhelm-task-plan-v1 record; its critic applies when critic is absent.",
+            "type": "object"
+          },
+          "route": {
+            "description": "A route id of the server's manifest; the deployer's default when absent.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "goal"
+        ],
+        "type": "object"
+      },
+      "name": "synthesize"
+    },
+    {
+      "description": "Assign a node to a responsible actor (POST /v1/executions/{executionId}/assign). Owner-only: the Runtime refuses any other actor type, so an agent session cannot assign work to itself. The recorded event keeps the assigned actor separate from the owner who recorded it.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "actorId": {
+            "type": "string"
+          },
+          "executionId": {
+            "type": "string"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "node": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId",
+          "node",
+          "actorId"
+        ],
+        "type": "object"
+      },
+      "name": "assign"
+    }
+  ]
+}

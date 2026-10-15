@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use graphhelm_protocols::{
-    EvidenceId, OpaqueId, PersistedTimestamp, RawSha256, RepositoryScope, SafeCode,
+    Clock, EvidenceId, OpaqueId, PersistedTimestamp, RawSha256, RepositoryScope, SafeCode,
     SemanticVersion, Sensitivity,
 };
 use sha2::{Digest, Sha256};
@@ -816,22 +816,26 @@ pub trait RetentionRepository: Send + Sync {
     ) -> RepositoryFuture<'a, Result<CleanupReceipt, RetentionError>>;
 }
 
-pub trait RetentionClock: Send + Sync {
-    fn now(&self) -> PersistedTimestamp;
-}
-
 pub struct RetentionService {
     repository: Arc<dyn RetentionRepository>,
     key_provider: Arc<dyn KeyProvider>,
-    clock: Arc<dyn RetentionClock>,
+    clock: Arc<dyn Clock>,
 }
 
 impl RetentionService {
+    /// #1357: the service reads the workspace's one [`Clock`] (UTC wall time, as `RetentionClock`
+    /// was) and persists it as a [`PersistedTimestamp`]. The conversion refuses only a time outside
+    /// the schema's datetime format (past year 9999), which no wall clock reaches; it is
+    /// `Invalid` rather than a new variant so the error codes stay as they are.
+    fn now(&self) -> Result<PersistedTimestamp, RetentionError> {
+        PersistedTimestamp::from_datetime(self.clock.now()).map_err(|_| RetentionError::Invalid)
+    }
+
     #[must_use]
     pub fn new(
         repository: Arc<dyn RetentionRepository>,
         key_provider: Arc<dyn KeyProvider>,
-        clock: Arc<dyn RetentionClock>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             repository,
@@ -864,7 +868,7 @@ impl RetentionService {
             let digest = retention_request_digest(&request);
             let plan = self
                 .repository
-                .dry_run(request.clone(), self.clock.now())
+                .dry_run(request.clone(), self.now()?)
                 .await?;
             if plan.operation_id() != request.operation_id() || plan.request_digest() != &digest {
                 return Err(RetentionError::Integrity);
@@ -893,7 +897,7 @@ impl RetentionService {
                 );
             }
             let metadata = self.key_provider.metadata().await.map_err(map_key_error)?;
-            let prepared_at = self.clock.now();
+            let prepared_at = self.now()?;
             let bytes = prepared_bytes(
                 &request,
                 &plan,
@@ -1031,7 +1035,7 @@ impl RetentionService {
         {
             return Err(RetentionError::Integrity);
         }
-        let completed_at = self.clock.now();
+        let completed_at = self.now()?;
         let finalized_tag = self
             .key_provider
             .authenticate(

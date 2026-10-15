@@ -6,7 +6,7 @@ import type { ClaudeTaskReadModel, TaskState } from "./team-tasks";
 import type { RuntimeEvent } from "./types";
 import { digestOf } from "./customs";
 import { readTaskEventRecords } from "./team-tasks";
-import { teamLinks, teamModel, type TeamInput } from "./team";
+import { botKeyOf, teamLinks, teamModel, type TeamInput } from "./team";
 
 const NOW = Date.parse("2026-10-05T12:00:00Z");
 const minutesAgo = (m: number) => new Date(NOW - m * 60_000).toISOString();
@@ -142,6 +142,64 @@ describe("teamModel", () => {
 });
 
 describe("teamLinks", () => {
+  it("indexes bot identities once while preserving complete first-match link output", () => {
+    let identityReads = 0;
+    const bots = Array.from({ length: 12 }, (_, index) => {
+      const key = `bot-${index}`;
+      const actorId = `actor-${index}`;
+      return Object.defineProperties({}, {
+        key: { get: () => { identityReads += 1; return key; } },
+        actorId: { get: () => { identityReads += 1; return actorId; } },
+      });
+    }) as ReturnType<typeof teamModel>["bots"];
+    const events = Array.from({ length: 32 }, (_, index) => record(index + 1, "actor-11", minutesAgo(index === 31 ? 0 : index + 1)));
+    const env: EnvelopeRecord = Object.fromEntries(events.map((event) => [event.sequence, {
+      to: "actor-10", replyTo: `reply-${event.sequence}`, text: `message-${event.sequence}`,
+    }]));
+
+    expect(teamLinks(events, env, bots, NOW)).toEqual([
+      { a: "bot-10", b: "bot-11", count: 32, lastAt: minutesAgo(0), live: true },
+    ]);
+    expect(identityReads).toBeLessThanOrEqual(4 * (bots.length + events.length));
+  });
+
+  it("preserves first-match key and actor alias collisions across calls", () => {
+    const first = [
+      { key: "first-key", actorId: "shared" },
+      { key: "shared", actorId: "duplicate" },
+      { key: "third-key", actorId: "duplicate" },
+    ] as ReturnType<typeof teamModel>["bots"];
+    expect(["shared", "duplicate", "missing", null].map((id) => botKeyOf(first, id))).toEqual([
+      "first-key", "shared", null, null,
+    ]);
+    const events = [
+      record(1, "shared", minutesAgo(2)),
+      record(2, "duplicate", minutesAgo(1)),
+      record(3, "missing", minutesAgo(1)),
+      record(4, "third-key", minutesAgo(1)),
+      record(5, "shared", minutesAgo(1)),
+      record(6, "studio-operator", minutesAgo(1)),
+    ];
+    const env: EnvelopeRecord = {
+      1: { to: "third-key", replyTo: null, text: "alias to native key" },
+      2: { to: "first-key", replyTo: null, text: "duplicate alias" },
+      3: { to: "first-key", replyTo: null, text: "unknown sender" },
+      4: { to: null, replyTo: null, text: "null recipient" },
+      5: { to: "duplicate", replyTo: null, text: "self after collision" },
+      6: { to: "third-key", replyTo: null, text: "operator excluded" },
+    };
+    expect(teamLinks(events, env, first, NOW)).toEqual([
+      { a: "first-key", b: "shared", count: 2, lastAt: minutesAgo(1), live: true },
+      { a: "first-key", b: "third-key", count: 1, lastAt: minutesAgo(2), live: false },
+    ]);
+    const second = [{ key: "shared", actorId: "new-actor" }, { key: "other", actorId: "second-actor" }] as ReturnType<typeof teamModel>["bots"];
+    expect(teamLinks([record(7, "new-actor", minutesAgo(1))], {
+      7: { to: "second-actor", replyTo: null, text: "new recipients" },
+    }, second, NOW)).toEqual([
+      { a: "other", b: "shared", count: 1, lastAt: minutesAgo(1), live: true },
+    ]);
+  });
+
   it("joins two bots that addressed each other and animates only the last minute", () => {
     const events = [record(1, "kit-1", minutesAgo(10)), record(2, "kit-2", new Date(NOW - 30_000).toISOString())];
     const env: EnvelopeRecord = { 1: { to: "coordinator", replyTo: null, text: "a" }, 2: { to: "kit-1", replyTo: null, text: "b" } };

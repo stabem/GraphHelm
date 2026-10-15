@@ -1,41 +1,18 @@
-// The collapsed-run-in-literal predicate, shared by every crate that guards its own
-// source. Included BY VALUE with `include!`; there is no `Cargo.toml` here, so adopting
-// it adds no dependency edge and no `Cargo.lock` line.
-//
-// Why a shared file at all: `tools/pathogens/tests/source_invariants.rs` said it, before
-// this file existed -- "if a THIRD crate needs this, extract a shared dev-only helper
-// instead of a third copy: twin pointers do not scale to N, and N copies of one predicate
-// drift." By the time the extraction was scheduled there were EIGHT guards, and the twin
-// pointers each still claimed a byte-identical partner that had already diverged.
-//
-// This path was inside the gate-freeze rule's GATE_MACHINERY until the freeze was retired
-// with the gate (#1225): a predicate is not an input to a gate, it IS the gate, so a change
-// to what it detects deserves its own review rather than riding in with the code it judges.
-// No mechanism enforces that any more; the review does.
-//
-// The comments here are `//` and NOT `//!` on purpose: an included file is spliced into
-// the MIDDLE of the including file, so an inner doc comment is E0753 in every adopting
-// crate at once. Measured -- it failed in two crates before this line was written.
-//
-// EVERY ITEM HERE MUST BE USED BY EVERY ADOPTER, and that is a hard constraint rather
-// than tidiness. The gate runs `clippy -- -D warnings`, so an item an adopter does not
-// consume is `dead_code` and fails the build for that crate. `include!` copies the whole
-// file into each adopting crate, so there is no way to take half of it.
-//
-// The rule that follows, and it is a rule about what may be ADDED here: export only what
-// every adopter consumes. Anything narrower than that -- a helper two crates want and the
-// third does not -- belongs in those two crates, not here, however tempting the symmetry.
-// If something must live here that not everyone uses, the cost is declared at the same
-// time: which crates carry an `#[allow(dead_code)]` and why, in this comment, so the
-// exception is visible to the next person rather than discovered by a red build.
-//
-// Today both items qualify: the compile carrier uses both, and every one of the nine
-// guards exempts comments. (Constraint named by L.)
-//
-// DECLARED EXCEPTION, under the rule directly above. `shared_predicate_self_path` is
-// consumed only by the workspace authored-strings sweep in core/protocols (it exempts this
-// file by its own path); the other adopters do not use it. It therefore carries
-// `#[allow(dead_code)]` here, once, rather than an `allow` in every adopter that skips it.
+//! The collapsed-run-in-literal predicate, shared by every crate that guards its own source.
+//!
+//! Why a shared predicate at all: `tools/pathogens/tests/source_invariants.rs` said it, before
+//! this existed -- "if a THIRD crate needs this, extract a shared dev-only helper instead of a
+//! third copy: twin pointers do not scale to N, and N copies of one predicate drift." By the time
+//! the extraction was scheduled there were EIGHT guards, and the twin pointers each still claimed
+//! a byte-identical partner that had already diverged.
+//!
+//! A predicate is not an input to a gate, it IS the gate, so a change to what it detects deserves
+//! its own review rather than riding in with the code it judges.
+//!
+//! #1315: this was `include!`d by value from `tools/source-invariants/detect.rs`. Because every
+//! includer got the whole file, every item had to be used by every adopter or carry an
+//! `#[allow(dead_code)]`. As a dev-dependency crate its items are `pub`: an adopter imports what
+//! it uses and the rest costs nothing.
 
 /// Whether this line carries a run of three or more spaces inside a STRING LITERAL.
 ///
@@ -89,7 +66,7 @@
 /// boundary -- 18 lines here contain one, none positioned to matter. Pre-existing in both,
 /// so this is a seal and not a regression; named because an unnamed instance of a limit is
 /// indistinguishable from a limit that does not exist.
-fn has_run_in_literal(line: &str) -> bool {
+pub fn has_run_in_literal(line: &str) -> bool {
     let mut inside = false;
     let mut spaces = 0_usize;
     let mut chars = line.trim_start_matches(' ').chars();
@@ -126,16 +103,11 @@ fn has_run_in_literal(line: &str) -> bool {
 /// or refusal message ever renders it. Every OTHER exemption is a property of a particular
 /// crate's fixtures -- `html:` rendered surfaces, canonical-JSON samples, the detection
 /// fixtures of the guards themselves -- and belongs beside those fixtures, not here.
-fn is_line_comment(line: &str) -> bool {
+pub fn is_line_comment(line: &str) -> bool {
     line.trim_start_matches(' ').starts_with("//")
 }
 
-/// This file's own location, as the `include!` that reached it spelled it.
-///
-/// Inside an included file `file!()` names the INCLUDED file -- measured before this was
-/// written, because the alternative (that it follows the includer) would have made the
-/// binding impossible. It resolves to `CARGO_MANIFEST_DIR` joined with the include
-/// string, `..` segments and all.
+/// This file's own location, for a failure message that has to send a reader here.
 ///
 /// It exists so that no test has to write this path by hand. A hand-written literal would
 /// be a fourth independent spelling of something already spelled three times, and would
@@ -146,7 +118,6 @@ fn is_line_comment(line: &str) -> bool {
 /// with its own message rather than quietly passing -- so the residual here is BOUNDED, not
 /// open-ended. A reader who meets a seal cannot tell a limitation that shouts from one that
 /// stays silent, and the two are worth completely different amounts of worry. (Named by L.)
-#[allow(dead_code)]
-fn shared_predicate_self_path() -> &'static str {
+pub fn shared_predicate_self_path() -> &'static str {
     file!()
 }

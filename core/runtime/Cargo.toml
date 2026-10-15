@@ -21,6 +21,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 
 [dev-dependencies]
+graphhelm-test-shims = { path = "../../tools/test-shims" }
 graphhelm-process = { path = "../process" }
 chrono.workspace = true
 # #668: the runtime dispatches gates through `GateRegistryPort` and no longer names any

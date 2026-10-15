@@ -32,10 +32,7 @@
 
 use std::path::{Path, PathBuf};
 
-include!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../tools/source-invariants/detect.rs"
-));
+use graphhelm_test_shims::detect::*;
 
 /// The census file, spelled once, relative to the crate root and with forward slashes.
 const CENSUS_FIXTURE_FILE: &str = "tests/cancellation_record_asymmetry.rs";

@@ -955,6 +955,7 @@ dependencies = [
  "graphhelm-schema-evolution",
  "graphhelm-sealed-key-provider",
  "graphhelm-simulation",
+ "graphhelm-test-shims",
  "graphhelm-tool-broker",
  "graphhelm-tool-host",
  "hex",
@@ -1027,6 +1028,7 @@ dependencies = [
  "graphhelm-process",
  "graphhelm-protocols",
  "graphhelm-schema",
+ "graphhelm-test-shims",
  "hex",
  "libc",
  "serde",
@@ -1050,6 +1052,7 @@ dependencies = [
  "graphhelm-process",
  "graphhelm-protocols",
  "graphhelm-simulation",
+ "graphhelm-test-shims",
  "proptest",
  "serde",
  "serde_json",
@@ -1063,6 +1066,7 @@ dependencies = [
  "fs2",
  "graphhelm-process",
  "graphhelm-schema",
+ "graphhelm-test-shims",
  "hex",
  "libc",
  "serde",
@@ -1095,6 +1099,7 @@ dependencies = [
  "graphhelm-policy",
  "graphhelm-protocols",
  "graphhelm-schema",
+ "graphhelm-test-shims",
  "hex",
  "serde_json",
  "sha2 0.11.0",
@@ -1108,6 +1113,7 @@ dependencies = [
  "chrono",
  "graphhelm-protocols",
  "graphhelm-schema",
+ "graphhelm-test-shims",
  "hex",
  "proptest",
  "serde_json",
@@ -1216,6 +1222,7 @@ version = "0.1.1"
 dependencies = [
  "chrono",
  "graphhelm-process",
+ "graphhelm-test-shims",
  "hex",
  "jsonschema",
  "serde",
@@ -1233,6 +1240,7 @@ version = "0.1.1"
 dependencies = [
  "graphhelm-process",
  "graphhelm-protocols",
+ "graphhelm-test-shims",
  "pathogens",
  "serde",
 ]
@@ -1251,6 +1259,7 @@ dependencies = [
  "graphhelm-quality",
  "graphhelm-schema",
  "graphhelm-simulation",
+ "graphhelm-test-shims",
  "graphhelm-tool-broker",
  "hex",
  "serde",
@@ -1333,6 +1342,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphhelm-test-shims"
+version = "0.1.1"
+
+[[package]]
 name = "graphhelm-tool-broker"
 version = "0.1.1"
 dependencies = [
@@ -1354,6 +1367,7 @@ dependencies = [
  "graphhelm-process-tree",
  "graphhelm-protocols",
  "graphhelm-runtime",
+ "graphhelm-test-shims",
  "graphhelm-tool-broker",
  "hex",
  "keel-contract-index",
@@ -2212,6 +2226,7 @@ dependencies = [
  "graphhelm-policy",
  "graphhelm-process",
  "graphhelm-process-tree",
+ "graphhelm-test-shims",
  "hex",
  "serde",
  "serde_json",

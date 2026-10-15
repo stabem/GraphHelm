@@ -23,6 +23,7 @@ uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+graphhelm-test-shims = { path = "../../tools/test-shims" }
 graphhelm-process = { path = "../process" }
 graphhelm-execution = { path = "../execution" }
 static_assertions.workspace = true

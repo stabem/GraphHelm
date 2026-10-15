@@ -27,6 +27,7 @@ members = [
   "tools/acceptance-map",
   "core/quality",
   "tools/pathogens",
+  "tools/test-shims",
   "tools/development-benchmark",
   "tools/keel-contract-index",
 ]

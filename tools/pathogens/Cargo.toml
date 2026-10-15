@@ -16,4 +16,5 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 
 [dev-dependencies]
+graphhelm-test-shims = { path = "../../tools/test-shims" }
 filetime = "0.2"

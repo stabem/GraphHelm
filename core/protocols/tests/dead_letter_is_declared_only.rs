@@ -43,10 +43,7 @@ use std::collections::{BTreeMap, BTreeSet};
 // extraction exists to remove.
 // ------------------------------------------------------------------------------------------
 
-include!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../tools/workspace-walk/walk.rs"
-));
+use graphhelm_test_shims::walk::*;
 
 // ------------------------------------------------------------------------------------------
 // HALF A -- the Rust sweep.

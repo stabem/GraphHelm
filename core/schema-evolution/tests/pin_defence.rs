@@ -10,11 +10,9 @@
 //! names which one it catches, because a bar published without its blind spot reads as stronger
 //! than it is.
 //!
-//! **This file does NOT adopt `tools/source-invariants/detect.rs`, and the reason is that file's
-//! own rule.** It requires every adopter to consume every item it exports, since `include!` copies
-//! the whole file and an unused item is `dead_code` under `-D warnings`. Its predicate finds runs
-//! inside STRING LITERALS; the defect here is a run inside COMMENT PROSE, which that predicate
-//! deliberately exempts. Adopting it to use half would break the build for this crate.
+//! **This file does NOT use `graphhelm_test_shims::detect`.** Its predicate finds runs inside
+//! STRING LITERALS; the defect here is a run inside COMMENT PROSE, which that predicate
+//! deliberately exempts.
 
 use std::path::PathBuf;
 

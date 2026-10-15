@@ -1,9 +1,6 @@
 //! Enforces source properties which runtime tests cannot observe.
 
-include!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../tools/source-invariants/detect.rs"
-));
+use graphhelm_test_shims::detect::*;
 
 use std::path::{Path, PathBuf};
 

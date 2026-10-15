@@ -59,10 +59,7 @@ use std::collections::BTreeMap;
 // must agree on what they SKIP is a duplicated ORACLE and not a duplicated mechanism.
 // ------------------------------------------------------------------------------------------
 
-include!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../tools/workspace-walk/walk.rs"
-));
+use graphhelm_test_shims::walk::*;
 
 /// The bare identifier, so an ALIASED path cannot walk past it.
 ///

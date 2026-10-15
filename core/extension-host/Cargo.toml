@@ -19,5 +19,6 @@ uuid.workspace = true
 windows-sys = { workspace = true, features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO"] }
 
 [dev-dependencies]
+graphhelm-test-shims = { path = "../../tools/test-shims" }
 graphhelm-process = { path = "../process" }
 tempfile.workspace = true

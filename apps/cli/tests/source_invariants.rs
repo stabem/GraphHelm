@@ -16,10 +16,7 @@
 //! explanation that stood here pointed away from it. The source reads plausibly
 //! while the operator reads `a waiter waits on its OWN                  lease`.
 
-include!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../tools/source-invariants/detect.rs"
-));
+use graphhelm_test_shims::detect::*;
 
 use std::path::{Path, PathBuf};
 
@@ -209,7 +206,7 @@ fn authored_sources_with_fs<F: AuthoredFs>(
 
 /// This crate's exemption, composed on top of the shared detection.
 ///
-/// The detection lives in `tools/source-invariants/detect.rs` and is included by value; only
+/// The detection lives in `graphhelm_test_shims::detect` (#1315); only
 /// the EXEMPTION is a property of this crate, which is why the two are separate functions
 /// there. Composing them here rather than importing a bundled predicate is what lets the
 /// exemption be asserted to be doing work, instead of merely having a subject.

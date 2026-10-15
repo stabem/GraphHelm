@@ -190,7 +190,11 @@ try {
   }
   $mode = if ($RedParent) { '' } else { '-ObserveTerminalTabs' }
   $tabObserver = Start-ObservedCommand $mode
-  Start-Sleep -Milliseconds 1100
+  $preamble = ''
+  if (-not $RedParent) {
+    for ($lineCount = 0; $lineCount -lt 2; $lineCount++) { $preamble += $tabObserver.StandardOutput.ReadLine() + [Environment]::NewLine }
+    if (-not $preamble.Contains('Terminal tab baseline ready.')) { throw "UNOBSERVED: observer baseline was not ready: $preamble" }
+  } else { Start-Sleep -Milliseconds 1100 }
   Start-Process -FilePath $wt -ArgumentList @('-w', $terminalName, 'new-tab', '--title', $secondTitle, $cmd, '/k', 'ping -n 25 127.0.0.1 >nul') | Out-Null
   $added = $null
   for ($attempt = 0; $attempt -lt 40 -and -not $added; $attempt++) {
@@ -202,7 +206,7 @@ try {
     }
   }
   if (-not $added -or $added.Count -ne 1) { throw 'UNOBSERVED: no distinct second tab appeared in the unchanged owned HWND' }
-  $output = $tabObserver.StandardOutput.ReadToEnd() + $tabObserver.StandardError.ReadToEnd()
+  $output = $preamble + $tabObserver.StandardOutput.ReadToEnd() + $tabObserver.StandardError.ReadToEnd()
   $tabObserver.WaitForExit()
   $expectedTabExit = if ($RedParent) { 0 } else { 1 }
   Write-Output "CASE existing Terminal tab: HWND $hwnd; baseline $($baseline[0]); added $($added[0]); observer exit $($tabObserver.ExitCode) (expected $expectedTabExit)"

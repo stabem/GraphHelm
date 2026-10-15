@@ -151,6 +151,9 @@ public static class ConsoleWindowWatch {
           ScanTabs();
           lock (Gate) { if (TabError != null) break; }
         }
+        // A tab can appear after the last poll and before the command exits.
+        // Compare the final UIA tree with the baseline before reporting coverage.
+        ScanTabs();
       } catch (Exception ex) { lock (Gate) { TabError = "accessibility: " + ex.GetType().Name + " " + ex.Message; } }
       finally {
         TabReady.Set();
@@ -257,6 +260,7 @@ if ($tabStartError) {
   Write-Output "UNOBSERVED: Terminal tab coverage: $tabStartError $unusedError"
   exit 1
 }
+if ($ObserveTerminalTabs) { Write-Output 'Terminal tab baseline ready.' }
 $started = Get-Date
 $log = Join-Path $env:TEMP 'gh-nowindow-observe.log'
 $runError = $null

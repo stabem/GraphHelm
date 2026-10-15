@@ -282,12 +282,12 @@ const TOOLS: [ToolSpec; 47] = [
     },
     ToolSpec {
         name: "claim",
-        description: "Claim a waiting_input node's external work is done (POST /v1/executions/{executionId}/claim). Testimony only: nothing releases until clear countersigns. The graph (file or graph) is optional; evidence is [{kind, contentHash, size}]; waitSeq and asserter default.",
+        description: "Claim a waiting_input node's external work is done (POST /v1/executions/{executionId}/claim). Testimony only: nothing releases until clear countersigns. Graph optional; waitSeq and asserter default.",
         schema: claim_schema,
     },
     ToolSpec {
         name: "clear",
-        description: "Countersign a claim by machine replay (POST /v1/executions/{executionId}/clear) with manifestHash or the evidence bundle: a match clears the node and drives dependents, a mismatch is journaled. Graph optional; claimSeq defaults to the one open claim. countersign is refused (#529).",
+        description: "Countersign a claim by machine replay (POST /v1/executions/{executionId}/clear) with manifestHash or the evidence bundle: a match clears the node and drives dependents, a mismatch is journaled. Graph optional; claimSeq defaults to the open claim. countersign is refused (#529).",
         schema: clear_schema,
     },
     ToolSpec {
@@ -789,8 +789,9 @@ fn claim_schema() -> serde_json::Value {
     )
 }
 
-/// #1284: one customs evidence item, `{kind, contentHash, size}`, typed so a caller learns the
-/// shape from the schema instead of from a refusal. The Runtime's `parse_claim_evidence` stays the
+/// #1284: one customs evidence item, `{kind, contentHash, size}`, typed on `claim` (where agents
+/// present evidence) so a caller learns the shape from the schema instead of from a refusal;
+/// `clear` names the same shape in words, inside #1277's `tools/list` byte budget. The Runtime's `parse_claim_evidence` stays the
 /// authority on the values.
 fn evidence_items_schema() -> serde_json::Value {
     serde_json::json!({
@@ -800,7 +801,7 @@ fn evidence_items_schema() -> serde_json::Value {
             "properties": {
                 "kind": {"type": "string"},
                 "contentHash": {"type": "string"},
-                "size": {"type": "integer", "minimum": 0},
+                "size": {"type": "integer"},
             },
             "required": ["kind", "contentHash", "size"],
             "additionalProperties": false,
@@ -822,7 +823,7 @@ fn clear_schema() -> serde_json::Value {
             "route": {"type": "string"},
             "claimSeq": {"type": "integer", "minimum": 0, "maximum": u64::MAX},
             "manifestHash": {"type": "string"},
-            "evidence": evidence_items_schema(),
+            "evidence": {"type": "array", "items": {"type": "object"}},
             "verifier": {"type": "string"},
         }),
         &["executionId"],

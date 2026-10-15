@@ -54,13 +54,8 @@ import type {
 } from "./runtime/types";
 import { claimVerdict, clearVerdict, digestOf, openWaitSequence } from "./runtime/customs";
 import type { AnswerOutcome } from "./components/answer";
-import {
-  registerStudioTools,
-  type ModelContextLike,
-  type RegisteredTools,
-  type ToolActivity,
-  type WebMcpAvailability,
-} from "./webmcp/adapter";
+import type { ModelContextLike, ToolActivity } from "./webmcp/adapter";
+import { useWebMcp } from "./webmcp/use-webmcp";
 import { buildGraphModel, conversationFor, pendingAcceptanceCount } from "./graph/model";
 import { openQuestions } from "./graph/ledger";
 import { topologyFromJournal, topologyNote, verifyTopology, type VerifiedTopology } from "./graph/topology";
@@ -183,7 +178,6 @@ export default function App({
   const clientRef = useRef<RuntimeClient | null>(null);
   /** Bumped by every connect and disconnect; a completion from an older connection discards itself. */
   const connectionGeneration = useRef(0);
-  const toolsRef = useRef<RegisteredTools | null>(null);
 
   const [runActionsOpen, setRunActionsOpen] = useState(false);
   /** #1156: resume was pressed without a graph file; the field says what it is waiting for. */
@@ -378,8 +372,7 @@ export default function App({
   const [remedySeconds, setRemedySeconds] = useState<Record<string, string>>({});
   const [board, setBoard] = useState<BoardState>(emptyBoard);
 
-  const [webmcp, setWebmcp] = useState<WebMcpAvailability>("unavailable");
-  const [tools, setTools] = useState<string[]>([]);
+  const { webmcp, tools, registerTools, unregisterTools } = useWebMcp(modelContext);
   const [activity, setActivity] = useState<ToolActivity | null>(null);
 
   /** ONE identity for "the events, or none yet". Building `events?.events ?? []` inline handed
@@ -1131,26 +1124,10 @@ export default function App({
       setNextCursor(page.hasMore ? page.nextCursor : null);
       setConnected(true);
 
-      const registration = registerStudioTools(
-        client,
-        {
-          onSelect: (id) => hooksRef.current.onSelect(id),
-          onMutation: (next) => hooksRef.current.onMutation(next),
-          onActivity: (next) => hooksRef.current.onActivity(next),
-        },
-        modelContext === undefined ? {} : { modelContext },
-      );
-      toolsRef.current = registration;
-      setWebmcp(registration.availability);
-      setTools(registration.names);
-      // A host whose registerTool settles ASYNCHRONOUSLY confirms its names only when `ready`
-      // settles - the snapshot above would then say "no site tools" forever on such a host
-      // (PR #467 review). Refreshed once settled, and only if this registration is still the
-      // page's current one: a disconnect in between must not resurrect dead chips.
-      void registration.ready.then(() => {
-        if (toolsRef.current !== registration) return;
-        setWebmcp(registration.availability);
-        setTools(registration.names);
+      registerTools(client, {
+        onSelect: (id) => hooksRef.current.onSelect(id),
+        onMutation: (next) => hooksRef.current.onMutation(next),
+        onActivity: (next) => hooksRef.current.onActivity(next),
       });
 
       // Read at connect, not only when a draft opens: the attention area needs to know whether a
@@ -1221,7 +1198,7 @@ export default function App({
         await loadExecution(first.executionId);
       }
     },
-    [loadExecution, modelContext],
+    [loadExecution, registerTools],
   );
 
   /** True once ANY connection attempt has begun this page-life - the boot auto-connect yields
@@ -1271,10 +1248,7 @@ export default function App({
         // throw) would otherwise leave the host holding registrations whose only removal handle
         // this overwrite discards - and the next connect's registerTool calls then collide with
         // them (PR #467 review). unregister() is idempotent and safe when nothing registered.
-        toolsRef.current?.unregister();
-        toolsRef.current = null;
-        setWebmcp("unavailable");
-        setTools([]);
+        unregisterTools();
         client.dispose();
         clientRef.current = null;
         setConnected(false);
@@ -1323,8 +1297,7 @@ export default function App({
     connectionGeneration.current += 1;
     markFresh();
     setConnecting(false);
-    toolsRef.current?.unregister();
-    toolsRef.current = null;
+    unregisterTools();
     clientRef.current?.dispose();
     clientRef.current = null;
     clearBoards();
@@ -1368,8 +1341,6 @@ export default function App({
     setConfirmCancel(false);
     setRemedySeconds({});
     setActivity(null);
-    setTools([]);
-    setWebmcp("unavailable");
     setGraphFile("");
     graphFileRef.current = "";
     verificationGeneration.current += 1;
@@ -1413,7 +1384,6 @@ export default function App({
   useEffect(
     () => () => {
       connectionGeneration.current += 1;
-      toolsRef.current?.unregister();
       clientRef.current?.dispose();
     },
     [],

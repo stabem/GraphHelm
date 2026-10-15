@@ -139,7 +139,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
             "--mode",
             "supervised",
             "--execution",
-            "exec-keel-route",
+            "exec_feature",
             "--held",
         ])
         .output()
@@ -202,7 +202,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
             .arg(&scope_card)
             .args(["--events"])
             .arg(&events)
-            .args(["--execution", "exec-keel-route", "--keyring"])
+            .args(["--execution", "exec_feature", "--keyring"])
             .arg(&keyring)
             .args(["--key-id", "route-key"])
             .env("GRAPHHELM_EVENTS_KEY", key);
@@ -253,7 +253,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         .arg(&events)
         .args([
             "--execution",
-            "exec-keel-route",
+            "exec_feature",
             "--node",
             "plan",
             "--keyring",

@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use graphhelm_execution::{
@@ -30,6 +31,14 @@ const KEEL_POLICY: &str = include_str!(
 const KEEL_CARD_SCHEMA: &str = include_str!(
     "../../../../extensions/builtin/graphhelm-development-contracts/schemas/keel-card.schema.json"
 );
+
+/// #1278 (plan D5): the shipped policy and card schema, parsed once per process. A Runtime or MCP
+/// server that checks many cards pays the YAML and JSON parse once; a failure is kept as its text
+/// so every caller still reports it the way it did.
+static POLICY: LazyLock<Result<KeelPolicy, String>> =
+    LazyLock::new(|| serde_yaml_ng::from_str(KEEL_POLICY).map_err(|error| error.to_string()));
+static CARD_SCHEMA: LazyLock<Result<serde_json::Value, String>> =
+    LazyLock::new(|| serde_json::from_str(KEEL_CARD_SCHEMA).map_err(|error| error.to_string()));
 
 /// A card is a few hundred bytes (`keel.yaml` `card.maxCardBytes`); this only stops an unbounded
 /// read. A card between the two is read and reported as `keel.card.too_large`.
@@ -342,7 +351,7 @@ pub(super) fn check(
         );
     }
     let diff = String::from_utf8_lossy(&output.stdout);
-    let policy: KeelPolicy = match serde_yaml_ng::from_str(KEEL_POLICY) {
+    let policy: &KeelPolicy = match POLICY.as_ref() {
         Ok(policy) => policy,
         Err(error) => {
             return Outcome::internal(COMMAND, format!("shipped keel.yaml unreadable: {error}"));
@@ -351,7 +360,7 @@ pub(super) fn check(
     let report = policy_keel::check(
         &diff,
         card.as_ref().map(|(card, bytes)| (card, *bytes)),
-        &policy,
+        policy,
     );
     let mut report = report;
     let changed: Vec<String> = report
@@ -360,7 +369,7 @@ pub(super) fn check(
         .map(|entry| entry.path.clone())
         .collect();
     let journey_data = super::journeys::keel_journeys(repo);
-    let guidance = card_guidance(&changed, &report.findings, &journey_data, &policy);
+    let guidance = card_guidance(&changed, &report.findings, &journey_data, policy);
     let journeys = journey_data;
     if policy.journey_first {
         report.findings.extend(missing_journeys(
@@ -976,13 +985,13 @@ fn read_card(path: &Path) -> Result<(Card, u64), Box<Outcome>> {
         })?;
         (value, bytes)
     };
-    let schema: serde_json::Value = serde_json::from_str(KEEL_CARD_SCHEMA).map_err(|error| {
+    let schema: &serde_json::Value = CARD_SCHEMA.as_ref().map_err(|error| {
         Box::new(Outcome::internal(
             COMMAND,
             format!("shipped keel-card.schema.json unreadable: {error}"),
         ))
     })?;
-    let diagnostics = graphhelm_schema::validate_inline_value(&schema, &value, "keel-card")
+    let diagnostics = graphhelm_schema::validate_inline_value(schema, &value, "keel-card")
         .map_err(|error| {
             Box::new(input_error(
                 format!("card schema validation failed: {error}"),
@@ -1116,7 +1125,7 @@ pub(crate) fn plan_value(
             &format!("/paths/{bad}"),
         ));
     }
-    let policy: KeelPolicy = serde_yaml_ng::from_str(KEEL_POLICY).map_err(|error| {
+    let policy: &KeelPolicy = POLICY.as_ref().map_err(|error| {
         Outcome::internal(
             PLAN_COMMAND,
             format!("shipped keel.yaml unreadable: {error}"),
@@ -1166,7 +1175,7 @@ pub(crate) fn plan_value(
         promise: promise.to_owned(),
         journeys,
     };
-    let mut planned = keel_plan::plan(&input, &policy, &rules);
+    let mut planned = keel_plan::plan(&input, policy, &rules);
     if let Some((judge, route)) = judge {
         planned = ask_jev(planned, promise, judge, route, &rules);
     }
@@ -1383,6 +1392,37 @@ mod tests {
     use super::*;
     use std::process::Stdio;
     use std::thread;
+
+    const KEEL_POLICY_SCHEMA: &str = include_str!(
+        "../../../../extensions/builtin/graphhelm-development-contracts/schemas/keel-policy.schema.json"
+    );
+
+    /// #1278: the shipped `keel.yaml` is valid against `keel-policy.schema.json`, and the parse the
+    /// commands share (`POLICY`) accepts it. A rule edited into the YAML that the schema does not
+    /// describe (or a field removed that it requires) fails here, not at a user's first check.
+    #[test]
+    fn shipped_keel_policy_is_valid_against_its_schema() {
+        let schema: serde_json::Value =
+            serde_json::from_str(KEEL_POLICY_SCHEMA).expect("keel-policy.schema.json parses");
+        let policy: serde_json::Value =
+            serde_yaml_ng::from_str(KEEL_POLICY).expect("keel.yaml parses as YAML");
+        let diagnostics = graphhelm_schema::validate_inline_value(&schema, &policy, "keel-policy")
+            .expect("the validator runs");
+        assert!(
+            diagnostics.is_empty(),
+            "keel.yaml breaks keel-policy.schema.json: {diagnostics:?}"
+        );
+        assert!(
+            POLICY.is_ok(),
+            "the shared policy parse refuses keel.yaml: {:?}",
+            POLICY.as_ref().err()
+        );
+        assert!(
+            CARD_SCHEMA.is_ok(),
+            "the shared card schema parse fails: {:?}",
+            CARD_SCHEMA.as_ref().err()
+        );
+    }
 
     const HOLDER_TEST: &str =
         "commands::keel::tests::bounded_proof_kills_a_descendant_that_holds_an_output_pipe";

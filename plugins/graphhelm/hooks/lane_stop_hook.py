@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import threading
 import time
 from urllib.parse import quote
 
@@ -125,30 +126,84 @@ def record_reconciled(bound: tuple, lane: str, data: dict, memory: Path | None =
         memory.write_text(digest, encoding="ascii")
 
 
-def main() -> int:
-    if sys.argv[1:] == ["--scan"]:
+def scan_status(payload: dict) -> int:
+    """#1278: the note scan, in this process. 1 = unanswered notes, 0 = none, 2 = unknown. The
+    scan runs on a daemon thread joined for `SCAN_CHILD_TIMEOUT_SECONDS`: the same wall-time bound
+    the `--scan` child process gave (a server that trickles bytes cannot hold the Stop), without
+    starting a second interpreter."""
+    box: list[int] = []
+
+    def run() -> None:
         try:
-            payload = hook_input()
-            return 1 if pending(payload) else 0
-        except Exception:
-            return 2
+            box.append(1 if pending(payload) else 0)
+        except Exception:  # noqa: BLE001 - unknown state never blocks the turn
+            box.append(2)
+    thread = threading.Thread(target=run, name="lane-note-scan", daemon=True)
+    thread.start()
+    thread.join(SCAN_CHILD_TIMEOUT_SECONDS)
+    return box[0] if box else 2
+
+
+def _common_dir(cwd: str) -> Path | None:
+    """The repository's common git dir, read from `.git` (and a worktree's `commondir`)."""
     try:
-        payload = hook_input()
-    except (ValueError, OSError):
-        return 0
+        start = Path(cwd).resolve()
+        for top in (start, *start.parents):
+            dot = top / ".git"
+            if dot.is_dir():
+                return dot
+            if dot.is_file():
+                text = dot.read_text(encoding="utf-8").strip()
+                if not text.startswith("gitdir:"):
+                    return None
+                gitdir = Path(text[len("gitdir:"):].strip())
+                gitdir = gitdir if gitdir.is_absolute() else (top / gitdir).resolve()
+                pointer = gitdir / "commondir"
+                return (gitdir / pointer.read_text(encoding="utf-8").strip()).resolve() if pointer.is_file() else gitdir
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def origin_url(cwd: str) -> str:
+    """`remote.origin.url`, read from the repository's config file (#1278: no git process); else
+    `git remote get-url origin`."""
+    common = _common_dir(cwd)
+    if common is not None:
+        section = None
+        try:
+            for raw in (common / "config").read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if line.startswith("["):
+                    section = re.sub(r"\s+", " ", line.strip("[]").strip())
+                elif section == 'remote "origin"' and "=" in line:
+                    key, _, value = line.partition("=")
+                    if key.strip().lower() == "url":
+                        return value.strip()
+        except OSError:
+            pass
+    return subprocess.run(["git", "-C", cwd, "remote", "get-url", "origin"],
+                          capture_output=True, text=True, timeout=1, check=True, creationflags=NO_WINDOW).stdout.strip()
+
+
+NOTES_REASON = ("GraphHelm: read the notes addressed to you on the team execution, act on them, "
+                "then record your operator_note reply with replyTo before stopping.")
+
+
+def evaluate(payload: dict, host: str = "claude") -> str | None:
+    """#1278: one Stop for this lane, callable in-process by `stop_hook.py`: reconcile, then the
+    reminder reason (or None)."""
     # Every Stop refreshes this lane's finished PRs and released claims. An offline
     # Runtime or GitHub must never prevent the host from ending its turn.
     try:
         bound = binding(payload)
         lane = os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload)
         if bound is not None and lane and ID.fullmatch(lane):
-            host = "codex" if "--host=codex" in sys.argv else "claude"
             start_lane_waiter(payload, bound, host)
             execution, token_file, url, _origin, _node = bound
             cwd = payload.get("cwd")
             if isinstance(cwd, str) and Path(cwd).is_dir():
-                remote = subprocess.run(["git", "-C", cwd, "remote", "get-url", "origin"],
-                                        capture_output=True, text=True, timeout=1, check=True, creationflags=NO_WINDOW).stdout.strip()
+                remote = origin_url(cwd)
                 match = re.fullmatch(r"(?:git@github\.com:|https://github\.com/)([^/\s]+/[^/\s]+?)(?:\.git)?", remote)
                 if match is not None:
                     cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
@@ -169,17 +224,23 @@ def main() -> int:
     # The host sets this on the continuation caused by a Stop block. One reminder
     # per stop cycle is enough, even when the lane cannot send its reply.
     if payload.get("stop_hook_active") is True:
-        return 0
+        return None
+    return NOTES_REASON if scan_status(payload) == 1 else None
+
+
+def main() -> int:
+    if sys.argv[1:] == ["--scan"]:  # kept for callers of the old child form
+        try:
+            payload = hook_input()
+            return 1 if pending(payload) else 0
+        except Exception:
+            return 2
     try:
-        result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--scan"],
-                                input=json.dumps(payload), text=True,
-                                capture_output=True, timeout=SCAN_CHILD_TIMEOUT_SECONDS, creationflags=NO_WINDOW)
-        status = result.returncode
-    except (OSError, subprocess.SubprocessError):
-        status = 2
-    if status == 1:
-        reason = ("GraphHelm: read the notes addressed to you on the team execution, act on them, "
-                  "then record your operator_note reply with replyTo before stopping.")
+        payload = hook_input()
+    except (ValueError, OSError):
+        return 0
+    reason = evaluate(payload, "codex" if "--host=codex" in sys.argv else "claude")
+    if reason:
         print(json.dumps({"decision": "block", "reason": reason}))
     return 0
 

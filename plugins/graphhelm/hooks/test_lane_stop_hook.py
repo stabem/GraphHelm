@@ -500,7 +500,7 @@ class LaneStopTests(unittest.TestCase):
                 result = subprocess.run([sys.executable, str(manifest.parent / name), *args], env=self.env,
                     input=json.dumps({"cwd": self.tmp.name, "session_id": session, "stop_hook_active": active}),
                     text=True, capture_output=True, timeout=12 * time_scale(), creationflags=NO_WINDOW)
-                if name == "lane_stop_hook.py":
+                if name in ("lane_stop_hook.py", "stop_hook.py"):  # #1278: one process on Claude
                     self.reminder_seconds = time.monotonic() - started
                 self.assertEqual(result.returncode, 0, result.stderr)
                 if result.stdout.strip():

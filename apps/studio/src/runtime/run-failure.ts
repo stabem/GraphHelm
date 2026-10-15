@@ -28,7 +28,7 @@ function logTail(run: JourneyRunView, lines = 6): string | null {
 export interface RunFailure {
   /** One sentence: where the run stopped and why. */
   text: string;
-  /** 0-based index of the step that failed; null when it stopped before step 1. */
+  /** 0-based index of the identified failed step; null when no failed step is known. */
   step: number | null;
   /** The launcher's last output lines, when the app did not start. */
   log: string | null;
@@ -36,7 +36,7 @@ export interface RunFailure {
   logPath: string | null;
 }
 
-/** #1296: a failed run says which step failed, or that it stopped before step 1 and why. */
+/** #1296: a failed run says which step failed, or where the failure can be located. */
 export function runFailure(run: JourneyRunView, stepIds: string[]): RunFailure {
   const code = run.detail?.code ?? run.reason ?? "internal";
   const why = WHY[code] ?? WHY[run.reason ?? ""] ?? `the Runtime refused the run (${code})`;
@@ -45,7 +45,9 @@ export function runFailure(run: JourneyRunView, stepIds: string[]): RunFailure {
   let step = stepIds.findIndex((id) => pointer === `/${id}` || pointer.startsWith(`/${id}/`) || pointer === id);
   if (step < 0) step = stepIds.findIndex((id) => run.screens?.[id]?.result && run.screens[id]!.result !== "pass");
   const log = logTail(run);
-  const where = step >= 0 ? `Step ${step + 1} failed` : "It stopped before step 1";
+  const progressed = stepIds.some((id) => run.screens?.[id]?.result === "pass");
+  const where = step >= 0 ? `Step ${step + 1} failed`
+    : progressed ? "The run failed; the failing step is unknown" : "It stopped before step 1";
   return {
     text: `${where}: ${why}.`,
     step: step >= 0 ? step : null,

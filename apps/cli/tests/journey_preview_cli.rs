@@ -165,25 +165,25 @@ fn a_missing_launcher_shell_is_recorded_as_a_spawn_failure() {
         r#"{"schema":"graphhelm.launcher.v1","script":"launcher.sh","isolated":true}"#,
     )
     .unwrap();
-    std::fs::write(
-        dir.path().join("launcher.sh"),
-        "#!/bin/sh\nexit 0\n",
-    )
-    .unwrap();
-    assert!(graphhelm_process::command("git")
-        .arg("-C")
-        .arg(dir.path())
-        .args(["add", "."])
-        .status()
-        .unwrap()
-        .success());
-    assert!(graphhelm_process::command("git")
-        .arg("-C")
-        .arg(dir.path())
-        .args(["commit", "--quiet", "--no-verify", "-m", "launcher fixture"])
-        .status()
-        .unwrap()
-        .success());
+    std::fs::write(dir.path().join("launcher.sh"), "#!/bin/sh\nexit 0\n").unwrap();
+    assert!(
+        graphhelm_process::command("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["add", "."])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        graphhelm_process::command("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["commit", "--quiet", "--no-verify", "-m", "launcher fixture"])
+            .status()
+            .unwrap()
+            .success()
+    );
 
     let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["--json", "journey", "preview", "checkout"])

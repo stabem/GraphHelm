@@ -98,7 +98,7 @@ fn project_record_path(dir: &Path, project_id: &str, instance: &str) -> PathBuf 
 pub(crate) fn new_instance() -> Result<String, String> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes).map_err(|_| "the OS random source is unavailable".to_owned())?;
-    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+    Ok(hex::encode(bytes))
 }
 
 fn refuse_symlink(path: &Path, what: &str) -> Result<(), String> {

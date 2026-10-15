@@ -109,72 +109,8 @@ fn decode_key(encoded: &str) -> Result<SecretBytes, Failure> {
             "/keyring",
         )
     };
-    if encoded.len() != 64 {
-        return Err(invalid());
-    }
-    let mut bytes = Vec::with_capacity(32);
-    let raw = encoded.as_bytes();
-    for pair in raw.chunks_exact(2) {
-        let high = hex_value(pair[0]).ok_or_else(invalid)?;
-        let low = hex_value(pair[1]).ok_or_else(invalid)?;
-        bytes.push((high << 4) | low);
-    }
-    Ok(SecretBytes::new(bytes))
-}
-
-const fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    }
-}
-
-/// #1325: the events key decoder, pinned on known keys BEFORE it moves to a shared helper. Same
-/// bytes, same accepted alphabet (lowercase only, exactly 64 characters, no trimming), same error.
-#[cfg(test)]
-mod hex_key_vectors {
-    use super::decode_key;
-
-    const KEY: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
-
-    fn bytes(encoded: &str) -> Vec<u8> {
-        decode_key(encoded)
-            .unwrap_or_else(|failure| panic!("{encoded} was refused: {}", failure.message))
-            .expose(<[u8]>::to_vec)
-    }
-
-    #[test]
-    fn hex_events_key_decodes_known_keys_byte_for_byte() {
-        assert_eq!(bytes(KEY), (0_u8..32).collect::<Vec<_>>());
-        assert_eq!(
-            bytes("ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100"),
-            [
-                0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22,
-                0x11, 0x00
-            ]
-            .repeat(2)
-        );
-    }
-
-    #[test]
-    fn hex_events_key_refuses_what_it_refused_with_the_same_failure() {
-        let upper = KEY.replace('a', "A");
-        let long = format!("{KEY}0");
-        let spaced = format!(" {}", &KEY[..63]);
-        let non_hex = format!("{}g", &KEY[..63]);
-        for encoded in [&KEY[..63], &long, &upper, &spaced, &non_hex, ""] {
-            let failure = decode_key(encoded)
-                .err()
-                .unwrap_or_else(|| panic!("{encoded:?} was accepted"));
-            assert_eq!(failure.code, super::super::CONFIG_CODE);
-            assert_eq!(
-                failure.message,
-                "GRAPHHELM_EVENTS_KEY must supply 64 lowercase hexadecimal characters"
-            );
-            assert_eq!(failure.pointer, "/keyring");
-        }
-    }
+    // #1325: one decoder for both keys; the wording above stays this caller's.
+    crate::commands::hex_key::decode_hex_key(encoded.as_bytes()).ok_or_else(invalid)
 }
 
 /// Resolves the configuration path from an explicit flag or the environment, in that order.
@@ -381,4 +317,51 @@ fn parse_admin_url(value: &str) -> Result<Endpoint, Failure> {
         user: user.to_owned(),
         database: database.to_owned(),
     })
+}
+
+/// #1325: the events key decoder, pinned on known keys BEFORE it moves to a shared helper. Same
+/// bytes, same accepted alphabet (lowercase only, exactly 64 characters, no trimming), same error.
+#[cfg(test)]
+mod hex_key_vectors {
+    use super::decode_key;
+
+    const KEY: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+
+    fn bytes(encoded: &str) -> Vec<u8> {
+        decode_key(encoded)
+            .unwrap_or_else(|failure| panic!("{encoded} was refused: {}", failure.message))
+            .expose(<[u8]>::to_vec)
+    }
+
+    #[test]
+    fn hex_events_key_decodes_known_keys_byte_for_byte() {
+        assert_eq!(bytes(KEY), (0_u8..32).collect::<Vec<_>>());
+        assert_eq!(
+            bytes("ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100"),
+            [
+                0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22,
+                0x11, 0x00
+            ]
+            .repeat(2)
+        );
+    }
+
+    #[test]
+    fn hex_events_key_refuses_what_it_refused_with_the_same_failure() {
+        let upper = KEY.replace('a', "A");
+        let long = format!("{KEY}0");
+        let spaced = format!(" {}", &KEY[..63]);
+        let non_hex = format!("{}g", &KEY[..63]);
+        for encoded in [&KEY[..63], &long, &upper, &spaced, &non_hex, ""] {
+            let failure = decode_key(encoded)
+                .err()
+                .unwrap_or_else(|| panic!("{encoded:?} was accepted"));
+            assert_eq!(failure.code, super::super::CONFIG_CODE);
+            assert_eq!(
+                failure.message,
+                "GRAPHHELM_EVENTS_KEY must supply 64 lowercase hexadecimal characters"
+            );
+            assert_eq!(failure.pointer, "/keyring");
+        }
+    }
 }

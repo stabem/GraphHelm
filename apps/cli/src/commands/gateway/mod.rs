@@ -304,24 +304,31 @@ pub(super) fn decode_key(encoded: &[u8], variable: &str) -> Result<SecretBytes, 
             "/keyring",
         )
     };
-    if encoded.len() != 64 {
-        return Err(invalid());
-    }
-    let mut bytes = zeroize::Zeroizing::new(Vec::<u8>::with_capacity(32));
-    for pair in encoded.chunks_exact(2) {
-        let high = hex_value(pair[0]).ok_or_else(invalid)?;
-        let low = hex_value(pair[1]).ok_or_else(invalid)?;
-        bytes.push((high << 4) | low);
-    }
-    Ok(SecretBytes::new(std::mem::take(&mut *bytes)))
+    // #1325: one decoder for both keys; the wording above stays this caller's.
+    crate::commands::hex_key::decode_hex_key(encoded).ok_or_else(invalid)
 }
 
-const fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    }
+/// Maps any broker failure onto the credential failure class. Covers both "the broker mechanism
+/// itself could not be used" (open/store/revoke I/O, corrupt store, sealing failure) and "the
+/// reference was malformed" (`BrokerError::InvalidReference`) — both are the broker refusing the
+/// operation outright, never a manifest or probe-specific concern. A *denied lease* specifically
+/// (`BrokerError::NotFound`/`Revoked`/`NotUsableByRoute`) is deliberately never routed through
+/// here by `probe.rs`, which reports those as a successful reply instead (see the module doc
+/// comment).
+pub(super) fn broker_failure(error: &BrokerError) -> Failure {
+    credential_error(&error.to_string(), "/broker")
+}
+
+/// The bounded current-thread runtime every broker-touching command bridges through, identical in
+/// shape to `commands::events::runtime` (`apps/cli/src/commands/events/mod.rs`) — the broker's own
+/// `create`/`open`/`store`/`lease`/`revoke` are `async fn`s over `EvidenceProtector`, and this is
+/// the CLI's synchronous command layer's bridge onto them (plan Task 3's own note; precedent
+/// `apps/cli/src/commands/events/backup.rs:32`).
+pub(super) fn runtime() -> Result<tokio::runtime::Runtime, Failure> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| credential_error("the operator runtime could not be started", "/"))
 }
 
 /// #1325: the gateway key decoder, pinned on known keys BEFORE it moves to a shared helper.
@@ -358,27 +365,4 @@ mod hex_key_vectors {
             assert_eq!(failure.pointer, "/keyring");
         }
     }
-}
-
-/// Maps any broker failure onto the credential failure class. Covers both "the broker mechanism
-/// itself could not be used" (open/store/revoke I/O, corrupt store, sealing failure) and "the
-/// reference was malformed" (`BrokerError::InvalidReference`) — both are the broker refusing the
-/// operation outright, never a manifest or probe-specific concern. A *denied lease* specifically
-/// (`BrokerError::NotFound`/`Revoked`/`NotUsableByRoute`) is deliberately never routed through
-/// here by `probe.rs`, which reports those as a successful reply instead (see the module doc
-/// comment).
-pub(super) fn broker_failure(error: &BrokerError) -> Failure {
-    credential_error(&error.to_string(), "/broker")
-}
-
-/// The bounded current-thread runtime every broker-touching command bridges through, identical in
-/// shape to `commands::events::runtime` (`apps/cli/src/commands/events/mod.rs`) — the broker's own
-/// `create`/`open`/`store`/`lease`/`revoke` are `async fn`s over `EvidenceProtector`, and this is
-/// the CLI's synchronous command layer's bridge onto them (plan Task 3's own note; precedent
-/// `apps/cli/src/commands/events/backup.rs:32`).
-pub(super) fn runtime() -> Result<tokio::runtime::Runtime, Failure> {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|_| credential_error("the operator runtime could not be started", "/"))
 }

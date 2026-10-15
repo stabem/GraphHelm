@@ -103,6 +103,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         &["src/lib.rs", "core/events/src/journal.rs"],
     );
     let events = scratch.path().join("events");
+    let unbound_events = scratch.path().join("unbound-events");
     let keyring = scratch.path().join("keyring");
     fs::create_dir(&keyring).unwrap();
     let key = "0101010101010101010101010101010101010101010101010101010101010101";
@@ -148,6 +149,28 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         start.status.success(),
         "{}",
         String::from_utf8_lossy(&start.stdout)
+    );
+    let unbound_start = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "execution", "start", "--file"])
+        .arg(&graph)
+        .args(["--events"])
+        .arg(&unbound_events)
+        .args(["--fixtures"])
+        .arg(&fixtures)
+        .args([
+            "--mode",
+            "supervised",
+            "--execution",
+            "exec_feature",
+            "--held",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        unbound_start.status.success(),
+        "{}",
+        String::from_utf8_lossy(&unbound_start.stdout)
     );
     let hashed = Command::cargo_bin("graphhelm")
         .unwrap()
@@ -207,6 +230,11 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
     .unwrap();
     let check = |binding_path: Option<&Path>| {
         let mut command = Command::cargo_bin("graphhelm").unwrap();
+        let check_events = if binding_path.is_some() {
+            &events
+        } else {
+            &unbound_events
+        };
         command
             .args([
                 "--json",
@@ -220,7 +248,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
             .args(["--card"])
             .arg(&scope_card)
             .args(["--events"])
-            .arg(&events)
+            .arg(check_events)
             .args(["--execution", "exec_feature", "--keyring"])
             .arg(&keyring)
             .args(["--key-id", "route-key"])

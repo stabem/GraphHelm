@@ -28,3 +28,77 @@ foreach ($case in $cases) {
   foreach ($text in $case.Contains) { if (-not $output.Contains($text)) { throw "$($case.Name): missing '$text'" } }
   foreach ($text in $case.Excludes) { if ($output.Contains($text)) { throw "$($case.Name): unexpectedly contained '$text'" } }
 }
+
+# A visible, test-owned console is the positive control. Compare the event with
+# an independent HWND/PID lookup while that window is still alive.
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class TestConsoleWindows {
+  delegate bool EnumProc(IntPtr hwnd, IntPtr data);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc callback, IntPtr data);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder name, int count);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+  public static string[] Snapshot() {
+    var found = new List<string>();
+    EnumWindows((hwnd, data) => {
+      var name = new StringBuilder(256);
+      GetClassName(hwnd, name, name.Capacity);
+      if (IsWindowVisible(hwnd) && (name.ToString() == "ConsoleWindowClass" || name.ToString() == "CASCADIA_HOSTING_WINDOW_CLASS")) {
+        uint pid;
+        uint thread = GetWindowThreadProcessId(hwnd, out pid);
+        if (thread != 0 && pid != 0) found.Add("0x" + hwnd.ToString("x") + "|" + pid + "|" + name);
+      }
+      return true;
+    }, IntPtr.Zero);
+    return found.ToArray();
+  }
+}
+'@
+$before = @([TestConsoleWindows]::Snapshot())
+$observerStart = New-Object System.Diagnostics.ProcessStartInfo
+$observerStart.FileName = $shell
+$ping = Join-Path $env:SystemRoot 'System32/PING.EXE'
+$observerCommand = "& '$observer' -Exe '$cmd' -Arguments @('/c','$ping -n 6 127.0.0.1 >nul')"
+$observerEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($observerCommand))
+$observerStart.Arguments = "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $observerEncoded"
+$observerStart.UseShellExecute = $false
+$observerStart.CreateNoWindow = $true
+$observerStart.RedirectStandardOutput = $true
+$observerStart.RedirectStandardError = $true
+$observing = [Diagnostics.Process]::Start($observerStart)
+$control = $null
+try {
+  Start-Sleep -Milliseconds 900
+  $controlStart = New-Object System.Diagnostics.ProcessStartInfo
+  $controlStart.FileName = $cmd
+  $controlStart.Arguments = "/c $ping -n 4 127.0.0.1 >nul"
+  $controlStart.UseShellExecute = $false
+  $controlStart.CreateNoWindow = $false
+  $control = [Diagnostics.Process]::Start($controlStart)
+  $newWindows = @()
+  for ($attempt = 0; $attempt -lt 30 -and $newWindows.Count -eq 0; $attempt++) {
+    Start-Sleep -Milliseconds 100
+    $newWindows = @([TestConsoleWindows]::Snapshot() | Where-Object { $before -notcontains $_ })
+  }
+  if ($newWindows.Count -ne 1) { throw "UNOBSERVED: expected one new visible console window, found $($newWindows.Count)" }
+  $parts = $newWindows[0].Split('|')
+  $control.WaitForExit()
+  $stdout = $observing.StandardOutput.ReadToEnd()
+  $stderr = $observing.StandardError.ReadToEnd()
+  $observing.WaitForExit()
+  $output = $stdout + $stderr
+  Write-Output "CASE visible console control: observer exit $($observing.ExitCode); HWND $($parts[0]); owner PID $($parts[1])"
+  Write-Output $output
+  if (-not $output.Contains("$($parts[2]) $($parts[0])")) { throw 'UNOBSERVED: positive control window was not captured by observer' }
+  if (-not $output.Contains("$($parts[2]) $($parts[0]) pid=$($parts[1])")) { throw 'Captured console window lacks its independently measured owner PID' }
+  if ($observing.ExitCode -ne 1) { throw "visible control: expected observer exit 1, got $($observing.ExitCode)" }
+} finally {
+  if ($control -and -not $control.HasExited) { $control.Kill(); $control.WaitForExit() }
+  if (-not $observing.HasExited) { $observing.Kill(); $observing.WaitForExit() }
+  if ($control) { $control.Dispose() }
+  $observing.Dispose()
+}

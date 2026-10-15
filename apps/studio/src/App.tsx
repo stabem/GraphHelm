@@ -97,6 +97,7 @@ import { Composer, type RouteChoice } from "./components/compose";
 import { Models, type KeyDraft, type ProbeState, type RouteDraft, type SaveOutcome } from "./components/models";
 import { AddProject } from "./components/addproject";
 import { RAIL_MAX, RAIL_MIN, loadRailWidth, saveRailWidth } from "./rail-width";
+import { useNow } from "./runtime/use-now";
 import { DRAFT_NODE_ID, draftGraph, newExecutionId } from "./graph/draft";
 import { isGeneratedRunId, readable, runLabel, verdictOf } from "./components/format";
 import { dockReserve } from "./dock-reserve";
@@ -613,6 +614,9 @@ export default function App({
   const pollGeneration = useRef(0);
   const railRefreshBusy = useRef(false);
   const successfulRailRefreshes = useRef(0);
+  /** The selected run's native chat request read; the tick below calls it, so it has no interval
+   * of its own (#1380). Set by the effect that owns `nativeRequests`. */
+  const readNativeRequests = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!connected || selected === "") return;
     const generation = ++pollGeneration.current;
@@ -631,6 +635,7 @@ export default function App({
       } else {
         hiddenTicks = 0;
       }
+      readNativeRequests.current?.();
       tickBusy = true;
       void (async () => {
         try {
@@ -1765,26 +1770,13 @@ export default function App({
     [loadExecution, loadList, observeStatus],
   );
 
-  /** One immutable evidence read per connection and id, shared by the task board and conversation.
-   * Keep invalid-ID refusals; evict other failures so the operator's retry can recover. */
-  const evidenceReads = useRef<{ client: RuntimeClient | null; entries: Map<string, Promise<EvidenceContent>> }>({ client: null, entries: new Map() });
+  /** One immutable evidence read per connection and id, shared by the task board and conversation:
+   * the client keeps it (bounded, see `RuntimeClient.readEvidence`), so a new connection starts empty. */
   const openEvidence = useCallback(
     async (executionId: string, evidenceId: string): Promise<EvidenceContent> => {
       const client = clientRef.current;
       if (!client) throw new Error("This Studio session is not connected.");
-      if (evidenceReads.current.client !== client) evidenceReads.current = { client, entries: new Map() };
-      const key = `${executionId}\u0000${evidenceId}`;
-      let pending = evidenceReads.current.entries.get(key);
-      if (!pending) {
-        pending = client.readEvidence(executionId, evidenceId);
-        evidenceReads.current.entries.set(key, pending);
-        const fetched = pending;
-        fetched.catch((reason: unknown) => {
-          if (reason instanceof RuntimeError && reason.httpStatus === 400) return;
-          if (evidenceReads.current.entries.get(key) === fetched) evidenceReads.current.entries.delete(key);
-        });
-      }
-      return pending;
+      return client.readEvidence(executionId, evidenceId);
     },
     [],
   );
@@ -2161,9 +2153,9 @@ export default function App({
 
   // THE LIVE TEAM (spec section 4): what needs the owner, who is on the team, the chat threads and
   // the "while you were away" card. All derived from the log; nothing here is a second source of truth.
-  const [clock, setClock] = useState(() => Date.now());
-  useEffect(() => { const timer = window.setInterval(() => setClock(Date.now()), 30_000); return () => window.clearInterval(timer); }, []);
-  useEffect(() => { setClock(Date.now()); }, [eventList]);
+  const ticking = useNow(30_000);
+  const grown = useMemo(() => Date.now(), [eventList]);
+  const clock = Math.max(ticking, grown);
   const nodeNames = useMemo(() => Object.fromEntries(model.nodes.flatMap((node) => node.declaredName ? [[node.id, node.declaredName] as const] : [])), [model]);
   const [nativeRequests, setNativeRequests] = useState<NativeChatRequest[] | null>(null);
   useEffect(() => {
@@ -2176,9 +2168,9 @@ export default function App({
       () => { if (active && clientRef.current === client && selectedRef.current === selected) setNativeRequests(null); },
     ); };
     read();
-    const timer = window.setInterval(read, pollIntervalMs);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [connected, selected, pollIntervalMs]);
+    readNativeRequests.current = read;
+    return () => { active = false; if (readNativeRequests.current === read) readNativeRequests.current = null; };
+  }, [connected, selected]);
   const needs = useMemo(() => needsYou({ status, stale, events: eventList, envelopes, pendingEnvelopeSequences: envelopes.__pendingEnvelopeSequences, nativeRequests,
     pendingDraftIds: durableProposals.map((proposal) => proposal.draftId), nodeNames, operatorId: OPERATOR_ACTOR.id,
     agentWorkRecorded: hasRecordedAgentWork, agentWorkPending }),

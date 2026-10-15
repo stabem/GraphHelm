@@ -504,12 +504,18 @@ function normaliseEvidenceRefs(raw: unknown): string[] {
   return ids;
 }
 
+/** How many opened evidence reads one connection keeps. A run's board and conversation open a
+ * few hundred at most; past this the least recently used is read again on demand. */
+export const EVIDENCE_CACHE_LIMIT = 512;
+
 export class RuntimeClient {
   #token: string | null;
   readonly #baseUrl: string;
   readonly #fetch: typeof fetch;
   #activeRequests = new Set<AbortController>();
   #evidenceQueues = new Map<string, EvidenceReadQueue>();
+  /** Opened evidence by execution and id, oldest use first. See `readEvidence`. */
+  #evidence = new Map<string, Promise<EvidenceContent>>();
   /** Set once this Runtime has refused the route listing as fixture-only. See `listRoutes`. */
   #fixtureOnly = false;
   #seenActorsUnsupported = false;
@@ -2181,6 +2187,28 @@ export class RuntimeClient {
     if (typeof evidenceId !== "string" || !/^[\x21-\x2e\x30-\x39\x3b-\x5b\x5d-\x7e]{1,128}$/.test(evidenceId)) {
       throw new RuntimeError("evidenceId is not a valid Runtime evidence identifier.", 0, []);
     }
+    // Sealed content never changes, so one read per id serves every caller on this connection:
+    // the task board, the conversation and the panel all land here. Bounded, least recently used
+    // first out. A 400 is kept (the same id would be refused again); any other failure is dropped
+    // so a retry can recover.
+    const key = `${id}\u0000${evidenceId}`;
+    const held = this.#evidence.get(key);
+    if (held !== undefined) {
+      this.#evidence.delete(key);
+      this.#evidence.set(key, held);
+      return held;
+    }
+    const read = this.#queueEvidenceRead(id, evidenceId);
+    this.#evidence.set(key, read);
+    if (this.#evidence.size > EVIDENCE_CACHE_LIMIT) this.#evidence.delete(this.#evidence.keys().next().value as string);
+    read.catch((reason: unknown) => {
+      if (reason instanceof RuntimeError && reason.httpStatus === 400) return;
+      if (this.#evidence.get(key) === read) this.#evidence.delete(key);
+    });
+    return read;
+  }
+
+  #queueEvidenceRead(id: string, evidenceId: string): Promise<EvidenceContent> {
     return new Promise<EvidenceContent>((resolve, reject) => {
       let queue = this.#evidenceQueues.get(id);
       if (queue === undefined) {

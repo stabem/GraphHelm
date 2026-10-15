@@ -240,6 +240,37 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         "{status}"
     );
     assert_eq!(status["data"]["signalsRecorded"], 1);
+    let digest = status["data"]["proposalDigests"]["draft-implement"]
+        .as_str()
+        .expect("status exposes the exact pending proposal digest");
+    let approval = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["execution", "approve", "--events"])
+        .arg(&events)
+        .args([
+            "--execution",
+            "exec-keel-route",
+            "--node",
+            "plan",
+            "--keyring",
+        ])
+        .arg(&keyring)
+        .args([
+            "--key-id",
+            "route-key",
+            "--proposal-digest",
+            digest,
+            "--draft-id",
+            "draft-implement",
+        ])
+        .env("GRAPHHELM_EVENTS_KEY", key)
+        .output()
+        .unwrap();
+    assert!(
+        approval.status.success(),
+        "the selected implementation proposal should apply: {}",
+        String::from_utf8_lossy(&approval.stdout)
+    );
     // Read the persisted event and decrypt its sealed envelope. A response alone could claim
     // admission while dropping the checked head or the precise scope finding.
     struct Clock;

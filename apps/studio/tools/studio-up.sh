@@ -46,6 +46,24 @@ fi
 trimmed=${events%/}
 token_file="$(dirname -- "$trimmed")/$(basename -- "$trimmed").token"
 
+# #1298: one events directory has one Runtime (its lifecycle lock), and it must serve THIS folder.
+# An agent's worktree once started a Runtime on these events with --project <worktree>; reusing it
+# ran every journey against the worktree's code. Such a Runtime is refused and named, never reused.
+lifecycle="$(dirname -- "$trimmed")/$(basename -- "$trimmed").runtime-lifecycle.json"
+canonical() { (CDPATH= cd -- "$1" 2>/dev/null && pwd -P) || printf '%s\n' "${1%/}"; }
+if [ -n "$project_path" ] && [ -f "$lifecycle" ] && answers "$runtime_url/health"; then
+  owner=$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$lifecycle" | head -n 1)
+  served=""
+  if [ -n "$owner" ]; then
+    served=$(ps -o args= -p "$owner" 2>/dev/null | sed -n 's/.*--project \(.*\)$/\1/p' \
+      | sed 's/ --[a-z-]* .*//')
+  fi
+  if [ -n "$served" ] && [ "$(canonical "$served")" != "$(canonical "$project_path")" ]; then
+    echo "[up] The GraphHelm Runtime at $runtime_url (pid $owner) serves another folder of this project: $served (this Studio is for ${project_path%/}). Journeys run there would test that folder's code. Stop that Runtime or start this Studio with a different --bind." >&2
+    exit 1
+  fi
+fi
+
 # 1 - the Runtime.
 if answers "$runtime_url/health"; then
   [ -f "$token_file" ] || { echo "[up] Something already answers at $runtime_url, and no token exists beside $events to prove it serves this project. Stop that service or pass a different --bind." >&2; exit 1; }

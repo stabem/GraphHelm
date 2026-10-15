@@ -1348,6 +1348,92 @@ mod tests {
         assert!(given.contains(&launcher_flag("Project", !cfg!(windows))));
     }
 
+    /// #1298: an agent's worktree started a Runtime on the owner's events with `--project
+    /// <worktree>`, and the owner's Studio reused it, so every replay built the worktree's code.
+    /// Runs the real POSIX launcher against a live Runtime of these events serving another folder:
+    /// it must refuse, name that folder, leave that Runtime running and start nothing.
+    /// Cost: one short python HTTP server and one launcher run.
+    #[cfg(unix)]
+    #[test]
+    fn the_launcher_refuses_a_runtime_of_these_events_serving_another_folder() {
+        use std::os::unix::fs::PermissionsExt;
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let studio_port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("main");
+        let other = root.path().join("worktree");
+        let events = project.join(".graphhelm").join("events");
+        std::fs::create_dir_all(&events).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        let server = root.path().join("fake_runtime.py");
+        std::fs::write(
+            &server,
+            "import http.server,sys\nclass H(http.server.BaseHTTPRequestHandler):\n def do_GET(s):\n  s.send_response(200);s.end_headers()\n def log_message(s,*a):pass\nhttp.server.HTTPServer(('127.0.0.1',int(sys.argv[1])),H).serve_forever()\n",
+        )
+        .unwrap();
+        let mut fake = std::process::Command::new("python3")
+            .arg(&server)
+            .arg(port.to_string())
+            .args(["serve", "--events"])
+            .arg(&events)
+            .arg("--project")
+            .arg(&other)
+            .spawn()
+            .unwrap();
+        std::fs::write(
+            project
+                .join(".graphhelm")
+                .join("events.runtime-lifecycle.json"),
+            format!(r#"{{"pid": {}, "state": "running"}}"#, fake.id()),
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+            assert!(std::time::Instant::now() < deadline, "fake Runtime up");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let stub = root.path().join("stub.sh");
+        let started = root.path().join("started");
+        std::fs::write(
+            &stub,
+            format!("#!/bin/sh\ntouch '{}'\nexit 7\n", started.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let launcher = Path::new(env!("CARGO_MANIFEST_DIR")).join("../studio/tools/studio-up.sh");
+        let mut launch = graphhelm_process::command("sh");
+        launch
+            .arg(&launcher)
+            .arg("--events")
+            .arg(&events)
+            .args(["--bind", &format!("127.0.0.1:{port}")])
+            .args(["--studio-port", &studio_port.to_string(), "--no-browser"])
+            .arg("--graph-helm")
+            .arg(&stub);
+        add_project(&mut launch, &project);
+        let output = launch.output().unwrap();
+        let alive = fake.try_wait().unwrap().is_none();
+        let _ = fake.kill();
+        let _ = fake.wait();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{stderr}");
+        assert!(
+            stderr.contains("serves another folder of this project"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("worktree"), "{stderr}");
+        assert!(alive, "the other folder's Runtime is left running");
+        assert!(!started.exists(), "no Runtime is started over it");
+    }
+
     #[test]
     fn posix_launcher_flags_are_the_kebab_case_twins() {
         assert_eq!(launcher_flag("ProjectPath", true), "--project-path");

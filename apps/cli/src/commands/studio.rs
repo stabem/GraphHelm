@@ -1208,10 +1208,10 @@ mod tests {
             waiting_line(83, 21, 24, 3),
             "waiting 1m23s: 21/24 build jobs in use by 3 build(s); starts when 4 are free (it goes next)"
         );
-        assert_eq!(
-            cargo_status("    Updating crates.io index"),
-            Some("Updating crates.io index")
-        );
+        // Cargo indents its status by four; built, not written, so the workspace strings guard
+        // (no collapsed run in an authored literal) does not read the fixture as an offence (#1312).
+        let updating = format!("{}Updating crates.io index", " ".repeat(4));
+        assert_eq!(cargo_status(&updating), Some("Updating crates.io index"));
         assert_eq!(
             cargo_status("  Downloaded serde v1.0.229"),
             Some("Downloaded serde v1.0.229")

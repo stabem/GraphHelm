@@ -240,6 +240,67 @@ class WindowsProcessObserver(unittest.TestCase):
                 states = [json.loads(line)["state"] for line in receipt.read_text(encoding="utf-8").splitlines()]
                 self.assertNotIn("exited", states)
 
+        for failure in ("write", "flush", "sync"):
+            with self.subTest(failure=failure, close_failure=True), tempfile.TemporaryDirectory() as directory:
+                receipt = Path(directory) / "receipt.jsonl"
+                args = ["--pid", str(process.pid), "--creation-filetime", str(creation),
+                        "--timeout-seconds", "0.1", "--output", str(receipt)]
+                faults = []
+                close_attempts = []
+                append_opens = []
+
+                class CombinedFaultOutput(FaultyOutput):
+                    def write(self, value):
+                        if failure == "write" and not self.failed:
+                            self.failed = True
+                            faults.append("write")
+                            raise OSError("SENSITIVE_WRITE_MARKER")
+                        return self.wrapped.write(value)
+
+                    def flush(self):
+                        if failure == "flush" and not self.failed:
+                            self.failed = True
+                            faults.append("flush")
+                            raise OSError("SENSITIVE_FLUSH_MARKER")
+                        return self.wrapped.flush()
+
+                    def close(self):
+                        close_attempts.append(True)
+                        self.wrapped.close()
+                        faults.append("close")
+                        raise OSError("SENSITIVE_CLOSE_MARKER")
+
+                def injected_open(path, *open_args, **open_kwargs):
+                    if Path(path) == receipt and open_args and open_args[0] == "a":
+                        append_opens.append(path)
+                    output = real_open(path, *open_args, **open_kwargs)
+                    if Path(path) == receipt and open_args and open_args[0] == "x":
+                        return CombinedFaultOutput(output, failure)
+                    return output
+
+                def injected_fsync(fd):
+                    if failure == "sync" and not faults:
+                        faults.append("sync")
+                        raise OSError("SENSITIVE_SYNC_MARKER")
+                    return real_fsync(fd)
+
+                from contextlib import redirect_stderr
+                error = io.StringIO()
+                with unittest.mock.patch.object(module, "open", injected_open, create=True), \
+                     unittest.mock.patch.object(module.os, "fsync", side_effect=injected_fsync), \
+                     redirect_stderr(error):
+                    code = module.main(args)
+                self.assertEqual(faults, [failure, "close"])
+                self.assertEqual(len(close_attempts), 1)
+                self.assertEqual(code, 2)
+                self.assertEqual(error.getvalue(), "receipt_unavailable\n")
+                for marker in ("SENSITIVE_WRITE_MARKER", "SENSITIVE_FLUSH_MARKER",
+                               "SENSITIVE_SYNC_MARKER", "SENSITIVE_CLOSE_MARKER"):
+                    self.assertNotIn(marker, error.getvalue())
+                self.assertNotIn("Traceback", error.getvalue())
+                self.assertEqual(append_opens, [])
+                self.assertIsNone(process.poll())
+
     def test_terminal_sync_failure_appends_failure_marker(self):
         spec = importlib.util.spec_from_file_location("runtime_exit_observe", TOOL)
         module = importlib.util.module_from_spec(spec)

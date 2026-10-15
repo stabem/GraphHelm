@@ -369,7 +369,10 @@ pub(super) fn check(
         show.arg("-C")
             .arg(repo)
             .arg("show")
-            .arg(format!("{head}:{path}"));
+            .arg(format!("{head}:{path}"))
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
         match graphhelm_process_tree::run_bounded(show, Duration::from_secs(10)) {
             Ok(Some((true, text, _))) => Some(text),
             _ => None,

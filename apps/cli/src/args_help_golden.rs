@@ -66,7 +66,7 @@ fn every_command_help_is_byte_identical_to_the_golden() {
             .last()
             .unwrap_or("?");
         panic!(
-            "--help changed in `{section}` at line {}:\n  got:      {:?}\n  expected: {:?}",
+            "--help changed in `{section}` at line {}:\n got: {:?}\n expected: {:?}",
             first + 1,
             actual.lines().nth(first),
             expected.lines().nth(first)

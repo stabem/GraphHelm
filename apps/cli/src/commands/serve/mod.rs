@@ -281,6 +281,43 @@ fn foreign_events_owner(events: &Path, project: &Path) -> Option<PathBuf> {
     (owner != canonical(project)).then_some(owner)
 }
 
+/// #1298 review: without `--project`, a Runtime started inside another worktree of the same
+/// repository as the events' checkout is that worktree's: the git toplevel of the current
+/// directory, when it shares the events' git common directory but is a different checkout.
+/// Anything else (no git, an unrelated repository, the same checkout) derives nothing.
+fn sibling_worktree(cwd: &Path, events: &Path) -> Option<PathBuf> {
+    let git = |dir: &Path| -> Option<(PathBuf, PathBuf)> {
+        let out = graphhelm_process::command("git")
+            .arg("-C")
+            .arg(dir)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .args([
+                "rev-parse",
+                "--path-format=absolute",
+                "--show-toplevel",
+                "--git-common-dir",
+            ])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let text = String::from_utf8(out.stdout).ok()?;
+        let mut lines = text.lines();
+        let canonical = |line: &str| std::fs::canonicalize(line).unwrap_or_else(|_| line.into());
+        Some((canonical(lines.next()?), canonical(lines.next()?)))
+    };
+    let state = events.parent()?;
+    if state.file_name()? != ".graphhelm" {
+        return None;
+    }
+    let (here, common) = git(cwd)?;
+    let (owner, owner_common) = git(state.parent()?)?;
+    (common == owner_common && here != owner).then_some(here)
+}
+
 fn execute(args: &ServeArgs) -> Result<(), Failure> {
     if args.workspace_sweep_seconds != 0 && !(60..=86400).contains(&args.workspace_sweep_seconds) {
         return Err(argument(
@@ -296,9 +333,16 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         args.workspace_sweep_test_seconds.unwrap_or(seconds)
     };
     let address = parse_loopback_bind(&args.bind)?;
+    let derived = args
+        .project
+        .is_none()
+        .then(|| std::env::current_dir().ok())
+        .flatten()
+        .and_then(|cwd| sibling_worktree(&cwd, &args.events));
     if let Some(owner) = args
         .project
         .as_deref()
+        .or(derived.as_deref())
         .and_then(|project| foreign_events_owner(&args.events, project))
     {
         return Err(serve_invalid(
@@ -3415,6 +3459,50 @@ fn append_audit_line(path: &Path, line: &serde_json::Value) -> std::io::Result<(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// #1298 review: `serve --events <main>/.graphhelm/events` started inside a worktree without
+    /// `--project` is that worktree's Runtime and must be refused like the explicit form; the main
+    /// checkout itself and a directory outside git derive nothing. Cost: one temp repo, git calls.
+    #[test]
+    fn a_worktree_without_project_is_still_another_checkout() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("main");
+        std::fs::create_dir_all(main.join(".graphhelm")).unwrap();
+        let git = |args: &[&str]| {
+            assert!(
+                graphhelm_process::command("git")
+                    .arg("-C")
+                    .arg(&main)
+                    .args(args)
+                    .env("GIT_AUTHOR_NAME", "t")
+                    .env("GIT_AUTHOR_EMAIL", "t@t")
+                    .env("GIT_COMMITTER_NAME", "t")
+                    .env("GIT_COMMITTER_EMAIL", "t@t")
+                    .output()
+                    .unwrap()
+                    .status
+                    .success(),
+                "{args:?}"
+            );
+        };
+        git(&["init", "-q"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "x"]);
+        let worktree = root.path().join("wt");
+        git(&[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            worktree.to_str().unwrap(),
+        ]);
+        let events = main.join(".graphhelm").join("events");
+        let derived = sibling_worktree(&worktree, &events).expect("the worktree is derived");
+        assert_eq!(derived, std::fs::canonicalize(&worktree).unwrap());
+        assert!(foreign_events_owner(&events, &derived).is_some());
+        assert_eq!(sibling_worktree(&main, &events), None);
+        let outside = tempfile::tempdir().unwrap();
+        assert_eq!(sibling_worktree(outside.path(), &events), None);
+    }
 
     /// #1298: a worktree's Runtime on the main checkout's events took the owner's Studio. The
     /// events of a project's `.graphhelm` belong to that project only; others are left alone.

@@ -1379,7 +1379,7 @@ mod tests {
             "import http.server,sys\nclass H(http.server.BaseHTTPRequestHandler):\n def do_GET(s):\n  s.send_response(200);s.end_headers()\n def log_message(s,*a):pass\nhttp.server.HTTPServer(('127.0.0.1',int(sys.argv[1])),H).serve_forever()\n",
         )
         .unwrap();
-        let mut fake = std::process::Command::new("python3")
+        let mut fake = graphhelm_process::command("python3")
             .arg(&server)
             .arg(port.to_string())
             .args(["serve", "--events"])

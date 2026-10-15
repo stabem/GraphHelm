@@ -20,11 +20,12 @@ signaled. `timeout` means the handle did not signal within the monotonic wait bu
 failure, identity mismatch, unsupported hosts, and invalid input produce fixed diagnostics and
 do not claim an exit cause. If the observer or host stops, a receipt with only `attached` is
 incomplete. Filesystem and OS calls are not covered by a hard wall-clock guarantee.
-If closing the receipt fails after a terminal record, the observer appends a
-`receipt_unavailable` record when the output remains writable. Readers must treat that
-final marker as a failed observation, even if an earlier `exited` record is present.
-If appending also fails, the process exit code and fixed diagnostic are required to
-classify the observation; the JSONL file alone may be incomplete.
+If syncing a terminal record fails, or closing the receipt fails after one, the observer
+attempts one append of a `receipt_unavailable` record when the output remains writable.
+Readers must treat that final marker as a failed observation, even if an earlier `exited`
+record is present. If appending or syncing the marker also fails, the process exit code
+and fixed diagnostic are required to classify the observation; the JSONL file alone may
+be incomplete.
 
 The observer requests only `PROCESS_QUERY_LIMITED_INFORMATION` and `SYNCHRONIZE`; it does not
 request process termination rights. The process handle is closed on every attached path.

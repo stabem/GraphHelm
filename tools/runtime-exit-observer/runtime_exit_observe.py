@@ -47,10 +47,18 @@ def main(argv=None):
         print(ERRORS["io"], file=sys.stderr)
         return 2
 
+    terminal_sync_failed = False
+
     def emit(record):
+        nonlocal terminal_sync_failed
         output.write(json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n")
         output.flush()
-        os.fsync(output.fileno())
+        try:
+            os.fsync(output.fileno())
+        except OSError:
+            if record["state"] in ("exited", "timeout"):
+                terminal_sync_failed = True
+            raise
 
     def close_output():
         try:
@@ -119,7 +127,8 @@ def main(argv=None):
                                       "observedAt": utc_now(), "exitCode": code.value})
                                 result = 0
                             except OSError:
-                                print(ERRORS["io"], file=sys.stderr)
+                                if not terminal_sync_failed:
+                                    print(ERRORS["io"], file=sys.stderr)
                                 result = 2
                         break
                     if status != 0x102:
@@ -134,13 +143,14 @@ def main(argv=None):
                         timeout_observed = True
                         result = 3
                     except OSError:
-                        print(ERRORS["io"], file=sys.stderr)
+                        if not terminal_sync_failed:
+                            print(ERRORS["io"], file=sys.stderr)
                         result = 2
     finally:
         kernel32.CloseHandle(handle)
         close_failed = not close_output_safely()
-    if close_failed:
-        if result in (0, 3):
+    if close_failed or terminal_sync_failed:
+        if result in (0, 3) or terminal_sync_failed:
             try:
                 with open(args.output, "a", encoding="utf-8", newline="\n") as failure_output:
                     failure_output.write(json.dumps({"schema": "graphhelm.runtime-process-exit/1",

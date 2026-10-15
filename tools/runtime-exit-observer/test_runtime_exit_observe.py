@@ -6,6 +6,7 @@ import io
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import unittest.mock
@@ -171,8 +172,7 @@ class WindowsProcessObserver(unittest.TestCase):
                     raise OSError("SENSITIVE_MARKER")
                 self.wrapped.close()
 
-        for failure, stage in (("write", "attach"), ("flush", "attach"), ("sync", "attach"),
-                               ("sync", "terminal")):
+        for failure, stage in (("write", "attach"), ("flush", "attach"), ("sync", "attach")):
             with self.subTest(failure=failure, stage=stage), tempfile.TemporaryDirectory() as directory:
                 receipt = Path(directory) / "receipt.jsonl"
                 args = ["--pid", str(process.pid), "--creation-filetime", str(creation),
@@ -201,6 +201,58 @@ class WindowsProcessObserver(unittest.TestCase):
                 self.assertIsNone(process.poll())
                 states = [json.loads(line)["state"] for line in receipt.read_text(encoding="utf-8").splitlines()]
                 self.assertNotIn("exited", states)
+
+    def test_terminal_sync_failure_appends_failure_marker(self):
+        spec = importlib.util.spec_from_file_location("runtime_exit_observe", TOOL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        real_fsync = os.fsync
+        for terminal, marker_sync_fails in (("exited", False), ("timeout", False), ("exited", True)):
+            with self.subTest(terminal=terminal, marker_sync_fails=marker_sync_fails), tempfile.TemporaryDirectory() as directory:
+                process, creation = self.child()
+                receipt = Path(directory) / "receipt.jsonl"
+                args = ["--pid", str(process.pid), "--creation-filetime", str(creation),
+                        "--timeout-seconds", "0.1" if terminal == "timeout" else "5", "--output", str(receipt)]
+                attached = threading.Event()
+                syncs = []
+
+                def sync(fd):
+                    syncs.append(fd)
+                    if len(syncs) == 2 or (marker_sync_fails and len(syncs) == 3):
+                        raise OSError("SENSITIVE_MARKER")
+                    real_fsync(fd)
+                    if len(syncs) == 1:
+                        attached.set()
+
+                def release_exit_child():
+                    if attached.wait(3):
+                        process.stdin.write(b"0\n")
+                        process.stdin.flush()
+
+                releaser = threading.Thread(target=release_exit_child) if terminal == "exited" else None
+                if releaser:
+                    releaser.start()
+                from contextlib import redirect_stderr
+                error = io.StringIO()
+                try:
+                    with unittest.mock.patch.object(module.os, "fsync", side_effect=sync), redirect_stderr(error):
+                        code = module.main(args)
+                finally:
+                    if releaser:
+                        releaser.join(timeout=4)
+                lines = receipt.read_text(encoding="utf-8").splitlines()
+                states = [json.loads(line)["state"] for line in lines[:2]]
+                self.assertEqual(len(syncs), 3, "attachment, terminal, and marker must each sync once")
+                self.assertEqual(code, 2)
+                self.assertEqual(error.getvalue(), "receipt_unavailable\n")
+                self.assertEqual(states, ["attached", terminal])
+                if not marker_sync_fails:
+                    self.assertEqual([json.loads(line)["state"] for line in lines],
+                                     ["attached", terminal, "receipt_unavailable"])
+                if terminal == "timeout":
+                    self.assertIsNone(process.poll())
+                else:
+                    self.assertEqual(process.wait(timeout=2), 0)
 
     def test_terminal_close_failure_reports_error_with_synced_exit_record(self):
         process, creation = self.child()

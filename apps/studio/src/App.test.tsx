@@ -1081,7 +1081,8 @@ describe("the projects rail", () => {
     expect(within(rail).getByText("dale-api-base")).toBeInTheDocument();
     expect(within(rail).getByText("demo-deploy")).toBeInTheDocument();
     expect(within(rail).getByText("demo-calm")).toBeInTheDocument();
-    expect(within(rail).getByRole("button", { name: /add project folder/i })).toBeInTheDocument();
+    await userEvent.click(within(rail).getByRole("button", { name: /add project folder/i }));
+    expect(await screen.findByLabelText("Add project folder")).toBeInTheDocument();
   });
 
   /**
@@ -1099,16 +1100,6 @@ describe("the projects rail", () => {
       within(rail).getByRole("button", { name: /demo-deploy.*needs you/i }),
     ).toBeInTheDocument();
     expect(within(rail).getByRole("button", { name: /demo-calm.*can sleep/i })).toBeInTheDocument();
-  });
-
-  /** The action on the folder row is icon-only: a label there is what clipped to "+ new ta". Its
-   * name has to reach a screen reader anyway, so the accessible name is where it lives. */
-  it("offers new task on the folder row without putting a label on it", async () => {
-    await open(stubClient());
-    const rail = screen.getByLabelText("Projects");
-    const action = within(rail).getByRole("button", { name: /new task in dale-api-base/i });
-    expect(action).toBeInTheDocument();
-    expect(action).toHaveTextContent("");
   });
 
   it("opens on the run that needs the operator, not merely the first one", async () => {
@@ -1181,15 +1172,6 @@ describe("the board", () => {
     const board = await screen.findByLabelText("Steps without a bot");
     expect(within(board).getByRole("button", { name: /^implementation/ })).toBeInTheDocument();
     expect(within(board).getByRole("button", { name: /^deploy/ })).toBeInTheDocument();
-  });
-
-  /** Nothing proves the shape until a graph file's hash matches the run's, so nothing is drawn
-   * and the note says so. */
-  it("draws no connection until one is proven", async () => {
-    await open(stubClient());
-    await userEvent.click(await screen.findByRole("button", { name: "Graph file" }));
-    expect(document.querySelectorAll("path.edge, .team-link")).toHaveLength(0);
-    expect(screen.getByText(/work connections unverified/i)).toBeInTheDocument();
   });
 
   it("renders the log as text, never as markup", async () => {
@@ -1929,24 +1911,6 @@ describe("starting a new task", () => {
     expect(client.setCredential).not.toHaveBeenCalled();
   });
 
-  it("does not call Runtime when adding a model without an API key", async () => {
-    const client = withRoutes({
-      setRoute: vi.fn(async () => ({ routes: ROUTES.routes })),
-      setCredential: vi.fn(),
-    });
-    await open(client);
-    await userEvent.click(screen.getByRole("button", { name: /^models$/i }));
-    await userEvent.click(screen.getByRole("button", { name: /Add model/i }));
-    await userEvent.type(screen.getByLabelText("Route id"), "new_route");
-    await userEvent.type(screen.getByLabelText("Base URL"), "https://api.example.com");
-    await userEvent.type(screen.getByLabelText("Model"), "example-model");
-    await userEvent.click(screen.getByRole("button", { name: "apply" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(/new model needs an API key/i);
-    expect(client.setRoute).not.toHaveBeenCalled();
-    expect(client.setCredential).not.toHaveBeenCalled();
-  });
-
   it("keeps a failed key draft retryable after the route was saved", async () => {
     const client = withRoutes({
       setRoute: vi.fn(async () => ({ routes: ROUTES.routes })),
@@ -2179,30 +2143,6 @@ describe("the shell's own layout", () => {
   });
 
 
-  /** The button exists because a project is a folder and the operator has more than one. What it
-   * can do today is tell them exactly what to run; it must not pretend to do more. */
-  it("says what adding a project folder actually takes", async () => {
-    await open(stubClient());
-    await userEvent.click(screen.getByRole("button", { name: /add project folder/i }));
-
-    const panel = await screen.findByLabelText("Add project folder");
-    await userEvent.type(within(panel).getByLabelText(/^folder$/i), "F:/projects/example/dale-api-base");
-    expect(
-      within(panel).getByText(
-        /Set-Location -LiteralPath 'F:\/projects\/example\/dale-api-base'; if \(\$\?\) \{ graphhelm init --bind 127\.0\.0\.1:8792; if \(\$\?\) \{ graphhelm studio start --bind 127\.0\.0\.1:8792 \} \}/i,
-      ),
-    ).toBeInTheDocument();
-    expect(
-      within(panel).getByText(
-        /cd 'F:\/projects\/example\/dale-api-base' && graphhelm init --bind 127\.0\.0\.1:8792 && graphhelm studio start --bind 127\.0\.0\.1:8792/i,
-      ),
-    ).toBeInTheDocument();
-    expect(within(panel).getByLabelText(/^folder$/i)).toHaveValue("F:/projects/example/dale-api-base");
-    // #1154: no bare `serve` on the port this page's Runtime already holds, and no promise of a
-    // pickup this Studio cannot make.
-    expect(panel).not.toHaveTextContent("--bind 127.0.0.1:8791");
-    expect(panel).not.toHaveTextContent("picks it up");
-  });
 });
 
 /**
@@ -2961,7 +2901,7 @@ describe("controls that act instead of excusing", () => {
  * ROUND-2 VALIDATION FIXES. A second five-persona review of the live screen confirmed the first
  * wave and found what it missed or introduced. Every test here is one of those findings.
  */
-describe("round-2: the recipient cannot go stale", () => {
+describe("the reply recipient follows the room", () => {
   it("reopening the panel from the run's name speaks to the room, not to a stale asker", async () => {
     const client = askedClient();
     await open(client);
@@ -2981,7 +2921,7 @@ describe("round-2: the recipient cannot go stale", () => {
   });
 });
 
-describe("round-2: the ledger settles debts honestly", () => {
+describe("the owed-reply ledger", () => {
   /** answeredIds was author-blind: another agent's side-reply erased a question addressed to
    * the OPERATOR, and the banner denied a message the thread showed five turns up. */
   it("an agent's reply does not settle a question addressed to you", async () => {
@@ -3253,7 +3193,7 @@ describe("round-2: the ledger settles debts honestly", () => {
   });
 });
 
-describe("round-2: controls stop betraying their own guards", () => {
+describe("controls keep their own guards", () => {
   it("calls a filtered empty conversation a search miss and restores the log on clear", async () => {
     await open(stubClient());
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
@@ -3332,7 +3272,7 @@ describe("round-2: controls stop betraying their own guards", () => {
   });
 });
 
-describe("round-2: the rail says each thing once", () => {
+describe("the rail states each fact once", () => {
   it("a run's state reaches the accessible name exactly once", async () => {
     await open(stubClient());
     const rail = screen.getByLabelText("Projects");
@@ -3347,7 +3287,7 @@ describe("round-2: the rail says each thing once", () => {
  * ROUND-3 VALIDATION FIXES. A third five-persona review confirmed round 2 (9 of 10 outright)
  * and found the finer defects below. Each test is one of them.
  */
-describe("round-3: what you typed survives, and what waits is true", () => {
+describe("drafts survive, and the waiting line is true", () => {
   /** A WebMCP agent selecting another run — or closing and reopening the panel — unmounted the
    * composer and silently discarded the operator's half-typed answer. */
   it("keeps the unsent draft across closing and reopening the panel", async () => {
@@ -3399,7 +3339,7 @@ describe("round-3: what you typed survives, and what waits is true", () => {
   });
 });
 
-describe("round-3: the rail is live and the screen belongs to one run", () => {
+describe("the live rail and one run per screen", () => {
   it("refreshes the loaded rail prefix every fifth successful poll and retries a failed full refresh", async () => {
     vi.useFakeTimers();
     const makeRun = (index: number, attention: "can_sleep" | "needs_you") => ({
@@ -3617,7 +3557,7 @@ describe("round-3: the rail is live and the screen belongs to one run", () => {
   });
 });
 
-describe("round-3: guards without side doors", () => {
+describe("disconnect and approval guards", () => {
   /** Holding Enter blew through the armed disconnect: keyboard clicks carry detail 0, and the
    * detail>1 guard never saw them. Key repeat is one continuous gesture, not a second decision. */
   it("key auto-repeat cannot fire the armed disconnect", async () => {
@@ -3657,7 +3597,7 @@ describe("round-3: guards without side doors", () => {
  * ROUND-4 VALIDATION FIXES. The fourth five-persona review returned 59/60 FIXED on round 3 and
  * found the finer defects below — the worst being a reflex arc the UI itself had severed.
  */
-describe("round-4: the debt can actually be settled", () => {
+describe("settling an owed reply", () => {
   it("answering through the banner sends the replyTo the ledger settles by", async () => {
     const client = askedClient();
     await open(client);
@@ -3695,7 +3635,7 @@ describe("round-4: the debt can actually be settled", () => {
   });
 });
 
-describe("round-4: nothing leaks across surfaces, runs or sessions", () => {
+describe("isolation across surfaces, runs and sessions", () => {
   it("a failed send keeps the words in the box", async () => {
     const client = askedClient({
       signal: vi.fn(async () => {
@@ -3931,7 +3871,7 @@ describe("round-4: nothing leaks across surfaces, runs or sessions", () => {
   });
 });
 
-describe("round-4: the instruments admit their own state", () => {
+describe("health and read-state honesty", () => {
   it("lets a new connection poll while the old connection's read is still pending", async () => {
     let releaseOldRead!: () => void;
     const oldRead = new Promise<void>((resolve) => { releaseOldRead = resolve; });

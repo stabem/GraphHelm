@@ -51,12 +51,18 @@ def main(argv=None):
 
     def emit(record):
         nonlocal terminal_sync_failed
-        output.write(json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n")
-        output.flush()
+        terminal = record["state"] in ("exited", "timeout")
+        try:
+            output.write(json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n")
+            output.flush()
+        except OSError:
+            if terminal:
+                terminal_sync_failed = True
+            raise
         try:
             os.fsync(output.fileno())
         except OSError:
-            if record["state"] in ("exited", "timeout"):
+            if terminal:
                 terminal_sync_failed = True
             raise
 

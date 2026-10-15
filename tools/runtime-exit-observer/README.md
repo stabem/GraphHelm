@@ -20,7 +20,7 @@ signaled. `timeout` means the handle did not signal within the monotonic wait bu
 failure, identity mismatch, unsupported hosts, and invalid input produce fixed diagnostics and
 do not claim an exit cause. If the observer or host stops, a receipt with only `attached` is
 incomplete. Filesystem and OS calls are not covered by a hard wall-clock guarantee.
-If syncing a terminal record fails, or closing the receipt fails after one, the observer
+If flushing or syncing a terminal record fails, or closing the receipt fails after one, the observer
 attempts one append of a `receipt_unavailable` record when the output remains writable.
 Readers must treat that final marker as a failed observation, even if an earlier `exited`
 record is present. If appending or syncing the marker also fails, the process exit code

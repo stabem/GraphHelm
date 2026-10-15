@@ -181,6 +181,7 @@ class WindowsProcessObserver(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         real_open = open
+        real_fsync = os.fsync
 
         class FaultyOutput:
             def __init__(self, wrapped, failure):
@@ -375,6 +376,81 @@ class WindowsProcessObserver(unittest.TestCase):
                     self.assertIsNone(process.poll())
                 else:
                     self.assertEqual(process.wait(timeout=2), 0)
+
+    def test_terminal_flush_failure_marker_write_failure_is_fixed_and_not_retried(self):
+        spec = importlib.util.spec_from_file_location("runtime_exit_observe", TOOL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        real_open = open
+        real_fsync = os.fsync
+        process, creation = self.child()
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / "receipt.jsonl"
+            args = ["--pid", str(process.pid), "--creation-filetime", str(creation),
+                    "--timeout-seconds", "5", "--output", str(receipt)]
+            attached = threading.Event()
+            initial = []
+            append_attempts = []
+
+            class FlushFailure:
+                def __init__(self, wrapped):
+                    self.wrapped = wrapped
+                    self.failed = False
+
+                def write(self, value):
+                    return self.wrapped.write(value)
+
+                def flush(self):
+                    if attached.is_set() and not self.failed:
+                        self.failed = True
+                        raise OSError("SENSITIVE_MARKER")
+                    self.wrapped.flush()
+
+                def fileno(self):
+                    return self.wrapped.fileno()
+
+                def close(self):
+                    self.wrapped.close()
+
+            def injected_open(path, *open_args, **open_kwargs):
+                if Path(path) == receipt and open_args[0] == "a":
+                    append_attempts.append(True)
+                    raise OSError("SENSITIVE_MARKER")
+                stream = real_open(path, *open_args, **open_kwargs)
+                if Path(path) == receipt and open_args[0] == "x":
+                    wrapped = FlushFailure(stream)
+                    initial.append(wrapped)
+                    return wrapped
+                return stream
+
+            def sync(fd):
+                real_fsync(fd)
+                attached.set()
+
+            def release_child():
+                if attached.wait(3):
+                    process.stdin.write(b"0\n")
+                    process.stdin.flush()
+
+            releaser = threading.Thread(target=release_child)
+            releaser.start()
+            from contextlib import redirect_stderr
+            error = io.StringIO()
+            try:
+                with unittest.mock.patch.object(module, "open", injected_open, create=True), \
+                     unittest.mock.patch.object(module.os, "fsync", side_effect=sync), \
+                     redirect_stderr(error):
+                    code = module.main(args)
+            finally:
+                releaser.join(timeout=4)
+            states = [json.loads(line)["state"] for line in receipt.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(code, 2)
+            self.assertEqual(error.getvalue(), "receipt_unavailable\n")
+            self.assertNotIn("SENSITIVE_MARKER", error.getvalue())
+            self.assertEqual(append_attempts, [True])
+            self.assertEqual(states, ["attached", "exited"])
+            self.assertTrue(initial[0].wrapped.closed)
+            self.assertEqual(process.wait(timeout=2), 0)
 
     def test_terminal_close_failure_reports_error_with_synced_exit_record(self):
         process, creation = self.child()

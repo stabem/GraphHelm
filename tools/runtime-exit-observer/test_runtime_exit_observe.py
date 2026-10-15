@@ -291,6 +291,91 @@ class WindowsProcessObserver(unittest.TestCase):
                 else:
                     self.assertEqual(process.wait(timeout=2), 0)
 
+    def test_terminal_flush_failure_appends_failure_marker(self):
+        spec = importlib.util.spec_from_file_location("runtime_exit_observe", TOOL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        real_open = open
+        real_fsync = os.fsync
+        for terminal in ("exited", "timeout"):
+            with self.subTest(terminal=terminal), tempfile.TemporaryDirectory() as directory:
+                process, creation = self.child()
+                receipt = Path(directory) / "receipt.jsonl"
+                args = ["--pid", str(process.pid), "--creation-filetime", str(creation),
+                        "--timeout-seconds", "0.1" if terminal == "timeout" else "5", "--output", str(receipt)]
+                attached = threading.Event()
+                flush_failed = []
+                initial_streams = []
+
+                class ForwardingOutput:
+                    def __init__(self, wrapped):
+                        self.wrapped = wrapped
+                        self.terminal_flush_failed = False
+
+                    def write(self, value):
+                        return self.wrapped.write(value)
+
+                    def flush(self):
+                        if attached.is_set() and not self.terminal_flush_failed:
+                            self.terminal_flush_failed = True
+                            flush_failed.append(True)
+                            raise OSError("SENSITIVE_MARKER")
+                        self.wrapped.flush()
+
+                    def fileno(self):
+                        return self.wrapped.fileno()
+
+                    def close(self):
+                        self.wrapped.close()
+
+                def injected_open(path, *open_args, **open_kwargs):
+                    stream = real_open(path, *open_args, **open_kwargs)
+                    if Path(path) == receipt and open_args[0] == "x":
+                        wrapped = ForwardingOutput(stream)
+                        initial_streams.append(wrapped)
+                        return wrapped
+                    return stream
+
+                sync_count = []
+
+                def sync(fd):
+                    real_fsync(fd)
+                    sync_count.append(fd)
+                    if len(sync_count) == 1:
+                        attached.set()
+
+                def release_exit_child():
+                    if attached.wait(3):
+                        process.stdin.write(b"0\n")
+                        process.stdin.flush()
+
+                releaser = threading.Thread(target=release_exit_child) if terminal == "exited" else None
+                if releaser:
+                    releaser.start()
+                from contextlib import redirect_stderr
+                error = io.StringIO()
+                try:
+                    with unittest.mock.patch.object(module, "open", injected_open, create=True), \
+                         unittest.mock.patch.object(module.os, "fsync", side_effect=sync), \
+                         redirect_stderr(error):
+                        code = module.main(args)
+                finally:
+                    if releaser:
+                        releaser.join(timeout=4)
+                lines = receipt.read_text(encoding="utf-8").splitlines()
+                states = [json.loads(line)["state"] for line in lines]
+                self.assertEqual(flush_failed, [True], "terminal flush fault must be reached")
+                self.assertEqual(len(initial_streams), 1)
+                self.assertTrue(initial_streams[0].wrapped.closed, "close must flush buffered terminal bytes")
+                self.assertEqual(code, 2)
+                self.assertEqual(error.getvalue(), "receipt_unavailable\n")
+                self.assertNotIn("SENSITIVE_MARKER", error.getvalue())
+                self.assertEqual(states, ["attached", terminal, "receipt_unavailable"])
+                if terminal == "timeout":
+                    self.assertIsNone(process.poll())
+                else:
+                    self.assertEqual(process.wait(timeout=2), 0)
+
     def test_terminal_close_failure_reports_error_with_synced_exit_record(self):
         process, creation = self.child()
         spec = importlib.util.spec_from_file_location("runtime_exit_observe", TOOL)

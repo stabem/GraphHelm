@@ -42,6 +42,28 @@ public static class TestConsoleWindows {
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder name, int count);
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr handle);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder name, ref int size);
+  [StructLayout(LayoutKind.Sequential)] struct PROCESS_BASIC_INFORMATION { public IntPtr reserved1, pebBaseAddress, reserved2a, reserved2b, uniquePid, inheritedPid; }
+  [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr process, int infoClass, out PROCESS_BASIC_INFORMATION info, int length, out int returned);
+  const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+  public static string[] Identity(uint pid) {
+    IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+    if (process == IntPtr.Zero) throw new System.ComponentModel.Win32Exception();
+    try {
+      long creation, exit, kernel, user;
+      if (!GetProcessTimes(process, out creation, out exit, out kernel, out user)) throw new System.ComponentModel.Win32Exception();
+      var path = new StringBuilder(1024);
+      int size = path.Capacity;
+      if (!QueryFullProcessImageName(process, 0, path, ref size)) throw new System.ComponentModel.Win32Exception();
+      PROCESS_BASIC_INFORMATION info;
+      int returned;
+      if (NtQueryInformationProcess(process, 0, out info, Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)), out returned) < 0) throw new System.ComponentModel.Win32Exception();
+      return new string[] { creation.ToString(), System.IO.Path.GetFileName(path.ToString()), info.inheritedPid.ToInt64().ToString() };
+    } finally { CloseHandle(process); }
+  }
   public static string[] Snapshot() {
     var found = new List<string>();
     EnumWindows((hwnd, data) => {
@@ -50,7 +72,10 @@ public static class TestConsoleWindows {
       if (IsWindowVisible(hwnd) && (name.ToString() == "ConsoleWindowClass" || name.ToString() == "CASCADIA_HOSTING_WINDOW_CLASS")) {
         uint pid;
         uint thread = GetWindowThreadProcessId(hwnd, out pid);
-        if (thread != 0 && pid != 0) found.Add("0x" + hwnd.ToString("x") + "|" + pid + "|" + name);
+        if (thread != 0 && pid != 0) {
+          string[] identity = Identity(pid);
+          found.Add("0x" + hwnd.ToString("x") + "|" + pid + "|" + name + "|" + identity[0] + "|" + identity[1] + "|" + identity[2]);
+        }
       }
       return true;
     }, IntPtr.Zero);
@@ -86,6 +111,7 @@ try {
   }
   if ($newWindows.Count -ne 1) { throw "UNOBSERVED: expected one new visible console window, found $($newWindows.Count)" }
   $parts = $newWindows[0].Split('|')
+  $independentIdentity = [TestConsoleWindows]::Identity([uint32]$parts[1])
   $control.WaitForExit()
   $stdout = $observing.StandardOutput.ReadToEnd()
   $stderr = $observing.StandardError.ReadToEnd()
@@ -95,6 +121,7 @@ try {
   Write-Output $output
   if (-not $output.Contains("$($parts[2]) $($parts[0])")) { throw 'UNOBSERVED: positive control window was not captured by observer' }
   if (-not $output.Contains("$($parts[2]) $($parts[0]) pid=$($parts[1])")) { throw 'Captured console window lacks its independently measured owner PID' }
+  if (-not $output.Contains("pid=$($parts[1]) created=$($independentIdentity[0]) name=$($independentIdentity[1]) parent=$($independentIdentity[2])")) { throw 'Captured console window lacks independently measured process identity and parent edge' }
   if ($observing.ExitCode -ne 1) { throw "visible control: expected observer exit 1, got $($observing.ExitCode)" }
 } finally {
   if ($control -and -not $control.HasExited) { $control.Kill(); $control.WaitForExit() }

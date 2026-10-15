@@ -546,7 +546,17 @@ export class RuntimeClient {
     return "[RuntimeClient]";
   }
 
-  async #request<T>({ method, path, body, headers = {}, timeoutMs = RUNTIME_REQUEST_TIMEOUT_MS }: RequestOptions): Promise<T> {
+  /** #1358: the one transport under #request and #image. It refuses without a token, registers an
+   * AbortController the client can cancel, races the fetch and the body read against the deadline
+   * (a RuntimeError GHSTUDIO_REQUEST_TIMEOUT) and the caller's abort (DisconnectedError), and maps
+   * any other failure to one message that never repeats the transport's own text (browsers put the
+   * request URL in it). `send` makes the fetch; `read` turns the response into the result, using
+   * `race` for any further await on the body. */
+  async #transport<R>(
+    timeoutMs: number,
+    send: (token: string, signal: AbortSignal) => Promise<Response>,
+    read: (response: Response, race: <X>(pending: Promise<X>) => Promise<X>) => Promise<R>,
+  ): Promise<R> {
     const token = this.#token;
     if (token === null) throw new DisconnectedError();
     const controller = new AbortController();
@@ -565,55 +575,16 @@ export class RuntimeClient {
         if (!deadlineReached) reject(new DisconnectedError());
       }, { once: true });
     });
+    // The deadline aborts the fetch, so the body read can reject with the abort before `deadline`
+    // itself does; once the deadline is reached any rejection IS the deadline.
+    const race = <X,>(pending: Promise<X>): Promise<X> =>
+      Promise.race([pending, deadline, cancelled]).catch((error: unknown) => {
+        if (deadlineReached) throw new RequestDeadlineError();
+        throw error;
+      });
     try {
-      const response = await Promise.race([
-        this.#fetch(`${this.#baseUrl}${path}`, {
-          method,
-          headers: {
-            Authorization: `Bearer ${token}`,
-            ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-            ...headers,
-          },
-          body: body === undefined ? undefined : JSON.stringify(body),
-          signal: controller.signal,
-        }),
-        deadline,
-        cancelled,
-      ]);
-
-      let envelope: Envelope<T>;
-      try {
-        envelope = (await Promise.race([response.json(), deadline, cancelled])) as Envelope<T>;
-      } catch (error) {
-        if (error instanceof RequestDeadlineError || deadlineReached) throw new RequestDeadlineError();
-        if (error instanceof DisconnectedError) throw error;
-        // #1170: the dev proxy marks a refused connection; that request was never delivered.
-        if (response.headers?.get?.(RUNTIME_UNREACHABLE_HEADER)) {
-          const message = "The Runtime is not answering, so nothing was sent. Start graphhelm serve, then try again.";
-          throw new RuntimeError(message, response.status, [
-            { code: RUNTIME_UNREACHABLE, severity: "error", message, path: "/", source: "studio" },
-          ]);
-        }
-        throw new RuntimeError(
-          response.status === 401
-            ? "The bearer token was refused."
-            // 502/503/504 with no JSON is the dev proxy (or a gateway) with no Runtime behind it.
-            : response.status >= 502 && response.status <= 504
-            ? "The Studio cannot reach the Runtime. Start graphhelm serve (and set GRAPHHELM_RUNTIME_URL to its address), then connect again."
-            : `The Runtime replied ${response.status} with a body this client could not read.`,
-          response.status,
-          [],
-        );
-      }
-
-      if (!response.ok || envelope.ok !== true || envelope.data === null) {
-        const diagnostics = Array.isArray(envelope.diagnostics) ? envelope.diagnostics : [];
-        const message =
-          diagnostics[0]?.message ??
-          (response.status === 401 ? "The bearer token was refused." : `The Runtime replied ${response.status}.`);
-        throw new RuntimeError(message, response.status, diagnostics);
-      }
-      return envelope.data;
+      const response = await race(send(token, controller.signal));
+      return await read(response, race);
     } catch (error) {
       if (error instanceof DisconnectedError) throw error;
       if (error instanceof RuntimeError) throw error;
@@ -634,6 +605,55 @@ export class RuntimeClient {
       if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
       this.#activeRequests.delete(controller);
     }
+  }
+
+  async #request<T>({ method, path, body, headers = {}, timeoutMs = RUNTIME_REQUEST_TIMEOUT_MS }: RequestOptions): Promise<T> {
+    return this.#transport(
+      timeoutMs,
+      (token, signal) => this.#fetch(`${this.#baseUrl}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+          ...headers,
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal,
+      }),
+      async (response, race) => {
+        let envelope: Envelope<T>;
+        try {
+          envelope = (await race(response.json())) as Envelope<T>;
+        } catch (error) {
+          if (error instanceof RequestDeadlineError || error instanceof DisconnectedError) throw error;
+          // #1170: the dev proxy marks a refused connection; that request was never delivered.
+          if (response.headers?.get?.(RUNTIME_UNREACHABLE_HEADER)) {
+            const message = "The Runtime is not answering, so nothing was sent. Start graphhelm serve, then try again.";
+            throw new RuntimeError(message, response.status, [
+              { code: RUNTIME_UNREACHABLE, severity: "error", message, path: "/", source: "studio" },
+            ]);
+          }
+          throw new RuntimeError(
+            response.status === 401
+              ? "The bearer token was refused."
+              // 502/503/504 with no JSON is the dev proxy (or a gateway) with no Runtime behind it.
+              : response.status >= 502 && response.status <= 504
+              ? "The Studio cannot reach the Runtime. Start graphhelm serve (and set GRAPHHELM_RUNTIME_URL to its address), then connect again."
+              : `The Runtime replied ${response.status} with a body this client could not read.`,
+            response.status,
+            [],
+          );
+        }
+        if (!response.ok || envelope.ok !== true || envelope.data === null) {
+          const diagnostics = Array.isArray(envelope.diagnostics) ? envelope.diagnostics : [];
+          const message =
+            diagnostics[0]?.message ??
+            (response.status === 401 ? "The bearer token was refused." : `The Runtime replied ${response.status}.`);
+          throw new RuntimeError(message, response.status, diagnostics);
+        }
+        return envelope.data;
+      },
+    );
   }
 
   /**
@@ -2121,54 +2141,32 @@ export class RuntimeClient {
   /** Image bytes from a route that answers them raw. On a frame route (`frame` given), 304, 204 and
    * 404 mean "nothing to show yet" and read as `null`; otherwise every non-2xx is a refusal. */
   async #image(path: string, notAnImage: string, frame?: { etag: string | null }): Promise<JourneyFrame | null> {
-    const token = this.#token;
-    if (token === null) throw new DisconnectedError();
-    const controller = new AbortController();
-    this.#activeRequests.add(controller);
-    let deadlineReached = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => { deadlineReached = true; controller.abort(); reject(new RequestDeadlineError()); }, RUNTIME_READ_TIMEOUT_MS);
-    });
-    const cancelled = new Promise<never>((_, reject) => {
-      controller.signal.addEventListener("abort", () => { if (!deadlineReached) reject(new DisconnectedError()); }, { once: true });
-    });
-    try {
-      const response = await Promise.race([
-        this.#fetch(`${this.#baseUrl}${path}`, {
-          method: "GET",
-          headers: { Authorization: `Bearer ${token}`, ...(frame?.etag ? { "If-None-Match": frame.etag } : {}) },
-          signal: controller.signal,
-        }),
-        deadline,
-        cancelled,
-      ]);
-      if (frame !== undefined && (response.status === 304 || response.status === 204 || response.status === 404)) return null;
-      if (!response.ok) {
-        throw new RuntimeError(
-          response.status === 401 ? "The bearer token was refused." : `The Runtime replied ${response.status}.`,
-          response.status,
-          [],
-        );
-      }
-      const type = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-      if (!IMAGE_TYPES.includes(type)) {
-        throw new RuntimeError(notAnImage, response.status, []);
-      }
-      const blob = await Promise.race([response.blob(), deadline, cancelled]);
-      return { blob, etag: response.headers.get("etag") };
-    } catch (error) {
-      if (error instanceof DisconnectedError || error instanceof RuntimeError) throw error;
-      if (error instanceof RequestDeadlineError || deadlineReached) {
-        const message = "The Runtime did not answer before the request deadline.";
-        throw new RuntimeError(message, 0, [{ code: "GHSTUDIO_REQUEST_TIMEOUT", severity: "error", message, path: "/", source: "studio" }]);
-      }
-      throw new RuntimeError("The Runtime could not be reached at this address.", 0, []);
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-      this.#activeRequests.delete(controller);
-    }
+    return this.#transport(
+      RUNTIME_READ_TIMEOUT_MS,
+      (token, signal) => this.#fetch(`${this.#baseUrl}${path}`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}`, ...(frame?.etag ? { "If-None-Match": frame.etag } : {}) },
+        signal,
+      }),
+      async (response, race) => {
+        if (frame !== undefined && (response.status === 304 || response.status === 204 || response.status === 404)) return null;
+        if (!response.ok) {
+          throw new RuntimeError(
+            response.status === 401 ? "The bearer token was refused." : `The Runtime replied ${response.status}.`,
+            response.status,
+            [],
+          );
+        }
+        const type = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+        if (!IMAGE_TYPES.includes(type)) {
+          throw new RuntimeError(notAnImage, response.status, []);
+        }
+        const blob = await race(response.blob());
+        return { blob, etag: response.headers.get("etag") };
+      },
+    );
   }
+
 
   /**
    * The content behind an evidence reference - a model's reply, a tool's output - opened.

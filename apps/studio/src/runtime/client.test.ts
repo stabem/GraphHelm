@@ -211,6 +211,49 @@ describe("RuntimeClient reads", () => {
     }
   });
 
+  // #1358: #request and #image share one #transport; these pin the deadline and abort paths on the
+  // image route and the body-read abort the deadline causes on the JSON route.
+  it("times an image read out at the read deadline and reports disposal as disconnect", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+      const client = new RuntimeClient("tok", { fetch: fetchImpl });
+      const late = client.readImage("demo", "ev-1").then((value) => value, (error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(RUNTIME_READ_TIMEOUT_MS);
+      expect(await late).toMatchObject({ code: "GHSTUDIO_REQUEST_TIMEOUT", httpStatus: 0 });
+
+      const pending = client.readImage("demo", "ev-2").then((value) => value, (error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(1_000);
+      client.dispose();
+      expect(await pending).toBeInstanceOf(DisconnectedError);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads a body the deadline aborts as a timeout, not as an unreadable body", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(async (_url: string, init: RequestInit = {}) => ({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        // The deadline aborts the fetch; the body read then rejects with the abort, which can
+        // settle before the deadline promise does.
+        json: () => new Promise<unknown>((_, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+        }),
+      }) as unknown as Response) as unknown as typeof fetch;
+      const client = new RuntimeClient("tok", { fetch: fetchImpl });
+      // getStatus reads under the read deadline (see "uses the capped reply suggestions deadline").
+      const status = client.getStatus("demo").then((value) => value, (error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(RUNTIME_READ_TIMEOUT_MS);
+      expect(await status).toMatchObject({ code: "GHSTUDIO_REQUEST_TIMEOUT", httpStatus: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("unwraps the four-key envelope and returns only its data", async () => {
     const { fetchImpl } = scriptedFetch([
       { match: (call) => call.url === "/v1/executions", reply: ok({ executions: [], hasMore: false, nextCursor: null }, "execution.list") },

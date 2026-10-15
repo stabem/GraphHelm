@@ -824,6 +824,156 @@ fn enabled_graphhelm_plugin_gets_explicit_duplicate_cleanup_with_freshness_guard
     assert_eq!(after["mcpServers"]["other"]["command"], "other");
 }
 
+#[test]
+fn development_contracts_plugin_is_a_valid_unique_cleanup_provider() {
+    let (p, h) = seeded();
+    std::fs::create_dir_all(h.path().join(".claude/plugins")).unwrap();
+    let plugin = tempfile::tempdir().unwrap();
+    let graphhelm = assert_cmd::cargo::cargo_bin!("graphhelm");
+    std::fs::write(plugin.path().join(".mcp.json"), serde_json::to_vec(&serde_json::json!({
+        "mcpServers": {"graphhelm": {"command": graphhelm, "args": ["mcp", "--discover", "--project", ".", "--actor", "agent-chat"]}}
+    })).unwrap()).unwrap();
+    std::fs::write(
+        h.path().join(".claude/settings.json"),
+        br#"{"enabledPlugins":{"graphhelm-development-contracts@local":true}}"#,
+    )
+    .unwrap();
+    std::fs::write(h.path().join(".claude/plugins/installed_plugins.json"), serde_json::to_vec(&serde_json::json!({
+        "plugins": {"graphhelm-development-contracts@local": [{"installPath": plugin.path(), "scope": "user"}]}
+    })).unwrap()).unwrap();
+    std::fs::write(h.path().join(".claude.json"), serde_json::to_vec(&serde_json::json!({
+        "keep": 1, "mcpServers": {"other": {"command":"other"}, "graphhelm": {"command": graphhelm, "args": ["mcp", "--discover", "--actor", "agent-chat"]}}
+    })).unwrap()).unwrap();
+    let (ok, preview) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{preview}");
+    assert!(
+        preview["data"]["suggestedResolutions"]
+            .as_array()
+            .unwrap()
+            .contains(&"home/.claude.json=use-plugin-mcp".into()),
+        "{preview}"
+    );
+    let state = private_dir();
+    let out = state.path().join("plan.json");
+    let (ok, resolved) = json(
+        setup(p.path(), h.path())
+            .args([
+                "--resolve",
+                "project/AGENTS.md=keep",
+                "--resolve",
+                "home/.claude.json=use-plugin-mcp",
+            ])
+            .arg("--out")
+            .arg(&out)
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{resolved}");
+    let digest = resolved["data"]["acceptance"]["digest"].as_str().unwrap();
+    let (ok, applied) = json(
+        setup(p.path(), h.path())
+            .args(["--state-root"])
+            .arg(state.path())
+            .args(["--apply"])
+            .arg(&out)
+            .args(["--accept", digest])
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{applied}");
+    let user = std::fs::read(h.path().join(".claude.json")).unwrap();
+    let user_value: Value = serde_json::from_slice(&user).unwrap();
+    assert_eq!(user_value["mcpServers"]["other"]["command"], "other");
+    let (ok, repeated) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{repeated}");
+    assert!(
+        !repeated["data"]["suggestedResolutions"]
+            .as_array()
+            .unwrap()
+            .contains(&"home/.claude.json=use-plugin-mcp".into()),
+        "{repeated}"
+    );
+}
+
+#[test]
+fn two_enabled_graphhelm_plugin_identities_are_ambiguous_for_cleanup() {
+    let (p, h) = seeded();
+    std::fs::create_dir_all(h.path().join(".claude/plugins")).unwrap();
+    let main_plugin = tempfile::tempdir().unwrap();
+    let contracts_plugin = tempfile::tempdir().unwrap();
+    let graphhelm = assert_cmd::cargo::cargo_bin!("graphhelm");
+    let write_mcp = |path: &Path| {
+        std::fs::write(path.join(".mcp.json"), serde_json::to_vec(&serde_json::json!({
+        "mcpServers": {"graphhelm": {"command": graphhelm, "args": ["mcp", "--discover", "--project", ".", "--actor", "agent-chat"]}}
+    })).unwrap()).unwrap()
+    };
+    write_mcp(main_plugin.path());
+    write_mcp(contracts_plugin.path());
+    std::fs::write(h.path().join(".claude/settings.json"), br#"{"enabledPlugins":{"graphhelm@local":true,"graphhelm-development-contracts@local":true}}"#).unwrap();
+    std::fs::write(h.path().join(".claude/plugins/installed_plugins.json"), serde_json::to_vec(&serde_json::json!({
+        "plugins": {"graphhelm@local": [{"installPath": main_plugin.path(), "scope": "user"}], "graphhelm-development-contracts@local": [{"installPath": contracts_plugin.path(), "scope": "user"}]}
+    })).unwrap()).unwrap();
+    std::fs::write(h.path().join(".claude.json"), serde_json::to_vec(&serde_json::json!({
+        "mcpServers": {"graphhelm": {"command": graphhelm, "args": ["mcp", "--discover", "--actor", "agent-chat"]}}
+    })).unwrap()).unwrap();
+    let before = std::fs::read(h.path().join(".claude.json")).unwrap();
+    let (ok, preview) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{preview}");
+    assert!(
+        !preview["data"]["suggestedResolutions"]
+            .as_array()
+            .unwrap()
+            .contains(&"home/.claude.json=use-plugin-mcp".into()),
+        "{preview}"
+    );
+    let (ok, refused) = json(
+        setup(p.path(), h.path())
+            .args([
+                "--resolve",
+                "project/AGENTS.md=keep",
+                "--resolve",
+                "home/.claude.json=use-plugin-mcp",
+            ])
+            .output()
+            .unwrap(),
+    );
+    assert!(!ok, "{refused}");
+    assert_eq!(
+        std::fs::read(h.path().join(".claude.json")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn disabled_development_contracts_plugin_does_not_create_ambiguity() {
+    let (p, h) = seeded();
+    std::fs::create_dir_all(h.path().join(".claude/plugins")).unwrap();
+    let main_plugin = tempfile::tempdir().unwrap();
+    let contracts_plugin = tempfile::tempdir().unwrap();
+    let graphhelm = assert_cmd::cargo::cargo_bin!("graphhelm");
+    for path in [main_plugin.path(), contracts_plugin.path()] {
+        std::fs::write(path.join(".mcp.json"), serde_json::to_vec(&serde_json::json!({
+            "mcpServers": {"graphhelm": {"command": graphhelm, "args": ["mcp", "--discover", "--project", ".", "--actor", "agent-chat"]}}
+        })).unwrap()).unwrap();
+    }
+    std::fs::write(h.path().join(".claude/settings.json"), br#"{"enabledPlugins":{"graphhelm@local":true,"graphhelm-development-contracts@local":false}}"#).unwrap();
+    std::fs::write(h.path().join(".claude/plugins/installed_plugins.json"), serde_json::to_vec(&serde_json::json!({
+        "plugins": {"graphhelm@local": [{"installPath": main_plugin.path(), "scope": "user"}], "graphhelm-development-contracts@local": [{"installPath": contracts_plugin.path(), "scope": "user"}]}
+    })).unwrap()).unwrap();
+    std::fs::write(h.path().join(".claude.json"), serde_json::to_vec(&serde_json::json!({
+        "mcpServers": {"graphhelm": {"command": graphhelm, "args": ["mcp", "--discover", "--actor", "agent-chat"]}}
+    })).unwrap()).unwrap();
+    let (ok, preview) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{preview}");
+    assert!(
+        preview["data"]["suggestedResolutions"]
+            .as_array()
+            .unwrap()
+            .contains(&"home/.claude.json=use-plugin-mcp".into()),
+        "{preview}"
+    );
+}
+
 /// #1323: the generated decisions are bounded to their surfaces. A block cannot target a settings
 /// file, a registration cannot target an instruction file, and an unknown decision is refused.
 #[test]

@@ -48,6 +48,7 @@ windows-sys = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
+graphhelm-test-shims = { path = "../../tools/test-shims" }
 proc-macro2 = { version = "=1.0.107", features = ["span-locations"] }
 syn = { version = "=2.0.119", features = ["full", "visit"] }
 tempfile.workspace = true

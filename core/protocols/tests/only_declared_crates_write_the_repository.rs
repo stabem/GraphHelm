@@ -57,10 +57,8 @@ use std::collections::{BTreeMap, BTreeSet};
 // are a duplicated ORACLE and not a duplicated mechanism.
 // ------------------------------------------------------------------------------------------
 
-include!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../tools/workspace-walk/walk.rs"
-));
+use graphhelm_test_shims::walk::*;
+use std::path::PathBuf;
 
 /// The three spellings of an append, and the reason there are exactly three.
 ///

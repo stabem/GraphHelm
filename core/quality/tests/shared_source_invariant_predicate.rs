@@ -1,9 +1,7 @@
 //! The compile carrier and the oracle for the shared source-invariant predicate.
 //!
-//! `tools/source-invariants/detect.rs` has no `Cargo.toml` -- that is the point of it, and
-//! it is also a hazard: a file nothing compiles is a file whose syntax errors wait for the
-//! next adopter to discover. This test is what compiles it, from the moment it is created
-//! and independently of whether any crate has adopted it yet.
+//! The predicate lives in `graphhelm_test_shims::detect` (#1315; before, an `include!`d file
+//! with no `Cargo.toml`, which this test existed to compile). What stays is the oracle below.
 //!
 //! It lives in `core/quality` for a reason that is now history: the gate-freeze rule (M06
 //! binding decision 5) counted `core/quality/` as gate machinery, so the shared file, its
@@ -11,10 +9,7 @@
 //! with the gate (#1225); the cell that checked the predicate's path against it went too.
 //! What stays is the oracle below: what the predicate detects and what it exempts.
 
-include!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../tools/source-invariants/detect.rs"
-));
+use graphhelm_test_shims::detect::*;
 
 /// Builds one fixture source line WITHOUT writing a run of spaces into this file.
 ///

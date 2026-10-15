@@ -18,10 +18,8 @@ pub(crate) struct SessionState {
     pub(crate) initialized: bool,
     /// 8 bytes of OS randomness, hex — the session's one impure input; Task 3's
     /// idempotency derivation consumes it per rpc id.
-    #[allow(dead_code)]
     pub(crate) nonce: String,
     /// The loopback-only API client (Task 3). The tool table (Task 5) drives it.
-    #[allow(dead_code)]
     pub(crate) client: Option<super::client::ApiClient>,
     /// #213: the presented per-contribution capability, the package it was minted against, and
     /// where every decision this gate makes is recorded. All three present or all three absent

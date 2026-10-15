@@ -29,15 +29,10 @@
 
 use std::collections::BTreeSet;
 
-include!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../tools/workspace-walk/walk.rs"
-));
+use graphhelm_test_shims::walk::*;
+use std::path::{Path, PathBuf};
 
-include!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../tools/source-invariants/detect.rs"
-));
+use graphhelm_test_shims::detect::*;
 
 /// Blank out literals whose ENTIRE content is spaces, leaving the quotes in place.
 ///

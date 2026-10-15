@@ -131,11 +131,8 @@ fn test_sources(root: &Path) -> Vec<(PathBuf, String)> {
 
 /// Drops whole-line comments and keeps everything else verbatim.
 ///
-/// A one-line predicate rather than an adoption of `tools/source-invariants/detect.rs`: that file
-/// states its own condition for adoption — "EVERY ITEM HERE MUST BE USED BY EVERY ADOPTER",
-/// because `include!` copies the whole file and the gate runs `clippy -- -D warnings`, so an
-/// unused item is `dead_code` and fails the build. This file consumes one of its three items, so
-/// its own rule says do not adopt it.
+/// A one-line predicate of its own. `graphhelm_test_shims::detect::is_line_comment` is the same
+/// rule, but this file guards package coverage, not authored strings, and keeps its one line local.
 ///
 /// LIMIT, named rather than discovered later: this drops lines that BEGIN with `//`, not trailing
 /// comments. A package path parked after code on the same line — `let x = 1; // extensions/…` —

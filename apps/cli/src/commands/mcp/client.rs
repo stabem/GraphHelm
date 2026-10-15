@@ -2,11 +2,6 @@
 //! handling that never touches argv or any output stream, and the per-logical-act idempotency
 //! derivation (`mcp-{nonce}-{rpc-id}`) whose ≤64 bound holds by construction.
 
-// The Task 5 tool table is this module's consumer; until it lands, construction and the
-// config refusals are exercised end to end while the request path only exists. The allow
-// dies with Task 5.
-#![allow(dead_code)]
-
 use std::time::Duration;
 
 use graphhelm_model_gateway::transport::UreqTransport;

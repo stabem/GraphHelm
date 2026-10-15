@@ -172,7 +172,26 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
     let draft = |id: &str| {
         serde_json::json!({
             "id": id, "expectedVersion": 1, "expectedHash": graph_hash,
-            "operations": [{"op": "patchNode", "path": "/spec/nodes/plan", "value": {"name": id}}]
+            "operations": [{
+                "op": "addNode", "path": "/spec/nodes/route-correction",
+                "value": {
+                    "type": "agent", "name": id, "objective": "Correct the blocked scope",
+                    "optionality": "required",
+                    "agent": {"ephemeral": {
+                        "purpose": "Correct the blocked scope",
+                        "capabilities": ["repository.read"],
+                        "allowedTools": ["repository.read"],
+                        "prohibitedActions": ["repository.write"],
+                        "inputSchema": "schema://ImplementationResult@1",
+                        "outputSchema": "schema://ImplementationResult@1",
+                        "instructions": "Correct the blocked scope",
+                        "completionContract": {"requires": ["source_locations"]},
+                        "isolationMinimum": "tier_0"
+                    }},
+                    "completion": {"requires": [{"outputSchemaValid": true}]},
+                    "timeoutSeconds": 900
+                }
+            }]
         })
     };
     let binding = scratch.path().join("binding.json");
@@ -251,7 +270,13 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         .unwrap()
         .args(["execution", "approve", "--events"])
         .arg(&events)
-        .args(["--execution", "exec_feature", "--node", "plan", "--keyring"])
+        .args([
+            "--execution",
+            "exec_feature",
+            "--node",
+            "route-correction",
+            "--keyring",
+        ])
         .arg(&keyring)
         .args([
             "--key-id",
@@ -326,13 +351,13 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         .unwrap();
     let signal: Value = envelope.expose(|bytes| serde_json::from_slice(bytes).unwrap());
     assert_eq!(signal["type"], "keel.blocked");
-    assert_eq!(signal["source"]["id"], "plan");
+    assert_eq!(signal["source"]["id"], "route-correction");
     assert_eq!(signal["proposal"]["id"], "draft-implement");
     let evidence = signal["evidence"].as_array().unwrap();
     for exact in [
         format!("head:{head}"),
         "task:issue-1045".into(),
-        "node:plan".into(),
+        "node:route-correction".into(),
         "finding:keel.scope.path_outside_card".into(),
         "path:docs/notes.md".into(),
     ] {
@@ -361,7 +386,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
     let stale = scratch.path().join("stale.json");
     fs::write(&stale, serde_json::to_vec(&serde_json::json!({
         "expectedHead": "0000000000000000000000000000000000000000",
-        "execution": "exec_feature", "task": "issue-1045", "node": "plan",
+        "execution": "exec_feature", "task": "issue-1045", "node": "route-correction",
         "implementDraft": draft("draft-stale-implement"), "reviewDraft": draft("draft-stale-review")
     })).unwrap()).unwrap();
     let (stale_code, stale_reply) = check(Some(&stale));

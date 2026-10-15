@@ -1328,6 +1328,16 @@ pub struct ServeArgs {
     /// owner flips it after minting one credential per lane, so no record is lost in between.
     #[arg(long = "require-lane-credential")]
     pub require_lane_credential: bool,
+    /// #1328: refuse a `file`, `fixtures` or query `manifest` path that resolves outside the
+    /// allowed roots (`--project` and every `--path-root`). Off by default: lanes post paths from
+    /// worktrees outside the project, so the owner turns it on with their roots after a restart,
+    /// the same way `--require-lane-credential` is flipped.
+    #[arg(long = "confine-paths")]
+    pub confine_paths: bool,
+    /// #1328: a directory a request path may also resolve under while `--confine-paths` is on,
+    /// beside `--project`; repeatable (for example `D:/gh` and `D:/gh/b`).
+    #[arg(long = "path-root")]
+    pub path_roots: Vec<PathBuf>,
     /// The bare program name a `tests` tool node runs, resolved on the child's PATH (see
     /// `--path-prepend`). Host configuration, never caller input.
     #[arg(long = "tests-runner", default_value = "cargo")]

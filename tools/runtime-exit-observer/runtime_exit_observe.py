@@ -111,7 +111,7 @@ def main(argv=None):
                 print(ERRORS["io"], file=sys.stderr)
                 result = 2
             else:
-                remaining = args.timeout_seconds
+                remaining = args.timeout_seconds - (time.monotonic() - started)
                 while remaining > 0:
                     wait_ms = max(1, min(1000, int(remaining * 1000)))
                     status = kernel32.WaitForSingleObject(handle, wait_ms)

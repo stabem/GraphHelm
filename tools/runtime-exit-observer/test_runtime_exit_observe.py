@@ -97,6 +97,43 @@ class WindowsProcessObserver(unittest.TestCase):
         self.assertEqual(records, [])
         self.assertIsNone(process.poll())
 
+    def test_attachment_persistence_exhausts_budget_before_first_wait(self):
+        spec = importlib.util.spec_from_file_location("runtime_exit_observe", TOOL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        real_fsync = os.fsync
+        for release_child in (True, False):
+            with self.subTest(release_child=release_child), tempfile.TemporaryDirectory() as directory:
+                process, creation = self.child()
+                receipt = Path(directory) / "receipt.jsonl"
+                args = ["--pid", str(process.pid), "--creation-filetime", str(creation),
+                        "--timeout-seconds", "0.1", "--output", str(receipt)]
+                clock = [100.0]
+                syncs = []
+
+                def sync(fd):
+                    real_fsync(fd)
+                    syncs.append(fd)
+                    if len(syncs) == 1:
+                        clock[0] = 100.2
+                        if release_child:
+                            process.stdin.write(b"0\n")
+                            process.stdin.flush()
+                            self.assertEqual(process.wait(timeout=2), 0)
+
+                from contextlib import redirect_stderr
+                error = io.StringIO()
+                with unittest.mock.patch.object(module.time, "monotonic", side_effect=lambda: clock[0]), \
+                     unittest.mock.patch.object(module.os, "fsync", side_effect=sync), redirect_stderr(error):
+                    code = module.main(args)
+                states = [json.loads(line)["state"] for line in receipt.read_text(encoding="utf-8").splitlines()]
+                self.assertEqual(len(syncs), 2)
+                self.assertEqual(code, 3)
+                self.assertEqual(error.getvalue(), "observation_timeout\n")
+                self.assertEqual(states, ["attached", "timeout"])
+                if not release_child:
+                    self.assertIsNone(process.poll())
+
     def observe_wrong_identity(self, process, creation):
         with tempfile.TemporaryDirectory() as directory:
             receipt = Path(directory) / "wrong.jsonl"

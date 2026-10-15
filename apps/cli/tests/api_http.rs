@@ -8896,6 +8896,67 @@ fn customs_graph() -> PathBuf {
     root().join("examples/graphs/customs-acting.yaml")
 }
 
+/// #1284: `clear` without `claimSeq` countersigns the execution's one open claim, as `claim`
+/// without `waitSeq` answers the node's open wait; with no claim open it is refused at
+/// `/claimSeq`, never guessed. Cost: one local server and temporary sealed store.
+#[test]
+fn clear_without_claim_seq_clears_the_one_open_claim() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = fixtures_file(
+        directory.path(),
+        serde_json::json!({ "implementation": "unknown", "release_notes": "success" }),
+    );
+    let execution = "exec_customs_default_seq";
+    let (_guard, base, token) = serve_sealed(&events);
+    let (status, started) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &customs_headers("default-seq-start"),
+        &serde_json::json!({ "file": customs_graph(), "fixtures": fixtures, "mode": "supervised" }),
+    );
+    assert_eq!(status, 200, "{started}");
+    let (status, claimed) = post_json(
+        &format!("{base}/v1/executions/{execution}/claim"),
+        &token,
+        &customs_headers("default-seq-claim"),
+        &serde_json::json!({ "file": customs_graph(), "node": "implementation",
+            "evidence": customs_evidence(&["test_report"]) }),
+    );
+    assert_eq!(status, 200, "{claimed}");
+    assert_eq!(claimed["data"]["claim"]["outcome"], "claimed", "{claimed}");
+    let (status, cleared) = post_json(
+        &format!("{base}/v1/executions/{execution}/clear"),
+        &token,
+        &customs_headers("default-seq-clear"),
+        &serde_json::json!({ "file": customs_graph(), "fixtures": fixtures,
+            "evidence": customs_evidence(&["test_report"]) }),
+    );
+    assert_eq!(status, 200, "{cleared}");
+    assert_eq!(
+        cleared["data"]["clearance"]["outcome"], "cleared",
+        "{cleared}"
+    );
+    assert_eq!(cleared["data"]["nodeStates"]["implementation"], "succeeded");
+
+    let (status, refused) = post_json(
+        &format!("{base}/v1/executions/{execution}/clear"),
+        &token,
+        &customs_headers("default-seq-clear-again"),
+        &serde_json::json!({ "file": customs_graph(), "fixtures": fixtures,
+            "evidence": customs_evidence(&["test_report"]) }),
+    );
+    assert_eq!(status, 400, "{refused}");
+    assert_eq!(refused["diagnostics"][0]["path"], "/claimSeq", "{refused}");
+    assert!(
+        refused["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("no open claim"),
+        "{refused}"
+    );
+}
+
 /// Snapshot-backed Answer must claim and clear without a host path. The file-backed customs
 /// cells miss this refusal. Cost: one local server and temporary sealed store, no external I/O.
 #[test]

@@ -3514,6 +3514,77 @@ pub(super) async fn start(
     .await
 }
 
+/// #1284: whether a signal object leaves `source` for the Runtime to fill.
+fn needs_source(signal: &serde_json::Value) -> bool {
+    signal.is_object() && signal.get("source").is_none_or(serde_json::Value::is_null)
+}
+
+/// #1284: fills a signal's `id`, `emittedAt` and `source` when the caller left them out (absent or
+/// null); a value the caller sent is kept as sent. `id` is derived from the request's idempotency
+/// key, so it names this request and nothing else. `source` is the caller, never a guess: the
+/// owner is `user/<actor>`, a system actor `system/<actor>`, and a scoped agent the ONE node it is
+/// assigned in this execution (`assigned_nodes`) - the same rule a `node_delivery` applies to a
+/// source the caller names. An agent with no node or several is refused, naming the choices.
+/// A non-object signal is left untouched for validation to refuse.
+fn fill_signal_defaults(
+    signal: &mut serde_json::Value,
+    actor: &PersistedActor,
+    assigned_nodes: &[String],
+    idempotency_key: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(), String> {
+    let source = if needs_source(signal) {
+        Some(match actor.actor_type() {
+            PersistedActorType::Owner => {
+                serde_json::json!({"type": "user", "id": actor.id().as_str()})
+            }
+            PersistedActorType::Agent => match assigned_nodes {
+                [node] => serde_json::json!({"type": "node", "id": node}),
+                [] => {
+                    return Err(
+                        "\"signal.source\" was left out and this agent is assigned no node \
+                         here; name it, e.g. {\"type\": \"node\", \"id\": \"<node>\"}"
+                            .to_owned(),
+                    );
+                }
+                several => {
+                    return Err(format!(
+                        "\"signal.source\" was left out and this agent is assigned several nodes \
+                         here ({}); name the one this signal is about",
+                        several.join(", ")
+                    ));
+                }
+            },
+            _ => serde_json::json!({"type": "system", "id": actor.id().as_str()}),
+        })
+    } else {
+        None
+    };
+    let Some(object) = signal.as_object_mut() else {
+        return Ok(());
+    };
+    if object.get("id").is_none_or(serde_json::Value::is_null) {
+        let digest = graphhelm_protocols::hash::sha256_hex(idempotency_key.as_bytes());
+        object.insert(
+            "id".to_owned(),
+            serde_json::json!(format!("signal-{}", &digest[..16])),
+        );
+    }
+    if object
+        .get("emittedAt")
+        .is_none_or(serde_json::Value::is_null)
+    {
+        object.insert(
+            "emittedAt".to_owned(),
+            serde_json::json!(now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+        );
+    }
+    if let Some(source) = source {
+        object.insert("source".to_owned(), source);
+    }
+    Ok(())
+}
+
 /// `POST /v1/executions/{id}/signal`: the CLI's `--signal <file>` becomes an inline JSON body field
 /// (`"signal": {...}`), and `--evidence-out <path>` becomes `"evidenceOut": "<path>"` — the same
 /// operator-supplied path string, used exactly as the CLI would (D-040's premise: the server is
@@ -3550,6 +3621,52 @@ pub(super) async fn signal(
             "/signal",
         );
     };
+    // #1284: fill what the Runtime can derive, BEFORE the envelope is serialized, so validation
+    // and the seal both see the filled values. The request digest was already taken over the
+    // caller's body (`parse_mutation_headers`), so an identical replay still replays.
+    let mut filled_signal = signal_value.clone();
+    // The projection is read only when an agent left `source` out: its assignment decides it.
+    let mut assigned_nodes = Vec::new();
+    if needs_source(&filled_signal) && identity.actor.actor_type() == PersistedActorType::Agent {
+        let Ok(store) = event_store(&state.events) else {
+            return respond(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Outcome::internal(SIGNAL_COMMAND, "the event store could not be opened").output,
+            );
+        };
+        let Ok((_, _, projection)) = execution::load_projection(&store, Some(&execution_id)) else {
+            return bad_request(
+                SIGNAL_COMMAND,
+                "the execution could not be read",
+                "/execution",
+            );
+        };
+        assigned_nodes = projection
+            .node_assignments
+            .iter()
+            .filter(|(_, assigned)| **assigned == identity.actor)
+            .map(|(node, _)| node.clone())
+            .collect();
+    }
+    if let Err(message) = fill_signal_defaults(
+        &mut filled_signal,
+        &identity.actor,
+        &assigned_nodes,
+        identity.keys[0].full.as_str(),
+        chrono::Utc::now(),
+    ) {
+        // The signal family's own code: a signal the Runtime cannot complete is an invalid
+        // signal, refused before anything is sealed or appended.
+        return respond_failure(
+            SIGNAL_COMMAND,
+            execution::Failure {
+                code: crate::error_codes::GHCLI003_SIGNAL_INVALID,
+                message,
+                pointer: "/signal/source".to_owned(),
+            },
+        );
+    }
+    let signal_value = &filled_signal;
     // #1148: a `task.*` record names a lane, and only that lane's credential may write it. The
     // shared agent session token authenticates "an agent on this machine", not a lane, so a
     // request it authenticated (marked by the auth layer) is refused as an identity mismatch
@@ -4732,12 +4849,62 @@ pub(super) async fn clear(
         Ok(source) => source,
         Err(response) => return response,
     };
-    let Some(claim_seq) = payload.get("claimSeq").and_then(serde_json::Value::as_u64) else {
-        return bad_request(
-            CLEAR_COMMAND,
-            "the request body must carry \"claimSeq\" as a non-negative integer",
-            "/claimSeq",
-        );
+    // #1284: `claimSeq` defaults to the execution's one open claim, as `claim` defaults `waitSeq`
+    // to the node's open wait. A present value must be a non-negative integer; absent with no
+    // open claim, or with several, is refused naming the choice the caller has to make.
+    let claim_seq = match payload.get("claimSeq") {
+        None | Some(serde_json::Value::Null) => {
+            let Ok(store) = event_store(&state.events) else {
+                return respond(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Outcome::internal(CLEAR_COMMAND, "the event store could not be opened").output,
+                );
+            };
+            let Ok((_, _, projection)) = execution::load_projection(&store, Some(&execution_id))
+            else {
+                return bad_request(
+                    CLEAR_COMMAND,
+                    "the execution could not be read",
+                    "/execution",
+                );
+            };
+            let open: Vec<u64> = projection.open_claims.keys().copied().collect();
+            match open.as_slice() {
+                [only] => *only,
+                [] => {
+                    return bad_request(
+                        CLEAR_COMMAND,
+                        "\"claimSeq\" was left out and this execution has no open claim",
+                        "/claimSeq",
+                    );
+                }
+                several => {
+                    return bad_request(
+                        CLEAR_COMMAND,
+                        &format!(
+                            "\"claimSeq\" was left out and this execution has several open claims \
+                             ({}); name one",
+                            several
+                                .iter()
+                                .map(u64::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                        "/claimSeq",
+                    );
+                }
+            }
+        }
+        Some(value) => match value.as_u64() {
+            Some(seq) => seq,
+            None => {
+                return bad_request(
+                    CLEAR_COMMAND,
+                    "\"claimSeq\" must be a non-negative integer",
+                    "/claimSeq",
+                );
+            }
+        },
     };
     let manifest_hash = match payload.get("manifestHash") {
         None | Some(serde_json::Value::Null) => None,
@@ -7824,5 +7991,133 @@ pub(super) async fn gateway_credential_set(
             StatusCode::INTERNAL_SERVER_ERROR,
             Outcome::internal(GATEWAY_CREDENTIAL_SET_COMMAND, "the store task failed").output,
         ),
+    }
+}
+
+#[cfg(test)]
+mod signal_fill_tests {
+    //! #1284: what the Runtime fills in a signal, and what it refuses to guess.
+
+    use super::fill_signal_defaults;
+    use chrono::TimeZone as _;
+    use graphhelm_protocols::{ActorId, PersistedActor, PersistedActorType};
+
+    fn actor(kind: PersistedActorType, id: &str) -> PersistedActor {
+        PersistedActor::new(kind, ActorId::parse(id).unwrap())
+    }
+
+    fn minimal() -> serde_json::Value {
+        serde_json::json!({
+            "type": "finding.root_cause",
+            "severity": "high",
+            "description": "d",
+            "evidence": ["e"],
+        })
+    }
+
+    fn now() -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc
+            .with_ymd_and_hms(2026, 10, 14, 12, 0, 0)
+            .unwrap()
+    }
+
+    #[test]
+    fn an_owner_signal_gets_id_time_and_a_user_source() {
+        let mut signal = minimal();
+        fill_signal_defaults(
+            &mut signal,
+            &actor(PersistedActorType::Owner, "owner-local"),
+            &[],
+            "key-1",
+            now(),
+        )
+        .unwrap();
+        assert_eq!(
+            signal["source"],
+            serde_json::json!({"type": "user", "id": "owner-local"})
+        );
+        assert_eq!(signal["emittedAt"], "2026-10-14T12:00:00.000Z");
+        let id = signal["id"].as_str().unwrap();
+        assert!(
+            id.starts_with("signal-") && id.len() == "signal-".len() + 16,
+            "{id}"
+        );
+        // The id names the request: the same key gives the same id, another key another one.
+        let mut again = minimal();
+        fill_signal_defaults(
+            &mut again,
+            &actor(PersistedActorType::Owner, "owner-local"),
+            &[],
+            "key-1",
+            now(),
+        )
+        .unwrap();
+        assert_eq!(again["id"], signal["id"]);
+        let mut other = minimal();
+        fill_signal_defaults(
+            &mut other,
+            &actor(PersistedActorType::Owner, "owner-local"),
+            &[],
+            "key-2",
+            now(),
+        )
+        .unwrap();
+        assert_ne!(other["id"], signal["id"]);
+    }
+
+    #[test]
+    fn an_agent_signal_takes_its_one_assigned_node_and_refuses_to_guess_otherwise() {
+        let agent = actor(PersistedActorType::Agent, "agent-a");
+        let mut signal = minimal();
+        fill_signal_defaults(&mut signal, &agent, &["implement".to_owned()], "k", now()).unwrap();
+        assert_eq!(
+            signal["source"],
+            serde_json::json!({"type": "node", "id": "implement"})
+        );
+
+        let none = fill_signal_defaults(&mut minimal(), &agent, &[], "k", now()).unwrap_err();
+        assert!(none.contains("no node"), "{none}");
+        let several = fill_signal_defaults(
+            &mut minimal(),
+            &agent,
+            &["a".to_owned(), "b".to_owned()],
+            "k",
+            now(),
+        )
+        .unwrap_err();
+        assert!(several.contains("a, b"), "{several}");
+    }
+
+    #[test]
+    fn values_the_caller_sent_are_kept_as_sent() {
+        let mut signal = minimal();
+        signal["id"] = serde_json::json!("mine");
+        signal["emittedAt"] = serde_json::json!("2026-01-01T00:00:00Z");
+        signal["source"] = serde_json::json!({"type": "tool", "id": "t"});
+        let before = signal.clone();
+        // Even an agent with no node: nothing is left to fill, so nothing is refused.
+        fill_signal_defaults(
+            &mut signal,
+            &actor(PersistedActorType::Agent, "agent-a"),
+            &[],
+            "k",
+            now(),
+        )
+        .unwrap();
+        assert_eq!(signal, before);
+    }
+
+    #[test]
+    fn a_non_object_signal_is_left_for_validation() {
+        let mut signal = serde_json::json!("not a signal");
+        fill_signal_defaults(
+            &mut signal,
+            &actor(PersistedActorType::Owner, "owner-local"),
+            &[],
+            "k",
+            now(),
+        )
+        .unwrap();
+        assert_eq!(signal, serde_json::json!("not a signal"));
     }
 }

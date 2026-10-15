@@ -128,6 +128,35 @@ export interface RegisteredTools {
 
 const TOOL_PREFIX = "graphhelm_";
 
+/**
+ * #1330 (plan D2): the MCP tool each WebMCP tool wraps, by name in `schemas/mcp-tools.json` (the
+ * catalog the Rust `TOOLS` table emits). `null` marks a Studio-only tool with no MCP twin. The
+ * cell in `mcp-tools.test.ts` holds every mapped tool's required fields and shared bounds to the
+ * catalog, so a schema change in Rust that the Studio did not follow fails there, not in an agent.
+ */
+export const MCP_TOOL_OF: Readonly<Record<string, string | null>> = {
+  [`${TOOL_PREFIX}list_executions`]: "list",
+  [`${TOOL_PREFIX}get_attention`]: null,
+  [`${TOOL_PREFIX}get_execution_status`]: "status",
+  [`${TOOL_PREFIX}get_execution_events`]: "events",
+  [`${TOOL_PREFIX}read_evidence`]: "evidence",
+  [`${TOOL_PREFIX}pause_execution`]: "pause",
+  [`${TOOL_PREFIX}approve`]: "approve",
+  [`${TOOL_PREFIX}resume_execution`]: "resume",
+  [`${TOOL_PREFIX}start_task`]: null,
+  [`${TOOL_PREFIX}send_message`]: null,
+  [`${TOOL_PREFIX}cancel_execution`]: "cancel",
+  [`${TOOL_PREFIX}sweep_execution`]: "sweep",
+  [`${TOOL_PREFIX}amend_budget`]: "amend_budget",
+};
+
+/** #1330: the old names of the two tools that drifted from their MCP spelling, kept as aliases
+ * for one release so an agent prompt that names them keeps working; remove after that release. */
+export const DEPRECATED_ALIASES: Readonly<Record<string, string>> = {
+  [`${TOOL_PREFIX}approve_node`]: `${TOOL_PREFIX}approve`,
+  [`${TOOL_PREFIX}amend_node_budget`]: `${TOOL_PREFIX}amend_budget`,
+};
+
 /** Closed schemas, small inputs, explicit bounds. `additionalProperties: false` everywhere: an
  * open schema lets a caller smuggle a field the tool then quietly ignores, which reads to the
  * agent as "accepted". */
@@ -389,7 +418,7 @@ export function registerStudioTools(
         {
           executionId: EXECUTION_ID_FIELD,
           after: { type: "integer", minimum: 0, description: "Exclusive cursor: the last sequence already read. Defaults to 0." },
-          limit: { type: "integer", minimum: 1, maximum: 200, description: "Page size. Defaults to 50." },
+          limit: { type: "integer", minimum: 1, maximum: 1000, description: "Page size. Defaults to 50." },
         },
         ["executionId"],
       ),
@@ -484,7 +513,7 @@ export function registerStudioTools(
       }),
     },
     {
-      name: `${TOOL_PREFIX}approve_node`,
+      name: `${TOOL_PREFIX}approve`,
       description:
         "Approve one blocked or proposed node so it becomes ready to run. WRITES a node-outcome decision to the append-only log, attributed to the Studio's WebMCP adapter as an agent (not as the owner). Refused when the node is in no state approval can act on. Returns the head before and after, the re-read status, and the directly attributable decision event - check the returned 'result' field before reporting this as done.",
       inputSchema: closed(
@@ -497,7 +526,7 @@ export function registerStudioTools(
         ["executionId", "node"],
       ),
       annotations: { readOnlyHint: false, untrustedContentHint: true },
-      execute: guarded(`${TOOL_PREFIX}approve_node`, async (input) => {
+      execute: guarded(`${TOOL_PREFIX}approve`, async (input) => {
         const id = requiredId(input);
         const node = input.node;
         if (typeof node !== "string" || node.length === 0 || node.length > 128) {
@@ -737,7 +766,7 @@ export function registerStudioTools(
       }),
     },
     {
-      name: `${TOOL_PREFIX}amend_node_budget`,
+      name: `${TOOL_PREFIX}amend_budget`,
       description:
         "Declare a silence bound for one node - the remedy the attention verdict itself offers when a node's silence could not be judged for want of a declared budget. 'seconds' is the operator's (or your principal's) own decision and has NO default anywhere on this path. 'computedAtSequence' is where the verdict computed the remedy - copy it from graphhelm_get_attention's silenceUnevaluated entry, never invent it. WRITES a form amendment to the append-only log, attributed to the Studio's WebMCP adapter as an agent (not as the owner). Returns the directly attributable decision event - check the returned 'result' field.",
       inputSchema: closed(
@@ -761,7 +790,7 @@ export function registerStudioTools(
         ["executionId", "node", "seconds", "computedAtSequence"],
       ),
       annotations: { readOnlyHint: false, untrustedContentHint: true },
-      execute: guarded(`${TOOL_PREFIX}amend_node_budget`, async (input) => {
+      execute: guarded(`${TOOL_PREFIX}amend_budget`, async (input) => {
         const id = requiredId(input);
         const node = input.node;
         if (typeof node !== "string" || node.length === 0 || node.length > 128) {
@@ -796,6 +825,11 @@ export function registerStudioTools(
       }),
     },
   ];
+  // #1330: each deprecated name answers exactly as its canonical tool does, for one release.
+  for (const [alias, canonical] of Object.entries(DEPRECATED_ALIASES)) {
+    const target = descriptors.find((descriptor) => descriptor.name === canonical);
+    if (target) descriptors.push({ ...target, name: alias, description: `Deprecated alias of ${canonical}; use that name. ${target.description}` });
+  }
 
   const registeredNames = new Set<string>();
   const pendingRegistrations: Promise<void>[] = [];

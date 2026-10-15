@@ -328,24 +328,9 @@ fn graphhelm_plugin_contributions(home: &Path, project: &Path, claude: &Value) -
             found.push(json!({"pluginName": name.clone(), "scope": scope, "contributionPath": path.to_string_lossy().replace('\\', "/"), "contributionDigest": format!("sha256:{}", hex::encode(Sha256::digest(&mcp))), "recordPath": home.join(INSTALLED_PLUGINS_RECORD).to_string_lossy().replace('\\', "/"), "recordDigest": record_digest.clone(), "enabledPath": settings_root.join(settings_relative).to_string_lossy().replace('\\', "/"), "enabledDigest": settings_digest, "settingsInputs": settings_inputs}));
         }
     }
-    let user_scoped = found
-        .iter()
-        .filter(|v| v["scope"] == "user")
-        .cloned()
-        .collect::<Vec<_>>();
-    let project_scoped = found
-        .iter()
-        .filter(|v| v["scope"] == "project")
-        .cloned()
-        .collect::<Vec<_>>();
-    let mut effective = Vec::new();
-    if user_scoped.len() == 1 {
-        effective.push(user_scoped[0].clone());
-    }
-    if project_scoped.len() == 1 {
-        effective.push(project_scoped[0].clone());
-    }
-    effective
+    // Keep all eligible records until the requested cleanup scope is known. Filtering an
+    // ambiguous scope here could make a different scope look like a unique fallback.
+    found
 }
 
 pub fn inventory(project: &Path, home: &Path) -> Result<Value, AdoptionError> {

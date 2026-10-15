@@ -3521,11 +3521,13 @@ fn needs_source(signal: &serde_json::Value) -> bool {
 
 /// #1284: fills a signal's `id`, `emittedAt` and `source` when the caller left them out (absent or
 /// null); a value the caller sent is kept as sent. `id` is derived from the request's idempotency
-/// key, so it names this request and nothing else. `source` is the caller, never a guess: the
-/// owner is `user/<actor>`, a system actor `system/<actor>`, and a scoped agent the ONE node it is
-/// assigned in this execution (`assigned_nodes`) - the same rule a `node_delivery` applies to a
-/// source the caller names. An agent with no node or several is refused, naming the choices.
-/// A non-object signal is left untouched for validation to refuse.
+/// key, so it names this request and nothing else. `source` is the caller, never a guess: a
+/// person (the owner or any other human) is `user/<actor>`, the system actor `system/<actor>`,
+/// and a scoped agent the ONE node it is assigned in this execution (`assigned_nodes`). That
+/// assignment rule is stricter than anything a caller-named source meets (`node_delivery` checks
+/// only that the node exists), so filling never lets an agent claim more than naming would. An
+/// agent with no node or several is refused, naming the choices. A non-object signal is left
+/// untouched for validation to refuse.
 fn fill_signal_defaults(
     signal: &mut serde_json::Value,
     actor: &PersistedActor,
@@ -3535,7 +3537,7 @@ fn fill_signal_defaults(
 ) -> Result<(), String> {
     let source = if needs_source(signal) {
         Some(match actor.actor_type() {
-            PersistedActorType::Owner => {
+            PersistedActorType::Owner | PersistedActorType::Human => {
                 serde_json::json!({"type": "user", "id": actor.id().as_str()})
             }
             PersistedActorType::Agent => match assigned_nodes {
@@ -3555,7 +3557,9 @@ fn fill_signal_defaults(
                     ));
                 }
             },
-            _ => serde_json::json!({"type": "system", "id": actor.id().as_str()}),
+            PersistedActorType::System => {
+                serde_json::json!({"type": "system", "id": actor.id().as_str()})
+            }
         })
     } else {
         None
@@ -8086,6 +8090,38 @@ mod signal_fill_tests {
         )
         .unwrap_err();
         assert!(several.contains("a, b"), "{several}");
+    }
+
+    /// A person who is not the owner is still a person: `user`, never `system`. Only the System
+    /// actor is labelled `system` (review of #1317).
+    #[test]
+    fn a_human_signal_is_labelled_user_and_only_a_system_actor_system() {
+        let mut human = minimal();
+        fill_signal_defaults(
+            &mut human,
+            &actor(PersistedActorType::Human, "human-reviewer"),
+            &[],
+            "k",
+            now(),
+        )
+        .unwrap();
+        assert_eq!(
+            human["source"],
+            serde_json::json!({"type": "user", "id": "human-reviewer"})
+        );
+        let mut system = minimal();
+        fill_signal_defaults(
+            &mut system,
+            &actor(PersistedActorType::System, "system-sweep"),
+            &[],
+            "k",
+            now(),
+        )
+        .unwrap();
+        assert_eq!(
+            system["source"],
+            serde_json::json!({"type": "system", "id": "system-sweep"})
+        );
     }
 
     #[test]

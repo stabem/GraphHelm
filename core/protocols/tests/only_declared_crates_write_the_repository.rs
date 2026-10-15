@@ -58,6 +58,7 @@ use std::collections::{BTreeMap, BTreeSet};
 // ------------------------------------------------------------------------------------------
 
 use graphhelm_test_shims::walk::*;
+use std::path::PathBuf;
 
 /// The three spellings of an append, and the reason there are exactly three.
 ///

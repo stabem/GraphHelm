@@ -30,6 +30,7 @@
 use std::collections::BTreeSet;
 
 use graphhelm_test_shims::walk::*;
+use std::path::{Path, PathBuf};
 
 use graphhelm_test_shims::detect::*;
 

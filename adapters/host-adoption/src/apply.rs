@@ -639,6 +639,87 @@ fn preflight(
                     reason: AdoptionReason::ReviewRequired,
                 });
             }
+            let manifests = guard["manifestInputs"].as_object().ok_or(AdoptionError {
+                reason: AdoptionReason::ReviewRequired,
+            })?;
+            if manifests.is_empty() || manifests.len() > 10_000 {
+                return Err(AdoptionError {
+                    reason: AdoptionReason::ReviewRequired,
+                });
+            }
+            if manifests.get(guard["contributionPath"].as_str().unwrap_or(""))
+                != Some(&guard["contributionDigest"])
+            {
+                return Err(AdoptionError {
+                    reason: AdoptionReason::ReviewRequired,
+                });
+            }
+            for (path, expected) in manifests {
+                let path = Path::new(path);
+                if !path.is_absolute() || path.file_name().is_none_or(|name| name != ".mcp.json") {
+                    return Err(AdoptionError {
+                        reason: AdoptionReason::ReviewRequired,
+                    });
+                }
+                let mut parent = path.parent();
+                while let Some(directory) = parent {
+                    match std::fs::symlink_metadata(directory) {
+                        Ok(metadata) if metadata.file_type().is_symlink() => {
+                            return Err(AdoptionError {
+                                reason: AdoptionReason::ReviewRequired,
+                            });
+                        }
+                        Ok(_) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(_) => {
+                            return Err(AdoptionError {
+                                reason: AdoptionReason::ReviewRequired,
+                            });
+                        }
+                    }
+                    parent = directory.parent();
+                }
+                match std::fs::symlink_metadata(path) {
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::NotFound && expected.is_null() => {}
+                    Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                        let Some(digest) =
+                            expected.as_str().and_then(|v| v.strip_prefix("sha256:"))
+                        else {
+                            return Err(AdoptionError {
+                                reason: AdoptionReason::ReviewRequired,
+                            });
+                        };
+                        if metadata.len() > 1024 * 1024 {
+                            return Err(AdoptionError {
+                                reason: AdoptionReason::ReviewRequired,
+                            });
+                        }
+                        let mut bytes = Vec::new();
+                        std::fs::File::open(path)
+                            .map_err(|_| AdoptionError {
+                                reason: AdoptionReason::ReviewRequired,
+                            })?
+                            .take(1024 * 1024 + 1)
+                            .read_to_end(&mut bytes)
+                            .map_err(|_| AdoptionError {
+                                reason: AdoptionReason::ReviewRequired,
+                            })?;
+                        if bytes.len() > 1024 * 1024
+                            || hex::encode(Sha256::digest(&bytes)) != digest
+                        {
+                            return Err(AdoptionError {
+                                reason: AdoptionReason::ReviewRequired,
+                            });
+                        }
+                    }
+                    _ => {
+                        return Err(AdoptionError {
+                            reason: AdoptionReason::ReviewRequired,
+                        });
+                    }
+                }
+            }
             let inputs = guard["settingsInputs"].as_object().ok_or(AdoptionError {
                 reason: AdoptionReason::ReviewRequired,
             })?;

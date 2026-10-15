@@ -234,6 +234,9 @@ fn graphhelm_plugin_contributions(home: &Path, project: &Path, claude: &Value) -
         return Vec::new();
     };
     let mut found = Vec::new();
+    // Include applicable installs before checking whether they contribute today. A missing or
+    // noncontributing manifest can become a second provider after the plan is reviewed.
+    let mut manifest_inputs = serde_json::Map::new();
     let mut examined = 0usize;
     for (name, installs) in plugins {
         if name != "graphhelm@local"
@@ -297,7 +300,23 @@ fn graphhelm_plugin_contributions(home: &Path, project: &Path, claude: &Value) -
                 continue;
             }
             let path = Path::new(root).join(".mcp.json");
-            let Ok(Some(mcp)) = read_candidate(Path::new(root), ".mcp.json") else {
+            let mcp = match read_candidate(Path::new(root), ".mcp.json") {
+                Ok(bytes) => bytes,
+                Err(_) => return Vec::new(),
+            };
+            if mcp
+                .as_ref()
+                .is_some_and(|bytes| bytes.len() as u64 > MAX_FILE_BYTES)
+            {
+                return Vec::new();
+            }
+            manifest_inputs.insert(
+                path.to_string_lossy().replace('\\', "/"),
+                mcp.as_ref()
+                    .map(|bytes| json!(format!("sha256:{}", hex::encode(Sha256::digest(bytes)))))
+                    .unwrap_or(Value::Null),
+            );
+            let Some(mcp) = mcp else {
                 continue;
             };
             let Ok(document) = serde_json::from_slice::<Value>(&mcp) else {
@@ -330,6 +349,9 @@ fn graphhelm_plugin_contributions(home: &Path, project: &Path, claude: &Value) -
     }
     // Keep all eligible records until the requested cleanup scope is known. Filtering an
     // ambiguous scope here could make a different scope look like a unique fallback.
+    for contribution in &mut found {
+        contribution["manifestInputs"] = json!(manifest_inputs);
+    }
     found
 }
 

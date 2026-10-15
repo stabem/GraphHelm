@@ -2410,7 +2410,7 @@ mod envelope_tests {
                 .collect();
             let body_fields: Vec<&String> = schema["properties"]
                 .as_object()
-                .map(|properties| properties.keys().collect())
+                .map(|properties| properties.keys().collect::<Vec<_>>())
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|field| field.as_str() != "ifMatch" && !path_args.contains(&field.as_str()))

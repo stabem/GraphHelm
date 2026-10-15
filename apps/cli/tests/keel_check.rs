@@ -353,13 +353,13 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         .unwrap();
     let signal: Value = envelope.expose(|bytes| serde_json::from_slice(bytes).unwrap());
     assert_eq!(signal["type"], "keel.blocked");
-    assert_eq!(signal["source"]["id"], "route-correction");
+    assert_eq!(signal["source"]["id"], "plan");
     assert_eq!(signal["proposal"]["id"], "draft-implement");
     let evidence = signal["evidence"].as_array().unwrap();
     for exact in [
         format!("head:{head}"),
         "task:issue-1045".into(),
-        "node:route-correction".into(),
+        "node:plan".into(),
         "finding:keel.scope.path_outside_card".into(),
         "path:docs/notes.md".into(),
     ] {

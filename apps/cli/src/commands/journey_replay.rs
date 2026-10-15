@@ -545,8 +545,12 @@ impl Driver {
         let success = reply["ok"]
             .as_bool()
             .ok_or_else(|| failure("replay.driver_frame_invalid", format!("{path}/ok"), 1))?;
+        // A failed expectation also carries the driver's per-check `details` (#1324); its text is
+        // never read here, only the code and pointer travel on.
         let keys = if success {
             &["protocol", "requestId", "ok", "result"][..]
+        } else if reply["code"] == "driver.expectation_failed" && reply.get("details").is_some() {
+            &["protocol", "requestId", "ok", "code", "path", "details"][..]
         } else {
             &["protocol", "requestId", "ok", "code", "path"][..]
         };
@@ -598,10 +602,15 @@ impl Driver {
         let result = &reply["result"];
         let fields: &[&str] = match op {
             "open" => &["url"],
-            "snapshot" if request["discover"] == true => {
-                &["url", "ariaYaml", "controls", "fingerprint", "expectations"]
-            }
-            "snapshot" => &["url", "ariaYaml", "controls", "fingerprint"],
+            "snapshot" if request["discover"] == true => &[
+                "url",
+                "ariaYaml",
+                "controls",
+                "fingerprint",
+                "checks",
+                "expectations",
+            ],
+            "snapshot" => &["url", "ariaYaml", "controls", "fingerprint", "checks"],
             "act" => &["url", "locator"],
             "capture" => &["path", "width", "height", "masked"],
             "coverage" => &["path", "schema"],
@@ -619,7 +628,18 @@ impl Driver {
             && match op {
                 "open" => text(&result["url"], 4096),
                 "snapshot" => {
-                    (request["discover"] != true
+                    // A success reply judges each requested expectation, in order, as seen (#1324).
+                    let expect = request["expect"].as_array().map_or(&[][..], Vec::as_slice);
+                    result["checks"].as_array().is_some_and(|checks| {
+                        checks.len() == expect.len()
+                            && checks.iter().zip(expect).all(|(check, wanted)| {
+                                closed(check, &["role", "name", "seen", "closest"])
+                                    && check["role"] == wanted["role"]
+                                    && check["name"] == wanted["name"]
+                                    && check["seen"] == true
+                                    && check["closest"].is_null()
+                            })
+                    }) && (request["discover"] != true
                         || result["expectations"].as_array().is_some_and(|pairs| {
                             pairs.len() <= 8
                                 && pairs.iter().all(|pair| {
@@ -2050,7 +2070,7 @@ mod tests {
             (json!({"expect":[]}), true),
             (json!({"expect":[],"discover":true}), false),
         ] {
-            let mut result = json!({"url":"http://localhost/","ariaYaml":aria,"controls":[],"fingerprint":fingerprint});
+            let mut result = json!({"url":"http://localhost/","ariaYaml":aria,"controls":[],"fingerprint":fingerprint,"checks":[]});
             if request["discover"] == true {
                 result["expectations"] = json!([]);
             }
@@ -2080,6 +2100,51 @@ mod tests {
             if !accepted {
                 assert_eq!(reply.unwrap_err().0, "replay.driver_frame_invalid");
             }
+        }
+    }
+
+    /// The snapshot frames the shipped driver writes since #1324: a success carries `checks`, a
+    /// failed expectation carries `details`. Regression: Rust refused both as
+    /// `replay.driver_frame_invalid`, so every flow with an expected screen failed at
+    /// `/screens/<id>/result`. Cost: milliseconds, fixed peer frames; no public seam.
+    #[test]
+    fn the_driver_snapshot_frames_with_checks_and_details_are_accepted() {
+        let fingerprint = format!("sha256:{}", "a".repeat(64));
+        let request = json!({"expect":[{"role":"heading","name":"Entrar"}]});
+        let seen = json!([{"role":"heading","name":"Entrar","seen":true,"closest":null}]);
+        let unseen = json!([{"role":"heading","name":"Entrar","seen":false,"closest":{"role":"heading","name":"Sair"}}]);
+        let success = |checks: &Value| json!({"protocol":PROTOCOL,"requestId":1,"ok":true,"result":{"url":"http://localhost/","ariaYaml":"- heading \"Entrar\"","controls":[],"fingerprint":fingerprint,"checks":checks}});
+        for (frame, expected) in [
+            (success(&seen), Ok(())),
+            (success(&unseen), Err("replay.driver_frame_invalid")),
+            (success(&json!([])), Err("replay.driver_frame_invalid")),
+            (
+                json!({"protocol":PROTOCOL,"requestId":1,"ok":false,"code":"driver.expectation_failed","path":"/","details":{"checks":unseen}}),
+                Err("driver.expectation_failed"),
+            ),
+            (
+                json!({"protocol":PROTOCOL,"requestId":1,"ok":false,"code":"driver.timeout","path":"/","details":{}}),
+                Err("replay.driver_frame_invalid"),
+            ),
+        ] {
+            let (writer, requests) = mpsc::sync_channel::<(Vec<u8>, mpsc::SyncSender<bool>)>(1);
+            std::thread::spawn(move || {
+                let (_, ack) = requests.recv().unwrap();
+                ack.send(true).unwrap();
+            });
+            let (peer, replies) = mpsc::sync_channel(1);
+            peer.send(Ok(Some(serde_json::to_vec(&frame).unwrap())))
+                .unwrap();
+            let mut driver = Driver {
+                owned: None,
+                writer,
+                replies,
+                sequence: 0,
+                secrets: vec![],
+                headed: false,
+            };
+            let reply = driver.call("snapshot", request.clone(), "/screens/entrar");
+            assert_eq!(reply.map(|_| ()).map_err(|e| e.0), expected, "{frame}");
         }
     }
 

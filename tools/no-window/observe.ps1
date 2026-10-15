@@ -185,11 +185,11 @@ if ($Exe) {
   $Command = @($Exe) + @($Arguments)
 }
 if (-not $Command -or $Command.Count -eq 0) { throw 'Provide -Exe and -Arguments, or a command after the observer options.' }
-Write-Output ("observing: " + ($Command -join ' '))
+$line = ($Command | ForEach-Object { [ConsoleWindowWatch]::QuoteArgument($_) }) -join ' '
+Write-Output ("observing: " + $line)
 [ConsoleWindowWatch]::Start()
 $started = Get-Date
 $log = Join-Path $env:TEMP 'gh-nowindow-observe.log'
-$line = ($Command | ForEach-Object { [ConsoleWindowWatch]::QuoteArgument($_) }) -join ' '
 $exit = [ConsoleWindowWatch]::RunDetached($line, $repo, $log)
 Get-Content $log -Tail 20
 Start-Sleep -Milliseconds 500

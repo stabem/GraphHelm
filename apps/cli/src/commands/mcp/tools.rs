@@ -2356,6 +2356,38 @@ mod envelope_tests {
         assert!(!status.description.contains(&rendered_route(&wrong)));
     }
 
+    /// #1361 (opt-2's review risk): the body column decides whether a route sends the derived
+    /// idempotency key and the caller's If-Match. A route sends them exactly when its tool's schema
+    /// is a mutating schema (it declares `ifMatch`), so `cancel` turned to `RouteBody::None` would
+    /// silently drop both and fail here. Named exceptions: the #223 stubs whose schema has no
+    /// fields yet but are mutations in shape (POST with a key, see their table comment).
+    #[test]
+    fn every_table_route_sends_the_key_exactly_when_its_tool_mutates() {
+        const MUTATIONS_WITHOUT_FIELDS: [&str; 2] = ["resolve_contract", "present"];
+        for route in ROUTES {
+            let tool = TOOLS.iter().find(|tool| tool.name == route.tool).unwrap();
+            let declares_if_match = (tool.schema)()["properties"].get("ifMatch").is_some();
+            let mutates = declares_if_match || MUTATIONS_WITHOUT_FIELDS.contains(&route.tool);
+            let sends_key = !matches!(route.body, RouteBody::None);
+            assert_eq!(
+                sends_key,
+                mutates,
+                "{}: body {} but its schema {} ifMatch",
+                route.tool,
+                if sends_key {
+                    "sends the key"
+                } else {
+                    "sends no key"
+                },
+                if declares_if_match {
+                    "declares"
+                } else {
+                    "does not declare"
+                }
+            );
+        }
+    }
+
     /// #1330 (plan D2): `schemas/mcp-tools.json` is `tools/list` as served, emitted from this
     /// table. The Studio's WebMCP adapter imports it instead of hand-copying schemas, so a schema
     /// change here that is not re-emitted fails this cell rather than drifting. Rewrite with

@@ -120,7 +120,8 @@ canonical `projectId`, `executionId`, `laneId`, `flowId`, `purpose` (`author` or
 `expiresAt`, `generation`, `state` and `issuer=owner`. The issuer verifies the execution belongs
 to the Runtime project, the lane is assigned to it and the flow exists. Identifiers pass their
 checked parsers and are compared byte for byte after canonicalization at creation. Assignment
-removal revokes the grant. `approve` is not a grant purpose. A coordinator may request a grant
+removal revokes the grant under the shared transaction rule below. `approve` is not a grant
+purpose. A coordinator may request a grant
 from the owner but cannot issue one by itself.
 
 The lane calls the broker with its task bearer and
@@ -143,10 +144,18 @@ Each durable credential record stores `credentialId`, `grantId`, immutable canon
 collisions or corrupt records refuse all journey use and provisioning. Key rotation explicitly
 reissues tokens; there is no fallback key. Registry and key backups require protection together.
 
-One Runtime owns the project registry. It holds an exclusive process lease against a second
-writer. For each issue, rotate or revoke operation, it takes a write lock, validates current
-state, appends one complete versioned record with length and checksum, flushes and durable-syncs
-the file, then publishes the new immutable in-memory snapshot before acknowledging. Startup
+One Runtime owns the project registry and trusted assignment state. It holds an exclusive process
+lease against a second writer. Assignment changes, grant changes and credential issue, rotation
+or revocation share one transaction lock and one durable journal. Provisioning holds that lock
+from assignment and grant validation through credential commit. Assignment removal holds the
+same lock and commits the removal and revocation of its grants and credentials as one journal
+transaction; it cannot acknowledge removal while an earlier issue is in flight. The transaction
+is one complete versioned record with length and checksum, flushed and durable-synced before
+publishing the new immutable in-memory snapshot or acknowledging either operation. If removal
+commits first, later provisioning refuses with the same stable authorization diagnostic and no
+credential record. If issue commits first, removal revokes that credential before acknowledging.
+Neither path may read assignment state from a separate unsynchronized cache or commit it to a
+separate store outside this atomic boundary. Startup
 replay refuses a corrupt or truncated record rather than guessing an earlier state. A crash
 before sync is unacknowledged; a crash after sync is recovered on replay. A lost response after
 commit requires revocation by `credentialId` before retry. A journey request holds the registry
@@ -237,6 +246,8 @@ Runtime. They must show:
 - rejected requests preserve the draft, review and event state.
 - spoofed lane identity and a task bearer on journey routes are rejected;
 - post-revocation use is refused before writes, including on the same Runtime process.
+- concurrent assignment removal and provisioning serialize in either order: removal first refuses
+  issuance, while issuance first is revoked before removal acknowledgement, including after replay.
 
 These HTTP tests establish application authentication and behavior only. A separate real-host
 observer must show one lane cannot read another lane's token or the owner's token under the

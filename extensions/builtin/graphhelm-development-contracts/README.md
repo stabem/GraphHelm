@@ -15,7 +15,7 @@ The inventory is declared in [extension.json](extension.json). Entry skills have
 | [`blind-review`](skills/blind-review/SKILL.md) | one blind verdict on a pinned head, with commands and results | review a change it helped write |
 | [`merge`](skills/merge/SKILL.md) | a pinned squash merge, read back, and a released workspace | merge a head the approval did not name |
 | [`memory-curator`](skills/memory-curator/SKILL.md) | advisory candidates for durable lessons | record anything directly |
-| [`keel`](skills/keel/SKILL.md) | a scoped contract card, measured write surface, and named proof | enforce its own rules or activate the penalty ladder |
+| [`keel`](skills/keel/SKILL.md) | the project's KEEL.md pattern: a scoped card, end-to-end proof first, every Keel value | enforce its own rules; the checks do |
 | [`test-audit`](skills/test-audit/SKILL.md) | an authoring gate, suite audit, or deletion record naming the covering observer | enforce rules or remove a test without a covering-observer record |
 
 For the left-to-right overview of both built-in skill packages, see the

@@ -1,7 +1,7 @@
 # Delivery process: GraphHelm + Keel
 
 This is the only process for changing this repository. How code is written is
-[Keel](../keel/KEEL_SPEC.md); this page says how a change gets from an issue to `main`.
+[Keel](../../KEEL.md); this page says how a change gets from an issue to `main`.
 
 ## 1. Issue
 
@@ -30,20 +30,8 @@ length it warns and still records; the Studio clips long text and shows all of i
 
 ## 2. Keel card
 
-Keel is proportional. Use only as much of it as the change needs.
+How much card a change needs, and what goes in it, is [keel/KEEL_PLAN.md](../../keel/KEEL_PLAN.md).
 
-| The change | What goes in the PR body |
-|---|---|
-| Docs, comments, inert config values, a one-line fix, a test-only fix | Nothing beyond the summary when the change has a known observer and no expanded-route risk; a test removal also carries its deletion record (the `test-audit` skill), naming the observer that still covers its obligation. Runtime- or security-affecting config needs a full card and behavioral evidence. |
-| A bounded code change | A three-line card: the paths in scope, the promise, the command that proves it. |
-| User-visible: the scope touches a screen's `scopePaths` of a compiled journey | The three-line card with `journeys:` naming every journey touched, and those journeys replayed green at the head. No new unit test is required; one may be added for a defect the journey cannot observe. |
-| New public surface: a module, type, public function, dependency or test file | The full card, and the new surface named. |
-| Persistence, permissions, compatibility, security, external effects, runtime-affecting config, concurrency, destructive operations | The full card, the JPD flow (`AGENTS.md`, Journey-Proven Development), and a test that names the defect (Law 3) even when a journey also covers the change. |
-
-A card lists paths, not globs. A new dependency is always named. Risk is read from what the change
-touches, not from how big it is: a one-line change can remove a permission check. A display-only
-config label may use the direct route; a Runtime timeout or permission setting needs behavioral
-evidence even if parsing succeeds.
 
 ## 3. Work
 
@@ -52,7 +40,7 @@ only the surface the promise needs, prove with the smallest adequate observer. B
 PR, the author runs the tests the change can reach and lists them, with their result, in the PR
 body.
 
-**Retire the path you replace (Keel Law 1).** When a change removes, replaces or redirects
+**Retire the path you replace (`keel/KEEL_EXEC.md`).** When a change removes, replaces or redirects
 a production caller, check the displaced declarations and their exclusive helpers/types, styles,
 dependencies and tests before opening the PR. A rename alone does not make its target dead. Search
 from the actual entry points and check dynamic registrations, public consumers, manual commands,
@@ -201,7 +189,7 @@ decision (approve a design, choose an option) goes to the user. The plugin's Sto
   Reading the PR's own comments is part of the review, not a finding handed over in a brief.
 - **One review for every kind of change**, including security,
   persistence, concurrency and destructive changes, until the owner raises it. A change that touches
-  a `keel.yaml` invariant class still needs its Law 3 test; the review checks it is there.
+  a `keel.yaml` invariant class still needs the isolated tests `keel/KEEL_EXEC.md` asks for, with their failure list; the review checks they are there.
   For a user-visible change the reviewer also runs `graphhelm journey replay` for each journey the
   card names, on the head, and pastes its summary.
 - The reviewer **runs the tests the change reaches** on that head and names each command and its

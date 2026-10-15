@@ -46,7 +46,9 @@ orchestrator calls this once per agent. The orchestrator itself never takes a la
 
 3. **Start it** with the host's subagent tool and the roster's model for its role. Its brief
    carries: its lane name, the issue, the project path and branch, the Runtime URL, execution
-   and token path, the skill it runs (`implement`, `blind-review`, `journey-map` ...), and the
+   and token path, the skill it runs (`implement`, `blind-review`, `journey-map` ...), the project's
+   `KEEL.md` and the Keel file for its step (`keel/KEEL_PLAN.md`, `KEEL_EXEC.md`, `KEEL_REVIEW.md` or
+   `KEEL_MERGE.md`) when the project has them, and the
    rule that it records its own steps with `task_record.py --lane <lane>` (`pr_opened` after
    every push, `review_verdict`, `merged`). A reviewer's brief follows `blind-review`: never the
    author's reasoning or an expected verdict. With the GraphHelm hooks installed,

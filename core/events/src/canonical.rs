@@ -1,5 +1,4 @@
 use serde::Serialize;
-use serde_json::Value;
 
 use crate::EventRepositoryError;
 use graphhelm_protocols::EventEnvelope;
@@ -34,26 +33,10 @@ pub(crate) fn serialized_len_bounded(
     Ok(writer.count)
 }
 
+/// #1378: the workspace's one canonical writer over the serialized value.
 pub(crate) fn canonical_bytes(value: &impl Serialize) -> Result<Vec<u8>, EventRepositoryError> {
     let value = serde_json::to_value(value).map_err(|_| EventRepositoryError::Invalid)?;
-    serde_json::to_vec(&canonical_value(value)).map_err(|_| EventRepositoryError::Invalid)
-}
-
-fn canonical_value(value: Value) -> Value {
-    match value {
-        Value::Array(values) => Value::Array(values.into_iter().map(canonical_value).collect()),
-        Value::Object(values) => {
-            let mut entries = values.into_iter().collect::<Vec<_>>();
-            entries.sort_by(|left, right| left.0.cmp(&right.0));
-            Value::Object(
-                entries
-                    .into_iter()
-                    .map(|(key, value)| (key, canonical_value(value)))
-                    .collect(),
-            )
-        }
-        scalar => scalar,
-    }
+    Ok(graphhelm_protocols::canonical::canonical_bytes(&value))
 }
 
 // #1272: the one pair, re-exported under the names this crate already uses.
@@ -78,6 +61,7 @@ pub(crate) fn event_hash(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     /// #1378: the event chain hash is persisted, so its canonical bytes are history. Every event
     /// in the committed fixture store is re-hashed here and must equal the `eventHash` it was

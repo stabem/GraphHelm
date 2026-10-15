@@ -136,12 +136,18 @@ function Get-ServedProject($commandLine) {
     if ($commandLine -match '--project\s+(\S+)') { return $Matches[1] }
     return ""
 }
+# Compared as full paths, without the \\?\ prefix, trailing slashes or case.
+function ConvertTo-PlainPath($path) {
+    $path = $path -replace '^\\\\\?\\', ''
+    try { $path = [System.IO.Path]::GetFullPath($path) } catch {}
+    return $path.TrimEnd([char]92, [char]47).ToLowerInvariant()
+}
 if ($alive) {
     $occupant = Get-RuntimeOccupant
     if ($occupant -and $ProjectPath) {
         $served = Get-ServedProject (Get-CimInstance Win32_Process -Filter "ProcessId = $($occupant.Id)" -ErrorAction SilentlyContinue).CommandLine
         $wanted = $ProjectPath.TrimEnd([char]92, [char]47)
-        if ($served -and ($served.TrimEnd([char]92, [char]47) -ne $wanted)) {
+        if ($served -and ((ConvertTo-PlainPath $served) -ne (ConvertTo-PlainPath $wanted))) {
             throw "The GraphHelm Runtime at $runtimeUrl serves another folder of this project: $served (this Studio is for $wanted). Journeys run there would test that folder's code. Stop that Runtime (pid $($occupant.Id)) or start this Studio with a different --bind."
         }
     }

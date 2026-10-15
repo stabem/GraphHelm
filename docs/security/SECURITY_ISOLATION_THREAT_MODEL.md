@@ -63,6 +63,16 @@ See [RFC-1309](../rfcs/RFC-1309-JOURNEY-CREDENTIAL-PROVISIONING.md) for the prop
 refusal behavior, lifecycle, authority conflict and required observers. This is a design proposal,
 not an accepted change to journey approval authority or current Runtime behavior.
 
+Current behavior has a separate unresolved authority mismatch: the journey review route calls
+`journey_flow::review_approve`, which calls `approve_as` and persists an agent reviewer as the
+approver; `apps/cli/tests/journey_flow_surfaces.rs` asserts the resulting flow status is
+`approved`. This conflicts with the owner-only approval policy documented in
+[`docs/guides/journeys.md`](../guides/journeys.md). The target
+recommendation is to retain owner-only final approval, but no authority decision or implementation
+change has been accepted. An independent security disposition is still required; see the RFC's
+six-question table. Until then, treat this as a documented implementation/policy conflict, not as
+proof that current behavior is owner-only.
+
 The proposed broker authenticates an assigned lane with its execution-and-lane task bearer,
 issued through an owner-side coordinator. The shared agent session token or a declared actor
 header cannot request a journey token. An owner-authenticated grant fixes the canonical project,

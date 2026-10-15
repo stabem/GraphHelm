@@ -9,7 +9,7 @@ import { DEPRECATED_ALIASES, MCP_TOOL_OF, registerStudioTools, type WebMcpToolDe
  * page tools spelled MCP names differently. */
 
 interface Schema { required?: string[]; properties?: Record<string, Record<string, unknown>> }
-const mcp = new Map((catalog as { tools: { name: string; inputSchema: Schema }[] }).tools.map((tool) => [tool.name, tool.inputSchema]));
+const mcp = new Map((catalog as unknown as { tools: { name: string; inputSchema: Schema }[] }).tools.map((tool) => [tool.name, tool.inputSchema]));
 
 /** Inputs only the page offers: the idempotency key a browser retry needs, which MCP derives. */
 const STUDIO_ONLY_FIELDS = new Set(["idempotencyKey"]);

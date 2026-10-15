@@ -67,7 +67,6 @@ public static class ConsoleWindowWatch {
   static readonly List<string> TabSeen = new List<string>();
   static readonly Dictionary<int, HashSet<string>> KnownTabs = new Dictionary<int, HashSet<string>>();
   static readonly Dictionary<int, AutomationElement> TabWindows = new Dictionary<int, AutomationElement>();
-  static StructureChangedEventHandler TabHandler;
   const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
   static string Identity(uint pid, long expectedCreation) {
     IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
@@ -130,11 +129,6 @@ public static class ConsoleWindowWatch {
       }
     }
   }
-  static void OnTabStructure(object sender, StructureChangedEventArgs args) {
-    if (args.StructureChangeType != StructureChangeType.ChildAdded) return;
-    try { ScanTabs(); }
-    catch (Exception ex) { lock (Gate) { TabError = "accessibility event: " + ex.GetType().Name; } }
-  }
   public static string StartTabs() {
     TabWorker = new Thread(() => {
       try {
@@ -152,9 +146,6 @@ public static class ConsoleWindowWatch {
           TabWindows.Add(hwnd, window);
         }
         if (TabWindows.Count == 0) throw new InvalidOperationException("no visible Terminal window in baseline");
-        TabHandler = OnTabStructure;
-        foreach (var window in TabWindows.Values)
-          Automation.AddStructureChangedEventHandler(window, TreeScope.Descendants, TabHandler);
         TabReady.Set();
         while (!TabStop.WaitOne(100)) {
           ScanTabs();
@@ -163,12 +154,6 @@ public static class ConsoleWindowWatch {
       } catch (Exception ex) { lock (Gate) { TabError = "accessibility: " + ex.GetType().Name + " " + ex.Message; } }
       finally {
         TabReady.Set();
-        if (TabHandler != null) {
-          foreach (var window in TabWindows.Values) {
-            try { Automation.RemoveStructureChangedEventHandler(window, TabHandler); }
-            catch (Exception ex) { lock (Gate) { TabError = "accessibility cleanup: " + ex.GetType().Name; } }
-          }
-        }
       }
     });
     TabWorker.IsBackground = true;
@@ -178,7 +163,7 @@ public static class ConsoleWindowWatch {
   }
   public static string[] StopTabs(out string error) {
     TabStop.Set();
-    if (!TabWorker.Join(2000)) { error = "accessibility collection timed out"; return new string[0]; }
+    if (!TabWorker.Join(10000)) { error = "accessibility collection timed out"; return new string[0]; }
     lock (Gate) { error = TabError; return TabSeen.ToArray(); }
   }
   static void OnEvent(IntPtr hook, uint evt, IntPtr hwnd, int idObject, int idChild, uint thread, uint time) {

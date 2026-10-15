@@ -20,5 +20,6 @@
     "noEmit": true,
     "jsx": "react-jsx"
   },
-  "include": ["src", "../../schemas/mcp-tools.json"]
+  "include": ["src", "../../schemas/mcp-tools.json"],
+  "exclude": ["src/runtime/session-gate.test.ts"]
 }

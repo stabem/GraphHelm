@@ -281,6 +281,8 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         .args([
             "--key-id",
             "route-key",
+            "--actor-id",
+            "route-agent",
             "--proposal-digest",
             digest,
             "--draft-id",

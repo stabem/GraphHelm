@@ -40,6 +40,25 @@ const viewport={width:1280,height:720};
 async function open(c,base,allowOrigins=[],extra={}) {const r=await c.send('open',{base,viewport,allowOrigins,...extra});assert.equal(r.ok,true,JSON.stringify(r));}
 async function act(c,kind,role,name,extra={}) {return c.send('act',{kind,role,name,...extra});}
 
+test('snapshot wire reports each check after a missing heading and redacts diagnostics',async t=>{
+  const secret='CANARY_driver_checks_721';
+  const server=createServer((_,res)=>{res.setHeader('Content-Type','text/html; charset=utf-8');res.end(`<h1>Produto conferido</h1><section role="region" aria-label="Também encontramos em"><button>Salvar item</button></section><button aria-label="${secret}">private</button>`);});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const c=await client(t,{GRAPHHELM_SECRET_CHECKS:secret});
+  await open(c,`http://127.0.0.1:${server.address().port}/`,[],{survive:true});
+  const failed=await c.send('snapshot',{expect:[{role:'heading',name:'Produto encontrado'},{role:'region',name:'Também encontramos em'},{role:'button',name:'Salvar item'}]});
+  assert.equal(failed.ok,false);assert.equal(failed.code,'driver.expectation_failed');
+  assert.deepEqual(failed.details.checks,[
+    {role:'heading',name:'Produto encontrado',seen:false,closest:{role:'heading',name:'Produto conferido'}},
+    {role:'region',name:'Também encontramos em',seen:true,closest:null},
+    {role:'button',name:'Salvar item',seen:true,closest:null},
+  ]);
+  const success=await c.send('snapshot',{expect:[{role:'heading',name:'Produto conferido'}]});
+  assert.equal(success.ok,true);assert.equal(success.result.checks[0].seen,true);
+  assert.ok(!JSON.stringify(failed).includes(secret));assert.ok(!JSON.stringify(success).includes(secret));
+});
+
 test('exact names, ambiguity, contextual cache and actual supported actions',async t=>{
   const f=await startFixture();t.after(()=>f.close());
   const c=await client(t);await open(c,f.base+'/controls');

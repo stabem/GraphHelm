@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { resolve, relative, isAbsolute, dirname } from 'node:path';
 import { lstat, mkdir, rename, writeFile } from 'node:fs/promises';
+import { judgeExpectations } from './judge.mjs';
 
 const PROTOCOL = 'graphhelm-journey-driver/1';
 const FRAME = 65536, TIMEOUT = 30000;
@@ -425,13 +426,34 @@ async function run(r) {
     return writeCoverageArtifact(coverageArtifact(entries, ['JavaScript page coverage only', 'backend, CSS, and worker coverage is not collected']));
   }
   if (r.op === 'snapshot') {
-    for (const expected of r.expect) {
-      // A screen renders after its document loads; wait for the control, then require it unique.
+    // Wait concurrently against one shared budget; one absent control must not consume a wait
+    // for every later assertion. Playwright calls may still exceed this nominal deadline.
+    await Promise.all(r.expect.map(async expected => {
       const target=page.getByRole(expected.role,{name:expected.name,exact:true});
-      try { await target.first().waitFor({state:'visible',timeout:SCREEN_WAIT}); } catch (err) { if (err.code) throw err; fail('driver.expectation_failed'); }
-      await unique(target,'driver.expectation_failed');
+      try { await target.first().waitFor({state:'visible',timeout:SCREEN_WAIT}); }
+      catch (err) { if (err.code || err.name!=='TimeoutError') throw err; }
+    }));
+    const rawAria=await page.locator('body').ariaSnapshot({timeout:TIMEOUT});
+    if (Buffer.byteLength(rawAria)>SNAPSHOT) fail('driver.snapshot_too_large');
+    const mainAria=redacted(rawAria);
+    const observed=new Map();
+    for (const match of rawAria.matchAll(/^\s*- ([a-z]+)(?: ("(?:[^"\\]|\\.)*"))?/gm)) {
+      if (!roles.has(match[1])) continue;
+      let name=''; try { name=match[2] ? JSON.parse(match[2]) : ''; } catch { fail('driver.protocol_invalid'); }
+      if (!string(name,256,true)) fail('driver.snapshot_too_large');
+      const key=JSON.stringify([match[1],name]);
+      observed.set(key,{role:match[1],name,count:1,visible:true});
+      if (observed.size>128) fail('driver.snapshot_too_large');
     }
-    const mainAria=redacted(await page.locator('body').ariaSnapshot({timeout:TIMEOUT}));
+    for (const expected of r.expect) {
+      const locator=page.getByRole(expected.role,{name:expected.name,exact:true});
+      const count=await locator.count();
+      const visible=count>0 && await locator.first().isVisible();
+      observed.set(JSON.stringify([expected.role,expected.name]),{...expected,count,visible});
+    }
+    const checks=judgeExpectations(r.expect,[...observed.values()]).map(check=>({
+      ...check,name:redacted(check.name),closest:check.closest && {...check.closest,name:redacted(check.closest.name)},
+    }));
     let ariaYaml=mainAria;
     const expectations=[];
     if (r.discover) {
@@ -459,8 +481,9 @@ async function run(r) {
     }
     if (Buffer.byteLength(ariaYaml)>SNAPSHOT) fail('driver.snapshot_too_large');
     checkHost();
+    if (checks.some(check=>!check.seen)) throw Object.assign(new Error('driver.expectation_failed'),{code:'driver.expectation_failed',details:clean({checks})});
     // Identity reads the whole page; the model gets the page within its budget (#356).
-    return clean({url:redacted(page.url()),ariaYaml:r.discover?summarized(ariaYaml,SNAPSHOT_DISCOVER):ariaYaml,...skeleton(ariaYaml),...(r.discover?{expectations}:{})});
+    return clean({url:redacted(page.url()),ariaYaml:r.discover?summarized(ariaYaml,SNAPSHOT_DISCOVER):ariaYaml,...skeleton(ariaYaml),checks,...(r.discover?{expectations}:{})});
   }
   if (r.op === 'act') {
     const target=await locate(r), locator=await observedLocator(target,r);
@@ -540,7 +563,7 @@ async function reply(r) {
     result=clean({protocol:PROTOCOL,requestId:r.requestId,ok:true,result:await run(r)});
   } catch(err) {
     const code=err.code || (err.name==='TimeoutError' ? 'driver.timeout' : 'driver.action_failed');
-    result={protocol:PROTOCOL,requestId:Number.isSafeInteger(r?.requestId) ? r.requestId : requestId+1,ok:false,code,path:'/'};
+    result={protocol:PROTOCOL,requestId:Number.isSafeInteger(r?.requestId) ? r.requestId : requestId+1,ok:false,code,path:'/',...(code==='driver.expectation_failed' && err.details ? {details:clean(err.details)} : {})};
   }
   let line=JSON.stringify(result)+'\n';
   if (Buffer.byteLength(line)>FRAME) line=JSON.stringify({protocol:PROTOCOL,requestId:result.requestId,ok:false,code:'driver.frame_too_large',path:'/'})+'\n';

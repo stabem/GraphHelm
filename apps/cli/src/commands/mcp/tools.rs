@@ -35,12 +35,12 @@ const TOOLS: [ToolSpec; 47] = [
     },
     ToolSpec {
         name: "list",
-        description: "List executions (GET /v1/executions): one row per stream (id, mode, status, attention, head, start and last instants), by id. after is an exclusive cursor; limit is 1..=100, default 20, and a larger one is refused, not clamped. Read-only.",
+        description: "List executions (GET /v1/executions): one row per stream (id, mode, status, attention, head, start/last instants), by id. after: exclusive cursor; limit 1..=100 (default 20; larger refused). Read-only.",
         schema: list_schema,
     },
     ToolSpec {
         name: "topology",
-        description: "Read a graph file's shape (POST /v1/graph/topology): entrypoints, nodes, edges and the semantic hash. Compare the hash with a run's execution_started graphHash before claiming these edges are that run's. file is on the Runtime host. Read-only.",
+        description: "Read a graph file's shape (POST /v1/graph/topology): entrypoints, nodes, edges and the semantic hash. Match it to a run's execution_started graphHash before calling these edges that run's. file is on the Runtime host. Read-only.",
         schema: topology_schema,
     },
     ToolSpec {
@@ -614,7 +614,7 @@ fn signal_schema() -> serde_json::Value {
             // #1330: the envelope's schema, named by its `$id` rather than `$ref`d: the Runtime
             // fills `id`, `emittedAt` and `source` (#1284), which that schema requires, and a
             // client that cannot resolve a remote `$ref` would refuse the tool outright.
-            "signal": {"type": "object", "description": "https://p50.dev/schemas/graph-signal.schema.json; id, emittedAt, source optional"},
+            "signal": {"type": "object", "description": "schemas/graph-signal.schema.json; id, emittedAt, source optional"},
             "evidenceOut": {"type": "string"},
             // #313: images beside the signal, never inside the envelope. The Runtime re-checks
             // every cap and the magic bytes; this schema only closes the wire shape.
@@ -899,7 +899,8 @@ fn amend_budget_schema() -> serde_json::Value {
         serde_json::json!({
             "executionId": {"type": "string"},
             "node": {"type": "string"},
-            "seconds": {"type": "integer", "minimum": 1, "maximum": u64::MAX,
+            // #1330: the Runtime's bound (`max_wall_clock_seconds`, ten years), not u64::MAX.
+            "seconds": {"type": "integer", "minimum": 1, "maximum": 315576000,
                 "description": "The bound YOU decide. Nothing here suggests one."},
             "computedAtSequence": {"type": "integer", "minimum": 0, "maximum": u64::MAX,
                 "description": "The frontier the verdict you are answering was computed at. A stale amendment is refused with the current one."},

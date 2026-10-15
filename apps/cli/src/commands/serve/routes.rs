@@ -416,6 +416,19 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
             );
         }
     };
+    // #1328: each of the three names a host path the Runtime reads.
+    for (path, field) in [
+        (fixture.as_deref(), "fixture"),
+        (judge_fixture.as_deref(), "judgeFixture"),
+        (library.as_deref(), "library"),
+    ] {
+        if let Some(path) = path
+            && let Err(response) =
+                confine_to_project(state.path_roots.as_deref(), path, SYNTHESIZE_COMMAND, field)
+        {
+            return response;
+        }
+    }
 
     let model: Box<dyn DraftModel + Send> = match fixture {
         Some(path) => {
@@ -3843,6 +3856,17 @@ pub(super) async fn signal(
             );
         }
     };
+    // #1328: a path the Runtime writes, so it is confined like the ones it reads.
+    if let Some(path) = &evidence_out
+        && let Err(response) = confine_to_project(
+            state.path_roots.as_deref(),
+            path,
+            SIGNAL_COMMAND,
+            "evidenceOut",
+        )
+    {
+        return response;
+    }
     if identity.actor.actor_type() == PersistedActorType::Agent && evidence_out.is_some() {
         return bad_request(
             SIGNAL_COMMAND,
@@ -5479,6 +5503,11 @@ async fn prepare_drive(
                     )));
                 }
             };
+            // #1328: a requested workspace root is a host path the drive reads and writes.
+            if let Some(path) = &requested_project {
+                confine_to_project(state.path_roots.as_deref(), path, command, "project")
+                    .map_err(MutationError::Prepared)?;
+            }
             let project = requested_project
                 .or_else(|| wiring.tools.as_ref().and_then(|tools| tools.project.clone()))
                 .or_else(|| std::env::current_dir().ok())
@@ -5859,15 +5888,21 @@ pub(super) async fn gateway_probe(
             _ => {}
         }
     }
-    if let Some(path) = &manifest
-        && let Err(response) = confine_to_project(
-            state.path_roots.as_deref(),
-            path,
-            GATEWAY_PROBE_COMMAND,
-            "manifest",
-        )
-    {
-        return response;
+    for (path, field) in [
+        (manifest.as_deref(), "manifest"),
+        (broker.as_deref(), "broker"),
+        (keyring.as_deref(), "keyring"),
+    ] {
+        if let Some(path) = path
+            && let Err(response) = confine_to_project(
+                state.path_roots.as_deref(),
+                path,
+                GATEWAY_PROBE_COMMAND,
+                field,
+            )
+        {
+            return response;
+        }
     }
     let Some(manifest) = effective_manifest(&state, manifest) else {
         return bad_request(

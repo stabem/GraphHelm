@@ -1328,8 +1328,9 @@ pub struct ServeArgs {
     /// owner flips it after minting one credential per lane, so no record is lost in between.
     #[arg(long = "require-lane-credential")]
     pub require_lane_credential: bool,
-    /// #1328: refuse a `file`, `fixtures` or query `manifest` path that resolves outside the
-    /// allowed roots (`--project` and every `--path-root`). Off by default: lanes post paths from
+    /// #1328: refuse any host path a request names (`file`, `fixtures`, `manifest`, `evidenceOut`,
+    /// `project`, and synthesize's and probe's paths) that resolves outside the allowed roots
+    /// (`--project` and every `--path-root`). Off by default: lanes post paths from
     /// worktrees outside the project, so the owner turns it on with their roots after a restart,
     /// the same way `--require-lane-credential` is flipped.
     #[arg(long = "confine-paths")]

@@ -12248,6 +12248,28 @@ fn a_path_outside_the_served_project_is_refused_with_the_existing_code() {
         "the same request from inside the project runs: {reply}"
     );
 
+    // evidenceOut is a path the Runtime WRITES: confined the same way, before the envelope lands.
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/exec-inside/signal"),
+        &token,
+        &[
+            ("Idempotency-Key", "confine-evidence-out"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "signal": {"type": "finding.root_cause", "severity": "high",
+                "description": "d", "evidence": ["e"]},
+            "evidenceOut": outside.join("envelope.json"),
+        }),
+    );
+    assert_eq!(status, 400, "{reply}");
+    refused(&reply, "evidenceOut");
+    assert!(
+        !outside.join("envelope.json").exists(),
+        "nothing was written outside"
+    );
+
     // A manifest named in the query is a host path too (the query is not percent-decoded).
     let manifest = outside.join("manifest.json");
     std::fs::write(&manifest, "{}").unwrap();

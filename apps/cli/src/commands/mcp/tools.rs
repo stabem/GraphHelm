@@ -282,12 +282,12 @@ const TOOLS: [ToolSpec; 47] = [
     },
     ToolSpec {
         name: "claim",
-        description: "Claim a waiting_input node's external work is done (POST /v1/executions/{executionId}/claim). Testimony only: nothing releases until clear countersigns. Needs the start graph (file or graph) and evidence [{kind, contentHash, size}]; waitSeq and asserter default.",
+        description: "Claim a waiting_input node's external work is done (POST /v1/executions/{executionId}/claim). Testimony only: nothing releases until clear countersigns. The graph (file or graph) is optional; evidence is [{kind, contentHash, size}]; waitSeq and asserter default.",
         schema: claim_schema,
     },
     ToolSpec {
         name: "clear",
-        description: "Countersign a claim by machine replay (POST /v1/executions/{executionId}/clear) with manifestHash or the evidence bundle: a match clears the node and drives dependents, a mismatch is journaled. Needs the graph and the claim's claimSeq. countersign is refused (#529).",
+        description: "Countersign a claim by machine replay (POST /v1/executions/{executionId}/clear) with manifestHash or the evidence bundle: a match clears the node and drives dependents, a mismatch is journaled. Graph optional; claimSeq defaults to the one open claim. countersign is refused (#529).",
         schema: clear_schema,
     },
     ToolSpec {
@@ -781,13 +781,36 @@ fn claim_schema() -> serde_json::Value {
             "graph": {"type": "object"},
             "node": {"type": "string"},
             "waitSeq": {"type": "integer", "minimum": 0, "maximum": u64::MAX},
-            "evidence": {"type": "array", "items": {"type": "object"}},
+            "evidence": evidence_items_schema(),
             "asserter": {"type": "string"},
             "mode": {"type": "string"},
         }),
         &["executionId", "node"],
     )
 }
+
+/// #1284: one customs evidence item, `{kind, contentHash, size}`, typed so a caller learns the
+/// shape from the schema instead of from a refusal. The Runtime's `parse_claim_evidence` stays the
+/// authority on the values.
+fn evidence_items_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string"},
+                "contentHash": {"type": "string"},
+                "size": {"type": "integer", "minimum": 0},
+            },
+            "required": ["kind", "contentHash", "size"],
+            "additionalProperties": false,
+        },
+    })
+}
+
+/// #1284: the signal fields the Runtime fills when the caller leaves them out.
+#[cfg(test)]
+const SERVER_FILLED_SIGNAL_FIELDS: &[&str] = &["id", "emittedAt", "source"];
 
 fn clear_schema() -> serde_json::Value {
     mutating_schema(
@@ -799,10 +822,10 @@ fn clear_schema() -> serde_json::Value {
             "route": {"type": "string"},
             "claimSeq": {"type": "integer", "minimum": 0, "maximum": u64::MAX},
             "manifestHash": {"type": "string"},
-            "evidence": {"type": "array", "items": {"type": "object"}},
+            "evidence": evidence_items_schema(),
             "verifier": {"type": "string"},
         }),
-        &["executionId", "claimSeq"],
+        &["executionId"],
     )
 }
 
@@ -1254,14 +1277,14 @@ fn placeholder(tool: &str, field: &str, declared: &str) -> serde_json::Value {
         // a required field added to the schema reddens this example instead of the next session.
         // The first version of this example lacked `evidence` and `emittedAt`: measured, a session
         // copied it and was refused twice more (token-bench 1044, v5).
+        // #1284: `id`, `emittedAt` and `source` are filled by the Runtime
+        // (SERVER_FILLED_SIGNAL_FIELDS), so the example carries only what the caller decides. A
+        // scoped agent assigned several nodes (or none) names `source` itself; the refusal says so.
         ("signal", "signal") => serde_json::json!({
-            "id": "<a new signal id you choose>",
-            "source": {"type": "node", "id": "<a nodeId>"},
             "type": "finding.root_cause",
             "severity": "high",
             "description": "<what was found, in one paragraph>",
-            "evidence": ["<one observation per entry: a command and what it printed>"],
-            "emittedAt": "<RFC 3339 instant, e.g. 2026-09-22T16:45:00Z>"
+            "evidence": ["<one observation per entry: a command and what it printed>"]
         }),
         _ => match declared {
             "integer" => serde_json::json!(1),
@@ -2394,18 +2417,17 @@ mod envelope_tests {
             .iter()
             .filter_map(serde_json::Value::as_str)
         {
+            // #1284: a field the Runtime fills is left out on purpose; every other one is there.
+            if SERVER_FILLED_SIGNAL_FIELDS.contains(&field) {
+                assert!(
+                    signal.get(field).is_none(),
+                    "the example should leave {field:?} to the Runtime: {signal}"
+                );
+                continue;
+            }
             assert!(
                 signal.get(field).is_some(),
                 "signal example lacks required {field:?}: {signal}"
-            );
-        }
-        let source_required = schema["properties"]["source"]["required"]
-            .as_array()
-            .expect("source.required");
-        for field in source_required.iter().filter_map(serde_json::Value::as_str) {
-            assert!(
-                signal["source"].get(field).is_some(),
-                "signal.source lacks {field:?}"
             );
         }
         let severities = schema["properties"]["severity"]["enum"]

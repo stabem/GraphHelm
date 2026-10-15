@@ -1604,6 +1604,123 @@ fn each_tool_maps_to_exactly_one_api_request_and_returns_the_envelope() {
     );
 }
 
+/// #1284: a minimal signal - only what the caller decides - is accepted over MCP, and the stored
+/// event and the SEALED envelope both carry the Runtime-filled `id`, `emittedAt` and `source`; the
+/// envelope's content hash is the event's `envelopeSha256`, so the digest covers the filled
+/// values. A scoped agent assigned no node is refused at `/signal/source` instead of guessed.
+#[test]
+fn a_minimal_signal_is_accepted_and_the_sealed_envelope_carries_the_filled_fields() {
+    let harness = wired_sealed("exec-mcp-minimal-signal");
+    let marker = "minimal-signal-marker-1284";
+    let session = harness.session_as(
+        "owner-chat",
+        "owner",
+        &[
+            initialize_request(1, "2025-06-18"),
+            initialized_notification(),
+            tool_call(
+                serde_json::json!("min-1"),
+                "signal",
+                serde_json::json!({
+                    "executionId": "exec-mcp-minimal-signal",
+                    "signal": {
+                        "type": "finding.root_cause",
+                        "severity": "high",
+                        "description": marker,
+                        "evidence": ["one observation"],
+                    },
+                }),
+            ),
+        ],
+    );
+    assert_eq!(
+        session.replies.len(),
+        2,
+        "replies {:?}; stderr {}",
+        session.replies,
+        String::from_utf8_lossy(&session.output.stderr)
+    );
+    let (is_error, envelope) = tool_envelope(&session.replies[1]);
+    assert!(!is_error, "the minimal signal must be accepted: {envelope}");
+
+    let events = http_get_json(
+        &harness.base,
+        &harness.token,
+        "/v1/executions/exec-mcp-minimal-signal/events?limit=1000",
+    );
+    let recorded = events["data"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|event| event["kind"]["type"] == "signal_recorded")
+        .unwrap_or_else(|| panic!("no signal_recorded event: {events}"))
+        .clone();
+    let data = &recorded["kind"]["data"];
+    let signal_id = data["signalId"].as_str().unwrap();
+    assert!(
+        signal_id.starts_with("signal-"),
+        "a Runtime-filled id: {data}"
+    );
+    assert_eq!(data["sourceKind"], "user", "{data}");
+    assert_eq!(data["sourceId"], "owner-chat", "{data}");
+
+    let evidence_id = recorded["evidenceRefs"][0]["evidenceId"].as_str().unwrap();
+    let opened = http_get_json(
+        &harness.base,
+        &harness.token,
+        &format!("/v1/executions/exec-mcp-minimal-signal/evidence?ids=%5B%22{evidence_id}%22%5D"),
+    );
+    let item = &opened["data"]["results"][0];
+    assert_eq!(item["status"], "available", "{opened}");
+    let sealed: serde_json::Value =
+        serde_json::from_str(item["content"].as_str().unwrap()).unwrap();
+    assert_eq!(sealed["description"], marker, "{sealed}");
+    assert_eq!(
+        sealed["id"], signal_id,
+        "the sealed envelope carries the filled id"
+    );
+    assert_eq!(
+        sealed["source"],
+        serde_json::json!({"type": "user", "id": "owner-chat"})
+    );
+    assert!(
+        sealed["emittedAt"]
+            .as_str()
+            .is_some_and(|at| at.ends_with('Z')),
+        "the sealed envelope carries the filled emittedAt: {sealed}"
+    );
+    assert_eq!(
+        item["contentSha256"], data["envelopeSha256"],
+        "the event's digest is the digest of the envelope that carries the filled values"
+    );
+
+    // A scoped agent assigned no node here: the Runtime does not guess a source.
+    let session = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        tool_call(
+            serde_json::json!("min-2"),
+            "signal",
+            serde_json::json!({
+                "executionId": "exec-mcp-minimal-signal",
+                "signal": {
+                    "type": "finding.root_cause",
+                    "severity": "high",
+                    "description": "agent without a node",
+                    "evidence": ["one observation"],
+                },
+            }),
+        ),
+    ]);
+    let (is_error, envelope) = tool_envelope(&session.replies[1]);
+    assert!(is_error, "{envelope}");
+    assert_eq!(
+        envelope["diagnostics"][0]["path"], "/signal/source",
+        "{envelope}"
+    );
+}
+
 #[test]
 fn pause_passes_mode_immediate_through() {
     let harness = wired("exec-mcp-pause");

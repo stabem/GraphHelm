@@ -97,6 +97,7 @@ def main(argv=None):
         return 2
     result = 2
     timeout_observed = False
+    receipt_error_reported = False
     try:
         created = ctypes.c_uint64()
         exited = ctypes.c_uint64()
@@ -114,7 +115,7 @@ def main(argv=None):
                 emit({"schema": "graphhelm.runtime-process-exit/1", "state": "attached", "pid": args.pid,
                       "creationFiletime": created.value, "observedAt": utc_now()})
             except OSError:
-                print(ERRORS["io"], file=sys.stderr)
+                receipt_error_reported = True
                 result = 2
             else:
                 remaining = args.timeout_seconds - (time.monotonic() - started)
@@ -167,6 +168,10 @@ def main(argv=None):
                     os.fsync(failure_output.fileno())
             except OSError:
                 pass
+        if not receipt_error_reported:
+            print(ERRORS["io"], file=sys.stderr)
+        return 2
+    if receipt_error_reported:
         print(ERRORS["io"], file=sys.stderr)
         return 2
     if timeout_observed:

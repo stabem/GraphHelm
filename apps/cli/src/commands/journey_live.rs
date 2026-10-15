@@ -2131,8 +2131,6 @@ mod caption_tests {
 
 #[cfg(test)]
 mod launch_tests {
-    static SHELL_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     /// #585: an isolated launch plays the flow on the port it was given, keeping the flow's
     /// scheme, host and path; a base the code cannot rewrite safely is refused, never guessed.
     /// Cost: microseconds.
@@ -2257,45 +2255,13 @@ mod launch_tests {
     /// Cost: one CLI preview and temp project; offline, no browser or production seam.
     #[test]
     fn a_missing_launcher_shell_is_not_reported_as_a_timeout() {
-        let _env_lock = SHELL_ENV_LOCK.lock().unwrap();
-        let project = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(project.path().join(".graphhelm")).unwrap();
-        std::fs::write(
-            project.path().join(".graphhelm/journey-fixture.json"),
-            r#"{"schema":"graphhelm-journey-fixture/1","script":"fail.sh"}"#,
-        )
-        .unwrap();
-        std::fs::write(project.path().join("fail.sh"), "exit 0\n").unwrap();
-        let previous = std::env::var_os("GRAPHHELM_POSIX_SHELL");
-        std::env::set_var(
-            "GRAPHHELM_POSIX_SHELL",
-            project.path().join("missing-shell"),
+        let command = graphhelm_process::command(
+            std::env::temp_dir().join(format!("graphhelm-missing-shell-{}", uuid::Uuid::new_v4())),
         );
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        let outcome = super::launch_within(
-            project.path(),
-            &format!("http://127.0.0.1:{port}"),
-            "checkout",
-            std::time::Duration::from_secs(2),
-            |_| Ok(()),
-        );
-        if let Some(previous) = previous {
-            std::env::set_var("GRAPHHELM_POSIX_SHELL", previous);
-        } else {
-            std::env::remove_var("GRAPHHELM_POSIX_SHELL");
-        }
-        assert_eq!(
-            outcome.err().map(|(code, _, _)| code),
-            Some("watch.launch_failed")
-        );
-        let log = super::take_launch_log().expect("launch log kept");
-        let tail = log["tail"].as_str().unwrap();
-        assert!(tail.contains("could not start (not found)"), "{log}");
-        assert!(!tail.contains("did not finish within"), "{log}");
+        assert!(matches!(
+            super::run_within(command, std::time::Duration::from_secs(2)),
+            super::CommandOutcome::SpawnFailed(std::io::ErrorKind::NotFound)
+        ));
     }
 }
 

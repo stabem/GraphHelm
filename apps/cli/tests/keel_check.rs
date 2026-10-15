@@ -1815,3 +1815,222 @@ fn keel_plan_decides_the_design_critic_by_class() {
         "{record}"
     );
 }
+
+/// A repository whose `HEAD~1..HEAD` range turns `path` from `before` into `after`.
+fn change(path: &str, before: &str, after: &str) -> TempDir {
+    let repo = tempfile::tempdir().unwrap();
+    git(repo.path(), &["init", "-q"]);
+    let full = repo.path().join(path);
+    fs::create_dir_all(full.parent().unwrap()).unwrap();
+    fs::write(&full, before).unwrap();
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "base"]);
+    fs::write(&full, after).unwrap();
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "change"]);
+    repo
+}
+
+/// The line-rule ids among a reply's blocking findings.
+fn line_rules(reply: &Value) -> Vec<String> {
+    reply["data"]["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["blocking"] == true)
+        .map(|finding| finding["rule"].as_str().unwrap().to_owned())
+        .filter(|rule| rule.starts_with("keel.rel.") || rule.starts_with("keel.names"))
+        .collect()
+}
+
+/// Contract (#1404): each line rule blocks an added production line in each language, through the
+/// real binary and git, and the fixed line passes. Regression: a rule that never fires, or fires on
+/// the fix, or reads the wrong side of the diff. No other cell runs these rules end to end.
+/// Cost: 30 short `graphhelm keel check` runs on scratch repositories; offline.
+#[test]
+fn each_line_rule_blocks_its_break_and_passes_its_fix_in_each_language() {
+    // (rule, path, violating line, fixed line)
+    let cases: [(&str, &str, &str, &str); 15] = [
+        (
+            "keel.rel.no_panic",
+            "src/lib.rs",
+            "pub fn f(x: Option<u8>) -> u8 { x.unwrap() }",
+            "pub fn f(x: Option<u8>) -> Option<u8> { x }",
+        ),
+        (
+            "keel.rel.no_panic",
+            "src/app.ts",
+            "throw \"bad state\";",
+            "throw new Error(\"bad state\");",
+        ),
+        (
+            "keel.rel.no_panic",
+            "src/app.py",
+            "assert ready",
+            "if not ready: raise ValueError(\"not ready\")",
+        ),
+        (
+            "keel.rel.no_swallow",
+            "src/lib.rs",
+            "    let _ = std::fs::remove_file(path);",
+            "    std::fs::remove_file(path)?;",
+        ),
+        (
+            "keel.rel.no_swallow",
+            "src/app.ts",
+            "try { save(); } catch {}",
+            "try { save(); } catch (error) { report(error); }",
+        ),
+        (
+            "keel.rel.no_swallow",
+            "src/app.py",
+            "    except OSError: pass",
+            "    except OSError as error: raise RuntimeError(\"save failed\") from error",
+        ),
+        (
+            "keel.rel.deadline",
+            "src/lib.rs",
+            "    let out = std::process::Command::new(\"git\").output();",
+            "    let out = run_bounded(std::process::Command::new(\"git\"), LIMIT);",
+        ),
+        (
+            "keel.rel.deadline",
+            "src/app.ts",
+            "const reply = await fetch(url);",
+            "const reply = await fetch(url, { signal: AbortSignal.timeout(5000) });",
+        ),
+        (
+            "keel.rel.deadline",
+            "src/app.py",
+            "subprocess.run([\"git\", \"status\"])",
+            "subprocess.run([\"git\", \"status\"], timeout=10)",
+        ),
+        (
+            "keel.names",
+            "src/lib.rs",
+            "pub struct StringUtils;",
+            "pub struct Slug;",
+        ),
+        (
+            "keel.names",
+            "src/app.ts",
+            "export class UserService {}",
+            "export class Users {}",
+        ),
+        (
+            "keel.names",
+            "src/app.py",
+            "def run_helper():",
+            "def run_step():",
+        ),
+        (
+            "keel.names.no_bare_flag",
+            "src/lib.rs",
+            "    open(path, true);",
+            "    open(path, Mode::Create);",
+        ),
+        (
+            "keel.names.no_bare_flag",
+            "src/app.ts",
+            "save(doc, false);",
+            "save(doc, { overwrite: false });",
+        ),
+        (
+            "keel.names.no_bare_flag",
+            "src/app.py",
+            "save(doc, None)",
+            "save(doc, owner=None)",
+        ),
+    ];
+    for (rule, path, broken, fixed) in cases {
+        let repo = change(path, "// base\n", &format!("// base\n{broken}\n"));
+        let (code, reply) = run(repo.path(), None);
+        assert_eq!(code, 2, "{rule} {path} should block: {reply}");
+        assert_eq!(line_rules(&reply), [rule], "{rule} {path}: {reply}");
+        let detail = reply["data"]["findings"][0]["detail"].as_str().unwrap();
+        assert!(
+            detail.starts_with(&format!("{path}:2: ")) && detail.contains("fix: "),
+            "{detail}"
+        );
+
+        let repo = change(path, "// base\n", &format!("// base\n{fixed}\n"));
+        let (code, reply) = run(repo.path(), None);
+        assert_eq!(
+            line_rules(&reply),
+            Vec::<String>::new(),
+            "{rule} {path} fix: {reply}"
+        );
+        assert_eq!(code, 0, "{rule} {path} fix: {reply}");
+    }
+}
+
+/// Contract (#1404): an excuse is honoured only in its exact form and is printed; an expired one,
+/// test code and a line that already existed never change the verdict. Regression: an excuse that
+/// silences any rule, a check that hides what it excused, or a rule that judges test or old code.
+/// Cost: six short CLI runs on scratch repositories; offline.
+#[test]
+fn line_rules_honour_and_print_excuses_and_skip_test_and_existing_code() {
+    // Honoured on the line above, and printed in data and as a diagnostic.
+    let repo = change(
+        "src/lib.rs",
+        "// base\n",
+        "// base\n// keel-allow: keel.rel.no_panic a Vec writer cannot fail until #1404\nlet bytes = to_vec(&value).expect(\"vec\");\n",
+    );
+    let (code, reply) = run(repo.path(), None);
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(
+        reply["data"]["exceptions"][0]["rule"], "keel.rel.no_panic",
+        "{reply}"
+    );
+    assert_eq!(reply["data"]["exceptions"][0]["line"], 3);
+    assert_eq!(reply["data"]["exceptions"][0]["until"], "#1404");
+    assert!(
+        codes(&reply).contains(&"keel.allow.honoured".to_owned()),
+        "{reply}"
+    );
+
+    // An excuse for another rule, or one that expired, does not excuse.
+    for comment in [
+        "// keel-allow: keel.rel.no_swallow wrong rule until #1404",
+        "// keel-allow: keel.rel.no_panic an old excuse until 2020-01-01",
+        "// keel-allow: keel.rel.no_panic no expiry given",
+    ] {
+        let repo = change(
+            "src/lib.rs",
+            "// base\n",
+            &format!("// base\n{comment}\nlet v = x.unwrap();\n"),
+        );
+        let (code, reply) = run(repo.path(), None);
+        assert_eq!(code, 2, "{comment}: {reply}");
+        assert_eq!(
+            line_rules(&reply),
+            ["keel.rel.no_panic"],
+            "{comment}: {reply}"
+        );
+    }
+
+    // A `#[cfg(test)]` module and a test path are not judged.
+    let repo = change(
+        "src/lib.rs",
+        "pub fn f() {}\n",
+        "pub fn f() {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() { Some(1).unwrap(); }\n}\n",
+    );
+    let (_, reply) = run(repo.path(), None);
+    assert_eq!(line_rules(&reply), Vec::<String>::new(), "{reply}");
+    let repo = change("tests/flow.py", "# base\n", "# base\nassert True\n");
+    let (_, reply) = run(repo.path(), None);
+    assert_eq!(line_rules(&reply), Vec::<String>::new(), "{reply}");
+
+    // A break that already existed does not block a change that only adds a clean line.
+    let repo = change(
+        "src/lib.rs",
+        "let v = x.unwrap();\n",
+        "let v = x.unwrap();\npub fn added() {}\n",
+    );
+    let (code, reply) = run(repo.path(), None);
+    assert_eq!(
+        (code, line_rules(&reply)),
+        (0, Vec::<String>::new()),
+        "{reply}"
+    );
+}

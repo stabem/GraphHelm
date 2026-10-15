@@ -48,6 +48,10 @@ Write the results into the project (create the repository folder if needed):
 1. `docs/PROJECT.md` with sections: Problem, Promise, Actors, Journeys (one short paragraph and a
    screen list per journey), Risks, Out of scope, Stack, v1 done, Open questions.
 2. `graphhelm init` in the project root, so the Runtime, MCP entry and Studio know the project.
+   Then run the `graphhelm-setup` skill for the project: it wires the MCP, the hooks and the
+   instruction block into `AGENTS.md` and `CLAUDE.md`, and puts the project's `KEEL.md` and
+   `keel/` step files in place when the project has none (copy them from GraphHelm until setup
+   installs them itself). Confirm the GraphHelm MCP `status` tool answers before Phase 3.
 3. One flow per journey in `.graphhelm/journeys/<id>.journey.yaml`, schema
    `graphhelm.journey-flow/1`, `status: draft`, `approved: null`. Follow the flow format, id rule
    and canonical form in the `journey-map` skill (GraphHelm JPD package), section (b). Screens
@@ -80,7 +84,7 @@ When the v1 flows are approved:
    Playwright observer: `graphhelm setup --project <root> --home <home> --install-observer
    playwright`) in the first issue.
 2. **Orchestrate from the Studio.** Run `graphhelm studio start` in the project and keep it open
-   for the owner. Start one team execution (`mcp__graphhelm__start` or the CLI). For each issue,
+   for the owner. Start one team execution (the GraphHelm MCP `start` tool or the CLI). For each issue,
    spawn an author lane with `graphhelm-team` (the roster's author model); it runs `task-plan`,
    `implement` (under `keel`) and `journey-prove`. Then spawn a different reviewer lane for
    `blind-review`; the approving reviewer runs `merge`. Run at most as many lanes at once as the

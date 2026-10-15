@@ -11,7 +11,7 @@ orchestrator calls this once per agent. The orchestrator itself never takes a la
 ## Before the first agent
 
 1. The Studio is open for the project (`graphhelm studio start` from the project root; see
-   `graphhelm-setup`). Read the team execution and Runtime URL from `mcp__graphhelm__briefing`
+   `graphhelm-setup`). Read the team execution and Runtime URL from the GraphHelm MCP `briefing` tool
    (or `graphhelm briefing --json`). Default execution `gh-team`, URL `http://127.0.0.1:8793`.
 2. The recorder is `tools/task-record/task_record.py` in the GraphHelm clone that
    `graphhelm studio start` keeps up to date. It needs the agent session token
@@ -24,7 +24,7 @@ orchestrator calls this once per agent. The orchestrator itself never takes a la
 4. The owner's roster: which model for each role and how many agents at once (the kickoff skill
    asks it once). Map each model to what the host can start: in Claude Code the subagent's
    `model` (for example `opus`, `sonnet`, `haiku`); for Runtime-driven nodes the gateway route of
-   that tier (`mcp__graphhelm__routes`; tier-to-route binding is ADR-041). Never start more
+   that tier (the GraphHelm MCP `routes` tool; tier-to-route binding is ADR-041). Never start more
    agents at once than the roster says.
 
 ## Spawn one lane
@@ -56,7 +56,7 @@ orchestrator calls this once per agent. The orchestrator itself never takes a la
 4. **Reuse before you spawn.** When a lane of the same role already finished a task on the same
    scope, hand it the next one instead of a new agent (agent reuse, ADR-041/042). An author lane
    is never reused as the reviewer of its own work.
-5. **Watch through the Studio, not the chat.** Read progress with `mcp__graphhelm__tasks` (every lane's step,
+5. **Watch through the Studio, not the chat.** Read progress with the GraphHelm MCP `tasks` tool (every lane's step,
    PR, head and heartbeat), `status` and `events`; never script the CLI or HTTP for the same answer. A lane silent past its heartbeat is shown stale there; re-brief or release it
    (`task_record.py ... released --claim-sequence <seq> --release-reason "<why>"`).
 

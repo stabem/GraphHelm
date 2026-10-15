@@ -26,7 +26,7 @@ boundary and is not true on the current shared OS user.
 
 ## Current baseline (documentary RED)
 
-At the baseline commit `cf2d88d2433172ac438d6d060364ba20f8a7e7d6`:
+At the baseline commit `b44477bb3d470c5211df36769f0cd3cef61d622e`:
 
 - `apps/cli/src/commands/tasks.rs` mints lane credentials from the owner token. This does not
   let a lane request its own credential without access to owner authority.
@@ -79,6 +79,18 @@ hashing nor transport protection changes the shared-user filesystem boundary.
 | Bootstrap authorization | `serve/mod.rs::lane_credential_subject` verifies a bearer for the execution path and declared lane; `execution/assign.rs::execute` writes `NodeAssigned` only for a sealed ghost node and `core/events/src/projection.rs` replays it into `node_assignments` | Bearer possession, a task claim and a node assignment do not authorize an arbitrary journey flow. No flow grant exists today. |
 
 This is documentary RED, not an executed failing test. The protocol below is proposed behavior.
+
+### Storage and revocation RED baseline
+
+The proposal puts `JourneyCredentialGrant` in the execution Event Store and keyed credential
+digests in a separate registry, then assumes a shared mutex and journal make both durable writes
+one transaction. The source does not provide that boundary. In `core/events/src/local.rs`,
+`LocalEventStore::append_atomic` takes that store's exclusive lock and `append_locked` commits its
+own journal batch with `flush`, `sync_data` and a directory sync before publishing the active
+marker. Its repository lock is acquired root-directory first, then `repository.lock`. Those locks
+protect that Event Store only; they cannot atomically commit a grant event with an unrelated
+registry, and a process-local mutex cannot serialize Runtime processes. This is documentary RED,
+not an executed failing test.
 
 ## Proposed trust and request flow
 
@@ -136,11 +148,11 @@ checked parsers and are compared byte for byte after canonicalization at creatio
 revocation revokes its credentials under the shared transaction rule below. Removing an unrelated
 ghost-node assignment has no effect on a journey grant. `approve` is not a grant purpose. A
 coordinator may request a grant from the owner but cannot issue one by itself. The grant writer
-appends the owner-authenticated event to the execution's durable store; replay rejects a duplicate
-id, wrong project/execution, non-owner issuer or malformed scope, and builds an active grant
-projection keyed by id and exact scope. The broker reads that projection under the shared
-transaction lock. A missing, revoked, unrelated or ambiguous grant refuses issuance without a
-credential or journey write.
+records the owner-authenticated grant in the private credential journal specified below. The
+public execution Event Store does not receive a second grant copy. Replay rejects a duplicate id,
+wrong project/execution, non-owner issuer or malformed scope and derives the active-grant view
+from that journal alone. A missing, revoked, unrelated or ambiguous grant refuses issuance without
+a credential or journey write.
 
 The lane calls proposed `POST /v1/executions/{executionId}/journey-credentials` with its task bearer and
 `{grantId, projectId, executionId, flowId, purpose}`; there is no authoritative `laneId` request
@@ -155,31 +167,103 @@ logs, errors, prompts, crash output and task records; audit carries identifiers 
 
 ### Registry and commit point
 
-The Runtime broker holds a separate versioned HMAC key outside the registry. It computes a
-domain-separated HMAC over all 32 token bytes and compares presented digests in constant time.
-Each durable credential record stores `credentialId`, `grantId`, immutable canonical scope,
-`generation`, `expiresAt`, `status` and digest, never plaintext. Missing keys, unknown versions,
-collisions or corrupt records refuse all journey use and provisioning. Key rotation explicitly
-reissues tokens; there is no fallback key. Registry and key backups require protection together.
+#### Chosen authority and path
 
-One Runtime owns the project registry and trusted grant state. It holds an exclusive process
-lease against a second writer. Grant changes and credential issue, rotation
-or revocation share one transaction lock and one durable journal. Provisioning holds that lock
-from grant validation through credential commit. Grant revocation holds the same lock and commits
-the revocation of its credentials as one journal transaction; it cannot acknowledge while an
-earlier issue is in flight. The transaction
-is one complete versioned record with length and checksum, flushed and durable-synced before
-publishing the new immutable in-memory snapshot or acknowledging either operation. If revocation
-commits first, later provisioning refuses with the same stable authorization diagnostic and no
-credential record. If issue commits first, revocation disables that credential before acknowledging.
-Neither path may read grant state from a separate unsynchronized cache or commit it to a
-separate store outside this atomic boundary. Startup
-replay refuses a corrupt or truncated record rather than guessing an earlier state. A crash
-before sync is unacknowledged; a crash after sync is recovered on replay. A lost response after
-commit requires revocation by `credentialId` before retry. A journey request holds the registry
-read lock from authentication through its state mutation. Thus revocation cannot be acknowledged
-while an earlier authorized write remains in flight; every request begun after acknowledgement
-refuses the old token without a restart. Storage or lock failure refuses before writing.
+Use one private append-only journal as the sole durable authority for both grants and credentials.
+For configured `serve --events <E>`, place its directory beside, not inside, the resolved `<E>`:
+`<parent-of-E>/credential-broker/journey-credentials.v1.log`. Its sibling
+`journey-credentials.hmac-key.v1` contains the versioned HMAC key and is readable only by the
+Runtime identity. The parent directory and files must reject symlinks and non-regular files, use
+owner-only permissions, and be created durably before the broker accepts requests. The one broker
+process holds an exclusive OS lock on the exact file `journey-credentials.v1.lock` for its
+lifetime; a process-local mutex alone is insufficient. Within that broker, a writer-preferring
+read/write admission lock gives credential mutations priority over later journey requests. No
+Runtime replica may serve this project from a private copy.
+
+The journal is a canonical, versioned, length-delimited record stream with a per-record checksum
+and monotonically increasing sequence. Its record variants are `GrantCreated`, `GrantRevoked`,
+`CredentialIssued`, `CredentialRevoked`, and `CredentialReplaced` (old credential id and new
+credential record in one frame). Every mutation carries an idempotency key and a canonical request
+digest. Reuse with the same request returns the original operation receipt; reuse with a different
+request fails with an idempotency conflict. A credential record contains its id, grant id, exact
+scope, generation, expiry, active/revoked state, HMAC key version and keyed digest. It never
+contains token plaintext. A grant record contains its owner issuer and canonical exact scope. The
+only grant and credential projection is rebuilt by replaying this journal; it is not copied into
+the execution Event Store, a cache file, or a second registry. Operational audit exports may
+expose ids and outcomes but never the HMAC key or credential digests, and exports are not an
+authorization input.
+
+The key file is a versioned key bundle, provisioned before the broker starts. Version 1 is
+immutable while the broker runs. Key rotation is offline: stop the broker, atomically add the new
+key version to the bundle, restart, and let new credential records name that version. Keep older
+versions while any active credential refers to them. Remove an old version only after replay
+proves there are no active credentials using it; write and sync the replacement bundle before
+restarting the broker. A crash while adding a version leaves the old key available and cannot make
+an uncommitted credential record valid. An unknown or missing version fails closed. The first
+implementation does not support online key replacement.
+
+The execution Event Store is deliberately outside this transaction. `LocalEventStore` protects
+its own journal and staged artifacts; its root-directory and `repository.lock` locks, append
+idempotency and active-marker protocol do not enlist a second store. Therefore the proposed grant
+is not also emitted as a `JourneyCredentialGrant` execution event. This avoids split-brain grant
+state rather than claiming a cross-store transaction that does not exist. It also means grant
+audit is private to the credential journal until a separately reviewed projection/export is
+designed; that limitation is explicit.
+
+#### Lock order, commit and recovery
+
+The broker takes locks in this order only: (1) its lifetime process lock on
+`journey-credentials.v1.lock`, (2) the in-process writer-preferring credential admission lock,
+then, for an authorized journey mutation only, (3) the existing journey-flow write lock, and (4)
+if that operation writes events, the execution Event Store locks in their own order (root
+directory, then `repository.lock`). Grant/credential operations never acquire journey-flow or
+Event Store locks. No path may acquire the credential lock while already holding either of those
+locks. Credential writes use the admission lock exclusively; credential reads hold it shared from
+authentication through all durable journey effects, including the flow file, its owner sidecar,
+and any Event Store append. A writer-preferring admission lock makes grant/credential revocation
+wait for already-authorized writes while preventing later requests from overtaking it.
+
+For an append, the broker validates the request against replayed state while holding the exclusive
+admission lock, appends one complete bounded frame, flushes and durable-syncs the journal, syncs
+the parent directory when creating it, then publishes a new immutable in-memory snapshot and
+acknowledges.
+The durable sync is the commit point. It mirrors the local Event Store's useful single-journal
+ordering, but does not reuse or pretend to extend that store's lock. A failed write or sync returns
+no success and publishes no new snapshot; its disk outcome is uncertain, so the broker stops
+serving until restart replay determines whether a complete frame committed. Replay accepts only
+complete, checksummed, correctly sequenced frames. A partial, malformed, corrupt or truncated tail makes the
+broker unavailable for both provisioning and journey authorization; it is never truncated or
+guessed past. A complete frame found after a crash is replayed as committed even if the caller
+never received its acknowledgement. Retrying the same idempotency key discovers the committed
+operation. For issuance whose response was lost, the retry returns the credential id and committed
+status but never the token; the owner revokes that id and starts a new issue with a new key. A
+reused key with changed content is always refused.
+
+#### Issue/revoke ordering and request races
+
+| Order or failure point | Durable result | Required response and recovery |
+|---|---|---|
+| Grant revoke gets the exclusive lock first | `GrantRevoked` commits; active credential checks require an active grant | Later issue refuses before writing a credential. Repeating the revoke key returns its committed receipt. |
+| Issue gets the exclusive lock first | `CredentialIssued` commits under the active grant | Revoke waits, then commits. The credential is unusable after the revoke acknowledgement because each use checks both credential and grant state. |
+| Revoke races an authorized journey write | The journey request holds the shared credential lock through flow-file and owner-sidecar changes, plus any Event Store append; revoke cannot commit first | Durable effects completed by that admitted request are ordered before revoke. After revoke acknowledgement, newly admitted requests refuse. If the request fails before mutation, no journey write occurs. |
+| Failure before a complete durable frame | No acknowledged change; a torn tail may remain | Fail closed on restart if the tail is incomplete. Do not repair or append behind it automatically. |
+| Complete frame durable, acknowledgement lost | The frame is committed and replayable | Same-key retry returns its receipt. Issue retry does not reveal plaintext; revoke the returned credential id and issue anew. |
+| Corrupt/truncated credential record, or credential-store lock failure before route admission | State cannot be safely advanced or trusted | Refuse provisioning and journey writes before touching flow files or Event Store state; require explicit store recovery outside this protocol. |
+
+Grant revocation need not rewrite every historical credential: every use checks that the
+credential's grant is still active in this same replayed state. Rotation is one
+`CredentialReplaced` frame, revoking the old id and activating the new one atomically; the new
+plaintext is returned only after the frame is durable. The first implementation permits no
+overlap. A journey write admitted before revocation may finish and commit before revocation can
+acknowledge; a request admitted after acknowledgement must fail. Event Store append idempotency
+handles a lost HTTP acknowledgement without changing that ordering. A sync error after a journey
+handler has begun can leave its own durable outcome uncertain; it is not described as an
+unchanged-state refusal. Authentication, scope and revoked-state refusals must occur before any
+flow-file, owner-sidecar or Event Store mutation.
+
+Independent security review must still accept this exact storage and race contract before
+implementation. If it rejects a private authority journal or its audit boundary, revise this
+choice before code; do not fall back to a mutex spanning two stores.
 
 The route checks active status, expiration, grant generation and exact project, flow and purpose
 before invoking a handler. It takes lane and execution from the registry, never actor headers.
@@ -236,21 +320,26 @@ route as owner-only or silently treat its persisted approval as a mere review.
 
 The independent review of PR #1344 at head `1b20121c` recorded six dispositions in
 [#1344's security review](https://github.com/stabem/GraphHelm/pull/1344#issuecomment-6186277965).
-Those dispositions apply to that head. This revision addresses only its bootstrap blocker and
-needs a new independent disposition on the exact head; it does not clear the other blockers.
+The independent review of PR #1349 at head `bb94d8fe` accepted the narrowed bootstrap rule in
+[#1349's security disposition](https://github.com/stabem/GraphHelm/pull/1349#issuecomment-6188269806):
+the execution/lane bearer proves identity, while a separate owner-issued exact-scope grant proves
+authorization. That decision is limited to bootstrap. It does not accept storage/revocation,
+secret delivery, approval authority or host isolation. The storage contract in this revision needs
+its own independent disposition on this exact head.
 
 | Question | Evidence and current proposal | Independent disposition |
 |---|---|---|
-| Bootstrap identity and authorization | `serve/mod.rs` verifies the execution/lane bearer but grants task-route access only. `NodeAssigned` has no flow/purpose scope. Proposed `JourneyCredentialGrant` is owner-issued and exact-scope. | BLOCKED on #1344 head; new independent review of this narrowed grant contract pending. |
+| Bootstrap identity and authorization | `serve/mod.rs` verifies the execution/lane bearer but grants task-route access only. `NodeAssigned` has no flow/purpose scope. Proposed private-journal `JourneyCredentialGrant` is owner-issued and exact-scope. | ACCEPTED for this narrowed bootstrap by #1349 at `bb94d8fe`; no Runtime behavior implemented. |
 | Scope/purpose refusal | Exact checks and unchanged-state refusal are specified, but no Runtime route or observer exists. | DESIGN SPECIFIED on #1344 head; Runtime unobserved. |
-| Revocation ordering | The proposed shared journal/lock has no concrete store or crash/replay implementation. | BLOCKED for implementation on #1344 head. |
+| Revocation ordering | This revision selects one private append-only authority journal and defines lock order, commit point, replay/idempotency and crash/race behavior. | BLOCKED pending independent disposition of this storage contract on this head; no Runtime observer. |
 | Secret exposure | A protected response channel and success/error/crash/log paths have not been reviewed. | BLOCKED for implementation on #1344 head. |
 | Approval authority | `review_approve -> approve_as` persists agent approval; `a_reviewer_agent_approves_only_with_its_own_credential_and_never_its_own_draft` expects approved status. | BLOCKED pending an accepted policy decision and compatibility plan on #1344 head. |
 | Host isolation | D-058 places owner and agent files under one OS user; no real-host unreadability observer exists. | BLOCKED as a separate host obligation on #1344 head. |
 
-Only an independent security reviewer can disposition the revised bootstrap contract on this
-head. Routine document approval is not security sign-off. The other blockers still prevent
-credential implementation.
+Only an independent security reviewer can disposition the revised storage contract on this head.
+Routine document approval is not security sign-off. The accepted #1349 bootstrap disposition is
+carried forward with its original scope; delivery, authority/compatibility and host-isolation
+blockers still prevent credential implementation.
 
 ## OS and process isolation boundary
 
@@ -269,12 +358,12 @@ described as OS isolation.
 
 ## Conditional implementation dependency order
 
-Dependency order: (1) obtain independent security disposition of the exact owner-grant bootstrap
-rule above; (2) choose and review the concrete durable grant/credential transaction, protected
-delivery channel and failure paths; (3) accept the approval-authority and persisted approval
-compatibility decision; (4) split implementation into a grant producer/replay slice, then
-credential issue and journey-route enforcement slices, each with its own exact-file card and
-isolated observers. Host isolation remains separate. Documentation approval authorizes no code.
+Dependency order: (1) the #1349 owner-grant bootstrap disposition is accepted and carried forward;
+(2) obtain an independent security disposition of this private-journal transaction and separately
+resolve protected delivery; (3) accept the approval-authority and persisted approval compatibility
+decision; (4) only then begin the first bounded storage slice below, followed by grant issuance,
+credential issue and journey-route enforcement slices with separate cards and isolated observers.
+Host isolation remains separate. Documentation approval authorizes no code.
 
 Do not start implementation until an independent security reviewer has dispositioned all six questions
 above, every blocker affecting the application protocol is resolved, and any owner-only approval
@@ -307,7 +396,29 @@ integration target, not the first implementation slice or authorization from thi
   replay need separate observers if the selected store path reaches them. Real-host OS isolation
   remains a separate deliverable.
 
-The independent reviewer may reject or narrow this sequence. No code is authorized by this proposal.
+### First conditional implementation card (not authorized yet)
+
+Proceed only after independent security disposition accepts the private-journal commit/recovery
+contract, the protected delivery channel is decided, and any authority/compatibility decision
+required by the selected purpose is accepted.
+
+- **Exact files:** `apps/cli/src/commands/serve/journey_credentials.rs`,
+  `apps/cli/src/commands/serve/mod.rs`, `apps/cli/src/commands/serve/routes.rs`,
+  `apps/cli/tests/journey_flow_surfaces.rs`.
+- **Promise:** Implement the private grant/credential journal and owner-only grant create/revoke
+  routes. Prove exact-scope grant replay, durable idempotency and refusal behavior. This slice does
+  not issue credential plaintext, change journey routes or change approval authority; those need
+  later cards after delivery and authority decisions.
+- **Proof:** Isolated temporary-store and HTTP tests with deterministic fault points cover grant
+  create/revoke ordering, pre-sync failure, durable commit with lost acknowledgement, same-key
+  replay, conflicting-key reuse, corrupt/truncated records and unchanged state on authorization
+  refusal. No stress or live Runtime test. Journey-write/revocation races are observed when a later
+  card integrates credential checks with the journey flow write lock.
+- **Retirement/compatibility:** No caller is displaced in this storage-only slice. Do not read or
+  migrate `GRAPHHELM_AGENT_CREDENTIALS`; route integration and its explicit compatibility policy
+  are a later card.
+
+The independent reviewer may reject or narrow this card. No code is authorized by this proposal.
 
 ## Required implementation observers
 

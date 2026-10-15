@@ -80,12 +80,20 @@ issued through an owner-side coordinator. The shared agent session token or a de
 header cannot request a journey token. An owner-authenticated grant fixes the canonical project,
 execution, lane, flow and author/reviewer purpose. That grant is a proposed new durable record;
 no current assignment projection supplies it. Missing, unrelated, revoked or ambiguous grants
-must refuse before writes. The lane receives only its newly issued token;
-the broker retains a keyed digest and serializes durable registry updates with journey writes.
-Revocation is acknowledged only after durable sync and publication; later requests on that same
-Runtime must fail without restart. A task bearer is not a journey credential. This design still
-cannot protect secrets from a process running as the same OS user and does not let a reviewer
-perform the owner-only final approval.
+must refuse before writes. The current proposal makes
+the resolved `serve --events <E>` directory's sibling
+`<parent-of-E>/credential-broker/journey-credentials.v1.log` the sole append-only authority for
+both grants and keyed credential digests, with one cross-process lock and replay-derived state.
+The grant is not duplicated in the execution Event Store: its local append and repository locks
+cannot make an unrelated registry write atomic. A journey request holds the credential-store
+read lock through its Event Store append; a grant or credential revocation takes the exclusive
+lock and is acknowledged only after durable sync and state publication. After that acknowledgement,
+new requests on the same Runtime must fail without restart. Corruption, a partial tail, lock failure
+or sync failure refuses provisioning and journey writes. This storage and race contract still needs
+independent security disposition before implementation; it is a proposal, not a current Runtime
+guarantee. A task bearer is not a journey credential. This design still cannot protect secrets
+from a process running as the same OS user and does not let a reviewer perform the owner-only final
+approval.
 
 ## 4. Adversaries and failure modes
 

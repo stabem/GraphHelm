@@ -2,6 +2,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { judgeExpectations } from './judge.mjs';
+
+test('judges ordered checks independently with closest role names and duplicate protection', () => {
+  const expect = [{role:'heading',name:'Produto conferido'}, {role:'region',name:'Também encontramos em'}, {role:'button',name:'Salvar'}];
+  const observed = [{role:'heading',name:'Produto conferido',count:1,visible:true}, {role:'button',name:'Salvar alterações',count:1,visible:true}];
+  assert.deepEqual(judgeExpectations(expect,observed), [
+    {role:'heading',name:'Produto conferido',seen:true,closest:null},
+    {role:'region',name:'Também encontramos em',seen:false,closest:null},
+    {role:'button',name:'Salvar',seen:false,closest:{role:'button',name:'Salvar alterações'}},
+  ]);
+  assert.deepEqual(judgeExpectations([{role:'button',name:'Save'}],[{role:'button',name:'Save',count:2,visible:true}]), [{role:'button',name:'Save',seen:false,closest:{role:'button',name:'Save'}}]);
+  assert.equal(judgeExpectations([{role:'button',name:'cat'}],[{role:'button',name:'car',count:1,visible:true},{role:'button',name:'cap',count:1,visible:true}])[0].closest.name,'cap');
+});
 
 const driver = fileURLToPath(new URL('./driver.mjs', import.meta.url));
 const protocol = 'graphhelm-journey-driver/1';

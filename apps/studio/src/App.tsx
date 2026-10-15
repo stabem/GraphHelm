@@ -2432,6 +2432,13 @@ export default function App({
   const citationPanel = useRef<HTMLElement | null>(null);
   useEffect(() => { setCitedRecords(null); }, [selected]);
   useEffect(() => { if (citedRecords !== null) citationPanel.current?.focus(); }, [citedRecords]);
+  // The cited records, filtered once per citation or log change through a Set, not per render by
+  // a linear `includes` over every event.
+  const citedEvents = useMemo(() => {
+    if (citedRecords === null) return [];
+    const cited = new Set(citedRecords.sequences);
+    return eventList.filter((event) => cited.has(event.sequence));
+  }, [citedRecords, eventList]);
   const closeCitedRecords = () => { setCitedRecords(null); citationOrigin.current?.focus(); };
   const openRecords = (sequences: number[]) => {
     const first = sequences[0];
@@ -3199,7 +3206,7 @@ export default function App({
               <section ref={citationPanel} className="journey-detail cited-records" role="dialog" aria-modal="false" aria-label="Cited records" tabIndex={-1}
                 onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); closeCitedRecords(); } }}>
                 <div className="journey-detail-head"><h2>Cited records</h2><button type="button" onClick={closeCitedRecords}>Close cited records</button></div>
-                <Thread events={eventList.filter((event) => citedRecords.sequences.includes(event.sequence))} executionId={selected} openEvidence={openEvidence}
+                <Thread events={citedEvents} executionId={selected} openEvidence={openEvidence}
                   emptyMessage="The cited records are not in the loaded history." />
               </section>
             )}

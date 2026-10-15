@@ -1,6 +1,6 @@
 # Graph Architect — typed judgments (System One) design
 
-Companion plan: the architect-judgments plan (`docs/process/DELIVERY.md`, History). Parent: the first
+Companion plan: the architect-judgments plan (`docs/process/ARCHIVE_NAMES.md`). Parent: the first
 compile, `docs/specs/2026-09-11-graph-architect-design.md`. Provider reference:
 `docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md` (TypeSafe), route family:
 `docs/models/UNIVERSAL_MODEL_GATEWAY.md` §2.6.

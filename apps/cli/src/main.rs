@@ -1,4 +1,6 @@
 mod args;
+#[cfg(test)]
+mod args_help_golden;
 mod commands;
 mod error_codes;
 mod human;

@@ -15,4 +15,14 @@ describe("runFailure (#1296)", () => {
     expect(f.step).toBe(1);
     expect(f.text).toMatch(/^Step 2 failed: /);
   });
+  it("does not claim a run stopped before step 1 after an edge failed", () => {
+    const f = runFailure({ state: "failed", reason: "internal",
+      detail: { code: "driver.unsupported_act", pointer: "/edges/next" },
+      screens: { a: { frame: true, result: "pass" } },
+      edges: { next: { result: "fail" } } }, ["a", "b"]);
+    expect(f.step).toBeNull();
+    expect(f.text).toContain("failing step is unknown");
+    expect(f.text).toContain("the journey uses a step the browser cannot do");
+    expect(f.text).not.toContain("before step 1");
+  });
 });

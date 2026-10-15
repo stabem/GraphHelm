@@ -1054,11 +1054,11 @@ fn record_command(args: &JourneyReplayArgs, kind: &str, contract: &str) -> Resul
     command
         .args(["--json", "journey", kind, "--contract", contract])
         .arg("--events")
-        .arg(args.events.as_ref().unwrap())
-        .args(["--execution", args.execution.as_ref().unwrap()])
+        .arg(args.record.events.as_ref().unwrap())
+        .args(["--execution", args.record.execution.as_ref().unwrap()])
         .arg("--keyring")
-        .arg(args.keyring.as_ref().unwrap())
-        .args(["--key-id", args.key_id.as_ref().unwrap()])
+        .arg(args.record.keyring.as_ref().unwrap())
+        .args(["--key-id", args.record.key_id.as_ref().unwrap()])
         .arg("--project")
         .arg(args.project.as_deref().unwrap_or(Path::new(".")));
     safe_environment(&mut command, true);
@@ -1627,7 +1627,7 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
                 .collect::<Vec<_>>()
                 .into();
             data["paths"][index] = path_data.clone();
-            if args.events.is_some() {
+            if args.record.events.is_some() {
                 let image = format!("{name}-{screen_id}.png");
                 let capture = driver.call(
                     "capture",
@@ -1708,15 +1708,15 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
 }
 
 pub(crate) fn run(args: &JourneyReplayArgs) -> Outcome {
-    let mut data = json!({"flowId":null,"modelCalls":0,"recording":if args.events.is_some() {"required"} else {"not_requested"},"cachePublished":false,"paths":[],"partialEffects":"retained"});
+    let mut data = json!({"flowId":null,"modelCalls":0,"recording":if args.record.events.is_some() {"required"} else {"not_requested"},"cachePublished":false,"paths":[],"partialEffects":"retained"});
     if !graphhelm_execution::valid_journey_id(&args.id) {
         return report(data, Some(failure("replay.id_invalid", "/id", 3)));
     }
     let bundle = [
-        args.events.is_some(),
-        args.execution.is_some(),
-        args.keyring.is_some(),
-        args.key_id.is_some(),
+        args.record.events.is_some(),
+        args.record.execution.is_some(),
+        args.record.keyring.is_some(),
+        args.record.key_id.is_some(),
     ];
     if bundle.iter().any(|v| *v) && !bundle.iter().all(|v| *v) {
         return report(
@@ -1766,12 +1766,12 @@ pub(crate) fn run(args: &JourneyReplayArgs) -> Outcome {
 }
 
 fn supervise(args: &JourneyReplayArgs, deadline: Instant) -> Outcome {
-    let data = json!({"flowId":null,"modelCalls":0,"recording":if args.events.is_some() {"required"} else {"not_requested"},"cachePublished":false,"paths":[],"partialEffects":"uncertain"});
+    let data = json!({"flowId":null,"modelCalls":0,"recording":if args.record.events.is_some() {"required"} else {"not_requested"},"cachePublished":false,"paths":[],"partialEffects":"uncertain"});
     let bundle = [
-        args.events.is_some(),
-        args.execution.is_some(),
-        args.keyring.is_some(),
-        args.key_id.is_some(),
+        args.record.events.is_some(),
+        args.record.execution.is_some(),
+        args.record.keyring.is_some(),
+        args.record.key_id.is_some(),
     ];
     let executable = match std::env::current_exe() {
         Ok(path) => path,
@@ -1836,11 +1836,11 @@ fn supervise(args: &JourneyReplayArgs, deadline: Instant) -> Outcome {
     if bundle[0] {
         command
             .arg("--events")
-            .arg(args.events.as_ref().unwrap())
-            .args(["--execution", args.execution.as_ref().unwrap()])
+            .arg(args.record.events.as_ref().unwrap())
+            .args(["--execution", args.record.execution.as_ref().unwrap()])
             .arg("--keyring")
-            .arg(args.keyring.as_ref().unwrap())
-            .args(["--key-id", args.key_id.as_ref().unwrap()]);
+            .arg(args.record.keyring.as_ref().unwrap())
+            .args(["--key-id", args.record.key_id.as_ref().unwrap()]);
     }
     match child_output(
         command,

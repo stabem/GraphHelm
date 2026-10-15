@@ -119,7 +119,7 @@ mod tests {
         else {
             panic!("{command} must parse as approve");
         };
-        assert_eq!(events, PathBuf::from("C:/data/events"));
+        assert_eq!(events.path, PathBuf::from("C:/data/events"));
         assert_eq!(execution.as_deref(), Some("exec-monitor"));
         assert_eq!(node, "review");
     }

@@ -183,10 +183,12 @@ fn replay_args(args: &JourneyOpenArgs, project: &Path) -> JourneyReplayArgs {
     JourneyReplayArgs {
         id: args.id.clone(),
         project: Some(project.to_path_buf()),
-        events: args.events.clone(),
-        execution: args.execution.clone(),
-        keyring: args.keyring.clone(),
-        key_id: args.key_id.clone(),
+        record: crate::args::OptionalRecordArgs {
+            events: args.record.events.clone(),
+            execution: args.record.execution.clone(),
+            keyring: args.record.keyring.clone(),
+            key_id: args.record.key_id.clone(),
+        },
         allow_origin: args.allow_origin.clone(),
         replay_worker: false,
         heal: false,
@@ -203,10 +205,12 @@ pub(crate) fn watch_args(args: &JourneyWatchArgs) -> JourneyOpenArgs {
         step: String::new(),
         path: args.path.clone(),
         project: args.project.clone(),
-        events: None,
-        execution: None,
-        keyring: None,
-        key_id: None,
+        record: crate::args::OptionalRecordArgs {
+            events: None,
+            execution: None,
+            keyring: None,
+            key_id: None,
+        },
         allow_origin: args.allow_origin.clone(),
         live_host: false,
         watch: true,
@@ -255,9 +259,12 @@ pub(super) fn open_in_runtime(args: &JourneyOpenArgs) -> Outcome {
     for origin in &args.allow_origin {
         command.args(["--allow-origin", origin]);
     }
-    if let (Some(events), Some(execution), Some(keyring), Some(key_id)) =
-        (&args.events, &args.execution, &args.keyring, &args.key_id)
-    {
+    if let (Some(events), Some(execution), Some(keyring), Some(key_id)) = (
+        &args.record.events,
+        &args.record.execution,
+        &args.record.keyring,
+        &args.record.key_id,
+    ) {
         command
             .arg("--events")
             .arg(events)
@@ -266,7 +273,7 @@ pub(super) fn open_in_runtime(args: &JourneyOpenArgs) -> Outcome {
             .arg(keyring)
             .args(["--key-id", key_id]);
     }
-    safe_environment(&mut command, args.events.is_some());
+    safe_environment(&mut command, args.record.events.is_some());
     for (key, value) in std::env::vars_os()
         .filter(|(key, _)| key.to_string_lossy().starts_with("GRAPHHELM_SECRET_"))
     {
@@ -329,10 +336,10 @@ fn open_with(args: &JourneyOpenArgs) -> Outcome {
         );
     }
     let bundle = [
-        args.events.is_some(),
-        args.execution.is_some(),
-        args.keyring.is_some(),
-        args.key_id.is_some(),
+        args.record.events.is_some(),
+        args.record.execution.is_some(),
+        args.record.keyring.is_some(),
+        args.record.key_id.is_some(),
     ];
     if bundle.iter().any(|v| *v) && !bundle.iter().all(|v| *v) {
         return report(
@@ -415,9 +422,12 @@ fn spawn_host(args: &JourneyOpenArgs, data: Value) -> Outcome {
     for origin in &args.allow_origin {
         command.args(["--allow-origin", origin]);
     }
-    if let (Some(events), Some(execution), Some(keyring), Some(key_id)) =
-        (&args.events, &args.execution, &args.keyring, &args.key_id)
-    {
+    if let (Some(events), Some(execution), Some(keyring), Some(key_id)) = (
+        &args.record.events,
+        &args.record.execution,
+        &args.record.keyring,
+        &args.record.key_id,
+    ) {
         command
             .arg("--events")
             .arg(events)
@@ -426,7 +436,7 @@ fn spawn_host(args: &JourneyOpenArgs, data: Value) -> Outcome {
             .arg(keyring)
             .args(["--key-id", key_id]);
     }
-    safe_environment(&mut command, args.events.is_some());
+    safe_environment(&mut command, args.record.events.is_some());
     command.env("GRAPHHELM_LIVE_HOST", "1");
     for (key, value) in std::env::vars_os()
         .filter(|(key, _)| key.to_string_lossy().starts_with("GRAPHHELM_SECRET_"))
@@ -801,7 +811,11 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
         }
         Err(failed) => return Err(failed),
     }
-    let recording = args.events.is_some().then(|| replay_args(args, &project));
+    let recording = args
+        .record
+        .events
+        .is_some()
+        .then(|| replay_args(args, &project));
     // A watch is visible to the Studio from its first act: the session record exists while it
     // plays (`state: playing`) and names the screen and the act it is at.
     let session_id = format!("live-{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);

@@ -243,7 +243,7 @@ fn run_capture(args: &JourneyCaptureArgs) -> Result<serde_json::Value, Failure> 
         ),
     );
     execution::signal::execute(
-        &record.events,
+        &record.events.path,
         Some(&record.execution),
         &signal,
         None,
@@ -276,7 +276,7 @@ fn run_walked(args: &JourneyWalkedArgs) -> Result<serde_json::Value, Failure> {
         ));
     }
     let keyring = keyring(record);
-    let found = records(&record.events, &record.execution, &keyring)?;
+    let found = records(&record.events.path, &record.execution, &keyring)?;
     let newest = |step: &str, pointer: &str| {
         found
             .captures
@@ -328,7 +328,7 @@ fn run_walked(args: &JourneyWalkedArgs) -> Result<serde_json::Value, Failure> {
         ),
     );
     execution::signal::execute(
-        &record.events,
+        &record.events.path,
         Some(&record.execution),
         &signal,
         None,

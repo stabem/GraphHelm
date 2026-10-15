@@ -2,6 +2,28 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
+// #1308 (plan D6): the required `--events <EVENTS>` store directory, shared by every command
+// that declared it bare. A plain comment, not `///`: a doc here would reach the help text.
+#[derive(Debug, Args, Clone)]
+pub struct EventsArg {
+    #[arg(long = "events", id = "events", value_name = "EVENTS")]
+    pub path: PathBuf,
+}
+
+// #1308 (plan D6): where a command may record its proof, all four or none (the command checks
+// that); shared by the journey commands that declared the group visibly. No `///` here either.
+#[derive(Debug, Args, Clone)]
+pub struct OptionalRecordArgs {
+    #[arg(long)]
+    pub events: Option<PathBuf>,
+    #[arg(long)]
+    pub execution: Option<String>,
+    #[arg(long)]
+    pub keyring: Option<PathBuf>,
+    #[arg(long)]
+    pub key_id: Option<String>,
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "graphhelm",
@@ -171,8 +193,8 @@ pub enum SkillsHost {
 
 #[derive(Debug, Args)]
 pub struct JourneysArgs {
-    #[arg(long)]
-    pub events: PathBuf,
+    #[command(flatten)]
+    pub events: EventsArg,
     /// Optional: a run that must exist. The map is project-wide either way (#332).
     #[arg(long)]
     pub execution: Option<String>,
@@ -299,14 +321,8 @@ pub struct JourneyOpenArgs {
     pub path: Option<String>,
     #[arg(long)]
     pub project: Option<PathBuf>,
-    #[arg(long)]
-    pub events: Option<PathBuf>,
-    #[arg(long)]
-    pub execution: Option<String>,
-    #[arg(long)]
-    pub keyring: Option<PathBuf>,
-    #[arg(long)]
-    pub key_id: Option<String>,
+    #[command(flatten)]
+    pub record: OptionalRecordArgs,
     /// Exact extra subresource origin; never permits navigation away from the local base.
     #[arg(long)]
     pub allow_origin: Vec<String>,
@@ -410,14 +426,8 @@ pub struct JourneyExploreArgs {
     pub allow_origin: Vec<String>,
     #[arg(long, default_value_t = 40)]
     pub max_steps: u16,
-    #[arg(long)]
-    pub events: Option<PathBuf>,
-    #[arg(long)]
-    pub execution: Option<String>,
-    #[arg(long)]
-    pub keyring: Option<PathBuf>,
-    #[arg(long)]
-    pub key_id: Option<String>,
+    #[command(flatten)]
+    pub record: OptionalRecordArgs,
     /// Internal contained worker, entered only after the supervisor's start handshake.
     #[arg(long, hide = true)]
     pub explore_worker: bool,
@@ -428,14 +438,8 @@ pub struct JourneyReplayArgs {
     pub id: String,
     #[arg(long)]
     pub project: Option<PathBuf>,
-    #[arg(long)]
-    pub events: Option<PathBuf>,
-    #[arg(long)]
-    pub execution: Option<String>,
-    #[arg(long)]
-    pub keyring: Option<PathBuf>,
-    #[arg(long)]
-    pub key_id: Option<String>,
+    #[command(flatten)]
+    pub record: OptionalRecordArgs,
     /// Exact extra subresource origin; never permits navigation away from the local base.
     #[arg(long)]
     pub allow_origin: Vec<String>,
@@ -540,8 +544,8 @@ pub struct JourneyLabelArgs {
 
 #[derive(Debug, Args)]
 pub struct JourneyRecordArgs {
-    #[arg(long)]
-    pub events: PathBuf,
+    #[command(flatten)]
+    pub events: EventsArg,
     #[arg(long)]
     pub execution: String,
     /// The keyring that seals the signal envelope.
@@ -1193,8 +1197,8 @@ pub enum QualityCommand {
     /// Runs a registered gate against the pathogen suite; on FULL rejection, stamps
     /// GateCertified onto the stream (what the certified-or-not-at-all precondition reads).
     Certify {
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         execution: Option<String>,
         /// The registered gate id. The registry is closed; an unrecognised id is refused and
@@ -1351,8 +1355,8 @@ pub enum ExecutionCommand {
     Start {
         #[arg(long)]
         file: PathBuf,
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         fixtures: Option<PathBuf>,
         /// `autopilot`, `supervised`, or `manual` — D-022's three levels of GRAPH-MUTATION
@@ -1404,8 +1408,8 @@ pub enum ExecutionCommand {
     /// The same answer `GET /v1/executions` replies with. It exists so a client never has to
     /// scrape the human monitor page to discover which executions are present.
     List {
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         /// Exclusive cursor: the last execution id the caller already read.
         #[arg(long)]
         after: Option<String>,
@@ -1415,8 +1419,8 @@ pub enum ExecutionCommand {
     },
     /// Replays a stream and reports the execution's current state — the operator's triage view.
     Status {
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         execution: Option<String>,
         /// Also writes the monitor page as a frozen, self-contained HTML snapshot (no
@@ -1452,8 +1456,8 @@ pub enum ExecutionCommand {
     /// Derived from the store alone; the first thing to read when picking up a run another
     /// session or harness drove.
     Briefing {
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         execution: Option<String>,
         /// With `--key-id`: open the newest `keel.plan` record and carry it as `plan` (#382).
@@ -1481,8 +1485,8 @@ pub enum ExecutionCommand {
     // Writing this as `///` is how the first version of this fix leaked the project's own
     // history back into the surface it was cleaning, one paragraph after removing it.
     Signal {
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         execution: Option<String>,
         #[arg(long)]
@@ -1531,8 +1535,8 @@ pub enum ExecutionCommand {
     /// Record what a node delivered and why, with project-relative file and journey references.
     /// Claims are agent-reported; this command does not verify filesystem changes.
     Delivery {
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         execution: String,
         #[arg(long)]
@@ -1552,8 +1556,8 @@ pub enum ExecutionCommand {
     },
     /// Read a delivery's referenced text document from the explicitly selected main project.
     DocumentRead {
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         execution: String,
         /// Main project filesystem directory; execution stream scope remains fixed.
@@ -1570,8 +1574,8 @@ pub enum ExecutionCommand {
     },
     /// Save an owner edit to the main project and record the change notice.
     DocumentSave {
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         execution: String,
         /// Main project filesystem directory; execution stream scope remains fixed.
@@ -1587,8 +1591,8 @@ pub enum ExecutionCommand {
     /// The owner approves a `Ghost` or `Blocked` node, readying it. Does not auto-drive: nothing
     /// auto-starts out of a manual intervention (D-020); run `resume` to continue.
     Approve {
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         execution: Option<String>,
         #[arg(long)]
@@ -1611,8 +1615,8 @@ pub enum ExecutionCommand {
     },
     /// Assigns an approved ghost node to an agent by its authenticated actor id.
     Assign {
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         execution: Option<String>,
         #[arg(long)]
@@ -1632,8 +1636,8 @@ pub enum ExecutionCommand {
     /// a second read, and between them two surfaces can disagree about whether the operator
     /// may sleep.
     AmendBudget {
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         execution: Option<String>,
         #[arg(long)]
@@ -1657,8 +1661,8 @@ pub enum ExecutionCommand {
     Pause {
         #[arg(long)]
         file: Option<PathBuf>,
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         execution: Option<String>,
     },
@@ -1668,8 +1672,8 @@ pub enum ExecutionCommand {
     Resume {
         #[arg(long)]
         file: Option<PathBuf>,
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         fixtures: Option<PathBuf>,
         #[arg(long)]
@@ -1691,8 +1695,8 @@ pub enum ExecutionCommand {
     /// spending the episodes it touches -- the honest sweep arriving later would find nothing left
     /// to raise.
     Sweep {
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         execution: Option<String>,
         #[arg(long = "as-of")]
@@ -1706,8 +1710,8 @@ pub enum ExecutionCommand {
         /// source of the node's declared `completion.customs.proofKinds`.
         #[arg(long)]
         file: PathBuf,
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         execution: Option<String>,
         #[arg(long)]
@@ -1731,8 +1735,8 @@ pub enum ExecutionCommand {
     Clear {
         #[arg(long)]
         file: PathBuf,
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         fixtures: Option<PathBuf>,
         #[arg(long)]
@@ -1754,8 +1758,8 @@ pub enum ExecutionCommand {
     /// Cancels every non-terminal node and completes the execution as `Cancelled`. Refuses when
     /// the execution is already terminal.
     Cancel {
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         execution: Option<String>,
     },
@@ -2150,15 +2154,15 @@ pub enum GraphCommand {
     },
     Simulate {
         file: PathBuf,
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         fixtures: Option<PathBuf>,
     },
     Draft(DraftArgs),
     Replay {
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
         #[arg(long)]
         workspace: Option<String>,
         #[arg(long)]
@@ -2262,8 +2266,8 @@ pub enum DraftCommand {
         draft_file: PathBuf,
         #[arg(long)]
         actor: String,
-        #[arg(long)]
-        events: PathBuf,
+        #[command(flatten)]
+        events: EventsArg,
     },
 }
 

@@ -89,14 +89,14 @@ pub fn run(command: TopLevel) -> Outcome {
                 file,
                 events,
                 fixtures,
-            } => simulate::run(&file, &events, fixtures.as_deref()),
+            } => simulate::run(&file, &events.path, fixtures.as_deref()),
             GraphCommand::Draft(args) => match args.command {
                 DraftCommand::Apply {
                     base_file,
                     draft_file,
                     actor,
                     events,
-                } => draft::run(&base_file, &draft_file, &actor, &events),
+                } => draft::run(&base_file, &draft_file, &actor, &events.path),
             },
             GraphCommand::Replay {
                 events,
@@ -105,7 +105,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 execution,
                 stream,
             } => replay::run(
-                &events,
+                &events.path,
                 workspace.as_deref(),
                 project.as_deref(),
                 execution.as_deref(),
@@ -296,7 +296,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 key_id,
             } => execution::start::run(
                 &file,
-                &events,
+                &events.path,
                 fixtures.as_deref(),
                 &mode,
                 execution.as_deref(),
@@ -310,7 +310,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 events,
                 after,
                 limit,
-            } => execution::list::run(&events, after.as_deref(), limit),
+            } => execution::list::run(&events.path, after.as_deref(), limit),
             ExecutionCommand::Status {
                 events,
                 execution,
@@ -320,7 +320,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 keyring,
                 key_id,
             } => execution::status::run(
-                &events,
+                &events.path,
                 execution.as_deref(),
                 html.as_deref(),
                 file.as_deref(),
@@ -339,7 +339,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 keyring,
                 key_id,
             } => execution::briefing::run(
-                &events,
+                &events.path,
                 execution.as_deref(),
                 keyring
                     .zip(key_id)
@@ -358,7 +358,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 key_id,
                 attach,
             } => execution::signal::run(
-                &events,
+                &events.path,
                 execution.as_deref(),
                 &signal,
                 &evidence_out,
@@ -376,7 +376,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 key_id,
                 actor_id,
             } => execution::delivery::run(
-                &events,
+                &events.path,
                 &execution,
                 &node,
                 &delivery,
@@ -396,7 +396,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 keyring,
                 key_id,
             } => execution::documents::run_read(
-                &events,
+                &events.path,
                 &execution,
                 &project,
                 &evidence_id,
@@ -412,7 +412,12 @@ pub fn run(command: TopLevel) -> Outcome {
                 keyring,
                 key_id,
             } => execution::documents::run_save(
-                &events, &execution, &project, &edit, &keyring, &key_id,
+                &events.path,
+                &execution,
+                &project,
+                &edit,
+                &keyring,
+                &key_id,
             ),
             ExecutionCommand::Approve {
                 events,
@@ -424,7 +429,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 proposal_digest,
                 draft_id,
             } => execution::approve::run(
-                &events,
+                &events.path,
                 execution.as_deref(),
                 &node,
                 keyring.as_deref(),
@@ -438,19 +443,19 @@ pub fn run(command: TopLevel) -> Outcome {
                 execution,
                 node,
                 actor_id,
-            } => execution::assign::run(&events, execution.as_deref(), &node, &actor_id),
+            } => execution::assign::run(&events.path, execution.as_deref(), &node, &actor_id),
             ExecutionCommand::AmendBudget {
                 events,
                 execution,
                 node,
                 seconds,
                 at,
-            } => execution::amend::run(&events, execution.as_deref(), &node, seconds, at),
+            } => execution::amend::run(&events.path, execution.as_deref(), &node, seconds, at),
             ExecutionCommand::Pause {
                 file,
                 events,
                 execution,
-            } => execution::pause::run(&events, execution.as_deref(), file.as_deref()),
+            } => execution::pause::run(&events.path, execution.as_deref(), file.as_deref()),
             ExecutionCommand::Resume {
                 file,
                 events,
@@ -460,20 +465,20 @@ pub fn run(command: TopLevel) -> Outcome {
                 key_id,
             } => execution::resume::run(
                 file.as_deref(),
-                &events,
+                &events.path,
                 fixtures.as_deref(),
                 execution.as_deref(),
                 keyring.as_deref(),
                 key_id.as_deref(),
             ),
             ExecutionCommand::Cancel { events, execution } => {
-                execution::cancel::run(&events, execution.as_deref())
+                execution::cancel::run(&events.path, execution.as_deref())
             }
             ExecutionCommand::Sweep {
                 events,
                 execution,
                 as_of,
-            } => execution::sweep::run(&events, execution.as_deref(), as_of.as_deref()),
+            } => execution::sweep::run(&events.path, execution.as_deref(), as_of.as_deref()),
             ExecutionCommand::Claim {
                 file,
                 events,
@@ -485,7 +490,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 mode,
             } => execution::claim::run(&execution::claim::Arguments {
                 file: &file,
-                events: &events,
+                events: &events.path,
                 execution: execution.as_deref(),
                 node: &node,
                 wait_seq,
@@ -504,7 +509,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 verifier,
             } => execution::clear::run(&execution::clear::Arguments {
                 file: &file,
-                events: &events,
+                events: &events.path,
                 fixtures: fixtures.as_deref(),
                 execution: execution.as_deref(),
                 claim_seq,
@@ -633,7 +638,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 .clone()
                 .unwrap_or_else(|| std::path::PathBuf::from("."));
             journeys::run(
-                &args.events,
+                &args.events.path,
                 args.execution.as_deref(),
                 &project,
                 &args.keyring,
@@ -735,7 +740,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 events,
                 execution,
                 gate,
-            } => quality::run(&events, execution.as_deref(), &gate),
+            } => quality::run(&events.path, execution.as_deref(), &gate),
         },
     }
 }

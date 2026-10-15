@@ -29,7 +29,7 @@ fn refused(code: &'static str, path: &str, exit: i32) -> Failure {
 fn initial(args: &JourneyExploreArgs) -> Value {
     json!({"flowId":args.id,"outcome":"unobserved","turns":0,"acts":0,"modelCalls":0,
         "usage":[],"promptSha256s":[],"screens":0,"edges":0,"flowPublished":false,"cachePublished":false,
-        "recording":if args.events.is_some(){"required"}else{"not_requested"},
+        "recording":if args.record.events.is_some(){"required"}else{"not_requested"},
         "capturedSignalIds":[],"walkedPairs":[],"partialEffects":"retained"})
 }
 
@@ -186,10 +186,10 @@ fn preflight(args: &JourneyExploreArgs) -> Result<()> {
     permissions(&args.allow_act)?;
     secrets(args)?;
     let bundle = [
-        args.events.is_some(),
-        args.execution.is_some(),
-        args.keyring.is_some(),
-        args.key_id.is_some(),
+        args.record.events.is_some(),
+        args.record.execution.is_some(),
+        args.record.keyring.is_some(),
+        args.record.key_id.is_some(),
     ];
     if bundle.iter().any(|v| *v) && !bundle.iter().all(|v| *v) {
         return Err(refused("explore.recording_incomplete", "/recording", 3));
@@ -720,7 +720,7 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
                 pending = Vec::new();
                 locators = Vec::new();
             }
-            if args.events.is_some() {
+            if args.record.events.is_some() {
                 let name = format!("{id}.png");
                 attempt!(driver.call(
                     "capture",
@@ -857,7 +857,7 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
     }
     data["cachePublished"] = true.into();
     data["flowDigest"] = cache["flowDigest"].clone();
-    if args.events.is_some() {
+    if args.record.events.is_some() {
         let preview = journey_flow::run_compile(&JourneyCompileArgs {
             ids: vec![args.id.clone()],
             project: Some(project.clone()),
@@ -872,10 +872,12 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
         let recording = JourneyReplayArgs {
             id: args.id.clone(),
             project: Some(project),
-            events: args.events.clone(),
-            execution: args.execution.clone(),
-            keyring: args.keyring.clone(),
-            key_id: args.key_id.clone(),
+            record: crate::args::OptionalRecordArgs {
+                events: args.record.events.clone(),
+                execution: args.record.execution.clone(),
+                keyring: args.record.keyring.clone(),
+                key_id: args.record.key_id.clone(),
+            },
             allow_origin: args.allow_origin.clone(),
             replay_worker: false,
             heal: false,
@@ -963,8 +965,8 @@ fn worker_command(args: &JourneyExploreArgs) -> Result<(Command, Vec<String>)> {
         ("--manifest", args.model.manifest.as_deref()),
         ("--broker", args.model.broker.as_deref()),
         ("--gateway-keyring", args.model.gateway_keyring.as_deref()),
-        ("--events", args.events.as_deref()),
-        ("--keyring", args.keyring.as_deref()),
+        ("--events", args.record.events.as_deref()),
+        ("--keyring", args.record.keyring.as_deref()),
     ] {
         if let Some(value) = value {
             command.arg(flag).arg(value);
@@ -973,8 +975,8 @@ fn worker_command(args: &JourneyExploreArgs) -> Result<(Command, Vec<String>)> {
     for (flag, value) in [
         ("--route", args.model.route.as_deref()),
         ("--gateway-key-id", args.model.gateway_key_id.as_deref()),
-        ("--execution", args.execution.as_deref()),
-        ("--key-id", args.key_id.as_deref()),
+        ("--execution", args.record.execution.as_deref()),
+        ("--key-id", args.record.key_id.as_deref()),
     ] {
         if let Some(value) = value {
             command.args([flag, value]);

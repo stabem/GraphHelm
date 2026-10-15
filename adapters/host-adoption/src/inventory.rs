@@ -236,7 +236,10 @@ fn graphhelm_plugin_contributions(home: &Path, project: &Path, claude: &Value) -
     let mut found = Vec::new();
     let mut examined = 0usize;
     for (name, installs) in plugins {
-        if !name.starts_with("graphhelm@") {
+        if name != "graphhelm@local"
+            && !name.starts_with("graphhelm@")
+            && !name.starts_with("graphhelm-development-contracts@")
+        {
             continue;
         }
         let install_values: Vec<&Value> = installs

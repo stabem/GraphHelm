@@ -305,6 +305,100 @@ const TOOLS: [ToolSpec; 47] = [
     },
 ];
 
+/// #1361 (plan wave E): one segment of a pass-through route's path.
+#[derive(Clone, Copy)]
+enum Seg {
+    /// A fixed path segment.
+    Lit(&'static str),
+    /// A required string argument, refused by `require` exactly as a hand-written arm did.
+    Arg(&'static str),
+}
+
+/// #1361: what a pass-through route sends.
+#[derive(Clone, Copy)]
+enum RouteBody {
+    /// No body, no idempotency key, no If-Match: a read (or a read-shaped verb).
+    None,
+    /// A mutation with an empty object body, the derived key and the caller's If-Match.
+    Empty,
+    /// A mutation that forwards the validated arguments verbatim, with the key and If-Match.
+    Arguments,
+}
+
+/// #1361: a tool whose work is exactly one Runtime request built from literals and required
+/// string arguments. The table replaces the match arms that only rebuilt this request by hand;
+/// a tool with real logic (a guard, defaults, a query, a choice of request) keeps its arm, and an
+/// arm that matches first (the owner guard on `workspace_sweep`) still wins.
+struct Route {
+    tool: &'static str,
+    method: &'static str,
+    path: &'static [Seg],
+    body: RouteBody,
+}
+
+use Seg::{Arg, Lit};
+
+// One route per line on purpose: the table is read across, tool by tool.
+#[rustfmt::skip]
+const ROUTES: &[Route] = &[
+    Route { tool: "status", method: "GET", path: &[Lit("v1"), Lit("executions"), Arg("executionId")], body: RouteBody::None },
+    Route { tool: "briefing", method: "GET", path: &[Lit("v1"), Lit("executions"), Arg("executionId"), Lit("briefing")], body: RouteBody::None },
+    Route { tool: "tasks", method: "GET", path: &[Lit("v1"), Lit("executions"), Arg("executionId"), Lit("tasks")], body: RouteBody::None },
+    Route { tool: "workspace_list", method: "GET", path: &[Lit("v1"), Lit("workspaces")], body: RouteBody::None },
+    Route { tool: "workspace_sweep", method: "POST", path: &[Lit("v1"), Lit("workspaces"), Lit("sweep")], body: RouteBody::None },
+    Route { tool: "journey_flows", method: "GET", path: &[Lit("v1"), Lit("journey-flows")], body: RouteBody::None },
+    Route { tool: "journey_approve", method: "POST", path: &[Lit("v1"), Lit("journey-flows"), Arg("id"), Lit("approve")], body: RouteBody::None },
+    Route { tool: "journey_sessions", method: "GET", path: &[Lit("v1"), Lit("journeys"), Lit("sessions")], body: RouteBody::None },
+    Route { tool: "journey_close", method: "DELETE", path: &[Lit("v1"), Lit("journeys"), Lit("sessions"), Arg("sessionId")], body: RouteBody::None },
+    Route { tool: "evidence", method: "GET", path: &[Lit("v1"), Lit("executions"), Arg("executionId"), Lit("evidence"), Arg("evidenceId")], body: RouteBody::None },
+    Route { tool: "cancel", method: "POST", path: &[Lit("v1"), Lit("executions"), Arg("executionId"), Lit("cancel")], body: RouteBody::Empty },
+    // #223 existence-slices: no arguments yet; mutations in shape (POST, key), reads as reads.
+    Route { tool: "resolve_contract", method: "POST", path: &[Lit("v1"), Lit("development"), Lit("contract")], body: RouteBody::Empty },
+    Route { tool: "memory_status", method: "GET", path: &[Lit("v1"), Lit("development"), Lit("memory")], body: RouteBody::None },
+    Route { tool: "present", method: "POST", path: &[Lit("v1"), Lit("development"), Lit("present")], body: RouteBody::Empty },
+    Route { tool: "memory_propose", method: "POST", path: &[Lit("v1"), Lit("development"), Lit("memory")], body: RouteBody::Arguments },
+    Route { tool: "accounting", method: "GET", path: &[Lit("v1"), Lit("development"), Lit("accounting")], body: RouteBody::None },
+];
+
+/// #1361: the request a pass-through route builds, arguments required left to right.
+fn route_request(
+    api: &ApiClient,
+    route: &Route,
+    arguments: &serde_json::Value,
+    key: &str,
+    if_match: Option<u64>,
+) -> Result<Result<(u16, serde_json::Value), String>, HandlerOutcome> {
+    let mut segments = Vec::with_capacity(route.path.len());
+    for segment in route.path {
+        segments.push(match segment {
+            Seg::Lit(text) => *text,
+            Seg::Arg(name) => require(arguments, name)?,
+        });
+    }
+    let path = url::segment_path(&segments);
+    let empty = serde_json::json!({});
+    Ok(match route.body {
+        RouteBody::None => api.request(route.method, &path, None, None, None),
+        RouteBody::Empty => api.request(route.method, &path, Some(&empty), Some(key), if_match),
+        RouteBody::Arguments => {
+            api.request(route.method, &path, Some(arguments), Some(key), if_match)
+        }
+    })
+}
+
+/// #1361: a route as its tool's description must name it, `METHOD /v1/a/{arg}/b`.
+fn rendered_route(route: &Route) -> String {
+    let path: Vec<String> = route
+        .path
+        .iter()
+        .map(|segment| match segment {
+            Seg::Lit(text) => (*text).to_owned(),
+            Seg::Arg(name) => format!("{{{name}}}"),
+        })
+        .collect();
+    format!("{} /{}", route.method, path.join("/"))
+}
+
 fn object_schema(properties: serde_json::Value, required: &[&str]) -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -1593,24 +1687,6 @@ pub(crate) fn call(
             };
             Ok(api.request("GET", &path, None, None, None))
         }
-        "status" => require(arguments, "executionId").map(|id| {
-            api.request(
-                "GET",
-                &url::segment_path(&["v1", "executions", id]),
-                None,
-                None,
-                None,
-            )
-        }),
-        "briefing" => require(arguments, "executionId").map(|id| {
-            api.request(
-                "GET",
-                &url::segment_path(&["v1", "executions", id, "briefing"]),
-                None,
-                None,
-                None,
-            )
-        }),
         "keel_plan" => {
             let body = serde_json::json!({
                 "task": arguments.get("task").cloned().unwrap_or(serde_json::Value::Null),
@@ -1629,40 +1705,6 @@ pub(crate) fn call(
                 None,
             ))
         }
-        "workspace_list" => Ok(api.request(
-            "GET",
-            &url::segment_path(&["v1", "workspaces"]),
-            None,
-            None,
-            None,
-        )),
-        // #360: deleting workspaces is the owner's act. An agent-typed session (every lane runs
-        // as one) is refused before any request, whatever credential the session holds.
-        "workspace_sweep" if api.actor_type != "owner" => Err(HandlerOutcome::Error {
-            code: INVALID_PARAMS,
-            message: "workspace_sweep is owner-only: only the owner removes agent workspaces \
-                      (`graphhelm workspace sweep --apply` or the Runtime route)"
-                .to_owned(),
-            data: Some(serde_json::json!({
-                "code": crate::error_codes::GHCLI037_WORKSPACE_REFUSED
-            })),
-        }),
-        "workspace_sweep" => Ok(api.request(
-            "POST",
-            &url::segment_path(&["v1", "workspaces", "sweep"]),
-            None,
-            None,
-            None,
-        )),
-        "tasks" => require(arguments, "executionId").map(|id| {
-            api.request(
-                "GET",
-                &url::segment_path(&["v1", "executions", id, "tasks"]),
-                None,
-                None,
-                None,
-            )
-        }),
         "journeys" => {
             let path = match str_arg(arguments, "executionId") {
                 Some(id) => url::segment_path(&["v1", "executions", id, "journeys"]),
@@ -1670,13 +1712,6 @@ pub(crate) fn call(
             };
             Ok(api.request("GET", &path, None, None, None))
         }
-        "journey_flows" => Ok(api.request(
-            "GET",
-            &url::segment_path(&["v1", "journey-flows"]),
-            None,
-            None,
-            None,
-        )),
         "journey_draft" => require(arguments, "id").and_then(|id| {
             let yaml = require(arguments, "yaml")?;
             Ok(api.request(
@@ -1709,15 +1744,6 @@ pub(crate) fn call(
             data: Some(serde_json::json!({
                 "code": crate::error_codes::GHCLI036_JOURNEY_APPROVE_OWNER_ONLY
             })),
-        }),
-        "journey_approve" => require(arguments, "id").map(|id| {
-            api.request(
-                "POST",
-                &url::segment_path(&["v1", "journey-flows", id, "approve"]),
-                None,
-                None,
-                None,
-            )
         }),
         "journey_open" => require(arguments, "contractId").and_then(|contract| {
             let step = require(arguments, "stepId")?;
@@ -1777,32 +1803,6 @@ pub(crate) fn call(
                 let force = arguments.get("force").and_then(serde_json::Value::as_bool) == Some(true);
                 api.request("POST", &path, Some(&serde_json::json!({"force": force})), None, None)
             }
-        }),
-        "journey_sessions" => Ok(api.request(
-            "GET",
-            &url::segment_path(&["v1", "journeys", "sessions"]),
-            None,
-            None,
-            None,
-        )),
-        "journey_close" => require(arguments, "sessionId").map(|session| {
-            api.request(
-                "DELETE",
-                &url::segment_path(&["v1", "journeys", "sessions", session]),
-                None,
-                None,
-                None,
-            )
-        }),
-        "evidence" => require(arguments, "executionId").and_then(|id| {
-            let evidence_id = require(arguments, "evidenceId")?;
-            Ok(api.request(
-                "GET",
-                &url::segment_path(&["v1", "executions", id, "evidence", evidence_id]),
-                None,
-                None,
-                None,
-            ))
         }),
         "events" => require(arguments, "executionId").map(|id| {
             let mut query = String::new();
@@ -2026,15 +2026,6 @@ pub(crate) fn call(
                 if_match,
             )
         }),
-        "cancel" => require(arguments, "executionId").map(|id| {
-            api.request(
-                "POST",
-                &url::segment_path(&["v1", "executions", id, "cancel"]),
-                Some(&serde_json::json!({})),
-                Some(&key),
-                if_match,
-            )
-        }),
         "wake_arm" => require(arguments, "executionId").map(|id| {
             // The session can only arm ITSELF: sessionId is the session's own nonce, never
             // an argument — the sleeper-only rule in the dispatch itself.
@@ -2136,31 +2127,6 @@ pub(crate) fn call(
             }
             api.request_waiting("GET", &path, None, None, None, PROBE_CALLER_WAIT)
         }),
-        // #223 existence-slice: no required arguments yet (see resolve_contract_schema).
-        "resolve_contract" => Ok(api.request(
-            "POST",
-            &url::segment_path(&["v1", "development", "contract"]),
-            Some(&serde_json::json!({})),
-            Some(&key),
-            if_match,
-        )),
-        // A READ: GET, no body, and no idempotency key. The key exists to make a mutation safe to
-        // repeat; attaching one to a read would claim this changes something.
-        "memory_status" => Ok(api.request(
-            "GET",
-            &url::segment_path(&["v1", "development", "memory"]),
-            None,
-            None,
-            None,
-        )),
-        // #223 existence-slice: no required arguments yet (see present_schema).
-        "present" => Ok(api.request(
-            "POST",
-            &url::segment_path(&["v1", "development", "present"]),
-            Some(&serde_json::json!({})),
-            Some(&key),
-            if_match,
-        )),
         // Forwards `budget` and `require` so the budget refusal is reachable here too (#393).
         // Both default to the pre-#393 degenerate call, so a caller that sends neither gets what
         // it always got. The refusal needs no special handling below: the route answers 422 with
@@ -2182,24 +2148,6 @@ pub(crate) fn call(
             })),
             Some(&key),
             if_match,
-        )),
-        // A MUTATION in shape -- POST with a body and an idempotency key -- even though the
-        // existence-slice persists nothing: the verb and the key describe what this operation IS,
-        // and wiring it as a read would have to be undone the day it stores anything.
-        "memory_propose" => Ok(api.request(
-            "POST",
-            &url::segment_path(&["v1", "development", "memory"]),
-            Some(arguments),
-            Some(&key),
-            if_match,
-        )),
-        // A READ: GET, no body, no idempotency key -- matching status/memory_status above.
-        "accounting" => Ok(api.request(
-            "GET",
-            &url::segment_path(&["v1", "development", "accounting"]),
-            None,
-            None,
-            None,
         )),
         // A READ-SHAPED POST like topology: no idempotency key, no If-Match -- synthesis
         // publishes, starts and appends nothing. Optional fields travel only when given, so
@@ -2253,7 +2201,22 @@ pub(crate) fn call(
                 None,
             )
         }),
-        _ => unreachable!("the closed-list check above already refused unknown names"),
+        // #360: deleting workspaces is the owner's act. An agent-typed session (every lane runs
+        // as one) is refused before any request, whatever credential the session holds.
+        "workspace_sweep" if api.actor_type != "owner" => Err(HandlerOutcome::Error {
+            code: INVALID_PARAMS,
+            message: "workspace_sweep is owner-only: only the owner removes agent workspaces \
+                      (`graphhelm workspace sweep --apply` or the Runtime route)"
+                .to_owned(),
+            data: Some(serde_json::json!({
+                "code": crate::error_codes::GHCLI037_WORKSPACE_REFUSED
+            })),
+        }),
+        // #1361: every tool whose arm would only rebuild one request is served from ROUTES.
+        _ => match ROUTES.iter().find(|route| route.tool == name) {
+            Some(route) => route_request(api, route, arguments, &key, if_match),
+            None => unreachable!("the closed-list check above already refused unknown names"),
+        },
     };
 
     let response = match outcome {
@@ -2356,6 +2319,40 @@ mod envelope_tests {
             long.is_empty(),
             "descriptions over {DESCRIPTION_MAX_CHARS} chars: {long:?}"
         );
+    }
+
+    /// #1361: a route-table entry is checked against its tool's own description, which names the
+    /// request (`surface_completeness` checks every such name against the router). A typo in a
+    /// route — a wrong method, a segment, an argument — fails here, not in an operator's hands.
+    #[test]
+    fn every_table_route_is_the_request_its_tool_describes() {
+        assert!(
+            ROUTES.len() > 10,
+            "HARNESS-BROKE: the route table is nearly empty"
+        );
+        let mut seen = std::collections::BTreeSet::new();
+        for route in ROUTES {
+            assert!(seen.insert(route.tool), "{} has two routes", route.tool);
+            let tool = TOOLS
+                .iter()
+                .find(|tool| tool.name == route.tool)
+                .unwrap_or_else(|| panic!("{} is routed but is not a tool", route.tool));
+            let request = rendered_route(route);
+            assert!(
+                tool.description.contains(&request),
+                "{}: route {request:?} is not the request its description names",
+                route.tool
+            );
+        }
+        // The check bites: a route one segment off is not found in the same description.
+        let wrong = Route {
+            tool: "status",
+            method: "GET",
+            path: &[Lit("v1"), Lit("execution"), Arg("executionId")],
+            body: RouteBody::None,
+        };
+        let status = TOOLS.iter().find(|tool| tool.name == "status").unwrap();
+        assert!(!status.description.contains(&rendered_route(&wrong)));
     }
 
     /// #1330 (plan D2): `schemas/mcp-tools.json` is `tools/list` as served, emitted from this

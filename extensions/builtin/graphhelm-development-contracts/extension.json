@@ -943,7 +943,7 @@
           "id": "skill/test-audit",
           "kind": "skill",
           "path": "skills/test-audit/SKILL.md",
-      "sha256": "sha256:d10d9100ffc695889257b23b2fdd25eec29faec2633b1ad11a00cc5f2954c043",
+      "sha256": "sha256:ad2a7b5e70a21269f461dc78cb5a49c690ee424d84312733c2d5e2ce205bba18",
           "effects": [],
           "permissions": [
             "package.read"

@@ -74,7 +74,7 @@ hashing nor transport protection changes the shared-user filesystem boundary.
 | Lane bootstrap | `apps/cli/src/commands/tasks.rs`, `credential` reads the owner token | No owner-free lane request protocol. |
 | Grant and scope | `serve/mod.rs`, `load_agent_credentials` parses `credential=actor|project|execution` | No authenticated grant or flow/purpose binding. |
 | Revocation | `serve/mod.rs`, `ServeState.agent_credentials` loads once | No restart-free update boundary. |
-| Authority | `serve/routes.rs`, `journey_flow_draft`, `journey_flow_review`, `approve_journey_flow` | Review and final approval need separate policy statements. |
+| Authority | `serve/routes.rs::journey_flow_review` calls `journey_flow::review_approve`, which calls `approve_as`; `journey_flow_surfaces.rs::a_reviewer_agent_approves_only_with_its_own_credential_and_never_its_own_draft` expects persisted status `approved` | Current behavior lets an agent reviewer perform and persist final approval, while `docs/guides/journeys.md` says approval belongs to the owner. The RFC's earlier claim that review is never final approval is false. |
 | OS isolation | D-058 in `docs/DECISION_REGISTER.md` | No cross-lane unreadability guarantee. |
 
 This is documentary RED, not an executed failing test. The protocol below is proposed behavior.
@@ -194,12 +194,44 @@ execution token, owner token or token scoped to another flow cannot satisfy the 
 
 Current `POST /v1/journey-flows/{id}/draft` and `/review` accept a registered scoped agent
 credential; it is not yet flow- or purpose-bound. The review handler records a blind review of
-the current digest and refuses a previous writer. Current
-`POST /v1/journey-flows/{id}/approve` is owner-authenticated. The standing rule that only the
-owner approves journeys remains in force. This RFC's `reviewer` purpose means a separate review
-operation, never final approval. Whether independent review should count as approval remains an
-unresolved authority change requiring an accepted decision-register entry and a governing-rule
-update. D-058 concerns credential handoff and its shared-user limit, not approval authority.
+the current digest and refuses a previous writer. The current route in
+`apps/cli/src/commands/serve/routes.rs` calls
+`apps/cli/src/commands/journey_flow.rs::review_approve`, which constructs a reviewer approver and
+calls `approve_as`. That path writes the approval record and approved status. The existing
+`apps/cli/tests/journey_flow_surfaces.rs::a_reviewer_agent_approves_only_with_its_own_credential_and_never_its_own_draft` test verifies that the
+result validates as approved. Therefore, the earlier sentence saying review is never final
+approval described a proposal as current behavior and was wrong.
+
+This conflicts with the standing owner-only journey rule and the policy intent of D-058. The
+reviewer path is current implementation behavior, not an accepted authority decision. The
+recommended target is owner-only final approval, with a distinct reviewer allowed to record a
+review that does not approve the flow. Keeping agent final approval is the alternative, but would
+need an explicit accepted decision and a change to the standing owner-only rule. A third option is
+to defer reviewer credentials and reject reviewer approval until the authority decision is made;
+that preserves the owner-only target but delays the proposed independent-review workflow. No
+alternative is accepted by this RFC. Until an independent security reviewer assesses this exact
+conflict and the owner accepts any required decision-register and governing-rule change, preserve
+the observed behavior and report the policy mismatch as unresolved. Do not describe the existing
+route as owner-only or silently treat its persisted approval as a mere review.
+
+## Security review disposition
+
+No independent security reviewer has yet recorded a disposition on this design head. The table
+below makes the six required questions and their evidence explicit for that review; `PENDING`
+means the question is not security-approved and cannot authorize implementation.
+
+| Question | Evidence and current proposal | Independent disposition |
+|---|---|---|
+| Bootstrap identity: can execution identity be authenticated without a caller-supplied lane name? | The concrete bootstrap requires the owner-issued execution-and-lane task bearer and checks trusted assignment state; caller fields and the shared session token are insufficient. | PENDING; reviewer must verify the existing task-authentication consumer and assignment source can establish this identity. |
+| Scope/purpose refusal: do wrong scope or purpose fail before writes? | The proposal checks project, execution, flow, lane and purpose before handler entry and specifies a stable refusal with unchanged state. | PENDING; route ordering and every write boundary need security review. |
+| Revocation ordering: can a race accept a revoked token after acknowledgement? | The proposal serializes assignment, grant and credential changes and journey writes under one transaction boundary, with durable sync before acknowledgement. | PENDING; reviewer must validate the lock/journal boundary against actual storage and crash recovery. |
+| Secret exposure: can token material reach logs, errors, events or task records? | The proposal returns plaintext once, stores a keyed digest, and excludes token and digest from recorded output. | PENDING; all output and failure paths require review. |
+| Approval authority: does reviewer approval conflict with policy? | `review_approve -> approve_as` persists an agent approval; `a_distinct_reviewer_can_approve` expects approved status. The standing target is owner-only final approval. | PENDING; reviewer must explicitly disposition the conflict and compatibility path. |
+| Host isolation: is there a real observer for cross-lane unreadability? | D-058 places owner and agent files under one OS user; this proposal does not establish unreadability. | BLOCKED; no real-host observer or separate enforced OS/process identity is delivered by this documentation slice. |
+
+Only the independent security reviewer can fill the disposition column on the reviewed head.
+Routine document approval is not security sign-off. Any unresolved blocker remains visible and
+prevents the credential implementation from starting.
 
 ## OS and process isolation boundary
 
@@ -216,22 +248,39 @@ supported host. Until that real observer passes, report OS isolation as unimplem
 unobserved. The narrower no-secret-handoff guarantee may be implemented earlier, but must not be
 described as OS isolation.
 
-## Follow-up implementation card (after security review)
+## First implementation card (conditional on security review and accepted authority)
 
-1. `apps/cli/src/commands/serve/mod.rs` — replace startup-only raw credential loading with the
-   trusted registry interface and reject invalid initial state.
-2. `apps/cli/src/commands/serve/routes.rs` — authenticate provisioning requests and enforce exact
-   scope and purpose before journey handlers.
-3. `apps/cli/src/commands/tasks.rs` — remove owner-token-based lane self-provisioning or route it
-   through the authorized broker contract.
-4. `apps/cli/tests/journey_flow_surfaces.rs` — observe the HTTP scope, author/reviewer and
-   no-write refusal cases below using isolated temporary stores.
-5. `apps/cli/tests/api_http.rs` — add an isolated HTTP observer for provisioning, rotation and
-   revocation without Runtime restart.
+Do not start this card until an independent security reviewer has dispositioned all six questions
+above, every blocker affecting the application protocol is resolved, and any owner-only approval
+authority decision is accepted in the decision register with the required governing-rule update.
+The host-isolation blocker may remain only if the implementation is explicitly limited to
+no-secret-handoff and claims no OS isolation. This is a bounded first slice, not authorization
+from this RFC:
 
-The OS isolation observer is a separate host-level deliverable and must not be claimed by these
-HTTP tests. Security review may narrow or revise these paths before implementation; no code is
-authorized by this proposed card alone.
+- **Exact files:** `apps/cli/src/commands/serve/mod.rs`,
+  `apps/cli/src/commands/serve/routes.rs`, `apps/cli/src/commands/tasks.rs`,
+  `apps/cli/src/commands/journey_flow.rs`,
+  `apps/cli/tests/journey_flow_surfaces.rs`.
+- **Promise:** replace startup-only `ServeState.agent_credentials` use for journey routes with a
+  trusted, owner-granted credential registry; authenticate the execution-and-lane task bearer,
+  enforce project/flow/lane/purpose and revocation before writes, and keep final approval behavior
+  aligned with the authority decision.
+- **Storage/auth consumers:** `ServeState` and `load_agent_credentials` in `serve/mod.rs`, the
+  journey draft/review handlers in `serve/routes.rs`, and owner-token task credential issuance in
+  `tasks.rs`. The implementation must identify and reuse or add the durable transaction store
+  named by security review; it may not claim atomicity by adding an in-memory cache alone.
+- **Compatibility:** existing `GRAPHHELM_AGENT_CREDENTIALS` consumers and the persisted approved
+  status produced by reviewer credentials need an explicit migration/refusal policy. Do not
+  reinterpret existing approvals or erase their author/reviewer history. If the accepted decision
+  requires changing reviewer approval, first add a failing isolated observer on the parent and
+  preserve the existing digest and previous-writer coverage.
+- **Proof:** isolated HTTP tests in `journey_flow_surfaces.rs` cover wrong scope/purpose, spoofed
+  lane, execution bearer refusal on journey routes, former-writer review, exact digest binding,
+  revocation without restart and unchanged state on refusal. Assignment-removal races and durable
+  replay need separate observers if the selected store path reaches them. Real-host OS isolation
+  remains a separate deliverable.
+
+The independent reviewer may reject or narrow this card. No code is authorized by this proposal.
 
 ## Required implementation observers
 

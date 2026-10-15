@@ -25,6 +25,9 @@ struct Spec {
 const SCRIPT_DIR: &str = ".graphhelm/observers";
 const DRIVER_NAME: &str = "journey_driver.mjs";
 const DRIVER: &[u8] = include_bytes!("../../../../tools/journey-driver/driver.mjs");
+/// The driver imports `./judge.mjs`, so it ships beside it.
+const JUDGE_NAME: &str = "judge.mjs";
+const JUDGE: &[u8] = include_bytes!("../../../../tools/journey-driver/judge.mjs");
 
 const PLAYWRIGHT: Spec = Spec {
     id: "playwright",
@@ -135,6 +138,15 @@ fn check(spec: &Spec, project: &Path, roots: &[PathBuf], node: bool) -> serde_js
                 "{SCRIPT_DIR}/{DRIVER_NAME} (graphhelm-journey-driver/1, this GraphHelm version)"
             ));
         }
+        if std::fs::read(project.join(SCRIPT_DIR).join(JUDGE_NAME))
+            .ok()
+            .as_deref()
+            != Some(JUDGE)
+        {
+            missing.push(format!(
+                "{SCRIPT_DIR}/{JUDGE_NAME} (this GraphHelm version)"
+            ));
+        }
     }
     serde_json::json!({
         "id": spec.id,
@@ -175,6 +187,7 @@ fn write_script(spec: &Spec, project: &Path) -> std::io::Result<()> {
     std::fs::write(path, spec.script)?;
     if spec.id == "playwright" {
         std::fs::write(project.join(SCRIPT_DIR).join(DRIVER_NAME), DRIVER)?;
+        std::fs::write(project.join(SCRIPT_DIR).join(JUDGE_NAME), JUDGE)?;
     }
     Ok(())
 }
@@ -256,11 +269,12 @@ pub(crate) enum Installed {
 
 /// The files an install may write in the project, reported back to the owner by name (#519):
 /// the button says up front that it edits `package.json`, and the result says what it did.
-const TOUCHED: [&str; 5] = [
+const TOUCHED: [&str; 6] = [
     "package.json",
     "package-lock.json",
     "node_modules/@playwright/test/package.json",
     ".graphhelm/observers/journey_driver.mjs",
+    ".graphhelm/observers/judge.mjs",
     ".graphhelm/observers/playwright_observe.py",
 ];
 
@@ -412,6 +426,7 @@ mod tests {
             serde_json::json!([
                 {"path": "package.json", "change": "modified"},
                 {"path": ".graphhelm/observers/journey_driver.mjs", "change": "created"},
+                {"path": ".graphhelm/observers/judge.mjs", "change": "created"},
                 {"path": ".graphhelm/observers/playwright_observe.py", "change": "created"},
             ])
         );
@@ -427,7 +442,7 @@ mod tests {
         let browser = check(&PLAYWRIGHT, &project, &[home.join("cache")], false);
         assert_eq!(browser["status"], "missing");
         let missing = browser["missing"].as_array().expect("missing");
-        assert_eq!(missing.len(), 5, "{missing:?}");
+        assert_eq!(missing.len(), 6, "{missing:?}");
         assert!(missing.iter().any(|entry| {
             entry
                 .as_str()

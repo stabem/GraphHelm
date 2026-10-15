@@ -917,6 +917,8 @@ fn two_enabled_graphhelm_plugin_identities_are_ambiguous_for_cleanup() {
         "mcpServers": {"graphhelm": {"command": graphhelm, "args": ["mcp", "--discover", "--actor", "agent-chat"]}}
     })).unwrap()).unwrap();
     let before = std::fs::read(h.path().join(".claude.json")).unwrap();
+    let out = private_dir();
+    let plan = out.path().join("plan.json");
     let (ok, preview) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
     assert!(ok, "{preview}");
     assert!(
@@ -934,10 +936,17 @@ fn two_enabled_graphhelm_plugin_identities_are_ambiguous_for_cleanup() {
                 "--resolve",
                 "home/.claude.json=use-plugin-mcp",
             ])
+            .arg("--out")
+            .arg(&plan)
             .output()
             .unwrap(),
     );
     assert!(!ok, "{refused}");
+    assert_eq!(
+        refused["diagnostics"][0]["path"],
+        "/adoption/invalid_configuration"
+    );
+    assert!(!plan.exists());
     assert_eq!(
         std::fs::read(h.path().join(".claude.json")).unwrap(),
         before

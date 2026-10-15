@@ -290,6 +290,8 @@ fn sibling_worktree(cwd: &Path, events: &Path) -> Option<PathBuf> {
         let out = graphhelm_process::command("git")
             .arg("-C")
             .arg(dir)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
             .args([
                 "rev-parse",
                 "--path-format=absolute",
@@ -3468,7 +3470,7 @@ mod tests {
         std::fs::create_dir_all(main.join(".graphhelm")).unwrap();
         let git = |args: &[&str]| {
             assert!(
-                std::process::Command::new("git")
+                graphhelm_process::command("git")
                     .arg("-C")
                     .arg(&main)
                     .args(args)

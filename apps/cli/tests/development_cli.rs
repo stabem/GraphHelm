@@ -5,8 +5,10 @@
 //! â€” rather than restating the vocabulary, so this adapter never becomes a second producer of one
 //! closed set.
 
+#[path = "support/mod.rs"]
+mod support;
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use support::repository_root;
 
 use graphhelm_governor::{
     MemoryPublicationState, MemoryPublicationTransition, MemoryRecord, MemorySemanticState,
@@ -14,13 +16,6 @@ use graphhelm_governor::{
 };
 use graphhelm_protocols::OpaqueId;
 use serde_json::Value;
-
-fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
-}
 
 fn shipped_policy() -> Value {
     // Read at RUN time, deliberately, rather than `include_str!`d. The production path embeds the

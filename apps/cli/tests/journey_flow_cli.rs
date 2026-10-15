@@ -2,8 +2,11 @@
 //! approval. Credible regressions: silently ignored YAML, stale approvals and unsafe overwrites.
 //! Existing journey tests accept JSON contracts only. Cost: subprocesses/tempdirs, no network,
 //! browser, model, credentials or production seams; seconds after the build.
+#[path = "support/mod.rs"]
+mod support;
 use std::path::Path;
 use std::process::{Command, Output};
+use support::owner_token;
 
 use serde_json::Value;
 
@@ -52,39 +55,6 @@ fn run(project: &Path, args: &[&str]) -> (Output, Value) {
         .unwrap();
     let json = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
     (out, json)
-}
-
-/// #534: approving is the owner's. `graphhelm init` makes the project's owner store and its owner
-/// token (with the owner-only ACL); the token's path is what `approve --token-file` takes.
-fn owner_token(project: &Path) -> String {
-    // init ignores all of `.graphhelm/`; a real project keeps its flows tracked and its owner
-    // store (events, token, keys, owner records) out of git, so the test ignores exactly that.
-    let gitignore = project.join(".gitignore");
-    let kept = std::fs::read(&gitignore).ok();
-    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args(["--json", "init", "--project"])
-        .arg(project)
-        .args(["--harness", "claude-code"])
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    let mut ignore = kept.unwrap_or_default();
-    ignore.extend_from_slice(
-        b"
-.graphhelm/*
-!.graphhelm/journeys/
-/.mcp.json
-",
-    );
-    std::fs::write(&gitignore, ignore).unwrap();
-    project
-        .join(".graphhelm/events.token")
-        .to_string_lossy()
-        .into_owned()
 }
 
 fn approve(project: &Path) -> (Output, Value) {

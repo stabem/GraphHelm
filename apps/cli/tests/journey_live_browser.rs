@@ -6,11 +6,14 @@
 //! Cost: ~30s plus build, Node/Playwright/Chromium explicitly installed and a desktop for the
 //! headed browser, local ports/Git; no provider/account or network installation. Ordinary
 //! offline runs ignore this target.
+#[path = "support/mod.rs"]
+mod support;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
+use support::owner_token;
 
 use serde_json::{Value, json};
 
@@ -321,36 +324,4 @@ fn open_live_at_a_step_replays_cached_edges_headed_and_stops_open_at_a_drifted_e
     assert_eq!(still["data"]["screen"], "cart", "{still}");
     let (code, closed) = journey(&project, &["close", &session]);
     assert_eq!(code, 0, "{closed}");
-}
-
-/// #534: approving is the owner's; `graphhelm init` makes the project's owner store and token.
-fn owner_token(project: &Path) -> String {
-    // init ignores all of `.graphhelm/`; a real project keeps its flows tracked and its owner
-    // store (events, token, keys, owner records) out of git, so the test ignores exactly that.
-    let gitignore = project.join(".gitignore");
-    let kept = std::fs::read(&gitignore).ok();
-    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args(["--json", "init", "--project"])
-        .arg(project)
-        .args(["--harness", "claude-code"])
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    let mut ignore = kept.unwrap_or_default();
-    ignore.extend_from_slice(
-        b"
-.graphhelm/*
-!.graphhelm/journeys/
-/.mcp.json
-",
-    );
-    std::fs::write(&gitignore, ignore).unwrap();
-    project
-        .join(".graphhelm/events.token")
-        .to_string_lossy()
-        .into_owned()
 }

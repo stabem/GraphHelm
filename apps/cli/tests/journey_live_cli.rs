@@ -4,7 +4,10 @@
 //! reaches, and `act` reaching a session that is not there. Real CLI/tempdir/Git boundary, the
 //! installed observer is a tripwire that must never start; cost: seconds after build, offline,
 //! no Node/browser/provider.
+#[path = "support/mod.rs"]
+mod support;
 use std::path::Path;
+use support::owner_token;
 
 use serde_json::Value;
 
@@ -596,38 +599,6 @@ fn watch_plays_a_guarded_act_only_under_a_mark_that_still_binds_its_edge() {
     // Restored, the mark binds again.
     std::fs::write(&path, &marked).unwrap();
     assert_eq!(guarded(dir.path()), serde_json::json!([]));
-}
-
-/// #534: approving is the owner's; `graphhelm init` makes the project's owner store and token.
-fn owner_token(project: &Path) -> String {
-    // init ignores all of `.graphhelm/`; a real project keeps its flows tracked and its owner
-    // store (events, token, keys, owner records) out of git, so the test ignores exactly that.
-    let gitignore = project.join(".gitignore");
-    let kept = std::fs::read(&gitignore).ok();
-    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args(["--json", "init", "--project"])
-        .arg(project)
-        .args(["--harness", "claude-code"])
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    let mut ignore = kept.unwrap_or_default();
-    ignore.extend_from_slice(
-        b"
-.graphhelm/*
-!.graphhelm/journeys/
-/.mcp.json
-",
-    );
-    std::fs::write(&gitignore, ignore).unwrap();
-    project
-        .join(".graphhelm/events.token")
-        .to_string_lossy()
-        .into_owned()
 }
 
 /// #534 slice 2: a watch plays a guarded act only under a mark the OWNER recorded. A marked YAML

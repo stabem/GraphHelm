@@ -2,7 +2,10 @@
 //! a draft/stale projection or discarding malformed cache bytes. Phase-1 observers never
 //! consume a replay cache. Real CLI/tempdir/Git boundary, no test-only production seam;
 //! cost: seconds after build, offline, no Node/browser/provider required.
+#[path = "support/mod.rs"]
+mod support;
 use std::path::Path;
+use support::owner_token;
 
 #[path = "support/time_scale.rs"]
 mod time_scale;
@@ -316,36 +319,4 @@ fn malformed_oversized_and_directory_cache_are_preserved_and_refused() {
         "replay.cache_invalid",
     );
     assert!(cache.is_dir());
-}
-
-/// #534: approving is the owner's; `graphhelm init` makes the project's owner store and token.
-fn owner_token(project: &Path) -> String {
-    // init ignores all of `.graphhelm/`; a real project keeps its flows tracked and its owner
-    // store (events, token, keys, owner records) out of git, so the test ignores exactly that.
-    let gitignore = project.join(".gitignore");
-    let kept = std::fs::read(&gitignore).ok();
-    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args(["--json", "init", "--project"])
-        .arg(project)
-        .args(["--harness", "claude-code"])
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    let mut ignore = kept.unwrap_or_default();
-    ignore.extend_from_slice(
-        b"
-.graphhelm/*
-!.graphhelm/journeys/
-/.mcp.json
-",
-    );
-    std::fs::write(&gitignore, ignore).unwrap();
-    project
-        .join(".graphhelm/events.token")
-        .to_string_lossy()
-        .into_owned()
 }

@@ -8,5 +8,10 @@
     "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "src/test/time-scale.ts", "src/runtime/proxy-signal.ts"]
+  "include": [
+    "vite.config.ts",
+    "src/test/time-scale.ts",
+    "src/runtime/proxy-signal.ts",
+    "src/runtime/session-gate.test.ts"
+  ]
 }

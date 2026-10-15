@@ -14,18 +14,14 @@ evidence.
 
 ## Thin host adapters
 
-The Claude and Codex manifests and `.mcp.json` are thin adapters over public GraphHelm CLI and MCP
-contracts. Each `SKILL.md` either choreographs those public surfaces or authors a schema-bound local
+The Claude and Codex manifests are thin adapters over public GraphHelm CLI and MCP contracts. Each `SKILL.md` either choreographs those public surfaces or authors a schema-bound local
 advisory artifact. They contain no Runtime implementation and do not enforce business rules.
 Machine-readable schemas, policy contracts, and evaluator contracts are authoritative; the skills
 only propose or choreograph their inputs. Deleting them removes convenience, not Runtime authority.
 
-The host wrapper starts `graphhelm mcp` against the local Public Runtime API. Before host discovery,
-set `${GRAPHHELM_CLI}` to the canonical absolute path of the trusted `graphhelm` executable. The
-adapter deliberately has no PATH or current-directory fallback. Authentication comes from
-`--token-file ${GRAPHHELM_TOKEN_FILE}`, and the host supplies a distinct actor id for each chat
-session through `${GRAPHHELM_ACTOR}`. Never paste a token into this file, a skill argument, an
-artifact, or a Graph DSL document, and never reuse one actor id across concurrent sessions.
+The package registers no MCP server of its own: the main `graphhelm` plugin serves the GraphHelm
+MCP, and these skills use its tools (#1409). Never paste a token into a skill argument, an artifact,
+or a Graph DSL document, and never reuse one actor id across concurrent sessions.
 
 ## Untrusted input and evidence safety
 

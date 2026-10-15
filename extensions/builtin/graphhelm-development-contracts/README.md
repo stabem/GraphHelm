@@ -44,9 +44,10 @@ sees it.
 
 ## Host views
 
-`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json` and `.mcp.json` are **hand-written and
-deletable**. They exist so a host can discover the package; they carry no authority of their own,
-and deleting them removes discovery and changes nothing else.
+`.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` are **hand-written and deletable**.
+They exist so a host can discover the package; they carry no authority of their own, and deleting
+them removes discovery and changes nothing else. The package registers no MCP server: the main
+`graphhelm` plugin serves the GraphHelm MCP (#1409).
 
 **Hand-written, not derived, and the distinction is not cosmetic.** Raised on review: this section
 originally said "derived", copied from the sibling package's language, and nothing in this

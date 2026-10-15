@@ -1,10 +1,9 @@
 {
   "id": "graphhelm-jpd",
   "name": "graphhelm-jpd",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Journey-Proven Development entry skills using GraphHelm public CLI/MCP contracts and schema-bound local advisory artifacts.",
   "skills": "skills",
-  "mcpServers": ".mcp.json",
   "author": {
     "name": "GraphHelm"
   },

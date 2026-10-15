@@ -1453,7 +1453,7 @@ mod tests {
     #[test]
     fn project_lock_is_shared_across_processes_with_different_temp_settings() {
         use std::process::Child;
-        use std::process::{Command, Stdio};
+        use std::process::Stdio;
         use std::time::{Duration, Instant};
 
         struct ChildGuard(Option<Child>);

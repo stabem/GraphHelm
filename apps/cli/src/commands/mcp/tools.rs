@@ -1100,8 +1100,10 @@ pub(crate) const UNLISTED_STUBS: [&str; 4] = [
 
 /// #1277: the most `tools/list` may serialise to, in bytes. Every connecting session pays it;
 /// the guard below fails a change that grows it past this, so growth is a decision in a diff.
+#[cfg(test)]
 const TOOL_LIST_BUDGET_BYTES: usize = 25_500;
 /// #1277: the longest a tool description may be: one line plus the route it maps to.
+#[cfg(test)]
 const DESCRIPTION_MAX_CHARS: usize = 300;
 
 /// The `tools/list` reply body: the closed table, minus the unlisted stubs.

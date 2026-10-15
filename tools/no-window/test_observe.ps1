@@ -118,7 +118,7 @@ try {
   $stderr = $observing.StandardError.ReadToEnd()
   $observing.WaitForExit()
   $output = $stdout + $stderr
-  Write-Output "CASE visible console control: observer exit $($observing.ExitCode); HWND $($parts[0]); owner PID $($parts[1])"
+  Write-Output "CASE visible console control: observer exit $($observing.ExitCode) (expected 1); HWND $($parts[0]); owner PID $($parts[1])"
   Write-Output $output
   if (-not $output.Contains("$($parts[2]) $($parts[0])")) { throw 'UNOBSERVED: positive control window was not captured by observer' }
   if (-not $output.Contains("$($parts[2]) $($parts[0]) pid=$($parts[1])")) { throw 'Captured console window lacks its independently measured owner PID' }
@@ -204,7 +204,8 @@ try {
   if (-not $added -or $added.Count -ne 1) { throw 'UNOBSERVED: no distinct second tab appeared in the unchanged owned HWND' }
   $output = $tabObserver.StandardOutput.ReadToEnd() + $tabObserver.StandardError.ReadToEnd()
   $tabObserver.WaitForExit()
-  Write-Output "CASE existing Terminal tab: HWND $hwnd; baseline $($baseline[0]); added $($added[0]); observer exit $($tabObserver.ExitCode)"
+  $expectedTabExit = if ($RedParent) { 0 } else { 1 }
+  Write-Output "CASE existing Terminal tab: HWND $hwnd; baseline $($baseline[0]); added $($added[0]); observer exit $($tabObserver.ExitCode) (expected $expectedTabExit)"
   Write-Output $output
   if ($RedParent) {
     if ($tabObserver.ExitCode -ne 0 -or -not $output.Contains('new tabs in an existing Windows Terminal were not observed')) { throw 'UNOBSERVED: parent did not return the expected top-level-only quiet result' }
@@ -233,3 +234,4 @@ try {
     try { $pattern = $owned.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern); $pattern.Close() } catch { Write-Output "UNOBSERVED: could not close test-owned Terminal HWND $hwnd : $_" }
   }
 }
+Write-Output 'PASS: all observer controls passed'

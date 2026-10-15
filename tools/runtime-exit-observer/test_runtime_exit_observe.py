@@ -207,8 +207,8 @@ class WindowsProcessObserver(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         real_fsync = os.fsync
-        for terminal in ("exited", "timeout"):
-            with self.subTest(terminal=terminal), tempfile.TemporaryDirectory() as directory:
+        for terminal, marker_sync_fails in (("exited", False), ("timeout", False), ("exited", True)):
+            with self.subTest(terminal=terminal, marker_sync_fails=marker_sync_fails), tempfile.TemporaryDirectory() as directory:
                 process, creation = self.child()
                 receipt = Path(directory) / "receipt.jsonl"
                 args = ["--pid", str(process.pid), "--creation-filetime", str(creation),
@@ -218,7 +218,7 @@ class WindowsProcessObserver(unittest.TestCase):
 
                 def sync(fd):
                     syncs.append(fd)
-                    if len(syncs) == 2:
+                    if len(syncs) == 2 or (marker_sync_fails and len(syncs) == 3):
                         raise OSError("SENSITIVE_MARKER")
                     real_fsync(fd)
                     if len(syncs) == 1:
@@ -240,11 +240,15 @@ class WindowsProcessObserver(unittest.TestCase):
                 finally:
                     if releaser:
                         releaser.join(timeout=4)
-                states = [json.loads(line)["state"] for line in receipt.read_text(encoding="utf-8").splitlines()]
+                lines = receipt.read_text(encoding="utf-8").splitlines()
+                states = [json.loads(line)["state"] for line in lines[:2]]
                 self.assertEqual(len(syncs), 3, "attachment, terminal, and marker must each sync once")
                 self.assertEqual(code, 2)
                 self.assertEqual(error.getvalue(), "receipt_unavailable\n")
-                self.assertEqual(states, ["attached", terminal, "receipt_unavailable"])
+                self.assertEqual(states, ["attached", terminal])
+                if not marker_sync_fails:
+                    self.assertEqual([json.loads(line)["state"] for line in lines],
+                                     ["attached", terminal, "receipt_unavailable"])
                 if terminal == "timeout":
                     self.assertIsNone(process.poll())
                 else:

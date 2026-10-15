@@ -139,17 +139,17 @@ const BLOCK_BODY: &str = "## GraphHelm and Keel
 Maintained by `graphhelm setup` (`--resolve <item>=graphhelm-block`). Edit outside this block.
 
 - For multi-step work use GraphHelm. Prefer the `mcp__graphhelm__*` tools (`briefing`, `status`, `start`, `evidence`, `resume`); when that MCP server is not connected, use the `graphhelm` CLI.
-- Write code under Keel, proportionally: docs or one-line fixes need nothing extra; a bounded code change names its paths, its promise and the command that proves it.
+- Write code under Keel. When the project has a `KEEL.md` at its root, read it and the file for your step under `keel/` (`KEEL_PLAN.md`, `KEEL_EXEC.md`, `KEEL_REVIEW.md`, `KEEL_MERGE.md`) before any code work; they win over the digest below. Keel is proportional: docs or one-line fixes need nothing extra; a bounded code change names its paths, its promise and the command that proves it.
 - Journey-Proven Development: work is done when an observer proves the user-visible promise.
 - A project's own AGENTS.md or CLAUDE.md takes precedence over this block, except on what the `graphhelm` CLI can do: there, trust `graphhelm --help` over any text, this block included.
 - `graphhelm keel check --diff <base>..<head> [--card <card.json>] [--prove-new-tests]` scores a change against its card; the diff starts at the merge-base.
 
-Keel, in brief (the full rules are the `keel` skill's REFERENCE.md; read it only when this does not answer):
+Keel, in brief, for a project without `KEEL.md` (the full rules are the `keel` skill's REFERENCE.md; read it only when this does not answer):
 
 1. Stay inside the card and search on purpose: open what it names, then search for the specific symbol or caller; change only the paths the task needs, even when a file outside it has the same defect.
 2. Add nothing unrequested: no helper, type, module, flag, dependency, file or test the task does not need. Extend an existing body or reuse a proven symbol before adding a type; a new interface needs a real caller (producer and consumer may land together).
 3. Keep existing behaviour working: before editing shared code, find its other callers and what they rely on.
-4. A new test names the defect and fails on the parent (without your change); a test green before the fix proves nothing. A new or changed test states its cost (run time, what it needs) and passes the `test-audit` skill's four-question gate.
+4. Never write unit tests after the code. Prove behaviour end to end first (a journey through the observer, the real CLI against a real Runtime, the real hook process), red on the base and green on the change. Isolated tests only for data formats and digests, path, link and key checks, and pure algorithms, after writing down every way the code can fail; a test green before the change proves nothing.
 5. Prove the promise with the smallest check that observes it; a proxy (another OS, a mock, an emulator, a cross-compile) is not an observation. Report passed, failed, skipped and unobserved separately; a later green never erases an earlier red.
 6. When you cannot observe the promise here, change nothing, say what is missing, and end with `OBSERVER_MISSING: <what is missing>`. Never write \"verified\" for what you did not observe.
 7. Stop when the promise is proven: no refactor, reformat or sweep beyond it.

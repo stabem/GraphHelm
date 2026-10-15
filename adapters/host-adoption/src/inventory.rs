@@ -159,6 +159,37 @@ fn installed_plugin_records(home: &Path, host: &str) -> (Vec<Value>, Option<Valu
 }
 
 fn graphhelm_plugin_contributions(home: &Path, project: &Path, claude: &Value) -> Vec<Value> {
+    // Bind every settings layer, including absence: a newly created project override must
+    // invalidate a reviewed cleanup before it removes the standalone registration.
+    let mut settings_inputs = serde_json::Map::new();
+    let mut settings_values = Vec::new();
+    for (key, root, relative) in [
+        ("home", home, ".claude/settings.json"),
+        ("project", project, ".claude/settings.json"),
+        ("local", project, ".claude/settings.local.json"),
+    ] {
+        let bytes = match read_candidate(root, relative) {
+            Ok(bytes) => bytes,
+            Err(_) => return Vec::new(),
+        };
+        let value = match bytes.as_deref() {
+            Some(bytes) if bytes.len() as u64 <= MAX_FILE_BYTES => {
+                match serde_json::from_slice::<Value>(bytes) {
+                    Ok(value) => Some(value),
+                    Err(_) => return Vec::new(),
+                }
+            }
+            Some(_) => return Vec::new(),
+            None => None,
+        };
+        settings_inputs.insert(
+            key.to_owned(),
+            bytes
+                .map(|bytes| json!(format!("sha256:{}", hex::encode(Sha256::digest(bytes)))))
+                .unwrap_or(Value::Null),
+        );
+        settings_values.push(value);
+    }
     let enablement = |root: &str, name: &str| {
         claude["items"].as_array().and_then(|items| {
             items
@@ -234,6 +265,18 @@ fn graphhelm_plugin_contributions(home: &Path, project: &Path, claude: &Value) -
             else {
                 continue;
             };
+            // Claude applies local, project, then user settings for this project. A user
+            // installation can be present while the project has explicitly disabled it.
+            let project_override = [2, 1].into_iter().find_map(|index| {
+                settings_values[index].as_ref().and_then(|settings| {
+                    settings["enabledPlugins"]
+                        .get(&name)
+                        .and_then(Value::as_bool)
+                })
+            });
+            if project_override == Some(false) {
+                continue;
+            }
             if scope == "project" {
                 let Some(project_path) = install.get("projectPath").and_then(Value::as_str) else {
                     continue;
@@ -279,7 +322,7 @@ fn graphhelm_plugin_contributions(home: &Path, project: &Path, claude: &Value) -
             } else {
                 home
             };
-            found.push(json!({"pluginName": name.clone(), "scope": scope, "contributionPath": path.to_string_lossy().replace('\\', "/"), "contributionDigest": format!("sha256:{}", hex::encode(Sha256::digest(&mcp))), "recordPath": home.join(INSTALLED_PLUGINS_RECORD).to_string_lossy().replace('\\', "/"), "recordDigest": record_digest.clone(), "enabledPath": settings_root.join(settings_relative).to_string_lossy().replace('\\', "/"), "enabledDigest": settings_digest}));
+            found.push(json!({"pluginName": name.clone(), "scope": scope, "contributionPath": path.to_string_lossy().replace('\\', "/"), "contributionDigest": format!("sha256:{}", hex::encode(Sha256::digest(&mcp))), "recordPath": home.join(INSTALLED_PLUGINS_RECORD).to_string_lossy().replace('\\', "/"), "recordDigest": record_digest.clone(), "enabledPath": settings_root.join(settings_relative).to_string_lossy().replace('\\', "/"), "enabledDigest": settings_digest, "settingsInputs": settings_inputs}));
         }
     }
     let user_scoped = found

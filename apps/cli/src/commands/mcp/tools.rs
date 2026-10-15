@@ -387,6 +387,7 @@ fn route_request(
 }
 
 /// #1361: a route as its tool's description must name it, `METHOD /v1/a/{arg}/b`.
+#[cfg(test)]
 fn rendered_route(route: &Route) -> String {
     let path: Vec<String> = route
         .path

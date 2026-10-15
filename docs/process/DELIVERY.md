@@ -277,6 +277,9 @@ runner (`ci/gate.ps1`) was deleted in #1204, so there is nothing a merge could w
 
 1. Pin the head: `gh pr view <N> --json headRefOid` must equal the sha the review named, and no
    BLOCK on that head is left unanswered by the review (§4).
+   If main moved since the reviewed run, rerun the reached checks on the merge result (main +
+   head) before pressing merge; a clean merge-tree is not a test. Example: #1276 ran on a base
+   before #1274 and merged clean on top of it, and main went red on a cell #1274 had made stale.
 2. Closing check: `ci/closing-keywords.ps1 -Number <N> -Repository stabem/GraphHelm -Closes <issues>`.
    It reads the body and the commit messages; their union must equal the intent. Never write a
    closing keyword (`close`, `fix`, `resolve` and their forms) next to an issue you do not mean to

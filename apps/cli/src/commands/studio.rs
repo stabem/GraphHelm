@@ -1348,6 +1348,29 @@ mod tests {
         assert!(given.contains(&launcher_flag("Project", !cfg!(windows))));
     }
 
+    /// #1298: an agent's worktree Studio took over the owner's Runtime (same events, `--project`
+    /// pointing at the worktree), and every replay ran that worktree's mutated code. The Windows
+    /// launcher must refuse a Runtime of these events that serves another folder before it reuses
+    /// or replaces it. Cost: one file read.
+    #[test]
+    fn the_windows_launcher_refuses_a_runtime_serving_another_folder() {
+        let script = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(LAUNCHER),
+        )
+        .unwrap();
+        let guard = script
+            .find("serves another folder of this project")
+            .expect("the launcher names the folder the running Runtime serves");
+        let reuse = script.find("reusing it").unwrap();
+        let replace = script.find("it runs a different graphhelm than").unwrap();
+        assert!(
+            guard < reuse && guard < replace,
+            "the check runs before reuse and replace"
+        );
+    }
+
     #[test]
     fn posix_launcher_flags_are_the_kebab_case_twins() {
         assert_eq!(launcher_flag("ProjectPath", true), "--project-path");

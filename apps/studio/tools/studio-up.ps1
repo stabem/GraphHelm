@@ -128,8 +128,23 @@ function Stop-RuntimeOccupant($process, $why) {
     Stop-Process -Id $process.Id -Force
     $process.WaitForExit(10000) | Out-Null
 }
+# #1298: a Runtime serving THESE events can still serve another checkout of the project (an agent's
+# worktree started its own Studio with --project <worktree>). Reusing or replacing it silently
+# runs every journey against that checkout's code, so it is refused with the folder it serves.
+function Get-ServedProject($commandLine) {
+    if ($commandLine -match '--project\s+"([^"]+)"') { return $Matches[1] }
+    if ($commandLine -match '--project\s+(\S+)') { return $Matches[1] }
+    return ""
+}
 if ($alive) {
     $occupant = Get-RuntimeOccupant
+    if ($occupant -and $ProjectPath) {
+        $served = Get-ServedProject (Get-CimInstance Win32_Process -Filter "ProcessId = $($occupant.Id)" -ErrorAction SilentlyContinue).CommandLine
+        $wanted = $ProjectPath.TrimEnd([char]92, [char]47)
+        if ($served -and ($served.TrimEnd([char]92, [char]47) -ne $wanted)) {
+            throw "The GraphHelm Runtime at $runtimeUrl serves another folder of this project: $served (this Studio is for $wanted). Journeys run there would test that folder's code. Stop that Runtime (pid $($occupant.Id)) or start this Studio with a different --bind."
+        }
+    }
     $launching = (Get-Command $GraphHelm -ErrorAction SilentlyContinue).Source
     if ($occupant -and $launching -and $occupant.Path -and ($occupant.Path -ne $launching)) {
         Stop-RuntimeOccupant $occupant "it runs a different graphhelm than $launching"

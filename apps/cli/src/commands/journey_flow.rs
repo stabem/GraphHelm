@@ -5,7 +5,6 @@ use graphhelm_protocols::Diagnostic;
 use graphhelm_schema::OfflineSchemaSet;
 use serde_json::Value;
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::path::{Component, Path};
@@ -508,10 +507,7 @@ fn mark_digest(flow: &Value, edge: &Value) -> String {
     if let Some(acts) = edge["acts"].as_array() {
         lines.extend(acts.iter().map(|act| inline(act, ACT_FIELDS)));
     }
-    format!(
-        "sha256:{}",
-        hex::encode(Sha256::digest(lines.join("\n").as_bytes()))
-    )
+    graphhelm_protocols::hash::wire_sha256(lines.join("\n").as_bytes())
 }
 
 /// The owner marked this edge safe to watch on a draft, and it is still that edge.
@@ -582,10 +578,7 @@ fn owner_signature(value: &Value, project: &Path) -> Vec<Finding> {
 }
 
 pub(crate) fn approval_digest(flow: &Value) -> String {
-    format!(
-        "sha256:{}",
-        hex::encode(Sha256::digest(canonical(flow, true).as_bytes()))
-    )
+    graphhelm_protocols::hash::wire_sha256(canonical(flow, true).as_bytes())
 }
 
 /// The exploration/healing writer uses the original schema, semantic checker,

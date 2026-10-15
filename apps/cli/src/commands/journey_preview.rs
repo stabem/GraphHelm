@@ -1362,8 +1362,7 @@ pub(crate) fn history_frame(project: &Path, id: &str, run: &str, screen: &str) -
 }
 
 fn sha_of(text: &str) -> String {
-    use sha2::Digest as _;
-    hex::encode(sha2::Sha256::digest(text.as_bytes()))
+    graphhelm_protocols::hash::sha256_hex(text.as_bytes())
 }
 
 #[cfg(test)]

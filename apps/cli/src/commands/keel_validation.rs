@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 use crate::output::{CommandOutput, Outcome};
 
@@ -34,9 +33,7 @@ fn input_error(message: impl Into<String>, path: &str) -> Outcome {
 }
 
 fn digest(bytes: &[u8]) -> String {
-    let mut hash = Sha256::new();
-    hash.update(bytes);
-    hex::encode(hash.finalize())
+    graphhelm_protocols::hash::sha256_hex(bytes)
 }
 
 fn inventory_digest(inventory: &BTreeMap<String, String>) -> String {

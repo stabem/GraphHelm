@@ -10,7 +10,7 @@
 //! environment, or the filesystem.
 
 use graphhelm_protocols::Diagnostic;
-use sha2::{Digest, Sha256};
+use graphhelm_protocols::hash::sha256_hex;
 
 use crate::catalog::CapabilityCatalog;
 use crate::profile::TaskProfile;
@@ -143,10 +143,6 @@ pub fn template_sha256() -> String {
 #[must_use]
 pub fn prompt_sha256(prompt: &str) -> String {
     sha256_hex(prompt.as_bytes())
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
 }
 
 /// Substitutes every placeholder of [`TEMPLATE`] from the profile, the catalog and (on a repair

@@ -27,5 +27,10 @@ record is present. If appending or syncing the marker also fails, the process ex
 and fixed diagnostic are required to classify the observation; the JSONL file alone may
 be incomplete.
 
+The observation budget starts just before the `attached` record is written. Its remaining
+time is checked before the first process wait and after later waits. If attachment syncing
+uses the budget, the observer records `timeout` without starting a wait. This bounds when
+a wait may begin; it does not bound filesystem calls, OS calls, or total command wall time.
+
 The observer requests only `PROCESS_QUERY_LIMITED_INFORMATION` and `SYNCHRONIZE`; it does not
 request process termination rights. The process handle is closed on every attached path.

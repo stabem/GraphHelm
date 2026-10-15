@@ -291,7 +291,19 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         "{status}"
     );
     assert_eq!(status["data"]["signalsRecorded"], 1);
-    assert_eq!(status["data"]["currentGraph"]["number"], 1);
+    let replay = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "graph", "replay", "--events"])
+        .arg(&events)
+        .output()
+        .unwrap();
+    assert!(
+        replay.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replay.stdout)
+    );
+    let replay: Value = serde_json::from_slice(&replay.stdout).unwrap();
+    assert_eq!(replay["data"]["currentGraph"]["number"], 1, "{replay}");
     let digest = status["data"]["proposalDigests"]["draft-implement"]
         .as_str()
         .expect("status exposes the exact pending proposal digest");

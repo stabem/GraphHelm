@@ -179,7 +179,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
     fs::write(
         &binding,
         serde_json::to_vec(&serde_json::json!({
-            "expectedHead": head, "execution": "exec-keel-route", "task": "issue-1045",
+            "expectedHead": head, "execution": "exec_feature", "task": "issue-1045",
             "node": "plan", "implementDraft": draft("draft-implement"),
             "reviewDraft": draft("draft-review")
         }))
@@ -225,7 +225,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         .unwrap()
         .args(["--json", "execution", "status", "--events"])
         .arg(&events)
-        .args(["--execution", "exec-keel-route"])
+        .args(["--execution", "exec_feature"])
         .output()
         .unwrap();
     assert!(
@@ -361,7 +361,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
     let stale = scratch.path().join("stale.json");
     fs::write(&stale, serde_json::to_vec(&serde_json::json!({
         "expectedHead": "0000000000000000000000000000000000000000",
-        "execution": "exec-keel-route", "task": "issue-1045", "node": "plan",
+        "execution": "exec_feature", "task": "issue-1045", "node": "plan",
         "implementDraft": draft("draft-stale-implement"), "reviewDraft": draft("draft-stale-review")
     })).unwrap()).unwrap();
     let (stale_code, stale_reply) = check(Some(&stale));
@@ -387,7 +387,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         .unwrap()
         .args(["--json", "execution", "status", "--events"])
         .arg(&events)
-        .args(["--execution", "exec-keel-route"])
+        .args(["--execution", "exec_feature"])
         .output()
         .unwrap();
     let status: Value = serde_json::from_slice(&status.stdout).unwrap();

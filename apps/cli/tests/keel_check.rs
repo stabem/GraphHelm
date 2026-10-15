@@ -462,7 +462,13 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         .unwrap()
         .args(["execution", "approve", "--events"])
         .arg(&events)
-        .args(["--execution", "exec_feature", "--node", "route-correction", "--keyring"])
+        .args([
+            "--execution",
+            "exec_feature",
+            "--node",
+            "route-correction",
+            "--keyring",
+        ])
         .arg(&keyring)
         .args([
             "--key-id",

@@ -43,9 +43,9 @@ use super::ports::{
     build_sealer, find_route,
 };
 use super::{
-    ExecutorWiring, MutationError, PausedUnderCaller, ServeState, execution_paused_under,
-    parse_mutation_headers, respond, respond_failure, run_idempotent_mutation,
-    run_idempotent_mutation_with_store, verify_agent_credential,
+    ExecutorWiring, MutationError, MutationFuture, MutationIdentity, PausedUnderCaller, ServeState,
+    execution_paused_under, parse_mutation_headers, respond, respond_failure,
+    run_idempotent_mutation, run_idempotent_mutation_with_store, verify_agent_credential,
 };
 use crate::commands::architect::{self, SynthesizeRequest};
 use crate::commands::execution::PreparedDrive;
@@ -143,6 +143,38 @@ macro_rules! json_body {
             Err(_) => return bad_request($command, "the request body is not valid JSON", "/"),
         }
     };
+}
+
+/// #1370: the mutation request's identity (Idempotency-Key, actor, digest), or an early return with
+/// `parse_mutation_headers`' own refusal. Used where each handler always parsed it, so a header
+/// refusal still precedes the route's body checks.
+macro_rules! mutation_identity {
+    ($headers:expr, $command:expr, $execution:expr, $body:expr, $suffixes:expr) => {
+        match parse_mutation_headers($headers, $command, $execution, $body, $suffixes) {
+            Ok(identity) => identity,
+            Err(response) => return response,
+        }
+    };
+}
+
+/// #1370: `run_idempotent_mutation` over this server's store and executor wiring, the arguments
+/// every mutation route passed by hand.
+async fn mutate<'a>(
+    state: &ServeState,
+    execution: &str,
+    command: &'static str,
+    identity: MutationIdentity,
+    run: impl FnOnce(PersistedActor, OpaqueId) -> MutationFuture<'a>,
+) -> Response {
+    run_idempotent_mutation(
+        &state.events,
+        execution,
+        command,
+        identity,
+        ExecutorWiring::from_state(state),
+        run,
+    )
+    .await
 }
 
 pub(super) async fn graph_topology(State(state): State<ServeState>, body: Bytes) -> Response {
@@ -3409,16 +3441,13 @@ pub(super) async fn start(
     body: Bytes,
 ) -> Response {
     let payload = json_body!(START_COMMAND, body);
-    let identity = match parse_mutation_headers(
+    let identity = mutation_identity!(
         &headers,
         START_COMMAND,
         &execution_id,
         &payload,
-        &["started"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["started"]
+    );
     let source = match graph_source(&payload, START_COMMAND, state.path_roots.as_deref()) {
         Ok(source) => source,
         Err(response) => return response,
@@ -3457,12 +3486,11 @@ pub(super) async fn start(
     let drive_execution = execution_id.clone();
     let drive_execution_id = execution_id.clone();
 
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         START_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 let version = load_and_publish(&source, START_COMMAND, &actor)
@@ -3676,16 +3704,13 @@ pub(super) async fn signal(
     body: Bytes,
 ) -> Response {
     let payload = json_body!(SIGNAL_COMMAND, body);
-    let identity = match parse_mutation_headers(
+    let identity = mutation_identity!(
         &headers,
         SIGNAL_COMMAND,
         &execution_id,
         &payload,
-        &["record"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["record"]
+    );
     let Some(signal_value) = payload.get("signal") else {
         return bad_request(
             SIGNAL_COMMAND,
@@ -3940,16 +3965,13 @@ pub(super) async fn approve(
     body: Bytes,
 ) -> Response {
     let payload = json_body!(APPROVE_COMMAND, body);
-    let identity = match parse_mutation_headers(
+    let identity = mutation_identity!(
         &headers,
         APPROVE_COMMAND,
         &execution_id,
         &payload,
-        &["outcome"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["outcome"]
+    );
     let Some(node) = payload.get("node").and_then(serde_json::Value::as_str) else {
         return bad_request(
             APPROVE_COMMAND,
@@ -3971,12 +3993,11 @@ pub(super) async fn approve(
     if !governed {
         let events = state.events.clone();
         let execution = execution_id.clone();
-        return run_idempotent_mutation(
-            &state.events,
+        return mutate(
+            &state,
             &execution_id,
             APPROVE_COMMAND,
             identity,
-            ExecutorWiring::from_state(&state),
             move |actor, key| {
                 Box::pin(async move {
                     Ok(execution::approve::execute(
@@ -4049,12 +4070,11 @@ pub(super) async fn approve(
     let events = state.events.clone();
     let drive_execution_id = execution_id.clone();
 
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         APPROVE_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         |owner, key| {
             Box::pin(async move {
                 Ok(tokio::task::spawn_blocking(move || {
@@ -4099,16 +4119,13 @@ pub(super) async fn assign(
     body: Bytes,
 ) -> Response {
     let payload = json_body!(ASSIGN_COMMAND, body);
-    let identity = match parse_mutation_headers(
+    let identity = mutation_identity!(
         &headers,
         ASSIGN_COMMAND,
         &execution_id,
         &payload,
-        &["outcome"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["outcome"]
+    );
     if identity.actor.actor_type() != PersistedActorType::Owner {
         return bad_request(ASSIGN_COMMAND, "only an owner may assign a node", "/actor");
     }
@@ -4130,12 +4147,11 @@ pub(super) async fn assign(
     let execution = execution_id.clone();
     let node = node.to_owned();
     let actor_id = actor_id.to_owned();
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         ASSIGN_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         move |actor, key| {
             Box::pin(async move {
                 Ok(execution::assign::execute(
@@ -4167,16 +4183,13 @@ pub(super) async fn amend_budget(
     body: Bytes,
 ) -> Response {
     let payload = json_body!(AMEND_BUDGET_COMMAND, body);
-    let identity = match parse_mutation_headers(
+    let identity = mutation_identity!(
         &headers,
         AMEND_BUDGET_COMMAND,
         &execution_id,
         &payload,
-        &["outcome"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["outcome"]
+    );
     let Some(node) = payload.get("node").and_then(serde_json::Value::as_str) else {
         return bad_request(
             AMEND_BUDGET_COMMAND,
@@ -4205,12 +4218,11 @@ pub(super) async fn amend_budget(
     let events = state.events.clone();
     let target = execution_id.clone();
 
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         AMEND_BUDGET_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::amend::execute(
@@ -4290,16 +4302,13 @@ pub(super) async fn pause(
     // immediate needs a new digest: it never went through this digest path before #681, so there
     // is no historical event whose key it could stop matching.
     let digest_body = pause_digest_body(immediate);
-    let identity = match parse_mutation_headers(
+    let identity = mutation_identity!(
         &headers,
         PAUSE_COMMAND,
         &execution_id,
         &digest_body,
-        &["paused"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["paused"]
+    );
 
     let sender = if immediate {
         let cancels = state.cancels.lock().await;
@@ -4311,12 +4320,11 @@ pub(super) async fn pause(
     if let Some(sender) = sender {
         let events = state.events.clone();
         let drive_execution_id = execution_id.clone();
-        return run_idempotent_mutation(
-            &state.events,
+        return mutate(
+            &state,
             &execution_id,
             PAUSE_COMMAND,
             identity,
-            ExecutorWiring::from_state(&state),
             move |actor, key| {
                 Box::pin(async move {
                     let signalled_key = key.clone();
@@ -4444,12 +4452,11 @@ pub(super) async fn pause(
 
     let events = state.events.clone();
     let drive_execution_id = execution_id.clone();
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         PAUSE_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::pause::execute(
@@ -4503,16 +4510,13 @@ pub(super) async fn resume(
     body: Bytes,
 ) -> Response {
     let payload = json_body!(RESUME_COMMAND, body);
-    let identity = match parse_mutation_headers(
+    let identity = mutation_identity!(
         &headers,
         RESUME_COMMAND,
         &execution_id,
         &payload,
-        &["resumed"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["resumed"]
+    );
     let source = if payload.get("file").is_some() {
         match graph_source(&payload, RESUME_COMMAND, state.path_roots.as_deref()) {
             Ok(source) => Some(source),
@@ -4541,12 +4545,11 @@ pub(super) async fn resume(
     let drive_execution = execution_id.clone();
     let drive_execution_id = execution_id.clone();
 
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         RESUME_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 let version = if source.is_none() {
@@ -4648,24 +4651,20 @@ pub(super) async fn cancel(
     UrlPath(execution_id): UrlPath<String>,
     headers: HeaderMap,
 ) -> Response {
-    let identity = match parse_mutation_headers(
+    let identity = mutation_identity!(
         &headers,
         CANCEL_COMMAND,
         &execution_id,
         &serde_json::Value::Null,
-        &["cancelled"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["cancelled"]
+    );
     let events = state.events.clone();
     let drive_execution_id = execution_id.clone();
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         CANCEL_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::cancel::execute(
@@ -4716,25 +4715,21 @@ pub(super) async fn sweep(
         }
     };
 
-    let identity = match parse_mutation_headers(
+    let identity = mutation_identity!(
         &headers,
         SWEEP_COMMAND,
         &execution_id,
         &payload,
-        &["sweep-performed"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["sweep-performed"]
+    );
 
     let events = state.events.clone();
     let drive_execution_id = execution_id.clone();
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         SWEEP_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::sweep::execute(
@@ -4770,16 +4765,7 @@ pub(super) async fn claim(
     body: Bytes,
 ) -> Response {
     let payload = json_body!(CLAIM_COMMAND, body);
-    let identity = match parse_mutation_headers(
-        &headers,
-        CLAIM_COMMAND,
-        &execution_id,
-        &payload,
-        &["claim"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+    let identity = mutation_identity!(&headers, CLAIM_COMMAND, &execution_id, &payload, &["claim"]);
     let source = match graph_source(&payload, CLAIM_COMMAND, state.path_roots.as_deref()) {
         Ok(source) => source,
         Err(response) => return response,
@@ -4827,13 +4813,7 @@ pub(super) async fn claim(
     let drive_state = state.clone();
     let drive_execution_id = execution_id.clone();
 
-    run_idempotent_mutation(
-        &state.events,
-        &execution_id,
-        CLAIM_COMMAND,
-        identity,
-        ExecutorWiring::from_state(&state),
-        |actor, key| {
+    mutate(&state, &execution_id, CLAIM_COMMAND, identity, |actor, key| {
             Box::pin(async move {
                 let (version, snapshot_hash) = match &source {
                     GraphSource::Snapshot => {
@@ -4898,16 +4878,7 @@ pub(super) async fn clear(
     body: Bytes,
 ) -> Response {
     let payload = json_body!(CLEAR_COMMAND, body);
-    let identity = match parse_mutation_headers(
-        &headers,
-        CLEAR_COMMAND,
-        &execution_id,
-        &payload,
-        &["clear"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+    let identity = mutation_identity!(&headers, CLEAR_COMMAND, &execution_id, &payload, &["clear"]);
     let source = match graph_source(&payload, CLEAR_COMMAND, state.path_roots.as_deref()) {
         Ok(source) => source,
         Err(response) => return response,
@@ -5016,13 +4987,7 @@ pub(super) async fn clear(
     let drive_execution = execution_id.clone();
     let drive_execution_id = execution_id.clone();
 
-    run_idempotent_mutation(
-        &state.events,
-        &execution_id,
-        CLEAR_COMMAND,
-        identity,
-        ExecutorWiring::from_state(&state),
-        |actor, key| {
+    mutate(&state, &execution_id, CLEAR_COMMAND, identity, |actor, key| {
             Box::pin(async move {
                 let (version, snapshot_hash) = match &source {
                     GraphSource::Snapshot => {
@@ -5949,11 +5914,7 @@ pub(super) async fn development_memory_propose(
 ) -> Response {
     const COMMAND: &str = "development.memory-propose";
     let payload = json_body!(COMMAND, body);
-    let identity = match parse_mutation_headers(&headers, COMMAND, "memory", &payload, &["memory"])
-    {
-        Ok(value) => value,
-        Err(response) => return response,
-    };
+    let identity = mutation_identity!(&headers, COMMAND, "memory", &payload, &["memory"]);
     let Some(true) = payload.get("optIn").and_then(serde_json::Value::as_bool) else {
         return bad_request(COMMAND, "optIn must be true for durable memory", "/optIn");
     };
@@ -6522,16 +6483,13 @@ pub(super) async fn wake_lease(
     body: Bytes,
 ) -> Response {
     let payload = json_body!(WAKE_LEASE_COMMAND, body);
-    let identity = match parse_mutation_headers(
+    let identity = mutation_identity!(
         &headers,
         WAKE_LEASE_COMMAND,
         &execution_id,
         &payload,
-        &["wake"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["wake"]
+    );
     let Some(session_id) = payload.get("sessionId").and_then(serde_json::Value::as_str) else {
         return bad_request(
             WAKE_LEASE_COMMAND,
@@ -6578,12 +6536,11 @@ pub(super) async fn wake_lease(
     let events = state.events.clone();
     let target = execution_id.clone();
 
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         WAKE_LEASE_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::wake::arm(

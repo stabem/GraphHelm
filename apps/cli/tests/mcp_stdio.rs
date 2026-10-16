@@ -11,6 +11,7 @@ use support::token_path;
 mod time_scale;
 use time_scale::scaled;
 
+use sha2::Digest;
 use std::time::{Duration, Instant};
 
 /// One whole session: feed `lines` to `graphhelm mcp`, close stdin, wait for exit, return
@@ -1991,9 +1992,7 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
     std::fs::create_dir_all(package.join("fixtures")).unwrap();
     let resource = b"{}";
     std::fs::write(package.join("fixtures/signal.json"), resource).unwrap();
-    let resource_hash = graphhelm_graph::raw_content_sha256(resource)
-        .unwrap()
-        .to_string();
+    let resource_hash = format!("sha256:{}", hex::encode(sha2::Sha256::digest(resource)));
     let manifest = serde_json::json!({
         "apiVersion": "p50.dev/v1", "kind": "Extension",
         "metadata": {"id": "graphhelm-mcp-lane-test", "version": "1.0.0", "publisher": "graphhelm"},

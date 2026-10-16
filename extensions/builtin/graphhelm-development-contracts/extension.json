@@ -3,7 +3,7 @@
   "kind": "Extension",
   "metadata": {
     "id": "graphhelm-development-contracts",
-    "version": "0.1.5",
+    "version": "0.1.6",
     "publisher": "GraphHelm",
     "source": {
       "repository": "https://github.com/stabem/GraphHelm"
@@ -611,7 +611,7 @@
           "id": "host/claude",
           "kind": "host-adapter",
           "path": ".claude-plugin/plugin.json",
-      "sha256": "sha256:50665b16d9c3d7eb252da537306bbd7092e1f02d9f85af74340f19fb9e4bf924",
+      "sha256": "sha256:405c30b152605a8fc4b62e8c8f0801b6927496c16dddd911edfaece41f84ba89",
           "effects": [
             "host.discover"
           ],
@@ -627,7 +627,7 @@
           "id": "host/codex",
           "kind": "host-adapter",
           "path": ".codex-plugin/plugin.json",
-      "sha256": "sha256:4d6c2a7f09ac6a9909c70f8748b2b1b32260fa189e7c18e45e649070ee33a40c",
+      "sha256": "sha256:2ac8d0ba897af60e4d01db3761fc3343d332b5231e8e2662e47c75c0ffabbb04",
           "effects": [
             "host.discover"
           ],
@@ -877,7 +877,7 @@
           "id": "skill/keel",
           "kind": "skill",
           "path": "skills/keel/SKILL.md",
-          "sha256": "sha256:58378fff65ccf6944a27d80b92953b76c3a75fbd2be73bcd0088296a36d00383",
+          "sha256": "sha256:806cf15866931efa820ad1942212503f9e1f8fb747642f0902f4a6864d43fc7f",
           "effects": [
             "artifact.propose",
             "runtime.connect",
@@ -964,7 +964,7 @@
           "id": "skill/blind-review",
           "kind": "skill",
           "path": "skills/blind-review/SKILL.md",
-          "sha256": "sha256:135134b07b2d5925627210f41b71164768ce1b6e57512a010c023e773b56cedb",
+          "sha256": "sha256:93ff660fc6ddce84fd40f8a632807d6af8eab0b72032fb0bfe1882c3a092b21e",
           "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
           "permissions": ["network.loopback", "package.read", "runtime.read"],
           "requires": {"capabilities": [], "observers": []},
@@ -975,7 +975,7 @@
           "id": "skill/merge",
           "kind": "skill",
           "path": "skills/merge/SKILL.md",
-          "sha256": "sha256:8c905bdea637f5b9b4a82690000b87a4dbf48a0c92c12c66a896e585c203d184",
+          "sha256": "sha256:f5e7caf4e75ff866e51b8360979a374562c9989cfc3b84d8ae1579247d484354",
           "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
           "permissions": ["network.loopback", "package.read", "runtime.read"],
           "requires": {"capabilities": [], "observers": []},

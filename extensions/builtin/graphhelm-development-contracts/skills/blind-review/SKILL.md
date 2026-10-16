@@ -31,8 +31,12 @@ for, a summary of the change or an expected verdict, you are not blind: say so a
    a card saved during an earlier review. Pin the fetched head: everything below is about that sha.
 2. Read every earlier comment. An open BLOCK on this head must be answered in your review: does it
    still hold, and why.
-3. Run the tests the change reaches on the committed head, plus the repository's lints for touched
-   code. Name each command and its result.
+3. Reuse the author's reached-plan receipt (the `run_reached.py` JSON named in the PR body) when
+   its head equals the pinned head and nothing in it is failed or pending; then run the
+   end-to-end proof of the promise, any cell you doubt, and the lints (fmt, clippy) on touched
+   code. Rerun the whole reached plan only when the receipt is missing, stale, red or pending, or
+   when the diff touches persistence, permissions, security, compatibility or the plan selector
+   itself. Name what you reused and what you reran, each command and its result.
 4. Run the Keel check against the body saved in step 1 and paste its output:
    `graphhelm --json keel check --diff <merge-base>..<head> --card <saved-body.md>`. State the
    source PR and fetch time (or digest) in the review. Exit 2 with

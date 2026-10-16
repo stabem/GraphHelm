@@ -147,7 +147,7 @@ class RunnerContracts(unittest.TestCase):
             calls = []
 
             def fake_git(_repo, *args):
-                return "HEAD" if args[0] == "rev-parse" else ""
+                return "sha-" + args[1] if args[0] == "rev-parse" else ""
 
             def fake_run(command, **kwargs):
                 if command[0] == "git":
@@ -163,7 +163,7 @@ class RunnerContracts(unittest.TestCase):
                     "waitedSeconds": 1, "heldSeconds": 2, "exitCode": 0, "batch": batch}}) + "\n")
                 return subprocess.CompletedProcess(command, 0, "", "")
 
-            args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
+            args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "BASE", "head": "HEAD",
                                       "root": "D:/gh", "lane": "test", "budget_seconds": 180,
                                       "allow_whole_package": None, "plan": False,
                                       "graphhelm": sys.executable, "jobs": 1})()
@@ -172,6 +172,8 @@ class RunnerContracts(unittest.TestCase):
                 self.assertEqual(rr.run(args), 0)
             report = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(report["status"], "passed")
+            # The receipt a reviewer reuses must name both shas it proved (#1458).
+            self.assertEqual((report["headBefore"], report["baseSha"]), ("sha-HEAD", "sha-BASE"))
             self.assertEqual([item["index"] for item in report["completed"]], [0, 1, 2])
             first = json.loads(calls[0][1]["GRAPHHELM_SLOT_BATCH"])
             second = json.loads(calls[1][1]["GRAPHHELM_SLOT_BATCH"])
@@ -402,7 +404,7 @@ class RunnerContracts(unittest.TestCase):
 
             with patch.dict(os.environ, {"GRAPHHELM_CLI": ""}), \
                     patch.object(rr.shutil, "which", return_value=None), \
-                    patch.object(rr, "_git", side_effect=["HEAD", "HEAD", "", "HEAD", ""]), \
+                    patch.object(rr, "_git", side_effect=["HEAD", "HEAD", "", "HEAD", "HEAD", ""]), \
                     patch.object(rr, "_selector", return_value=plan), \
                     patch.object(rr.subprocess, "run", side_effect=fake_child):
                 self.assertEqual(rr.run(args), 0)
@@ -415,7 +417,7 @@ class RunnerContracts(unittest.TestCase):
                                       "root": "D:/gh", "lane": "test", "budget_seconds": 180,
                                       "allow_whole_package": None, "plan": True,
                                       "graphhelm": str(Path(temp) / "missing")})()
-            with patch.object(rr, "_git", side_effect=["HEAD", "HEAD", ""]), \
+            with patch.object(rr, "_git", side_effect=["HEAD", "HEAD", "", "HEAD"]), \
                     patch.object(rr, "_selector", side_effect=AssertionError("selector must not run")):
                 self.assertEqual(rr.run(args), 1)
             self.assertIn("missing", json.loads(output.read_text(encoding="utf-8"))["error"])

@@ -27,9 +27,10 @@ Step 4. Only the reviewer who approved merges. Read [`KEEL.md`](../KEEL.md) firs
 1. **Pin the head.** `gh pr view <N> --json headRefOid` must equal the sha the review named, and
    no BLOCK on that head is left unanswered. Merge exactly that commit:
    `gh pr merge <N> --squash --match-head-commit <sha>`.
-2. **Main moved, run again.** If main moved after your review, rerun the reached plan on the new
-   main plus the head before you merge; a clean merge-tree is not a test. Two changes that each
-   pass alone can break together.
+2. **Main gets one whole run after merges.** Two changes that each pass alone can break
+   together, so after merges land the orchestrator owns one whole-package run on main, at most
+   once an hour while main moves. A red main is fixed first, by a revert or a fix-forward PR,
+   before any new merge.
 3. **Closing keywords** in the body and the commits must match what the change closes. Never
    write a closing keyword (`close`, `fix`, `resolve` and their forms) next to an issue you do not
    mean to close, not even inside a negation; write `Refs #N` instead.

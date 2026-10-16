@@ -487,6 +487,7 @@ def run(args: argparse.Namespace) -> int:
             raise RuntimeError(f"requested --head {args.head} resolves to {requested}, actual HEAD is {before}")
         status = _git(repo, "status", "--porcelain=v1")
         report["headBefore"] = before
+        report["baseSha"] = _git(repo, "rev-parse", args.base)
         report["untracked"] = [line for line in status.splitlines() if line.startswith("??")]
         if status:
             raise RuntimeError("worktree is not clean; tracked or untracked source could affect the proof")

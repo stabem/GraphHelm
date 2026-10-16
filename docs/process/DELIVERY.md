@@ -105,8 +105,10 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
   Rust builds, Studio checks or journey previews.
 
 Execute the plan with `python tools/reached-tests/run_reached.py` (the command, its batches, slot
-admission and 900-second budget are LANES.md §3). Record the report and any pending checks in the
-PR; a budget miss is never green.
+admission and 900-second budget are LANES.md §3). The author runs it once on main + head and
+leaves the receipt, the JSON report, as a file path in the PR body together with its summary line;
+the receipt names the head sha (`headBefore`) and the base main sha (`baseSha`). A budget miss is
+never green.
 
 **Resume, summary and preflight.** Rerun the same command with the same `--output` after
 any stop: a step is reused only when the previous run passed it, ended with HEAD unchanged and a
@@ -188,8 +190,12 @@ decision (approve a design, choose an option) goes to the user. The plugin's Sto
   a `keel.yaml` invariant class still needs the isolated tests `keel/KEEL_EXEC.md` asks for, with their failure list; the review checks they are there.
   For a user-visible change the reviewer also runs `graphhelm journey replay` for each journey the
   card names, on the head, and pastes its summary.
-- The reviewer **runs the tests the change reaches** on that head and names each command and its
-  result in the review. A review that does not run them is not a review. The reached set is what
+- The reviewer **reuses the author's receipt** (§3) when its head equals the PR head and nothing in
+  it is failed or pending, and then runs the end-to-end proof of the promise, any cell the reviewer
+  doubts, and fmt and clippy on the touched crates. The reviewer reruns the whole reached plan
+  only when the receipt is missing, stale, red or pending, or when the diff touches persistence,
+  permissions, security, compatibility or the plan selector itself. The review comment names what
+  was reused and what was rerun, each command and its result. The reached set is what
   `tools/reached-tests/reached_tests.py --base <merge base> --head <head>` prints, subject to the
   same test budget as the author (§3). Any extra check needs its scope and reason in the card;
   review is not a reason to run unrelated Studio checks, all journey previews or a full suite.
@@ -240,10 +246,9 @@ decision (approve a design, choose an option) goes to the user. The plugin's Sto
 
 The reviewer who approved merges (a blind subagent included). There is no separate gate run and no separate presser: the Keel checks the reviewer runs (`KEEL.md`) are what block, and a blocking finding is a `BLOCK`.
 
-The steps (pin the head, rerun when main moved, merge, check after, delete the branch) and the
-definition of delivered are [`keel/KEEL_MERGE.md`](../../keel/KEEL_MERGE.md). A change once ran on
-an old base, merged clean on top of a newer one, and main went red on a cell the newer change had
-made stale. Two additions here:
+The steps (pin the head, merge, check after, delete the branch; main's one whole run after merges) and the
+definition of delivered are [`keel/KEEL_MERGE.md`](../../keel/KEEL_MERGE.md). Two changes that each
+pass alone can break together (`mcp_discovery` × #1412), which is why main gets that run. Two additions here:
 
 1. Closing check: `ci/closing-keywords.ps1 -Number <N> -Repository stabem/GraphHelm -Closes <issues>`.
    It reads the body and the commit messages; their union must equal the intent (the

@@ -341,6 +341,72 @@ class SessionHookTests(unittest.TestCase):
                       "".join(call.args[0] for call in stderr.write.call_args_list))
         self.assertEqual(armed_cursors, [19, 21, None])
 
+    def test_wake_wait_abort_is_logged_and_the_waiter_rearms(self):
+        """#1118: 0xC0000409 from wake-wait left two lanes deaf with no cause on record."""
+        spec = importlib.util.spec_from_file_location("session_hook_abort", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        bound = ("run-test", str(self.token_file),
+                 f"http://127.0.0.1:{self.server.server_port}",
+                 f"http://127.0.0.1:{self.server.server_port}", None)
+        armed = []
+        heartbeat = Path(self.temp.name) / "alive"
+        heartbeat.touch()
+        state = Path(self.temp.name) / "waiter-state"
+        abort = type("Result", (), {"returncode": 3221226505, "stdout": "",
+                                    "stderr": "x" * 5000 + "thread 'main' panicked at wake.rs:9\n"})()
+        waits = iter((abort, type("Result", (), {"returncode": 0, "stdout": "{}", "stderr": ""})()))
+
+        def wait(*_args, **_kwargs):
+            result = next(waits)
+            if result.returncode == 0:
+                heartbeat.unlink()
+            return result
+
+        def arm(_payload, _bound, matures_in=60, cursor=None):
+            armed.append(cursor)
+            return 30
+
+        with patch.dict(os.environ, {"GRAPHHELM_HOOK_STATE_DIR": str(state)}), \
+             patch.object(hook, "binding", return_value=bound), \
+             patch.object(hook, "arm_lane_wake", side_effect=arm), \
+             patch.object(hook.subprocess, "run", side_effect=wait), \
+             patch.object(hook.sys, "stderr"), \
+             patch.object(hook.time, "sleep"):
+            hook.wait_for_lane("codex", "session-123", Path(self.temp.name), heartbeat, 29)
+
+        self.assertEqual(armed, [29, None])
+        log = (state / "session-123.waiter.log").read_text(encoding="utf-8").splitlines()
+        self.assertTrue(log[0].startswith("wake_wait_exit:3221226505:"), log)
+        self.assertTrue(log[0].endswith("thread 'main' panicked at wake.rs:9"), log)
+        self.assertLessEqual(len(log[0]), 600)
+
+    def test_repeated_wake_wait_failures_stop_the_waiter(self):
+        """A CLI that fails every time must not spin: the waiter gives up after a bounded run."""
+        spec = importlib.util.spec_from_file_location("session_hook_abort_loop", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        bound = ("run-test", str(self.token_file),
+                 f"http://127.0.0.1:{self.server.server_port}",
+                 f"http://127.0.0.1:{self.server.server_port}", None)
+        heartbeat = Path(self.temp.name) / "alive"
+        heartbeat.touch()
+        calls = []
+
+        def wait(*_args, **_kwargs):
+            calls.append(1)
+            return type("Result", (), {"returncode": 1, "stdout": "", "stderr": "boom"})()
+
+        with patch.dict(os.environ, {"GRAPHHELM_HOOK_STATE_DIR": str(Path(self.temp.name) / "s")}), \
+             patch.object(hook, "binding", return_value=bound), \
+             patch.object(hook, "arm_lane_wake", return_value=1), \
+             patch.object(hook.subprocess, "run", side_effect=wait), \
+             patch.object(hook.sys, "stderr"), \
+             patch.object(hook.time, "sleep"):
+            hook.wait_for_lane("codex", "session-123", Path(self.temp.name), heartbeat, 1)
+
+        self.assertEqual(len(calls), 5)
+
     def test_start_lane_waiter_arms_when_event_head_takes_one_and_a_half_seconds(self):
         spec = importlib.util.spec_from_file_location("session_hook_delayed_arm", SCRIPT)
         hook = importlib.util.module_from_spec(spec)
@@ -449,7 +515,7 @@ class SessionHookTests(unittest.TestCase):
         )
         self.assertEqual(companion_manifest["hooks"], "./hooks/codex-hooks.json")
         main_manifest = json.loads((repository / "plugins" / "graphhelm" / "plugin.json").read_text())
-        self.assertEqual(main_manifest["version"], "0.1.44")
+        self.assertEqual(main_manifest["version"], "0.1.45")
         self.assertEqual(companion_manifest["version"], main_manifest["version"])
         for host in (".claude-plugin", ".codex-plugin"):
             legacy = json.loads((repository / "plugins" / "graphhelm" / host / "plugin.json").read_text())

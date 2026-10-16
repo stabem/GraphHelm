@@ -1,5 +1,9 @@
 param([switch]$RedParent)
 $ErrorActionPreference = 'Stop'
+if ($env:GRAPHHELM_ALLOW_VISIBLE_TABS -ne '1') {
+  Write-Output 'SKIPPED (opt-in)'
+  exit 0
+}
 $repo = (git rev-parse --show-toplevel).Trim()
 $observer = Join-Path $repo 'tools/no-window/observe.ps1'
 $shell = (Get-Process -Id $PID).Path
@@ -170,7 +174,7 @@ function Start-ObservedCommand([string]$extra, [int]$seconds = 7) {
 $owned = $null
 $tabObserver = $null
 try {
-  Start-Process -FilePath $wt -ArgumentList @('-w', $terminalName, 'new-tab', '--title', $firstTitle, $cmd, '/k', 'ping -n 30 127.0.0.1 >nul') | Out-Null
+  Start-Process -FilePath $wt -ArgumentList @('-w', $terminalName, 'new-tab', '--title', $firstTitle, $cmd, '/c', 'ping -n 30 127.0.0.1 >nul') | Out-Null
   for ($attempt = 0; $attempt -lt 40 -and -not $owned; $attempt++) {
     Start-Sleep -Milliseconds 100
     $owned = Find-OwnedTerminal
@@ -195,7 +199,7 @@ try {
     for ($lineCount = 0; $lineCount -lt 2; $lineCount++) { $preamble += $tabObserver.StandardOutput.ReadLine() + [Environment]::NewLine }
     if (-not $preamble.Contains('Terminal tab baseline ready.')) { throw "UNOBSERVED: observer baseline was not ready: $preamble" }
   } else { Start-Sleep -Milliseconds 1100 }
-  Start-Process -FilePath $wt -ArgumentList @('-w', $terminalName, 'new-tab', '--title', $secondTitle, $cmd, '/k', 'ping -n 25 127.0.0.1 >nul') | Out-Null
+  Start-Process -FilePath $wt -ArgumentList @('-w', $terminalName, 'new-tab', '--title', $secondTitle, $cmd, '/c', 'ping -n 25 127.0.0.1 >nul') | Out-Null
   $added = $null
   for ($attempt = 0; $attempt -lt 40 -and -not $added; $attempt++) {
     Start-Sleep -Milliseconds 100

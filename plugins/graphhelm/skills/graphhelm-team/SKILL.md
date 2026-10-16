@@ -12,7 +12,7 @@ orchestrator calls this once per agent. The orchestrator itself never takes a la
 
 1. The Studio is open for the project (`graphhelm studio start` from the project root; see
    `graphhelm-setup`). Read the team execution and Runtime URL from the GraphHelm MCP `briefing` tool
-   (or `graphhelm briefing --json`). Default execution `gh-team`, URL `http://127.0.0.1:8793`.
+   (or `graphhelm execution briefing --json`). Default execution `gh-team`, URL `http://127.0.0.1:8793`.
 2. The recorder is `tools/task-record/task_record.py` in the GraphHelm clone that
    `graphhelm studio start` keeps up to date. It needs the agent session token
    `<project>/.graphhelm/events.agent.token`; never the owner's `events.token`.

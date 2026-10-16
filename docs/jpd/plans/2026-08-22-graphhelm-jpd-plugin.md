@@ -60,7 +60,7 @@ reports; it does not install or activate.
 - Add focused schema and CLI tests for valid, tampered, escaped, unsupported-surface, invalid-skill,
   `OBSERVER_MISSING`, and retry-lineage cases.
 - Run skill and plugin validators supplied by the Codex skill tooling.
-- Run targeted Rust tests, then the complete `./ci/gate.ps1`.
+- Run the tests the change reaches ([DELIVERY.md](../../process/DELIVERY.md) §3).
 - Review the full diff for secret exposure, path traversal, symlink escape, ambiguous activation,
   direct Runtime imports, and false success claims.
 

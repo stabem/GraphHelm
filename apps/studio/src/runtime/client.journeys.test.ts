@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DisconnectedError, RuntimeClient, RuntimeError } from "./client";
+import { RuntimeClient, RuntimeError } from "./client";
 
 interface Seen { url: string; headers: Record<string, string>; method?: string; body?: unknown }
 
@@ -68,31 +68,6 @@ describe("RuntimeClient.markJourneyEdgeSafe", () => {
   });
 });
 
-describe("RuntimeClient.readImage", () => {
-  it.each(["image/png", "image/jpeg", "image/webp"])("returns a blob for %s", async (type) => {
-    const { seen, runtime } = client(() => bytes(type));
-    const blob = await runtime.readImage("run 1", "img/1");
-    expect(blob.size).toBe(3);
-    expect(seen[0].url).toBe("/v1/executions/run%201/evidence/img%2F1");
-    expect(seen[0].headers.Authorization).toBe("Bearer secret-token");
-  });
-  it("refuses a non-image content type", async () => {
-    await expect(client(() => json({ text: "x" })).runtime.readImage("r", "e")).rejects.toThrow(/image/);
-    await expect(client(() => bytes("image/svg+xml")).runtime.readImage("r", "e")).rejects.toBeInstanceOf(RuntimeError);
-  });
-  it("refuses a 401 without leaking the token", async () => {
-    const error = await client(() => bytes("image/png", 401)).runtime.readImage("r", "e").catch((e) => e);
-    expect(error).toBeInstanceOf(RuntimeError);
-    expect(error.httpStatus).toBe(401);
-    expect(String(error.message)).not.toContain("secret-token");
-  });
-  it("throws DisconnectedError once disposed", async () => {
-    const { runtime } = client(() => bytes("image/png"));
-    runtime.dispose();
-    await expect(runtime.readImage("r", "e")).rejects.toBeInstanceOf(DisconnectedError);
-  });
-});
-
 // #519: a journey's run and its frames go through the routes agreed on the issue. Regressions
 // caught: Run again that does not force, a frame read that drops the tag (so every poll downloads
 // the picture again), "no frame yet" surfaced as an error, and the token outside the header.
@@ -136,11 +111,3 @@ describe("RuntimeClient journey run and frames", () => {
   });
 });
 
-// A live act still uses the public Runtime route.
-describe("RuntimeClient live journey act", () => {
-  it("acts through POST /v1/journeys/sessions/{id}/act", async () => {
-    const { seen, runtime } = client(() => json({ sessionId: "s-1", state: "pass", code: null }));
-    await runtime.actLive("s-1", { kind: "activate", role: "button", name: "Pay now" });
-    expect(seen[0].url).toBe("/v1/journeys/sessions/s-1/act");
-  });
-});

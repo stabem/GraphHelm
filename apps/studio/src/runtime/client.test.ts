@@ -219,11 +219,11 @@ describe("RuntimeClient reads", () => {
     try {
       const fetchImpl = vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch;
       const client = new RuntimeClient("tok", { fetch: fetchImpl });
-      const late = client.readImage("demo", "ev-1").then((value) => value, (error: unknown) => error);
+      const late = client.liveFrame("demo-1").then((value) => value, (error: unknown) => error);
       await vi.advanceTimersByTimeAsync(RUNTIME_READ_TIMEOUT_MS);
       expect(await late).toMatchObject({ code: "GHSTUDIO_REQUEST_TIMEOUT", httpStatus: 0 });
 
-      const pending = client.readImage("demo", "ev-2").then((value) => value, (error: unknown) => error);
+      const pending = client.liveFrame("demo-2").then((value) => value, (error: unknown) => error);
       await vi.advanceTimersByTimeAsync(1_000);
       client.dispose();
       expect(await pending).toBeInstanceOf(DisconnectedError);

@@ -1,21 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { Bot } from "./team";
-import { describeActivity, namesOf, parseMention } from "./threads";
+import { describeActivity, namesOf } from "./threads";
 
 const bot = (key: string, name: string): Bot => ({ key, actorId: key, name, hue: 0, role: null, doingNow: "", lastRecordAt: null,
   lastSequence: 0, state: "working", quietMinutes: null, shared: false, native: false, tasks: [] });
 const BOTS = [bot("coordinator", "Coordinator"), bot("kit-1", "loja kit 1"), bot("kit-2", "loja kit 2")];
-describe("parseMention", () => {
-  it("targets one bot by its display name, longest name first", () => {
-    expect(parseMention("@loja kit 2 please rebase", BOTS)).toEqual({ to: "kit-2", text: "please rebase" });
-    expect(parseMention("@Coordinator  plan?", BOTS)).toEqual({ to: "coordinator", text: "plan?" });
-  });
-  it("leaves an unknown mention as plain text to everyone", () => {
-    expect(parseMention("@nobody hi", BOTS)).toEqual({ to: null, text: "@nobody hi" });
-  });
-});
-
 describe("describeActivity", () => {
   it("reads as bot, verb, object", () => {
     const names = namesOf(BOTS);

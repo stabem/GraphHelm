@@ -31,11 +31,6 @@ export interface TasksReply extends LaneFold {
   rejected: number;
 }
 
-/** What the views need when the Runtime predates the route: say so, never an empty board. */
-export type TasksRead =
-  | { kind: "tasks"; reply: TasksReply }
-  | { kind: "unsupported" };
-
 /** The one sentence the Team, Graph and Lanes views show in place of the board when the Runtime
  * answered the tasks route with 404 or 401 (an older binary). */
 export const RUNTIME_PREDATES_TASKS_ROUTE = "Runtime predates the tasks route · restart it on the current binary";

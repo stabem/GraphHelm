@@ -44,7 +44,6 @@ import type {
   RecordedActor,
   RuntimeEvent,
   WireActorType,
-  LiveAct,
 } from "./types";
 import { RUNTIME_UNREACHABLE_HEADER } from "./proxy-signal";
 import { tasksReply, type TasksReply } from "./tasks-route";
@@ -95,9 +94,6 @@ export const RUNTIME_READ_TIMEOUT_MS = 60_000;
  * answer a slow runtime; the Studio waits longer, so a slow but alive runtime reads as its real
  * health. A Rust test reads this number and fails when it is not above the probe's bound. */
 export const GATEWAY_PROBE_WAIT_MS = 45_000;
-/** A live open replays cached acts in a real browser before it answers (#409): the Runtime bounds
- * it at its own run budget (180 s), so the request waits longer than a read. */
-const RUNTIME_LIVE_TIMEOUT_MS = 200_000;
 const RUNTIME_WATCH_TIMEOUT_MS = 15 * 60_000;
 
 /** An identifier bound the same way the Runtime bounds an `OpaqueId`. */
@@ -2040,19 +2036,13 @@ export class RuntimeClient {
     });
   }
 
-  /** One act into a live session (#409): `POST /v1/journeys/sessions/{id}/act`. */
-  async actLive(sessionId: string, act: LiveAct): Promise<Record<string, unknown>> {
-    const id = checkedId(sessionId, "sessionId");
-    return this.#request<Record<string, unknown>>({ method: "POST", path: `/v1/journeys/sessions/${encodeURIComponent(id)}/act`, body: act, timeoutMs: RUNTIME_LIVE_TIMEOUT_MS });
-  }
-
   /** Watch a flow (#462): `POST /v1/journey-flows/{id}/watch`. A headed browser plays it on the
    * owner's screen; the Runtime answers when the play ends, and the `mode: "watch"` row in
    * The sessions feed carries the step being played meanwhile. Never proof; never approval. */
   async watchFlow(flowId: string, path?: string): Promise<Record<string, unknown>> {
     const id = checkedId(flowId, "flowId");
     return this.#request<Record<string, unknown>>({
-      // A play (and the app it may start first) can outlast the live-act timeout; the step lit
+      // A play (and the app it may start first) can outlast a read deadline; the step lit
       // meanwhile comes from the sessions poll, so this wait only bounds a stuck Runtime.
       method: "POST", path: `/v1/journey-flows/${encodeURIComponent(id)}/watch`, timeoutMs: RUNTIME_WATCH_TIMEOUT_MS,
       body: path ? { path } : {},
@@ -2088,19 +2078,6 @@ export class RuntimeClient {
   async approveJourneyFlow(flowId: string): Promise<{ id: string; status: string }> {
     const id = checkedId(flowId, "flowId");
     return this.#request<{ id: string; status: string }>({ method: "POST", path: `/v1/journey-flows/${encodeURIComponent(id)}/approve` });
-  }
-
-  /**
-   * The raw bytes of an image evidence item. The route answers image bytes (not an envelope) for
-   * png/jpeg/webp; anything else - a JSON refusal, another content type - is refused here. The
-   * token rides only the Authorization header and never reaches an error message.
-   */
-  async readImage(executionId: string, evidenceId: string): Promise<Blob> {
-    const id = checkedId(executionId, "executionId");
-    const evidence = checkedId(evidenceId, "evidenceId");
-    const image = await this.#image(`/v1/executions/${encodeURIComponent(id)}/evidence/${encodeURIComponent(evidence)}`, "The Runtime did not return an image for this evidence.");
-    if (image === null) throw new RuntimeError("The Runtime did not return an image for this evidence.", 204, []);
-    return image.blob;
   }
 
   /**

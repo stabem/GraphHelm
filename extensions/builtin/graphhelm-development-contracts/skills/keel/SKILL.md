@@ -14,7 +14,7 @@ the change needs: a docs or one-line change needs nothing beyond the task record
 <!-- keel embed start: keel/KEEL_EXEC.md (generated; edit the source, then run tools/keel-plugin/sync_keel_plugin.py) -->
 # KEEL_EXEC
 
-Step 2, from an accepted card to a proven change. Read [`KEEL.md`](../KEEL.md) and the card first.
+Step 2, from an accepted card to a proven change. Read `KEEL.md` and the card first.
 
 ## Write
 

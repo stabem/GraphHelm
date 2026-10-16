@@ -15,14 +15,15 @@ const WHY: Record<string, string> = {
   "replay.act_value_missing": "a step has no value to type",
   "replay.entry_missing": "the journey has no first screen",
   "preview.runner_lost": "the program running the journey stopped unexpectedly",
+  "replay.driver_frame_invalid": "the browser driver stopped before it answered",
   internal: "the program running the journey stopped unexpectedly",
 };
 
-/** The last lines of a failed launcher's output, the part that names the real cause. */
-function logTail(run: JourneyRunView, lines = 6): string | null {
-  const tail = run.launchLog?.tail?.trim();
-  if (!tail) return null;
-  return tail.split(/\r?\n/).filter((l) => l.trim() !== "").slice(-lines).join("\n");
+/** The last non-empty lines of a kept output tail, the part that names the real cause. */
+function lastLines(tail: string | undefined, lines = 6): string | null {
+  const text = tail?.trim();
+  if (!text) return null;
+  return text.split(/\r?\n/).filter((l) => l.trim() !== "").slice(-lines).join("\n");
 }
 
 export interface RunFailure {
@@ -30,8 +31,10 @@ export interface RunFailure {
   text: string;
   /** 0-based index of the identified failed step; null when no failed step is known. */
   step: number | null;
-  /** The launcher's last output lines, when the app did not start. */
+  /** The last output lines that name the cause: the launcher's, else the browser driver's. */
   log: string | null;
+  /** Whose output `log` is (#1448). */
+  logFrom: "launcher" | "driver" | null;
   /** Where the full launcher log lives on disk. */
   logPath: string | null;
 }
@@ -44,7 +47,9 @@ export function runFailure(run: JourneyRunView, stepIds: string[]): RunFailure {
   // The pointer names a step id when the play failed on it; the result of a screen also does.
   let step = stepIds.findIndex((id) => pointer === `/${id}` || pointer.startsWith(`/${id}/`) || pointer === id);
   if (step < 0) step = stepIds.findIndex((id) => run.screens?.[id]?.result && run.screens[id]!.result !== "pass");
-  const log = logTail(run);
+  const launcher = lastLines(run.launchLog?.tail);
+  const log = launcher ?? lastLines(run.driverLog?.tail);
+  const logFrom = launcher ? "launcher" : log ? "driver" : null;
   const progressed = stepIds.some((id) => run.screens?.[id]?.result === "pass");
   const where = step >= 0 ? `Step ${step + 1} failed`
     : progressed ? "The run failed; the failing step is unknown" : "It stopped before step 1";
@@ -52,6 +57,7 @@ export function runFailure(run: JourneyRunView, stepIds: string[]): RunFailure {
     text: `${where}: ${why}.`,
     step: step >= 0 ? step : null,
     log,
+    logFrom,
     logPath: run.launchLog?.path ?? null,
   };
 }

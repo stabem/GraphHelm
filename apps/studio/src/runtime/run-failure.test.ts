@@ -10,6 +10,14 @@ describe("runFailure (#1296)", () => {
     expect(f.log).toContain("Cannot find module 'vite'");
     expect(f.logPath).toBe("C:\\tmp\\graphhelm-launch-1.log");
   });
+  it("shows the browser driver's last lines when it died before answering (#1448)", () => {
+    const f = runFailure({ state: "failed", reason: "internal", detail: { code: "replay.driver_frame_invalid", pointer: "/entry/eof" },
+      driverLog: { tail: "node:internal\nError [ERR_MODULE_NOT_FOUND]: Cannot find module 'judge.mjs'\n" } }, ["gate", "run"]);
+    expect(f.text).toBe("It stopped before step 1: the browser driver stopped before it answered.");
+    expect(f.log).toContain("Cannot find module 'judge.mjs'");
+    expect(f.logFrom).toBe("driver");
+    expect(f.logPath).toBeNull();
+  });
   it("names the step a play failed on", () => {
     const f = runFailure({ state: "failed", reason: "internal", detail: { code: "driver.unsupported_act", pointer: "/result" } }, ["home", "result"]);
     expect(f.step).toBe(1);

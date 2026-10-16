@@ -108,6 +108,11 @@ fn an_unlisted_preview_refusal_keeps_its_code_and_stopped_step() {
             DRIVER,
         )
         .unwrap();
+        std::fs::write(
+            project.path().join(".graphhelm/observers/judge.mjs"),
+            include_bytes!("../../../tools/journey-driver/judge.mjs"),
+        )
+        .unwrap();
         let (code, compiled) = cli(
             project.path(),
             &["journey", "compile", "account", "--fmt", "--include-draft"],
@@ -323,6 +328,11 @@ fn an_approved_journey_holds_before_its_destructive_act_and_plays_it_only_when_c
     let observer = project.join(".graphhelm/observers");
     std::fs::create_dir(&observer).unwrap();
     std::fs::write(observer.join("journey_driver.mjs"), DRIVER).unwrap();
+    std::fs::write(
+        observer.join("judge.mjs"),
+        include_bytes!("../../../tools/journey-driver/judge.mjs"),
+    )
+    .unwrap();
     let (code, value) = cli(
         &project,
         &["journey", "compile", "account", "--fmt", "--include-draft"],
@@ -544,6 +554,11 @@ fn coverage_fixture() -> (tempfile::TempDir, PathBuf, OwnedNodeModulesLink, Path
     std::fs::write(
         project.join(".graphhelm/observers/journey_driver.mjs"),
         DRIVER,
+    )
+    .unwrap();
+    std::fs::write(
+        project.join(".graphhelm/observers/judge.mjs"),
+        include_bytes!("../../../tools/journey-driver/judge.mjs"),
     )
     .unwrap();
 

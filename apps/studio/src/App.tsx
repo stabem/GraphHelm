@@ -164,6 +164,7 @@ type CanvasTab = "team" | "journey" | "graph";
 const CANVAS_TAB_KEY = "graphhelm.studio.canvas-tab";
 /** #583: the canvas tab the owner last chose this browser session, else Graph. */
 function savedCanvasTab(): CanvasTab {
+  if (journeyFromUrl()) return "journey";
   try {
     const saved = sessionStorage.getItem(CANVAS_TAB_KEY);
     if (saved === "team" || saved === "journey" || saved === "graph") return saved;
@@ -1772,7 +1773,7 @@ export default function App({
   const capturesOpening = useMemo(() => eventList.filter((event) => event.kind === "signal_recorded" && event.evidenceRefs.length > 0
     && (event.payload as { kind?: unknown } | null)?.kind === "jpd.screen_captured" && envelopes[event.sequence] === undefined).length,
   [eventList, envelopes]);
-  const [journeyContract, setJourneyContract] = useState<string | null>(null);
+  const [journeyContract, setJourneyContract] = useState<string | null>(() => journeyFromUrl() || null);
   const botNameOf = useCallback((id: string) => botNames[id] ?? id, [botNames]);
   // #393: one thread per task, opened by the run's task.* records.
   const currentTaskGraphs = useMemo(() => (taskGraphs?.executionId === selected ? taskGraphs : null), [taskGraphs, selected]);
@@ -2141,6 +2142,12 @@ export default function App({
   };
   const chooseCanvas = (tab: CanvasTab) => {
     setCanvasTab(tab);
+    // The deep link chose the first tab only; the owner's own choice wins from here on.
+    if (journeyFromUrl() && typeof window.history?.replaceState === "function") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("journey");
+      window.history.replaceState(window.history.state, "", url);
+    }
     try { sessionStorage.setItem(CANVAS_TAB_KEY, tab); } catch { /* storage refused: the choice lasts this page only */ }
   };
   /** The one legal action for a blocked or waiting step, or for a pending proposal. */
@@ -3080,6 +3087,12 @@ export default function App({
 export function selectedRunFromUrl(): string {
   if (typeof window === "undefined") return "";
   return new URLSearchParams(window.location.search).get("run") ?? "";
+}
+
+/** The journey named by `?journey=` (`graphhelm studio open --journey`): the Proof view opens on it. */
+export function journeyFromUrl(): string {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get("journey") ?? "";
 }
 
 /** #1169: keep `?run=` in step with the open run, leaving every other parameter alone. */

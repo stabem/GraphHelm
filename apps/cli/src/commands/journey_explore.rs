@@ -538,18 +538,7 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
     let allow = permissions(&args.allow_act)?;
     let model = architect::build_model(&model_source(&args.model)?)
         .map_err(|error| (error.code, error.pointer, 3))?;
-    let installed = project.join(".graphhelm/observers/journey_driver.mjs");
-    let expected = include_bytes!("../../../../tools/journey-driver/driver.mjs");
-    let mut bytes = Vec::new();
-    if !browser::safe_node(&installed)
-        || !browser::safe_node(&project.join(".graphhelm/observers"))
-        || std::fs::File::open(&installed)
-            .and_then(|f| f.take(expected.len() as u64 + 1).read_to_end(&mut bytes))
-            .is_err()
-        || bytes != expected
-    {
-        return Err(refused("replay.observer_missing", "/observer", 3));
-    }
+    browser::observer_ready(&project)?;
     for relative in [
         ".graphhelm",
         ".graphhelm/journeys",

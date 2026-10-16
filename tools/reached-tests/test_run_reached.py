@@ -901,6 +901,45 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         self.assertTrue(any("GRAPHHELM_CLI" in p for p in problems))
         self.assertTrue(any("relative" in p for p in problems))
 
+    def test_the_build_floor_is_checked_on_the_slot_root_not_the_checkout(self):
+        # #1459: a checkout drive with 8 GB free blocked plans whose builds all write to the slot root.
+        root = Path(self.output.parent) / "slot-root"
+        root.mkdir(parents=True)
+        free = {}
+
+        def usage(path):
+            gb = free.get(Path(path).resolve(), 8.0)
+            return __import__("collections").namedtuple("u", "total used free")(0, 0, gb * 1e9)
+
+        cargo = [{"argv": ["cargo", "test", "-p", "x"]}]
+        with patch.dict(os.environ, {}, clear=False), patch.object(rr.shutil, "disk_usage", side_effect=usage):
+            os.environ.pop("CARGO_TARGET_DIR", None)
+            free[root.resolve()] = 50.0
+            problems, _ = rr._preflight(self.repo, self.output, cargo, None, str(root))
+            self.assertEqual(problems, [])
+            free[root.resolve()] = 4.0
+            problems, _ = rr._preflight(self.repo, self.output, cargo, None, str(root))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("slot root", problems[0])
+
+    def test_the_default_budget_lets_a_plan_continue_after_a_step_that_waited_for_the_slot(self):
+        # #1459: a first step that spends 200 s (slot queue included) no longer ends the plan.
+        self.steps = [self.ok, self.ok]
+        plan = {"steps": [{"argv": argv, "cwd": ".", "slot": False} for argv in self.steps]}
+        real_run, real_clock, skew = rr.subprocess.run, rr.time.monotonic, [0.0]
+
+        def child(command, **kwargs):
+            if "stdout" in kwargs and command[0] == sys.executable:
+                skew[0] += 200.0
+            return real_run(command, **kwargs)
+
+        with patch.object(rr, "_selector", return_value=plan),                 patch.object(rr.subprocess, "run", side_effect=child),                 patch.object(rr.time, "monotonic", side_effect=lambda: real_clock() + skew[0]),                 patch("sys.stdout", __import__("io").StringIO()):
+            rr.main(["--repo", str(self.repo), "--output", str(self.output), "--base", "HEAD",
+                     "--min-free-gb", "0"])
+        report = json.loads(self.output.read_text(encoding="utf-8"))
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(self.runs(), ["ok", "ok"])
+
     def test_default_stdout_is_the_short_summary(self):
         self.steps = [self.ok, self.bad]
         buffer = __import__("io").StringIO()

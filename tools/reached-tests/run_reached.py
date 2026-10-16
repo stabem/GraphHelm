@@ -392,17 +392,23 @@ def _reusable_results(output: Path) -> tuple[dict[str, dict[str, Any]], str | No
 
 
 def _preflight(repo: Path, output: Path, steps: list[dict[str, Any]],
-               min_free_gb: float | None) -> tuple[list[str], list[str]]:
-    """Problems that would stop the proof midway, found before any step runs, and warnings."""
+               min_free_gb: float | None, root: str | None = None) -> tuple[list[str], list[str]]:
+    """Problems that would stop the proof midway, found before any step runs, and warnings.
+
+    #1459: the build floor (10 GB with Cargo steps) is checked where the builds write, the slot
+    root and CARGO_TARGET_DIR; the checkout and the report only need the small floor."""
     problems: list[str] = []
     warnings: list[str] = []
     cargo = any(Path(step["argv"][0]).name.lower() in ("cargo", "cargo.exe") for step in steps)
-    floor = min_free_gb if min_free_gb is not None else (10.0 if cargo else 1.0)
-    places = {"repository": repo, "report": output.parent}
+    small = min_free_gb if min_free_gb is not None else 1.0
+    build = min_free_gb if min_free_gb is not None else (10.0 if cargo else 1.0)
+    places = {"repository": (repo, small), "report": (output.parent, small)}
     target = os.environ.get("CARGO_TARGET_DIR")
+    if cargo and root:
+        places["slot root"] = (Path(root), build)
     if cargo and target:
-        places["CARGO_TARGET_DIR"] = Path(target)
-    for label, place in places.items():
+        places["CARGO_TARGET_DIR"] = (Path(target), build)
+    for label, (place, floor) in places.items():
         probe = place
         while not probe.exists() and probe.parent != probe:
             probe = probe.parent
@@ -534,7 +540,8 @@ def run(args: argparse.Namespace) -> int:
             child_env.update({"CARGO_BUILD_JOBS": jobs, "RUST_TEST_THREADS": "2"})
             report["fingerprint"] = _fingerprint(repo, steps, selected_graphhelm, child_env)
             keys = [_proof_key(report["fingerprint"], step) for step in steps]
-            problems, warnings = _preflight(repo, output, steps, getattr(args, "min_free_gb", None))
+            problems, warnings = _preflight(repo, output, steps, getattr(args, "min_free_gb", None),
+                                             getattr(args, "root", None))
             report["preflight"] = {"problems": problems, "warnings": warnings}
             reused_seconds = 0.0
             reuse: dict[str, dict[str, Any]] = {}
@@ -743,7 +750,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--lane", default="reached-fast-feedback")
     ap.add_argument("--graphhelm", help="GraphHelm executable; overrides GRAPHHELM_CLI and PATH")
     ap.add_argument("--output", required=True)
-    ap.add_argument("--budget-seconds", type=float, default=180)
+    # #1459: 180 s ended almost every first run `budgetExceeded` after one step, because the budget
+    # includes waiting for the shared slot; 900 s fits a warm plan plus an ordinary queue.
+    ap.add_argument("--budget-seconds", type=float, default=900)
     ap.add_argument("--jobs", type=int, default=6,
                     help="cargo build jobs for every slot command (1..32; default 6; one root up to 16)")
     ap.add_argument("--allow-whole-package")

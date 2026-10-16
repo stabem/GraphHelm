@@ -198,7 +198,7 @@ _DIGEST_FIELD = re.compile(r'("sha256"\s*:\s*)"sha256:[0-9a-f]{64}"')
 
 def _rewrite(path, text):
     """Write `text` only when it differs from the file, so a current file keeps its bytes and mtime."""
-    if path.is_file() and path.read_bytes().decode("utf-8") == text:
+    if path.is_file() and path.read_bytes().decode("utf-8").replace("\r\n", "\n") == text:
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(text.encode("utf-8"))

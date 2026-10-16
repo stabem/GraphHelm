@@ -7,8 +7,8 @@ import type { TestFrame } from "../runtime/test-frames";
 const userEvent = fastUserEvent();
 
 const frames: TestFrame[] = [
-  { stepId: "a", n: 1, verb: "SEES", text: "Journey tab", status: "passed", reason: null, expected: ["tab selected"], inputs: [], intent: null, checks: [], checkStatus: [], failure: null, typed: [] },
-  { stepId: "b", n: 2, verb: "DOES", text: "Click Mark safe", status: "waits_for_you", reason: "data-changing", expected: [], inputs: [], intent: null, checks: [], checkStatus: [], failure: null, typed: [] },
+  { stepId: "a", n: 1, verb: "SEES", text: "Journey tab", status: "passed", reason: null, expected: ["tab selected"], inputs: [], intent: null, checks: [], checkStatus: [], failure: null, typed: [], screenIntent: null },
+  { stepId: "b", n: 2, verb: "DOES", text: "Click Mark safe", status: "waits_for_you", reason: "data-changing", expected: [], inputs: [], intent: null, checks: [], checkStatus: [], failure: null, typed: [], screenIntent: null },
 ];
 
 function setup(selected = 0, frameUrl = (id: string) => (id === "a" ? "blob:a" : null)) {
@@ -20,7 +20,7 @@ function setup(selected = 0, frameUrl = (id: string) => (id === "a" ? "blob:a" :
 describe("TestCanvas", () => {
   it("says what the journey proves, what the step typed and every check (#1287)", () => {
     const strong: TestFrame[] = [{ stepId: "salvo", n: 1, verb: "DOES", text: "Submits “Salvar”", status: "passed", reason: null,
-      expected: ["success"], inputs: ["Types “parceiro” into “Tag Amazon”", "Submits “Salvar”"], intent: "Tag Amazon as a partner", checks: ["shows cell “parceiro”"], checkStatus: ["passed"], failure: null, typed: [] }];
+      expected: ["success"], inputs: ["Types “parceiro” into “Tag Amazon”", "Submits “Salvar”"], intent: "Tag Amazon as a partner", checks: ["shows cell “parceiro”"], checkStatus: ["passed"], failure: null, typed: [], screenIntent: null }];
     render(<TestCanvas frames={strong} purpose="The owner tags a store and the tag stays after a reload." selected={0}
       onSelect={vi.fn()} frameUrl={() => null} onMarkSafe={vi.fn()} />);
     expect(screen.getByText("The owner tags a store and the tag stays after a reload.")).toBeInTheDocument();
@@ -34,7 +34,7 @@ describe("TestCanvas", () => {
   it("marks each assertion on its own and says what the screen showed (#1286)", () => {
     const red: TestFrame[] = [{ stepId: "s", n: 1, verb: "SEES", text: "Produto", status: "failed", reason: "expect_missing", expected: [], inputs: [], intent: null,
       checks: ["shows heading “Produto encontrado”", "shows region “Também encontramos em”", "shows button “Salvar item”"],
-      checkStatus: ["failed", "passed", "passed"], failure: "Expected heading 'Produto encontrado' — the screen shows heading 'Produto conferido'", typed: [] }];
+      checkStatus: ["failed", "passed", "passed"], failure: "Expected heading 'Produto encontrado' — the screen shows heading 'Produto conferido'", typed: [], screenIntent: null }];
     render(<TestCanvas frames={red} selected={0} onSelect={vi.fn()} frameUrl={() => null} onMarkSafe={vi.fn()} />);
     const rows = screen.getByRole("list", { name: "Assertions" }).querySelectorAll("li");
     expect([...rows].map((row) => row.getAttribute("data-check"))).toEqual(["failed", "passed", "passed"]);
@@ -45,11 +45,19 @@ describe("TestCanvas", () => {
 
   it("captions what was typed into the masked fields of the frame (#1286)", () => {
     const typed: TestFrame[] = [{ stepId: "s", n: 1, verb: "DOES", text: "Submits “Salvar”", status: "passed", reason: null, expected: [], inputs: [], intent: null,
-      checks: [], checkStatus: [], failure: null, typed: ['Typed "zuvemo-20" into "Tag de afiliado Amazon"', 'Typed the secret admin into "Senha"'] }];
+      checks: [], checkStatus: [], failure: null, typed: ['Typed "zuvemo-20" into "Tag de afiliado Amazon"', 'Typed the secret admin into "Senha"'], screenIntent: null }];
     render(<TestCanvas frames={typed} selected={0} onSelect={vi.fn()} frameUrl={() => "blob:s"} onMarkSafe={vi.fn()} />);
     const caption = screen.getByRole("list", { name: "Typed on this step" });
     expect(caption).toHaveTextContent('Typed "zuvemo-20" into "Tag de afiliado Amazon"');
     expect(caption).toHaveTextContent('Typed the secret admin into "Senha"');
+  });
+
+  it("says what the screen is for under the step title, and repeated typing keeps both rows (#1286)", () => {
+    const frame: TestFrame[] = [{ stepId: "s", n: 1, verb: "SEES", text: "Obra", status: "passed", reason: null, expected: [], inputs: [], intent: null,
+      checks: [], checkStatus: [], failure: null, typed: ['Typed "a" into "Nome"', 'Typed "a" into "Nome"'], screenIntent: "Confirma que a obra foi criada" }];
+    render(<TestCanvas frames={frame} selected={0} onSelect={vi.fn()} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    expect(screen.getByText("Confirma que a obra foi criada")).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Typed on this step" }).querySelectorAll("li")).toHaveLength(2);
   });
 
   it("flags a journey that does not say what it proves (#1287)", () => {

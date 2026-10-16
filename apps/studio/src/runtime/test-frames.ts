@@ -12,7 +12,9 @@ export interface TestFrame { stepId: string; n: number; verb: "SEES" | "DOES" | 
   failure: string | null;
   /** #1286: what was typed on the edge that entered this step, read from the flow (never from the
    * screenshot), so a masked block on the frame has a caption: `Typed "x" into "Field"`. */
-  typed: string[] }
+  typed: string[];
+  /** #1286: what the screen this step lands on is for, from the flow; null when it does not say. */
+  screenIntent: string | null }
 
 export type CheckStatus = "passed" | "failed" | "not_evaluated";
 
@@ -67,7 +69,7 @@ function actInput(act: NonNullable<JourneyFlowView["edges"][number]["acts"]>[num
 /** #1287: the flow's own words for one step: the acts of the edge that entered it and what its
  * screen must show. A composed contract id `<flow>.<path>` names its path; the flow id is `main`. */
 function flowDetails(flow: JourneyFlowView | undefined, contractId: string, stepId: string, index: number) {
-  if (!flow) return { inputs: [], intent: null, checks: [], typed: [] as string[], expect: [] as { role: string; name: string }[] };
+  if (!flow) return { inputs: [], intent: null, checks: [], typed: [] as string[], screenIntent: null as string | null, expect: [] as { role: string; name: string }[] };
   const pathName = contractId === flow.id ? "main" : contractId.slice(flow.id.length + 1);
   const edgeId = index > 0 ? flow.paths[pathName]?.[index - 1] : undefined;
   const edge = edgeId ? flow.edges.find((e) => e.id === edgeId) : undefined;
@@ -76,6 +78,7 @@ function flowDetails(flow: JourneyFlowView | undefined, contractId: string, step
     inputs: (edge?.acts ?? []).map(actInput),
     typed: (edge?.acts ?? []).map(typedCaption).filter((line): line is string => line !== null),
     intent: edge?.intent ?? null,
+    screenIntent: screen?.intent ?? null,
     checks: (screen?.expect ?? []).map((e) => `shows ${e.role} “${e.name}”`),
     expect: screen?.expect ?? [],
   };

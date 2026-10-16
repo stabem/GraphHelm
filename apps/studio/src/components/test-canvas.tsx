@@ -93,7 +93,7 @@ export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUr
             {src ? <img src={src} alt={`Frame ${cur.n}: ${cur.text}`} /> : <p>No frame recorded for this step</p>}
           </div>
           {cur.typed.length > 0 && (
-            <ul aria-label="Typed on this step" className="tc-asserts">{cur.typed.map((line) => <li key={line}>{line}</li>)}</ul>
+            <ul aria-label="Typed on this step" className="tc-asserts">{cur.typed.map((line, i) => <li key={`${i}:${line}`}>{line}</li>)}</ul>
           )}
           <div className="tc-status">
             <span className="tc-chip" data-status={cur.status}>{LABEL[cur.status]}</span>
@@ -106,6 +106,7 @@ export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUr
           <div className="tc-ins-block">
             <span className="tc-kicker">{`ACTION ${cur.n} · ${cur.verb}`}</span>
             <h3>{cur.text}</h3>
+            {cur.screenIntent && <p className="tc-intent">{cur.screenIntent}</p>}
             <code className="tc-code">{`step ${cur.stepId}\n${cur.verb.toLowerCase()} ${cur.text}`}</code>
           </div>
           {inspectorStep?.(cur.stepId)}
@@ -126,7 +127,7 @@ export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUr
                   const own = cur.checkStatus[i] ?? "not_evaluated";
                   const mark: FrameStatus = own === "passed" ? "passed" : own === "failed" ? "failed" : "not_run";
                   const label = own === "passed" ? "seen" : own === "failed" ? "not seen" : "not evaluated";
-                  return <li key={e} data-check={own}><span aria-hidden="true" className="tc-mark" data-status={mark}>{MARK[mark]}</span> {e}<span className="sr-only"> ({label})</span></li>;
+                  return <li key={`${i}:${e}`} data-check={own}><span aria-hidden="true" className="tc-mark" data-status={mark}>{MARK[mark]}</span> {e}<span className="sr-only"> ({label})</span></li>;
                 })}
                 {cur.expected.map((e) => `state is ${e}`).map((e) => <li key={e}><span aria-hidden="true" className="tc-mark" data-status={cur.status}>{MARK[cur.status]}</span> {e}</li>)}
               </ul>

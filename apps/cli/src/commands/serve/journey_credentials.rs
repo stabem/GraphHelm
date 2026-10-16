@@ -122,23 +122,26 @@ struct Open {
 }
 
 /// The journal as `serve` holds it: open, or the reason it cannot serve.
+///
+/// The journal is opened on the first grant request, not at `serve` start: a Runtime that never
+/// grants anything creates no `credential-broker` directory. Once opened, the lifetime lock is
+/// held until the process exits.
 pub(super) struct Journal {
-    inner: Mutex<Result<Open, Unavailable>>,
+    dir: PathBuf,
+    inner: Mutex<Option<Result<Open, Unavailable>>>,
 }
 
 impl Journal {
-    /// Opens (creating if absent) the journal beside `events` and replays it. Never fails `serve`
-    /// start: an unusable journal answers its routes with a refusal instead.
+    /// The journal beside `events`, opened (created if absent) and replayed on first use. An
+    /// unusable journal answers its routes with a refusal; it never fails `serve` start.
     pub(super) fn open(events: &Path) -> Self {
-        Self {
-            inner: Mutex::new(open_at(&broker_dir(events))),
-        }
+        Self::open_dir(&broker_dir(events))
     }
 
-    #[cfg(test)]
     fn open_dir(dir: &Path) -> Self {
         Self {
-            inner: Mutex::new(open_at(dir)),
+            dir: dir.to_path_buf(),
+            inner: Mutex::new(None),
         }
     }
 }
@@ -322,7 +325,7 @@ impl Journal {
             .inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let open = match guard.as_mut() {
+        let open = match guard.get_or_insert_with(|| open_at(&self.dir)).as_mut() {
             Ok(open) => open,
             Err(reason) => {
                 return refused(
@@ -392,7 +395,7 @@ impl Journal {
             .and_then(|()| open.log.flush())
             .and_then(|()| open.log.sync_data());
         if written.is_err() {
-            *guard = Err(Unavailable::Uncertain);
+            *guard = Some(Err(Unavailable::Uncertain));
             return refused(
                 StatusCode::SERVICE_UNAVAILABLE,
                 crate::error_codes::GHCLI005_EXECUTION_STATE,
@@ -704,6 +707,10 @@ mod tests {
     fn a_second_holder_and_a_corrupt_journal_refuse_every_write() {
         let dir = tempfile::tempdir().unwrap();
         let first = Journal::open_dir(dir.path());
+        assert!(matches!(
+            first.append("k0", &json!({}), |_| Ok(created("g0"))),
+            Answer::Ok(_)
+        ));
         let second = Journal::open_dir(dir.path());
         assert!(matches!(
             second.append("k", &json!({}), |_| Ok(created("g"))),

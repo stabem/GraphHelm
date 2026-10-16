@@ -1,3 +1,4 @@
+pub(crate) mod alloc_guard;
 mod documents;
 mod journey_credentials;
 mod lifecycle;

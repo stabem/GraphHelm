@@ -34,6 +34,7 @@ mod runtime_record;
 mod schema;
 mod secret_file;
 mod serve;
+pub(crate) use serve::alloc_guard::Guard as AllocGuard;
 mod simulate;
 mod skills;
 mod studio;

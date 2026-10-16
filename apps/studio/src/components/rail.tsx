@@ -230,7 +230,7 @@ export function ProjectRail({
           <div className="hint" role="note" aria-label="Previous Runtime exit" style={{ overflowWrap: "anywhere" }}>
             Runtime restarted · {previousExit.state === "vanished" ? "previous run started" : "last stop"} <time dateTime={new Date(previousExit.at * 1000).toISOString()} title={`PID ${previousExit.pid} · ${new Date(previousExit.at * 1000).toISOString()}`}>
               {new Date(previousExit.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}
-            </time>{previousExit.state === "vanished" ? " and stopped without recording why" : ` (${({ serve_error: "failed", panicked: "crashed" } as Record<string, string>)[previousExit.state] ?? "stopped"})`}
+            </time>{previousExit.state === "vanished" ? " and stopped without recording why" : ` (${({ serve_error: "failed", panicked: "crashed", out_of_memory: "ran out of memory" } as Record<string, string>)[previousExit.state] ?? "stopped"})`}
             {/* The ids are for whoever debugs the Runtime, not the sentence the owner reads. */}
             <details>
               <summary>Details</summary>

@@ -280,6 +280,11 @@ def _waiter_path(payload: dict, bound: tuple[str, str, str, str, str | None], ho
 HEARTBEAT_MAX_AGE = 30 * 60
 CREATE_BREAKAWAY_FROM_JOB = 0x01000000
 ARM_BUDGET_SECONDS = 5.0
+# Consecutive unexpected wake-wait exits a waiter survives (#1118): one abort must not leave a lane
+# deaf, but a CLI that fails every time must not spin. Back-off doubles from 1 s up to 60 s.
+WAKE_WAIT_FAILURE_LIMIT = 5
+# The tail of wake-wait's stderr kept in waiter.log, so an abort names its cause.
+STDERR_TAIL = 400
 
 
 def _heartbeat_path(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> Path:
@@ -387,6 +392,7 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
     cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
     pid_path = _waiter_path(payload, bound, host)
     exit_reason = "heartbeat_stale"
+    failures = 0
     try:
       # SessionEnd removes this marker explicitly. Its age only says the host has been idle;
       # treating age as death drops an otherwise-live lane after a long quiet interval.
@@ -394,7 +400,7 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
         result = subprocess.run([cli, "wake-wait", "--events", str(events),
                                  "--execution", bound[0], "--session-id", session],
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, check=False,
+                                stderr=subprocess.PIPE, check=False,
                                 text=True,
                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         # An append can consume the lease before wake-wait parks its pipe. Its timeout
@@ -409,9 +415,20 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
         except (TypeError, ValueError):
             stale = False
         if result.returncode not in (0, 2, 3) and not stale:
-            print(f"wake-wait exited {result.returncode} for {session}; stopping waiter", file=sys.stderr)
+            failures += 1
+            tail = " ".join((getattr(result, "stderr", None) or "").split())[-STDERR_TAIL:]
             exit_reason = f"wake_wait_exit:{result.returncode}"
-            return
+            if failures >= WAKE_WAIT_FAILURE_LIMIT:
+                print(f"wake-wait exited {result.returncode} for {session} {failures} times; "
+                      "stopping waiter", file=sys.stderr)
+                exit_reason += f":{tail}"
+                return
+            _log_waiter_exit(session, f"{exit_reason}:{tail}")
+            print(f"wake-wait exited {result.returncode} for {session}; re-arming waiter", file=sys.stderr)
+            time.sleep(min(2 ** (failures - 1), 60))
+        else:
+            failures = 0
+            exit_reason = "heartbeat_stale"
         if not heartbeat.exists():
             return
         if stale:

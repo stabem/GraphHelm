@@ -5,8 +5,9 @@ description: "Use while implementing a planned change under Keel: how to write w
 
 How to use this skill:
 
-- If the project has its own `KEEL.md` at its root, follow that file and the `keel/` files it names.
-  The text below is the bundled copy, for projects that have none.
+- Read the project's own `KEEL.md` at its root when one exists, and the `keel/` step files it names.
+  When the project has none, read https://github.com/stabem/GraphHelm/blob/main/KEEL.md and the step
+  files under https://github.com/stabem/GraphHelm/blob/main/keel/. The text below is the bundled copy.
 - In the text below, `keel/KEEL_PLAN.md`, `keel/KEEL_EXEC.md`, `keel/KEEL_REVIEW.md` and
   `keel/KEEL_MERGE.md` are this plugin's `keel-plan`, `keel-exec`, `keel-review` and `keel-merge`
   skills, and `KEEL.md` is its `keel` skill. `docs/keel/KEEL_SPEC.md` exists only in the GraphHelm

@@ -38,7 +38,7 @@ class KeelPlugin(unittest.TestCase):
                 body = text(PLUGIN / "skills" / skill / "SKILL.md")
                 marker = sync.marker(source)
                 self.assertEqual(body.count(marker), 1, f"{skill}: the source marker for {source} must appear once")
-                self.assertEqual(body.split(marker, 1)[1], text(ROOT / source),
+                self.assertEqual(body.split(marker, 1)[1], sync.github_links(text(ROOT / source), source),
                                  f"{skill} differs from {source}: run python tools/keel-plugin/sync_keel_plugin.py")
 
     def test_each_skill_file_is_exactly_what_the_sync_writes(self):
@@ -59,6 +59,14 @@ class KeelPlugin(unittest.TestCase):
         embedded = body.split(start, 1)[1].split(end, 1)[0]
         self.assertEqual(embedded, text(ROOT / sync.GRAPHHELM_KEEL_SOURCE),
                          "the GraphHelm keel skill differs from its source: run python tools/keel-plugin/sync_keel_plugin.py")
+
+    def test_no_relative_keel_link_is_left_in_the_plugin(self):
+        # A plugin installed in another project has no `KEEL.md` or `keel/` beside it: a relative
+        # link to either leads nowhere, so each must name the copy on GitHub.
+        relative = re.compile(r"\]\((?!https?:)[^)]*(KEEL\.md|keel/)[^)]*\)")
+        for path in sorted(PLUGIN.rglob("*.md")):
+            with self.subTest(path=path.relative_to(ROOT).as_posix()):
+                self.assertEqual(relative.findall(text(path)), [], "relative KEEL link: run the sync")
 
     def test_each_skill_is_named_after_its_folder(self):
         for skill in sync.SKILLS:

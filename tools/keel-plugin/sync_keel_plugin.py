@@ -1,5 +1,7 @@
 """Writes the standalone keel plugin's skills from the repository's KEEL files, which stay the only source."""
 import json
+import posixpath
+import re
 import sys
 from pathlib import Path
 
@@ -29,10 +31,14 @@ DESCRIPTIONS = {
     "keel-merge": "Use when merging a change you approved under Keel: what to recheck at the merge and "
                   "what to record after it.",
 }
+# A relative link copied out of the repository leads nowhere inside a plugin, so it points here.
+GITHUB_BLOB = "https://github.com/stabem/GraphHelm/blob/main/"
+RELATIVE_LINK = re.compile(r"\]\((?![a-z][a-z0-9+.-]*:|#)([^)\s#]+)(#[^)\s]*)?\)")
 PREAMBLE = """How to use this skill:
 
-- If the project has its own `KEEL.md` at its root, follow that file and the `keel/` files it names.
-  The text below is the bundled copy, for projects that have none.
+- Read the project's own `KEEL.md` at its root when one exists, and the `keel/` step files it names.
+  When the project has none, read https://github.com/stabem/GraphHelm/blob/main/KEEL.md and the step
+  files under https://github.com/stabem/GraphHelm/blob/main/keel/. The text below is the bundled copy.
 - In the text below, `keel/KEEL_PLAN.md`, `keel/KEEL_EXEC.md`, `keel/KEEL_REVIEW.md` and
   `keel/KEEL_MERGE.md` are this plugin's `keel-plan`, `keel-exec`, `keel-review` and `keel-merge`
   skills, and `KEEL.md` is its `keel` skill. `docs/keel/KEEL_SPEC.md` exists only in the GraphHelm
@@ -48,6 +54,13 @@ PREAMBLE = """How to use this skill:
 
 def marker(source):
     return f"\n<!-- keel source: {source} (generated; edit the source, then run tools/keel-plugin/sync_keel_plugin.py) -->\n\n"
+
+
+def github_links(text, source):
+    # Every relative link in a KEEL file is resolved against that file and pointed at GitHub.
+    base = posixpath.dirname(source)
+    return RELATIVE_LINK.sub(
+        lambda m: f"]({GITHUB_BLOB}{posixpath.normpath(posixpath.join(base, m.group(1)))}{m.group(2) or ''})", text)
 
 
 def keel_text(source):
@@ -69,7 +82,7 @@ def embed(skill_text, source):
 
 def render(skill):
     source = SKILLS[skill]
-    body = keel_text(source)
+    body = github_links(keel_text(source), source)
     frontmatter = f"---\nname: {skill}\ndescription: {json.dumps(DESCRIPTIONS[skill])}\n---\n\n"
     return frontmatter + PREAMBLE + marker(source) + body
 

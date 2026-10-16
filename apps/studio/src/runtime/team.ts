@@ -219,12 +219,6 @@ function doingNow(task: TaskState | undefined, note: string | undefined): string
   return note ?? "No note yet";
 }
 
-/** The bot an actor id or thread id belongs to, or null when it belongs to none. */
-export function botKeyOf(bots: Bot[], id: string | null): string | null {
-  if (id === null) return null;
-  return bots.find((bot) => bot.key === id || bot.actorId === id)?.key ?? null;
-}
-
 /** One line per pair of bots that addressed each other (the `talks` pair rule in App.tsx). */
 export function teamLinks(events: RuntimeEvent[], envelopes: EnvelopeRecord, bots: Bot[], now: number): TeamLink[] {
   const botByIdentity = new Map<string, string>();

@@ -11,6 +11,7 @@ use support::token_path;
 mod time_scale;
 use time_scale::scaled;
 
+use sha2::Digest;
 use std::time::{Duration, Instant};
 
 /// One whole session: feed `lines` to `graphhelm mcp`, close stdin, wait for exit, return
@@ -320,7 +321,7 @@ const FIXTURE_KEY_ID: &str = "mcp-fixture-key";
 /// Starts the real server with an offline fixture keyring. Agent callers then omit
 /// `evidenceOut`; the server seals their signal under this key instead of accepting a Runtime
 /// filesystem path chosen by the caller.
-fn serve_sealed(events: &Path) -> (ServerGuard, String, String) {
+fn serve_sealed_with_lane_policy(events: &Path, strict: bool) -> (ServerGuard, String, String) {
     let keyring = events.parent().unwrap().join("keyring");
     std::fs::create_dir_all(&keyring).unwrap();
     let init = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
@@ -342,12 +343,20 @@ fn serve_sealed(events: &Path) -> (ServerGuard, String, String) {
         String::from_utf8_lossy(&init.stdout),
         String::from_utf8_lossy(&init.stderr)
     );
-    serve_with_keyring(events, Some((&keyring, FIXTURE_KEY_ID)))
+    serve_with_keyring_and_lane_policy(events, Some((&keyring, FIXTURE_KEY_ID)), strict)
 }
 
 fn serve_with_keyring(
     events: &Path,
     keyring: Option<(&Path, &str)>,
+) -> (ServerGuard, String, String) {
+    serve_with_keyring_and_lane_policy(events, keyring, false)
+}
+
+fn serve_with_keyring_and_lane_policy(
+    events: &Path,
+    keyring: Option<(&Path, &str)>,
+    strict: bool,
 ) -> (ServerGuard, String, String) {
     let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command.args([
@@ -360,6 +369,9 @@ fn serve_with_keyring(
     if let Some((keyring, key_id)) = keyring {
         command.args(["--keyring", keyring.to_str().unwrap(), "--key-id", key_id]);
         command.env("GRAPHHELM_EVENTS_KEY", FIXTURE_EVENTS_KEY);
+    }
+    if strict {
+        command.arg("--require-lane-credential");
     }
     let mut child = command
         .stdout(Stdio::piped())
@@ -508,7 +520,15 @@ fn wired_sealed(execution: &str) -> WiredHarness {
     wired_with_server(execution, true)
 }
 
+fn wired_lane_sealed(execution: &str) -> WiredHarness {
+    wired_with_server_mode(execution, true, true)
+}
+
 fn wired_with_server(execution: &str, sealed: bool) -> WiredHarness {
+    wired_with_server_mode(execution, sealed, false)
+}
+
+fn wired_with_server_mode(execution: &str, sealed: bool, strict: bool) -> WiredHarness {
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
     let fixtures = write_json_file(
@@ -538,7 +558,7 @@ fn wired_with_server(execution: &str, sealed: bool) -> WiredHarness {
         // Keep the existing legacy execution fixture. Enable real sealing on the restarted
         // server for the agent signal journeys, without inventing a governed genesis fixture.
         drop(server);
-        serve_sealed(&events)
+        serve_sealed_with_lane_policy(&events, strict)
     } else {
         (server, base, token)
     };
@@ -1710,6 +1730,373 @@ fn a_minimal_signal_is_accepted_and_the_sealed_envelope_carries_the_filled_field
     assert_eq!(
         envelope["diagnostics"][0]["path"], "/signal/source",
         "{envelope}"
+    );
+}
+
+#[test]
+fn lane_bound_signal_uses_one_credential_for_one_call() {
+    let execution = "exec-mcp-lane-bound";
+    let harness = wired_lane_sealed(execution);
+    let credential = |lane: &str| {
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args([
+                "--json",
+                "tasks",
+                "credential",
+                "--lane",
+                lane,
+                "--execution",
+                execution,
+                "--token-file",
+                harness
+                    ._directory
+                    .path()
+                    .join("events.token")
+                    .to_str()
+                    .unwrap(),
+            ])
+            .output()
+            .unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["ok"], true, "{reply}");
+        harness
+            ._directory
+            .path()
+            .join(format!("events.agent.{lane}.token"))
+    };
+    let lane_a = credential("lane-alpha");
+    let lane_b = credential("lane-beta");
+    let wrong_execution_file = harness._directory.path().join("wrong-execution.token");
+    let mint_wrong_execution =
+        graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args([
+                "--json",
+                "tasks",
+                "credential",
+                "--lane",
+                "lane-alpha",
+                "--execution",
+                "other-execution",
+                "--token-file",
+                harness
+                    ._directory
+                    .path()
+                    .join("events.token")
+                    .to_str()
+                    .unwrap(),
+                "--out",
+                wrong_execution_file.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+    let minted: serde_json::Value = serde_json::from_slice(&mint_wrong_execution.stdout).unwrap();
+    assert_eq!(minted["ok"], true, "{minted}");
+    let signal = |id: &str, lane: &str, kind: &str, description: String| {
+        serde_json::json!({
+            "id": id, "source": {"type": "user", "id": lane}, "type": kind,
+            "severity": "low", "description": description, "evidence": ["task"],
+            "emittedAt": "2026-10-15T12:00:00Z"
+        })
+    };
+    let claim = signal(
+        "mcp-lane-claim",
+        "lane-alpha",
+        "task.claimed",
+        serde_json::json!({
+            "schema": "graphhelm-task-event-v1", "taskId": "issue-1407", "revision": 1,
+            "at": "2026-10-15T12:00:00Z", "issue": 1407, "lane": "lane-alpha",
+            "branch": "issue-1407-mcp-lane", "repo": "stabem/GraphHelm"
+        })
+        .to_string(),
+    );
+    let bound = |rpc: &str, envelope: serde_json::Value, lane: &str, file: &Path| {
+        tool_call(
+            serde_json::json!(rpc),
+            "signal",
+            serde_json::json!({
+                "executionId": execution, "signal": envelope, "lane": lane,
+                "credentialFile": file.to_str().unwrap()
+            }),
+        )
+    };
+    let task_doc = |revision: u64, fields: serde_json::Value| {
+        let mut document = serde_json::json!({
+            "schema": "graphhelm-task-event-v1", "taskId": "issue-1407", "revision": revision,
+            "at": "2026-10-15T12:00:00Z"
+        });
+        document
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        document.to_string()
+    };
+    let pr = signal(
+        "mcp-lane-pr",
+        "lane-alpha",
+        "task.pr_opened",
+        task_doc(
+            2,
+            serde_json::json!({
+                "pr": 1408, "headSha": "abcdef01", "journeys": [], "lane": "lane-alpha"
+            }),
+        ),
+    );
+    let assigned = signal(
+        "mcp-lane-assigned",
+        "lane-alpha",
+        "task.review_assigned",
+        task_doc(
+            3,
+            serde_json::json!({
+                "pr": 1408, "headSha": "abcdef01", "reviewer": "lane-beta", "ordinal": 1
+            }),
+        ),
+    );
+    let verdict = signal(
+        "mcp-lane-verdict",
+        "lane-beta",
+        "task.review_verdict",
+        task_doc(
+            4,
+            serde_json::json!({
+                "pr": 1408, "headSha": "abcdef01", "reviewer": "lane-beta", "verdict": "APPROVE",
+                "commentUrl": "https://github.com/stabem/GraphHelm/pull/1408#issuecomment-1"
+            }),
+        ),
+    );
+    let mut reply = signal(
+        "mcp-lane-reply",
+        "lane-beta",
+        "operator_note",
+        "reply".into(),
+    );
+    reply["replyTo"] = serde_json::json!("ordinary");
+    let raw_credential = std::fs::read_to_string(&lane_a).unwrap();
+    let calls = [
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        bound("claim", claim.clone(), "lane-alpha", &lane_a),
+        bound("claim", claim, "lane-alpha", &lane_a),
+        bound("pr", pr, "lane-alpha", &lane_a),
+        bound("assigned", assigned, "lane-alpha", &lane_a),
+        bound("verdict", verdict, "lane-beta", &lane_b),
+        bound(
+            "wrong-credential",
+            signal(
+                "wrong-credential",
+                "lane-alpha",
+                "operator_note",
+                "no".into(),
+            ),
+            "lane-alpha",
+            &lane_b,
+        ),
+        bound(
+            "wrong-execution",
+            signal(
+                "wrong-execution",
+                "lane-alpha",
+                "operator_note",
+                "no".into(),
+            ),
+            "lane-alpha",
+            &wrong_execution_file,
+        ),
+        tool_call(
+            serde_json::json!("ordinary"),
+            "signal",
+            serde_json::json!({
+                "executionId": execution,
+                "signal": signal("ordinary", "agent-chat", "operator_note", "ordinary".into())
+            }),
+        ),
+        bound("claim", reply, "lane-beta", &lane_b),
+        bound(
+            "missing",
+            signal("missing", "lane-alpha", "operator_note", "no".into()),
+            "lane-alpha",
+            &harness._directory.path().join("absent.token"),
+        ),
+        bound(
+            "unreadable",
+            signal("unreadable", "lane-alpha", "operator_note", "no".into()),
+            "lane-alpha",
+            harness._directory.path(),
+        ),
+        bound(
+            "source",
+            signal(
+                "source",
+                "lane-beta",
+                "task.heartbeat",
+                task_doc(5, serde_json::json!({"lane": "lane-alpha"})),
+            ),
+            "lane-alpha",
+            &lane_a,
+        ),
+        tool_call(
+            serde_json::json!("partial"),
+            "signal",
+            serde_json::json!({
+                "executionId": execution, "signal": signal("partial", "lane-alpha", "operator_note", "no".into()),
+                "lane": "lane-alpha"
+            }),
+        ),
+        bound(
+            "invalid-lane",
+            signal("invalid-lane", "lane-alpha", "operator_note", "no".into()),
+            "lane alpha",
+            &lane_a,
+        ),
+        tool_call(
+            serde_json::json!("raw-credential"),
+            "signal",
+            serde_json::json!({
+                "executionId": execution,
+                "signal": signal("raw-credential", "lane-alpha", "operator_note", "no".into()),
+                "lane": "lane-alpha", "credentialFile": raw_credential
+            }),
+        ),
+    ];
+    let session = harness.session(&calls);
+    assert_eq!(session.replies.len(), 16, "{:?}", session.replies);
+    for index in [1, 2, 3, 4, 5, 8, 9] {
+        let (error, reply) = tool_envelope(&session.replies[index]);
+        assert!(!error, "call {index}: {reply}");
+    }
+    for index in [6, 7, 10, 11, 12, 13, 14, 15] {
+        let (error, _) = tool_envelope(&session.replies[index]);
+        assert!(
+            error || session.replies[index].get("error").is_some(),
+            "{:?}",
+            session.replies[index]
+        );
+    }
+    // A lane the header could not carry is refused by the MCP server itself, before any request.
+    assert!(
+        session.replies[14]["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("lane must be")),
+        "{:?}",
+        session.replies[14]
+    );
+    assert!(!String::from_utf8_lossy(&session.output.stdout).contains(&raw_credential));
+    let events = http_get_json(
+        &harness.base,
+        &harness.token,
+        &format!("/v1/executions/{execution}/events?limit=1000"),
+    );
+    let records: Vec<_> = events["data"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["kind"]["type"] == "signal_recorded")
+        .collect();
+    assert_eq!(records.len(), 6, "{events}");
+    assert_eq!(records[0]["actor"]["id"], "lane-alpha");
+    assert_eq!(records[3]["actor"]["id"], "lane-beta");
+    assert_eq!(records[4]["actor"]["id"], "agent-chat");
+    assert_eq!(records[5]["actor"]["id"], "lane-beta");
+    assert_eq!(records[5]["kind"]["data"]["replyTo"], "ordinary");
+    let tasks = http_get_json(
+        &harness.base,
+        &harness.token,
+        &format!("/v1/executions/{execution}/tasks"),
+    );
+    assert_eq!(tasks["data"]["rejected"], 0, "{tasks}");
+    assert_eq!(tasks["data"]["tasks"][0]["pr"], 1408, "{tasks}");
+
+    // An extension capability belonging to this MCP process cannot bless another writer.
+    let package = harness._directory.path().join("capability-package");
+    std::fs::create_dir_all(package.join("fixtures")).unwrap();
+    let resource = b"{}";
+    std::fs::write(package.join("fixtures/signal.json"), resource).unwrap();
+    let resource_hash = format!("sha256:{}", hex::encode(sha2::Sha256::digest(resource)));
+    let manifest = serde_json::json!({
+        "apiVersion": "p50.dev/v1", "kind": "Extension",
+        "metadata": {"id": "graphhelm-mcp-lane-test", "version": "1.0.0", "publisher": "graphhelm"},
+        "spec": {
+            "type": "skill-package", "capabilities": ["journey_proof"],
+            "permissions": {
+                "filesystem": {"package": "read", "workspaceArtifacts": "proposal-write"},
+                "network": {"external": false, "loopbackRuntimeApi": true},
+                "runtime": {"read": true, "mutations": ["signal"], "ownerConfirmationRequired": ["signal"]},
+                "secrets": {"artifactValues": false, "tokenFile": false}
+            },
+            "contracts": {"contributions": [{
+                "id": "fixtures-signal-json", "kind": "fixture", "path": "fixtures/signal.json",
+                "sha256": resource_hash, "effects": ["runtime.connect", "runtime.mutate"],
+                "permissions": ["network.loopback", "owner.decision.request", "runtime.write"],
+                "requires": {"capabilities": [], "observers": []}, "surfaces": ["tool:signal"]
+            }]},
+            "runtime": {"kind": "data", "isolationMinimum": "tier_0"},
+            "compatibility": {"framework": ">=0.1"}
+        }
+    });
+    std::fs::write(
+        package.join("extension.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let digest = graphhelm_schema::validate_extension_package(&package)
+        .unwrap()
+        .package_digest;
+    let capability_file = harness._directory.path().join("capability.json");
+    std::fs::write(&capability_file, serde_json::to_vec(&serde_json::json!({
+        "packageDigest": digest, "contributionId": "fixtures-signal-json", "actor": "agent-chat",
+        "allowedTools": ["signal"], "revoked": false, "expiresAt": 9_999_999_999_u64
+    })).unwrap()).unwrap();
+    let audit_file = harness._directory.path().join("capability-audit.jsonl");
+    let capability_session = mcp_session_with(
+        &[
+            "--url",
+            &harness.base,
+            "--token-file",
+            harness.token_file.to_str().unwrap(),
+            "--actor",
+            "agent-chat",
+            "--actor-type",
+            "agent",
+            "--package",
+            package.to_str().unwrap(),
+            "--capability-token-file",
+            capability_file.to_str().unwrap(),
+            "--capability-audit-log",
+            audit_file.to_str().unwrap(),
+        ],
+        &[],
+        &[
+            initialize_request(1, "2025-06-18"),
+            initialized_notification(),
+            bound(
+                "capability",
+                signal("capability", "lane-alpha", "operator_note", "no".into()),
+                "lane-alpha",
+                &lane_a,
+            ),
+        ],
+    );
+    assert_eq!(capability_session.replies.len(), 2);
+    assert!(
+        capability_session.replies[1]["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("bound lane differs")),
+        "{:?}",
+        capability_session.replies
+    );
+    let after = http_get_json(
+        &harness.base,
+        &harness.token,
+        &format!("/v1/executions/{execution}/events?limit=1000"),
+    );
+    assert_eq!(
+        after["data"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["kind"]["type"] == "signal_recorded")
+            .count(),
+        6
     );
 }
 

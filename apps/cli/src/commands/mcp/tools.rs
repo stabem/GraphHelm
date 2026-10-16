@@ -710,6 +710,10 @@ fn signal_schema() -> serde_json::Value {
             // fills `id`, `emittedAt` and `source` (#1284), which that schema requires, and a
             // client that cannot resolve a remote `$ref` would refuse the tool outright.
             "signal": {"type": "object", "description": "schemas/graph-signal.schema.json; id, emittedAt, source optional"},
+            // The lane's shape is checked in `call`, not here: the advertised schema is a hint a
+            // client may skip, and every byte here is in every tools/list reply.
+            "lane": {"type": "string", "description": "Lane to sign as; with credentialFile."},
+            "credentialFile": {"type": "string", "description": "Path to the lane's credential file, never its contents."},
             "evidenceOut": {"type": "string"},
             // #313: images beside the signal, never inside the envelope. The Runtime re-checks
             // every cap and the magic bytes; this schema only closes the wire shape.
@@ -1224,8 +1228,10 @@ pub(crate) const UNLISTED_STUBS: [&str; 4] = [
 
 /// #1277: the most `tools/list` may serialise to, in bytes. Every connecting session pays it;
 /// the guard below fails a change that grows it past this, so growth is a decision in a diff.
+/// Raised from 25 500 for `signal`'s `lane` and `credentialFile` (lane-signed writes), already
+/// cut to two short descriptions with their shape checked in `call` instead of the schema.
 #[cfg(test)]
-const TOOL_LIST_BUDGET_BYTES: usize = 25_500;
+const TOOL_LIST_BUDGET_BYTES: usize = 25_700;
 /// #1277: the longest a tool description may be: one line plus the route it maps to.
 #[cfg(test)]
 const DESCRIPTION_MAX_CHARS: usize = 300;
@@ -1632,6 +1638,47 @@ pub(crate) fn call(
     };
     let arguments = &arguments;
 
+    if name == "signal"
+        && arguments.get("lane").is_some() != arguments.get("credentialFile").is_some()
+    {
+        return HandlerOutcome::Error {
+            data: None,
+            code: INVALID_PARAMS,
+            message: "signal needs lane and credentialFile together".to_owned(),
+        };
+    }
+    // The lane becomes the X-GraphHelm-Actor header: refuse any other shape before it travels.
+    if name == "signal"
+        && arguments.get("lane").is_some_and(|lane| {
+            !lane.as_str().is_some_and(|lane| {
+                (1..=128).contains(&lane.len())
+                    && lane.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-')
+                    })
+            })
+        })
+    {
+        return HandlerOutcome::Error {
+            data: None,
+            code: INVALID_PARAMS,
+            message: "lane must be 1 to 128 of A-Z a-z 0-9 . _ : -".to_owned(),
+        };
+    }
+    if name == "signal"
+        && str_arg(arguments, "credentialFile").is_some_and(|file| {
+            file.len() == 64
+                && file
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        })
+    {
+        return HandlerOutcome::Error {
+            data: None,
+            code: INVALID_PARAMS,
+            message: "credentialFile must name a local file, not credential contents".to_owned(),
+        };
+    }
+
     // `wake_wait` is the one tool whose work is NOT an API request: it blocks on the local
     // rendezvous. It is handled before the request table rather than inside it, because
     // folding a blocking local wait into the arm that builds HTTP calls is how a surface
@@ -1640,7 +1687,14 @@ pub(crate) fn call(
         return with_example(name, wake_wait_tool(api, nonce, arguments));
     }
 
-    let key = derive_key(nonce, rpc_id);
+    let key = if name == "signal" {
+        arguments.get("lane").map_or_else(
+            || derive_key(nonce, rpc_id),
+            |lane| derive_key(nonce, &serde_json::json!([lane, rpc_id])),
+        )
+    } else {
+        derive_key(nonce, rpc_id)
+    };
     let if_match = arguments.get("ifMatch").and_then(serde_json::Value::as_u64);
     let outcome = match name {
         "document_read" | "document_save" => {
@@ -1886,13 +1940,12 @@ pub(crate) fn call(
             if let Some(attachments) = arguments.get("attachments") {
                 body["attachments"] = attachments.clone();
             }
-            api.request(
-                "POST",
-                &url::segment_path(&["v1", "executions", id, "signal"]),
-                Some(&body),
-                Some(&key),
-                if_match,
-            )
+            let path = url::segment_path(&["v1", "executions", id, "signal"]);
+            if let (Some(lane), Some(file)) = (str_arg(arguments, "lane"), str_arg(arguments, "credentialFile")) {
+                api.request_as_lane(&path, &body, &key, if_match, lane, file)
+            } else {
+                api.request("POST", &path, Some(&body), Some(&key), if_match)
+            }
         }),
         "sweep" => require(arguments, "executionId").map(|id| {
             // Only a supplied `asOf` travels. Sending an explicit null, or this process's own idea

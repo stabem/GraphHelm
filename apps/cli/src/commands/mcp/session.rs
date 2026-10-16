@@ -174,6 +174,20 @@ pub(crate) fn handle(
                 };
             };
             if let Some(capability) = state.capability.as_ref() {
+                // A capability admitted for the process actor cannot authorize another writer.
+                if name == "signal"
+                    && arguments
+                        .get("lane")
+                        .is_some_and(|lane| lane.as_str() != Some(&client.actor))
+                {
+                    return HandlerOutcome::Error {
+                        data: None,
+                        code: super::rpc::INVALID_REQUEST,
+                        message:
+                            "capability refused: the bound lane differs from the session actor"
+                                .to_owned(),
+                    };
+                }
                 let decision = check_capability(
                     &capability.token,
                     &capability.package_root,

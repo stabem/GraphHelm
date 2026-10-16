@@ -493,6 +493,10 @@
             "maxItems": 4,
             "type": "array"
           },
+          "credentialFile": {
+            "description": "Path to the lane's credential file, never its contents.",
+            "type": "string"
+          },
           "evidenceOut": {
             "type": "string"
           },
@@ -504,6 +508,10 @@
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
+          },
+          "lane": {
+            "description": "Lane to sign as; with credentialFile.",
+            "type": "string"
           },
           "signal": {
             "description": "schemas/graph-signal.schema.json; id, emittedAt, source optional",

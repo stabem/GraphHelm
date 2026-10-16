@@ -710,6 +710,8 @@ fn signal_schema() -> serde_json::Value {
             // fills `id`, `emittedAt` and `source` (#1284), which that schema requires, and a
             // client that cannot resolve a remote `$ref` would refuse the tool outright.
             "signal": {"type": "object", "description": "schemas/graph-signal.schema.json; id, emittedAt, source optional"},
+            "lane": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]+$", "description": "Lane signed by the local credential file; pair with credentialFile."},
+            "credentialFile": {"type": "string", "minLength": 1, "description": "Local path to a pre-minted lane credential; pair with lane. Never pass credential contents."},
             "evidenceOut": {"type": "string"},
             // #313: images beside the signal, never inside the envelope. The Runtime re-checks
             // every cap and the magic bytes; this schema only closes the wire shape.
@@ -1632,6 +1634,16 @@ pub(crate) fn call(
     };
     let arguments = &arguments;
 
+    if name == "signal"
+        && arguments.get("lane").is_some() != arguments.get("credentialFile").is_some()
+    {
+        return HandlerOutcome::Error {
+            data: None,
+            code: INVALID_PARAMS,
+            message: "signal needs lane and credentialFile together".to_owned(),
+        };
+    }
+
     // `wake_wait` is the one tool whose work is NOT an API request: it blocks on the local
     // rendezvous. It is handled before the request table rather than inside it, because
     // folding a blocking local wait into the arm that builds HTTP calls is how a surface
@@ -1640,7 +1652,14 @@ pub(crate) fn call(
         return with_example(name, wake_wait_tool(api, nonce, arguments));
     }
 
-    let key = derive_key(nonce, rpc_id);
+    let key = if name == "signal" {
+        arguments.get("lane").map_or_else(
+            || derive_key(nonce, rpc_id),
+            |lane| derive_key(nonce, &serde_json::json!([lane, rpc_id])),
+        )
+    } else {
+        derive_key(nonce, rpc_id)
+    };
     let if_match = arguments.get("ifMatch").and_then(serde_json::Value::as_u64);
     let outcome = match name {
         "document_read" | "document_save" => {
@@ -1886,13 +1905,12 @@ pub(crate) fn call(
             if let Some(attachments) = arguments.get("attachments") {
                 body["attachments"] = attachments.clone();
             }
-            api.request(
-                "POST",
-                &url::segment_path(&["v1", "executions", id, "signal"]),
-                Some(&body),
-                Some(&key),
-                if_match,
-            )
+            let path = url::segment_path(&["v1", "executions", id, "signal"]);
+            if let (Some(lane), Some(file)) = (str_arg(arguments, "lane"), str_arg(arguments, "credentialFile")) {
+                api.request_as_lane(&path, &body, &key, if_match, lane, file)
+            } else {
+                api.request("POST", &path, Some(&body), Some(&key), if_match)
+            }
         }),
         "sweep" => require(arguments, "executionId").map(|id| {
             // Only a supplied `asOf` travels. Sending an explicit null, or this process's own idea

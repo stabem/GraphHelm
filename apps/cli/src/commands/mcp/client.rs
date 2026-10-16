@@ -213,6 +213,37 @@ impl ApiClient {
         )
     }
 
+    /// A lane file grants one signal request. Keep the process client and discovery cache intact.
+    pub(crate) fn request_as_lane(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+        idempotency_key: &str,
+        if_match: Option<u64>,
+        lane: &str,
+        credential_file: &str,
+    ) -> Result<(u16, serde_json::Value), String> {
+        let token = crate::commands::secret_file::read_existing(
+            std::path::Path::new(credential_file),
+            "lane credential",
+        )
+        .map_err(|_| "the lane credential file is unavailable or invalid".to_owned())?;
+        let mut endpoint = self.current_endpoint()?;
+        endpoint.token = Zeroizing::new(token);
+        self.request_with(
+            &endpoint,
+            "POST",
+            path,
+            Some(body),
+            Settings {
+                idempotency_key: Some(idempotency_key),
+                if_match,
+                timeout: REQUEST_TIMEOUT,
+            },
+            Some(lane),
+        )
+    }
+
     /// [`Self::request`] with its own wait, for a call whose Runtime side may take longer than
     /// [`REQUEST_TIMEOUT`] (the gateway probe, #600 review).
     pub(crate) fn request_waiting(
@@ -235,6 +266,7 @@ impl ApiClient {
                 if_match,
                 timeout,
             },
+            None,
         );
         if !self.is_discovering() {
             return result;
@@ -258,6 +290,7 @@ impl ApiClient {
                         if_match,
                         timeout,
                     },
+                    None,
                 )
             }
             // A transport failure may have landed; never retried here, only re-resolved next time.
@@ -433,6 +466,7 @@ impl ApiClient {
         path: &str,
         body: Option<&serde_json::Value>,
         settings: Settings<'_>,
+        lane: Option<&str>,
     ) -> Result<(u16, serde_json::Value), String> {
         use graphhelm_model_gateway::transport::{HttpTransport, TransportRequest};
         let Settings {
@@ -446,7 +480,12 @@ impl ApiClient {
         )];
         if let Some(key) = idempotency_key {
             headers.push(("Idempotency-Key".to_owned(), key.to_owned()));
-            headers.extend(self.mutation_headers());
+            let mut mutation_headers = self.mutation_headers();
+            if let Some(lane) = lane {
+                mutation_headers[0].1 = lane.to_owned();
+                mutation_headers[1].1 = "agent".to_owned();
+            }
+            headers.extend(mutation_headers);
         }
         if let Some(head) = if_match {
             headers.push(("If-Match".to_owned(), head.to_string()));

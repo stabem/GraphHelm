@@ -493,6 +493,11 @@
             "maxItems": 4,
             "type": "array"
           },
+          "credentialFile": {
+            "description": "Local path to a pre-minted lane credential; pair with lane. Never pass credential contents.",
+            "minLength": 1,
+            "type": "string"
+          },
           "evidenceOut": {
             "type": "string"
           },
@@ -504,6 +509,13 @@
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
+          },
+          "lane": {
+            "description": "Lane signed by the local credential file; pair with credentialFile.",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "type": "string"
           },
           "signal": {
             "description": "schemas/graph-signal.schema.json; id, emittedAt, source optional",

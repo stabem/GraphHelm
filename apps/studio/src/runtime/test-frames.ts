@@ -1,11 +1,35 @@
-import type { JourneyFlowView, JourneyRunView, JourneyView, StepAction } from "./types";
+import type { JourneyFlowView, JourneyRunCheck, JourneyRunView, JourneyView, StepAction } from "./types";
 import { skippedEdgeInto } from "./mission";
 
 export type FrameStatus = "running" | "passed" | "failed" | "waits_for_you" | "not_run";
 export interface TestFrame { stepId: string; n: number; verb: "SEES" | "DOES" | "EXPECT"; text: string; status: FrameStatus; reason: string | null; expected: string[];
   /** #1287, from the flow source when the Studio has it: what the user did to reach this screen
    * (typed text, choices), why, and every element the screen must show. */
-  inputs: string[]; intent: string | null; checks: string[] }
+  inputs: string[]; intent: string | null; checks: string[];
+  /** #1286: each of `checks`, judged on its own; "not_evaluated" when the run says nothing about it. */
+  checkStatus: CheckStatus[];
+  /** #1286: the first failed assertion in words, "Expected … — the screen shows …", or null. */
+  failure: string | null }
+
+export type CheckStatus = "passed" | "failed" | "not_evaluated";
+
+/** The fixed phrase stays English; role and names are the flow's and the page's, as written. */
+export function checkFailure(check: JourneyRunCheck): string {
+  const shown = check.closest ? `${check.closest.role} '${check.closest.name}'` : `no ${check.role}`;
+  return `Expected ${check.role} '${check.name}' — the screen shows ${shown}`;
+}
+
+/** Each expected element's own verdict: from the run's per-assertion `checks` when it has them; a
+ * passed step without them still means every element was seen (the observer fails otherwise). */
+function judged(expect: { role: string; name: string }[], status: FrameStatus, checks: JourneyRunCheck[] | undefined) {
+  const statuses: CheckStatus[] = expect.map((e, i) => {
+    const check = checks?.[i];
+    if (check && check.role === e.role && check.name === e.name) return check.seen ? "passed" : "failed";
+    return status === "passed" ? "passed" : "not_evaluated";
+  });
+  const first = checks?.find((check, i) => statuses[i] === "failed" && !check.seen);
+  return { statuses, failure: first ? checkFailure(first) : null };
+}
 
 const ACTION_VERB: Record<string, string> = {
   navigate: "Goes to", activate: "Clicks", enter_text: "Types into", select: "Chooses",
@@ -34,7 +58,7 @@ function actInput(act: NonNullable<JourneyFlowView["edges"][number]["acts"]>[num
 /** #1287: the flow's own words for one step: the acts of the edge that entered it and what its
  * screen must show. A composed contract id `<flow>.<path>` names its path; the flow id is `main`. */
 function flowDetails(flow: JourneyFlowView | undefined, contractId: string, stepId: string, index: number) {
-  if (!flow) return { inputs: [], intent: null, checks: [] };
+  if (!flow) return { inputs: [], intent: null, checks: [], expect: [] as { role: string; name: string }[] };
   const pathName = contractId === flow.id ? "main" : contractId.slice(flow.id.length + 1);
   const edgeId = index > 0 ? flow.paths[pathName]?.[index - 1] : undefined;
   const edge = edgeId ? flow.edges.find((e) => e.id === edgeId) : undefined;
@@ -43,6 +67,7 @@ function flowDetails(flow: JourneyFlowView | undefined, contractId: string, step
     inputs: (edge?.acts ?? []).map(actInput),
     intent: edge?.intent ?? null,
     checks: (screen?.expect ?? []).map((e) => `shows ${e.role} “${e.name}”`),
+    expect: screen?.expect ?? [],
   };
 }
 
@@ -61,7 +86,9 @@ export function testFrames(journey: JourneyView, run: JourneyRunView | null, run
     else if (screen?.result === "pass") status = "passed";
     else if (screen?.result) { status = "failed"; reason = screen.reason ?? null; }
     else if (running === s.stepId) status = "running";
+    const { expect, ...details } = flowDetails(flow, journey.contractId, s.screen?.screenId ?? s.stepId, i);
+    const { statuses, failure } = judged(expect, status, flow?.status === "weak" ? undefined : screen?.checks);
     return { stepId: s.stepId, n: i + 1, verb, text: s.action ? actionText(s.action) : title, status, reason, expected,
-      ...flowDetails(flow, journey.contractId, s.screen?.screenId ?? s.stepId, i) };
+      ...details, checkStatus: statuses, failure };
   });
 }

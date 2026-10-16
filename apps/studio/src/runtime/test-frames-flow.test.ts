@@ -38,4 +38,30 @@ describe("testFrames with the flow source", () => {
     expect(weak.map((f) => f.status)).toEqual(["not_run", "not_run"]);
     expect(weak[0]!.reason).toMatch(/does not say what it proves/);
   });
+
+  // #1286: one missing heading must not paint the elements the screen does show; each assertion
+  // reads its own verdict and the failed one says what the screen showed instead.
+  it("judges each assertion on its own and names what the screen showed (#1286)", () => {
+    const three = { ...flow, screens: [flow.screens[0]!, { ...flow.screens[1]!, expect: [
+      { role: "heading", name: "Produto encontrado" }, { role: "region", name: "Também encontramos em" }, { role: "button", name: "Salvar item" }] }] };
+    const checks = [
+      { role: "heading", name: "Produto encontrado", seen: false, closest: { role: "heading", name: "Produto conferido" } as { role: string; name: string } | null },
+      { role: "region", name: "Também encontramos em", seen: true, closest: null },
+      { role: "button", name: "Salvar item", seen: true, closest: null }];
+    const runWith = (judged: typeof checks) => ({ state: "failed", screens: { lojas: { frame: false, result: "pass" },
+      salvo: { frame: false, result: "drift", reason: "expect_missing", checks: judged } } }) as never;
+    const [, failed] = testFrames(journey, runWith(checks), null, three);
+    expect(failed!.checkStatus).toEqual(["failed", "passed", "passed"]);
+    expect(failed!.failure).toBe("Expected heading 'Produto encontrado' — the screen shows heading 'Produto conferido'");
+    const none = runWith([{ ...checks[0]!, closest: null }, checks[1]!, checks[2]!]);
+    expect(testFrames(journey, none, null, three)[1]!.failure).toBe("Expected heading 'Produto encontrado' — the screen shows no heading");
+  });
+
+  it("an old run without checks: passed stays seen, anything else is not evaluated (#1286)", () => {
+    const run = { state: "failed", screens: { lojas: { frame: false, result: "pass" }, salvo: { frame: false, result: "drift" } } } as never;
+    const [passed, drifted] = testFrames(journey, run, null, flow);
+    expect(passed!.checkStatus).toEqual(["passed"]);
+    expect(drifted!.checkStatus).toEqual(["not_evaluated"]);
+    expect(drifted!.failure).toBeNull();
+  });
 });

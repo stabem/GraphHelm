@@ -2086,7 +2086,11 @@ mod tests {
         assert_ne!(approval_digest(&edited), approval_digest(&with));
         // Only the one line is new: a flow without a screen intent keeps its exact bytes.
         assert_eq!(
-            written.replacen("    intent: Confirma que a obra foi criada\n", "", 1),
+            written.replacen(
+                &format!("{}intent: Confirma que a obra foi criada\n", " ".repeat(4)),
+                "",
+                1
+            ),
             canonical(&plain, false)
         );
     }

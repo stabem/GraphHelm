@@ -581,7 +581,8 @@ fn bare_flag(language: Language, code: &str) -> bool {
 }
 
 /// Calls where a bare boolean is the value itself, not a mode switch: constructors, assertions,
-/// state setters and standard containers.
+/// state setters, standard containers and the combinators whose argument is a default value
+/// (`unwrap_or(false)` supplies a value; it switches no mode).
 fn exempt_callee(language: Language, callee: &str) -> bool {
     let last = callee.rsplit(['.', ':']).next().unwrap_or(callee);
     if callee.is_empty() || last.is_empty() || callee.ends_with('!') {
@@ -590,7 +591,11 @@ fn exempt_callee(language: Language, callee: &str) -> bool {
     if language == Language::Rust && last.starts_with(|c: char| c.is_uppercase()) {
         return true;
     }
-    const EXEMPT: [&str; 22] = [
+    const EXEMPT: [&str; 26] = [
+        "unwrap_or",
+        "map_or",
+        "then_some",
+        "or_insert",
         "Some",
         "Ok",
         "Err",

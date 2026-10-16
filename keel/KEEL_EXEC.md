@@ -28,7 +28,7 @@ Step 2, from an accepted card to a proven change. Read [`KEEL.md`](../KEEL.md) a
    captures what the code does, not what it should do.
 2. **End to end first.** Prove the promise the way a user meets it:
    - a screen with an approved journey flow: `graphhelm journey replay` with the browser observer
-     installed (`graphhelm setup --install-observer`); a project that keeps its own Playwright
+     installed (`graphhelm setup --install-observer playwright`); a project that keeps its own Playwright
      tests: `tools/playwright-observer/playwright_observe.py --journey <contractId>`;
    - the CLI and the Runtime: the real binary against a real Runtime on a scratch store, asserting
      the reply and what was recorded;

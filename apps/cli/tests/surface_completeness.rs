@@ -194,7 +194,7 @@ fn read_rust_string(text: &str) -> String {
 /// AN EXCEPTION LIST IS THE HONEST HALF OF A COMPLETENESS GUARD, and it earns its keep only if
 /// adding a row is harder than adding the tool. Each entry names WHY, so a future author who wants
 /// to silence this guard has to write a false sentence rather than paste a path.
-const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 17] = [
+const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 19] = [
     (
         "GET",
         "/v1/journey-observer/setup",
@@ -291,6 +291,16 @@ const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 17] = [
          Drafts and their acts are written by agents, so on the chat surface the hand that wrote \
          the act would be offered the mark that excuses it, which is self-validation, not a \
          runtime verb; its doors are the Studio and `graphhelm journey mark-safe`",
+    ),
+    (
+        "POST",
+        "/v1/executions/{id}/journey-credential-grants",
+        "the owner grants one lane a journey credential scope (#1309); a grant is authority over agents, so an agent must never issue one, and the route refuses every agent and task bearer. An MCP tool runs with an agent's credential and would only ever be refused",
+    ),
+    (
+        "POST",
+        "/v1/executions/{id}/journey-credential-grants/{grant}/revoke",
+        "the owner withdraws a journey credential grant (#1309); like issuing one, it is owner authority over agents and refuses every agent and task bearer, so no agent-credentialed MCP tool may name it",
     ),
 ];
 

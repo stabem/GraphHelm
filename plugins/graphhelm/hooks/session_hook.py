@@ -278,6 +278,7 @@ def _waiter_path(payload: dict, bound: tuple[str, str, str, str, str | None], ho
 
 
 HEARTBEAT_MAX_AGE = 30 * 60
+CREATE_BREAKAWAY_FROM_JOB = 0x01000000
 ARM_BUDGET_SECONDS = 5.0
 
 
@@ -349,14 +350,23 @@ def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None
         pass
     cursor = arm_lane_wake(payload, bound)
     pid_path.parent.mkdir(parents=True, exist_ok=True)
+    argv = [sys.executable, str(Path(__file__).resolve()), "wait", "--host", host,
+            "--session-id", _session(payload), "--events", str(events),
+            "--heartbeat", str(_heartbeat_path(payload, bound, host)), "--cursor", str(cursor)]
     flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS if os.name == "nt" else 0
-    child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "wait", "--host", host,
-                              "--session-id", _session(payload), "--events", str(events),
-                              "--heartbeat", str(_heartbeat_path(payload, bound, host)),
-                              "--cursor", str(cursor)],
-                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags,
-                             start_new_session=os.name != "nt")
+    # #919: the host runs hooks in a job object that is closed when the hook returns, which
+    # killed every waiter before it could log an exit. Leave the job; a job that forbids
+    # breakaway refuses the flag, and then the waiter starts inside it as before.
+    attempts = (flags | CREATE_BREAKAWAY_FROM_JOB, flags) if os.name == "nt" else (flags,)
+    for attempt, creationflags in enumerate(attempts):
+        try:
+            child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL, close_fds=True,
+                                     creationflags=creationflags, start_new_session=os.name != "nt")
+            break
+        except OSError:
+            if attempt == len(attempts) - 1:
+                raise
     pid_path.write_text(str(child.pid), encoding="ascii")
 
 

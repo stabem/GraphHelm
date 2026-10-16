@@ -320,10 +320,6 @@ const FIXTURE_KEY_ID: &str = "mcp-fixture-key";
 /// Starts the real server with an offline fixture keyring. Agent callers then omit
 /// `evidenceOut`; the server seals their signal under this key instead of accepting a Runtime
 /// filesystem path chosen by the caller.
-fn serve_sealed(events: &Path) -> (ServerGuard, String, String) {
-    serve_sealed_with_lane_policy(events, false)
-}
-
 fn serve_sealed_with_lane_policy(events: &Path, strict: bool) -> (ServerGuard, String, String) {
     let keyring = events.parent().unwrap().join("keyring");
     std::fs::create_dir_all(&keyring).unwrap();
@@ -1769,6 +1765,31 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
     };
     let lane_a = credential("lane-alpha");
     let lane_b = credential("lane-beta");
+    let wrong_execution_file = harness._directory.path().join("wrong-execution.token");
+    let mint_wrong_execution =
+        graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args([
+                "--json",
+                "tasks",
+                "credential",
+                "--lane",
+                "lane-alpha",
+                "--execution",
+                "other-execution",
+                "--token-file",
+                harness
+                    ._directory
+                    .path()
+                    .join("events.token")
+                    .to_str()
+                    .unwrap(),
+                "--out",
+                wrong_execution_file.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+    let minted: serde_json::Value = serde_json::from_slice(&mint_wrong_execution.stdout).unwrap();
+    assert_eq!(minted["ok"], true, "{minted}");
     let signal = |id: &str, lane: &str, kind: &str, description: String| {
         serde_json::json!({
             "id": id, "source": {"type": "user", "id": lane}, "type": kind,
@@ -1797,11 +1818,66 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
             }),
         )
     };
+    let task_doc = |revision: u64, fields: serde_json::Value| {
+        let mut document = serde_json::json!({
+            "schema": "graphhelm-task-event-v1", "taskId": "issue-1407", "revision": revision,
+            "at": "2026-10-15T12:00:00Z"
+        });
+        document
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        document.to_string()
+    };
+    let pr = signal(
+        "mcp-lane-pr",
+        "lane-alpha",
+        "task.pr_opened",
+        task_doc(
+            2,
+            serde_json::json!({
+                "pr": 1408, "headSha": "abcdef01", "journeys": [], "lane": "lane-alpha"
+            }),
+        ),
+    );
+    let assigned = signal(
+        "mcp-lane-assigned",
+        "lane-alpha",
+        "task.review_assigned",
+        task_doc(
+            3,
+            serde_json::json!({
+                "pr": 1408, "headSha": "abcdef01", "reviewer": "lane-beta", "ordinal": 1
+            }),
+        ),
+    );
+    let verdict = signal(
+        "mcp-lane-verdict",
+        "lane-beta",
+        "task.review_verdict",
+        task_doc(
+            4,
+            serde_json::json!({
+                "pr": 1408, "headSha": "abcdef01", "reviewer": "lane-beta", "verdict": "APPROVE",
+                "commentUrl": "https://github.com/stabem/GraphHelm/pull/1408#issuecomment-1"
+            }),
+        ),
+    );
+    let mut reply = signal(
+        "mcp-lane-reply",
+        "lane-beta",
+        "operator_note",
+        "reply".into(),
+    );
+    reply["replyTo"] = serde_json::json!("ordinary");
     let calls = [
         initialize_request(1, "2025-06-18"),
         initialized_notification(),
         bound("claim", claim.clone(), "lane-alpha", &lane_a),
         bound("claim", claim, "lane-alpha", &lane_a),
+        bound("pr", pr, "lane-alpha", &lane_a),
+        bound("assigned", assigned, "lane-alpha", &lane_a),
+        bound("verdict", verdict, "lane-beta", &lane_b),
         bound(
             "wrong-credential",
             signal(
@@ -1822,7 +1898,7 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
                 "no".into(),
             ),
             "lane-alpha",
-            &credential("lane-alpha-other"),
+            &wrong_execution_file,
         ),
         tool_call(
             serde_json::json!("ordinary"),
@@ -1832,14 +1908,47 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
                 "signal": signal("ordinary", "agent-chat", "operator_note", "ordinary".into())
             }),
         ),
+        bound("reply", reply, "lane-beta", &lane_b),
+        bound(
+            "missing",
+            signal("missing", "lane-alpha", "operator_note", "no".into()),
+            "lane-alpha",
+            &harness._directory.path().join("absent.token"),
+        ),
+        bound(
+            "unreadable",
+            signal("unreadable", "lane-alpha", "operator_note", "no".into()),
+            "lane-alpha",
+            harness._directory.path(),
+        ),
+        bound(
+            "source",
+            signal("source", "lane-beta", "operator_note", "no".into()),
+            "lane-alpha",
+            &lane_a,
+        ),
+        tool_call(
+            serde_json::json!("partial"),
+            "signal",
+            serde_json::json!({
+                "executionId": execution, "signal": signal("partial", "lane-alpha", "operator_note", "no".into()),
+                "lane": "lane-alpha"
+            }),
+        ),
+        bound(
+            "invalid-lane",
+            signal("invalid-lane", "lane-alpha", "operator_note", "no".into()),
+            "lane alpha",
+            &lane_a,
+        ),
     ];
     let session = harness.session(&calls);
-    assert_eq!(session.replies.len(), 6, "{:?}", session.replies);
-    for index in [1, 2, 5] {
+    assert_eq!(session.replies.len(), 15, "{:?}", session.replies);
+    for index in [1, 2, 3, 4, 5, 8, 9] {
         let (error, reply) = tool_envelope(&session.replies[index]);
         assert!(!error, "call {index}: {reply}");
     }
-    for index in [3, 4] {
+    for index in [6, 7, 10, 11, 12, 13, 14] {
         let (error, _) = tool_envelope(&session.replies[index]);
         assert!(
             error || session.replies[index].get("error").is_some(),
@@ -1858,9 +1967,19 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
         .iter()
         .filter(|event| event["kind"]["type"] == "signal_recorded")
         .collect();
-    assert_eq!(records.len(), 2, "{events}");
+    assert_eq!(records.len(), 6, "{events}");
     assert_eq!(records[0]["actor"]["id"], "lane-alpha");
-    assert_eq!(records[1]["actor"]["id"], "agent-chat");
+    assert_eq!(records[3]["actor"]["id"], "lane-beta");
+    assert_eq!(records[4]["actor"]["id"], "agent-chat");
+    assert_eq!(records[5]["actor"]["id"], "lane-beta");
+    assert_eq!(records[5]["kind"]["data"]["replyTo"], "ordinary");
+    let tasks = http_get_json(
+        &harness.base,
+        &harness.token,
+        &format!("/v1/executions/{execution}/tasks"),
+    );
+    assert_eq!(tasks["data"]["rejected"], 0, "{tasks}");
+    assert_eq!(tasks["data"]["tasks"][0]["pr"], 1408, "{tasks}");
 }
 
 #[test]

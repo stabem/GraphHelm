@@ -110,6 +110,57 @@ class SessionHookTests(unittest.TestCase):
         self.assertEqual(bound, ("gh-team", str(self.token_file), "http://127.0.0.1:8793",
                                  "http://127.0.0.1:8793", None))
 
+    def test_team_bound_waiter_parks_on_wake_wait(self):
+        # #1058: a lane bound by team.json + title (no GRAPHHELM_EXECUTION_ID) must park its
+        # detached waiter. The waiter re-resolves its binding from its own argv; without the
+        # session's cwd it found no team.json and returned silently, so no lease was ever held.
+        spec = importlib.util.spec_from_file_location("session_hook_team_waiter", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        repo = Path(self.temp.name) / "repo"
+        (repo / ".graphhelm" / "events").mkdir(parents=True)
+        (repo / ".graphhelm" / "team.json").write_text(json.dumps({
+            "executionId": "gh-team", "tokenFile": str(self.token_file),
+            "runtimeUrl": f"http://127.0.0.1:{self.server.server_port}",
+        }), encoding="utf-8")
+        lane_root = Path(self.temp.name) / "lane-sessions"
+        state_dir = Path(self.temp.name) / "waiter-state"
+        env = {key: value for key, value in self.env.items() if not key.startswith("GRAPHHELM_")}
+        env.update({"GRAPHHELM_HOOK_STATE_DIR": str(state_dir),
+                    "GRAPHHELM_EVENTS_DIR": str(repo / ".graphhelm" / "events")})
+        payload = {"session_id": "session-123", "cwd": str(repo)}
+        launched = []
+        waits = []
+
+        def launch(argv, **_kwargs):
+            launched.append(argv)
+            return type("Child", (), {"pid": 1})()
+
+        def wake(argv, **_kwargs):
+            waits.append(argv)
+            for marker in state_dir.rglob("*.waiter.alive"):
+                marker.unlink()
+            return type("Result", (), {"returncode": 0, "stdout": "{}", "stderr": ""})()
+
+        with patch.object(hook, "_lane_sessions_root", return_value=lane_root), \
+             patch.dict(os.environ, env, clear=True), \
+             patch.object(hook, "arm_lane_wake", return_value=19), \
+             patch.object(hook.subprocess, "Popen", side_effect=launch):
+            hook._remember_lane({"session_id": "session-123", "session_title": "gh-claude-13"})
+            bound = hook.binding(payload)
+            self.assertIsNotNone(bound)
+            hook.start_lane_waiter(payload, bound, "claude")
+        self.assertEqual(len(launched), 1)
+        with patch.object(hook, "_lane_sessions_root", return_value=lane_root), \
+             patch.dict(os.environ, env, clear=True), \
+             patch.object(hook, "arm_lane_wake", return_value=19), \
+             patch.object(hook.subprocess, "run", side_effect=wake), \
+             patch.object(sys, "argv", launched[0][1:]):
+            hook.main()
+        self.assertEqual(len(waits), 1)
+        self.assertEqual(waits[0][1], "wake-wait")
+        self.assertEqual(waits[0][waits[0].index("--execution") + 1], "gh-team")
+
     def test_environment_execution_id_wins_over_team_file(self):
         spec = importlib.util.spec_from_file_location("session_hook_test", SCRIPT)
         hook = importlib.util.module_from_spec(spec)
@@ -398,7 +449,7 @@ class SessionHookTests(unittest.TestCase):
         )
         self.assertEqual(companion_manifest["hooks"], "./hooks/codex-hooks.json")
         main_manifest = json.loads((repository / "plugins" / "graphhelm" / "plugin.json").read_text())
-        self.assertEqual(main_manifest["version"], "0.1.42")
+        self.assertEqual(main_manifest["version"], "0.1.43")
         self.assertEqual(companion_manifest["version"], main_manifest["version"])
         for host in (".claude-plugin", ".codex-plugin"):
             legacy = json.loads((repository / "plugins" / "graphhelm" / host / "plugin.json").read_text())

@@ -17,7 +17,8 @@
 //! (`--max-wait`); one that gives up leaves a `.resume` reservation, so the same lane and label
 //! queueing again within `RESUME_GRACE` are served at their first arrival. `--priority` tickets
 //! sort before every other waiter (`!` precedes the digits of an arrival key) and are only for
-//! lanes the owner listed in `slot-priority-lanes`.
+//! lanes the owner listed in `slot-priority-lanes`. `--stage review|merge` tickets (`#`) sort after
+//! priority and before every implement waiter; no ticket ever preempts the holder.
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -38,6 +39,8 @@ const PRIORITY_LANES: &str = "slot-priority-lanes";
 const HOLDER: &str = "holder.json";
 /// Prefix of a priority ticket: sorts before the digits of every normal arrival key.
 const PRIORITY_MARK: &str = "!";
+/// Prefix of a `--stage review|merge` ticket: after `!`, before the digits of an implement job.
+const REVIEW_MARK: &str = "#";
 const BUILD_ADMISSION_ENV: &str = "GRAPHHELM_BUILD_ADMISSION_DIR";
 
 fn refuse(message: &str, path: &str) -> Outcome {
@@ -1291,7 +1294,13 @@ fn run_admitted_slot_core(
     let now = unix_now();
     let reservation = reservation_path(&dir, lane, label);
     let arrival = take_reservation(&reservation, now).unwrap_or(now);
-    let mark = if request.priority { PRIORITY_MARK } else { "" };
+    let mark = if request.priority {
+        PRIORITY_MARK
+    } else if request.stage == crate::args::SlotStage::Implement {
+        ""
+    } else {
+        REVIEW_MARK
+    };
     let mine = dir.join(format!(
         "{mark}{arrival:024}-{lane}-{}.ticket",
         std::process::id()

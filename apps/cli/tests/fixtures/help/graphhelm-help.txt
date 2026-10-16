@@ -5419,6 +5419,12 @@ Options:
       --priority
           Go next after the current holder, ahead of every other waiter; never preempts the holder. Only for a lane listed in `<root>/.graphhelm-workspaces/slot-priority-lanes` (one lane per line, written by the owner); any other lane is refused and its command never runs (#540)
 
+      --stage <STAGE>
+          What the build serves: `review` and `merge` jobs go ahead of waiting `implement` jobs, never ahead of the holder or a `--priority` waiter
+          
+          [default: implement]
+          [possible values: implement, review, merge]
+
   -h, --help
           Print help
 

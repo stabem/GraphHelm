@@ -1304,7 +1304,12 @@ fn review_stage_is_served_before_waiting_implement_jobs() {
     let implement_command = marker_command(&log, "i", 10);
     let implement_root = root.clone();
     let implement = std::thread::spawn(move || {
-        run_admitted_slot(&request(&implement_root, "lane-i", "plan", &implement_command))
+        run_admitted_slot(&request(
+            &implement_root,
+            "lane-i",
+            "plan",
+            &implement_command,
+        ))
     });
     wait_for_ticket(&root, "lane-i");
     let review_root = root.clone();

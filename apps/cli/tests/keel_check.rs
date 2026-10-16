@@ -1872,8 +1872,8 @@ fn each_line_rule_blocks_its_break_and_passes_its_fix_in_each_language() {
         (
             "keel.rel.no_swallow",
             "src/lib.rs",
-            "    let _ = std::fs::remove_file(path);",
-            "    std::fs::remove_file(path)?;",
+            "let _ = std::fs::remove_file(path);",
+            "std::fs::remove_file(path)?;",
         ),
         (
             "keel.rel.no_swallow",
@@ -1884,14 +1884,14 @@ fn each_line_rule_blocks_its_break_and_passes_its_fix_in_each_language() {
         (
             "keel.rel.no_swallow",
             "src/app.py",
-            "    except OSError: pass",
-            "    except OSError as error: raise RuntimeError(\"save failed\") from error",
+            "except OSError: pass",
+            "except OSError as error: raise RuntimeError(\"save failed\") from error",
         ),
         (
             "keel.rel.deadline",
             "src/lib.rs",
-            "    let out = std::process::Command::new(\"git\").output();",
-            "    let out = run_bounded(std::process::Command::new(\"git\"), LIMIT);",
+            "let out = std::process::Command::new(\"git\").output();",
+            "let out = run_bounded(std::process::Command::new(\"git\"), LIMIT);",
         ),
         (
             "keel.rel.deadline",
@@ -1926,8 +1926,8 @@ fn each_line_rule_blocks_its_break_and_passes_its_fix_in_each_language() {
         (
             "keel.names.no_bare_flag",
             "src/lib.rs",
-            "    open(path, true);",
-            "    open(path, Mode::Create);",
+            "open(path, true);",
+            "open(path, Mode::Create);",
         ),
         (
             "keel.names.no_bare_flag",
@@ -2013,7 +2013,7 @@ fn line_rules_honour_and_print_excuses_and_skip_test_and_existing_code() {
     let repo = change(
         "src/lib.rs",
         "pub fn f() {}\n",
-        "pub fn f() {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() { Some(1).unwrap(); }\n}\n",
+        "pub fn f() {}\n#[cfg(test)]\nmod tests {\n#[test]\nfn t() { Some(1).unwrap(); }\n}\n",
     );
     let (_, reply) = run(repo.path(), None);
     assert_eq!(line_rules(&reply), Vec::<String>::new(), "{reply}");

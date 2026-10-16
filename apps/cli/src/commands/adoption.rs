@@ -67,7 +67,7 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
                 "inventory": inventory,
                 "plan": plan,
                 "provisioning": provisioning,
-                "suggestedResolutions": suggestions(&inventory),
+                "suggestedResolutions": suggestions(&inventory, args),
                 "observers": super::observers::readiness(&args.project, &args.home),
             }));
         }
@@ -78,10 +78,22 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
             reason: AdoptionReason::InvalidConfiguration,
         })?;
         let mut resolutions = Vec::new();
+        let mut already_applied = Vec::new();
         for text in &args.resolve {
-            if let Some(resolution) = parse_resolution(text, args, &registration, &inventory)? {
-                resolutions.push(resolution);
+            match parse_resolution(text, args, &registration, &inventory)? {
+                Some(resolution) => resolutions.push(resolution),
+                None => already_applied.push(text.clone()),
             }
+        }
+        // Every requested item already holds what it asks for: a second run is a no-op, not a
+        // refused empty plan. No plan file is written, so there is nothing to apply.
+        if resolutions.is_empty() {
+            return Ok(serde_json::json!({
+                "inventory": inventory,
+                "plan": null,
+                "provisioning": provisioning,
+                "alreadyApplied": already_applied,
+            }));
         }
         let plan = graphhelm_host_adoption::resolve(&inventory, &resolutions)?;
         graphhelm_host_adoption::write_private(out, &pretty(&plan)?)?;
@@ -248,7 +260,7 @@ fn eligible_plugin_contribution<'a>(
     Some(selected)
 }
 
-fn suggestions(inventory: &serde_json::Value) -> Vec<String> {
+fn suggestions(inventory: &serde_json::Value, args: &AdoptionSetupArgs) -> Vec<String> {
     let present = |id: &str| {
         inventory["spec"]["hosts"].as_array().is_some_and(|hosts| {
             hosts.iter().any(|host| {
@@ -273,7 +285,16 @@ fn suggestions(inventory: &serde_json::Value) -> Vec<String> {
         out.push("project/.mcp.json=use-plugin-mcp".to_owned());
     }
     for id in ["home/.claude/CLAUDE.md", "home/AGENTS.md"] {
-        if present(id) {
+        // A file whose block is already current has nothing left to suggest.
+        let current = item_path(id, args)
+            .and_then(|path| read_bytes(&path).ok())
+            .is_some_and(|before| {
+                std::str::from_utf8(&before)
+                    .ok()
+                    .and_then(upsert_block)
+                    .is_some_and(|after| after.as_bytes() == before.as_slice())
+            });
+        if present(id) && !current {
             out.push(format!("{id}=graphhelm-block"));
         }
     }
@@ -294,7 +315,7 @@ fn item_path(item: &str, args: &AdoptionSetupArgs) -> Option<std::path::PathBuf>
 /// reviewed after-bytes from the item's current bytes, so they travel the same digest, `--out`,
 /// `--plan` and `--accept` path as a hand-written replacement, and a source that moves before
 /// `--apply` is refused as stale. `None`: the MCP item already carries this exact registration,
-/// so there is nothing to decide; a block that is already current becomes `keep`.
+/// or the block is already current, so there is nothing to decide.
 /// The two `register-mcp` entries: the project file names its project root, while the user file
 /// uses the host's active working directory to select the project.
 struct Registrations {
@@ -360,11 +381,8 @@ fn parse_resolution(
             let before = read_bytes(&item_path(item, args).ok_or_else(invalid)?)?;
             let text = std::str::from_utf8(&before).map_err(|_| invalid())?;
             let after = upsert_block(text).ok_or_else(invalid)?;
-            Ok(Some(if after.as_bytes() == before.as_slice() {
-                resolution(Decision::Keep, None)
-            } else {
-                resolution(Decision::Replace, Some(after.into_bytes()))
-            }))
+            Ok((after.as_bytes() != before.as_slice())
+                .then(|| resolution(Decision::Replace, Some(after.into_bytes()))))
         }
         "register-mcp" => {
             if !MCP_ITEMS.contains(&item) {

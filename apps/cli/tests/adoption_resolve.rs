@@ -509,15 +509,13 @@ fn setup_registers_the_user_mcp_and_upserts_the_user_block_idempotently() {
         "line endings follow the file"
     );
 
-    // Second run: the block is current (keep) and the registration is present (nothing), so the
-    // plan would change nothing and is refused rather than padded; no file moves.
+    // Second run: the block is current and the registration is present, so the run is a no-op:
+    // both items are reported as already applied, no plan is written and no file moves.
     let again = s.path().join("again.json");
-    let (ok, refused) = resolve(&again);
-    assert!(!ok, "{refused}");
-    assert_eq!(
-        refused["diagnostics"][0]["path"],
-        "/adoption/invalid_configuration"
-    );
+    let (ok, noop) = resolve(&again);
+    assert!(ok, "{noop}");
+    assert_eq!(noop["data"]["alreadyApplied"].as_array().unwrap().len(), 2);
+    assert!(noop["data"]["plan"].is_null());
     assert!(!again.exists());
 
     let mut command = assert_cmd::Command::from_std(graphhelm_process::command(

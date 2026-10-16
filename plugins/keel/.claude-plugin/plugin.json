@@ -1,0 +1,11 @@
+{
+  "name": "keel",
+  "version": "0.1.0",
+  "description": "Keel, GraphHelm's construction pattern for agents that write code, standalone: plan, execute, review and merge skills that need no Runtime, MCP or journeys.",
+  "author": {
+    "name": "GraphHelm"
+  },
+  "homepage": "https://github.com/stabem/GraphHelm",
+  "repository": "https://github.com/stabem/GraphHelm",
+  "license": "MIT"
+}

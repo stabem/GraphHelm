@@ -166,6 +166,23 @@ It does **not** install the CLI, start the Runtime, or replace the main `graphhe
 registration. Steps 2, 4 and 6 do that. The hooks companion's task-handoff MCP is a separate
 surface; it does not replace the main Runtime tools.
 
+### Keel only, in any project
+
+A project that wants only Keel's rules, with no Runtime, MCP server, task records or journeys,
+installs the standalone `keel` plugin and nothing else. Skip steps 1-4 and 6 for that project.
+
+```sh
+claude plugin marketplace add stabem/GraphHelm
+claude plugin install keel@graphhelm
+
+codex plugin add keel@graphhelm
+```
+
+**Verify** with `claude plugin details keel@graphhelm`: five skills (`keel`, `keel-plan`,
+`keel-exec`, `keel-review`, `keel-merge`), no MCP server and no hooks. The skills follow the
+project's own `KEEL.md` when it has one, and run `graphhelm keel check` only when that CLI is on
+PATH.
+
 ### Keel and Journey-Proven Development skills
 
 When adopting the Keel/JPD development method, install its two companion packages in each

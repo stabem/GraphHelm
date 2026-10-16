@@ -170,6 +170,10 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 
       python tools/reached-tests/run_reached.py --repo . --base origin/main --head HEAD --root D:/gh --lane <lane> --output <outside-repo>/feedback.json
 
+  The author's run of this command is the receipt the reviewer reuses instead of a second
+  whole-plan run on the same head, and main gets its one whole run after merges; when each
+  applies is [DELIVERY.md](DELIVERY.md) §3 to §5.
+
   Pin the agent CLI with `--graphhelm <absolute-executable>` or `GRAPHHELM_CLI`; an explicit
   missing executable is an error, never a reason to fall back to another installation. The
   runner records the resolved path and uses it for its selector and GraphHelm commands.

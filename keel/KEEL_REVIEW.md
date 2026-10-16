@@ -13,9 +13,15 @@ expected verdict, you are not blind: say so and do not review.
 ## Do
 
 1. **Read the earlier comments** and answer any open block on this head.
-2. **Rerun everything yourself.** The whole reached plan on main plus the head, and every
-   end-to-end proof the card names. Do not trust the author's green. Name each command and its
-   result, and the size of each population (for example, how many test files ran).
+2. **Reuse the author's receipt, rerun what proves.** The author leaves the `run_reached.py` JSON
+   report as a file path in the PR body with its summary line; it names the head (`headBefore`)
+   and the base main sha (`baseSha`). Reuse it when its head equals the PR head and nothing in it
+   is failed or pending. Then run the end-to-end proof of the promise, any cell you doubt, and fmt
+   and clippy on the touched crates. Rerun the whole reached plan on main plus the head only when
+   the receipt is missing, stale, red or pending, or when the diff touches persistence,
+   permissions, security, compatibility or the plan selector itself. Name what you reused and what
+   you reran, each command and its result, and the size of each population (for example, how many
+   test files ran).
 3. **List only the values in `KEEL.md` that do not hold** on the diff, plus every value the
    card's risk row names, whether it holds or not. A value marked `to build` is checked by reading.
 4. **Check every exception** the change adds: is the reason true, and does it expire? Refuse one

@@ -22,7 +22,7 @@ and drops the ones that only helped a human eye.
 | Pragmatic Programmer | do not program by coincidence | kept: the cause comes before the fix (`keel.cause`) |
 | Pragmatic Programmer | orthogonality | kept as cohesion: split what never talks, merge what always changes together |
 | Extreme Programming | YAGNI, simple design | kept: add only what the promise needs |
-| Extreme Programming | test first | adapted: the order is not checkable, so a test earns its place by catching a deliberate break, whenever it was written; the cheapest observer that proves the promise |
+| Extreme Programming | test first | adapted: the order is not checkable, so a test earns its place by catching a deliberate break, whenever it was written; the cheapest observer that proves the promise; a standalone unit test only as a regression test, except formats, security and pure algorithms |
 | Extreme Programming | refactor mercilessly | dropped as a habit; a refactor is its own structural commit inside a card |
 | Clean Architecture | dependency rule | kept: dependencies point inward (`keel.deps`) |
 | Clean Architecture | interfaces and layers per feature | dropped: indirection a model must follow; interfaces only at I/O |
@@ -75,7 +75,11 @@ mirror the implementation
 an order of writing, which git cannot prove, but a test that turns red when the promise is broken
 on purpose and red on the parent. Any observer that passes those is accepted, unit, integration or
 end to end; the one closest to the user-visible promise is preferred when it is affordable, since
-it leaves a receipt anyone can replay.
+it leaves a receipt anyone can replay. A standalone unit test is the exception to that preference:
+it is added when someone finds a bug, as the smallest reproduction, red before the fix and green
+after, so it names a real defect instead of restating the implementation. Data formats and digests,
+security and pure algorithms keep their unit tests from the start, because an end-to-end run cannot
+reach every case.
 
 **Blocking.** From September to October 2026 Keel only reported; `App.tsx` grew to 3,625 lines
 through 128 changes that each passed alone. A rule the machine measures now blocks, with a written

@@ -49,7 +49,8 @@ Step 2, from an accepted card to a proven change. Read `KEEL.md` and the card fi
 
 ## Prove
 
-1. **Choose the cheapest observer that proves the promise**: unit, integration or end to end.
+1. **Choose the cheapest observer that proves the promise**: integration or end to end, or a unit
+   test under step 2.
    Prefer the observer closest to the user-visible promise when it is affordable:
    - a screen with an approved journey flow: `graphhelm journey replay` with the browser observer
      installed (`graphhelm setup --install-observer playwright`); a project that keeps its own Playwright
@@ -58,8 +59,11 @@ Step 2, from an accepted card to a proven change. Read `KEEL.md` and the card fi
      the reply and what was recorded;
    - hooks: the real hook process in a scratch folder, asserting what it recorded.
    Run it red on the parent and green on the change.
-2. **Every new test passes the break-it-once sabotage (step 5) and the `test-audit` skill's four
-   questions**, whenever it was written.
+2. **A standalone unit test is a regression test.** Add one only when someone finds a bug: the
+   smallest test that reproduces it, red before the fix and green after. The exceptions are data
+   formats and digests, security (paths, links, keys, permissions) and pure algorithms, where an
+   end-to-end run cannot reach every case. Every new test, whenever it was written, passes the
+   break-it-once sabotage (step 5) and the `test-audit` skill's four questions.
 3. **The artifact.** Every end-to-end proof ends in a receipt recorded in GraphHelm, the one the
    Studio Proof tab shows: what ran, on which commit, the result, and the command that repeats it.
 4. **The failure list.** A change in the last row of the `KEEL_PLAN.md` table writes down every way

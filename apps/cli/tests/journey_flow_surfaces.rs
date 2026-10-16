@@ -904,3 +904,132 @@ fn a_reviewer_agent_approves_only_with_its_own_credential_and_never_its_own_draf
     );
     assert_eq!(flow(&harness.flows(), "checkout")["status"], "approved");
 }
+
+/// #1309 slice 1: one owner grant request, with the `Idempotency-Key` every mutation carries.
+fn grant_call(base: &str, path: &str, bearer: &str, key: &str, body: &str) -> (u16, Value) {
+    let address = base.strip_prefix("http://").unwrap();
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAuthorization: Bearer {bearer}\r\nIdempotency-Key: {key}\r\n\r\n{body}",
+        body.len()
+    );
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(scaled(Duration::from_secs(60))))
+        .unwrap();
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).unwrap();
+    let split = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+    let head = String::from_utf8_lossy(&raw[..split]).into_owned();
+    let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+    let mut body = raw[split + 4..].to_vec();
+    if head
+        .to_ascii_lowercase()
+        .contains("transfer-encoding: chunked")
+    {
+        body = dechunk(&body);
+    }
+    (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+
+fn first_code(reply: &Value) -> (&str, &str) {
+    let diagnostic = &reply["diagnostics"][0];
+    (
+        diagnostic["code"].as_str().unwrap_or(""),
+        diagnostic["path"].as_str().unwrap_or(""),
+    )
+}
+
+/// #1309 slice 1: owner grants live in a private journal beside the events directory. They
+/// survive a restart by replay, a reused key answers its receipt, no agent credential reaches the
+/// routes, and a torn journal refuses rather than guessing.
+#[test]
+fn owner_journey_grants_survive_a_restart_and_refuse_agents_and_a_torn_journal() {
+    let harness = prepared();
+    let journal = harness
+        .scratch
+        .path()
+        .join("credential-broker/journey-credentials.v1.log");
+    let grants = format!("/v1/executions/{RUN}/journey-credential-grants");
+    let (guard, base, token) = harness.serve(true);
+    let project_id = http(&base, "GET", "/health", None).1["data"]["projectId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let body = |purpose: &str| {
+        json!({"projectId": project_id, "laneId": "agent-reviewer", "flowId": "checkout",
+            "purpose": purpose, "expiresAt": "2030-01-01T00:00:00Z"})
+        .to_string()
+    };
+
+    let (status, created) = grant_call(&base, &grants, &token, "grant-1", &body("reviewer"));
+    assert_eq!(status, 200, "{created}");
+    let grant = created["data"]["grantId"].as_str().unwrap().to_owned();
+    assert_eq!(created["data"]["state"], "active");
+    assert_eq!(created["data"]["laneId"], "agent-reviewer");
+    let (status, again) = grant_call(&base, &grants, &token, "grant-1", &body("reviewer"));
+    assert_eq!((status, &again["data"]), (200, &created["data"]));
+    let (status, conflict) = grant_call(&base, &grants, &token, "grant-1", &body("author"));
+    assert_eq!(status, 409, "{conflict}");
+    assert_eq!(first_code(&conflict).1, "/idempotencyKey");
+    let committed = std::fs::read(&journal).unwrap();
+
+    // No agent credential reaches the routes, and none of them writes a frame.
+    let agent_token =
+        std::fs::read_to_string(harness.events.with_extension("agent.token")).unwrap();
+    for bearer in [agent_token.trim(), AGENT_CREDENTIAL, REVIEWER_CREDENTIAL] {
+        let (status, refused) = grant_call(&base, &grants, bearer, "grant-agent", &body("author"));
+        assert!(matches!(status, 401 | 403), "{status} {refused}");
+    }
+    let (status, refused) = grant_call(&base, &grants, &token, "grant-2", &body("approve"));
+    assert_eq!(
+        (status, first_code(&refused).1),
+        (400, "/purpose"),
+        "{refused}"
+    );
+    let (status, refused) = grant_call(
+        &base,
+        "/v1/executions/no-such-run/journey-credential-grants",
+        &token,
+        "grant-3",
+        &body("author"),
+    );
+    assert_eq!(status, 404, "{refused}");
+    assert_eq!(std::fs::read(&journal).unwrap(), committed);
+
+    let revoke = format!("{grants}/{grant}/revoke");
+    let (status, revoked) = grant_call(&base, &revoke, &token, "revoke-1", "");
+    assert_eq!(status, 200, "{revoked}");
+    assert_eq!(revoked["data"]["state"], "revoked");
+    drop(guard);
+
+    // A restart replays both frames: the receipt still answers, and the grant is still revoked.
+    let (guard, base, token) = harness.serve(true);
+    let (status, replayed) = grant_call(&base, &grants, &token, "grant-1", &body("reviewer"));
+    assert_eq!(
+        (status, replayed["data"]["grantId"].as_str()),
+        (200, Some(grant.as_str()))
+    );
+    let (status, refused) = grant_call(&base, &revoke, &token, "revoke-2", "");
+    assert_eq!(
+        (status, first_code(&refused).1),
+        (409, "/grantId"),
+        "{refused}"
+    );
+    drop(guard);
+
+    // A torn last frame: both routes refuse, and the journal is left exactly as found.
+    let mut torn = std::fs::read(&journal).unwrap();
+    torn.pop();
+    std::fs::write(&journal, &torn).unwrap();
+    let (_guard, base, token) = harness.serve(true);
+    for (path, key) in [(grants.as_str(), "grant-4"), (revoke.as_str(), "revoke-3")] {
+        let (status, refused) = grant_call(&base, path, &token, key, &body("author"));
+        assert_eq!(
+            (status, first_code(&refused).1),
+            (503, "/journal"),
+            "{refused}"
+        );
+    }
+    assert_eq!(std::fs::read(&journal).unwrap(), torn);
+}

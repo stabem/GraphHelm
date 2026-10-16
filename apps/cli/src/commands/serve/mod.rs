@@ -1,4 +1,5 @@
 mod documents;
+mod journey_credentials;
 mod lifecycle;
 pub(super) mod monitor;
 mod native_chats;
@@ -194,6 +195,8 @@ struct ServeState {
     /// In-memory liveness only: an authenticated actor has contacted this Runtime recently.
     /// Never persisted; it is display evidence and grants no authority.
     seen_actors: Arc<std::sync::Mutex<BTreeMap<String, (Instant, &'static str)>>>,
+    /// #1309: owner-issued journey credential grants, in their private journal beside `events`.
+    grants: Arc<journey_credentials::Journal>,
 }
 
 impl ServeState {
@@ -430,6 +433,7 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         sweep_interval: args.sweep_interval,
         native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         seen_actors: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
+        grants: Arc::new(journey_credentials::Journal::open(&args.events)),
     };
 
     let rt =
@@ -1016,6 +1020,14 @@ fn build_router(state: ServeState) -> Router {
         .route("/v1/executions/{id}/documents/save", post(documents::save))
         .route("/v1/executions/{id}/approve", post(routes::approve))
         .route("/v1/executions/{id}/assign", post(routes::assign))
+        .route(
+            "/v1/executions/{id}/journey-credential-grants",
+            post(journey_credentials::create),
+        )
+        .route(
+            "/v1/executions/{id}/journey-credential-grants/{grant}/revoke",
+            post(journey_credentials::revoke),
+        )
         .route(
             "/v1/executions/{id}/amend-budget",
             post(routes::amend_budget),

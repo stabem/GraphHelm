@@ -17,6 +17,11 @@
       "name": "graphhelm-development-contracts",
       "source": "./extensions/builtin/graphhelm-development-contracts",
       "description": "Keel, code contracts, evidence retrieval, and advisory memory skills."
+    },
+    {
+      "name": "keel",
+      "source": "./plugins/keel",
+      "description": "Keel's plan, execute, review and merge skills for any project; no Runtime, MCP or journeys."
     }
   ]
 }

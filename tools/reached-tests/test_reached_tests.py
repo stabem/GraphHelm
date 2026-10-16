@@ -805,6 +805,24 @@ class Reach(unittest.TestCase):
         self.assertEqual((whole, single, studio, tools, validate, other), (set(), set(), [], [], [], []))
         self.assertEqual(rt.commands(whole, single, studio), [])
 
+    def test_a_keel_rule_or_keel_plugin_change_reaches_the_keel_twin_guard(self):
+        # The standalone keel plugin's skills carry the KEEL files' text: an edit on either side
+        # must run the guard that compares them, or the two drift with every check green.
+        with tempfile.TemporaryDirectory() as repo:
+            guard = Path(repo, "tools", "keel-plugin")
+            guard.mkdir(parents=True)
+            (guard / "test_keel_plugin.py").write_text("", encoding="utf-8")
+            for changed in ("KEEL.md", "keel/KEEL_EXEC.md", "plugins/keel/skills/keel-exec/SKILL.md",
+                            ".claude-plugin/marketplace.json", ".agents/plugins/marketplace.json"):
+                *_, tools, _, other = reach(changed, repo=repo)
+                self.assertIn("python -m unittest tools/keel-plugin/test_keel_plugin.py", tools, changed)
+                self.assertEqual(other, [], changed)
+
+    def test_shipped_keel_plugin_content_needs_a_release_bump(self):
+        self.assertTrue(rt._plugin_release_content("plugins/keel/skills/keel/SKILL.md"))
+        self.assertTrue(rt._plugin_release_content("plugins/keel/.claude-plugin/plugin.json"))
+        self.assertFalse(rt._plugin_release_content("plugins/keel/docs/notes.md"))
+
     def test_a_tool_change_reaches_that_tools_own_tests(self):
         with tempfile.TemporaryDirectory() as repo:
             tool = Path(repo, "tools", "task-record")

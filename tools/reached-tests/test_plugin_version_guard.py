@@ -167,5 +167,58 @@ class PluginVersionGuard(unittest.TestCase):
         self.assertIn(guard.MANIFESTS[-1], message)
 
 
+class KeelPluginReleaseGroup(unittest.TestCase):
+    """The standalone keel plugin is its own release: its version moves with its own content only."""
+
+    setUp = PluginVersionGuard.setUp
+    git = PluginVersionGuard.git
+    write = PluginVersionGuard.write
+    write_manifests = PluginVersionGuard.write_manifests
+    commit = PluginVersionGuard.commit
+    check = PluginVersionGuard.check
+
+    def write_keel(self, version):
+        for path in guard.KEEL_MANIFESTS:
+            self.write(path, json.dumps({"name": "keel", "version": version}) + "\n")
+
+    def test_a_new_plugin_group_with_coherent_head_manifests_passes(self):
+        self.write_keel("0.1.0")
+        self.write("plugins/keel/skills/keel/SKILL.md", "# Keel\n")
+        passed, message = self.check(self.commit("add the keel plugin"))
+        self.assertTrue(passed, message)
+
+    def test_keel_content_without_a_keel_bump_fails_naming_its_manifest(self):
+        self.write_keel("0.1.0")
+        self.write("plugins/keel/skills/keel/SKILL.md", "# Keel\n")
+        self.base = self.commit("add the keel plugin")
+        self.write("plugins/keel/skills/keel/SKILL.md", "# Keel, changed\n")
+        passed, message = self.check(self.commit("change keel without a bump"))
+        self.assertFalse(passed)
+        self.assertIn(guard.KEEL_MANIFESTS[0], message)
+
+    def test_keel_and_graphhelm_releases_do_not_force_each_other(self):
+        self.write_keel("0.1.0")
+        self.write("plugins/keel/skills/keel/SKILL.md", "# Keel\n")
+        self.base = self.commit("add the keel plugin")
+        self.write("plugins/keel/skills/keel/SKILL.md", "# Keel, changed\n")
+        self.write_keel("0.1.1")
+        passed, message = self.check(self.commit("bump keel only"))
+        self.assertTrue(passed, message)
+
+        self.base = self.git("rev-parse", "HEAD")
+        self.write("plugins/graphhelm/skills/guide/SKILL.md", "# Changed guide\n")
+        self.write_manifests("0.1.29")
+        passed, message = self.check(self.commit("bump graphhelm only"))
+        self.assertTrue(passed, message)
+
+    def test_keel_host_manifests_must_agree(self):
+        self.write("plugins/keel/.claude-plugin/plugin.json", json.dumps({"name": "keel", "version": "0.1.0"}) + "\n")
+        self.write("plugins/keel/.codex-plugin/plugin.json", json.dumps({"name": "keel", "version": "0.2.0"}) + "\n")
+        self.write("plugins/keel/skills/keel/SKILL.md", "# Keel\n")
+        passed, message = self.check(self.commit("mismatched keel manifests"))
+        self.assertFalse(passed)
+        self.assertIn("plugins/keel/.codex-plugin/plugin.json", message)
+
+
 if __name__ == "__main__":
     unittest.main()

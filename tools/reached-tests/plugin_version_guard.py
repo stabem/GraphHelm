@@ -15,6 +15,16 @@ MANIFESTS = (
     "plugins/graphhelm-codex-hooks/.codex-plugin/plugin.json",
 )
 PLUGIN_ROOTS = ("plugins/graphhelm/", "plugins/graphhelm-codex-hooks/")
+KEEL_MANIFESTS = (
+    "plugins/keel/.claude-plugin/plugin.json",
+    "plugins/keel/.codex-plugin/plugin.json",
+)
+# Each release group versions its own roots: shipping one never forces a bump of another.
+GROUPS = (
+    (PLUGIN_ROOTS, MANIFESTS),
+    (("plugins/keel/",), KEEL_MANIFESTS),
+)
+ALL_ROOTS = tuple(root for roots, _ in GROUPS for root in roots)
 VERSION = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
     r"(?:-((?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -46,7 +56,7 @@ def _changed_paths(repo, base, head):
         if status.startswith(("R", "C")):
             source, destination = fields[index:index + 2]
             paths.append(destination)
-            if status.startswith("R") and not destination.startswith(PLUGIN_ROOTS):
+            if status.startswith("R") and not destination.startswith(ALL_ROOTS):
                 paths.append(source)
             index += 2
         else:
@@ -93,31 +103,54 @@ def _version_precedence(version):
     ), (-1,))
 
 
+def _group_check(repo, base, head, paths, roots, manifests):
+    shipped = [path for path in paths if path.startswith(roots) and not _is_docs_or_tests(path)]
+    if not shipped:
+        return True, None
+    try:
+        after = [_manifest_version(repo, head, path) for path in manifests]
+    except ValueError as exc:
+        return False, str(exc)
+    after_versions = [item[0] for item in after]
+    if len(set(after_versions)) != 1:
+        path = manifests[next(i for i, version in enumerate(after_versions) if version != after_versions[0])]
+        return False, f"mismatched release manifests: {path} has {after_versions[manifests.index(path)]}"
+    try:
+        before = [_manifest_version(repo, base, path) for path in manifests]
+    except ValueError as exc:
+        # A group that did not exist at the base is a new plugin: its first version needs no bump.
+        if all(_absent(repo, base, path) for path in manifests):
+            return True, f"PASS: new plugin release {after_versions[0]} in {manifests[0]}"
+        return False, str(exc)
+    before_versions = [item[0] for item in before]
+    if len(set(before_versions)) != 1:
+        path = manifests[next(i for i, version in enumerate(before_versions) if version != before_versions[0])]
+        return False, f"mismatched base release manifests: {path} has {before_versions[manifests.index(path)]}"
+    if _version_precedence(after[0][1]) <= _version_precedence(before[0][1]):
+        return False, f"bump the plugin version in {manifests[0]} (shipped plugin content changed)"
+    return True, f"PASS: shipped plugin content changed; release version {after_versions[0]} exceeds {before_versions[0]}"
+
+
+def _absent(repo, commit, path):
+    return subprocess.run(["git", "cat-file", "-e", f"{commit}:{path}"], cwd=repo, capture_output=True,
+                          creationflags=NO_WINDOW).returncode != 0
+
+
 def check(repo, base_ref, head_ref):
     """Return (passed, message), reading only committed blobs at the supplied refs."""
     repo = Path(repo).resolve()
     base, head = _commit(repo, base_ref), _commit(repo, head_ref)
     paths = _changed_paths(repo, base, head)
-    shipped = [path for path in paths if path.startswith(PLUGIN_ROOTS) and not _is_docs_or_tests(path)]
-    if not shipped:
+    messages = []
+    for roots, manifests in GROUPS:
+        passed, message = _group_check(repo, base, head, paths, roots, manifests)
+        if not passed:
+            return False, message
+        if message is not None:
+            messages.append(message)
+    if not messages:
         return True, "PASS: no shipped plugin content changed; version bump not required"
-
-    try:
-        before = [_manifest_version(repo, base, path) for path in MANIFESTS]
-        after = [_manifest_version(repo, head, path) for path in MANIFESTS]
-    except ValueError as exc:
-        return False, str(exc)
-    before_versions = [item[0] for item in before]
-    after_versions = [item[0] for item in after]
-    if len(set(before_versions)) != 1:
-        path = MANIFESTS[next(i for i, version in enumerate(before_versions) if version != before_versions[0])]
-        return False, f"mismatched base release manifests: {path} has {before_versions[MANIFESTS.index(path)]}"
-    if len(set(after_versions)) != 1:
-        path = MANIFESTS[next(i for i, version in enumerate(after_versions) if version != after_versions[0])]
-        return False, f"mismatched release manifests: {path} has {after_versions[MANIFESTS.index(path)]}"
-    if _version_precedence(after[0][1]) <= _version_precedence(before[0][1]):
-        return False, f"bump the plugin version in {MANIFESTS[0]} (shipped plugin content changed)"
-    return True, f"PASS: shipped plugin content changed; release version {after_versions[0]} exceeds {before_versions[0]}"
+    return True, "; ".join(messages)
 
 
 def main(argv=None):

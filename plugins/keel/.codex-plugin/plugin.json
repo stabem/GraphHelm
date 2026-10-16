@@ -1,0 +1,25 @@
+{
+  "name": "keel",
+  "version": "0.1.0",
+  "description": "Keel, GraphHelm's construction pattern for agents that write code, standalone: plan, execute, review and merge skills that need no Runtime, MCP or journeys.",
+  "author": {
+    "name": "GraphHelm"
+  },
+  "repository": "https://github.com/stabem/GraphHelm",
+  "license": "MIT",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Keel",
+    "shortDescription": "Plan, write, review and merge code under Keel's rules.",
+    "longDescription": "Keel is how code is built in GraphHelm, packaged for any project: one skill per step (plan, execute, review, merge) plus the values every step applies. It prefers the project's own KEEL.md, runs `graphhelm keel check` only when that CLI is installed, and needs no Runtime, MCP server, task records or journeys.",
+    "developerName": "GraphHelm",
+    "category": "Developer Tools",
+    "capabilities": [
+      "skills"
+    ],
+    "defaultPrompt": [
+      "Plan this change under Keel.",
+      "Review this change under Keel."
+    ]
+  }
+}

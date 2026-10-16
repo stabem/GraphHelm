@@ -9,7 +9,10 @@ export interface TestFrame { stepId: string; n: number; verb: "SEES" | "DOES" | 
   /** #1286: each of `checks`, judged on its own; "not_evaluated" when the run says nothing about it. */
   checkStatus: CheckStatus[];
   /** #1286: the first failed assertion in words, "Expected … — the screen shows …", or null. */
-  failure: string | null }
+  failure: string | null;
+  /** #1286: what was typed on the edge that entered this step, read from the flow (never from the
+   * screenshot), so a masked block on the frame has a caption: `Typed "x" into "Field"`. */
+  typed: string[] }
 
 export type CheckStatus = "passed" | "failed" | "not_evaluated";
 
@@ -46,6 +49,12 @@ export function actionText(action: StepAction): string {
 /** `running`: the step id a live run is on (#746); that step reads "running" until it has a result. */
 const ACT_VERB: Record<string, string> = { ...ACTION_VERB, http: "Sends", cli: "Runs" };
 
+function typedCaption(act: NonNullable<JourneyFlowView["edges"][number]["acts"]>[number]): string | null {
+  if (act.kind !== "enter_text") return null;
+  const value = act.secret ? `the secret ${act.secret}` : act.text ? `"${act.text}"` : "nothing";
+  return `Typed ${value} into "${act.name}"`;
+}
+
 function actInput(act: NonNullable<JourneyFlowView["edges"][number]["acts"]>[number]): string {
   const verb = ACT_VERB[act.kind] ?? act.kind.replace(/_/g, " ");
   if (act.kind === "enter_text") {
@@ -58,13 +67,14 @@ function actInput(act: NonNullable<JourneyFlowView["edges"][number]["acts"]>[num
 /** #1287: the flow's own words for one step: the acts of the edge that entered it and what its
  * screen must show. A composed contract id `<flow>.<path>` names its path; the flow id is `main`. */
 function flowDetails(flow: JourneyFlowView | undefined, contractId: string, stepId: string, index: number) {
-  if (!flow) return { inputs: [], intent: null, checks: [], expect: [] as { role: string; name: string }[] };
+  if (!flow) return { inputs: [], intent: null, checks: [], typed: [] as string[], expect: [] as { role: string; name: string }[] };
   const pathName = contractId === flow.id ? "main" : contractId.slice(flow.id.length + 1);
   const edgeId = index > 0 ? flow.paths[pathName]?.[index - 1] : undefined;
   const edge = edgeId ? flow.edges.find((e) => e.id === edgeId) : undefined;
   const screen = flow.screens.find((s) => s.id === stepId);
   return {
     inputs: (edge?.acts ?? []).map(actInput),
+    typed: (edge?.acts ?? []).map(typedCaption).filter((line): line is string => line !== null),
     intent: edge?.intent ?? null,
     checks: (screen?.expect ?? []).map((e) => `shows ${e.role} “${e.name}”`),
     expect: screen?.expect ?? [],

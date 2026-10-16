@@ -64,4 +64,10 @@ describe("testFrames with the flow source", () => {
     expect(drifted!.checkStatus).toEqual(["not_evaluated"]);
     expect(drifted!.failure).toBeNull();
   });
+
+  it("captions each typed value of the entering edge, secrets by name only (#1286)", () => {
+    const [first, second] = testFrames(journey, null, null, flow);
+    expect(first!.typed).toEqual([]);
+    expect(second!.typed).toEqual(['Typed "parceiro" into "Tag Amazon"', 'Typed the secret admin into "Senha"']);
+  });
 });

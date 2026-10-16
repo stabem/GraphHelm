@@ -1,7 +1,7 @@
 {
   "id": "graphhelm-development-contracts",
   "name": "graphhelm-development-contracts",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Data-only entry skills for proposing development contracts, gathering and citing evidence, curating lessons, scoping changes with Keel, and auditing tests through public read surfaces and advisory artifacts.",
   "skills": "skills",
   "author": {

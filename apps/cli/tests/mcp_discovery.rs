@@ -851,3 +851,61 @@ fn discover_with_an_owner_actor_type_is_refused() {
         String::from_utf8_lossy(&output.stdout)
     );
 }
+
+/// #1449: a test that starts `serve` without naming a registry must not publish into the user's
+/// real `~/.graphhelm/runtime`; about 30 tests did, leaving thousands of records there. Cargo's
+/// `[env]` (`.cargo/config.toml`) points every test process at `target/graphhelm-test-runtime`,
+/// and `serve` inherits it. The home is redirected to a temporary directory so a regression lands
+/// there, where the test can see it, instead of in the real home.
+#[test]
+fn serve_started_by_a_test_registers_under_target_not_the_home() {
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let events = scratch.path().join("events.jsonl");
+    let port = free_port();
+    let child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["serve", "--events", events.to_str().unwrap(), "--bind"])
+        .arg(format!("127.0.0.1:{port}"))
+        .env("USERPROFILE", &home)
+        .env("HOME", &home)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let runtime = Killed(child);
+    let in_home = home
+        .join(".graphhelm")
+        .join("runtime")
+        .join(format!("{port}.json"));
+    let configured = std::env::var_os("GRAPHHELM_RUNTIME_DIR").map(std::path::PathBuf::from);
+    let deadline = Instant::now() + scaled(Duration::from_secs(60));
+    let published = loop {
+        if in_home.is_file() {
+            break in_home.clone();
+        }
+        if let Some(record) = configured
+            .as_ref()
+            .map(|dir| dir.join(format!("{port}.json")))
+            .filter(|record| record.is_file())
+        {
+            break record;
+        }
+        assert!(Instant::now() < deadline, "serve never published on {port}");
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    stop(runtime, port);
+    assert!(
+        !in_home.exists(),
+        "a test Runtime registered in the home: {}",
+        in_home.display()
+    );
+    let configured = configured.expect("cargo sets GRAPHHELM_RUNTIME_DIR for test processes");
+    assert!(
+        configured.ends_with(Path::new("target").join("graphhelm-test-runtime")),
+        "{}",
+        configured.display()
+    );
+    assert_eq!(published, configured.join(format!("{port}.json")));
+    let _ = std::fs::remove_file(&published);
+}

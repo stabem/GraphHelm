@@ -138,7 +138,7 @@ const BLOCK_BODY: &str = "## GraphHelm and Keel
 
 Maintained by `graphhelm setup` (`--resolve <item>=graphhelm-block`). Edit outside this block.
 
-- For multi-step work use GraphHelm. Prefer the `mcp__graphhelm__*` tools (`briefing`, `status`, `start`, `evidence`, `resume`); when that MCP server is not connected, use the `graphhelm` CLI.
+- For multi-step work use GraphHelm. Read and drive its state through the GraphHelm MCP tools (shown as `mcp__graphhelm__*` or `mcp__plugin_graphhelm_graphhelm__*`, depending on the host): `briefing`, `status`, `tasks`, `start`, `evidence`, `resume`. Use the `graphhelm` CLI for builds, checks and other work on the machine, or when that MCP server is not connected.
 - Write code under Keel. When the project has a `KEEL.md` at its root, read it and the file for your step under `keel/` (`KEEL_PLAN.md`, `KEEL_EXEC.md`, `KEEL_REVIEW.md`, `KEEL_MERGE.md`) before any code work; they win over the digest below. Keel is proportional: docs or one-line fixes need nothing extra; a bounded code change names its paths, its promise and the command that proves it.
 - Journey-Proven Development: work is done when an observer proves the user-visible promise.
 - A project's own AGENTS.md or CLAUDE.md takes precedence over this block, except on what the `graphhelm` CLI can do: there, trust `graphhelm --help` over any text, this block included.

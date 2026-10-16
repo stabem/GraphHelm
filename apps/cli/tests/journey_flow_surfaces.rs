@@ -1329,3 +1329,147 @@ fn a_lane_receives_its_journey_credential_once_and_the_token_is_written_nowhere(
     );
     assert!(!replayed.to_string().contains(&token));
 }
+
+/// #1309 enforcement slice (scope ruled 2026-10-16: the draft route only): a lane writes a journey
+/// draft with its journey credential only while the credential and its grant are both active and
+/// unexpired, for that exact flow, with purpose `author`. Revocation and expiry are checked on
+/// every use. A reviewer credential, a credential for another flow, a revoked or expired one, and
+/// a wrong token are refused with one stable 403 and leave the flow file as it was; the token
+/// never appears in a reply or the read audit. The review route is untouched (approval authority
+/// is still BLOCKED in RFC-1309).
+#[test]
+fn a_journey_credential_writes_a_draft_only_while_it_and_its_grant_are_live() {
+    let harness = prepared();
+    let audit = harness.scratch.path().join("read-audit.jsonl");
+    let grants = format!("/v1/executions/{RUN}/journey-credential-grants");
+    let issue = format!("/v1/executions/{RUN}/journey-credentials");
+    let (_guard, base, owner) = harness.serve_with_audit(&harness.events, true, Some(&audit));
+    let project_id = http(&base, "GET", "/health", None).1["data"]["projectId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let lane = lane_bearer(&owner, RUN, "agent-planner");
+    let mut keys = 0;
+    let mut grant = |flow: &str, purpose: &str, expires: &str| {
+        keys += 1;
+        let body = json!({"projectId": project_id, "laneId": "agent-planner", "flowId": flow,
+            "purpose": purpose, "expiresAt": expires})
+        .to_string();
+        let (status, created) = grant_call(&base, &grants, &owner, &format!("g-{keys}"), &body);
+        assert_eq!(status, 200, "{created}");
+        created["data"]["grantId"].as_str().unwrap().to_owned()
+    };
+    let credential = |grant_id: &str, flow: &str, purpose: &str, key: &str| {
+        let authorization = format!("Bearer {lane}");
+        let (status, _, issued) = lane_call(
+            &base,
+            &issue,
+            &[
+                ("Authorization", &authorization),
+                ("X-GraphHelm-Actor", "agent-planner"),
+                ("Idempotency-Key", key),
+            ],
+            &json!({"grantId": grant_id, "projectId": project_id, "executionId": RUN,
+                "flowId": flow, "purpose": purpose})
+            .to_string(),
+        );
+        assert_eq!(status, 200, "{issued}");
+        (
+            issued["data"]["credentialId"].as_str().unwrap().to_owned(),
+            issued["data"]["token"].as_str().unwrap().to_owned(),
+        )
+    };
+    let before = harness.flow_text("checkout");
+    let mut edits = 0;
+    let mut draft = |flow: &str, id: &str, token: &str| {
+        edits += 1;
+        let yaml = harness
+            .flow_text(flow)
+            .replacen("title: ", &format!("title: Edit {edits} "), 1);
+        let authorization = format!("Bearer {token}");
+        let (status, _, reply) = lane_call(
+            &base,
+            &format!("/v1/journey-flows/{flow}/draft"),
+            &[
+                ("Authorization", &authorization),
+                ("X-GraphHelm-Journey-Credential", id),
+            ],
+            &json!({"yaml": yaml}).to_string(),
+        );
+        assert!(
+            !reply.to_string().contains(token),
+            "a reply carries the token"
+        );
+        (status, reply)
+    };
+
+    // A live author credential for this flow writes the draft, as its lane.
+    let author_grant = grant("checkout", "author", "2030-01-01T00:00:00Z");
+    let (author_id, author_token) = credential(&author_grant, "checkout", "author", "c-1");
+    let (status, written) = draft("checkout", &author_id, &author_token);
+    assert_eq!(status, 200, "{written}");
+    assert_ne!(harness.flow_text("checkout"), before);
+
+    // Refusals leave the flow file as it was.
+    let refuse = |status: u16, reply: &Value, flow_before: &str, flow_now: &str| {
+        assert_eq!(status, 403, "{reply}");
+        assert_eq!(flow_before, flow_now);
+    };
+    // The same credential on another flow.
+    let basket = harness.flow_text("basket");
+    let (status, reply) = draft("basket", &author_id, &author_token);
+    refuse(status, &reply, &basket, &harness.flow_text("basket"));
+    // A wrong token under a real credential id.
+    let checkout = harness.flow_text("checkout");
+    let (status, reply) = draft("checkout", &author_id, &"0".repeat(64));
+    refuse(status, &reply, &checkout, &harness.flow_text("checkout"));
+    // A reviewer credential never writes a draft.
+    let reviewer_grant = grant("checkout", "reviewer", "2030-01-01T00:00:00Z");
+    let (reviewer_id, reviewer_token) = credential(&reviewer_grant, "checkout", "reviewer", "c-2");
+    let (status, reply) = draft("checkout", &reviewer_id, &reviewer_token);
+    refuse(status, &reply, &checkout, &harness.flow_text("checkout"));
+
+    // Revocation is checked on every use: the owner revokes, and the same token stops working.
+    let (status, _) = grant_call(
+        &base,
+        &format!("{issue}/{author_id}/revoke"),
+        &owner,
+        "r-1",
+        "",
+    );
+    assert_eq!(status, 200);
+    let (status, reply) = draft("checkout", &author_id, &author_token);
+    refuse(status, &reply, &checkout, &harness.flow_text("checkout"));
+
+    // Revoking the grant stops a credential that is itself still active.
+    let second = grant("checkout", "author", "2030-01-01T00:00:00Z");
+    let (second_id, second_token) = credential(&second, "checkout", "author", "c-3");
+    let (status, _) = grant_call(
+        &base,
+        &format!("{grants}/{second}/revoke"),
+        &owner,
+        "r-2",
+        "",
+    );
+    assert_eq!(status, 200);
+    let (status, reply) = draft("checkout", &second_id, &second_token);
+    refuse(status, &reply, &checkout, &harness.flow_text("checkout"));
+
+    // Expiry is checked on every use: a grant that ends in a few seconds bounds its credential.
+    let soon = (chrono::Utc::now() + chrono::Duration::seconds(3))
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let short = grant("checkout", "author", &soon);
+    let (short_id, short_token) = credential(&short, "checkout", "author", "c-4");
+    std::thread::sleep(Duration::from_secs(5));
+    let (status, reply) = draft("checkout", &short_id, &short_token);
+    refuse(status, &reply, &checkout, &harness.flow_text("checkout"));
+
+    // No token reached the read audit.
+    let audit_text = std::fs::read_to_string(&audit).unwrap();
+    for token in [&author_token, &reviewer_token, &second_token, &short_token] {
+        assert!(
+            !audit_text.contains(token.as_str()),
+            "the read audit holds a token"
+        );
+    }
+}

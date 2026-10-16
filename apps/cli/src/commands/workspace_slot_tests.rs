@@ -46,6 +46,7 @@ fn request<'a>(
         shared: true,
         max_wait: None,
         priority: false,
+        stage: crate::args::SlotStage::Implement,
         command,
     }
 }
@@ -1285,6 +1286,42 @@ fn priority_is_allowed_only_for_listed_lanes_and_runs_next() {
     assert!(priority.join().unwrap().output.ok);
     assert!(normal.join().unwrap().output.ok);
     assert_eq!(tags(&log), ["a", "p", "b"]);
+}
+
+/// Reviews waited hours behind implement plans in the one slot. A review queued after an
+/// implement job runs before it once the holder finishes; the holder itself is never preempted.
+#[test]
+fn review_stage_is_served_before_waiting_implement_jobs() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let log = dir.path().join("log.txt");
+    let holder_command = marker_command(&log, "a", 500);
+    let holder_root = root.clone();
+    let holder = std::thread::spawn(move || {
+        run_admitted_slot(&request(&holder_root, "lane-a", "hold", &holder_command))
+    });
+    wait_for_holder(&root, "lane-a");
+    let implement_command = marker_command(&log, "i", 10);
+    let implement_root = root.clone();
+    let implement = std::thread::spawn(move || {
+        run_admitted_slot(&request(&implement_root, "lane-i", "plan", &implement_command))
+    });
+    wait_for_ticket(&root, "lane-i");
+    let review_root = root.clone();
+    let review_log = log.clone();
+    let review = std::thread::spawn(move || {
+        let review_command = marker_command(&review_log, "r", 10);
+        let review = SlotRequest {
+            stage: crate::args::SlotStage::Review,
+            ..request(&review_root, "lane-r", "pr-review", &review_command)
+        };
+        run_admitted_slot(&review)
+    });
+    wait_for_ticket(&root, "lane-r");
+    assert!(holder.join().unwrap().output.ok);
+    assert!(review.join().unwrap().output.ok);
+    assert!(implement.join().unwrap().output.ok);
+    assert_eq!(tags(&log), ["a", "r", "i"]);
 }
 
 #[test]

@@ -2402,9 +2402,20 @@ pub struct WorkspaceSlotArgs {
     /// line, written by the owner); any other lane is refused and its command never runs (#540).
     #[arg(long)]
     pub priority: bool,
+    /// What the build serves: `review` and `merge` jobs go ahead of waiting `implement` jobs,
+    /// never ahead of the holder or a `--priority` waiter.
+    #[arg(long, value_enum, default_value_t = SlotStage::Implement)]
+    pub stage: SlotStage,
     /// The command and its arguments, after `--`.
     #[arg(last = true, required = true)]
     pub command: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum SlotStage {
+    Implement,
+    Review,
+    Merge,
 }
 
 #[derive(Debug, Subcommand)]

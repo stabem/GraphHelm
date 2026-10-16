@@ -494,6 +494,7 @@ pub(crate) struct SlotRequest<'a> {
     /// Minutes; `None` waits as long as it takes (#540).
     pub max_wait: Option<f64>,
     pub priority: bool,
+    pub stage: crate::args::SlotStage,
     pub command: &'a [String],
 }
 

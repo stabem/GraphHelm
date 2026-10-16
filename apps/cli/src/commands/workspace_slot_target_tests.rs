@@ -47,6 +47,7 @@ fn slot_in(root: &Path, lane: &str, worktree: &Path, log: &Path) -> (i32, Value)
         shared: false,
         max_wait: None,
         priority: false,
+        stage: crate::args::SlotStage::Implement,
         command: &command,
     };
     let outcome = run_admitted_slot_in(&request, worktree);

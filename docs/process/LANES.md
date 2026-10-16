@@ -77,6 +77,10 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 
       graphhelm workspace slot --root D:\gh --lane <lane> --jobs 6 --label <what> -- cargo +1.97.1 test --locked -p graphhelm-cli --test cli -- --test-threads=2 keel_check::
 
+- A reviewer or merger passes `--stage review` or `--stage merge` (to the slot, or to
+  `run_reached.py`); the slot serves it ahead of waiting implement jobs, never ahead of the holder
+  or a `--priority` waiter. **WIP limit:** a lane does not start a new implement plan while a
+  review assigned to it is open.
 - The CLI refuses shell, PowerShell and Python wrappers before creating a ticket. Keep the outer
   script outside the slot. A direct CLI slot invocation still acquires once per submitted Cargo
   command; the reached-test runner batches short commands by default. Unscoped package tests,

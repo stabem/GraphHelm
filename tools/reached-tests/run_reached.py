@@ -567,6 +567,10 @@ def run(args: argparse.Namespace) -> int:
             # Batch is the safe default for the official runner. Keep the fallback for
             # tests and embedders that construct an Args object directly.
             batch_mode = bool(getattr(args, "batch_slot", True))
+            # Review and merge runs go ahead of waiting implement jobs; implement passes nothing,
+            # so a pinned CLI older than `--stage` keeps working.
+            stage = getattr(args, "stage", "implement")
+            stage_flag = [] if stage == "implement" else ["--stage", stage]
             order = _execution_order(steps, batch_mode)
             work = [entry for entry in order if entry["index"] in report["pending"]]
             if problems and not getattr(args, "skip_preflight", False):
@@ -603,7 +607,7 @@ def run(args: argparse.Namespace) -> int:
                     # The CLI receives original argv; its Rust worker selects the child cwd/target.
                     command = [str(selected_graphhelm), "--json", "workspace", "slot", "--root", args.root,
                                "--lane", args.lane, "--jobs", jobs, "--label", f"reached-batch-{indices[0]}",
-                               "--max-wait", repr(remaining_budget / 60.0), "--", *commands[0]]
+                               *stage_flag, "--max-wait", repr(remaining_budget / 60.0), "--", *commands[0]]
                     # Batch commands are carried by the opt-in environment, never by the CLI argv.
                     payload = {"schema": _BATCH_SCHEMA, "commands": commands,
                                "budgetSeconds": remaining_budget, "deadlineUnixMs": deadline_unix_ms,
@@ -611,7 +615,7 @@ def run(args: argparse.Namespace) -> int:
                 elif entry["slot"]:
                     command = [str(selected_graphhelm), "--json", "workspace", "slot", "--root", args.root,
                                "--lane", args.lane, "--jobs", jobs, "--label", f"reached-step-{entry['index']}",
-                               "--max-wait", repr(remaining_budget / 60.0), "--", *commands[0]]
+                               *stage_flag, "--max-wait", repr(remaining_budget / 60.0), "--", *commands[0]]
                     payload = None
                 else:
                     command = commands[0]
@@ -748,6 +752,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--head", default="HEAD")
     ap.add_argument("--root", default="D:/gh")
     ap.add_argument("--lane", default="reached-fast-feedback")
+    ap.add_argument("--stage", choices=("implement", "review", "merge"), default="implement",
+                    help="review or merge runs are served by the build slot ahead of waiting implement jobs")
     ap.add_argument("--graphhelm", help="GraphHelm executable; overrides GRAPHHELM_CLI and PATH")
     ap.add_argument("--output", required=True)
     # #1459: 180 s ended almost every first run `budgetExceeded` after one step, because the budget

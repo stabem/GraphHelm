@@ -82,7 +82,7 @@ import { approvalBlockReason, beforeAfterPairs, captureDocuments, type BeforeAft
 import type { JourneyRunView } from "./runtime/types";
 import { SaidLinks, type SaidLinkContext } from "./components/said";
 import { teamLinks, teamModel } from "./runtime/team";
-import { needsYou, type DraftItem, type QuestionItem, type StepItem } from "./runtime/needs-you";
+import { needsYou, type DraftItem, type StepItem } from "./runtime/needs-you";
 import { buildHandover, hiddenThisSession, hideThisSession, readLastSeen, shouldShowHandover, writeLastSeen } from "./runtime/handover";
 import { EVERYONE, describeActivity, namesOf } from "./runtime/threads";
 import { ProjectRail } from "./components/rail";
@@ -100,6 +100,7 @@ import { isGeneratedRunId, readable, runLabel, verdictOf } from "./components/fo
 import { dockReserve } from "./dock-reserve";
 import { actionLegality, hasEnded } from "./components/legality";
 import { useProjectPrefs } from "./runtime/use-project-prefs";
+import { useSay } from "./runtime/use-say";
 import { useModelsRoutes } from "./runtime/use-models-routes";
 
 
@@ -207,24 +208,6 @@ export default function App({
   const [connecting, setConnecting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  /** Which composer is mid-send / holds the failure — "run", "talk" or "agent" — so an error
-   * lands only in the box that produced it. `null` means idle / no failure. */
-  const [saying, setSaying] = useState<string | null>(null);
-  const [sayError, setSayError] = useState<{ via: string; text: string } | null>(null);
-  /** Bumped when an attention action asks the message box to take the cursor. A nonce rather
-   * than a boolean: the second click must focus again even though the panel is already open. */
-  const [sayFocusNonce, setSayFocusNonce] = useState(0);
-  /** Who that action wants the message addressed to — the asker of the pending question, or
-   * `null` for the room. Set BEFORE the nonce bumps, so the composer retargets every time:
-   * five independent reviewers found the answer shipping as a DM to a stale recipient. */
-  const [sayTo, setSayTo] = useState<string | null>(null);
-  /** The question the next message ANSWERS, when the attention block chose the target. The
-   * ledger retires a debt only via a reply whose replyTo names the question's signalId — and
-   * the banner's own button used to send none, leaving the debt immortal from this UI (two
-   * blind round-4 reviewers). Rides only while the recipient is still that asker. */
-  const [sayAnswer, setSayAnswer] = useState<{ asker: string; signalId: string | null } | null>(
-    null,
-  );
   /** Disconnect asks twice: it erases the token and every stored board, and it sits one slip
    * away from Refresh. First click arms; the arm decays on its own. */
   const [leaving, setLeaving] = useState(false);
@@ -663,10 +646,7 @@ export default function App({
       // follow the operator across runs. `saying` in particular: cleared HERE, and the old
       // send's guarded finally then leaves it alone, so the new run's box never witnesses a
       // busy-to-idle edge that was not its own.
-      setSayTo(null);
-      setSayAnswer(null);
-      setSaying(null);
-      setSayError(null);
+      resetSay();
       setEvidence(null);
       // An armed cancel confirmation and half-typed budget seconds are questions about ONE
       // run; carrying either across a switch would aim them at the wrong one.
@@ -1577,83 +1557,10 @@ export default function App({
   }, []);
   const documentSavingChanged = useCallback((saving: boolean) => { documentSaving.current = saving; }, []);
 
-  /** Says something into the selected run. Its own busy/error pair rather than the shared ones —
-   * and TAGGED BY SURFACE: with the run panel and a chat column open side by side, one shared
-   * error painted "could not be sent" into every composer at once, so the operator could not tell
-   * which of their messages actually failed (round-3 markets). */
-  const say = useCallback(
-    async (
-      message: string,
-      to: string | null = null,
-      via: string = "run",
-      replyTo: string | null = null,
-      kind: "operator_note" | "actor_alias" | "owner_refusal" = "operator_note",
-      task: string | null = null,
-    ): Promise<boolean> => {
-      const client = clientRef.current;
-      if (!client || selected === "") return false;
-      // The run this send belongs to. Its completion may only touch the say state while that
-      // run is still on screen: the rail stays selectable during a send, and an unconditional
-      // finally cleared `saying` under the NEXT run - whose box then read the busy-to-idle
-      // edge as ITS delivery and deleted a draft that was never sent (PR #467 review, P1).
-      const forRun = selected;
-      setSaying(via);
-      setSayError(null);
-      const fail = (text: string) => {
-        if (clientRef.current === client && selectedRef.current === forRun) {
-          setSayError({ via, text });
-        }
-      };
-      try {
-        const evidence = await client.signal(selected, message, {
-          ...(to === null ? {} : { to }),
-          // The receipt the ledger settles by. Without it, an answer sent through the banner's
-          // own button never retired the question it answered.
-          ...(replyTo === null ? {} : { replyTo }),
-          ...(task === null ? {} : { task }),
-          ...(kind === "operator_note" ? {} : { kind }),
-        });
-        if (evidence.result === "refused") {
-          fail(evidence.diagnostics[0]?.message ?? "The Runtime refused the message.");
-          return false;
-        }
-        if (evidence.result === "unknown") {
-          // Deliberately not reported as sent. The append may well have landed, and saying "sent"
-          // about something unverified is the one error that cannot be walked back later.
-          fail(
-            "The Runtime accepted this but it could not be confirmed in the log. Reload before sending it again.",
-          );
-          await loadExecution(selected);
-          return false;
-        }
-        await loadExecution(selected);
-        return true;
-      } catch (reason) {
-        fail(messageOf(reason, "The message could not be sent."));
-        return false;
-      } finally {
-        if (clientRef.current === client && selectedRef.current === forRun) setSaying(null);
-      }
-    },
-    [loadExecution, selected],
-  );
-
-  /** Spec 4.1: the owner names a bot. Recorded, so every Studio on this run reads the same name. */
-  const nameBot = useCallback(
-    (actorId: string, displayName: string) =>
-      say(JSON.stringify({ protocol: "graphhelm-actor-alias-v1", displayName }), actorId, "chat", null, "actor_alias"),
-    [say],
-  );
-  /** Spec 4.3: a final no to one question. Its replyTo retires the question like an answer does. */
-  const refuse = useCallback(
-    async (item: QuestionItem, reason?: string): Promise<boolean> => {
-      if (item.signalId === null) return false;
-      const trimmed = reason?.trim();
-      return say(JSON.stringify({ protocol: "graphhelm-owner-refusal-v1", ...(trimmed ? { reason: trimmed } : {}) }),
-        item.asker, "chat", item.signalId, "owner_refusal");
-    },
-    [say],
-  );
+  const {
+    saying, sayError, sayFocusNonce, setSayFocusNonce, sayTo, setSayTo, sayAnswer, setSayAnswer,
+    resetSay, say, nameBot, refuse,
+  } = useSay({ clientRef, selected, selectedRef, loadExecution });
 
   const linkNativePersona = useCallback(async (nodeId: string, chat: NativeChatSummary, charter: string) => {
     const client = clientRef.current;

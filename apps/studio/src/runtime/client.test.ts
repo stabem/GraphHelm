@@ -645,11 +645,11 @@ describe("the token", () => {
   it("adds process liveness to the board read without changing ordinary status", async () => {
     const { fetchImpl, calls } = scriptedFetch([
       { match: (call) => call.url === "/v1/executions/demo", reply: ok(statusData()) },
-      { match: (call) => call.url === "/v1/seen-actors", reply: ok({ seenActors: ["lane-a"], seenActorAgesMs: { "lane-a": 180000 } }, "serve.seen_actors") },
+      { match: (call) => call.url === "/v1/seen-actors", reply: ok({ seenActors: ["lane-a"], seenActorAgesMs: { "lane-a": 180000 }, seenActorSources: { "lane-a": "claimed" } }, "serve.seen_actors") },
     ]);
     const client = new RuntimeClient("tok", { fetch: fetchImpl });
     expect((await client.getStatus("demo")).seenActors).toBeUndefined();
-    expect(await client.getStatus("demo", true)).toMatchObject({ seenActors: ["lane-a"], seenActorAgesMs: { "lane-a": 180000 } });
+    expect(await client.getStatus("demo", true)).toMatchObject({ seenActors: ["lane-a"], seenActorAgesMs: { "lane-a": 180000 }, seenActorSources: { "lane-a": "claimed" } });
     expect(calls.filter((call) => call.url === "/v1/seen-actors")).toHaveLength(1);
   });
 

@@ -864,6 +864,7 @@ pub(super) async fn seen_actors(State(state): State<ServeState>) -> Response {
             serde_json::json!({
                 "seenActors": state.seen_actors(),
                 "seenActorAgesMs": state.seen_actor_ages_ms(),
+                "seenActorSources": state.seen_actor_sources(),
             }),
         )
         .output,

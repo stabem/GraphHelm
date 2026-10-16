@@ -3397,6 +3397,14 @@ fn parse_loopback_bind(bind: &str) -> Result<SocketAddr, Failure> {
     Ok(address)
 }
 
+/// `/v1/executions/{id}/journey-credentials`, exactly: the route whose response carries a token.
+fn journey_credential_issue_path(path: &str) -> bool {
+    matches!(
+        path.split('/').collect::<Vec<_>>().as_slice(),
+        ["", "v1", "executions", id, "journey-credentials"] if !id.is_empty()
+    )
+}
+
 /// Appends one JSON line per request: what was asked, and the exact bytes served.
 ///
 /// This exists because four paid blind-judge runs produced findings that could not be checked:
@@ -3413,14 +3421,6 @@ fn parse_loopback_bind(bind: &str) -> Result<SocketAddr, Failure> {
 ///   status and body are recorded.
 /// - A failure to record is reported, never swallowed. An audit that silently stops recording
 ///   is worse than no audit: it reads as "the caller asked nothing".
-/// `/v1/executions/{id}/journey-credentials`, exactly: the route whose response carries a token.
-fn journey_credential_issue_path(path: &str) -> bool {
-    matches!(
-        path.split('/').collect::<Vec<_>>().as_slice(),
-        ["", "v1", "executions", id, "journey-credentials"] if !id.is_empty()
-    )
-}
-
 async fn record_read(
     State(state): State<ServeState>,
     request: Request,

@@ -296,6 +296,11 @@ fn watch_starts_a_down_app_only_from_a_launcher_inside_the_project() {
         include_bytes!("../../../tools/journey-driver/driver.mjs"),
     )
     .unwrap();
+    std::fs::write(
+        dir.path().join(".graphhelm/observers/judge.mjs"),
+        include_bytes!("../../../tools/journey-driver/judge.mjs"),
+    )
+    .unwrap();
     refuses(
         dir.path(),
         &["watch", "checkout"],
@@ -327,6 +332,11 @@ fn watch_and_preview_pass_the_selected_flow_to_the_launcher() {
     std::fs::write(
         dir.path().join(".graphhelm/observers/journey_driver.mjs"),
         include_bytes!("../../../tools/journey-driver/driver.mjs"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(".graphhelm/observers/judge.mjs"),
+        include_bytes!("../../../tools/journey-driver/judge.mjs"),
     )
     .unwrap();
     std::fs::write(
@@ -366,6 +376,11 @@ fn watch_and_preview_launch_before_refusing_a_fixture_minted_secret() {
     std::fs::write(
         dir.path().join(".graphhelm/observers/journey_driver.mjs"),
         include_bytes!("../../../tools/journey-driver/driver.mjs"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(".graphhelm/observers/judge.mjs"),
+        include_bytes!("../../../tools/journey-driver/judge.mjs"),
     )
     .unwrap();
     std::fs::write(
@@ -427,6 +442,11 @@ fn launcher_secrets_reach_preflight_without_exporting_other_keys_or_values() {
         std::fs::write(
             dir.path().join(".graphhelm/observers/journey_driver.mjs"),
             include_bytes!("../../../tools/journey-driver/driver.mjs"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(".graphhelm/observers/judge.mjs"),
+            include_bytes!("../../../tools/journey-driver/judge.mjs"),
         )
         .unwrap();
         std::fs::write(

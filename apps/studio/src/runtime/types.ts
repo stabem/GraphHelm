@@ -500,7 +500,10 @@ export interface LiveSession {
 /** How one screen or edge fared in a journey's run (#519). The reason codes are the Runtime's
  * closed list; the Studio says them in words. */
 export type JourneyStepResult = "pass" | "fail" | "drift";
-export interface JourneyRunScreen { frame: boolean; width?: number; height?: number; result?: JourneyStepResult; reason?: string; detail?: { code: string; pointer: string }; seen?: string }
+/** One assertion as the observer judged it (#1286): seen on its own, and the nearest accessible
+ * name of the same role when it was not. Names are the flow's and the page's, already redacted. */
+export interface JourneyRunCheck { role: string; name: string; seen: boolean; closest: { role: string; name: string } | null }
+export interface JourneyRunScreen { frame: boolean; width?: number; height?: number; result?: JourneyStepResult; reason?: string; detail?: { code: string; pointer: string }; seen?: string; checks?: JourneyRunCheck[] }
 /** An edge the destructive guard stopped reads `skipped` (it does not turn the run red); an edge the
  * run never got to reads `null`. */
 export interface JourneyRunEdge { result?: JourneyStepResult | "skipped" | null; reason?: string; detail?: { code: string; pointer: string }; seen?: string }

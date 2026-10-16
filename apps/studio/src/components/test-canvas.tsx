@@ -117,9 +117,18 @@ export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUr
             <span className="tc-cap">ASSERTIONS</span>
             {cur.expected.length + cur.checks.length > 0 ? (
               <ul aria-label="Assertions" className="tc-asserts">
-                {[...cur.checks, ...cur.expected.map((e) => `state is ${e}`)].map((e) => <li key={e}><span aria-hidden="true" className="tc-mark" data-status={cur.status}>{MARK[cur.status]}</span> {e}</li>)}
+                {cur.checks.map((e, i) => {
+                  // #1286: each element carries its own verdict, so one missing heading no longer
+                  // paints every assertion of the step red.
+                  const own = cur.checkStatus[i] ?? "not_evaluated";
+                  const mark: FrameStatus = own === "passed" ? "passed" : own === "failed" ? "failed" : "not_run";
+                  const label = own === "passed" ? "seen" : own === "failed" ? "not seen" : "not evaluated";
+                  return <li key={e} data-check={own}><span aria-hidden="true" className="tc-mark" data-status={mark}>{MARK[mark]}</span> {e}<span className="sr-only"> ({label})</span></li>;
+                })}
+                {cur.expected.map((e) => `state is ${e}`).map((e) => <li key={e}><span aria-hidden="true" className="tc-mark" data-status={cur.status}>{MARK[cur.status]}</span> {e}</li>)}
               </ul>
             ) : <p className="tc-muted">No assertion written for this step</p>}
+            {cur.failure && <p className="tc-reason" role="status">{cur.failure}</p>}
             {cur.reason && <p className="tc-reason">{cur.reason}</p>}
           </div>
           <div className="tc-ins-block">

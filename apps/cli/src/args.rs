@@ -2361,11 +2361,46 @@ pub struct WorkspaceRootArgs {
 
 #[derive(Debug, Args)]
 pub struct WorkspaceSweepArgs {
-    #[arg(long)]
-    pub root: PathBuf,
+    /// The claim ledger root swept for released workspaces. Not used with `--merged-branch`.
+    #[arg(
+        long,
+        required_unless_present = "merged_branch",
+        conflicts_with = "merged_branch"
+    )]
+    pub root: Option<PathBuf>,
     /// Remove what the dry run lists. Without it nothing is changed.
     #[arg(long)]
     pub apply: bool,
+    /// Merge cleanup (#1456): remove every worktree of this merged branch, the review checkouts
+    /// detached at `--head`, the `--target` directories and the local branch, in one call.
+    #[arg(long, requires = "repo")]
+    pub merged_branch: Option<String>,
+    /// The repository whose worktrees are listed (any of its worktrees, or the main checkout).
+    #[arg(long, requires = "merged_branch")]
+    pub repo: Option<PathBuf>,
+    /// The merged PR number; names the leftovers folder. Defaults to the branch name.
+    #[arg(long, requires = "merged_branch")]
+    pub pr: Option<u64>,
+    /// The reviewed head sha: detached review checkouts at it are removed too.
+    #[arg(long, requires = "merged_branch")]
+    pub head: Option<String>,
+    /// A per-PR build directory to delete (repeatable). Links are removed, never followed.
+    #[arg(long = "target", requires = "merged_branch")]
+    pub targets: Vec<PathBuf>,
+    /// A lane's single reused review worktree (repeatable): kept, and its checkout of the PR
+    /// is moved off to `--base` instead of being removed. Its shared target is never named here.
+    #[arg(long = "keep-worktree", requires = "merged_branch")]
+    pub keep_worktrees: Vec<PathBuf>,
+    /// Where a kept worktree is detached to.
+    #[arg(long, default_value = "origin/main", requires = "merged_branch")]
+    pub base: String,
+    /// Uncommitted work found in a worktree is saved under `<leftovers>/<PR>/` before removal.
+    #[arg(
+        long,
+        default_value = "D:/_merge-leftovers",
+        requires = "merged_branch"
+    )]
+    pub leftovers: PathBuf,
 }
 
 #[derive(Debug, Args)]

@@ -35,8 +35,7 @@ Step 5 of the per-task graph (`docs/process/DELIVERY.md` §5). Only the approvin
    stacked on it (`gh pr list --base <branch> --state open`).
 4. Read what landed: `git log -1 --format=%B origin/main` and `gh issue view` for every closed
    issue. Corrections go in a follow-up comment on the same PR.
-5. Release the workspace the task used: `graphhelm workspace release --root <root> --lane <lane>
-   --task <n>`. It records the head and deletes nothing; never sweep other sessions' worktrees.
+5. Clean up the PR: run `graphhelm workspace sweep --apply --merged-branch <branch> --repo <repo> --pr <N> --head <sha> [--target <dir>]... [--keep-worktree <dir>]`; it stops the processes inside the PR's worktrees, unlinks links without following them, saves uncommitted work to `D:/_merge-leftovers/<N>/`, and removes every worktree and review checkout of the PR (any lane's), the named per-PR targets and the local branch. Exception: a lane's single reused review worktree, named by `--keep-worktree`, is kept with its shared target; only its checkout of the PR is moved to `origin/main` (#1456).
 
 ## Completion
 

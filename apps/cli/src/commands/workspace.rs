@@ -34,7 +34,12 @@ pub fn run(args: &WorkspaceArgs) -> Outcome {
             run_release(&release.root, &release.lane, &release.task)
         }
         WorkspaceCommand::List(list) => run_list(&list.root, list.sizes),
-        WorkspaceCommand::Sweep(sweep) => run_sweep(&sweep.root, sweep.apply),
+        WorkspaceCommand::Sweep(sweep) => match (&sweep.merged_branch, &sweep.root) {
+            (Some(_), _) => super::workspace_merged::run(sweep),
+            (None, Some(root)) => run_sweep(root, sweep.apply),
+            // clap requires --root without --merged-branch; this arm is unreachable.
+            (None, None) => input("workspace.sweep", "--root is required", "/root"),
+        },
         WorkspaceCommand::Slot(slot) => match (&slot.action, &slot.root, &slot.lane) {
             (Some(crate::args::WorkspaceSlotAction::Status(status)), _, _) => {
                 super::workspace_slot::run_status(&status.root)
@@ -58,14 +63,14 @@ pub fn run(args: &WorkspaceArgs) -> Outcome {
     }
 }
 
-fn refuse(command: &'static str, code: &str, message: &str, path: &str) -> Outcome {
+pub(crate) fn refuse(command: &'static str, code: &str, message: &str, path: &str) -> Outcome {
     Outcome::domain(
         command,
         vec![Diagnostic::error(code, message, path, "graphhelm")],
     )
 }
 
-fn input(command: &'static str, message: &str, path: &str) -> Outcome {
+pub(crate) fn input(command: &'static str, message: &str, path: &str) -> Outcome {
     Outcome::application(
         command,
         Diagnostic::error(
@@ -321,7 +326,7 @@ fn is_link(metadata: &std::fs::Metadata) -> bool {
 ///
 /// Fails closed: a directory or entry the scan cannot read is an `Err` naming it, and the caller
 /// keeps the workspace. An unread directory may hold a link.
-fn first_link(path: &Path, base: &Path) -> Result<Option<PathBuf>, (PathBuf, String)> {
+pub(crate) fn first_link(path: &Path, base: &Path) -> Result<Option<PathBuf>, (PathBuf, String)> {
     let relative = |p: &Path| p.strip_prefix(base).unwrap_or(p).to_path_buf();
     let entries = std::fs::read_dir(path).map_err(|e| (relative(path), e.to_string()))?;
     for entry in entries {
@@ -359,7 +364,7 @@ fn size_of(path: &Path) -> u64 {
 
 /// Deletes `path` without following links: a link (file or directory symlink, or a junction) is
 /// removed as the link itself, so whatever it points at survives.
-fn remove_tree(path: &Path) -> std::io::Result<()> {
+pub(crate) fn remove_tree(path: &Path) -> std::io::Result<()> {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),

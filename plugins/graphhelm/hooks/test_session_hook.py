@@ -154,9 +154,11 @@ class SessionHookTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("session_hook_test", SCRIPT)
         hook = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(hook)
+        state_dir = Path(self.temp.name) / "waiter-state"
         with patch.object(hook, "binding", return_value=("run-test", str(self.token_file),
                                                         f"http://127.0.0.1:{self.server.server_port}",
                                                         f"http://127.0.0.1:{self.server.server_port}", None)), \
+             patch.dict(os.environ, {"GRAPHHELM_HOOK_STATE_DIR": str(state_dir)}), \
              patch.object(hook, "_heartbeat_fresh", return_value=False), \
              patch.object(hook, "arm_lane_wake") as arm, \
              patch.object(hook.subprocess, "run") as wait:
@@ -164,6 +166,50 @@ class SessionHookTests(unittest.TestCase):
             arm.assert_called_once()
             self.assertEqual(arm.call_args.kwargs["matures_in"], 1)
             wait.assert_not_called()
+
+    def test_stale_heartbeat_does_not_stop_live_waiter_after_stale_burn(self):
+        spec = importlib.util.spec_from_file_location("session_hook_stale_live", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        bound = ("run-test", str(self.token_file),
+                 f"http://127.0.0.1:{self.server.server_port}",
+                 f"http://127.0.0.1:{self.server.server_port}", None)
+        heartbeat = Path(self.temp.name) / "alive"
+        heartbeat.touch()
+        old = 1
+        os.utime(heartbeat, (old, old))
+        stale_burn = json.dumps({"ok": True, "data": {
+            "timedOut": True,
+            "lastConsumed": {"reason": "stale_rendezvous", "atSequence": 20},
+            "misBurn": None,
+        }})
+        results = iter((
+            type("Result", (), {"returncode": 4, "stdout": stale_burn, "stderr": ""})(),
+            type("Result", (), {"returncode": 0, "stdout": "{}", "stderr": ""})(),
+        ))
+
+        def wake(*_args, **_kwargs):
+            result = next(results)
+            if result.returncode == 0:
+                heartbeat.unlink()
+            return result
+
+        arms = []
+        def arm(_payload, _bound, matures_in=60, cursor=None):
+            arms.append((matures_in, cursor))
+            return 21
+
+        state_dir = Path(self.temp.name) / "waiter-state"
+        with patch.dict(os.environ, {**self.env, "GRAPHHELM_HOOK_STATE_DIR": str(state_dir)}), \
+             patch.object(hook, "binding", return_value=bound), \
+             patch.object(hook, "arm_lane_wake", side_effect=arm), \
+             patch.object(hook.subprocess, "run", side_effect=wake), \
+             patch.object(hook.time, "sleep"):
+            hook.wait_for_lane("codex", "session-123", Path(self.temp.name), heartbeat, 19)
+
+        self.assertEqual(arms, [(60, 19), (1, None)])
+        self.assertEqual((state_dir / "session-123.waiter.log").read_text(encoding="utf-8").splitlines(),
+                         ["heartbeat_stale"])
 
     def test_stale_burn_rearms_before_an_ask_that_arrived_while_unparked(self):
         spec = importlib.util.spec_from_file_location("session_hook_stale_burn", SCRIPT)
@@ -182,18 +228,22 @@ class SessionHookTests(unittest.TestCase):
                 self.assertEqual(cursor, 19)
             return 21
 
+        heartbeat = Path(self.temp.name) / "alive"
+        heartbeat.touch()
         waits = iter((2, 0))
         def wait(*_args, **_kwargs):
-            return type("Result", (), {"returncode": next(waits)})()
+            result = type("Result", (), {"returncode": next(waits)})()
+            if result.returncode == 0:
+                heartbeat.unlink()
+            return result
 
-        with patch.object(hook, "binding", return_value=bound), \
-             patch.object(hook, "_heartbeat_fresh", side_effect=(True, True, True, False, True)), \
+        with patch.dict(os.environ, {"GRAPHHELM_HOOK_STATE_DIR": str(Path(self.temp.name) / "waiter-state")}), \
+             patch.object(hook, "binding", return_value=bound), \
              patch.object(hook, "arm_lane_wake", side_effect=arm), \
              patch.object(hook.subprocess, "run", side_effect=wait), \
              patch.object(hook.time, "sleep"):
-            hook.wait_for_lane("codex", "session-123", Path(self.temp.name),
-                               Path(self.temp.name) / "alive", 19)
-        self.assertEqual(calls, [19])
+            hook.wait_for_lane("codex", "session-123", Path(self.temp.name), heartbeat, 19)
+        self.assertEqual(calls, [19, None])
 
     def test_stale_burn_timeout_rearms_waiter(self):
         spec = importlib.util.spec_from_file_location("session_hook_stale_timeout", SCRIPT)
@@ -216,22 +266,29 @@ class SessionHookTests(unittest.TestCase):
             "lastConsumed": {"reason": "stale_rendezvous", "atSequence": 20},
             "misBurn": None,
         }})
+        heartbeat = Path(self.temp.name) / "alive"
+        heartbeat.touch()
         waits = iter((type("Result", (), {"returncode": 3, "stdout": ordinary_timeout, "stderr": ""})(),
                       type("Result", (), {"returncode": 4, "stdout": stale_burn, "stderr": ""})(),
                       type("Result", (), {"returncode": 0, "stdout": "{}", "stderr": ""})()))
 
-        with patch.object(hook, "binding", return_value=bound), \
-             patch.object(hook, "_heartbeat_fresh", side_effect=(True, True, True, True, False, True)), \
+        def wait(*_args, **_kwargs):
+            result = next(waits)
+            if result.returncode == 0:
+                heartbeat.unlink()
+            return result
+
+        with patch.dict(os.environ, {"GRAPHHELM_HOOK_STATE_DIR": str(Path(self.temp.name) / "waiter-state")}), \
+             patch.object(hook, "binding", return_value=bound), \
              patch.object(hook, "arm_lane_wake", side_effect=arm), \
-             patch.object(hook.subprocess, "run", side_effect=lambda *a, **kw: next(waits)), \
+             patch.object(hook.subprocess, "run", side_effect=wait), \
              patch.object(hook.sys, "stderr") as stderr, \
              patch.object(hook.time, "sleep"):
-            hook.wait_for_lane("codex", "session-123", Path(self.temp.name),
-                               Path(self.temp.name) / "alive", 19)
+            hook.wait_for_lane("codex", "session-123", Path(self.temp.name), heartbeat, 19)
 
         self.assertIn("stale rendezvous consumed for session-123; re-arming waiter",
                       "".join(call.args[0] for call in stderr.write.call_args_list))
-        self.assertEqual(armed_cursors, [19, 21])
+        self.assertEqual(armed_cursors, [19, 21, None])
 
     def test_start_lane_waiter_arms_when_event_head_takes_one_and_a_half_seconds(self):
         spec = importlib.util.spec_from_file_location("session_hook_delayed_arm", SCRIPT)
@@ -307,7 +364,7 @@ class SessionHookTests(unittest.TestCase):
         )
         self.assertEqual(companion_manifest["hooks"], "./hooks/codex-hooks.json")
         main_manifest = json.loads((repository / "plugins" / "graphhelm" / "plugin.json").read_text())
-        self.assertEqual(main_manifest["version"], "0.1.40")
+        self.assertEqual(main_manifest["version"], "0.1.41")
         self.assertEqual(companion_manifest["version"], main_manifest["version"])
         for host in (".claude-plugin", ".codex-plugin"):
             legacy = json.loads((repository / "plugins" / "graphhelm" / host / "plugin.json").read_text())

@@ -285,6 +285,20 @@ def _heartbeat_path(payload: dict, bound: tuple[str, str, str, str, str | None],
     return state_path(bound[0], _session(payload), host, bound[3]).with_suffix(".waiter.alive")
 
 
+def _waiter_log_path(session: str) -> Path:
+    return _state_root() / f"{session}.waiter.log"
+
+
+def _log_waiter_exit(session: str, reason: str) -> None:
+    try:
+        path = _waiter_log_path(session)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as output:
+            output.write(f"{reason}\n")
+    except OSError:
+        pass
+
+
 def touch_lane_heartbeat(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> None:
     path = _heartbeat_path(payload, bound, host)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -354,8 +368,11 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
         return
     cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
     pid_path = _waiter_path(payload, bound, host)
+    exit_reason = "heartbeat_stale"
     try:
-      while _heartbeat_fresh(heartbeat):
+      # SessionEnd removes this marker explicitly. Its age only says the host has been idle;
+      # treating age as death drops an otherwise-live lane after a long quiet interval.
+      while heartbeat.exists():
         result = subprocess.run([cli, "wake-wait", "--events", str(events),
                                  "--execution", bound[0], "--session-id", session],
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -375,8 +392,9 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
             stale = False
         if result.returncode not in (0, 2, 3) and not stale:
             print(f"wake-wait exited {result.returncode} for {session}; stopping waiter", file=sys.stderr)
+            exit_reason = f"wake_wait_exit:{result.returncode}"
             return
-        if not _heartbeat_fresh(heartbeat):
+        if not heartbeat.exists():
             return
         if stale:
             print(f"stale rendezvous consumed for {session}; re-arming waiter", file=sys.stderr)
@@ -386,6 +404,9 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
             cursor = arm_lane_wake(payload, bound, cursor=cursor)
         except (OSError, ValueError, KeyError):
             time.sleep(1)
+    except Exception as error:
+        exit_reason = f"exception:{type(error).__name__}"
+        raise
     finally:
         if not _heartbeat_fresh(heartbeat):
             try:
@@ -397,6 +418,7 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
                 pid_path.unlink()
         except (FileNotFoundError, ValueError, OSError):
             pass
+        _log_waiter_exit(session, exit_reason)
 
 
 def stop_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> None:

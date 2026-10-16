@@ -34,6 +34,122 @@ foreach ($case in $cases) {
   foreach ($text in $case.Excludes) { if ($output.Contains($text)) { throw "$($case.Name): unexpectedly contained '$text'" } }
 }
 
+# The real GraphHelm launcher path (#1290): `journey preview --force` on a disposable project whose
+# declared launcher is tools/no-window/fixture. A quiet run here proves only this synthetic fixture,
+# never a real project; launch failure or missing tools are UNOBSERVED, not a product verdict.
+$cli = $env:GRAPHHELM_CLI
+if (-not $cli) { $cli = (Get-Command graphhelm.exe -ErrorAction SilentlyContinue).Source }
+$sh = (Get-Command sh.exe -ErrorAction SilentlyContinue).Source
+$node = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
+if (-not $cli -or -not (Test-Path -LiteralPath $cli)) { throw 'UNOBSERVED: launcher case: no GraphHelm CLI in GRAPHHELM_CLI or PATH' }
+if (-not $sh -or -not $node) { throw 'UNOBSERVED: launcher case: sh.exe or node.exe is unavailable' }
+$cliVersion = (& $cli --version 2>&1 | Out-String).Trim()
+Write-Output "launcher case: CLI $cliVersion ($(if ($env:GRAPHHELM_CLI) { 'GRAPHHELM_CLI' } else { 'PATH' })); shell $sh"
+$project = Join-Path ([IO.Path]::GetTempPath()) ('gh-nowindow-launch-' + [guid]::NewGuid().ToString('N'))
+$marks = Join-Path $project 'marks.txt'
+New-Item -ItemType Directory -Path (Join-Path $project '.graphhelm/journeys') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'tools/no-window/fixture/fixture.sh'), (Join-Path $repo 'tools/no-window/fixture/server.mjs') -Destination $project
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+[IO.File]::WriteAllText((Join-Path $project '.graphhelm/journey-fixture.json'), '{"schema":"graphhelm-journey-fixture/1","script":"fixture.sh","isolated":true}', $utf8)
+[IO.File]::WriteAllText((Join-Path $project '.graphhelm/journeys/nowindow.journey.yaml'), @'
+schema: graphhelm.journey-flow/1
+id: nowindow
+title: Fixture service answers its health check
+purpose: A client sees the fixture service report that it is healthy.
+status: draft
+approved: null
+base: http://127.0.0.1:8765
+actors: [client]
+secrets: []
+risks: []
+screens:
+  - id: start
+    title: Before any request
+    url: /
+    state: stable
+    expect: []
+    scope: unknown
+  - id: healthy
+    title: The health answer
+    url: /health.json
+    state: success
+    expect: [{role: status, name: "200"}, {role: json, name: status=ok}]
+    scope: unknown
+edges:
+  - id: check
+    from: start
+    to: healthy
+    acts:
+      - {kind: http, role: GET, name: /health.json}
+paths:
+  main: [check]
+drift: []
+'@.Replace("`r`n", "`n"), $utf8)
+$driver = Join-Path $project 'drive.sh'
+[IO.File]::WriteAllText($driver, @'
+#!/bin/sh
+cd "$(dirname "$0")" || exit 3
+"$GH_CLI" --json journey preview nowindow --force --project . > start.json 2>&1 || { cat start.json; exit 4; }
+i=0
+while [ $i -lt 120 ]; do
+  "$GH_CLI" --json journey preview nowindow --read --project . > read.json 2>&1
+  grep -q '"state":"running"' read.json || break
+  i=$((i + 1))
+  sleep 1
+done
+cat read.json
+grep -q '"state":"ready"' read.json
+'@.Replace("`r`n", "`n"), $utf8)
+$launchOutput = ''
+$launchExit = $null
+try {
+  Push-Location $project
+  try {
+    git init --quiet 2>&1 | Out-Null; git config user.email nowindow@example.invalid; git config user.name nowindow
+    & $cli --json init --harness claude-code --project . 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "UNOBSERVED: launcher case: graphhelm init exited $LASTEXITCODE" }
+    & $cli --json journey compile nowindow --fmt --include-draft --project . 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "UNOBSERVED: launcher case: journey compile exited $LASTEXITCODE" }
+    git add -A 2>&1 | Out-Null; git commit --quiet -m fixture 2>&1 | Out-Null
+  } finally { Pop-Location }
+  $env:GH_CLI = $cli
+  $env:NOWINDOW_MARKS = $marks
+  $tabFlag = if ($env:GRAPHHELM_NOWINDOW_TABS -eq '1') { '-ObserveTerminalTabs' } else { '' }
+  $script = "& '$observer' $tabFlag -Exe '$sh' -Arguments @('$driver')"
+  $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
+  $start = New-Object System.Diagnostics.ProcessStartInfo
+  $start.FileName = $shell
+  $start.Arguments = "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
+  $start.UseShellExecute = $false
+  $start.CreateNoWindow = $true
+  $start.RedirectStandardOutput = $true
+  $start.RedirectStandardError = $true
+  $launch = [Diagnostics.Process]::Start($start)
+  $launchOutput = $launch.StandardOutput.ReadToEnd() + $launch.StandardError.ReadToEnd()
+  $launch.WaitForExit()
+  $launchExit = $launch.ExitCode
+  $launch.Dispose()
+} finally {
+  Remove-Item Env:GH_CLI, Env:NOWINDOW_MARKS -ErrorAction SilentlyContinue
+}
+Write-Output "CASE launcher path: observer exit $launchExit"
+Write-Output $launchOutput
+$reached = if (Test-Path -LiteralPath $marks) { @(Get-Content -LiteralPath $marks) } else { @() }
+$upLine = @($reached | Where-Object { $_ -like 'up *' })
+Write-Output "launcher steps reached: $(if ($reached.Count) { $reached -join ', ' } else { 'none' })"
+if ($upLine.Count -ne 1 -or -not ($reached -contains 'down')) { throw "UNOBSERVED: launcher case did not reach both up and down (reached: $($reached -join ', '))" }
+$childPid = $upLine[0].Substring(3)
+& $sh -c "kill -0 $childPid 2>/dev/null"
+if ($LASTEXITCODE -eq 0) { & $sh -c "kill $childPid"; throw "launcher case: fixture child $childPid outlived down" }
+if (-not $launchOutput.Contains('command exit: 0')) { throw 'UNOBSERVED: launcher case: preview did not end ready, so no product verdict' }
+$shownMatch = [regex]::Match($launchOutput, 'console windows shown: (\d+)')
+if (-not $shownMatch.Success) { throw 'UNOBSERVED: launcher case: observer printed no window count' }
+$tabMatch = [regex]::Match($launchOutput, 'terminal tabs added: (\d+)')
+$tabCount = if ($tabMatch.Success) { $tabMatch.Groups[1].Value } else { 'not observed' }
+$launcherVerdict = if ($launchExit -eq 0) { 'PASS (synthetic fixture only)' } else { 'FAIL' }
+Write-Output "LAUNCHER OBSERVATION: $launcherVerdict; windows $($shownMatch.Groups[1].Value); tabs $tabCount; up and down reached; child stopped"
+Remove-Item -LiteralPath $project -Recurse -Force -ErrorAction SilentlyContinue
+
 # A visible, test-owned console is the positive control. Compare the event with
 # an independent HWND/PID lookup while that window is still alive.
 Add-Type -TypeDefinition @'
@@ -242,4 +358,4 @@ try {
     try { $pattern = $owned.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern); $pattern.Close() } catch { Write-Output "UNOBSERVED: could not close test-owned Terminal HWND $hwnd : $_" }
   }
 }
-Write-Output 'PASS: all observer controls passed'
+Write-Output "PASS: all observer controls passed; launcher product observation: $launcherVerdict"

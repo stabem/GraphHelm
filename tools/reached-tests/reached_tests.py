@@ -487,7 +487,8 @@ def reach(changed, packages, embedded, repo=None):
             js = sorted(f.relative_to(root).as_posix() for f in tool.glob("*.test.mjs") if ".browser." not in f.name)
             tools |= {python_test_tool(root, f) for f in py} | ({f"node --test {' '.join(js)}"} if js else set())
             hit = hit or bool(py or js)
-        if path in ("tools/no-window/observe.ps1", "tools/no-window/test_observe.ps1"):
+        if path in ("tools/no-window/observe.ps1", "tools/no-window/test_observe.ps1",
+                    "tools/no-window/fixture/fixture.sh", "tools/no-window/fixture/server.mjs"):
             observer = "tools/no-window/test_observe.ps1"
             if root is not None and (root / observer).is_file():
                 tools.add(f"powershell.exe -NoProfile -ExecutionPolicy Bypass -File {observer}")

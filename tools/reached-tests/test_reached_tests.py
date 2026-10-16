@@ -118,6 +118,32 @@ class Reach(unittest.TestCase):
             self.assertEqual(missing_tools, [])
             self.assertIn({"path": observer, "reason": "no-window observer test is missing"}, missing)
 
+    def test_no_window_launcher_fixture_paths_select_the_same_powershell_step_once(self):
+        """A fixture-only change must not escape the native no-window launcher observation."""
+        observer = "tools/no-window/test_observe.ps1"
+        expected = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                    "-File", observer]
+        fixture = ["tools/no-window/fixture/fixture.sh", "tools/no-window/fixture/server.mjs"]
+        with tempfile.TemporaryDirectory() as repo:
+            for relative in (*fixture, observer):
+                path = Path(repo, relative)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("", encoding="utf-8")
+
+            for changed in ([fixture[0]], [fixture[1]], fixture, [*fixture, observer]):
+                *_, tools, _, other = reach(*changed, repo=repo)
+                self.assertEqual(rt.steps(set(), set(), [], tools, repo=Path(repo)), [
+                    {"argv": expected, "cwd": ".", "slot": False}], changed)
+                self.assertEqual(other, [], changed)
+
+            *_, unrelated, _, other = reach("tools/no-window/fixture/README.md", repo=repo)
+            self.assertEqual(unrelated, [])
+
+            Path(repo, observer).unlink()
+            *_, missing_tools, _, missing = reach(fixture[0], repo=repo)
+            self.assertEqual(missing_tools, [])
+            self.assertIn({"path": observer, "reason": "no-window observer test is missing"}, missing)
+
     def test_task_handoff_fixture_selects_its_offline_scenario_once(self):
         """Reach the real isolated handoff observer for fixture-only diffs.
 

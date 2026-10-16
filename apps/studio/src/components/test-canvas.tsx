@@ -92,6 +92,9 @@ export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUr
           <div className="tc-viewport" data-status={cur.status}>
             {src ? <img src={src} alt={`Frame ${cur.n}: ${cur.text}`} /> : <p>No frame recorded for this step</p>}
           </div>
+          {cur.typed.length > 0 && (
+            <ul aria-label="Typed on this step" className="tc-asserts">{cur.typed.map((line) => <li key={line}>{line}</li>)}</ul>
+          )}
           <div className="tc-status">
             <span className="tc-chip" data-status={cur.status}>{LABEL[cur.status]}</span>
             <span className="tc-status-verb">{cur.verb.toLowerCase()}</span>

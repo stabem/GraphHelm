@@ -97,6 +97,9 @@
 //! also #715: on Unix a killed-but-unreaped descendant still reads as running, so the liveness
 //! answer has its own asymmetry one layer down.
 
+mod inside;
+pub use inside::{path_is_inside, processes_inside};
+
 /// Why a process group could not be established.
 ///
 /// Deliberately NOT the caller's error type. `create` used to return `BackupError`, so the module

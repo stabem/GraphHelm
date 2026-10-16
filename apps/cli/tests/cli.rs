@@ -217,3 +217,5 @@ mod update_check_cli;
 mod wake_http;
 #[path = "workspace_cli.rs"]
 mod workspace_cli;
+#[path = "workspace_merged_cli.rs"]
+mod workspace_merged_cli;

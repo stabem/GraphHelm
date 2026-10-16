@@ -66,6 +66,7 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 
   When git still refuses ("contains modified or untracked files"), find what is left and deal with
   it by name. Never answer that refusal with `--force` while a junction is inside.
+- After a merge the merger removes the PR's worktrees with `graphhelm workspace sweep --apply --merged-branch <branch> --repo <repo> --pr <N> --head <sha> [--target <dir>]... [--keep-worktree <dir>]` (DELIVERY.md §5): it stops the processes inside the PR's worktrees, unlinks links without following them, saves uncommitted work to `D:/_merge-leftovers/<N>/`, and removes every worktree and review checkout of the PR (any lane's), the named per-PR targets and the local branch. For the one kept worktree (`--keep-worktree`), see [KEEL_MERGE.md](../../keel/KEEL_MERGE.md) step 5.
 - Removal by name, and never `git worktree prune`, is DELIVERY.md §6; never touch another lane's
   ticket either.
 

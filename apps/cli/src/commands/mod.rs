@@ -44,6 +44,7 @@ mod topology;
 mod validate;
 mod wake_wait;
 mod workspace;
+mod workspace_merged;
 mod workspace_slot;
 
 use std::sync::Arc;

@@ -14,9 +14,7 @@ Step 4. Only the reviewer who approved merges. Read [`KEEL.md`](../KEEL.md) firs
    mean to close, not even inside a negation; write `Refs #N` instead.
 4. **Check after.** Read what landed, then run the change's main proof on main and confirm it is
    green. If it is red, the merge is not delivered: fix main first.
-5. **Delete the branch.** The merger deletes it unless a pull request is stacked on it
-   (`gh pr list --base <branch> --state open`). The author cleans up its own worktree and build
-   directories; nobody deletes another lane's.
+5. **Clean up the PR.** After the merge lands the merger runs `graphhelm workspace sweep --apply --merged-branch <branch> --repo <repo> --pr <N> --head <sha> [--target <dir>]... [--keep-worktree <dir>]`: it stops the processes inside the PR's worktrees, unlinks links without following them, saves uncommitted work to `D:/_merge-leftovers/<N>/`, and removes every worktree and review checkout of the PR (any lane's), the named per-PR targets and the local branch (unless a pull request is stacked on it: `gh pr list --base <branch> --state open`). Exception: a lane's single reused review worktree, named by `--keep-worktree`, is kept with its shared target; only its checkout of the PR is moved to `origin/main` (#1456).
 
 **Delivered** means merged into `main` and `main` green on the change's main proof. An open pull
 request is not delivered.

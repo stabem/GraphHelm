@@ -51,7 +51,9 @@ GUARD = f"cargo {TOOLCHAIN} test --locked -p graphhelm-protocols --test authored
 # path under the prefix reaches these test files, as (package, test file stem).
 RUNTIME_READERS = {
     "extensions/": [("graphhelm-host-adoption", "release_packages"), ("graphhelm-cli", "development_plugin"),
-                    ("graphhelm-cli", "jpd_plugin"), ("graphhelm-cli", "extension_cli")],
+                    ("graphhelm-cli", "jpd_plugin"), ("graphhelm-cli", "extension_cli"),
+                    # The canonical golden pins the extension manifests and the digests they carry.
+                    ("graphhelm-protocols", "canonical_golden")],
     # The committed journey flows: the scope guard reads them, and `journey validate --all` checks them.
     ".graphhelm/journeys/": [("graphhelm-cli", "journey_scope_guard")],
 }

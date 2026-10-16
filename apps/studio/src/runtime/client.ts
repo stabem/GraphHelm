@@ -855,7 +855,8 @@ export class RuntimeClient {
   }
 
   /**
-   * #1192: the task projection the Runtime folds (`GET /v1/executions/{id}/tasks`, #1149). `null`
+   * #1192: the task projection the Runtime folds (`GET /v1/executions/{id}/tasks?full=1`, #1149;
+   * the lane timeline draws the record and slice histories the default open board leaves out). `null`
    * means the Runtime predates the route: a 404 that does not carry `GHCLI028_EXECUTION_NOT_FOUND`
    * (an older binary's `serve.not_found`), or a 401 from this route alone (an older auth layer
    * that knows no such read). A 404 naming an unknown execution, and every other failure, still
@@ -867,7 +868,7 @@ export class RuntimeClient {
     try {
       const data = await this.#request<unknown>({
         method: "GET",
-        path: `/v1/executions/${encodeURIComponent(id)}/tasks`,
+        path: `/v1/executions/${encodeURIComponent(id)}/tasks?full=1`,
       });
       const reply = tasksReply(data);
       if (reply === null) {

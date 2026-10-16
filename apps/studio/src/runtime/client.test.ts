@@ -1525,7 +1525,7 @@ describe("the tasks route (#1192)", () => {
 
   it("reads the projection under the same bearer and hands the reply through whole", async () => {
     const { fetchImpl, calls } = scriptedFetch([
-      { match: (call) => call.url === "/v1/executions/run-1/tasks", reply: ok(reply, "execution.tasks") },
+      { match: (call) => call.url === "/v1/executions/run-1/tasks?full=1", reply: ok(reply, "execution.tasks") },
     ]);
     const client = new RuntimeClient("tok", { fetch: fetchImpl });
     await expect(client.getTasks("run-1")).resolves.toEqual(reply);
@@ -1535,26 +1535,26 @@ describe("the tasks route (#1192)", () => {
 
   it("answers null for a Runtime that predates the route: 404 without the unknown-id code, or 401", async () => {
     const notFound = scriptedFetch([
-      { match: (call) => call.url.endsWith("/tasks"), reply: { status: 404, envelope: { ok: false, command: "serve.not_found", data: null, diagnostics: [{ code: "GHCLI008_SERVE_NOT_FOUND", severity: "error", message: "no route", path: "", source: "serve-cli" }] } } },
+      { match: (call) => call.url.endsWith("/tasks?full=1"), reply: { status: 404, envelope: { ok: false, command: "serve.not_found", data: null, diagnostics: [{ code: "GHCLI008_SERVE_NOT_FOUND", severity: "error", message: "no route", path: "", source: "serve-cli" }] } } },
     ]);
     await expect(new RuntimeClient("tok", { fetch: notFound.fetchImpl }).getTasks("run-1")).resolves.toBeNull();
     const unauthorized = scriptedFetch([
-      { match: (call) => call.url.endsWith("/tasks"), reply: { status: 401, envelope: { ok: false, command: "serve.unauthorized", data: null, diagnostics: [{ code: "GHCLI007_SERVE_UNAUTHORIZED", severity: "error", message: "a valid Authorization: Bearer token is required", path: "/authorization", source: "serve-cli" }] } } },
+      { match: (call) => call.url.endsWith("/tasks?full=1"), reply: { status: 401, envelope: { ok: false, command: "serve.unauthorized", data: null, diagnostics: [{ code: "GHCLI007_SERVE_UNAUTHORIZED", severity: "error", message: "a valid Authorization: Bearer token is required", path: "/authorization", source: "serve-cli" }] } } },
     ]);
     await expect(new RuntimeClient("tok", { fetch: unauthorized.fetchImpl }).getTasks("run-1")).resolves.toBeNull();
   });
 
   it("throws for an unknown execution, a broken store and an unknown reply shape", async () => {
     const unknownId = scriptedFetch([
-      { match: (call) => call.url.endsWith("/tasks"), reply: { status: 404, envelope: { ok: false, command: "execution.tasks", data: null, diagnostics: [{ code: "GHCLI028_EXECUTION_NOT_FOUND", severity: "error", message: "no execution with this id exists in this store", path: "/execution", source: "execution-cli" }] } } },
+      { match: (call) => call.url.endsWith("/tasks?full=1"), reply: { status: 404, envelope: { ok: false, command: "execution.tasks", data: null, diagnostics: [{ code: "GHCLI028_EXECUTION_NOT_FOUND", severity: "error", message: "no execution with this id exists in this store", path: "/execution", source: "execution-cli" }] } } },
     ]);
     await expect(new RuntimeClient("tok", { fetch: unknownId.fetchImpl }).getTasks("typo")).rejects.toMatchObject({ code: "GHCLI028_EXECUTION_NOT_FOUND", httpStatus: 404 });
     const broken = scriptedFetch([
-      { match: (call) => call.url.endsWith("/tasks"), reply: { status: 500, envelope: { ok: false, command: "execution.tasks", data: null, diagnostics: [] } } },
+      { match: (call) => call.url.endsWith("/tasks?full=1"), reply: { status: 500, envelope: { ok: false, command: "execution.tasks", data: null, diagnostics: [] } } },
     ]);
     await expect(new RuntimeClient("tok", { fetch: broken.fetchImpl }).getTasks("run-1")).rejects.toBeInstanceOf(RuntimeError);
     const odd = scriptedFetch([
-      { match: (call) => call.url.endsWith("/tasks"), reply: ok({ executionId: "run-1", tasks: "not a list" }, "execution.tasks") },
+      { match: (call) => call.url.endsWith("/tasks?full=1"), reply: ok({ executionId: "run-1", tasks: "not a list" }, "execution.tasks") },
     ]);
     await expect(new RuntimeClient("tok", { fetch: odd.fetchImpl }).getTasks("run-1")).rejects.toBeInstanceOf(RuntimeError);
   });

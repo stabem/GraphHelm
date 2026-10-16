@@ -319,22 +319,30 @@ pub fn run(command: TopLevel) -> Outcome {
                 html,
                 file,
                 tasks,
+                full_tasks,
                 keyring,
                 key_id,
-            } => execution::status::run(
-                &events.path,
-                execution.as_deref(),
-                html.as_deref(),
-                file.as_deref(),
-                tasks
+            } => {
+                let keyring = tasks
                     .then(|| keyring.zip(key_id))
                     .flatten()
                     .map(|(directory, key_id)| execution::signal::SignalKeyring {
                         directory,
                         key_id,
-                    })
-                    .as_ref(),
-            ),
+                    });
+                let depth = if full_tasks {
+                    execution::tasks::TasksDepth::Full
+                } else {
+                    execution::tasks::TasksDepth::Open
+                };
+                execution::status::run(
+                    &events.path,
+                    execution.as_deref(),
+                    html.as_deref(),
+                    file.as_deref(),
+                    keyring.as_ref().map(|keyring| (keyring, depth)),
+                )
+            }
             ExecutionCommand::Briefing {
                 events,
                 execution,

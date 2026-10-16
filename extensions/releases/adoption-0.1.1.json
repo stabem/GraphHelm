@@ -2,6 +2,6 @@
   "version": "0.1.1",
   "packages": [
     {"id":"graphhelm-jpd","version":"0.1.1","path":"../builtin/graphhelm-jpd"},
-    {"id":"graphhelm-development-contracts","version":"0.1.3","path":"../builtin/graphhelm-development-contracts"}
+    {"id":"graphhelm-development-contracts","version":"0.1.4","path":"../builtin/graphhelm-development-contracts"}
   ]
 }

@@ -1,7 +1,7 @@
 //! The bundled release manifest names each builtin package. In a source checkout it pins no
-//! digest (#407): the loader derives each one from the package, so an edit under
-//! `extensions/builtin/` needs no re-pin and two PRs never collide on the file. A packaged bundle
-//! still pins digests (`hosts/packages.rs`, refused without them).
+//! digest (#407) and no version (#1459): the loader derives both from the package, so an edit
+//! under `extensions/builtin/` needs no re-pin and two PRs never collide on the file. A packaged
+//! bundle still pins both (`hosts/packages.rs`, refused without them).
 
 #[test]
 fn the_source_release_file_pins_no_digest_and_the_loader_derives_the_current_one() {
@@ -14,8 +14,8 @@ fn the_source_release_file_pins_no_digest_and_the_loader_derives_the_current_one
             .as_array()
             .unwrap()
             .iter()
-            .all(|p| p.get("digest").is_none()),
-        "the source release file must not pin digests (#407): {release}"
+            .all(|p| p.get("digest").is_none() && p.get("version").is_none()),
+        "the source release file must not pin digests (#407) or versions (#1459): {release}"
     );
     let packages = graphhelm_host_adoption::hosts::release_packages().unwrap();
     assert!(!packages.is_empty());
@@ -23,7 +23,9 @@ fn the_source_release_file_pins_no_digest_and_the_loader_derives_the_current_one
         .iter()
         .filter_map(|package| {
             let current = graphhelm_schema::validate_extension_package(&package.path).unwrap();
-            (package.id != current.id || package.digest != current.package_digest)
+            (package.id != current.id
+                || package.version != current.version
+                || package.digest != current.package_digest)
                 .then(|| format!("{} -> {}", package.id, current.package_digest))
         })
         .collect();
@@ -69,20 +71,27 @@ fn two_package_edits_do_not_collide_in_the_release_file() {
     std::fs::write(dir.path().join("release.json"), &text).unwrap();
     assert!(git(&["add", "-A"]).0);
     assert!(git(&["commit", "-qm", "base"]).0);
-    // What editing one package forces in the release file: a new digest on that package's line
-    // when the file pins digests, nothing when the loader derives them.
+    // What editing one package forces in the release file: a new digest (#407) and a version
+    // bump (#1459) on that package's line when the file pins them, nothing when the loader
+    // derives them.
     let forced = |id: &str, text: &str| -> String {
         let value: serde_json::Value = serde_json::from_str(text).unwrap();
-        let pinned = value["packages"]
+        let package = value["packages"]
             .as_array()
             .unwrap()
             .iter()
             .find(|package| package["id"] == id)
-            .and_then(|package| package["digest"].as_str().map(str::to_owned));
-        match pinned {
-            Some(digest) => text.replace(&digest, &format!("sha256:{}", "e".repeat(64))),
-            None => text.to_owned(),
+            .unwrap();
+        let mut out = text.to_owned();
+        if let Some(digest) = package["digest"].as_str() {
+            out = out.replace(digest, &format!("sha256:{}", "e".repeat(64)));
         }
+        if let Some(version) = package["version"].as_str() {
+            let line = format!("\"id\":\"{id}\",\"version\":\"{version}\"");
+            assert!(out.contains(&line), "unexpected release line for {id}");
+            out = out.replace(&line, &format!("\"id\":\"{id}\",\"version\":\"9.9.9\""));
+        }
+        out
     };
     for (branch, id) in [
         ("pr-a", "graphhelm-jpd"),

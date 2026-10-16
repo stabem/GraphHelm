@@ -19,13 +19,15 @@ pub struct PinnedPackage {
     pub path: PathBuf,
 }
 
-/// One package line of a release file. `digest` is required in a packaged bundle and absent in
-/// the source checkout's file (#407), where the loader derives it from the package itself.
+/// One package line of a release file. `version` and `digest` are required in a packaged bundle
+/// and absent in the source checkout's file (#407 digest, #1459 version), where the loader
+/// derives both from the package itself.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReleaseEntry {
     id: String,
-    version: String,
+    #[serde(default)]
+    version: Option<String>,
     #[serde(default)]
     digest: Option<String>,
     path: PathBuf,
@@ -69,30 +71,34 @@ pub fn release_packages() -> Result<Vec<PinnedPackage>, AdoptionError> {
         .collect()
 }
 
-/// A release line with its path made absolute and its digest pinned. A packaged bundle must pin
-/// the digest; the source checkout derives it from the package, refusing a package whose id or
-/// version disagrees with its line.
+/// A release line with its path made absolute and its version and digest pinned. A packaged
+/// bundle must pin both; the source checkout derives them from the package, refusing a package
+/// whose id, or a version the line still names, disagrees with its line.
 fn resolve_entry(
     entry: ReleaseEntry,
     base: &Path,
     packaged: bool,
 ) -> Result<PinnedPackage, AdoptionError> {
     let path = base.join(&entry.path);
-    let digest = match (entry.digest, packaged) {
-        (Some(digest), _) => digest,
-        (None, true) => return Err(invalid()),
-        (None, false) => {
+    let (version, digest) = match (entry.version, entry.digest, packaged) {
+        (Some(version), Some(digest), _) => (version, digest),
+        (_, _, true) => return Err(invalid()),
+        (version, digest, false) => {
             let current =
                 graphhelm_schema::validate_extension_package(&path).map_err(|_| invalid())?;
-            if current.id != entry.id || current.version != entry.version {
+            if current.id != entry.id
+                || version
+                    .as_ref()
+                    .is_some_and(|version| *version != current.version)
+            {
                 return Err(invalid());
             }
-            current.package_digest
+            (current.version, digest.unwrap_or(current.package_digest))
         }
     };
     Ok(PinnedPackage {
         id: entry.id,
-        version: entry.version,
+        version,
         digest,
         path,
     })
@@ -102,17 +108,22 @@ fn resolve_entry(
 mod release_entry_tests {
     use super::*;
 
-    /// #407: only the source checkout may leave the digest out; a packaged bundle without one is
-    /// refused rather than trusted. Cost: no I/O beyond the refusal path.
+    /// #407, #1459: only the source checkout may leave the digest or the version out; a packaged
+    /// bundle without one is refused rather than trusted. Cost: no I/O beyond the refusal path.
     #[test]
-    fn a_packaged_bundle_must_pin_the_digest() {
-        let entry = ReleaseEntry {
-            id: "graphhelm-jpd".into(),
-            version: "0.1.0".into(),
-            digest: None,
-            path: PathBuf::from("../builtin/graphhelm-jpd"),
-        };
-        assert!(resolve_entry(entry, Path::new("."), true).is_err());
+    fn a_packaged_bundle_must_pin_the_digest_and_the_version() {
+        for (version, digest) in [
+            (Some("0.1.0".to_owned()), None),
+            (None, Some(format!("sha256:{}", "e".repeat(64)))),
+        ] {
+            let entry = ReleaseEntry {
+                id: "graphhelm-jpd".into(),
+                version,
+                digest,
+                path: PathBuf::from("../builtin/graphhelm-jpd"),
+            };
+            assert!(resolve_entry(entry, Path::new("."), true).is_err());
+        }
     }
 }
 

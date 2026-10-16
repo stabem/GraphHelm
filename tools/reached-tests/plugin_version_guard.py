@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
-"""Require a coherent plugin version increase when shipped plugin content changes."""
+"""Require a coherent plugin version increase when shipped plugin content changes.
+
+`--write` regenerates the chain a skill change drags in (#1459 item 14), from the working tree:
+the version of each changed release group one patch above `--base` (unless it is already above
+it), every builtin extension's contribution digests in `extension.json`, and each package's
+canonical goldens under `core/protocols/tests/fixtures/canonical-goldens/` (#1459 item 16; the
+Rust cell `canonical_golden` stays the authority over those bytes). The source release file
+`extensions/releases/adoption-*.json` pins no version or digest, so it needs no rewrite. A
+second run changes nothing."""
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -24,7 +33,9 @@ GROUPS = (
     (PLUGIN_ROOTS, MANIFESTS),
     (("plugins/keel/",), KEEL_MANIFESTS),
 )
-ALL_ROOTS = tuple(root for roots, _ in GROUPS for root in roots)
+EXTENSIONS = "extensions/builtin/"
+GOLDENS = "core/protocols/tests/fixtures/canonical-goldens/"
+ALL_ROOTS = tuple(root for roots, _ in GROUPS for root in roots) + (EXTENSIONS,)
 VERSION = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
     r"(?:-((?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -82,7 +93,7 @@ def _manifest_version(repo, commit, path):
         manifest = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid release manifest {path}: {exc.msg}") from None
-    version = manifest.get("version") if isinstance(manifest, dict) else None
+    version = _version_field(manifest)
     match = VERSION.fullmatch(version) if isinstance(version, str) else None
     if match is None:
         raise ValueError(f"invalid release version in manifest: {path}")
@@ -90,6 +101,34 @@ def _manifest_version(repo, commit, path):
     prerelease = match.group(4)
     identifiers = tuple(prerelease.split(".")) if prerelease is not None else None
     return version, (major, minor, patch, identifiers)
+
+
+def _version_field(manifest):
+    if not isinstance(manifest, dict):
+        return None
+    if manifest.get("kind") == "Extension":
+        metadata = manifest.get("metadata")
+        return metadata.get("version") if isinstance(metadata, dict) else None
+    return manifest.get("version")
+
+
+def _extension_groups(repo, commit):
+    """Each builtin extension package is its own release group: extension.json and both host manifests."""
+    try:
+        names = _git(repo, "ls-tree", "-d", "--name-only", f"{commit}:{EXTENSIONS.rstrip('/')}").split()
+    except subprocess.CalledProcessError:
+        return []
+    return [((f"{EXTENSIONS}{name}/",), tuple(f"{EXTENSIONS}{name}/{manifest}" for manifest in
+             ("extension.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json")))
+            for name in sorted(names)]
+
+
+def _parsed_version(version):
+    match = VERSION.fullmatch(version) if isinstance(version, str) else None
+    if match is None:
+        return None
+    major, minor, patch = (int(part) for part in match.group(1, 2, 3))
+    return major, minor, patch, tuple(match.group(4).split(".")) if match.group(4) is not None else None
 
 
 def _version_precedence(version):
@@ -142,7 +181,7 @@ def check(repo, base_ref, head_ref):
     base, head = _commit(repo, base_ref), _commit(repo, head_ref)
     paths = _changed_paths(repo, base, head)
     messages = []
-    for roots, manifests in GROUPS:
+    for roots, manifests in (*GROUPS, *_extension_groups(repo, head)):
         passed, message = _group_check(repo, base, head, paths, roots, manifests)
         if not passed:
             return False, message
@@ -153,12 +192,112 @@ def check(repo, base_ref, head_ref):
     return True, "; ".join(messages)
 
 
+_VERSION_FIELD = re.compile(r'("version"\s*:\s*)"[^"]*"')
+_DIGEST_FIELD = re.compile(r'("sha256"\s*:\s*)"sha256:[0-9a-f]{64}"')
+
+
+def _rewrite(path, text):
+    """Write `text` only when it differs from the file, so a current file keeps its bytes and mtime."""
+    if path.is_file() and path.read_bytes().decode("utf-8") == text:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(text.encode("utf-8"))
+    return True
+
+
+def _set_version(path, version):
+    text = path.read_bytes().decode("utf-8")
+    new, count = _VERSION_FIELD.subn(lambda m: f'{m.group(1)}"{version}"', text, count=1)
+    if count != 1 or _version_field(json.loads(new)) != version:
+        raise ValueError(f"cannot set the version in {path}")
+    return _rewrite(path, new)
+
+
+def _set_digests(package):
+    path = package / "extension.json"
+    text = path.read_bytes().decode("utf-8")
+    contributions = json.loads(text)["spec"]["contracts"]["contributions"]
+    digests = iter(["sha256:" + hashlib.sha256((package / item["path"]).read_bytes()).hexdigest()
+                    for item in contributions])
+    new, count = _DIGEST_FIELD.subn(lambda m: f'{m.group(1)}"{next(digests)}"', text)
+    if count != len(contributions):
+        raise ValueError(f"{path}: {count} sha256 fields for {len(contributions)} contributions")
+    return _rewrite(path, new)
+
+
+def _reject_constant(name):
+    raise ValueError(name)
+
+
+def _goldens(repo, package):
+    """Canonical JSON digests of every parseable JSON file of one package: the corpus and bytes
+    core/protocols/tests/canonical_golden.rs checks."""
+    out = {}
+    for path in package.rglob("*.json"):
+        try:
+            value = json.loads(path.read_bytes().decode("utf-8"), parse_constant=_reject_constant)
+        except ValueError:
+            continue  # a deliberately malformed fixture is not a canonical input
+        canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        out[path.relative_to(repo).as_posix()] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return json.dumps(dict(sorted(out.items())), indent=2, ensure_ascii=False) + "\n"
+
+
+def _worktree_changes(repo, base):
+    """Paths that differ between the merge base with `base` and the working tree, untracked included."""
+    fork = _git(repo, "merge-base", base, "HEAD").strip()
+    changed = _git(repo, "diff", "--name-only", "-z", fork, "--").split("\0")
+    untracked = _git(repo, "ls-files", "--others", "--exclude-standard", "-z").split("\0")
+    return [path for path in changed + untracked if path]
+
+
+def write(repo, base_ref):
+    """Regenerate versions, contribution digests and goldens; return the files written."""
+    repo = Path(repo).resolve()
+    base = _commit(repo, base_ref)
+    changed = _worktree_changes(repo, base)
+    written = []
+    for roots, manifests in (*GROUPS, *_extension_groups(repo, "HEAD")):
+        if not any(path.startswith(roots) and not _is_docs_or_tests(path) for path in changed):
+            continue
+        if all(_absent(repo, base, path) for path in manifests):
+            continue  # a new release group starts at its own first version
+        _, before = _manifest_version(repo, base, manifests[0])
+        current = {_version_field(json.loads((repo / path).read_bytes())) for path in manifests}
+        parsed = _parsed_version(next(iter(current))) if len(current) == 1 else None
+        if parsed is not None and _version_precedence(parsed) > _version_precedence(before):
+            continue
+        version = f"{before[0]}.{before[1]}.{before[2] + 1}"
+        written += [path for path in manifests if _set_version(repo / path, version)]
+    for package in sorted((repo / EXTENSIONS).iterdir()):
+        if not (package / "extension.json").is_file():
+            continue
+        if _set_digests(package):
+            written.append(f"{EXTENSIONS}{package.name}/extension.json")
+        golden = repo / GOLDENS / f"{package.name}.json"
+        if _rewrite(golden, _goldens(repo, package)):
+            written.append(golden.relative_to(repo).as_posix())
+    return list(dict.fromkeys(written))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default=".")
     parser.add_argument("--base", required=True)
-    parser.add_argument("--head", required=True)
+    parser.add_argument("--head", help="the ref to check (required without --write)")
+    parser.add_argument("--write", action="store_true",
+                        help="regenerate versions, extension digests and canonical goldens in the working tree")
     args = parser.parse_args(argv)
+    if args.write:
+        try:
+            written = write(args.repo, args.base)
+        except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
+            print(f"plugin version guard --write failed: {exc}")
+            return 1
+        print("wrote " + ", ".join(written) if written else "nothing to write: the chain is current")
+        return 0
+    if args.head is None:
+        parser.error("--head is required without --write")
     try:
         passed, message = check(args.repo, args.base, args.head)
     except (OSError, subprocess.CalledProcessError) as exc:

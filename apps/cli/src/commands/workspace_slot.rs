@@ -494,6 +494,7 @@ pub(crate) struct SlotRequest<'a> {
     /// Minutes; `None` waits as long as it takes (#540).
     pub max_wait: Option<f64>,
     pub priority: bool,
+    pub stage: crate::args::SlotStage,
     pub command: &'a [String],
 }
 
@@ -1304,7 +1305,7 @@ fn run_admitted_slot_core(
     }
     let info = json!({"lane": lane, "label": label, "pid": std::process::id(),
         "arrivedNanos": arrival.to_string(), "priority": request.priority,
-        "worktree": cwd});
+        "stage": request.stage.as_str(), "worktree": cwd});
     let _ = std::fs::write(info_path(&mine), info.to_string());
     let started = Instant::now();
     let batch_started = batch.as_ref().map_or(started, |run| run.started);
@@ -1499,7 +1500,7 @@ fn run_admitted_slot_core(
     release(slot, ticket, &admission);
     let mut data = json!({"lane": lane, "label": label, "exitCode": code, "waitedSeconds": waited,
         "heldSeconds": held, "targetDir": target.to_string_lossy(), "cleaned": cleaned,
-        "priority": request.priority, "reclaimedTargets": reclaimed});
+        "priority": request.priority, "stage": request.stage.as_str(), "reclaimedTargets": reclaimed});
     if let Some(batch) = batch_result {
         data["batch"] = batch;
     }
@@ -1583,6 +1584,7 @@ pub(crate) fn run_status(root: &Path) -> Outcome {
                 .unwrap_or(serde_json::Value::Null);
             json!({"lane": info["lane"], "label": info["label"], "pid": info["pid"],
                 "worktree": info["worktree"], "priority": info["priority"].as_bool().unwrap_or(false),
+                "stage": info["stage"].as_str().unwrap_or("implement"),
                 "waitedSeconds": seconds_since(nanos_of(&info["arrivedNanos"]), now),
                 "ticket": ticket.file_name().map(|n| n.to_string_lossy().into_owned())})
         })

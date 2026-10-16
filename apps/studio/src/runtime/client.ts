@@ -706,7 +706,7 @@ export class RuntimeClient {
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { previousExit: null, startup, currentRun };
     const value = raw as Record<string, unknown>;
     const state = value.state;
-    if (state !== "clean" && state !== "vanished" && state !== "serve_error" && state !== "panicked") return { previousExit: null, startup, currentRun };
+    if (state !== "clean" && state !== "vanished" && state !== "serve_error" && state !== "panicked" && state !== "out_of_memory") return { previousExit: null, startup, currentRun };
     if (typeof value.pid !== "number" || !Number.isSafeInteger(value.pid) || value.pid < 1 || value.pid > 0xffffffff ||
         typeof value.at !== "number" || !Number.isSafeInteger(value.at) || value.at < 0 || value.at > 8_640_000_000_000) return { previousExit: null, startup, currentRun };
     // Only Runtime's crate-relative Rust source coordinates are displayable, never free text.
@@ -715,6 +715,7 @@ export class RuntimeClient {
     const result: RuntimePreviousExit = { state, pid: value.pid, at: value.at };
     if (typeof value.instance === "string" && /^[0-9a-f]{32}$/.test(value.instance)) result.instance = value.instance;
     if (value.location !== undefined) result.location = location(value.location);
+    if (state === "out_of_memory" && typeof value.size === "number" && Number.isSafeInteger(value.size) && value.size >= 0) result.size = value.size;
     if (value.lastPanic !== undefined) {
       const panic = value.lastPanic;
       result.lastPanic = { location: location(panic !== null && typeof panic === "object" ? (panic as Record<string, unknown>).location : undefined) };

@@ -1,3 +1,4 @@
+pub(crate) mod alloc_guard;
 mod documents;
 mod lifecycle;
 pub(super) mod monitor;

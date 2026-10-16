@@ -13,6 +13,10 @@ mod progress;
 #[path = "../tests/support/time_scale.rs"]
 mod test_time;
 
+/// #41: forwards to the system allocator and records an allocation failure before std aborts.
+#[global_allocator]
+static ALLOCATOR: commands::AllocGuard = commands::AllocGuard;
+
 use std::ffi::{OsStr, OsString};
 use std::io::{IsTerminal, Write};
 

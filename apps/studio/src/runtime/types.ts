@@ -10,13 +10,15 @@
 
 /** Validated diagnostic metadata from the unauthenticated health probe. */
 export interface RuntimePreviousExit {
-    state: "clean" | "vanished" | "serve_error" | "panicked";
+    state: "clean" | "vanished" | "serve_error" | "panicked" | "out_of_memory";
     pid: number;
     instance?: string;
   /** Unix seconds, restricted to the JavaScript date range. */
   at: number;
   location?: string;
   lastPanic?: { location: string };
+  /** #41: bytes of the allocation that failed, when the Runtime ran out of memory. */
+  size?: number;
 }
 
 /** The four-key envelope every Runtime reply carries. */

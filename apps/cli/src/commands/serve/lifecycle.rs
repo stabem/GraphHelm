@@ -132,6 +132,8 @@ impl Lifecycle {
             )
         })?;
         regular(&path).map_err(|_| invalid())?;
+        let note_path = path.with_extension("oom");
+        regular(&note_path).map_err(|_| invalid())?;
         let previous = match File::open(&path) {
             Ok(file) => {
                 let mut bytes = Vec::new();
@@ -142,22 +144,33 @@ impl Lifecycle {
                     return Err(invalid());
                 }
                 let record: Record = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+                // #41: an allocation failure aborts without unwinding, so the record still
+                // says `running`; the guard's note beside it is the only witness of the cause.
+                let oom = matches!(record.state, State::Running)
+                    .then(|| read_note(&note_path))
+                    .flatten();
                 // The acquired lifetime lock proves no previous owner remains. A live
                 // recorded PID can have been reused and does not establish ownership.
                 let state = match record.state {
+                    State::Running if oom.is_some() => "out_of_memory",
                     State::Running => "vanished",
                     State::Clean => "clean",
                     State::ServeError => "serve_error",
                     State::Panicked if record.fatal != Some(true) => "vanished",
                     State::Panicked => "panicked",
                 };
-                let at = if state == "vanished" {
+                let at = if let Some(note) = &oom {
+                    note.at
+                } else if state == "vanished" {
                     record.started_at
                 } else {
                     record.at.unwrap_or(record.started_at)
                 };
                 let mut result = serde_json::json!({"state": state, "pid": record.pid,
                     "at": at});
+                if let Some(note) = oom {
+                    result["size"] = serde_json::Value::from(note.size);
+                }
                 result["instance"] = record
                     .instance
                     .map_or(serde_json::Value::Null, serde_json::Value::String);
@@ -191,6 +204,15 @@ impl Lifecycle {
             "startedAt": record.started_at,
         });
         write(&path, &record).map_err(|_| invalid())?;
+        // Truncating consumes the previous run's note; the open handle is what the allocation
+        // guard writes through, because opening a file on that path would itself allocate.
+        let note = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&note_path)
+            .map_err(|_| invalid())?;
+        super::alloc_guard::arm(note);
         let writer = Arc::new(Mutex::new((path, record)));
         let hook_writer = Arc::clone(&writer);
         let previous_hook = std::panic::take_hook();
@@ -244,6 +266,24 @@ impl Lifecycle {
         record.at = Some(now());
         write(path, record).map_err(|_| invalid())
     }
+}
+
+#[derive(Deserialize)]
+struct Note {
+    size: u64,
+    at: u64,
+}
+
+/// The guard's note, if the previous run left a well-formed one. Anything else (absent, empty,
+/// torn by the abort) reads as no note, and the death stays "vanished".
+fn read_note(path: &Path) -> Option<Note> {
+    let mut bytes = Vec::new();
+    File::open(path)
+        .ok()?
+        .take(256)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 fn sanitize(raw: &str) -> String {

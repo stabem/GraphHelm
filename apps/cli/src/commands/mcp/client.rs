@@ -482,8 +482,13 @@ impl ApiClient {
             headers.push(("Idempotency-Key".to_owned(), key.to_owned()));
             let mut mutation_headers = self.mutation_headers();
             if let Some(lane) = lane {
-                mutation_headers[0].1 = lane.to_owned();
-                mutation_headers[1].1 = "agent".to_owned();
+                for (name, value) in &mut mutation_headers {
+                    match name.as_str() {
+                        "X-GraphHelm-Actor" => lane.clone_into(value),
+                        "X-GraphHelm-Actor-Type" => "agent".clone_into(value),
+                        _ => {}
+                    }
+                }
             }
             headers.extend(mutation_headers);
         }

@@ -1972,6 +1972,14 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
             session.replies[index]
         );
     }
+    // A lane the header could not carry is refused by the MCP server itself, before any request.
+    assert!(
+        session.replies[14]["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("lane must be")),
+        "{:?}",
+        session.replies[14]
+    );
     assert!(!String::from_utf8_lossy(&session.output.stdout).contains(&raw_credential));
     let events = http_get_json(
         &harness.base,

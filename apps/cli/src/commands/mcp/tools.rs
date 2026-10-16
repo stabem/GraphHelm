@@ -710,8 +710,10 @@ fn signal_schema() -> serde_json::Value {
             // fills `id`, `emittedAt` and `source` (#1284), which that schema requires, and a
             // client that cannot resolve a remote `$ref` would refuse the tool outright.
             "signal": {"type": "object", "description": "schemas/graph-signal.schema.json; id, emittedAt, source optional"},
-            "lane": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]+$", "description": "Lane signed by the local credential file; pair with credentialFile."},
-            "credentialFile": {"type": "string", "minLength": 1, "description": "Local path to a pre-minted lane credential; pair with lane. Never pass credential contents."},
+            // The lane's shape is checked in `call`, not here: the advertised schema is a hint a
+            // client may skip, and every byte here is in every tools/list reply.
+            "lane": {"type": "string", "description": "Lane to sign as; with credentialFile."},
+            "credentialFile": {"type": "string", "description": "Path to the lane's credential file, never its contents."},
             "evidenceOut": {"type": "string"},
             // #313: images beside the signal, never inside the envelope. The Runtime re-checks
             // every cap and the magic bytes; this schema only closes the wire shape.
@@ -1641,6 +1643,23 @@ pub(crate) fn call(
             data: None,
             code: INVALID_PARAMS,
             message: "signal needs lane and credentialFile together".to_owned(),
+        };
+    }
+    // The lane becomes the X-GraphHelm-Actor header: refuse any other shape before it travels.
+    if name == "signal"
+        && arguments.get("lane").is_some_and(|lane| {
+            !lane.as_str().is_some_and(|lane| {
+                (1..=128).contains(&lane.len())
+                    && lane.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-')
+                    })
+            })
+        })
+    {
+        return HandlerOutcome::Error {
+            data: None,
+            code: INVALID_PARAMS,
+            message: "lane must be 1 to 128 of A-Z a-z 0-9 . _ : -".to_owned(),
         };
     }
     if name == "signal"

@@ -839,6 +839,10 @@ export function useActorAliases(
 
 const NO_ALIASES: Record<string, string> = {};
 
+function isKeelCard(event: RuntimeEvent): boolean {
+  return typeof event.payload === "object" && event.payload !== null && (event.payload as { kind?: unknown }).kind === "keel.card";
+}
+
 export function useEnvelopes(
   events: RuntimeEvent[],
   executionId: string | undefined,
@@ -866,6 +870,9 @@ export function useEnvelopes(
     const carriers = events.filter(
       (event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && event.evidenceRefs.length > 0,
     ).reverse();
+    // Keel cards first, then newest first: a long run's cards are old records, and behind thousands
+    // of newer carriers their rows read "reading" for minutes (gh-team: 15 cards behind 6,944).
+    carriers.sort((a, b) => Number(isKeelCard(b)) - Number(isKeelCard(a)));
     setEnvelopes((previous) => ({
       forId: executionId,
       map: previous.forId === executionId ? previous.map : {},

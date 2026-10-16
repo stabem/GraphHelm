@@ -2055,30 +2055,17 @@ mod tests {
     /// Cost: in memory only.
     #[test]
     fn a_screen_intent_is_written_validated_and_approved() {
-        let source = "schema: graphhelm.journey-flow/1
-id: itens
-title: Usuario cria um item
-status: draft
-approved: null
-base: http://127.0.0.1:3000
-actors: [owner]
-secrets: []
-risks: []
-screens:
-  - {id: a, url: /a, state: stable, expect: [], scope: unknown}
-edges: []
-paths: {main: []}
-drift: []
-";
-        let plain: Value = serde_yaml_ng::from_str(source).unwrap();
+        let plain: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_flow/checkout.journey.yaml"
+        ))
+        .unwrap();
         let mut with = plain.clone();
         with["screens"][0]["intent"] = json!("Confirma que a obra foi criada");
         let schemas = flow_schemas().unwrap();
-        assert!(
-            schemas
-                .validate(FLOW_SCHEMA_ID, &with, "journey-flow")
-                .is_empty()
-        );
+        let base = schemas.validate(FLOW_SCHEMA_ID, &plain, "journey-flow");
+        assert!(base.is_empty(), "fixture invalid: {base:?}");
+        let accepted = schemas.validate(FLOW_SCHEMA_ID, &with, "journey-flow");
+        assert!(accepted.is_empty(), "{accepted:?}");
         let mut empty = plain.clone();
         empty["screens"][0]["intent"] = json!("");
         assert!(
@@ -2097,7 +2084,11 @@ drift: []
         let mut edited = with.clone();
         edited["screens"][0]["intent"] = json!("Outra coisa");
         assert_ne!(approval_digest(&edited), approval_digest(&with));
-        assert!(!canonical(&plain, false).contains("intent"));
+        // Only the one line is new: a flow without a screen intent keeps its exact bytes.
+        assert_eq!(
+            written.replacen("    intent: Confirma que a obra foi criada\n", "", 1),
+            canonical(&plain, false)
+        );
     }
 
     /// #1296: `name` and `feature` only label a journey for the Studio rail. Defect named: adding

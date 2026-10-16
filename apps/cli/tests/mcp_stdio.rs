@@ -1991,7 +1991,9 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
     std::fs::create_dir_all(package.join("fixtures")).unwrap();
     let resource = b"{}";
     std::fs::write(package.join("fixtures/signal.json"), resource).unwrap();
-    let resource_hash = graphhelm_graph::raw_content_sha256(resource).unwrap().to_string();
+    let resource_hash = graphhelm_graph::raw_content_sha256(resource)
+        .unwrap()
+        .to_string();
     let manifest = serde_json::json!({
         "apiVersion": "p50.dev/v1", "kind": "Extension",
         "metadata": {"id": "graphhelm-mcp-lane-test", "version": "1.0.0", "publisher": "graphhelm"},
@@ -2013,30 +2015,71 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
             "compatibility": {"framework": ">=0.1"}
         }
     });
-    std::fs::write(package.join("extension.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
-    let digest = graphhelm_schema::validate_extension_package(&package).unwrap().package_digest;
+    std::fs::write(
+        package.join("extension.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let digest = graphhelm_schema::validate_extension_package(&package)
+        .unwrap()
+        .package_digest;
     let capability_file = harness._directory.path().join("capability.json");
     std::fs::write(&capability_file, serde_json::to_vec(&serde_json::json!({
         "packageDigest": digest, "contributionId": "fixtures-signal-json", "actor": "agent-chat",
         "allowedTools": ["signal"], "revoked": false, "expiresAt": 9_999_999_999_u64
-    })).unwrap();
+    })).unwrap()).unwrap();
     let audit_file = harness._directory.path().join("capability-audit.jsonl");
-    let capability_session = mcp_session_with(&[
-        "--url", &harness.base, "--token-file", harness.token_file.to_str().unwrap(),
-        "--actor", "agent-chat", "--actor-type", "agent", "--package", package.to_str().unwrap(),
-        "--capability-token-file", capability_file.to_str().unwrap(),
-        "--capability-audit-log", audit_file.to_str().unwrap(),
-    ], &[], &[
-        initialize_request(1, "2025-06-18"), initialized_notification(),
-        bound("capability", signal("capability", "lane-alpha", "operator_note", "no".into()), "lane-alpha", &lane_a),
-    ]);
+    let capability_session = mcp_session_with(
+        &[
+            "--url",
+            &harness.base,
+            "--token-file",
+            harness.token_file.to_str().unwrap(),
+            "--actor",
+            "agent-chat",
+            "--actor-type",
+            "agent",
+            "--package",
+            package.to_str().unwrap(),
+            "--capability-token-file",
+            capability_file.to_str().unwrap(),
+            "--capability-audit-log",
+            audit_file.to_str().unwrap(),
+        ],
+        &[],
+        &[
+            initialize_request(1, "2025-06-18"),
+            initialized_notification(),
+            bound(
+                "capability",
+                signal("capability", "lane-alpha", "operator_note", "no".into()),
+                "lane-alpha",
+                &lane_a,
+            ),
+        ],
+    );
     assert_eq!(capability_session.replies.len(), 2);
-    assert!(capability_session.replies[1]["error"]["message"].as_str()
-        .is_some_and(|message| message.contains("bound lane differs")), "{:?}", capability_session.replies);
-    let after = http_get_json(&harness.base, &harness.token,
-        &format!("/v1/executions/{execution}/events?limit=1000"));
-    assert_eq!(after["data"]["events"].as_array().unwrap().iter()
-        .filter(|event| event["kind"]["type"] == "signal_recorded").count(), 6);
+    assert!(
+        capability_session.replies[1]["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("bound lane differs")),
+        "{:?}",
+        capability_session.replies
+    );
+    let after = http_get_json(
+        &harness.base,
+        &harness.token,
+        &format!("/v1/executions/{execution}/events?limit=1000"),
+    );
+    assert_eq!(
+        after["data"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["kind"]["type"] == "signal_recorded")
+            .count(),
+        6
+    );
 }
 
 #[test]

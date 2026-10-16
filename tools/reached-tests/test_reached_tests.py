@@ -25,6 +25,8 @@ PACKAGES = [
      "bundles": {"keel_check": "development", "development_plugin": "development", "journey_scope_guard": "journeys"}},
     {"name": "graphhelm-host-adoption", "dir": "adapters/host-adoption", "deps": [],
      "tests": [{"name": "release_packages", "src": "adapters/host-adoption/tests/release_packages.rs"}], "bundles": {}},
+    {"name": "graphhelm-protocols", "dir": "core/protocols", "deps": [],
+     "tests": [{"name": "canonical_golden", "src": "core/protocols/tests/canonical_golden.rs"}], "bundles": {}},
 ]
 EMBEDDED = {"extensions/builtin/graphhelm-jpd/schemas/journey-contract.schema.json": {"graphhelm-cli"}}
 
@@ -773,6 +775,11 @@ class Reach(unittest.TestCase):
         self.assertIn(("graphhelm-cli", "development", "development_plugin"), single)
         self.assertEqual(validate, ["extensions/builtin/graphhelm-development-contracts"])
         self.assertEqual(other, [])
+
+    def test_an_extension_manifest_change_reaches_the_canonical_golden(self):
+        """#1425: a re-pinned extension.json digest turned main red on canonical_golden unseen."""
+        _, single, *_ = reach("extensions/builtin/graphhelm-development-contracts/extension.json")
+        self.assertIn(("graphhelm-protocols", "canonical_golden", None), single)
 
     def test_studio_files_reach_vitest_related_and_nothing_in_rust(self):
         whole, single, studio, *_ = reach("apps/studio/src/runtime/team-tasks.ts")

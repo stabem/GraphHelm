@@ -15,7 +15,8 @@ use std::sync::{Mutex, OnceLock};
 
 use graphhelm_events::{EvidenceOpener, EvidenceRead};
 use graphhelm_execution::tasks::{
-    FoldSlice, Route, TaskEventRecord, TaskState, fold_task_events_with_routes, parse_task_event,
+    FoldSlice, Route, TaskEventRecord, TaskState, TaskStep, fold_task_events_with_routes,
+    parse_task_event,
 };
 use graphhelm_protocols::{EventKind, EvidenceId, PersistedTimestamp};
 use serde::Serialize;
@@ -51,6 +52,66 @@ pub struct TasksView {
     /// #1234 (plan A7): lane liveness judged once, here, from the declared budgets and the
     /// Runtime's own event times at `now`; the Studio reads it instead of keeping thresholds.
     pub liveness: Liveness,
+}
+
+/// How much of the fold a read answers. `Open` is every door's default: a long-lived run's
+/// record, slice and route histories grow without bound (3.9 MB on the gh-team run), past what
+/// a model can read in one tool reply. `Full` is the whole `TasksView`, for the Studio's lane
+/// timeline, which draws those histories.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TasksDepth {
+    Open,
+    Full,
+}
+
+/// The default reply: the tasks still in flight and everything judged about them, sized by the
+/// open work rather than by the run's history. `endedTasks` counts the merged slices left out,
+/// so a reader knows the full view has more.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenTasksView {
+    pub view: &'static str,
+    pub execution_id: String,
+    pub head_sequence: u64,
+    pub tasks: Vec<TaskState>,
+    pub ended_tasks: usize,
+    pub rejected: usize,
+    pub opened: usize,
+    pub now: PersistedTimestamp,
+    pub leases: Vec<ClaimLease>,
+    pub stalls: Vec<TaskStall>,
+    pub liveness: Liveness,
+}
+
+impl TasksView {
+    /// The reply a door serves at `depth`: the full view unchanged, or the open board.
+    pub fn at_depth(self, depth: TasksDepth) -> serde_json::Value {
+        let value = match depth {
+            TasksDepth::Full => serde_json::to_value(self),
+            TasksDepth::Open => {
+                let total = self.tasks.len();
+                let tasks: Vec<TaskState> = self
+                    .tasks
+                    .into_iter()
+                    .filter(|task| task.step != TaskStep::Merged)
+                    .collect();
+                serde_json::to_value(OpenTasksView {
+                    view: "open",
+                    execution_id: self.execution_id,
+                    head_sequence: self.head_sequence,
+                    ended_tasks: total - tasks.len(),
+                    tasks,
+                    rejected: self.rejected,
+                    opened: self.opened,
+                    now: self.now,
+                    leases: self.leases,
+                    stalls: self.stalls,
+                    liveness: self.liveness,
+                })
+            }
+        };
+        value.expect("a view of serializable fold types")
+    }
 }
 
 /// #1234: a lane with an open obligation is `silent` once it has recorded nothing of any kind for

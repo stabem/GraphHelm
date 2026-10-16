@@ -1460,6 +1460,10 @@ pub enum ExecutionCommand {
             requires = "key_id"
         )]
         tasks: bool,
+        /// #1449: with `--tasks`, the whole fold (every record, slice and route of the run's
+        /// history) instead of the open board `--tasks` answers by default.
+        #[arg(long, requires = "tasks")]
+        full_tasks: bool,
         #[arg(long)]
         keyring: Option<PathBuf>,
         #[arg(long)]

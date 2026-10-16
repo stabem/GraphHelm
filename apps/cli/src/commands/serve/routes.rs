@@ -1913,12 +1913,24 @@ pub(super) async fn project_journeys(State(state): State<ServeState>) -> Respons
 /// `graphhelm execution status --tasks`'s `tasks` block: every task slice with its lit step,
 /// lane, PR, head, claim sequence and last heartbeat, folded in the Runtime from the run's
 /// verified `task.*` envelopes (opened with the Runtime's own keyring). Read-only; an agent
-/// session token reaches it like every other `GET /v1/executions/...`.
+/// session token reaches it like every other `GET /v1/executions/...`. #1449: the default reply
+/// is the open board (`TasksDepth::Open`); `?full=1` answers the whole fold the Studio draws.
 pub(super) async fn tasks(
     State(state): State<ServeState>,
     UrlPath(execution_id): UrlPath<String>,
+    RawQuery(query): RawQuery,
 ) -> Response {
     const COMMAND: &str = "execution.tasks";
+    let depth = if query
+        .as_deref()
+        .unwrap_or("")
+        .split('&')
+        .any(|pair| pair == "full=1")
+    {
+        execution::tasks::TasksDepth::Full
+    } else {
+        execution::tasks::TasksDepth::Open
+    };
     let Some(keyring) = state.sealing.clone() else {
         return respond_failure(
             COMMAND,
@@ -1934,7 +1946,7 @@ pub(super) async fn tasks(
         execution::tasks::with_shared_cache(&key, |cache| {
             execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, cache)
         })
-        .map(|view| serde_json::to_value(view).expect("a view of serializable fold types"))
+        .map(|view| view.at_depth(depth))
     })
     .await
     else {

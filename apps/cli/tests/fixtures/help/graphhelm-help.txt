@@ -1166,6 +1166,9 @@ Options:
       --tasks
           #1149: also fold the execution's `task.*` records into `tasks`, the same projection `GET /v1/executions/{id}/tasks` and the MCP tool `tasks` serve. Needs `--execution` and the sealing keyring (`--keyring`, `--key-id`) that opens the envelopes
 
+      --full-tasks
+          #1449: with `--tasks`, the whole fold (every record, slice and route of the run's history) instead of the open board `--tasks` answers by default
+
       --keyring <KEYRING>
           
 

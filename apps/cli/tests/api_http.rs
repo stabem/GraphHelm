@@ -2798,7 +2798,7 @@ fn two_concurrent_claims_on_one_task_record_exactly_one() {
             "round {round}: exactly one claim lands: {replies:?}"
         );
         let tasks = get_json(
-            &format!("{base}/v1/executions/{execution}/tasks"),
+            &format!("{base}/v1/executions/{execution}/tasks?full=1"),
             Some(&token),
         );
         let claims = tasks["data"]["records"]
@@ -3836,7 +3836,7 @@ fn the_tasks_route_folds_the_runs_task_records_into_slices() {
         &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
     );
     let reply = get_json(
-        &format!("{base}/v1/executions/{execution}/tasks"),
+        &format!("{base}/v1/executions/{execution}/tasks?full=1"),
         Some(&token),
     );
     assert_eq!(reply["ok"], Value::Bool(true), "{reply}");
@@ -3906,7 +3906,7 @@ fn the_tasks_route_folds_the_runs_task_records_into_slices() {
     // unchanged head opens none; one more record opens exactly one and is drawn.
     assert_eq!(data["opened"], 2, "{data}");
     let again = get_json(
-        &format!("{base}/v1/executions/{execution}/tasks"),
+        &format!("{base}/v1/executions/{execution}/tasks?full=1"),
         Some(&token),
     );
     assert_eq!(again["data"]["opened"], 0, "{again}");
@@ -3921,7 +3921,7 @@ fn the_tasks_route_folds_the_runs_task_records_into_slices() {
         .to_string(),
     );
     let third = get_json(
-        &format!("{base}/v1/executions/{execution}/tasks"),
+        &format!("{base}/v1/executions/{execution}/tasks?full=1"),
         Some(&token),
     );
     assert_eq!(third["data"]["opened"], 1, "{third}");
@@ -3935,6 +3935,31 @@ fn the_tasks_route_folds_the_runs_task_records_into_slices() {
         third["data"]["headSequence"],
         head_sequence(&base, &token, execution),
         "the third reply names the moved head"
+    );
+    // #1449: without `full=1` the reply is the open board. It must not grow with the run's
+    // history: the merged slice is counted, not listed, and the record, slice and route
+    // histories are left out, while the leases, stalls and liveness the reconciler and the
+    // board read stay.
+    let open = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks"),
+        Some(&token),
+    );
+    let open = &open["data"];
+    assert_eq!(open["view"], "open", "{open}");
+    assert_eq!(open["tasks"], serde_json::json!([]), "{open}");
+    assert_eq!(open["endedTasks"], 1, "{open}");
+    for history in ["records", "slices", "routes"] {
+        assert!(
+            open.get(history).is_none(),
+            "{history} in the open view: {open}"
+        );
+    }
+    assert!(open["leases"].is_array(), "{open}");
+    assert!(open["stalls"].is_array(), "{open}");
+    assert!(open["liveness"]["lanes"].is_array(), "{open}");
+    assert_eq!(
+        open["headSequence"], third["data"]["headSequence"],
+        "{open}"
     );
 }
 

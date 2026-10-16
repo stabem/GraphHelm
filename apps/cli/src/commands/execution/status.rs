@@ -542,7 +542,7 @@ pub fn run(
     execution: Option<&str>,
     html: Option<&Path>,
     file: Option<&Path>,
-    tasks: Option<&super::signal::SignalKeyring>,
+    tasks: Option<(&super::signal::SignalKeyring, super::tasks::TasksDepth)>,
 ) -> Outcome {
     // #134: `--file` is loaded, linted and published the way `resume` does it, so the version
     // whose hash is compared below is the same object `resume` would redispatch from.
@@ -597,10 +597,9 @@ pub fn run(
     // opened and the fold are checked against the one deadline minted above, so `--tasks` can
     // never be a second unbounded history read behind a budgeted first one.
     let value = match (value, tasks, execution) {
-        (Ok(mut value), Some(keyring), Some(execution)) => {
+        (Ok(mut value), Some((keyring, depth)), Some(execution)) => {
             super::tasks::read(events, execution, keyring, &budget).map(|view| {
-                value["tasks"] = serde_json::to_value(view)
-                    .expect("a view built from serializable fold types serializes");
+                value["tasks"] = view.at_depth(depth);
                 value
             })
         }

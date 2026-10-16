@@ -372,27 +372,40 @@ impl ApiClient {
     /// returned or changed.
     fn discover_project(&self, project_id: &str) -> Result<DiscoveredEndpoint, String> {
         use graphhelm_model_gateway::transport::{HttpTransport, TransportRequest};
-        use std::time::Duration;
+        use std::time::{Duration, Instant};
 
         const HEALTH_TIMEOUT: Duration = Duration::from_secs(1);
+        const HEALTH_BUDGET: Duration = Duration::from_secs(5);
         let fail = |reason: &str| format!("project Runtime discovery: {reason}");
         let dir = crate::commands::runtime_record::registry_dir()
             .ok_or_else(|| fail("no home directory and no GRAPHHELM_RUNTIME_DIR"))?;
         let records = crate::commands::runtime_record::read_project(&dir, project_id)
             .map_err(|error| fail(&error))?;
         let mut live = Vec::new();
+        let deadline = Instant::now() + HEALTH_BUDGET;
+        let mut budget_exhausted = false;
         for record in records {
             if !is_loopback_url(&record.url) || super::url::validate_base(&record.url).is_err() {
                 continue;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                budget_exhausted = true;
+                break;
             }
             let health = TransportRequest {
                 method: "GET",
                 url: super::url::join(&record.url, "/health")?,
                 headers: Vec::new(),
                 body: Vec::new(),
-                timeout: HEALTH_TIMEOUT,
+                timeout: HEALTH_TIMEOUT.min(remaining),
             };
-            let Ok(response) = self.transport.execute(&health) else {
+            let response = self.transport.execute(&health);
+            if Instant::now() >= deadline {
+                budget_exhausted = true;
+                break;
+            }
+            let Ok(response) = response else {
                 continue;
             };
             if response.status != 200 {
@@ -405,6 +418,11 @@ impl ApiClient {
             {
                 live.push(record);
             }
+        }
+        if budget_exhausted {
+            return Err(fail(
+                "health probing budget exhausted before all candidate records were checked; refusing partial discovery",
+            ));
         }
         if live.len() != 1 {
             return Err(fail(if live.is_empty() {

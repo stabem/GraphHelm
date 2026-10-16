@@ -1871,6 +1871,7 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
         "reply".into(),
     );
     reply["replyTo"] = serde_json::json!("ordinary");
+    let raw_credential = std::fs::read_to_string(&lane_a).unwrap();
     let calls = [
         initialize_request(1, "2025-06-18"),
         initialized_notification(),
@@ -1947,14 +1948,23 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
             "lane alpha",
             &lane_a,
         ),
+        tool_call(
+            serde_json::json!("raw-credential"),
+            "signal",
+            serde_json::json!({
+                "executionId": execution,
+                "signal": signal("raw-credential", "lane-alpha", "operator_note", "no".into()),
+                "lane": "lane-alpha", "credentialFile": raw_credential
+            }),
+        ),
     ];
     let session = harness.session(&calls);
-    assert_eq!(session.replies.len(), 15, "{:?}", session.replies);
+    assert_eq!(session.replies.len(), 16, "{:?}", session.replies);
     for index in [1, 2, 3, 4, 5, 8, 9] {
         let (error, reply) = tool_envelope(&session.replies[index]);
         assert!(!error, "call {index}: {reply}");
     }
-    for index in [6, 7, 10, 11, 12, 13, 14] {
+    for index in [6, 7, 10, 11, 12, 13, 14, 15] {
         let (error, _) = tool_envelope(&session.replies[index]);
         assert!(
             error || session.replies[index].get("error").is_some(),
@@ -1962,6 +1972,7 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
             session.replies[index]
         );
     }
+    assert!(!String::from_utf8_lossy(&session.output.stdout).contains(&raw_credential));
     let events = http_get_json(
         &harness.base,
         &harness.token,

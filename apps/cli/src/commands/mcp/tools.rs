@@ -1643,6 +1643,20 @@ pub(crate) fn call(
             message: "signal needs lane and credentialFile together".to_owned(),
         };
     }
+    if name == "signal"
+        && str_arg(arguments, "credentialFile").is_some_and(|file| {
+            file.len() == 64
+                && file
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        })
+    {
+        return HandlerOutcome::Error {
+            data: None,
+            code: INVALID_PARAMS,
+            message: "credentialFile must name a local file, not credential contents".to_owned(),
+        };
+    }
 
     // `wake_wait` is the one tool whose work is NOT an API request: it blocks on the local
     // rendezvous. It is handled before the request table rather than inside it, because

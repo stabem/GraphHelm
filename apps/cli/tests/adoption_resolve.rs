@@ -1271,3 +1271,68 @@ fn setup_applies_and_restores_the_init_project_registration() {
         }
     }
 }
+
+/// A current block beside a missing user registration: the rerun still answers the block `keep`
+/// and plans the registration, instead of refusing the instruction file as unanswered.
+#[test]
+fn a_current_block_beside_a_missing_registration_still_plans_the_registration() {
+    let user_json = br#"{"numStartups":3,"mcpServers":{"mine":{"command":"my-server","args":[]}}}"#;
+    let (p, h) = seeded();
+    std::fs::write(h.path().join(".claude/CLAUDE.md"), b"# Mine\r\n").unwrap();
+    std::fs::write(h.path().join(".claude.json"), user_json).unwrap();
+    let s = private_dir();
+    let resolve = |out: &Path| {
+        json(
+            setup(p.path(), h.path())
+                .arg("--resolve")
+                .arg("project/AGENTS.md=keep")
+                .arg("--resolve")
+                .arg("home/.claude/CLAUDE.md=graphhelm-block")
+                .arg("--resolve")
+                .arg("home/.claude.json=register-mcp")
+                .arg("--out")
+                .arg(out)
+                .output()
+                .unwrap(),
+        )
+    };
+    let first = s.path().join("first.json");
+    let (ok, value) = resolve(&first);
+    assert!(ok, "first resolve: {value}");
+    let digest = value["data"]["acceptance"]["digest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (ok, applied) = json(
+        setup(p.path(), h.path())
+            .arg("--state-root")
+            .arg(s.path())
+            .arg("--apply")
+            .arg(&first)
+            .arg("--accept")
+            .arg(&digest)
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "first apply: {applied}");
+    std::fs::write(h.path().join(".claude.json"), user_json).unwrap();
+
+    // The suggestions still name the current block while the registration is missing.
+    let (ok, preview) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{preview}");
+    assert!(
+        preview["data"]["suggestedResolutions"]
+            .as_array()
+            .unwrap()
+            .contains(&"home/.claude/CLAUDE.md=graphhelm-block".into()),
+        "{preview}"
+    );
+
+    let second = s.path().join("second.json");
+    let (ok, value) = resolve(&second);
+    assert!(ok, "mixed run refused: {value}");
+    assert!(
+        second.exists(),
+        "no plan written for the missing registration"
+    );
+}

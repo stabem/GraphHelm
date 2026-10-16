@@ -81,7 +81,15 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
         let mut already_applied = Vec::new();
         for text in &args.resolve {
             match parse_resolution(text, args, &registration, &inventory)? {
-                Some(resolution) => resolutions.push(resolution),
+                // A current block still answers its item `keep`; it is also already applied.
+                Some(resolution) => {
+                    if resolution.decision == graphhelm_policy::adoption::Decision::Keep
+                        && text.ends_with("=graphhelm-block")
+                    {
+                        already_applied.push(text.clone());
+                    }
+                    resolutions.push(resolution);
+                }
                 None => already_applied.push(text.clone()),
             }
         }
@@ -93,7 +101,11 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
                 .iter()
                 .all(|resolution| resolution.decision == graphhelm_policy::adoption::Decision::Keep)
         {
-            let kept: Vec<_> = resolutions.iter().map(|r| r.item.clone()).collect();
+            let kept: Vec<_> = resolutions
+                .iter()
+                .filter(|r| !already_applied.contains(&format!("{}=graphhelm-block", r.item)))
+                .map(|r| r.item.clone())
+                .collect();
             return Ok(serde_json::json!({
                 "inventory": inventory,
                 "plan": null,
@@ -291,17 +303,22 @@ fn suggestions(inventory: &serde_json::Value, args: &AdoptionSetupArgs) -> Vec<S
     if project_plugin && present("project/.mcp.json/mcp/graphhelm") {
         out.push("project/.mcp.json=use-plugin-mcp".to_owned());
     }
-    for id in ["home/.claude/CLAUDE.md", "home/AGENTS.md"] {
-        // A file whose block is already current has nothing left to suggest.
-        let current = item_path(id, args)
+    let current = |id: &str| {
+        item_path(id, args)
             .and_then(|path| read_bytes(&path).ok())
             .is_some_and(|before| {
                 std::str::from_utf8(&before)
                     .ok()
                     .and_then(upsert_block)
                     .is_some_and(|after| after.as_bytes() == before.as_slice())
-            });
-        if present(id) && !current {
+            })
+    };
+    let blocks = ["home/.claude/CLAUDE.md", "home/AGENTS.md"];
+    // A current block is suggested only while something else still needs work: its item must
+    // still be answered then, and alone it has nothing left to do.
+    let pending = !out.is_empty() || blocks.iter().any(|id| present(id) && !current(id));
+    for id in blocks {
+        if present(id) && (pending || !current(id)) {
             out.push(format!("{id}=graphhelm-block"));
         }
     }
@@ -322,7 +339,7 @@ fn item_path(item: &str, args: &AdoptionSetupArgs) -> Option<std::path::PathBuf>
 /// reviewed after-bytes from the item's current bytes, so they travel the same digest, `--out`,
 /// `--plan` and `--accept` path as a hand-written replacement, and a source that moves before
 /// `--apply` is refused as stale. `None`: the MCP item already carries this exact registration,
-/// or the block is already current, so there is nothing to decide.
+/// so there is nothing to decide; a block that is already current becomes `keep`.
 /// The two `register-mcp` entries: the project file names its project root, while the user file
 /// uses the host's active working directory to select the project.
 struct Registrations {
@@ -388,8 +405,11 @@ fn parse_resolution(
             let before = read_bytes(&item_path(item, args).ok_or_else(invalid)?)?;
             let text = std::str::from_utf8(&before).map_err(|_| invalid())?;
             let after = upsert_block(text).ok_or_else(invalid)?;
-            Ok((after.as_bytes() != before.as_slice())
-                .then(|| resolution(Decision::Replace, Some(after.into_bytes()))))
+            Ok(Some(if after.as_bytes() == before.as_slice() {
+                resolution(Decision::Keep, None)
+            } else {
+                resolution(Decision::Replace, Some(after.into_bytes()))
+            }))
         }
         "register-mcp" => {
             if !MCP_ITEMS.contains(&item) {

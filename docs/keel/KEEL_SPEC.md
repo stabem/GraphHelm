@@ -1,94 +1,87 @@
-# Keel: the development model GraphHelm installs
+# Keel: why the rules are what they are
 
-Status: accepted design for #1212, written 2026-09-22 from three inputs: the owner's order of the same day, a six-frame isolated ideation run (36 ideas, 18 named traps, 3 deepened), and an eight-angle web research sweep (93 findings that survived adversarial verification, 3 refuted). Sources are cited by URL where a mechanism or a number comes from one; a sentence without a citation is this repository's own decision. The model is named **Keel**: a keel is laid before any plank and is the part of the hull that resists drift. Three independent frames of the ideation arrived at the word; it fits the Helm.
+The rules are in [`KEEL.md`](../../KEEL.md) and the step files under [`keel/`](../../keel/). This
+page holds only the reasons and the sources, so a rule is never written twice.
 
-**Version:** rules file `keel.yaml` 1.6.0. **Current policy, which overrides the text below where they differ:** Keel is guidance and measurement, not punishment; count rules are signals for the reviewer (`surfaceEnforcement: signal`) and only objective contracts block (an unparseable diff, a card scope that is not a list of paths); the ladder is computed, reported and never applied (`ladder.enabled: false`) until a controlled comparison shows penalties add value over guidance alone; an agent starts from the card and searches on purpose; mutation is used only when it adds evidence; a test may be removed when its deletion record names the observer that still covers its obligation (Law 3); valid proof is reused and rerun only for changed inputs (Law 6). The position paper's section 7a records the review behind this policy.
+## The reader changed
 
-## 1. What Keel optimises, in order
+The classic books on code (Clean Code, The Pragmatic Programmer, Extreme Programming, Clean
+Architecture, Refactoring, A Philosophy of Software Design) were written for people typing and
+reading code. Here a model writes it and a model reads it. A model pays for every byte it reads,
+loses accuracy as its context fills, and pays a tool call for every file it opens. Keel keeps the
+book rules that still lower that cost or raise correctness, adapts the ones whose reason survives,
+and drops the ones that only helped a human eye.
 
-1. **Read tokens.** An agent loads a contract card and a symbol index, never the tree. Measured elsewhere: reads are about three quarters of an agent's spend ([SWE-Pruner](https://arxiv.org/html/2601.16746)); repository overviews in always-loaded context raised inference cost about 20% with no success gain ([arXiv 2602.11988](https://arxiv.org/abs/2602.11988)); selective, path-scoped context cut cache-creation tokens on every task at unchanged correctness ([arXiv 2607.27250](https://arxiv.org/html/2607.27250)).
-2. **Write tokens.** Code is written against a declared write surface; rewrite churn and speculative abstraction are signals for review under the guidance-first policy above. A log-format experiment found that compression reduced input tokens by about 17% while increasing total session tokens by about 67%. That experiment did not measure code architecture or billed delivery cost; the effect of cross-file indirection remains a hypothesis to test in Keel's own deliveries ([arXiv 2604.07502, sections 6.2.2 and 8.4.4](https://arxiv.org/html/2604.07502)).
-3. **Proof without useless tests.** A test exists to kill a defect for a named criterion. Measured elsewhere: line coverage saturates at 100% for LLM suites while mutation score varies 84–96% and correlates with fault detection at r = 0.11 ([arXiv 2609.24341](https://arxiv.org/abs/2609.24341)); LLM-written oracles capture actual, not expected, behaviour ([Autonoma](https://getautonoma.com/blog/ai-generated-tests-pass-but-dont-assert)); agents choose a mock 95% of the time when they add one ([Hora & Robbes, MSR 2026](https://arxiv.org/html/2410.10628)).
-4. **A watchdog that repairs and penalizes.** No source found closes this loop: fitness functions emit repair tasks, lint ledgers count fires, harness evolution reverts config edits, but nothing attributes a violation to a seat, folds a score, and feeds it into what that seat may do next. This is where Keel is new.
-
-## 2. The six laws
-
-Each law names the mechanism that enforces it and the rule ids it emits. Prose that is not backed by a mechanism is advice; the mechanism is the law.
-
-### Law 1 — Nothing exists without a promise and a consumer
-
-Work starts from a **contract card**: scope as a list of paths (no globs, no `..`), the exported symbols the change adds, acceptance criteria each naming the command that decides it, one refusal per failure mode. The card is bounded (`keel.yaml` `card`: paths, symbols, bytes) and refused before anyone reads it when over a bound (`keel.card.scope_empty`, `scope_too_wide`, `scope_not_a_path`, `too_many_symbols`, `too_large`). A new module, type or public function is a **door that needs a key**: a consumer that already exists in the graph before the author claimed its node. Spec ownership of every source file by exactly one node, with orphan code refused the way orphan tests already are, is the same law seen from the tree ([Spec Growth Engine](https://arxiv.org/pdf/2606.27045); [Tessl spec-as-source](https://github.com/Fission-AI/OpenSpec/blob/main/docs/getting-started.md)).
-
-Kept from: design-by-contract (the card is a contract), Pragmatic Programmer's tracer bullet (a card is one thin promise, end to end), JPD (the unit of work is an observable promise). Discarded: the narrative repository overview in always-loaded context (measured dead weight), and any prose-only "definition of done".
-
-**Retiring a consumer (2026-10-10, #711).** Law 1 also applies when a consumer disappears. In this
-repository, a change that removes, replaces or redirects a production caller inspects the displaced
-path: declarations, exclusive helpers/types, UI selectors, dependencies and tests. Remove only
-candidates whose production reachability and contract obligations have been checked; do not leave
-an old path alive solely because its tests still pass. A public or wire contract, platform-specific
-path, dynamic registration or manual tool may remain live without a local static caller.
-
-The author records the evidence and disposition in the PR's `Retirement:` entry; the existing
-reviewer checks it on the pinned head (`docs/process/DELIVERY.md` §3). Incomplete or stale coverage
-is unobserved, never proof of absence. A retained item needs a named consumer or contract; a
-speculative future use is not a consumer. Review uncertainty explicitly rather than deleting to
-satisfy a count. The record is scoped to the change, not a periodic repository sweep. This is a
-repository author/reviewer obligation, not a new automated classifier, hook, schema field or
-installed-plugin behavior; `keel check` does not certify absence of dead code.
-
-### Law 2 — The write surface is declared, spent, and refused by name
-
-A node spends from a budget vector {new module, new type, new public function, new dependency, new test}. Zero is a budget. A promise may declare an allowance at planning time, capped by `maxAllowance`. The classifier (`core/policy/src/keel.rs`, `classify_write`) reads the unified diff and charges each declaration it can recognise on one added line in Rust, TypeScript/JavaScript and Python; every overrun is a finding by name (`keel.surface.<kind>_over_budget`, detail `charged N, budget M`) that refuses the diff only under `surfaceEnforcement: block` — by default it is a signal for the reviewer — and never a score, because a score lets a large win on one kind buy sprawl on another — the same averaging refusal `token-efficiency.yaml` already makes. A file that gains more than `body.maxFileLinesDelta` lines in one diff is `keel.body.oversized_change`.
-
-Kept from: SOLID's single responsibility (one file, one reason to change) and dependency inversion **at the boundary only**; Clean Architecture's dependency rule as a tag matrix, not a directory ceremony ([Nx module boundaries](https://nx.dev/docs/features/enforce-module-boundaries); vertical slices, [Miller](https://jeremydmiller.com/2026/06/04/the-codebase-is-the-prompt-wolverine-vertical-slices-and-ai-assisted-development/)); Ousterhout's inline rule (a private one-call pass-through is indirection debt, [Normand](https://ericnormand.substack.com/p/zillions-of-one-line-functions)). Discarded: "always program to an interface", the full layer stack per feature, "extract until each function does one thing" as a hard cap on hotspots (extraction spread complexity across more files and the agent opened more of them, [SonarSource minimal pairs](https://arxiv.org/abs/2605.20049)), and DRY-by-Manager/Service/Util extraction across features (generic names break the grep navigation agents live by, [Akita](https://akitaonrails.com/en/2026/04/20/clean-code-for-ai-agents/)).
-
-### Law 3 — A test is born against a named defect
-
-A proof instrument exists to kill an executable defect for one criterion id in the card. Admission, in order: it cannot be vacuous (a test that cannot fail is refused before it runs), it asserts against an independent oracle (a literal or spec-derived value, never the subject's own output), it passes, and — only when that adds evidence the existing proof lacks — it kills a mutant on the changed lines that the pre-existing suite left alive ([Meta TestGen-LLM](https://arxiv.org/html/2402.09171); [ACH concern mutants](https://engineering.fb.com/2025/09/30/security/llms-are-the-key-to-mutation-testing-and-better-compliance/); [zylos discrimination artefacts](https://zylos.ai/research/2026-07-28-mutation-testing-test-discrimination-agent-written-code/)). Mocks only at contract-named boundaries (I/O, clock, randomness); fakes inside. Tests, contracts and the rules file are immutable to the implementing agent; a diff that adds `skip`/`ignore`/`xfail` is refused. A test may be removed when its deletion record names the observer that still covers its obligation (the `test-audit` skill's campaign mode; the same condition `docs/keel/BENCHMARK_PROTOCOL.md` sets for pruning: a test is pruned only when another observer covers the same obligation); a lower test count is never a win by itself ([Beck, augmented coding](https://newsletter.kentbeck.com/p/augmented-coding-beyond-the-vibes)). The meaningful-test policy this repository published on 2026-09-22 (#1198) is Law 3's prose; mutation is one instrument among several, used when it adds evidence, not a universal admission step.
-
-Kept from: XP's test-first **intent** (red first, as an attachable red-on-parent artefact rather than a self-discipline the model does not have — "the genie doesn't want to do TDD"), F.I.R.S.T. made checkable. Discarded: coverage as the gate, London-school "mock every collaborator", TDD enforced by prompt.
-
-**Journey-first note (1.4.0, #382).** For a user-visible change (a screen's scope path in the diff) the journey is the proof instrument: its replay at the head kills the defect "the user cannot complete this journey". A unit test is admitted on the same terms as before but is not required. For the invariant classes in `keel.yaml` `invariants` the law stands unchanged.
-
-### Law 4 — Penalty is a routing state, not a message
-
-**Implemented and off by default (`ladder.enabled: false`, revision above): while off, `effective_mode` is always `full` and the rung is only reported.** When enabled, drift and proof fold over a seat's last `windowNodes` records into a rung: `full` → `contract_only` (no new module, type or dependency) → `patch_only` (existing bodies only) → `propose_only` (a plan for another seat). Every `strikesPerRung` net strikes drop one rung; credit comes only from a passing named proof (`creditPerProvenPromise`); a revert refunds nothing; credit is never banked ahead of drift. The fold is `core/policy/src/keel.rs` `ladder`, pure over the Event Store. Each rung is a smaller write **shape**, not a smaller number: an allowance cannot reopen a closed rung. The repair node's own cost is charged to the offender's ledger (slice 3), and a reviewer lane that vouched for a head the watchdog later debits is debited at a smaller tariff, so the ladder disciplines the lane set, not only authors.
-
-This law is the part no source has. The nearest neighbours — [archfit](https://asdecided.com/articles/how-to-prevent-architectural-drift-from-ai-coding-agents) emits a repair task, [AgentLint](https://github.com/mauhpr/agentlint) keeps a session fire ledger with an escalating severity ladder, [AHE](https://arxiv.org/abs/2604.25850) reverts config edits whose predictions fail — stop before attribution to a seat and before feeding the score into routing, budget or model tier. GraphHelm already has the primitives the neighbours lack: the identity line per lane, `amend_budget`, route eligibility, and an append-only Event Store the fold can replay.
-
-### Law 5 — The enforcer is itself receipted and pinned
-
-The rules file is versioned (`keel.yaml` `version`) and content-addressed by the package digest; the version travels with every verdict (`Classification.policy_version`). A refusal is an event carrying rule id, config version, offending diff hash and actor; a penalty that does not replay is void; a waiver carries the six required fields the code-rule resolver already demands and an expiry. Unreadable evidence is an authoring fault, never a verdict — the same distinction the gate registry already draws. The watchdog earns the right to gate the way every registered gate does: by rejecting a bred suite of useless-but-green specimens (`tools/pathogens`), with its suite digest in `GateCertified` so growing the suite voids old certifications by comparison.
-
-Kept from: GraphHelm's own gate-certification design, hook exit-code contracts ([Claude Code hooks](https://code.claude.com/docs/en/hooks)), state-bound evidence (a verdict names the head it judged, [arXiv 2607.24604](https://arxiv.org/html/2607.24604)).
-
-### Law 6 — Verification is proportional to what the change can reach
-
-Owner order 2026-09-23: *keel also serves to optimise time.* The unit of cost is the whole delivery, and wall-clock spent on a check the change cannot affect is cost with no evidence bought. Verification runs what the change can reach and nothing else: a Markdown edit that no code reads needs no build, a Rust edit runs the tests of the crates that depend on it, and only a change to the schemas, the protocols or the dependency graph runs the whole workspace. Since 2026-09-24 there is no separate gate: the author and one reviewer run the reached tests and name them in the pull request (`docs/process/DELIVERY.md`). Two failure directions and they are not symmetric: running too little ships a defect, so every doubt still widens to the whole workspace; running too much only wastes time, so it is corrected rather than tolerated. **When a lane finds a check that ran without being reachable, that is drift in the method, recorded with its cause and fixed like any other** — the rule that produced it is named (the #1216 body traces the full gate on Markdown to three rules, each safe alone), and the fix carries a control proving the narrower path still runs the check when the change does reach it. **Reuse valid proof; rerun only for changed inputs**: a result already recorded for the same inputs (the same head, toolchain and platform) is evidence, and running it again buys nothing. Reuse applies within one lane and never replaces the reviewer's own run of the reached tests (`docs/process/DELIVERY.md` §4).
-
-**Reach note (1.4.0, #382).** Verification reach is read from the path classes the policy declares, not argued per PR; the planner's record (`keel.plan`, phase B of #382) will be the reach decision, and a review that disagrees raises it.
-
-## 3. What the classifier is and is not
-
-`classify_write` is a line grammar over a diff, not a parser. It recognises declarations from one added line; it does not see a function grow inside an existing body (bounded only by the per-file cap), does not resolve re-exports, macros, `impl` blocks adding methods, TypeScript namespace merging or Python dynamic attributes, and reads dependency manifests by section heading. Each is a sealed limit; the reader who needs the stronger claim writes the parser and the pathogen that fails without it. Its failure directions are asymmetric: too wide refuses correct work and teaches agents to route around it with waivers; too narrow lets sprawl through while reporting green, which is worse because a green watchdog is trusted. The first slice ships the grammar with tests at both sides of every bound and every language on its own diff; the pathogen suite that certifies it as a gate is slice 2.
-
-## 4. Slices
-
-| Slice | Delivers | Touches |
+| From | Rule | Keel |
 |---|---|---|
-| 1 (this PR) | Spec; `keel.yaml` + schema + fixtures + `keel` skill in the development-contracts package; `core/policy::keel` (`classify_write`, `ladder`, `check_card`) with tests | package, `core/policy` |
-| 2 | `gate-keel` registered in `quality.rs` with its pathogen suite; evidence = diff + card + test report; mutant-kill admission for tests | `apps/cli/commands/quality.rs`, `tools/pathogens` |
-| 3 | `KeelDebit` events; the ladder folded per actor from the Event Store; wired to `amend_budget` and route eligibility; repair cost charged to the offender | runtime driver (after #1204 lands) |
-| 4 | Contract index generated deterministically from the AST per unit (the read half of Law 1), served through `compile_context` instead of files | `core/architect`, context compiler |
+| Clean Code | meaningful names | kept: `keel.names`, made stricter for search (`keel.names.one`, no bare flags) |
+| Clean Code | small functions, extract until each does one thing | dropped: every extraction is one more symbol to open; replaced by deep modules (`keel.deep`) |
+| Clean Code | comments are a failure, code explains itself | adapted: a comment carries only the why (`keel.comments`), and every file carries one purpose line (`keel.purpose`) |
+| Clean Code | leave the campsite cleaner | dropped: it pulls the agent out of its card; a neighbour's defect is named in the pull request |
+| Pragmatic Programmer | DRY | adapted: no duplicate knowledge, abstraction on the third copy (`keel.dup`, `keel.dup.third`) |
+| Pragmatic Programmer | do not program by coincidence | kept: the cause comes before the fix (`keel.cause`) |
+| Pragmatic Programmer | orthogonality | kept as cohesion: split what never talks, merge what always changes together |
+| Extreme Programming | YAGNI, simple design | kept: add only what the promise needs |
+| Extreme Programming | test first | adapted: end to end first; isolated tests only where end to end cannot reach |
+| Extreme Programming | refactor mercilessly | dropped as a habit; a refactor is its own structural commit inside a card |
+| Clean Architecture | dependency rule | kept: dependencies point inward (`keel.deps`) |
+| Clean Architecture | interfaces and layers per feature | dropped: indirection a model must follow; interfaces only at I/O |
+| Clean Architecture | screaming architecture | adapted: a feature lives together in a folder named after it (`keel.slice`) |
+| Kent Beck | separate structure from behaviour | kept: `keel.commit.kind` |
+| Ousterhout | deep modules, define errors out of existence | kept: `keel.deep`, `keel.rel.no_impossible` |
 
-The optional [`keel test validation`](KEEL_TEST_VALIDATION.md) command collects journey execution
-evidence. It distinguishes generated functions observed in the browser from unobserved candidates
-and unknown source coverage; it cannot establish that a declaration is safe to delete.
+## Why each group of rules
 
-## 5. Gaps the research names, kept open on purpose
+**Read cost.** Reads are most of an agent's spend. In the SWE-agent ablation, viewing a file 100
+lines at a time solved 18.0% of SWE-bench Lite against 12.7% with the whole file in view
+([arXiv 2405.15793](https://arxiv.org/html/2405.15793)). The size of what is read matters, not the
+size of the file, which is why Keel has no line limit and asks agents to read the symbol, not the
+file. Context files loaded in every session raised inference cost by more than 20% with no gain in
+success ([arXiv 2602.11988](https://arxiv.org/abs/2602.11988)), which is why `KEEL.md` stays short and
+the step files load only for their step. Passing tool output teaches nothing and costs tokens
+([HumanLayer](https://www.humanlayer.dev/blog/context-efficient-backpressure)), hence `keel.tool.quiet`.
 
-Write-token economy has no direct instrument anywhere (first-write survival to merge, patch precision) — slice 3 will measure it from the Event Store before claiming it. "The card is answerable without opening bodies" is a hypothesis no source tested — slice 4 pairs it with a body-read ratio. A unified drift taxonomy with severities does not exist; Keel's rule ids are one. The watchdog's own false-positive budget and rule-retirement criterion are unowned in every source; Law 5's replayable refusals are the precondition for measuring them. Multi-lane concurrency (two seats drifting one module, attribution in a squash of two clean PRs) is unsolved everywhere; GraphHelm's identity line and the two-pass protocol are the primitives. Compliance decay per generated unit (odds ratio 0.944 per function, [arXiv 2605.10039](https://arxiv.org/abs/2605.10039)) argues for re-checking every K units; the effect on billed cost is unmeasured and is not claimed.
+**Cohesion over size.** No controlled study compares many small files with few large ones, so
+Keel does not invent a number. It measures the two failures directly: groups inside a file that
+never touch (two responsibilities) and files that always change together (one responsibility
+spread out).
 
-## 6. Traps refused during ideation
+**Names.** Hiding identifiers sharply hurts models on intent-level tasks
+([arXiv 2507.05289](https://arxiv.org/html/2507.05289v1)). A name assembled at run time or renamed
+at a boundary cannot be found by one search ([greppability](https://mjtsai.com/blog/2024/10/14/greppability-is-an-underrated-code-metric/)).
 
-Cells-not-files (a build-system project); test synthesis from a property DSL (a research project); AST patches as the authoring surface (fights how models write — parse the text diff at the gate instead); read-set declaration enforced only when every read is a metered tool; telomeric write budgets with no recovery path; one-strike trust resets; a warrant per function (multiplies card bytes); refusing every stdout match as non-proof (for a CLI, structured stdout is the contract — refuse log-message matches, not structured output).
+**Duplication and near-duplicates.** A duplicate is two places to change. A near-duplicate is
+worse for a model: a similar but wrong distractor in context lowers accuracy, and more of them
+lower it further ([Chroma, context rot](https://www.trychroma.com/research/context-rot)).
+
+**Hidden magic.** A model reasons from what is in the file it reads. A decorator, an injected
+fixture or a base class that changes behaviour elsewhere is invisible there
+([Ronacher](https://lucumr.pocoo.org/2025/6/12/agentic-coding/)).
+
+**Actionable errors.** An error that says how to fix itself saves a retry loop. Readable names in
+place of raw ids reduced hallucination in Anthropic's tool work
+([writing tools for agents](https://www.anthropic.com/engineering/writing-tools-for-agents)).
+
+**Reliability, idempotency, Big O.** Agents retry. A write that is not idempotent turns a retry
+into a duplicate; a call without a deadline turns a slow dependency into a stuck lane; a path that
+reads all history per request becomes the next outage as the store grows. These are measured, not
+argued: a request key or a run-twice test, a deadline on every external call, a scale check at N
+and 10N.
+
+**End to end first.** A test written to fit existing code records what the code does, not what
+it should do; models write such tests by default and their assertions mirror the implementation
+([Autonoma](https://getautonoma.com/blog/ai-generated-tests-pass-but-dont-assert)). An end-to-end
+proof observes the promise a user sees and leaves a receipt anyone can replay. Isolated tests stay
+where an end-to-end run cannot reach every case: data formats and digests, security, pure algorithms.
+
+**Blocking.** From September to October 2026 Keel only reported; `App.tsx` grew to 3,625 lines
+through 128 changes that each passed alone. A rule the machine measures now blocks, with a written
+exception the reviewer can refuse. There is no penalty ladder: the block is the cost.
+
+## Limits, kept open
+
+- Most values in `KEEL.md` are `to build`: until their check lands, the reviewer checks them by
+  reading, which is the weaker instrument.
+- The cohesion checks need a symbol graph per language; their false-positive rate is unmeasured.
+- Token savings from these rules are expected from the sources above, not yet measured on Keel's
+  own deliveries. A saving is claimed only after a controlled before and after.

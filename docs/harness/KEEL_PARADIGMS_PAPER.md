@@ -2,7 +2,9 @@
 
 **Why the classic paradigms were not enough, what was kept from each, and what is new.**
 
-Status: position paper accompanying the Keel specification
+Status: historical position paper (2026-09-23). Keel became a blocking construction pattern on
+2026-10-15; the current rules are [`KEEL.md`](../../KEEL.md) and the reasons are the rationale
+([`docs/keel/KEEL_SPEC.md`](../keel/KEEL_SPEC.md)). Where this paper differs, they win. It accompanied the Keel specification
 ([`docs/keel/KEEL_SPEC.md`](../keel/KEEL_SPEC.md))
 and tracker #1212. Written 2026-09-23. Every number below comes from a cited source or from a
 measurement made in this repository; a sentence with neither is a design decision and says so.

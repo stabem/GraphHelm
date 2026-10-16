@@ -70,7 +70,7 @@ callers, dynamic registrations, supported platforms, public APIs and persisted c
 missing journey when the behavior should still exist; remove the code only when those checks show
 it has no required consumer. Record the evidence in the PR's `Retirement:` section.
 
-This command supplements the [Keel retirement rule](KEEL_SPEC.md); it does not change
+This command supplements the [Keel retirement rule](../../keel/KEEL_EXEC.md); it does not change
 [`keel check`](KEEL_CHECK.md) into a dead-code detector. A clean report proves only the declared
 journeys and the collection limits reported for that run.
 

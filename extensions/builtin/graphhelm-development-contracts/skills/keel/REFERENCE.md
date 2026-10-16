@@ -1,6 +1,6 @@
 ---
 name: keel-reference
-description: "The full Keel reference behind the keel skill's digest: the card and its bounds, surface counting, proof against a named defect, the verdict and its causes, the source index, and where to spend time. Read on demand, when the digest in the keel skill does not answer the question."
+description: "The full Keel reference behind the keel skill's digest: the card and its bounds, surface counting, end-to-end-first proof, the verdict and its causes, the source index, and where to spend time. Read on demand, when the digest in the keel skill does not answer the question."
 ---
 
 # Keel: full reference
@@ -17,15 +17,14 @@ refusal below is made by code against the rules file whose version travels with 
 skill that also enforced would be a second authority whose rules live in prose.
 
 A keel is laid before any plank and is the part of the hull that resists drift. Everything here is
-one of two things: laid before (the card, the budget, the named defect) or resists drift (the
-classifier, the ladder, the receipt).
+one of two things: laid before (the card, the budget, the proof) or resists drift (the
+classifier and the receipt).
 
-**Today Keel is guidance and measurement, not punishment** (rules file `1.3.0`). Its goal is
-quality first, then the lowest total cost per proven delivery. Count findings are signals for the
-reviewer; only objective contracts refuse (an unparseable diff, a card scope that is not a list of
-paths). The rung ladder is computed and reported but applied only when `ladder.enabled` is true, and
-it ships off. Use only as much of Keel as the change needs: a docs or one-line change needs nothing
-beyond the task record.
+**Keel is a construction pattern.** Where the project has a root `KEEL.md`, it and the step files
+under `keel/` are the rules, and this reference only explains the mechanisms behind them. A rule the
+machine measures without doubt blocks the merge; a rule without a working mechanism is checked by
+the reviewer. There is no penalty ladder. Use only as much of Keel as the change needs: a docs or
+one-line change needs nothing beyond the task record.
 
 ## The five moves, in order
 
@@ -72,17 +71,16 @@ Prefer the move that spends nothing: satisfy the promise inside an existing cont
 existing proven symbol instead of writing a twin, extend a body instead of adding a type. The
 cheapest correct diff is the one the classifier cannot charge.
 
-### 3. Prove against a named defect
+### 3. Prove end to end first
 
-A test exists to kill a defect for one criterion in the card. Name both in the test: the criterion
-id and the defect it would catch. A test that cannot fail on its own defect, that asserts a value
-the test itself constructed, or that matches a log message instead of a structured output is not
-proof and is refused by the meaningful-test policy this package already carries. Reuse an existing
-instrument when it already observes the contract; a second test over the same promise is a
-`newTest` charge with nothing bought. Skip tests for reversible, low-impact changes that only
-mirror the implementation. For Rust, `graphhelm keel check ... --prove-new-tests` runs each new test on the parent and the
-head; a test green on the parent is the signal `keel.test.green_on_parent`. A new or changed test states its cost (run time, what it needs) and
-passes the four-question gate of the `test-audit` skill; removing a test needs that skill's
+Never write a unit test after the code: it records what the code does, not what it should do.
+Prove the promise the way a user meets it (a journey, the real CLI against a real Runtime, the real
+hook process), red on the base and green on the change, and leave the receipt in GraphHelm.
+Isolated tests are for data formats and digests, security and pure algorithms only, written after
+the list of every way the code can fail. A test that cannot fail, that asserts a value it built
+itself, or that matches a log message instead of a structured output is not proof. For Rust,
+`graphhelm keel check ... --prove-new-tests` runs each new test on the parent and the head; green
+on the parent is `keel.test.green_on_parent`. Removing a test needs the `test-audit` skill's
 deletion record naming the observer that still covers its obligation.
 
 Report passed, failed, skipped and unobserved separately. A skipped instrument is not a pass; an
@@ -95,11 +93,6 @@ against the budget, the findings by rule id (each marked blocking or not), and t
 A blocking finding names an objective rule, and the repair is the smallest diff that removes it. A
 signal is for the reviewer: answer it in the PR body (why the surface was needed) or remove the
 charge. When a rule fires, record whether the cause was the card, the tool, the task or the agent.
-
-When `ladder.enabled` is true (it ships off), drift and proof fold into a rung per seat: `full` → `contract_only` (no new module, type or
-dependency) → `patch_only` (existing bodies only) → `propose_only` (write a plan for another seat).
-Credit comes only from a passing named proof; a revert refunds nothing. A seat in `patch_only` is
-not being punished for its past — it is being routed to the moves that cannot drift.
 
 ### 5. Spend time only where the change reaches
 

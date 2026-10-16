@@ -7,6 +7,8 @@ description: "Merge an approved PR at the exact head the review read, check its 
 
 Step 5 of the per-task graph (`docs/process/DELIVERY.md` §5). Only the approving reviewer merges.
 
+**Load the project's `KEEL.md` and `keel/KEEL_MERGE.md` first, when the project has them; their rules bind and win over this skill where they differ.**
+
 ## Emits and reads
 
 - Reads: the approval comment (its head sha), the PR body and commit messages.

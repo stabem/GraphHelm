@@ -1,12 +1,15 @@
 ---
 name: keel
-description: "Work under the Keel development model: load a contract card instead of the tree, spend a declared write surface, prove a promise against a named defect, and read the watchdog's verdict as a routing state. Use by default for code work and context retrieval in projects that adopted GraphHelm; no explicit user invocation is needed."
+description: "Work under the Keel construction pattern: load the project's KEEL.md and the file for your step, start from a contract card instead of the tree, stay inside its paths, prove the promise end to end first, and apply every Keel value. Use by default for code work and context retrieval in projects that adopted GraphHelm; no explicit user invocation is needed."
 ---
 
 # Keel, in brief
 
-This digest is what loads by default; it carries every binding rule. Use only as much Keel as the
-change needs: a docs or one-line change needs nothing beyond the task record.
+**When the project has a `KEEL.md` at its root, read it and the file for your step under `keel/`
+(`KEEL_PLAN.md`, `KEEL_EXEC.md`, `KEEL_REVIEW.md`, `KEEL_MERGE.md`) first: they are the pattern,
+and they win over this digest where they differ.** This digest carries the binding rules for a
+project without them. Use only as much Keel as the change needs: a docs or one-line change needs
+nothing beyond the task record.
 
 1. Stay inside the card and search on purpose: open what it names first, then search for the
    specific symbol or caller. Change only the paths the task needs; a file the task does not reach
@@ -16,9 +19,11 @@ change needs: a docs or one-line change needs nothing beyond the task record.
    interface needs a real caller (producer and consumer may land together).
 3. Keep existing behaviour working. Before editing shared code, find its other callers and the
    behaviour they rely on; a fix that breaks a neighbour is not a fix.
-4. A new test must name the defect and fail on the parent (without your change). A test that is
-   green before the fix proves nothing; do not add it. A new or changed test states its cost (run
-   time, what it needs) and passes the `test-audit` skill's four-question gate.
+4. Never write unit tests after the code. Prove behaviour end to end first (a journey through the
+   Playwright observer, the real CLI against a real Runtime, the real hook process), red on the
+   base and green on the change. Isolated tests only for data formats and digests, security and
+   pure algorithms, after writing down every way the code can fail. A test green before the
+   change proves nothing; do not add it.
 5. Prove the promise with the smallest check that observes it. A proxy (another OS, a mock, an
    emulator, a cross-compile, a test compiled out on this host) is not an observation.
    Report passed, failed, skipped and unobserved separately; a later green never erases an earlier red.
@@ -27,6 +32,10 @@ change needs: a docs or one-line change needs nothing beyond the task record.
 7. Stop when the promise is proven. Do not refactor, reformat or sweep beyond it.
 8. Removing a test needs the `test-audit` skill's deletion record naming the observer that still
    covers its obligation. No record, no removal.
+
+Read run state through the GraphHelm MCP tools (`status`, `briefing`, `tasks`, `events`,
+`evidence`); use the CLI for builds, the slot, `keel check` and other work on the machine, and
+say so when the MCP server is not connected.
 
 Record the card and the proof where the hooks and the Studio can see them: inside a GraphHelm
 execution, as `keel.card` and `keel.proof` signals threaded by `replyTo`; outside one, the card at

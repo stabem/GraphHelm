@@ -78,7 +78,7 @@ infrastructure. CLI smoke: `cargo +1.97.1 run --locked -p graphhelm-cli -- graph
 Use the smallest workflow that can prove the requested change: direct for a small reversible
 change with a known observer and no persistence, permission, compatibility, external effect, or
 uncertain recovery; expanded for those risks or an unclear observer. What each route writes down is
-the Keel card table (DELIVERY.md §2). Neither route skips the tests the change reaches or the review.
+the card table in keel/KEEL_PLAN.md. Neither route skips the tests the change reaches or the review.
 JPD artifacts apply only when the typed JPD flow is invoked. Keep missing observers unresolved and
 stop retries when they add no evidence or reach the approved budget boundary.
 
@@ -97,45 +97,11 @@ stop retries when they add no evidence or reach the approved budget boundary.
 
 ### Keel: how code is written here
 
-Keel is this repository's development model for code written by agents. Its goal, in order:
-**quality preserved first, then the lowest total cost per proven delivery** — every attempt,
-repair, review and watchdog run counted, not tokens alone. The reasoning is in
-[docs/harness/KEEL_PARADIGMS_PAPER.md](docs/harness/KEEL_PARADIGMS_PAPER.md); the specification is
-[docs/keel/KEEL_SPEC.md](docs/keel/KEEL_SPEC.md). **Keel is guidance and measurement today, not punishment.** Its
-counts are reported, not enforced, except where a contract is objective (KEEL_SPEC.md, status
-line). **Keel is proportional:** the card each kind of change needs is the table in DELIVERY.md §2.
-
-**When Keel applies, these rules bind** (the same digest the `keel` skill loads):
-
-1. Stay inside the card and search on purpose: open what it names first, then search for the
-   specific symbol or caller. Change only the paths the task needs; a file the task does not reach
-   is out of scope, even when it has the same defect or looks untidy.
-2. Add nothing unrequested: no new helper, type, module, flag, dependency, file or test the task
-   does not need. Extend an existing body or reuse a proven symbol before adding a type; a new
-   interface needs a real caller (producer and consumer may land together).
-3. Keep existing behaviour working. Before editing shared code, find its other callers and the
-   behaviour they rely on; a fix that breaks a neighbour is not a fix.
-4. A new test must name the defect and fail on the parent (without your change). A test that is
-   green before the fix proves nothing; do not add it. A new or changed test states its cost (run
-   time, what it needs) and passes the `test-audit` skill's four-question gate.
-5. Prove the promise with the smallest check that observes it. A proxy (another OS, a mock, an
-   emulator, a cross-compile, a test compiled out on this host) is not an observation.
-   Report passed, failed, skipped and unobserved separately; a skipped or unavailable observer never counts as a pass.
-6. When you cannot observe the promise on this host, change nothing, say what is missing, and end
-   with `OBSERVER_MISSING: <what is missing>`. Never write "verified" for what you did not observe.
-7. Stop when the promise is proven. Do not refactor, reformat or sweep beyond it.
-8. Removing a test needs the `test-audit` skill's deletion record naming the observer that still
-   covers its obligation. No record, no removal.
-9. A change that removes, replaces or redirects a production caller retires the displaced path in
-   the same scope and records `Retirement:` in the PR (DELIVERY.md §3, `KEEL_SPEC.md` Law 1).
-
-Record in the PR body what context the card was missing. Mock only I/O, clock and randomness;
-mutation testing only when it adds evidence the existing proof lacks. Surface counts are signals,
-never a quota. Full rules: the `keel` skill's `REFERENCE.md` and the `test-audit` skill, both under
-`extensions/builtin/graphhelm-development-contracts/skills/`.
-
-**Drift is recorded with its cause.** When a rule fires, record whether the cause was the card, the
-tool, the task or the agent before anyone restricts anything.
+Keel is the construction pattern for every change an agent makes here. Read
+[KEEL.md](KEEL.md) before any code work, then the file for your step in [keel/](keel/): plan,
+execute, review or merge. Rules the machine measures block the merge; the rest are checked by the
+reviewer. The reasons are in [docs/keel/KEEL_SPEC.md](docs/keel/KEEL_SPEC.md). No Keel rule is
+written outside those files.
 
 ## Security rules
 

@@ -96,7 +96,7 @@ GraphHelm includes two complementary development methods:
 
 - [Journey-Proven Development](https://github.com/stabem/GraphHelm/blob/main/docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md) defines what an observer must verify about the user's actual journey. Missing proof remains `OBSERVER_MISSING`.
   Start with the [user journeys guide](https://github.com/stabem/GraphHelm/blob/main/docs/guides/journeys.md): author a flow, validate, approve, replay, and read capture freshness.
-- [Keel](https://github.com/stabem/GraphHelm/blob/main/docs/keel/KEEL_SPEC.md) keeps scope, context, and new code proportional to the change, with quality first and the total cost of a proven delivery in view.
+- [Keel](https://github.com/stabem/GraphHelm/blob/main/KEEL.md) is the construction pattern every agent follows: one file of values, one file per step (plan, execute, review, merge), end-to-end proof first, and blocking checks for every rule a machine can measure.
 
 The specifications distinguish guidance from implemented checks. See the [delivery process](https://github.com/stabem/GraphHelm/blob/main/docs/process/DELIVERY.md).
 
@@ -143,7 +143,7 @@ Keel says how the code inside that change is written and proved.
                          ▼     └────────────────┬─────────────────┘
                  back to review                 ▼
                                     Delivered = merged into main
-                                    (no gates, no presser)
+                                    (Keel checks block; no presser)
 ```
 
 Every comment, review and merge starts with `Session: <name> · Head: <sha8>`. Long form:
@@ -159,31 +159,34 @@ Every comment, review and merge starts with `Session: <name> · Head: <sha8>`. L
  docs, config,  bounded       a screen       new public            persistence,
  one line,      code          (journey       surface               permissions,
  test only      change        scope)         (module, type,        security,
-                                             fn, dep, test)        external effects
+                                             fn, dep, route)       external effects
    │              │             │               │                      │
- summary        3-line card:  3-line card     full card,            full card
- only           paths,        + journeys:     new surface           + JPD flow
-                promise,      replayed        named                 + named-defect
-                proof command green                                 test
+ summary        card: paths,  card +          full card,            full card
+ only           promise,      journeys        surface named         + journey
+                proof         replayed green                        + failure list
    └──────────────┴─────────────┴───────┬───────┴──────────────────────┘
                                         ▼
-        ┌─────────────────────────────────────────────────────────┐
-        │ Law 1  Promise and consumer: nothing without both       │
-        │ Law 2  Write surface declared, spent, refused by name   │
-        │ Law 3  A test is born against a named defect            │
-        │ Law 4  Penalty is a routing state (ladder, off today)   │
-        │ Law 5  The enforcer is versioned and receipted          │
-        │ Law 6  Verify only what the change can reach            │
-        └───────────────────────────┬─────────────────────────────┘
-                                    ▼
-                  graphhelm keel check --diff <base>..<head> --card <card>
-                  path outside the card → widen the card or drop the change
-                                    ▼
-                  An observer proves the promise
-                  no observer → OBSERVER_MISSING, never "done"
+   PLAN    keel/KEEL_PLAN.md   promise, proof, search what exists,
+                               cost (Big O), risks, measured gain
+                                        ▼
+   EXEC    keel/KEEL_EXEC.md   stay in the card, read the symbol not the file,
+                               end-to-end proof first, break it once,
+                               whole reached plan, receipt in GraphHelm
+                                        ▼
+   REVIEW  keel/KEEL_REVIEW.md blind, reruns everything, checks every value,
+                               measures any promised gain before and after
+                                        ▼
+   MERGE   keel/KEEL_MERGE.md  pinned head, rerun if main moved,
+                               check after, clean up what you created
+                                        ▼
+           Values (KEEL.md): cohesion, no duplicate, no dead code,
+           inward dependencies, searchable names, no hidden magic,
+           reliability, idempotency, less complexity, Big O, quiet tools
+           measured rule broken → merge blocked, exception written in code
 ```
 
-Long form: [Keel specification](https://github.com/stabem/GraphHelm/blob/main/docs/keel/KEEL_SPEC.md).
+Long form: [KEEL.md](https://github.com/stabem/GraphHelm/blob/main/KEEL.md), and the reasons in
+[the Keel rationale](https://github.com/stabem/GraphHelm/blob/main/docs/keel/KEEL_SPEC.md).
 
 ## Control and trust
 
@@ -215,12 +218,13 @@ Report vulnerabilities privately through [SECURITY.md](https://github.com/stabem
 
 ```text
 Use GraphHelm and Keel for software work.
-- If the GraphHelm MCP tools (mcp__graphhelm__*) are available, use them for state: briefing, status, events, evidence, resume. Otherwise use the graphhelm CLI with --json, and say which source you used.
-- Keel: keep effort proportional. Docs or one-line fixes need nothing extra. For a code change, first state the promise: what changes, what must keep working, and the command that proves it. Name the paths in scope. Search on purpose, add only the surface the promise needs, and prove it with the smallest adequate test.
+- If the GraphHelm MCP tools are available (named mcp__graphhelm__* or mcp__plugin_graphhelm_graphhelm__*, depending on the host), use them for state: briefing, status, events, evidence, resume. Otherwise use the graphhelm CLI with --json, and say which source you used.
+- Keel: before any code work, read the project's KEEL.md and the keel/ file for your step (KEEL_PLAN.md, KEEL_EXEC.md, KEEL_REVIEW.md or KEEL_MERGE.md). They are the rules and win over these defaults. Without them: keep effort proportional, state the promise and the command that proves it, name the paths in scope, search before you add, add only what the promise needs.
+- Prove behaviour end to end first. Never write unit tests after the code.
 - Journey-Proven Development: work is done only when an observer proves the user-visible promise. With no observer, say OBSERVER_MISSING; never claim success from a proxy.
 - Report passed, failed, skipped and unobserved separately. A later green never erases an earlier red.
 - Issue first, one PR per issue, one independent review before merge.
-- A project's own AGENTS.md or CLAUDE.md overrides these defaults.
+- A project's own KEEL.md, AGENTS.md or CLAUDE.md overrides these defaults.
 ```
 
 </details>

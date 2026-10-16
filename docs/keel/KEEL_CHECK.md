@@ -148,7 +148,7 @@ requested reviewer and head; it says nothing about merge authorization or whethe
 
 ## Proving new tests: `--prove-new-tests`
 
-Keel Law 3 says a test is born against a named defect. `--prove-new-tests` checks that for every new
+A test that is green before the change proves nothing (`keel/KEEL_EXEC.md`). `--prove-new-tests` checks that for every new
 Rust `#[test]` the counter charges (#1333):
 
 ```sh

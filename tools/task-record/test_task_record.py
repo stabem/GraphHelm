@@ -559,13 +559,25 @@ class TaskRecordTest(unittest.TestCase):
         self.assertEqual(FakeRuntime.auth[-1], "Bearer credential-lane-a")
         self.assertEqual(task_record.credential_file("x/events.token", "lane-a"), Path("x/events.agent.lane-a.token"))
         self.assertEqual(task_record.credential_file("x/events.agent.token", "lane-a"), Path("x/events.agent.lane-a.token"))
+        # #1459: a --token-file that already names the lane's credential is used as it is.
+        self.assertEqual(task_record.credential_file("x/events.agent.lane-a.token", "lane-a"), Path("x/events.agent.lane-a.token"))
 
-    def test_a_lane_without_a_credential_falls_back_to_the_shared_token_and_names_the_mint_command(self):
+    def test_a_lane_without_a_credential_is_refused_and_told_the_mint_command(self):
+        # #1459: the silent fallback to the shared token recorded rev-1444's claim under it.
+        seen = len(FakeRuntime.seen)
+        with self.assertRaises(SystemExit) as refused:
+            self.run_step("--lane", "lane-none", "claimed", "--issue", "9", "--branch", "b", "--no-github")
+        self.assertEqual(len(FakeRuntime.seen), seen, "nothing is sent")
+        self.assertIn("graphhelm tasks credential --lane lane-none --execution gh-team", str(refused.exception.code))
+        self.assertIn("--allow-shared-token", str(refused.exception.code))
+
+    def test_a_lane_without_a_credential_falls_back_to_the_shared_token_only_when_allowed(self):
         # #1148 rollout: a Runtime without --require-lane-credential still accepts the shared token,
-        # so the record is sent with it and the missing file is reported on stderr, not fatal.
+        # so with --allow-shared-token the record is sent with it and the missing file is on stderr.
         err = io.StringIO()
         with redirect_stderr(err):
-            code, out = self.run_step("--lane", "lane-none", "claimed", "--issue", "9", "--branch", "b", "--no-github")
+            code, out = self.run_step("--lane", "lane-none", "--allow-shared-token", "claimed", "--issue", "9",
+                                      "--branch", "b", "--no-github")
         self.assertEqual(code, 0, out)
         self.assertEqual(FakeRuntime.auth[-1], "Bearer agent-token")
         self.assertIn("graphhelm tasks credential --lane lane-none --execution gh-team", err.getvalue())

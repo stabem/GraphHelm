@@ -60,6 +60,8 @@ def credential_file(token_file, lane):
     → `events.agent.<lane>.token`, the path `graphhelm tasks credential --lane <lane>` writes."""
     path = Path(token_file)
     stem = path.name
+    if stem.endswith(f".agent.{lane}.token"):
+        return path  # #1459: already the lane's credential; appending the lane again misses it
     for suffix in (".agent.token", ".token"):
         if stem.endswith(suffix):
             stem = stem[: -len(suffix)]
@@ -68,9 +70,9 @@ def credential_file(token_file, lane):
 
 
 def read_credential(args):
-    """The lane's credential when its file exists; otherwise the shared token (#1148 rollout: a
-    Runtime without `--require-lane-credential` still accepts it), with a note on stderr naming the
-    mint command, so the missing file is visible without stopping the record."""
+    """The lane's credential when its file exists. Without it the record is refused naming the mint
+    command, unless `--allow-shared-token` sends the shared token (#1148 rollout: a Runtime without
+    `--require-lane-credential` still accepts it) with that note on stderr (#1459)."""
     path = credential_file(args.token_file, args.lane)
     try:
         value = path.read_text(encoding="utf-8").strip()
@@ -78,9 +80,13 @@ def read_credential(args):
         value = ""
     if value and "\n" not in value:
         return value
+    mint = f"graphhelm tasks credential --lane {args.lane} --execution {args.execution} --token-file <events.token>"
+    if not args.allow_shared_token:
+        # #1459: the silent fallback recorded under the shared token; now it takes an explicit flag.
+        sys.exit(f"task_record: no credential for lane {args.lane} at {path}; no record sent. Mint it with: "
+                 f"{mint} (or pass --allow-shared-token to send the shared agent token)")
     print(f"task_record: no credential for lane {args.lane} at {path}; sending the shared agent token "
-          f"(a Runtime with --require-lane-credential refuses it); the owner mints it with: "
-          f"graphhelm tasks credential --lane {args.lane} --execution {args.execution} --token-file <events.token>",
+          f"(--allow-shared-token; a Runtime with --require-lane-credential refuses it); mint it with: {mint}",
           file=sys.stderr)
     try:
         token = Path(args.token_file).read_text(encoding="utf-8").strip()
@@ -249,6 +255,8 @@ def parse(argv):
     p.add_argument("--token-file", default=".graphhelm/events.agent.token",
                    help="the Runtime's agent session token path; the lane's own credential is read beside it, "
                         "at <events>.agent.<lane>.token (#1148), and the shared token's value is never sent")
+    p.add_argument("--allow-shared-token", action="store_true",
+                   help="send the shared agent token when the lane has no credential file (default: refuse)")
     p.add_argument("--title", help="claimed/pr_opened: the issue's or PR's title; default: read with gh")
     p.add_argument("--summary", help="claimed/pr_opened: one sentence; default: the body's 'Summary:' line, read with gh."
                    " planned: the plan in one line (at most 300 characters), required")

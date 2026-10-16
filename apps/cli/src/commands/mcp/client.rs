@@ -414,6 +414,22 @@ impl ApiClient {
             .ok_or_else(|| fail("no home directory and no GRAPHHELM_RUNTIME_DIR"))?;
         let records = crate::commands::runtime_record::read_project(&dir, project_id)
             .map_err(|error| fail(&error))?;
+        // #1449: spend the health budget only on records that can still be live. A record whose
+        // agent token file is gone (its temp project was deleted) cannot hand out a token, and on
+        // one URL only the newest `startedAt` can belong to the port's current holder.
+        let mut newest = std::collections::BTreeMap::<String, u64>::new();
+        for record in &records {
+            let started = newest.entry(record.url.clone()).or_insert(0);
+            *started = (*started).max(record.started_at);
+        }
+        let records: Vec<_> = records
+            .into_iter()
+            .filter(|record| {
+                newest.get(&record.url) == Some(&record.started_at)
+                    && crate::commands::secret_file::agent_token_beside(&record.token_file)
+                        .is_file()
+            })
+            .collect();
         let mut live = Vec::new();
         let deadline = Instant::now() + HEALTH_BUDGET;
         let mut budget_exhausted = false;

@@ -83,7 +83,7 @@ JPD artifacts apply only when the typed JPD flow is invoked. Keep missing observ
 stop retries when they add no evidence or reach the approved budget boundary.
 
 - Start from the complete user journey and compile each promise into an observable obligation. Select the smallest proof method strong enough for that obligation and risk; do not apply one universal testing ritual or blanket TDD.
-- Browser journey proof runs only in an explicitly observer-enabled validation environment; the committed offline checks stay browser-session-free and otherwise report `OBSERVER_MISSING`.
+- Browser journey proof runs only in an explicitly observer-enabled validation environment; the committed offline checks stay browser-session-free and otherwise report `OBSERVER_MISSING` ([keel/KEEL_EXEC.md](keel/KEEL_EXEC.md)).
 - Keep every retry linked to its initial attempt and evidence delta. A later green result never erases an earlier red result or becomes first-pass success.
 - Keep unit tests beside the owning module. Put cross-crate behavior in integration tests and user-visible contracts in CLI or journey smoke tests.
 - Use fixed clock and ID implementations in tests. Assertions must not depend on wall-clock time, randomness, filesystem ordering, map insertion order, locale, or platform path separators.
@@ -92,7 +92,7 @@ stop retries when they add no evidence or reach the approved budget boundary.
 - Golden fixtures are allowed only for reviewed canonical JSON, semantic hashes, and ordered event output. A fixture update requires an explicit explanation in the commit/PR.
 - Every public method must have working behavior in the same commit. No `TODO`, `TBD`, `unimplemented!`, empty handler, or ceremonial scaffold is allowed.
 - **Meaningful-test rule.** A test earns its place only by protecting an observable contract against a credible regression that existing coverage misses, without production seams no real caller needs; the `test-audit` skill carries the four-question gate, the audit list and the deletion record. Reject unconditional passes, mock self-confirmation, assertions over values created by the test, and checks that merely freeze incidental source spelling or private call order. Preserve tests for real architecture, security, schema, canonical hash, deterministic replay, persistence, concurrency, compatibility, and platform contracts. A lower test count is never a win by itself; stop when the behavior is proven.
-- Runtime-affecting configuration needs behavioral evidence; parsing or shape validation alone is not proof.
+- Runtime-affecting configuration: see the risk table in [keel/KEEL_PLAN.md](keel/KEEL_PLAN.md).
 - This policy is versioned on `main`. Merging it does not update existing branches or installed skill copies; lanes must integrate the `main` change and reload or reinstall their bundled skills before relying on it. Bundled skills remain self-contained and must not depend on repository-external paths.
 
 ### Keel: how code is written here

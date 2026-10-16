@@ -40,7 +40,7 @@ only the surface the promise needs, prove with the smallest adequate observer. B
 PR, the author runs the tests the change can reach and lists them, with their result, in the PR
 body.
 
-**Retire the path you replace (`keel/KEEL_EXEC.md`).** When a change removes, replaces or redirects
+**Retire the path you replace** (the rule is `keel/KEEL_EXEC.md`; how to check it here:). When a change removes, replaces or redirects
 a production caller, check the displaced declarations and their exclusive helpers/types, styles,
 dependencies and tests before opening the PR. A rename alone does not make its target dead. Search
 from the actual entry points and check dynamic registrations, public consumers, manual commands,
@@ -164,19 +164,15 @@ Done means an observer proved the user-visible promise, run by the agent. A repl
 user to verify ("try it in the app", "please test", "vai lá e testa", "me avisa se funcionou")
 is not a delivery: run the journey observer yourself and report what it saw. When the change is
 deployed, replay the journey against the deployed site after the deploy, not only at the head.
-With no observer that can reach it, say `OBSERVER_MISSING` and what is missing. Only a product
+With no observer that can reach it, follow `OBSERVER_MISSING` in [`keel/KEEL_EXEC.md`](../../keel/KEEL_EXEC.md). Only a product
 decision (approve a design, choose an option) goes to the user. The plugin's Stop hook
 `plugins/graphhelm/hooks/handoff_stop_hook.py` refuses such a reply once.
 
 ## 4. One review, by another session or a blind subagent
 
 - One review from a reviewer that did not write the change: another session, or a **blind
-  subagent**. A blind subagent is spawned for the review only. Its brief
-  may carry: the PR number, the identity line to sign with, where the rules live (`AGENTS.md`,
-  this document), the build directory, and questions that apply to every review (correctness,
-  security, fail-closed behaviour, test quality). It must not carry the author's reasoning, a
-  finding to look for, a summary of the change, or an expected verdict. A subagent that helped
-  write the change, or was given any of those, is not blind and cannot review it.
+  subagent**, spawned for the review only. What its brief may carry, and who is not blind, is
+  [`keel/KEEL_REVIEW.md`](../../keel/KEEL_REVIEW.md).
 - The review's first line names the reviewer and the head sha it read:
   `Session: <ListAgents name [ref]> · Head: <sha8>`, with `(blind subagent)` after the session
   name when a subagent reviews.
@@ -244,21 +240,18 @@ decision (approve a design, choose an option) goes to the user. The plugin's Sto
 
 The reviewer who approved merges (a blind subagent included). There is no separate gate run and no separate presser: the Keel checks the reviewer runs (`KEEL.md`) are what block, and a blocking finding is a `BLOCK`.
 
-1. Pin the head: `gh pr view <N> --json headRefOid` must equal the sha the review named, and no
-   BLOCK on that head is left unanswered by the review (§4).
-   If main moved since the reviewed run, rerun the reached checks on the merge result (main +
-   head) before pressing merge; a clean merge-tree is not a test. A change once ran on an old base,
-   merged clean on top of a newer one, and main went red on a cell the newer change had made stale.
-2. Closing check: `ci/closing-keywords.ps1 -Number <N> -Repository stabem/GraphHelm -Closes <issues>`.
-   It reads the body and the commit messages; their union must equal the intent. Never write a
-   closing keyword (`close`, `fix`, `resolve` and their forms) next to an issue you do not mean to
-   close, not even inside a negation. Write `Refs #N` instead.
-3. `gh pr merge <N> --squash --match-head-commit <sha>`. Delete the branch unless another PR is
-   stacked on it (`gh pr list --base <branch> --state open`).
-4. Read what landed: `git log -1 --format=%B origin/main` and `gh issue view` for every closed
+The steps (pin the head, rerun when main moved, merge, check after, delete the branch) and the
+definition of delivered are [`keel/KEEL_MERGE.md`](../../keel/KEEL_MERGE.md). A change once ran on
+an old base, merged clean on top of a newer one, and main went red on a cell the newer change had
+made stale. Two additions here:
+
+1. Closing check: `ci/closing-keywords.ps1 -Number <N> -Repository stabem/GraphHelm -Closes <issues>`.
+   It reads the body and the commit messages; their union must equal the intent (the
+   keyword rule is `keel/KEEL_MERGE.md`).
+2. Read what landed: `git log -1 --format=%B origin/main` and `gh issue view` for every closed
    issue. Corrections go in a follow-up comment on the same PR.
 
-A change is delivered when it is merged into `main`, not when the PR is open.
+Delivered is defined once, in [`keel/KEEL_MERGE.md`](../../keel/KEEL_MERGE.md).
 
 ### Task records
 

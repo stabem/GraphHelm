@@ -308,11 +308,8 @@ fn shipped_mcp_registrations_discover_without_port_or_token_overrides() {
     std::fs::create_dir(&elsewhere).unwrap();
     let _runtime = serve_with_project(&events, free_port(), &registry, Some(&project));
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    for path in [
-        "plugins/graphhelm/.mcp.json",
-        "extensions/builtin/graphhelm-development-contracts/.mcp.json",
-        "extensions/builtin/graphhelm-jpd/.mcp.json",
-    ] {
+    // #1412: only the graphhelm plugin registers the MCP; companion packages ship none.
+    for path in ["plugins/graphhelm/.mcp.json"] {
         let config: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.join(path)).unwrap()).unwrap();
         for explicit in [false, true] {
@@ -463,6 +460,64 @@ fn project_discovery_ignores_more_than_sixteen_stale_restart_records() {
     assert!(
         authorized(&reply),
         "one live Runtime must be selected: {reply}"
+    );
+}
+
+/// #1449: dead restart records on one port, and records whose token file was deleted with their
+/// temp project, must not spend the health budget the one live Runtime needs.
+/// Cost: one disposable Runtime and MCP client; local loopback only.
+#[test]
+fn project_discovery_skips_superseded_and_tokenless_records_before_probing() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = dir.path().join("registry");
+    let project = dir.path().join("project");
+    let events = project.join(".graphhelm").join("events");
+    std::fs::create_dir_all(&events).unwrap();
+    let _runtime = serve_with_project(&events, free_port(), &registry, Some(&project));
+    let project_records = std::fs::read_dir(registry.join("projects"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let live_path = std::fs::read_dir(&project_records)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(live_path).unwrap()).unwrap();
+    let started_at = record["startedAt"].as_u64().unwrap();
+    let dead_url = format!("http://127.0.0.1:{}", free_port());
+    for index in 0..40_u64 {
+        let stale_instance = format!("{index:032x}");
+        record["instance"] = serde_json::json!(stale_instance);
+        record["url"] = serde_json::json!(dead_url);
+        record["startedAt"] = serde_json::json!(started_at - 1000 + index);
+        std::fs::write(
+            project_records.join(format!("{stale_instance}.json")),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+    }
+    let gone = dir.path().join("deleted-temp-project").join("events.token");
+    for index in 40..60_u64 {
+        let stale_instance = format!("{index:032x}");
+        record["instance"] = serde_json::json!(stale_instance);
+        record["url"] = serde_json::json!(format!("http://127.0.0.1:{}", free_port()));
+        record["tokenFile"] = serde_json::json!(gone);
+        std::fs::write(
+            project_records.join(format!("{stale_instance}.json")),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+    }
+    let mut bridge = Bridge::start_project(&project, &registry);
+    let reply = bridge.list();
+    assert!(
+        authorized(&reply),
+        "the live Runtime must be found inside the health budget: {reply}"
     );
 }
 

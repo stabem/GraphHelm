@@ -950,9 +950,9 @@ export function useEnvelopes(
     };
   }, [eventSequence, executionId, openEvidence]);
   // A stable empty answer, not a fresh literal: downstream memos key off this identity.
-  return envelopes.forId === executionId
+  return useMemo(() => envelopes.forId === executionId
     ? Object.assign({ ...envelopes.map }, { __pendingEnvelopeSequences: [...new Set([...envelopes.failed, ...envelopes.pending])], __readingEnvelopeSequences: [...envelopes.pending] })
-    : Object.assign({}, { __pendingEnvelopeSequences: [], __readingEnvelopeSequences: [] });
+    : Object.assign({}, { __pendingEnvelopeSequences: [], __readingEnvelopeSequences: [] }), [envelopes, executionId]);
 }
 
 /**

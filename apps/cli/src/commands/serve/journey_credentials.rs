@@ -66,6 +66,9 @@ const MAX_CREDENTIAL_SECONDS: i64 = 15 * 60;
 /// Set by the auth layer only on a request authenticated by a #1148 lane credential, whose lane is
 /// recomputed rather than trusted. The auth layer strips it from every incoming request first.
 pub(super) const VERIFIED_LANE_HEADER: &str = "x-graphhelm-verified-lane";
+/// Set by the auth layer only on a draft request whose journey credential verified, naming the
+/// lane it authorizes. The auth layer strips it from every incoming request first.
+pub(super) const JOURNEY_WRITER_HEADER: &str = "x-graphhelm-journey-writer";
 /// One frame's payload, in bytes. A grant record is a few hundred bytes.
 const MAX_FRAME_BYTES: usize = 4096;
 /// Records the journal may hold before it refuses further writes.
@@ -296,21 +299,52 @@ fn load_or_create_key(path: &Path) -> Result<Zeroizing<[u8; KEY_BYTES]>, Unavail
     if !path.exists() {
         let mut fresh = Zeroizing::new([0_u8; KEY_BYTES]);
         getrandom::fill(fresh.as_mut()).map_err(|_| Unavailable::Corrupt)?;
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-            .map_err(|_| Unavailable::Corrupt)?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        // `WRITE_DAC` and `READ_CONTROL`, as `secret_file::create_secret_file_with` asks, so the
+        // protected DACL can be applied and read back on this handle.
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            use windows_sys::Win32::Foundation::GENERIC_WRITE;
+            use windows_sys::Win32::Storage::FileSystem::{READ_CONTROL, WRITE_DAC};
+            options.access_mode(GENERIC_WRITE | READ_CONTROL | WRITE_DAC);
+        }
+        let mut file = options.open(path).map_err(|_| Unavailable::Corrupt)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
                 .map_err(|_| Unavailable::Corrupt)?;
         }
+        // Before a key byte is written, the empty file is made owner-only, as every minted secret
+        // is (`secret_file::create_secret_file_with`); otherwise it is removed and nothing serves.
+        #[cfg(windows)]
+        if graphhelm_sealed_key_provider::protect_owner_only(&file).is_err() {
+            drop(file);
+            let _ = std::fs::remove_file(path);
+            return Err(Unavailable::Corrupt);
+        }
         file.write_all(fresh.as_ref())
             .and_then(|()| file.sync_all())
             .map_err(|_| Unavailable::Corrupt)?;
         return Ok(fresh);
+    }
+    // A key provisioned before its file was protected (#1490 on Windows) is protected now, and a
+    // key that cannot be made owner-only does not serve.
+    #[cfg(windows)]
+    {
+        let file = File::open(path).map_err(|_| Unavailable::Corrupt)?;
+        if graphhelm_sealed_key_provider::verify_owner_only(&file).is_err() {
+            use std::os::windows::fs::OpenOptionsExt;
+            use windows_sys::Win32::Storage::FileSystem::{READ_CONTROL, WRITE_DAC};
+            let writable = OpenOptions::new()
+                .access_mode(READ_CONTROL | WRITE_DAC)
+                .open(path)
+                .map_err(|_| Unavailable::Corrupt)?;
+            graphhelm_sealed_key_provider::protect_owner_only(&writable)
+                .map_err(|_| Unavailable::Corrupt)?;
+        }
     }
     let mut bytes = Zeroizing::new(Vec::new());
     File::open(path)
@@ -824,6 +858,47 @@ pub(super) async fn revoke(
     )
 }
 
+impl Journal {
+    /// #1309 enforcement: the lane a journey credential authorizes to write a draft of `flow`, or
+    /// `None`. Checked on every use against the replayed journal: the HMAC of `token` equals the
+    /// committed digest (constant time); the credential is unrevoked, unexpired, purpose `author`,
+    /// for exactly this flow; and its grant is unrevoked and unexpired for the same lane and flow.
+    /// A journal that cannot serve answers `None`, so an unusable journal never authorizes.
+    pub(super) fn draft_writer(
+        &self,
+        credential_id: &str,
+        token: &str,
+        flow: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Option<String> {
+        let mut guard = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let open = guard
+            .get_or_insert_with(|| open_at(&self.dir))
+            .as_ref()
+            .ok()?;
+        let credential = open.view.credentials.get(credential_id)?;
+        let grant = open.view.grants.get(&credential.grant_id)?;
+        let digest = hex::encode(hmac(&open.key, token.as_bytes()));
+        let live = |expires: &str| {
+            chrono::DateTime::parse_from_rfc3339(expires)
+                .is_ok_and(|expires| expires.with_timezone(&chrono::Utc) > now)
+        };
+        let authorized = super::constant_time_eq(digest.as_bytes(), credential.digest.as_bytes())
+            && !credential.revoked
+            && credential.purpose == "author"
+            && credential.flow_id == flow
+            && live(&credential.expires_at)
+            && !grant.revoked
+            && grant.lane_id == credential.lane_id
+            && grant.flow_id == flow
+            && live(&grant.expires_at);
+        authorized.then(|| credential.lane_id.clone())
+    }
+}
+
 /// One refusal for every grant mismatch, so a lane learns nothing about another scope.
 fn no_grant() -> Answer {
     refused(
@@ -1245,5 +1320,22 @@ mod tests {
             hex::encode(hmac(&key, b"what do ya want for nothing?")),
             "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
         );
+    }
+
+    // #1309 (#1490 review): the HMAC key is a secret, so on Windows its file carries the same
+    // protected owner-only DACL as every minted secret, read back through the provider's own
+    // check rather than assumed. Credible regression: the key inheriting the directory ACL.
+    // Cost: one temporary journal; Windows only.
+    #[cfg(windows)]
+    #[test]
+    fn the_hmac_key_file_is_owner_only_on_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::open_dir(dir.path());
+        assert!(matches!(
+            journal.append("k-grant", &json!({}), |_, _| Ok(created("g1"))),
+            Answer::Ok(_)
+        ));
+        let key = File::open(dir.path().join(KEY_NAME)).unwrap();
+        assert!(graphhelm_sealed_key_provider::verify_owner_only(&key).is_ok());
     }
 }

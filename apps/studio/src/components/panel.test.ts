@@ -165,6 +165,42 @@ it("reads each event once when the caller rebuilds the unchanged array", async (
   expect(open).toHaveBeenCalledTimes(1);
 });
 
+it("keeps the settled envelope snapshot stable across unrelated renders", async () => {
+  resetPanelCaches();
+  const first = event(5, "signal_recorded", { kind: "operator_note", signalId: "sig-q" });
+  first.actorId = "kit-3";
+  first.evidenceRefs = ["question"];
+  const second = event(6, "signal_recorded", { kind: "operator_note", signalId: "sig-next" });
+  second.evidenceRefs = ["next"];
+  const open = vi.fn(async (_run: string, id: string): Promise<EvidenceContent> => ({
+    evidenceId: id,
+    content: JSON.stringify({ type: "operator_note", description: id, target: { id: "studio-operator", type: "user" } }),
+    contentSha256: "hash", mediaType: "application/json", sensitivity: "confidential",
+  }));
+  let memoEvaluations = 0;
+  const { result, rerender } = renderHook(({ unrelated, rows, run }) => {
+    void unrelated;
+    const snapshot = useEnvelopes(rows, run, open);
+    React.useMemo(() => { memoEvaluations += 1; return snapshot; }, [snapshot]);
+    return snapshot;
+  }, { initialProps: { unrelated: 0, rows: [first], run: "run-a" } });
+  await waitFor(() => expect(result.current.__pendingEnvelopeSequences).toEqual([]));
+  const settled = result.current;
+  const evaluationsAfterSettle = memoEvaluations;
+
+  rerender({ unrelated: 1, rows: [first], run: "run-a" });
+  expect(result.current).toBe(settled);
+  expect(result.current.__pendingEnvelopeSequences).toBe(settled.__pendingEnvelopeSequences);
+  expect(result.current.__readingEnvelopeSequences).toBe(settled.__readingEnvelopeSequences);
+  expect(memoEvaluations).toBe(evaluationsAfterSettle);
+
+  rerender({ unrelated: 1, rows: [first, second], run: "run-a" });
+  await waitFor(() => expect(result.current[6]?.text).toBe("next"));
+  expect(result.current).not.toBe(settled);
+  expect(result.current[5]).toEqual(expect.objectContaining({ text: "question", to: "studio-operator" }));
+  expect(result.current.__pendingEnvelopeSequences).toEqual([]);
+});
+
 it("settles cached envelopes after a poll adds another carrier", async () => {
   resetPanelCaches();
   const first = event(5, "signal_recorded", { kind: "operator_note", signalId: "sig-q" });

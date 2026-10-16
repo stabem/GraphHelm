@@ -413,7 +413,7 @@ fn valid_id(value: &str) -> bool {
     value.len() <= MAX_ID_LEN && OpaqueId::parse(value).is_ok()
 }
 
-fn owner_and_key<'a>(headers: &'a HeaderMap) -> Result<&'a str, Answer> {
+fn owner_and_key(headers: &HeaderMap) -> Result<&str, Answer> {
     if super::header_value(headers, "x-graphhelm-actor-type").is_some_and(|kind| kind != "owner") {
         return Err(refused(
             StatusCode::FORBIDDEN,

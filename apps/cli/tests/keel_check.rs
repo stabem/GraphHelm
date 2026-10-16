@@ -655,6 +655,56 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
             .any(|value| { value == "path:core/events/src/journal.rs" }),
         "warning finding path missing from evidence: {signal}"
     );
+    assert!(
+        signal["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == &format!("head:{corrected_head}")),
+        "the review route is bound to the corrected head: {signal}"
+    );
+    // Both cycles are published: the original blocked finding must still open from this fresh
+    // read with its own head and rule, not the corrected ones.
+    let original = history
+        .iter()
+        .find(|event| {
+            matches!(
+                event.kind,
+                graphhelm_protocols::EventKind::SignalRecorded(_)
+            )
+        })
+        .unwrap();
+    let sealed = match store
+        .sealed_evidence(
+            &stream.scope,
+            original.evidence_refs.first().unwrap().evidence_id(),
+        )
+        .unwrap()
+    {
+        graphhelm_events::EvidenceRead::Available(sealed) => sealed,
+        other => panic!("original signal evidence unavailable: {other:?}"),
+    };
+    let envelope = runtime
+        .block_on(protector.open(stream.scope.clone(), &sealed))
+        .unwrap();
+    let original: Value = envelope.expose(|bytes| serde_json::from_slice(bytes).unwrap());
+    assert_eq!(original["type"], "keel.blocked", "{original}");
+    let evidence = original["evidence"].as_array().unwrap();
+    for exact in [
+        format!("head:{head}"),
+        "finding:keel.scope.path_outside_card".into(),
+    ] {
+        assert!(
+            evidence.iter().any(|value| value == &exact),
+            "original evidence lost {exact} after both cycles: {original}"
+        );
+    }
+    assert!(
+        !evidence
+            .iter()
+            .any(|value| value == &format!("head:{corrected_head}")),
+        "{original}"
+    );
 }
 
 fn run_verdict(comments: &Path, head: &str, reviewer: &str) -> (i32, Value) {

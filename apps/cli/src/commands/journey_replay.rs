@@ -393,6 +393,9 @@ pub(super) struct Driver {
     sequence: u64,
     secrets: Vec<String>,
     headed: bool,
+    /// The per-expectation judgement of the last `snapshot` reply (#1286), pass or fail. Only a
+    /// shape `failed_checks`/the success validator accepted is kept; anything else reads as none.
+    last_checks: Option<Value>,
 }
 
 pub(super) struct TemporaryOutput(PathBuf);
@@ -481,6 +484,7 @@ impl Driver {
             sequence: 0,
             secrets: secrets.values().cloned().collect(),
             headed: false,
+            last_checks: None,
         })
     }
 
@@ -502,7 +506,16 @@ impl Driver {
         result
     }
 
+    /// The checks the last `snapshot` judged, once: the next caller sees none until another
+    /// snapshot answers (#1286).
+    pub(super) fn take_checks(&mut self) -> Option<Value> {
+        self.last_checks.take()
+    }
+
     fn call_inner(&mut self, op: &str, mut request: Value, path: &str) -> Result<Value> {
+        if op == "snapshot" {
+            self.last_checks = None;
+        }
         let deadline = Instant::now() + OP_BUDGET;
         self.sequence += 1;
         request["protocol"] = PROTOCOL.into();
@@ -567,6 +580,9 @@ impl Driver {
             ));
         }
         if !success {
+            if op == "snapshot" && reply["code"] == "driver.expectation_failed" {
+                self.last_checks = failed_checks(&reply["details"], &request["expect"]);
+            }
             let code = match reply["code"].as_str().unwrap_or("") {
                 "driver.locator_missing" => "driver.locator_missing",
                 "driver.locator_ambiguous" => "driver.locator_ambiguous",
@@ -710,6 +726,9 @@ impl Driver {
                 format!("{path}/result"),
                 1,
             ));
+        }
+        if op == "snapshot" {
+            self.last_checks = Some(result["checks"].clone());
         }
         Ok(result.clone())
     }
@@ -1029,6 +1048,36 @@ pub(super) fn observer_ready(project: &Path) -> Result<()> {
         return Err(failure("replay.observer_missing", "/observer", 3));
     }
     Ok(())
+}
+
+/// The driver's per-expectation judgement on a failed snapshot (#1324), kept only when it is the
+/// exact shape the driver promises: one entry per requested expectation, in order, naming the
+/// same role and name, at least one unseen, and a `closest` that is null or one short role/name
+/// pair. Any other `details` reads as none, so a malformed reply never reaches the Studio.
+pub(super) fn failed_checks(details: &Value, expect: &Value) -> Option<Value> {
+    let closed = |value: &Value, keys: &[&str]| {
+        value.as_object().is_some_and(|object| {
+            object.len() == keys.len() && object.keys().all(|key| keys.contains(&key.as_str()))
+        })
+    };
+    let text = |value: &Value, max: usize| value.as_str().is_some_and(|text| text.len() <= max);
+    let checks = details["checks"].as_array()?;
+    let expect = expect.as_array()?;
+    let valid = closed(details, &["checks"])
+        && checks.len() == expect.len()
+        && checks.iter().any(|check| check["seen"] == false)
+        && checks.iter().zip(expect).all(|(check, wanted)| {
+            closed(check, &["role", "name", "seen", "closest"])
+                && check["role"] == wanted["role"]
+                && check["name"] == wanted["name"]
+                && check["seen"].is_boolean()
+                && (check["closest"].is_null()
+                    || (check["seen"] == false
+                        && closed(&check["closest"], &["role", "name"])
+                        && text(&check["closest"]["role"], 64)
+                        && text(&check["closest"]["name"], 256)))
+        });
+    valid.then(|| Value::Array(checks.clone()))
 }
 
 pub(super) fn observe(
@@ -1913,6 +1962,87 @@ fn supervise(args: &JourneyReplayArgs, deadline: Instant) -> Outcome {
 mod tests {
     use super::*;
 
+    /// #1286: the real `call` path keeps a failed snapshot's per-assertion judgement for the
+    /// preview to read once. Regression: the driver sent `details.checks` (#1324) but Rust dropped
+    /// it, so the Studio painted the step's single status on every assertion. Cost: milliseconds,
+    /// one fixed peer frame through the existing writer/reply channels; no new seam.
+    #[test]
+    fn a_failed_snapshot_keeps_its_checks_for_one_reader() {
+        let checks = json!([
+            {"role":"heading","name":"Produto encontrado","seen":false,
+             "closest":{"role":"heading","name":"Produto conferido"}},
+            {"role":"button","name":"Salvar item","seen":true,"closest":null},
+        ]);
+        let (writer, requests) = mpsc::sync_channel::<(Vec<u8>, mpsc::SyncSender<bool>)>(1);
+        std::thread::spawn(move || {
+            let (_, ack) = requests.recv().unwrap();
+            ack.send(true).unwrap();
+        });
+        let (peer, replies) = mpsc::sync_channel(1);
+        peer.send(Ok(Some(
+            serde_json::to_vec(&json!({"protocol":PROTOCOL,"requestId":1,"ok":false,
+                "code":"driver.expectation_failed","path":"/expect","details":{"checks":checks}}))
+            .unwrap(),
+        )))
+        .unwrap();
+        let mut driver = Driver {
+            owned: None,
+            writer,
+            replies,
+            sequence: 0,
+            secrets: vec![],
+            headed: true,
+            last_checks: None,
+        };
+        let expect = json!([{"role":"heading","name":"Produto encontrado"},
+            {"role":"button","name":"Salvar item"}]);
+        let refused = driver.call("snapshot", json!({"expect":expect}), "/screens/s");
+        assert_eq!(refused.unwrap_err().0, "driver.expectation_failed");
+        assert_eq!(driver.take_checks(), Some(checks));
+        assert_eq!(driver.take_checks(), None);
+    }
+
+    /// #1286: a failed snapshot's judgement survives only in the exact shape the driver promises,
+    /// so the Studio can mark each assertion on its own and never renders driver-shaped garbage.
+    /// Cost: microseconds, in-memory JSON; no process, browser, or production seam.
+    #[test]
+    fn failed_checks_keep_only_the_promised_shape() {
+        let expect = json!([
+            {"role":"heading","name":"Produto encontrado"},
+            {"role":"region","name":"Também encontramos em"},
+        ]);
+        let good = json!({"checks":[
+            {"role":"heading","name":"Produto encontrado","seen":false,
+             "closest":{"role":"heading","name":"Produto conferido"}},
+            {"role":"region","name":"Também encontramos em","seen":true,"closest":null},
+        ]});
+        assert_eq!(failed_checks(&good, &expect), Some(good["checks"].clone()));
+        let mut all_seen = good.clone();
+        all_seen["checks"][0]["seen"] = true.into();
+        all_seen["checks"][0]["closest"] = Value::Null;
+        let mut renamed = good.clone();
+        renamed["checks"][1]["name"] = "Other".into();
+        let mut extra_key = good.clone();
+        extra_key["checks"][0]["note"] = "x".into();
+        let mut closest_on_seen = good.clone();
+        closest_on_seen["checks"][1]["closest"] = json!({"role":"region","name":"X"});
+        let mut long_closest = good.clone();
+        long_closest["checks"][0]["closest"]["name"] = "x".repeat(257).into();
+        let short = json!({"checks":[good["checks"][0].clone()]});
+        for bad in [
+            all_seen,
+            renamed,
+            extra_key,
+            closest_on_seen,
+            long_closest,
+            short,
+            json!({}),
+            json!(null),
+        ] {
+            assert_eq!(failed_checks(&bad, &expect), None, "{bad}");
+        }
+    }
+
     /// R6: absent or unrelated launcher keys must not default a required secret.
     /// The browser-only missing-secret check leaves this offline boundary uncovered.
     /// Cost: milliseconds, in-memory maps; no process, browser, or production seam.
@@ -2049,6 +2179,7 @@ mod tests {
                 sequence: 0,
                 secrets: vec![],
                 headed: false,
+                last_checks: None,
             };
             assert_eq!(
                 driver.call(op, request, "/peer").unwrap_err().0,
@@ -2094,6 +2225,7 @@ mod tests {
                 sequence: 0,
                 secrets: vec![],
                 headed: false,
+                last_checks: None,
             };
             let reply = driver.call("snapshot", request.clone(), "/peer");
             assert_eq!(reply.is_ok(), accepted, "{request}: {reply:?}");
@@ -2142,6 +2274,7 @@ mod tests {
                 sequence: 0,
                 secrets: vec![],
                 headed: false,
+                last_checks: None,
             };
             let reply = driver.call("snapshot", request.clone(), "/screens/entrar");
             assert_eq!(reply.map(|_| ()).map_err(|e| e.0), expected, "{frame}");

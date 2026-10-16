@@ -538,6 +538,15 @@ fn failed_reason(code: &str) -> &'static str {
     }
 }
 
+/// A screen entry carrying the driver's per-assertion judgement (#1286). The entry is the
+/// captured frame when there is one, else the same `{"frame":false}` a bare screen records.
+fn with_checks(frame: Option<Value>, checks: Option<Value>) -> Option<Value> {
+    let Some(checks) = checks else { return frame };
+    let mut entry = frame.unwrap_or_else(|| json!({"frame":false}));
+    entry["checks"] = checks;
+    Some(entry)
+}
+
 /// What a refused act or observation means for one step (the closed list agreed on #519).
 fn step_reason(code: &str) -> &'static str {
     match code {
@@ -1015,18 +1024,27 @@ fn play_path(
         }
         driver.call("open", request, "/entry")?;
         let arrived = |driver: &mut Driver, run: &mut Run, screen: &str| -> Result<bool> {
-            match observe(driver, screens[screen], base, &format!("/screens/{screen}")) {
+            let observed = observe(driver, screens[screen], base, &format!("/screens/{screen}"));
+            // #1286: each assertion's own seen/closest travels on the screen entry, so the Studio
+            // marks them one by one instead of painting the step's status on all of them.
+            let checks = driver.take_checks();
+            match observed {
                 Ok(_) => {
                     let frame = run.capture(driver, output.path(), screen);
                     run.prove(screen, frame.as_ref())?;
-                    run.screen(screen, "pass", None, frame);
+                    run.screen(screen, "pass", None, with_checks(frame, checks));
                     Ok(true)
                 }
                 Err((code, _, _))
                     if SURVIVABLE.contains(&code) || code == "replay.wrong_screen" =>
                 {
                     let frame = run.capture(driver, output.path(), screen);
-                    run.screen(screen, "drift", Some(step_reason(code)), frame);
+                    run.screen(
+                        screen,
+                        "drift",
+                        Some(step_reason(code)),
+                        with_checks(frame, checks),
+                    );
                     Ok(false)
                 }
                 Err(failed) => Err(failed),
@@ -1373,8 +1391,25 @@ mod tests {
         Guard, HISTORY_KEEP, JourneyPreviewArgs, archive, body, dir_of, failed_reason,
         history_frame, history_id, history_ids, plain_id, proof_args, read_state, reap_lost,
         reap_lost_from, reap_lost_from_with, runner_liveness, runner_liveness_with, save_state,
-        severity, step_reason, unsealed_proof, watch_budget,
+        severity, step_reason, unsealed_proof, watch_budget, with_checks,
     };
+
+    /// #1286: a screen keeps its frame fields and gains `checks`; without checks nothing changes.
+    /// Cost: microseconds, in-memory JSON.
+    #[test]
+    fn a_screen_entry_carries_the_drivers_checks() {
+        let checks = json!([{"role":"heading","name":"A","seen":false,"closest":null}]);
+        assert_eq!(with_checks(None, None), None);
+        assert_eq!(
+            with_checks(None, Some(checks.clone())),
+            Some(json!({"frame":false,"checks":checks}))
+        );
+        let frame = json!({"frame":true,"path":"f.png"});
+        assert_eq!(with_checks(Some(frame.clone()), None), Some(frame.clone()));
+        let mut expected = frame.clone();
+        expected["checks"] = checks.clone();
+        assert_eq!(with_checks(Some(frame), Some(checks)), Some(expected));
+    }
     use serde_json::{Value, json};
     use std::path::Path;
 

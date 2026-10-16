@@ -13,6 +13,72 @@ use graphhelm_execution::tasks::{
 use graphhelm_protocols::PersistedTimestamp;
 use serde_json::{Value, json};
 
+/// #1469: the Backlog is the NEWEST `task.queued` list, minus every issue a live slice holds,
+/// oldest first; the list opens no slice, and an over-long or malformed list is not a record.
+#[test]
+fn backlog_is_the_newest_queued_list_minus_held_issues_oldest_first() {
+    use graphhelm_execution::tasks::backlog;
+    let queued = |sequence: u64, issues: Value| {
+        record(
+            sequence,
+            "task.queued",
+            "coordinator",
+            json!({"taskId": "backlog", "issues": issues}),
+        )
+    };
+    let item = |issue: u64, opened: &str| json!({"issue": issue, "title": format!("Issue {issue}"), "openedAt": opened});
+    let records = vec![
+        queued(1, json!([item(5, "2026-10-01T00:00:00Z")])),
+        queued(
+            2,
+            json!([
+                item(9, "2026-10-03T00:00:00Z"),
+                item(7, "2026-10-02T00:00:00Z"),
+                item(8, "2026-10-01T00:00:00Z")
+            ]),
+        ),
+        record(
+            3,
+            "task.claimed",
+            "lane-a",
+            json!({"taskId": "issue-8", "issue": 8, "lane": "lane-a", "branch": "issue-8-x"}),
+        ),
+    ];
+    let tasks = fold_task_events(&records);
+    assert_eq!(tasks.len(), 1, "a queued list opens no slice: {tasks:?}");
+    let shown: Vec<u64> = backlog(&records, &tasks).iter().map(|q| q.issue).collect();
+    assert_eq!(
+        shown,
+        vec![7, 9],
+        "issue 5 left the newest list; issue 8 is held"
+    );
+
+    let base = |issues: Value| json!({"schema": "graphhelm-task-event-v1", "taskId": "backlog", "revision": 1, "at": "x", "issues": issues});
+    let many: Vec<Value> = (1..=26).map(|n| item(n, "2026-10-01T00:00:00Z")).collect();
+    assert!(
+        parse("task.queued", "coordinator", base(json!(many))).is_none(),
+        "26 issues exceed maxItems"
+    );
+    assert!(
+        parse(
+            "task.queued",
+            "coordinator",
+            base(json!([{"issue": 1, "title": "t"}]))
+        )
+        .is_none(),
+        "openedAt is required"
+    );
+    assert!(
+        parse(
+            "task.queued",
+            "coordinator",
+            base(json!([{"issue": 1, "title": "t", "openedAt": "x", "pr": 2}]))
+        )
+        .is_none(),
+        "unknown item key"
+    );
+}
+
 fn record(sequence: u64, kind: &str, actor: &str, document: Value) -> TaskEventRecord {
     let mut base = json!({"schema": "graphhelm-task-event-v1", "taskId": "pr-384", "revision": sequence, "at": "2026-10-07T20:00:00Z"});
     for (key, value) in document.as_object().unwrap() {

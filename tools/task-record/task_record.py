@@ -39,10 +39,14 @@ import os
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
-KINDS = ("claimed", "planned", "released", "heartbeat", "pr_opened", "review_assigned", "review_verdict", "merged", "closed", "critic_verdict")
+KINDS = ("claimed", "planned", "released", "heartbeat", "pr_opened", "review_assigned", "review_verdict", "merged", "closed", "critic_verdict", "queued")
+# #1469: `queued` records the open issues carrying this label that no open PR closes, oldest
+# first, at most QUEUED_MAX (the schema's maxItems), as the Lanes Backlog reads them.
+WAVE_LABEL = "current-wave"
+QUEUED_MAX = 25
 # The default revision is the step's position in the delivery. `planned` (#480) came later and is
 # the claim's companion, so the older steps keep their numbers (and their records' keys).
-REVISIONS = {"claimed": 1, "planned": 1, "released": 2, "heartbeat": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "merged": 5, "closed": 6, "critic_verdict": 1}
+REVISIONS = {"claimed": 1, "planned": 1, "released": 2, "heartbeat": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "merged": 5, "closed": 6, "critic_verdict": 1, "queued": 1}
 CLASSES = ("docs", "code", "user_visible", "invariant")
 PROOFS = ("none", "tests", "journey", "both")
 # #477: what the naming standard asks (DELIVERY.md "Naming") and what the Runtime accepts.
@@ -206,7 +210,7 @@ def parse(argv):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("kind", choices=KINDS)
     p.add_argument("--lane", required=True, help="the recording actor (your ListAgents name)")
-    p.add_argument("--issue", type=int, required=True, help="the task is issue-<N> for its whole life")
+    p.add_argument("--issue", type=int, help="the task is issue-<N> for its whole life (every kind but queued)")
     p.add_argument("--revision", type=int, help="defaults to the step's position: claimed 1 (planned 1) ... merged 5")
     p.add_argument("--branch")
     p.add_argument("--claim-sequence", type=int, help="released: exact sequence of your latest still-open pre-PR task.claimed record")
@@ -262,7 +266,31 @@ def parse(argv):
                    " planned: the plan in one line (at most 300 characters), required")
     p.add_argument("--no-github", action="store_true", help="do not call gh for the title and summary")
     p.add_argument("--dry-run", action="store_true")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if args.kind != "queued" and args.issue is None:
+        p.error("the following arguments are required: --issue")
+    if args.kind == "queued" and args.issue is not None:
+        p.error("queued lists every open wave issue; it takes no --issue")
+    return args
+
+
+def wave_backlog(repo):
+    """#1469: the open `current-wave` issues no open PR closes, oldest first, read with `gh`; at most
+    QUEUED_MAX. Any gh failure stops the step: an empty list would clear the Backlog."""
+    def gh(*command):
+        run = [*command, "--repo", repo] if repo else list(command)
+        try:
+            return json.loads(subprocess.run(run, capture_output=True, text=True, encoding="utf-8", timeout=60,
+                                             check=True, creationflags=NO_WINDOW).stdout)
+        except (OSError, subprocess.SubprocessError, ValueError) as error:
+            sys.exit(f"task_record: queued could not read GitHub ({' '.join(command[:3])}): {error}")
+    issues = gh("gh", "issue", "list", "--state", "open", "--label", WAVE_LABEL, "--limit", "200",
+                "--json", "number,title,createdAt")
+    prs = gh("gh", "pr", "list", "--state", "open", "--limit", "200", "--json", "closingIssuesReferences")
+    held = {ref.get("number") for pr in prs for ref in pr.get("closingIssuesReferences") or []}
+    rows = sorted((i for i in issues if i.get("number") not in held), key=lambda i: (i["createdAt"], i["number"]))
+    return [{"issue": i["number"], "title": i["title"].strip()[:200], "openedAt": i["createdAt"]}
+            for i in rows[:QUEUED_MAX]]
 
 
 JOURNEYS_DIR = Path(__file__).resolve().parents[2] / ".graphhelm" / "journeys"
@@ -380,9 +408,16 @@ def planned_fields(args):
 
 
 def document(args, now):
-    doc = {"schema": "graphhelm-task-event-v1", "taskId": f"issue-{args.issue}",
+    doc = {"schema": "graphhelm-task-event-v1", "taskId": "backlog" if args.kind == "queued" else f"issue-{args.issue}",
            "revision": args.revision or REVISIONS[args.kind], "at": now}
-    if args.kind == "heartbeat":
+    if args.kind == "queued":
+        if args.no_github:
+            sys.exit("task_record: queued reads the issue list with gh; --no-github is refused")
+        doc.update(repo=args.repo, issues=wave_backlog(args.repo))
+        # The Runtime admits a description of at most 8 KiB: the newest issues give way first.
+        while len(json.dumps(doc, separators=(",", ":")).encode()) > 8000:
+            doc["issues"].pop()
+    elif args.kind == "heartbeat":
         doc.update(lane=args.lane)
     elif args.kind == "claimed":
         need(args, "branch")
@@ -693,7 +728,8 @@ def send(args, doc, now):
         # Keep accepted keys stable; the digest still covers the full lane, kind and record.
         signal_id = f"{signal_id[:47]}-{digest}"
     evidence = args.comment_url or (f"https://github.com/{args.repo}/pull/{args.pr}" if args.pr
-                                    else f"https://github.com/{args.repo}/issues/{args.issue}")
+                                    else f"https://github.com/{args.repo}/issues/{args.issue}" if args.issue
+                                    else f"https://github.com/{args.repo}/labels/{WAVE_LABEL}")
     body = {"signal": {"id": signal_id, "type": f"task.{args.kind}",
                        "source": {"type": "user", "id": args.lane}, "severity": "low",
                        "emittedAt": now, "evidence": [evidence],

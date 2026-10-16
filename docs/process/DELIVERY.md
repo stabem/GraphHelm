@@ -285,6 +285,7 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 | merge and read what landed (§5) | `task.merged` | `pr`, `mergeSha`, `closes`, `merger` |
 | a PR closed without a merge (the Stop reconciler records it as the lane; by hand only to repair) | `task.closed` | `pr`, `reason` (`superseded` or `abandoned`), `by` (the superseding PR, or the PR itself when abandoned) |
 | grade the design, once per round, when the plan says `critic: design` | `task.critic_verdict` | `round`, `score`, `passScore`, `maxRounds`, `verdict`, `designRef`, `lane`, `reasons` |
+| refresh the Lanes Backlog (the coordinator; #1469): the open `current-wave` issues no open PR closes, at most 25; `taskId` is `backlog` and the newest record replaces the earlier ones | `task.queued` | `issues` (each `issue`, `title`, `openedAt`), `repo` |
 
 `taskId` is `issue-<N>` for the whole life of the task. An issue worked in several PRs is one
 task with one slice per PR: record `task.claimed` with the new slice's own branch before its

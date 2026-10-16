@@ -24,7 +24,8 @@ pub const MAX_ENVELOPE_BYTES: usize = 1024 * 1024;
 /// #591: a gap at least this long between two records of one lane is a stall, not active work.
 pub const ACTIVE_GAP_MS: i64 = 30 * 60_000;
 
-/// The ten record kinds a lane writes (DELIVERY.md, "Task records").
+/// The eleven record kinds a lane (or, for `task.queued`, whoever reads the issue list) writes
+/// (DELIVERY.md, "Task records").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum TaskEventKind {
     #[serde(rename = "task.claimed")]
@@ -47,6 +48,10 @@ pub enum TaskEventKind {
     Closed,
     #[serde(rename = "task.critic_verdict")]
     CriticVerdict,
+    /// #1469: the open wave issues its recorder read; the newest record replaces the earlier ones.
+    /// It opens no slice; the tasks route serves the ones no live slice holds as the backlog.
+    #[serde(rename = "task.queued")]
+    Queued,
 }
 
 impl TaskEventKind {
@@ -64,6 +69,7 @@ impl TaskEventKind {
             "task.merged" => Self::Merged,
             "task.closed" => Self::Closed,
             "task.critic_verdict" => Self::CriticVerdict,
+            "task.queued" => Self::Queued,
             _ => return None,
         })
     }
@@ -82,6 +88,7 @@ impl TaskEventKind {
             Self::Merged => "task.merged",
             Self::Closed => "task.closed",
             Self::CriticVerdict => "task.critic_verdict",
+            Self::Queued => "task.queued",
         }
     }
 }
@@ -238,6 +245,45 @@ pub struct TaskEventRecord {
     /// #480: the lane's keel plan, from `task.planned`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<TaskPlan>,
+    /// #1469: the issues a `task.queued` lists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queued: Option<Vec<QueuedIssue>>,
+}
+
+/// #1469: one open wave issue as a `task.queued` record lists it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueuedIssue {
+    pub issue: u64,
+    pub title: String,
+    pub opened_at: String,
+}
+
+/// #1469: the most issues one `task.queued` lists (the schema's `maxItems`), so a record stays
+/// under the Runtime's 8 KiB description limit.
+pub const MAX_QUEUED_ISSUES: usize = 25;
+
+/// #1469: the newest `task.queued` record's issues that no live slice holds as its
+/// issue, oldest first. An issue missing from the newest list is not shown.
+#[must_use]
+pub fn backlog(records: &[TaskEventRecord], tasks: &[TaskState]) -> Vec<QueuedIssue> {
+    let Some(newest) = records
+        .iter()
+        .filter(|r| r.kind == TaskEventKind::Queued)
+        .max_by_key(|r| r.sequence)
+    else {
+        return Vec::new();
+    };
+    let held = |n: u64| tasks.iter().any(|t| t.issue == Some(n));
+    let mut out: Vec<QueuedIssue> = newest
+        .queued
+        .iter()
+        .flatten()
+        .filter(|q| !held(q.issue))
+        .cloned()
+        .collect();
+    out.sort_by(|a, b| a.opened_at.cmp(&b.opened_at).then(a.issue.cmp(&b.issue)));
+    out
 }
 
 impl TaskEventRecord {
@@ -272,6 +318,7 @@ impl TaskEventRecord {
             occurred_at: None,
             critic: None,
             plan: None,
+            queued: None,
         }
     }
 }
@@ -687,6 +734,39 @@ pub fn parse_task_event(
                 max_rounds,
                 verdict,
             });
+        }
+        TaskEventKind::Queued => {
+            let repo = repository(document).ok()?;
+            if !document.keys().all(|key| {
+                matches!(
+                    key.as_str(),
+                    "schema" | "taskId" | "revision" | "at" | "repo" | "issues"
+                )
+            }) {
+                return None;
+            }
+            let items = field("issues").as_array()?;
+            if items.len() > MAX_QUEUED_ISSUES {
+                return None;
+            }
+            let mut queued = Vec::with_capacity(items.len());
+            for item in items {
+                let item = item.as_object()?;
+                if !item
+                    .keys()
+                    .all(|key| matches!(key.as_str(), "issue" | "title" | "openedAt"))
+                {
+                    return None;
+                }
+                let get = |key: &str| item.get(key).unwrap_or(&serde_json::Value::Null);
+                queued.push(QueuedIssue {
+                    issue: count(get("issue"))?,
+                    title: words_text(get("title"), 200)?,
+                    opened_at: text(get("openedAt"), 64)?,
+                });
+            }
+            record.repo = repo;
+            record.queued = Some(queued);
         }
     }
     Some(record)
@@ -1304,6 +1384,10 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
     let mut routes: Vec<Route> = Vec::new();
     let mut next_id = 0_usize;
     for event in ordered {
+        // #1469: the issue list belongs to no slice; `backlog` reads it.
+        if event.kind == TaskEventKind::Queued {
+            continue;
+        }
         if event.kind == TaskEventKind::Heartbeat {
             let claim = slices.iter_mut().rev().find(|s| {
                 s.state.task_id == event.task_id
@@ -1709,7 +1793,9 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 state.step = TaskStep::Merged;
             }
             TaskEventKind::Closed => {}
-            TaskEventKind::Heartbeat | TaskEventKind::Released => unreachable!("handled above"),
+            TaskEventKind::Heartbeat | TaskEventKind::Released | TaskEventKind::Queued => {
+                unreachable!("handled above")
+            }
         }
         // #480: Plan and Critic hold time only once a plan is recorded. Before that, the claim's
         // time is Implement's. Judged after the record is applied, so the `task.planned` that ends

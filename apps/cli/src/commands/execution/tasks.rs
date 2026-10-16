@@ -15,8 +15,8 @@ use std::sync::{Mutex, OnceLock};
 
 use graphhelm_events::{EvidenceOpener, EvidenceRead};
 use graphhelm_execution::tasks::{
-    FoldSlice, Route, TaskEventRecord, TaskState, TaskStep, fold_task_events_with_routes,
-    parse_task_event,
+    FoldSlice, QueuedIssue, Route, TaskEventRecord, TaskState, TaskStep, backlog,
+    fold_task_events_with_routes, parse_task_event,
 };
 use graphhelm_protocols::{EventKind, EvidenceId, PersistedTimestamp};
 use serde::Serialize;
@@ -52,6 +52,9 @@ pub struct TasksView {
     /// #1234 (plan A7): lane liveness judged once, here, from the declared budgets and the
     /// Runtime's own event times at `now`; the Studio reads it instead of keeping thresholds.
     pub liveness: Liveness,
+    /// #1469: the newest `task.queued` record's open wave issues no live slice holds, oldest
+    /// first: the Lanes Backlog. Empty when no issue list was recorded.
+    pub backlog: Vec<QueuedIssue>,
 }
 
 /// How much of the fold a read answers. `Open` is every door's default: a long-lived run's
@@ -586,6 +589,7 @@ pub(crate) fn read_history(
     }
     let liveness = liveness(&fold.tasks, &records, &last_by_actor, &now);
     let stalls = stalled_tasks(&fold.tasks, &now);
+    let backlog = backlog(&records, &fold.tasks);
     Ok(TasksView {
         execution_id: execution.to_owned(),
         head_sequence: history.last().map_or(0, |event| event.sequence),
@@ -599,6 +603,7 @@ pub(crate) fn read_history(
         leases,
         liveness,
         stalls,
+        backlog,
     })
 }
 

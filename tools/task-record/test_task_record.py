@@ -1036,8 +1036,8 @@ class LaneDocsGuardTest(unittest.TestCase):
         kinds = set(task_record.KINDS)
         lanes = (self.REPO / "docs/process/LANES.md").read_text(encoding="utf-8")
         section = lanes.split("## 4. Task records", 1)[1].split("\n## ", 1)[0]
-        # LANES §4: every `$T --issue N <kind>` in the command table.
-        in_lanes = set(re.findall(r"\$T --issue N (\w+)", section))
+        # LANES §4: every `$T --issue N <kind>` in the command table (`$T queued` takes no issue, #1469).
+        in_lanes = set(re.findall(r"\$T (?:--issue N )?(\w+)", section))
         self.assertEqual(in_lanes, kinds, f"LANES.md §4 names {sorted(in_lanes)}, task_record.py writes {sorted(kinds)}")
         self.assertNotIn("Until the change that does so lands", section,
                          "#508 landed: pr_opened --reviewer records review_assigned")

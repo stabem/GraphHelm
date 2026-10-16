@@ -19,7 +19,10 @@ export interface LaneLiveness { lane: string; lastRecordAt?: string; owes: boole
 export interface Liveness { budgets: LivenessBudgets; lanes: LaneLiveness[] }
 /** #1193: a live pre-PR claim's lease; `overdue` is the stale-claim verdict. */
 export interface ClaimLease { key: string; taskId: string; lane: string; claimSequence: number; leaseSeconds: number; expiresAt: string; overdue: boolean }
-export interface LaneFold { slices: FoldSlice[]; routes: Route[]; liveness?: Liveness; leases?: ClaimLease[] }
+/** #1469: one open wave issue nobody has picked up: the newest `task.queued` record lists it and no
+ * live slice holds it. `openedAt` is when the issue was opened, as the recorder read it. */
+export interface BacklogIssue { issue: number; title: string; openedAt: string }
+export interface LaneFold { slices: FoldSlice[]; routes: Route[]; liveness?: Liveness; leases?: ClaimLease[]; backlog?: BacklogIssue[] }
 
 export interface TasksReply extends LaneFold {
   executionId: string;

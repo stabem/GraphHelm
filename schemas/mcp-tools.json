@@ -494,8 +494,7 @@
             "type": "array"
           },
           "credentialFile": {
-            "description": "Local path to a pre-minted lane credential; pair with lane. Never pass credential contents.",
-            "minLength": 1,
+            "description": "Path to the lane's credential file, never its contents.",
             "type": "string"
           },
           "evidenceOut": {
@@ -511,10 +510,7 @@
             "type": "integer"
           },
           "lane": {
-            "description": "Lane signed by the local credential file; pair with credentialFile.",
-            "maxLength": 128,
-            "minLength": 1,
-            "pattern": "^[A-Za-z0-9._:-]+$",
+            "description": "Lane to sign as; with credentialFile.",
             "type": "string"
           },
           "signal": {

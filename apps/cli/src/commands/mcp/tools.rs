@@ -1228,8 +1228,10 @@ pub(crate) const UNLISTED_STUBS: [&str; 4] = [
 
 /// #1277: the most `tools/list` may serialise to, in bytes. Every connecting session pays it;
 /// the guard below fails a change that grows it past this, so growth is a decision in a diff.
+/// Raised from 25 500 for `signal`'s `lane` and `credentialFile` (lane-signed writes), already
+/// cut to two short descriptions with their shape checked in `call` instead of the schema.
 #[cfg(test)]
-const TOOL_LIST_BUDGET_BYTES: usize = 25_500;
+const TOOL_LIST_BUDGET_BYTES: usize = 25_700;
 /// #1277: the longest a tool description may be: one line plus the route it maps to.
 #[cfg(test)]
 const DESCRIPTION_MAX_CHARS: usize = 300;

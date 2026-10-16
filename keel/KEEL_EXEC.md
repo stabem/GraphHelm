@@ -18,7 +18,7 @@ Step 2, from an accepted card to a proven change. Read `KEEL.md` and the card fi
 - Keep existing behaviour working. Before you edit shared code, find its other callers and what
   they rely on. A fix that breaks a neighbour is not a fix.
 - A change that displaces a production caller follows the retirement rule in
-  [`DELIVERY.md`](../docs/process/DELIVERY.md) §3.
+  `docs/process/DELIVERY.md` §3.
 - Stop when the promise is proven. Do not refactor, reformat or sweep beyond it, even when a
   neighbouring file has the same defect: name it in the pull request instead.
 

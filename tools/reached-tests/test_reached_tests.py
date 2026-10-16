@@ -805,7 +805,8 @@ class Reach(unittest.TestCase):
             guard = Path(repo, "tools", "keel-plugin")
             guard.mkdir(parents=True)
             (guard / "test_keel_plugin.py").write_text("", encoding="utf-8")
-            for changed in ("KEEL.md", "keel/KEEL_EXEC.md", "plugins/keel/skills/keel-exec/SKILL.md"):
+            for changed in ("KEEL.md", "keel/KEEL_EXEC.md", "plugins/keel/skills/keel-exec/SKILL.md",
+                            ".claude-plugin/marketplace.json", ".agents/plugins/marketplace.json"):
                 *_, tools, _, other = reach(changed, repo=repo)
                 self.assertIn("python -m unittest tools/keel-plugin/test_keel_plugin.py", tools, changed)
                 self.assertEqual(other, [], changed)

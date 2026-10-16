@@ -174,7 +174,7 @@ it("keeps the settled envelope snapshot stable across unrelated renders", async 
   second.evidenceRefs = ["next"];
   const open = vi.fn(async (_run: string, id: string): Promise<EvidenceContent> => ({
     evidenceId: id,
-    content: JSON.stringify({ type: "operator_note", description: id, target: { id: "studio-operator", type: "user" } }),
+    content: JSON.stringify({ type: "operator_note", description: id, to: "studio-operator" }),
     contentSha256: "hash", mediaType: "application/json", sensitivity: "confidential",
   }));
   let memoEvaluations = 0;

@@ -53,6 +53,20 @@ fn backlog_is_the_newest_queued_list_minus_held_issues_oldest_first() {
         "issue 5 left the newest list; issue 8 is held"
     );
 
+    // A claim given back returns its issue to the Backlog; a merged slice still holds it.
+    let mut given_back = records.clone();
+    given_back.push(record(4, "task.released", "lane-a", json!({"taskId": "issue-8", "lane": "lane-a", "claimSequence": 3, "reason": "handing back"})));
+    let tasks = fold_task_events(&given_back);
+    let shown: Vec<u64> = backlog(&given_back, &tasks)
+        .iter()
+        .map(|q| q.issue)
+        .collect();
+    assert_eq!(
+        shown,
+        vec![8, 7, 9],
+        "a released claim no longer holds issue 8"
+    );
+
     let base = |issues: Value| json!({"schema": "graphhelm-task-event-v1", "taskId": "backlog", "revision": 1, "at": "x", "issues": issues});
     let many: Vec<Value> = (1..=26).map(|n| item(n, "2026-10-01T00:00:00Z")).collect();
     assert!(

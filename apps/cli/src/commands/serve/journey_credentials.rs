@@ -265,8 +265,8 @@ fn apply(view: &mut View, record: &Value) -> Option<()> {
     }
     let receipt = match record["kind"].as_str()? {
         "GrantCreated" => {
-            let grant = &record["grant"];
-            let field = |name: &str| grant[name].as_str().map(str::to_owned);
+            let fields = &record["grant"];
+            let field = |name: &str| fields[name].as_str().map(str::to_owned);
             let grant = Grant {
                 grant_id: field("grantId")?,
                 project_id: field("projectId")?,
@@ -277,7 +277,7 @@ fn apply(view: &mut View, record: &Value) -> Option<()> {
                 expires_at: field("expiresAt")?,
                 revoked: false,
             };
-            if grant["issuer"] != "owner" || view.grants.contains_key(&grant.grant_id) {
+            if fields["issuer"] != "owner" || view.grants.contains_key(&grant.grant_id) {
                 return None;
             }
             let receipt = grant.view();

@@ -7149,6 +7149,9 @@ pub(super) mod tests {
             gateway_manifest: None,
             native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             seen_actors: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
+            grants: Arc::new(super::journey_credentials::Journal::open(
+                &directory.path().join("events"),
+            )),
         };
         (directory, state)
     }

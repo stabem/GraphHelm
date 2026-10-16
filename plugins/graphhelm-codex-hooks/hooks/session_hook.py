@@ -353,6 +353,11 @@ def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None
     argv = [sys.executable, str(Path(__file__).resolve()), "wait", "--host", host,
             "--session-id", _session(payload), "--events", str(events),
             "--heartbeat", str(_heartbeat_path(payload, bound, host)), "--cursor", str(cursor)]
+    # #1058: a lane bound through team.json is re-resolved from the session's cwd; without it
+    # the detached waiter found no binding and returned before ever parking on its lease.
+    cwd = payload.get("cwd")
+    if isinstance(cwd, str) and Path(cwd).is_absolute():
+        argv += ["--cwd", cwd]
     flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS if os.name == "nt" else 0
     # #919: the host runs hooks in a job object that is closed when the hook returns, which
     # killed every waiter before it could log an exit. Leave the job; a job that forbids
@@ -371,10 +376,13 @@ def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None
 
 
 def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
-                  cursor: int | None = None) -> None:
+                  cursor: int | None = None, cwd: str | None = None) -> None:
     payload = {"session_id": session}
+    if cwd:
+        payload["cwd"] = cwd
     bound = binding(payload)
     if bound is None:
+        _log_waiter_exit(session, "unbound")
         return
     cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
     pid_path = _waiter_path(payload, bound, host)
@@ -899,6 +907,7 @@ def main() -> int:
     parser.add_argument("--events", type=Path)
     parser.add_argument("--heartbeat", type=Path)
     parser.add_argument("--cursor", type=int)
+    parser.add_argument("--cwd")
     args = parser.parse_args()
     host = args.host
     output_format = args.format or ("native" if host in {"claude", "codex"} else "portable")
@@ -906,7 +915,7 @@ def main() -> int:
         if args.phase == "wait":
             if not args.session_id or args.events is None or args.heartbeat is None:
                 raise ValueError("waiter binding missing")
-            wait_for_lane(host, args.session_id, args.events, args.heartbeat, args.cursor)
+            wait_for_lane(host, args.session_id, args.events, args.heartbeat, args.cursor, args.cwd)
         elif args.phase == "touch":
             payload = hook_input()
             bound = binding(payload)

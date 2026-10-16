@@ -534,6 +534,8 @@ export interface JourneyRunView {
   held?: { edge: string; act: string; base: string };
   /** A failed launch's output (#1296): the log file and its last bytes, which name the cause. */
   launchLog?: { path?: string; tail?: string };
+  /** The browser driver died before it answered (#1448): its last stderr, secrets masked. */
+  driverLog?: { tail?: string };
 }
 /** One earlier finished run of a journey (#history): `GET /v1/journey-flows/{id}/history`. */
 export interface JourneyPastRun extends JourneyRunView { run: string }

@@ -14,6 +14,25 @@ export interface JourneyRunSource {
 const RUN_POLL_MS = 1000;
 let activePreview: symbol | null = null;
 
+/** What to do about each preview refusal the Runtime names; the bare message said only "cannot be previewed". */
+const PREVIEW_NEXT: Record<string, string> = {
+  "preview.busy": "Another run of this flow is still going. Wait for it to finish, then Run again.",
+  "preview.unwritable": "The project's .graphhelm folder cannot be written. Check that it exists and is yours, then Run again.",
+  "preview.launcher_not_isolated": 'Recording proof needs an isolated launcher. Set `"isolated": true` in .graphhelm/journey-fixture.json, then Run again.',
+  "preview.flow_unknown": "No journey flow has this id. Check the id in .graphhelm/journeys.",
+  "preview.project_invalid": "The Runtime cannot read the project folder. Restart it with `graphhelm studio start` in the project.",
+  "preview.keyring_missing": "Start the Runtime with its sealed keyring (`graphhelm studio start`), then Run again.",
+};
+
+/** The refusal as the owner reads it: the Runtime's words, its code, and the next step when known. */
+export function refusalText(cause: unknown): string {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const code = typeof cause === "object" && cause !== null && typeof (cause as { code?: unknown }).code === "string" ? (cause as { code: string }).code : "";
+  if (!code) return message;
+  const next = PREVIEW_NEXT[code];
+  return `${message} (${code}).${next ? ` ${next}` : ""}`;
+}
+
 export function useJourneyRun(flowId: string, source: JourneyRunSource | undefined, autoStart = true): { offered: boolean; run: JourneyRunView | null; frames: Record<string, string>; failure: string | null; busyReason: string | null; launching: boolean; again: () => void; confirm: () => void; confirming: boolean } {
   const [run, setRun] = useState<JourneyRunView | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -42,7 +61,7 @@ export function useJourneyRun(flowId: string, source: JourneyRunSource | undefin
       if (cancelled) return;
       setStarting(false);
       if (typeof cause === "object" && cause !== null && (cause as { httpStatus?: unknown }).httpStatus === 404) setAbsent(true);
-      else setFailure(cause instanceof Error ? cause.message : String(cause));
+      else setFailure(refusalText(cause));
     };
     const take = (next: JourneyRunView) => {
       if (next.state !== "running") release();

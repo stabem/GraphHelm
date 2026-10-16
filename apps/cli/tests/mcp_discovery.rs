@@ -308,7 +308,7 @@ fn shipped_mcp_registrations_discover_without_port_or_token_overrides() {
     std::fs::create_dir(&elsewhere).unwrap();
     let _runtime = serve_with_project(&events, free_port(), &registry, Some(&project));
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    // #1412: only the graphhelm plugin registers the MCP; companion packages ship none.
+    // #1412 removed the extension packages' own registrations: the plugin's is the only one shipped.
     for path in ["plugins/graphhelm/.mcp.json"] {
         let config: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.join(path)).unwrap()).unwrap();

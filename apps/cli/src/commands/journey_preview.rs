@@ -805,6 +805,10 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
             if let Some(log) = super::journey_live::take_launch_log() {
                 run.state["launchLog"] = log;
             }
+            // The driver's own masked stderr tail when it died before answering (#1448).
+            if let Some(log) = super::journey_replay::take_driver_log() {
+                run.state["driverLog"] = log;
+            }
             let detail = json!({"code":code,"pointer":pointer});
             run.state["detail"] = detail.clone();
             // The pointer may name a flow array index (preflight) or a stable step id (play).
@@ -1453,6 +1457,11 @@ mod tests {
             include_bytes!("../../../../tools/journey-driver/driver.mjs"),
         )
         .unwrap();
+        std::fs::write(
+            project.join(".graphhelm/observers/judge.mjs"),
+            include_bytes!("../../../../tools/journey-driver/judge.mjs"),
+        )
+        .unwrap();
         std::fs::write(project.join("package.json"), "{}").unwrap();
         std::fs::write(
             project.join(".graphhelm/journey-fixture.json"),
@@ -2027,6 +2036,11 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         std::fs::write(
             observers.join("journey_driver.mjs"),
             include_bytes!("../../../../tools/journey-driver/driver.mjs"),
+        )
+        .unwrap();
+        std::fs::write(
+            observers.join("judge.mjs"),
+            include_bytes!("../../../../tools/journey-driver/judge.mjs"),
         )
         .unwrap();
         std::fs::write(

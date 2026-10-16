@@ -29,7 +29,7 @@ function runFailure(run: JourneyRunView, stepIds: string[]): string {
     return "Couldn't run this journey: no browser observer is installed. Run `graphhelm setup --install-observer playwright` in this project, then Run again.";
   }
   const failed = explain(run, stepIds);
-  return `Couldn't run this journey. ${failed.text}${failed.log ? ` The launcher said: ${failed.log.split("\n").slice(-2).join(" / ")}` : ""}`;
+  return `Couldn't run this journey. ${failed.text}${failed.log ? ` The ${failed.logFrom === "driver" ? "browser driver" : "launcher"} said: ${failed.log.split("\n").slice(-2).join(" / ")}` : ""}`;
 }
 
 interface Props {

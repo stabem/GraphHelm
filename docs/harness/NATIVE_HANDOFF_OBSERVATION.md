@@ -1,6 +1,6 @@
 # Native handoff observation protocol
 
-This protocol implements the current [issue #62 native acceptance observation card](https://github.com/stabem/GraphHelm/issues/62#issuecomment-6151341241). It prepares one bounded Claude-to-Codex work transfer and defines what a future pilot must observe; this document does not run or pass that pilot. A handoff receipt means the adapter retrieved an offer and briefing. It does not mean that a model consumed the task, did the work, or accepted it.
+This protocol implements the current [issue #62 native acceptance observation card](https://github.com/stabem/GraphHelm/issues/62#issuecomment-6151341241). It prepares one bounded work transfer between two native AI hosts and defines what a future pilot must observe; this document does not run or pass that pilot. Since the Codex subscription ended (2026-10-15) the receiver host is a second Claude host, Claude Code CLI, while the sender is Claude Desktop ([re-scope](https://github.com/stabem/GraphHelm/issues/62#issuecomment-6216490508)); wherever the steps below say Codex, read "the receiver host". A Codex receiver is deferred until a Codex host exists. A handoff receipt means the adapter retrieved an offer and briefing. It does not mean that a model consumed the task, did the work, or accepted it.
 
 ## Current evidence gap (RED)
 
@@ -83,8 +83,25 @@ If a pilot-owned child does not exit by its deadline, retain its process identit
 
 Record actual wall time per step and total time. Record native usage only when the host exposes it with evidence; otherwise write `unknown`. One pilot cannot prove comparative cost. Any later cost study needs a separately frozen baseline, matched tasks, acceptance rule, and authorization.
 
+## Pilot results (2026-10-16, Claude Desktop to Claude Code CLI)
+
+Run by lane gh-claude-21 against an isolated Runtime (`127.0.0.1:8799`, its own `.graphhelm/` in a detached worktree at `1d80ee2f`), execution `pilot62`. The full evidence report is on [issue #62](https://github.com/stabem/GraphHelm/issues/62).
+
+- **pilot62-1 — aborted, kept as a failed attempt.** The offer was recorded. The receiver's single `receive` never reached the Runtime: the operator's prompt ran the adapter with `python -I`, which drops the script directory from `sys.path`, so `session_hook` failed to import. No receipt exists for that offer. The receiver stopped without retrying, as instructed.
+- **pilot62-2 — one offer, one receive, no retry.**
+
+| Obligation | Result |
+| --- | --- |
+| Offer durably recorded | observed (`handoff-offer-5a6f5bef…`, `state: recorded`, sealed) |
+| Intended receiver got the task | observed: one native `receive` call in Claude Code session `5c86ccde-…`, receipt `handoff-receipt-f8f8f6cf…`; the task text came from the Runtime's sealed note `pilot62-2-brief`, not from the prompt |
+| Receiver consumed the task and did work | observed: answer cites commit `1d80ee2f`, output sha256 `0a5293ea…`; the session transcript shows no read of the sealed expected answer |
+| Work independently accepted | observed: blind reviewer subagent distinct from the receiver, `VERDICT: ACCEPT` on the same commit and output hash |
+| Studio represents the same outcome | missing: no Studio was bound to the isolated Runtime |
+
+Found on the way (not a pilot obligation): the Runtime refuses any signal whose id contains `sk-` (for example `task-note`) with HTTP 500 `GHE009_EXTERNALIZATION_FAILED` at `/repository`, a secret-scanner false positive reported as a server error.
+
 ## Observer and remaining state
 
-The observer for this document is one independent review that checks every command against the linked source contracts and applies the interpretation rules to existing issue/PR records. The native pilot remains pending until a separate coordinator-routed task supplies an isolated binding and executes the protocol.
+The observer for this document is one independent review that checks every command against the linked source contracts and applies the interpretation rules to existing issue/PR records. Pilot62-2 observed four of the five rows for a Claude-to-Claude transfer. It says nothing about a Codex receiver or about reliability beyond one run.
 
-`OBSERVER_MISSING: same-task native consumption, accepted work and Studio evidence`.
+`OBSERVER_MISSING: Studio evidence for the same task; a Codex receiver (deferred until a Codex host exists)`.

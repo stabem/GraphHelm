@@ -49,6 +49,17 @@ class KeelPlugin(unittest.TestCase):
                 self.assertEqual(text(PLUGIN / "skills" / skill / "SKILL.md"), sync.render(skill),
                                  f"{skill} was edited by hand: run python tools/keel-plugin/sync_keel_plugin.py")
 
+    def test_the_graphhelm_keel_skill_carries_the_same_execute_rules(self):
+        # The development-contracts `keel` skill must stay self-contained (no dependency on another
+        # plugin), so it embeds the execute step's text: written by the same sync, from the same file.
+        body = text(sync.GRAPHHELM_KEEL_SKILL)
+        start, end = sync.embedded_markers(sync.GRAPHHELM_KEEL_SOURCE)
+        self.assertEqual(body.count(start), 1, "the embedded block's start marker must appear once")
+        self.assertEqual(body.count(end), 1, "the embedded block's end marker must appear once")
+        embedded = body.split(start, 1)[1].split(end, 1)[0]
+        self.assertEqual(embedded, text(ROOT / sync.GRAPHHELM_KEEL_SOURCE),
+                         "the GraphHelm keel skill differs from its source: run python tools/keel-plugin/sync_keel_plugin.py")
+
     def test_each_skill_is_named_after_its_folder(self):
         for skill in sync.SKILLS:
             with self.subTest(skill=skill):

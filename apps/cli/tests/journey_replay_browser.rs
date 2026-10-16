@@ -267,6 +267,11 @@ fn two_credential_free_paths_replay_to_canonical_cache_sealed_captures_and_fresh
     let observer = project.join(".graphhelm/observers");
     std::fs::create_dir(&observer).unwrap();
     std::fs::write(observer.join("journey_driver.mjs"), DRIVER).unwrap();
+    std::fs::write(
+        observer.join("judge.mjs"),
+        include_bytes!("../../../tools/journey-driver/judge.mjs"),
+    )
+    .unwrap();
     let (code, value) = reply(
         cli()
             .args([

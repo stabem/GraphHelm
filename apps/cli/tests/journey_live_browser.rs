@@ -210,6 +210,11 @@ fn open_live_at_a_step_replays_cached_edges_headed_and_stops_open_at_a_drifted_e
     let observer = project.join(".graphhelm/observers");
     std::fs::create_dir(&observer).unwrap();
     std::fs::write(observer.join("journey_driver.mjs"), DRIVER).unwrap();
+    std::fs::write(
+        observer.join("judge.mjs"),
+        include_bytes!("../../../tools/journey-driver/judge.mjs"),
+    )
+    .unwrap();
     let (code, value) = journey(
         &project,
         &["compile", "checkout", "--fmt", "--include-draft"],

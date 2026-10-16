@@ -20,7 +20,10 @@ orchestrator calls this once per agent. The orchestrator itself never takes a la
    `GRAPHHELM_AGENT_CREDENTIALS` (`<secret>=<lane>|project-local|<exec>`, `;`-separated) in the
    Runtime's environment when it starts. It is the only way a lane records a journey draft or
    approves one as a reviewer (`POST /v1/journey-flows/<id>/draft` and `.../review`). Hand each
-   lane only its own secret, in a file, never in a prompt or a log.
+   lane only its own secret, in a file, never in a prompt or a log. When a journey needs the
+   owner's approval, run `graphhelm studio open --journey <contractId> --no-browser`, open the
+   link it prints in the Claude desktop app's browser pane, and hand the owner the Approve click;
+   never press it for them.
 4. The owner's roster: which model for each role and how many agents at once (the kickoff skill
    asks it once). Map each model to what the host can start: in Claude Code the subagent's
    `model` (for example `opus`, `sonnet`, `haiku`); for Runtime-driven nodes the gateway route of

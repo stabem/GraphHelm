@@ -863,6 +863,15 @@ pub fn open(args: &StudioOpenArgs) -> Outcome {
             "/project",
         );
     }
+    // A contract id is a plain name; anything else would reach the link's query unescaped.
+    if let Some(journey) = &args.journey
+        && !is_journey_id(journey)
+    {
+        return refused(
+            "--journey takes a journey contract id such as `studio-connect` (letters, digits, `.`, `_`, `-`)",
+            "/journey",
+        );
+    }
     let ticket = match write_ticket(&ticket_path(&events)) {
         Ok(ticket) => ticket,
         Err(error) => {
@@ -872,7 +881,11 @@ pub fn open(args: &StudioOpenArgs) -> Outcome {
             );
         }
     };
-    let url = format!("http://127.0.0.1:{}/?session={ticket}", args.port);
+    let mut url = format!("http://127.0.0.1:{}/?session={ticket}", args.port);
+    if let Some(journey) = &args.journey {
+        url.push_str("&journey=");
+        url.push_str(journey);
+    }
     let opened = !args.no_browser
         && browser_command(&url)
             .stdin(std::process::Stdio::null())
@@ -888,6 +901,14 @@ pub fn open(args: &StudioOpenArgs) -> Outcome {
         json!({ "opened": false, "url": url })
     };
     Outcome::success(COMMAND, data)
+}
+
+fn is_journey_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
 /// Runs the launcher with its output piped and copied line by line to this terminal (#1267).
@@ -1237,6 +1258,31 @@ mod tests {
         assert!(!already_installed(Some("abc"), None));
         assert!(!already_installed(None, Some("abc")));
         assert!(!already_installed(Some(""), Some("")));
+    }
+
+    /// The journey id lands in the link's query: a plain id selects the Proof view, anything that
+    /// could add or override a parameter (`&session=`) is refused before a ticket is written.
+    #[test]
+    fn open_journey_links_a_plain_id_and_refuses_one_that_reaches_the_query() {
+        let dir = tempfile::tempdir().unwrap();
+        let graphhelm = dir.path().join(".graphhelm");
+        std::fs::create_dir_all(&graphhelm).unwrap();
+        std::fs::write(graphhelm.join("events.token"), "t").unwrap();
+        let args = |journey: &str| StudioOpenArgs {
+            project: Some(dir.path().to_path_buf()),
+            port: 5183,
+            no_browser: true,
+            journey: Some(journey.to_owned()),
+        };
+        let linked = open(&args("studio-connect")).output;
+        let url = linked.data.unwrap()["url"].as_str().unwrap().to_owned();
+        assert!(url.starts_with("http://127.0.0.1:5183/?session="), "{url}");
+        assert!(url.ends_with("&journey=studio-connect"), "{url}");
+        std::fs::remove_file(graphhelm.join("events.studio-ticket")).unwrap();
+        let refused = open(&args("x&session=other")).output;
+        assert!(!refused.ok);
+        assert_eq!(refused.diagnostics[0].path, "/journey");
+        assert!(!graphhelm.join("events.studio-ticket").exists());
     }
 
     #[test]

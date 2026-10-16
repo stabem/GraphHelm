@@ -640,6 +640,9 @@ pub struct StudioOpenArgs {
     /// Print nothing but open the browser; without it the link is printed only when opening fails.
     #[arg(long = "no-browser")]
     pub no_browser: bool,
+    /// Land on this journey's Proof view (its contract id), for an owner approval.
+    #[arg(long)]
+    pub journey: Option<String>,
 }
 
 #[derive(Debug, Args)]

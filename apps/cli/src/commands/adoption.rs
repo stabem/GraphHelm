@@ -85,14 +85,21 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
                 None => already_applied.push(text.clone()),
             }
         }
-        // Every requested item already holds what it asks for: a second run is a no-op, not a
-        // refused empty plan. No plan file is written, so there is nothing to apply.
-        if resolutions.is_empty() {
+        // Some item already holds what it asks for and the rest are kept: a second run is a
+        // no-op, not a refused empty plan. No plan file is written. A run of keeps alone is still
+        // refused by `resolve`, because it never asked for a change.
+        if !already_applied.is_empty()
+            && resolutions
+                .iter()
+                .all(|resolution| resolution.decision == graphhelm_policy::adoption::Decision::Keep)
+        {
+            let kept: Vec<_> = resolutions.iter().map(|r| r.item.clone()).collect();
             return Ok(serde_json::json!({
                 "inventory": inventory,
                 "plan": null,
                 "provisioning": provisioning,
                 "alreadyApplied": already_applied,
+                "kept": kept,
             }));
         }
         let plan = graphhelm_host_adoption::resolve(&inventory, &resolutions)?;

@@ -510,11 +510,12 @@ fn setup_registers_the_user_mcp_and_upserts_the_user_block_idempotently() {
     );
 
     // Second run: the block is current and the registration is present, so the run is a no-op:
-    // both items are reported as already applied, no plan is written and no file moves.
+    // both items are reported as already applied, the keep as kept, no plan is written and no file moves.
     let again = s.path().join("again.json");
     let (ok, noop) = resolve(&again);
     assert!(ok, "{noop}");
     assert_eq!(noop["data"]["alreadyApplied"].as_array().unwrap().len(), 2);
+    assert_eq!(noop["data"]["kept"][0], "project/AGENTS.md");
     assert!(noop["data"]["plan"].is_null());
     assert!(!again.exists());
 
@@ -1212,11 +1213,8 @@ fn setup_applies_and_restores_the_init_project_registration() {
     assert_eq!(std::fs::read(&settings).unwrap(), original_settings);
     assert_eq!(std::fs::read(p.path().join("AGENTS.md")).unwrap(), ORIGINAL);
     let (ok, again) = resolve(&s.path().join("again.json"));
-    assert!(!ok, "{again}");
-    assert_eq!(
-        again["diagnostics"][0]["path"],
-        "/adoption/invalid_configuration"
-    );
+    assert!(ok, "{again}");
+    assert!(again["data"]["plan"].is_null());
     assert!(!s.path().join("again.json").exists());
 
     let mut restore = assert_cmd::Command::from_std(graphhelm_process::command(

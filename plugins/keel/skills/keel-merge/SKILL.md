@@ -5,8 +5,12 @@ description: "Use when merging a change you approved under Keel: what to recheck
 
 How to use this skill:
 
+- First run: if the project has no `KEEL.md` at its root, install Keel into it with
+  `python <this plugin>/setup/keel_setup.py <project root>` (the plugin folder is two levels above
+  this skill's folder). It copies `KEEL.md` and the `keel/` step files into the project, offline,
+  never overwrites an existing one, and adds a marked pointer line to `CLAUDE.md` and `AGENTS.md`.
 - Read the project's own `KEEL.md` at its root when one exists, and the `keel/` step files it names.
-  When the project has none, read https://github.com/stabem/GraphHelm/blob/main/KEEL.md and the step
+  Before that step has run, read https://github.com/stabem/GraphHelm/blob/main/KEEL.md and the step
   files under https://github.com/stabem/GraphHelm/blob/main/keel/. The text below is the bundled copy.
 - In the text below, `keel/KEEL_PLAN.md`, `keel/KEEL_EXEC.md`, `keel/KEEL_REVIEW.md` and
   `keel/KEEL_MERGE.md` are this plugin's `keel-plan`, `keel-exec`, `keel-review` and `keel-merge`

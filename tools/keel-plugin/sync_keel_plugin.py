@@ -34,10 +34,15 @@ DESCRIPTIONS = {
 # A relative link copied out of the repository leads nowhere inside a plugin, so it points here.
 GITHUB_BLOB = "https://github.com/stabem/GraphHelm/blob/main/"
 RELATIVE_LINK = re.compile(r"\]\((?![a-z][a-z0-9+.-]*:|#)([^)\s#]+)(#[^)\s]*)?\)")
+SETUP_FILES = ROOT / "plugins" / "keel" / "setup" / "files"
 PREAMBLE = """How to use this skill:
 
+- First run: if the project has no `KEEL.md` at its root, install Keel into it with
+  `python <this plugin>/setup/keel_setup.py <project root>` (the plugin folder is two levels above
+  this skill's folder). It copies `KEEL.md` and the `keel/` step files into the project, offline,
+  never overwrites an existing one, and adds a marked pointer line to `CLAUDE.md` and `AGENTS.md`.
 - Read the project's own `KEEL.md` at its root when one exists, and the `keel/` step files it names.
-  When the project has none, read https://github.com/stabem/GraphHelm/blob/main/KEEL.md and the step
+  Before that step has run, read https://github.com/stabem/GraphHelm/blob/main/KEEL.md and the step
   files under https://github.com/stabem/GraphHelm/blob/main/keel/. The text below is the bundled copy.
 - In the text below, `keel/KEEL_PLAN.md`, `keel/KEEL_EXEC.md`, `keel/KEEL_REVIEW.md` and
   `keel/KEEL_MERGE.md` are this plugin's `keel-plan`, `keel-exec`, `keel-review` and `keel-merge`
@@ -92,6 +97,11 @@ def main():
         target = SKILLS_DIR / skill / "SKILL.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(render(skill).encode("utf-8"))
+    for source in SKILLS.values():
+        # The setup step ships the KEEL files as they are: inside a project their relative links hold.
+        target = SETUP_FILES / source
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(keel_text(source).encode("utf-8"))
     current = GRAPHHELM_KEEL_SKILL.read_bytes().decode("utf-8").replace("\r\n", "\n")
     GRAPHHELM_KEEL_SKILL.write_bytes(embed(current, GRAPHHELM_KEEL_SOURCE).encode("utf-8"))
     print(f"wrote {len(SKILLS)} skills under {SKILLS_DIR.relative_to(ROOT).as_posix()}")

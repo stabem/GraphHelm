@@ -32,6 +32,10 @@ use crate::output::{CommandOutput, Outcome};
 const COMMAND: &str = "journey.preview";
 const PREVIEWS: &str = ".graphhelm/journey-previews";
 const STATE: &str = "state.json";
+/// The runner's own stderr (#1298): why a runner that died before finishing stopped.
+const RUNNER_LOG: &str = "runner.log";
+/// The last bytes of `RUNNER_LOG` a lost run carries as its `launchLog.tail`.
+const RUNNER_LOG_TAIL: usize = 4096;
 /// The page size a preview plays at unless the flow declares one (#585); the frames the Studio
 /// shows are this size.
 const WIDTH: u32 = 1280;
@@ -400,10 +404,17 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
             .arg(proof.record.keyring.as_ref().unwrap())
             .args(["--key-id", proof.record.key_id.as_deref().unwrap()]);
     }
+    // #1298: the runner's stderr is kept, truncated per run, so a runner that dies says why.
+    // A link planted at that name is never followed.
+    let log = dir.join(RUNNER_LOG);
+    let stderr = (std::fs::symlink_metadata(&log).is_err() || safe_node(&log))
+        .then(|| std::fs::File::create(&log).ok())
+        .flatten()
+        .map_or_else(Stdio::null, Stdio::from);
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(stderr);
     for (key, value) in std::env::vars_os()
         .filter(|(key, _)| key.to_string_lossy().starts_with("GRAPHHELM_SECRET_"))
     {
@@ -483,15 +494,20 @@ fn reap_lost_from_with(
     // Settled first (#586): a run that finished between the read and the liveness check is read
     // as it finished, and is never reaped.
     let mut state = read_settled_with(read, &liveness)?;
-    if state["state"] != "running"
-        || liveness(&state) != Liveness::Dead
-        || state["launched"].is_null()
-    {
+    if state["state"] != "running" || liveness(&state) != Liveness::Dead {
         return Some(state);
     }
-    if let Some(stop) = LaunchedStop::from_record(project, &state["launched"]) {
+    // #1298: a runner that died before it launched any app is lost all the same; storing it
+    // `failed` lets the next run archive it instead of erasing it.
+    if !state["launched"].is_null()
+        && let Some(stop) = LaunchedStop::from_record(project, &state["launched"])
+    {
         stop.stop();
     }
+    if let Some(log) = runner_log(dir) {
+        state["launchLog"] = log;
+    }
+    state["ranAt"] = chrono::Utc::now().to_rfc3339().into();
     let reason = if within_budget(&state) {
         "preview.runner_lost"
     } else {
@@ -505,6 +521,19 @@ fn reap_lost_from_with(
     }
     save_state(dir, &state);
     Some(state)
+}
+
+/// The runner's own stderr as a lost run's `launchLog` (#1298): its path and its last
+/// `RUNNER_LOG_TAIL` bytes, or nothing when the log is missing, unsafe or empty.
+fn runner_log(dir: &Path) -> Option<Value> {
+    let path = dir.join(RUNNER_LOG);
+    if !safe_node(&path) {
+        return None;
+    }
+    let bytes = std::fs::read(&path).ok()?;
+    let start = bytes.len().saturating_sub(RUNNER_LOG_TAIL);
+    let tail = String::from_utf8_lossy(&bytes[start..]).trim().to_owned();
+    (!tail.is_empty()).then(|| json!({"path": path.to_string_lossy(), "tail": tail}))
 }
 
 fn read_settled_with(
@@ -1392,7 +1421,7 @@ fn sha_of(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        Guard, HISTORY_KEEP, JourneyPreviewArgs, archive, body, dir_of, failed_reason,
+        Guard, HISTORY_KEEP, JourneyPreviewArgs, RUNNER_LOG, archive, body, dir_of, failed_reason,
         history_frame, history_id, history_ids, plain_id, proof_args, read_state, reap_lost,
         reap_lost_from, reap_lost_from_with, runner_liveness, runner_liveness_with, save_state,
         severity, step_reason, unsealed_proof, watch_budget, with_checks,
@@ -1542,6 +1571,40 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             body(None, &json!({"status":"approved"}), "sha256:aa", "c1")["kind"],
             "replay"
         );
+    }
+
+    /// #1298: a runner that dies before it launches any app (Run again on an isolated fixture:
+    /// "stopped before step 1", no launcher lines, and the next run erased it) is stored as
+    /// `failed / preview.runner_lost` with the tail of its own stderr, so Proof says why and the
+    /// next run archives it into the history.
+    #[test]
+    fn a_dead_runner_without_an_app_is_stored_failed_with_its_log_and_archived() {
+        let project = tempfile::tempdir().unwrap();
+        let dir = dir_of(project.path(), "checkout");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(RUNNER_LOG),
+            "early line\nthread 'main' panicked: boom\n",
+        )
+        .unwrap();
+        save_state(
+            &dir,
+            &json!({"preview":true,"digest":"sha256:aa","commit":"c1","state":"running",
+                "pid":u32::MAX,"startedAt":chrono::Utc::now().to_rfc3339(),
+                "screens":{},"edges":{}}),
+        );
+        let reaped = reap_lost(project.path(), &dir).unwrap();
+        assert_eq!(reaped["state"], "failed", "{reaped}");
+        assert_eq!(reaped["reason"], "preview.runner_lost", "{reaped}");
+        let tail = reaped["launchLog"]["tail"].as_str().unwrap_or_default();
+        assert!(tail.contains("panicked: boom"), "{reaped}");
+        assert_eq!(
+            read_state(&dir).unwrap()["state"],
+            "failed",
+            "stored, not only shown"
+        );
+        archive(&dir, &reaped);
+        assert_eq!(history_ids(&dir.join("history")).len(), 1);
     }
 
     /// #history: a finished run that a new one replaces moves to `history/` with its frames, its

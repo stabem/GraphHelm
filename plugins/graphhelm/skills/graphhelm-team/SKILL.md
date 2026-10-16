@@ -29,6 +29,17 @@ orchestrator calls this once per agent. The orchestrator itself never takes a la
    `model` (for example `opus`, `sonnet`, `haiku`); for Runtime-driven nodes the gateway route of
    that tier (the GraphHelm MCP `routes` tool; tier-to-route binding is ADR-041). Never start more
    agents at once than the roster says.
+   Within the roster, pick the cheapest model and effort that can do each subagent's task, and never
+   go above it:
+   - Mechanical (rebase plus `plugin_version_guard.py --write`, post-merge cleanup, rerunning a named
+     test set, a status check): smallest model, low effort.
+   - Bounded implementation, or a blind review that reuses the author's receipt: mid model, low or
+     medium effort.
+   - Design, security, an unknown-cause bug, or a review of persistence, permissions or
+     compatibility: top model, higher effort.
+   Resume an existing agent before spawning one. Run a long wait (a reached plan, the slot) as a
+   background shell, not inside an agent. Record kind, tier and effort in the delegation record
+   ("Delegation choice: implementer · standard · medium").
 
 ## Spawn one lane
 

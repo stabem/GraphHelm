@@ -1939,7 +1939,7 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
     for (group, fields) in [
         (
             "screens",
-            &["id", "title", "url", "state", "expect", "scope"][..],
+            &["id", "title", "intent", "url", "state", "expect", "scope"][..],
         ),
         ("edges", &["id", "from", "to", "intent", "acts", "safe"][..]),
     ] {
@@ -2047,6 +2047,57 @@ mod tests {
             "{:?}",
             refused.iter().map(|f| f.code).collect::<Vec<_>>()
         );
+    }
+
+    /// #1286: a screen can say what it is for. Defect named: the canonical writer drops a screen
+    /// `intent` (so the owner's words vanish on format), or the approval ignores it (so changing
+    /// what a screen proves leaves an approval valid). An intent-free flow keeps its bytes.
+    /// Cost: in memory only.
+    #[test]
+    fn a_screen_intent_is_written_validated_and_approved() {
+        let source = "schema: graphhelm.journey-flow/1
+id: itens
+title: Usuario cria um item
+status: draft
+approved: null
+base: http://127.0.0.1:3000
+actors: [owner]
+secrets: []
+risks: []
+screens:
+  - {id: a, url: /a, state: stable, expect: [], scope: unknown}
+edges: []
+paths: {main: []}
+drift: []
+";
+        let plain: Value = serde_yaml_ng::from_str(source).unwrap();
+        let mut with = plain.clone();
+        with["screens"][0]["intent"] = json!("Confirma que a obra foi criada");
+        let schemas = flow_schemas().unwrap();
+        assert!(
+            schemas
+                .validate(FLOW_SCHEMA_ID, &with, "journey-flow")
+                .is_empty()
+        );
+        let mut empty = plain.clone();
+        empty["screens"][0]["intent"] = json!("");
+        assert!(
+            !schemas
+                .validate(FLOW_SCHEMA_ID, &empty, "journey-flow")
+                .is_empty()
+        );
+        let written = canonical(&with, false);
+        assert!(
+            written.contains("intent: Confirma que a obra foi criada"),
+            "{written}"
+        );
+        let reread: Value = serde_yaml_ng::from_str(&written).unwrap();
+        assert_eq!(canonical(&reread, false), written);
+        assert_ne!(approval_digest(&with), approval_digest(&plain));
+        let mut edited = with.clone();
+        edited["screens"][0]["intent"] = json!("Outra coisa");
+        assert_ne!(approval_digest(&edited), approval_digest(&with));
+        assert!(!canonical(&plain, false).contains("intent"));
     }
 
     /// #1296: `name` and `feature` only label a journey for the Studio rail. Defect named: adding

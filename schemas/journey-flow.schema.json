@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/journey-flow.schema.json",
-  "x-graphhelm-schema-version": "1.6.0",
+  "x-graphhelm-schema-version": "1.7.0",
   "title": "GraphHelm Journey Flow",
   "type": "object",
   "properties": {
@@ -370,6 +370,12 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 160
+        },
+        "intent": {
+          "description": "What this screen is for and what it proves, in the owner's words (#1286). Part of the approved digest; shown in Proof under the step title.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
         },
         "url": {
           "type": "string",

@@ -2563,6 +2563,241 @@ fn graphhelm_releases_another_lanes_claim_only_with_released_by() {
     assert_eq!(reply["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID");
 }
 
+/// #1424: the owner (or the orchestrator, which holds the owner token) clears a stopped fleet.
+/// A leaseless slice (a plan with no claim, so no claim sequence a lane release could name) is
+/// released by its slice key; a retired lane's pre-PR, review and merge slices all read orphaned
+/// and released, the lane leaves the liveness list, its next record is refused, and un-retiring
+/// admits it again. Catches: a key release a lane could sign, a release of a key that is not
+/// open, a retirement that leaves a slice open or the lane owing, and one that does not bind
+/// later records. Through the HTTP door and the tasks route. Cost: one served Runtime, ~20 POSTs.
+#[test]
+fn the_owner_releases_a_slice_by_key_and_retires_a_lane() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-retire-lane";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let post = |id: &str, actor: &str, actor_type: &str, kind: &str, document: &Value| {
+        let body = serde_json::json!({"signal": {"id": id, "source": {"type": "user", "id": actor},
+            "type": kind, "severity": "low", "description": document.to_string(),
+            "evidence": ["task"], "emittedAt": "2026-10-16T02:00:00Z"}});
+        post_json(
+            &format!("{base}/v1/executions/{execution}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", id),
+                ("X-GraphHelm-Actor", actor),
+                ("X-GraphHelm-Actor-Type", actor_type),
+            ],
+            &body,
+        )
+    };
+    let lane = |id: &str, actor: &str, kind: &str, document: &Value| {
+        let (status, reply) = post(id, actor, "agent", kind, document);
+        assert_eq!(status, 200, "{id}: {reply}");
+    };
+    let head = |task: &str, revision: u64| {
+        serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": task,
+            "revision": revision, "at": "2026-10-16T02:00:00Z"})
+    };
+    let with = |mut base: Value, fields: Value| {
+        for (key, value) in fields.as_object().unwrap() {
+            base[key] = value.clone();
+        }
+        base
+    };
+    let tasks = || {
+        get_json(
+            &format!("{base}/v1/executions/{execution}/tasks"),
+            Some(&token),
+        )["data"]
+            .clone()
+    };
+    let slices_of = |data: &Value, task: &str| -> Vec<Value> {
+        data["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|slice| slice["taskId"] == task)
+            .cloned()
+            .collect()
+    };
+    let open = |slice: &Value| slice.get("releasedBy").is_none() && slice["step"] != "merged";
+
+    // A leaseless slice: a plan recorded with no claim before it.
+    let plan = with(
+        head("issue-62", 1),
+        serde_json::json!({"lane": "lane-ghost", "classes": ["code"], "reviews": 1,
+            "proof": "tests", "critic": {"mode": "none", "passScore": 8, "maxRounds": 3},
+            "summary": "a plan whose lane stopped"}),
+    );
+    lane("ghost-plan", "lane-ghost", "task.planned", &plan);
+    let data = tasks();
+    let ghost = slices_of(&data, "issue-62");
+    assert_eq!(ghost.len(), 1, "{data}");
+    assert!(ghost[0].get("claimSequence").is_none(), "leaseless: {data}");
+    let key = ghost[0]["key"].as_str().unwrap().to_owned();
+    let release = with(
+        head("issue-62", 2),
+        serde_json::json!({"lane": "lane-ghost", "sliceKey": key,
+            "reason": "the Codex subscription ended", "releasedBy": "orchestrator"}),
+    );
+    // A lane cannot release by key, even its own slice.
+    let before = head_sequence(&base, &token, execution);
+    let mut own = release.clone();
+    own["releasedBy"] = serde_json::json!("lane-ghost");
+    let (status, reply) = post("ghost-self", "lane-ghost", "agent", "task.released", &own);
+    assert!(status == 400 || status == 403, "lane key release: {reply}");
+    // A key no open slice holds is refused.
+    let mut stale = release.clone();
+    stale["sliceKey"] = serde_json::json!("issue-62#claim-9");
+    let (status, reply) = post("ghost-stale", "orchestrator", "owner", "task.released", &stale);
+    assert_eq!(status, 400, "unknown key: {reply}");
+    assert_eq!(
+        head_sequence(&base, &token, execution),
+        before,
+        "refusals append nothing"
+    );
+    let (status, reply) = post(
+        "ghost-release",
+        "orchestrator",
+        "owner",
+        "task.released",
+        &release,
+    );
+    assert_eq!(status, 200, "owner key release: {reply}");
+    let data = tasks();
+    let ghost = slices_of(&data, "issue-62");
+    assert!(ghost.iter().all(|slice| !open(slice)), "released: {data}");
+    assert_eq!(ghost[0]["releasedBy"], "orchestrator", "{data}");
+
+    // lane-r holds three open slices: a pre-PR claim, a PR in review, an approved PR.
+    let claim = |task: &str, issue: u64| {
+        with(
+            head(task, 1),
+            serde_json::json!({"issue": issue, "lane": "lane-r",
+                "branch": format!("{task}-work"), "repo": "stabem/GraphHelm"}),
+        )
+    };
+    let opened = |task: &str, pr: u64| {
+        with(
+            head(task, 3),
+            serde_json::json!({"pr": pr, "headSha": "abcdef01", "journeys": [], "lane": "lane-r"}),
+        )
+    };
+    lane("r-70", "lane-r", "task.claimed", &claim("issue-70", 70));
+    lane("r-71", "lane-r", "task.claimed", &claim("issue-71", 71));
+    lane("r-71-pr", "lane-r", "task.pr_opened", &opened("issue-71", 710));
+    lane("r-72", "lane-r", "task.claimed", &claim("issue-72", 72));
+    lane("r-72-pr", "lane-r", "task.pr_opened", &opened("issue-72", 720));
+    lane(
+        "q-72",
+        "lane-q",
+        "task.review_verdict",
+        &with(
+            head("issue-72", 4),
+            serde_json::json!({"pr": 720, "headSha": "abcdef01", "reviewer": "lane-q",
+                "verdict": "APPROVE", "commentUrl": "https://github.com/stabem/GraphHelm/pull/720#c"}),
+        ),
+    );
+    let data = tasks();
+    let steps: Vec<Value> = ["issue-70", "issue-71", "issue-72"]
+        .iter()
+        .map(|task| {
+            let slices = slices_of(&data, task);
+            assert!(slices.iter().any(open), "{task} open: {data}");
+            slices[0]["step"].clone()
+        })
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            serde_json::json!("plan"),
+            serde_json::json!("review"),
+            serde_json::json!("merge")
+        ],
+        "{data}"
+    );
+    let in_liveness = |data: &Value, name: &str| {
+        data["liveness"]["lanes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["lane"] == name)
+    };
+    assert!(in_liveness(&data, "lane-r"), "{data}");
+
+    let retire = |retired: bool| {
+        with(
+            head("lanes", 1),
+            serde_json::json!({"lanes": ["lane-r"], "retired": retired,
+                "reason": "the Codex subscription ended"}),
+        )
+    };
+    // A lane cannot retire anyone.
+    let (status, reply) = post(
+        "r-retire-lane",
+        "lane-q",
+        "agent",
+        "task.lane_retired",
+        &retire(true),
+    );
+    assert!(status == 400 || status == 403, "lane retire: {reply}");
+    let (status, reply) = post(
+        "r-retire",
+        "orchestrator",
+        "owner",
+        "task.lane_retired",
+        &retire(true),
+    );
+    assert_eq!(status, 200, "owner retire: {reply}");
+    let data = tasks();
+    for task in ["issue-70", "issue-71", "issue-72"] {
+        let slices = slices_of(&data, task);
+        assert!(slices.iter().all(|slice| !open(slice)), "{task}: {data}");
+        assert!(
+            slices.iter().all(|slice| slice["orphaned"] == true),
+            "{task}: {data}"
+        );
+    }
+    assert!(!in_liveness(&data, "lane-r"), "gone from liveness: {data}");
+    // A record signed by the retired lane is refused and appends nothing.
+    let before = head_sequence(&base, &token, execution);
+    let (status, reply) = post(
+        "r-73",
+        "lane-r",
+        "agent",
+        "task.claimed",
+        &claim("issue-73", 73),
+    );
+    assert_eq!(status, 400, "retired lane: {reply}");
+    assert_eq!(head_sequence(&base, &token, execution), before);
+    // Un-retired, it records again.
+    let (status, reply) = post(
+        "r-back",
+        "orchestrator",
+        "owner",
+        "task.lane_retired",
+        &retire(false),
+    );
+    assert_eq!(status, 200, "un-retire: {reply}");
+    lane("r-73-again", "lane-r", "task.claimed", &claim("issue-73", 73));
+    let data = tasks();
+    assert!(slices_of(&data, "issue-73").iter().any(open), "{data}");
+}
+
 /// #1220: a lane cannot claim a task another lane holds as an open pre-PR claim, unless the claim
 /// names that holder in `assignedBy` (the holder hands it over). Before: admission never looked at
 /// other lanes' claims, so two lanes worked one issue (the Codex dispatcher, 2026-10-13). Catches

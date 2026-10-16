@@ -70,4 +70,11 @@ describe("testFrames with the flow source", () => {
     expect(first!.typed).toEqual([]);
     expect(second!.typed).toEqual(['Typed "parceiro" into "Tag Amazon"', 'Typed the secret admin into "Senha"']);
   });
+
+  it("carries the screen's own intent, null when the flow does not say (#1286)", () => {
+    const said = { ...flow, screens: [flow.screens[0]!, { ...flow.screens[1]!, intent: "Confirma que a tag ficou salva" }] };
+    const [first, second] = testFrames(journey, null, null, said);
+    expect(first!.screenIntent).toBeNull();
+    expect(second!.screenIntent).toBe("Confirma que a tag ficou salva");
+  });
 });

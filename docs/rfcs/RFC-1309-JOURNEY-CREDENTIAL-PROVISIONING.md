@@ -5,6 +5,16 @@
 Proposed security design for issue #1309. This RFC does not change Runtime behavior or grant
 review authority. Implementation requires independent security review and a follow-up issue.
 
+**Delivered slice 1 (storage):** PR #1486, merged as `aa6d3d13`, implements the owner-only grant
+create/revoke routes over the private journal in "Registry and commit point", with the three
+conditions of the independent storage disposition on #1309 (gh-claude-14, 2026-10-16 11:49Z):
+bounded frames and record count, refusal without the lifetime lock, and no isolation claim. Its HTTP
+observer `owner_journey_grants_survive_a_restart_and_refuse_agents_and_a_torn_journal` covers
+restart replay, idempotent receipt and conflict, agent and task-bearer refusal, and a torn tail.
+It does **not** observe the deterministic fault points (failure before `sync_data`; durable commit
+with lost acknowledgement). Those move to the credential-issue slice. No token is issued and no
+journey route changed.
+
 ## Promise and scope
 
 Provision a journey author or reviewer credential to one authenticated lane without giving that
@@ -273,6 +283,76 @@ An execution task bearer authenticates provisioning and task routes, but is reje
 draft and review routes. Invalid scope, unknown token, ambiguity and concurrent update
 uncertainty refuse without changing flow files or the Event Store.
 
+## Protected delivery channel
+
+**Documentary RED (before this section):** the disposition table recorded "Secret exposure —
+BLOCKED" with no traced list of writers that could carry a plaintext token. Nothing below is
+implemented; it is the contract the credential-issue card must meet.
+
+### Channel
+
+The credential is delivered exactly once, in the body of the `200` response to the lane's own
+`POST /v1/executions/{executionId}/journey-credentials`, on the loopback Runtime connection the lane
+opened with its task bearer. There is no second channel: no file written by the Runtime, no event,
+no task record, no MCP tool, no Studio view and no recovery endpoint. The response carries
+`Cache-Control: no-store`. No serve route sets that header today (no match for `no-store` under
+`apps/cli/src/commands/serve/`), so this route is the first. The token is 32 CSPRNG bytes,
+hex-encoded, held in `Zeroizing` from the draw until the response is serialized, following the
+`tasks credential` precedent (`apps/cli/src/commands/tasks.rs:306`, `:309`).
+
+### Every writer that could carry the plaintext
+
+Source state at `33109519`.
+
+| Writer | What it captures today | Required rule for the credential route |
+|---|---|---|
+| `--read-audit` recorder `record_read` (`serve/mod.rs:3393-3471`, wired at `:1088`) | Buffers the **whole response body** (`:3406`) and appends it in plaintext with method, path and query (`:3447-3453`). It runs outside auth. Only `/evidence` responses are redacted (`:3437-3445`). Headers never reach it (`:1086-1087`). | **The main leak path.** The recorder must replace the body of any `.../journey-credentials` response with `{"redacted":"journey credential","bytes":N}` before writing, using the same wholesale replacement as the `/evidence` branch for a non-JSON body. RED observer: with `--read-audit` on, issue one credential and assert the audit file never contains the token bytes. |
+| Grant/credential journal receipts (`serve/journey_credentials.rs:88` stores `(digest, receipt)`; insert `:300`; replayed on the same key `:340`) | The full receipt `Value` is persisted in the journal frame and returned again for a repeated `Idempotency-Key`. | The `CredentialIssued` frame and its receipt hold `credentialId`, `grantId`, `generation`, `expiresAt` and the keyed digest only, **never the token**. The token is added to the HTTP body after the commit, outside the receipt. |
+| Duplicate request under the same `Idempotency-Key` | Replays the stored receipt (`:340`). | It returns `409` with stable code path `/credentialId`, naming the already-issued `credentialId` and **no token**. The token is never sent twice. If the lane lost it, the owner revokes that credential and the lane requests a new one under a new key. |
+| Panic hook and crash record (`serve/lifecycle.rs:219-237`, `finish` `:259-264`) | State, a sanitized `file:line` (`:226-229`), an opaque thread id, a timestamp and a fatal flag. **No panic message or payload.** | Safe as is. Keep the rule: the hook never records a payload. |
+| Tracing / tower-http / `eprintln!` of bodies | None exists in serve's layers (`mod.rs:1014`, `:1080`, `:1084`, `:1088`). | Adding any body-logging layer later must exclude this route. A source guard is preferred over review memory. |
+| CLI `--json` envelope | A client command prints whatever `data` it is handed (pattern: `tasks.rs:319-329`). | If a CLI client for this route is added, it writes the token to an owner-only file (`secret_file::write_derived`, `tasks.rs:318`) and prints only the path, as `tasks credential` does. |
+| MCP tool replies (`commands/mcp/tools.rs`) and Studio WebMCP (`apps/studio/src/webmcp/adapter.ts:275` passes `JSON.stringify(result)` to the model) | Each tool's reply reaches a model transcript. | **No MCP or WebMCP tool may name this route.** A token in a transcript is a disclosed secret. The route joins `NOT_A_RUNTIME_VERB` in `apps/cli/tests/surface_completeness.rs` with that reason, following the grant routes added there by #1486. |
+| `PUT /v1/gateway/credentials/{reference}` precedent (`serve/routes.rs:7943-7991`) | It keeps a secret out of path, query and response; the secret travels only in the request body (`:7945-7951`). | The credential route is the opposite direction (secret in the response), which is why the read-audit rule above is mandatory. |
+| Error and refusal paths | Diagnostics carry a code, pointer and message. | No error is constructed after the token is drawn. Draw, commit and respond in that order, and refuse before the draw. A failure after the commit and before the response leaves an issued credential the lane never saw: the owner revokes it (below). |
+
+### Lane-side storage
+
+The lane writes the token to an owner-only file next to its task-bearer file, using
+`secret_file::write_derived` (the `tasks credential` precedent), or keeps it in memory only. It
+never writes the token to a task record, a PR, a comment, a log or an MCP argument. Under D-058 the
+lane and the owner are the same OS user, so this is a no-secret-handoff guarantee only. It is
+**not** OS isolation, and the "OS and process isolation boundary" section is unchanged.
+
+### Uncertain delivery
+
+| Case | Outcome |
+|---|---|
+| Refused before the draw (scope, grant, bearer) | No frame, no token, one stable diagnostic. |
+| Crash before `sync_data` | No committed `CredentialIssued`; on replay the request never happened, so the lane retries with the same key. |
+| Committed, response lost (reset, timeout, crash after `sync_data`) | The credential exists and the lane never saw it. A retry with the same key gets `409` naming the `credentialId` without a token. The owner revokes that `credentialId`; the lane asks again under a new key. |
+| Same key, different body | `409` at `/idempotencyKey`, as for grants today. |
+
+### Implementation card enabled by this section (conditional)
+
+Conditional on an independent security disposition of this section. Approval authority and host
+isolation stay BLOCKED and are untouched by this card.
+
+- **Exact files:** `apps/cli/src/commands/serve/journey_credentials.rs`,
+  `apps/cli/src/commands/serve/mod.rs` (route registration and the read-audit redaction),
+  `apps/cli/tests/journey_flow_surfaces.rs`, `apps/cli/tests/surface_completeness.rs`.
+- **Promise:** a lane holding its task bearer and an active exact-scope grant receives one
+  credential, once. The token appears in no journal frame, receipt, audit line or replay. Journey
+  routes do not yet accept the credential; that is the enforcement card.
+- **Proof (RED first, on the parent):**
+  1. With `--read-audit` on, the audit file contains no token bytes.
+  2. The journal file contains no token bytes.
+  3. A same-key retry gets `409` with no token.
+  4. Wrong lane, execution, flow or purpose, and a revoked or expired grant, are refused with no
+     frame written.
+  5. Deterministic fault points: failure before `sync_data` leaves no credential; a commit followed
+     by a dropped response is then revocable by the owner.
+
 ## Lifecycle
 
 - **Rotation:** the owner revokes the old generation and authorizes a replacement under the same
@@ -331,8 +411,8 @@ its own independent disposition on this exact head.
 |---|---|---|
 | Bootstrap identity and authorization | `serve/mod.rs` verifies the execution/lane bearer but grants task-route access only. `NodeAssigned` has no flow/purpose scope. Proposed private-journal `JourneyCredentialGrant` is owner-issued and exact-scope. | ACCEPTED for this narrowed bootstrap by #1349 at `bb94d8fe`; no Runtime behavior implemented. |
 | Scope/purpose refusal | Exact checks and unchanged-state refusal are specified, but no Runtime route or observer exists. | DESIGN SPECIFIED on #1344 head; Runtime unobserved. |
-| Revocation ordering | This revision selects one private append-only authority journal and defines lock order, commit point, replay/idempotency and crash/race behavior. | BLOCKED pending independent disposition of this storage contract on this head; no Runtime observer. |
-| Secret exposure | A protected response channel and success/error/crash/log paths have not been reviewed. | BLOCKED for implementation on #1344 head. |
+| Revocation ordering | One private append-only authority journal with lock order, commit point, replay/idempotency and crash/race behavior. | ACCEPTED-WITH-CONDITIONS for a grant-only slice by the independent storage disposition on #1309 (gh-claude-14, `31dacf29`); implemented by #1486 (`aa6d3d13`). Fault-point observers remain open for the credential-issue slice. |
+| Secret exposure | "Protected delivery channel" below: a one-shot loopback response, the full writer table with source citations, receipts that never hold plaintext, and no replay of a token. | PENDING independent disposition of the delivery contract on this head. Implementation stays blocked until then. |
 | Approval authority | `review_approve -> approve_as` persists agent approval; `a_reviewer_agent_approves_only_with_its_own_credential_and_never_its_own_draft` expects approved status. | BLOCKED pending an accepted policy decision and compatibility plan on #1344 head. |
 | Host isolation | D-058 places owner and agent files under one OS user; no real-host unreadability observer exists. | BLOCKED as a separate host obligation on #1344 head. |
 

@@ -62,7 +62,10 @@ and revoke scope; a coordinator may request only within that grant. Credential d
 OS isolation: D-058's shared-user limitation still applies until a host-level observer proves
 cross-lane unreadability under separate OS identities or equivalent enforced process boundaries.
 See [RFC-1309](../rfcs/RFC-1309-JOURNEY-CREDENTIAL-PROVISIONING.md) for the proposed flow,
-refusal behavior, lifecycle, authority conflict and required observers. This is a design proposal,
+refusal behavior, lifecycle, authority conflict and required observers. The credential plaintext is
+delivered once in the issuing response and must never reach the `--read-audit` file, a journal
+receipt, a replay, an MCP or WebMCP tool, or a task record (RFC-1309 "Protected delivery
+channel"). This is a design proposal,
 not an accepted change to journey approval authority or current Runtime behavior.
 
 Current behavior has a separate unresolved authority mismatch: the journey review route calls

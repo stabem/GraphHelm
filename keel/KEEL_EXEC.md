@@ -27,8 +27,9 @@ Step 2, from an accepted card to a proven change. Read [`KEEL.md`](../KEEL.md) a
 1. **Never write unit tests after the code.** A test written to fit code that already exists
    captures what the code does, not what it should do.
 2. **End to end first.** Prove the promise the way a user meets it:
-   - the Studio: a journey through the Playwright observer
-     (`tools/playwright-observer/playwright_observe.py --journey <contractId>`);
+   - a screen with an approved journey flow: `graphhelm journey replay` with the browser observer
+     installed (`graphhelm setup --install-observer`); a project that keeps its own Playwright
+     tests: `tools/playwright-observer/playwright_observe.py --journey <contractId>`;
    - the CLI and the Runtime: the real binary against a real Runtime on a scratch store, asserting
      the reply and what was recorded;
    - hooks: the real hook process in a scratch folder, asserting what it recorded.

@@ -1,6 +1,6 @@
 # KEEL_EXEC
 
-Step 2, from an accepted card to a proven change. Read [`KEEL.md`](../KEEL.md) and the card first.
+Step 2, from an accepted card to a proven change. Read `KEEL.md` and the card first.
 
 ## Write
 

@@ -351,8 +351,15 @@ interface PendingEvidenceRead {
 
 interface EvidenceReadQueue {
   entries: Map<string, PendingEvidenceRead[]>;
-  active: boolean;
+  /** Batches sent and not yet answered, plus one scheduled to coalesce the first reads. */
+  inFlight: number;
 }
+
+/** The Runtime answers at most eight ids per collection read. One batch at a time made a long
+ * run's envelopes thousands of serial round trips; four side by side leave the browser's six
+ * connections per host room for the poll. */
+const EVIDENCE_BATCH_SIZE = 8;
+const EVIDENCE_BATCHES_IN_FLIGHT = 4;
 
 /** A caller-minted correlation id. `crypto.randomUUID` where available; a bounded random string
  * otherwise, because a Studio served over plain http on some browsers has no `randomUUID`. This
@@ -2212,21 +2219,28 @@ export class RuntimeClient {
     return new Promise<EvidenceContent>((resolve, reject) => {
       let queue = this.#evidenceQueues.get(id);
       if (queue === undefined) {
-        queue = { entries: new Map(), active: false };
+        queue = { entries: new Map(), inFlight: 0 };
         this.#evidenceQueues.set(id, queue);
       }
       const waiters = queue.entries.get(evidenceId) ?? [];
       waiters.push({ resolve, reject });
       queue.entries.set(evidenceId, waiters);
-      if (!queue.active) {
-        queue.active = true;
+      // The first read waits one microtask so the reads beside it share its request; a full batch
+      // waiting behind requests already out goes out beside them.
+      if (queue.inFlight === 0 || (queue.entries.size >= EVIDENCE_BATCH_SIZE && queue.inFlight < EVIDENCE_BATCHES_IN_FLIGHT)) {
+        queue.inFlight += 1;
         queueMicrotask(() => { void this.#flushEvidenceQueue(id, queue!); });
       }
     });
   }
 
   async #flushEvidenceQueue(executionId: string, queue: EvidenceReadQueue): Promise<void> {
-    const selected = [...queue.entries.entries()].slice(0, 8);
+    const selected = [...queue.entries.entries()].slice(0, EVIDENCE_BATCH_SIZE);
+    if (selected.length === 0) {
+      queue.inFlight -= 1;
+      if (queue.inFlight === 0 && this.#evidenceQueues.get(executionId) === queue) this.#evidenceQueues.delete(executionId);
+      return;
+    }
     for (const [id] of selected) queue.entries.delete(id);
     const ids = selected.map(([id]) => id);
     try {
@@ -2309,9 +2323,9 @@ export class RuntimeClient {
     } finally {
       if (queue.entries.size > 0) {
         queueMicrotask(() => { void this.#flushEvidenceQueue(executionId, queue); });
-      } else if (this.#evidenceQueues.get(executionId) === queue) {
-        queue.active = false;
-        this.#evidenceQueues.delete(executionId);
+      } else {
+        queue.inFlight -= 1;
+        if (queue.inFlight === 0 && this.#evidenceQueues.get(executionId) === queue) this.#evidenceQueues.delete(executionId);
       }
     }
   }

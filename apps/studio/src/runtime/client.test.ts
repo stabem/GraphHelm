@@ -376,6 +376,35 @@ describe("RuntimeClient reads", () => {
     ]);
   });
 
+  // A single batch of eight in flight at a time made gh-team's ~6,944 envelopes 871 serial
+  // round trips. Full batches waiting behind a slow one must go out beside it, up to four.
+  it("sends full evidence batches side by side instead of one round trip at a time", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const releases: Array<() => void> = [];
+    const fetchImpl = (async (url: string) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise<void>((release) => releases.push(release));
+      inFlight -= 1;
+      const ids = JSON.parse(new URL(url, "http://runtime").searchParams.get("ids") ?? "[]") as string[];
+      const results = ids.map((id) => ({ status: "available", evidenceId: id, mediaType: "text/plain", sensitivity: "internal", contentSha256: id, content: `content-${id}` }));
+      return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: { results }, diagnostics: [] }), { status: 200 });
+    }) as typeof fetch;
+    const client = new RuntimeClient("token", { fetch: fetchImpl });
+    const ids = Array.from({ length: 48 }, (_, index) => `e-${index}`);
+    const reads = Promise.all(ids.map((id) => client.readEvidence("demo", id)));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(releases.length).toBe(4);
+    while (releases.length > 0 || inFlight > 0) {
+      releases.splice(0).forEach((release) => release());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    const values = await reads;
+    expect(values.map((value) => value.content)).toEqual(ids.map((id) => `content-${id}`));
+    expect(peak).toBe(4);
+  });
+
   it("maps reordered collection results by ID and keeps an item refusal local", async () => {
     const fetchImpl = (async (url: string) => {
       const parsed = new URL(url, "http://runtime");

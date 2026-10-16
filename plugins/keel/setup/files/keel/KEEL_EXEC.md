@@ -1,6 +1,6 @@
 # KEEL_EXEC
 
-Step 2, from an accepted card to a proven change. Read [`KEEL.md`](../KEEL.md) and the card first.
+Step 2, from an accepted card to a proven change. Read `KEEL.md` and the card first.
 
 ## Write
 
@@ -17,43 +17,46 @@ Step 2, from an accepted card to a proven change. Read [`KEEL.md`](../KEEL.md) a
   idempotent writes, no new slow shape, no complexity increase the card did not justify.
 - Keep existing behaviour working. Before you edit shared code, find its other callers and what
   they rely on. A fix that breaks a neighbour is not a fix.
-- A change that removes, replaces or redirects a production caller deletes the displaced path in
-  the same change and writes `Retirement:` in the pull request.
+- A change that removes, replaces or redirects a production caller deletes the displaced path
+  (its declarations, exclusive helpers, types, styles, dependencies and tests) in the same change
+  and writes `Retirement:` in the pull request: each candidate removed, retained (name its live
+  consumer or contract) or unobserved (name the gap). A zero-hit search or green tests are leads,
+  not deletion proof.
 - Stop when the promise is proven. Do not refactor, reformat or sweep beyond it, even when a
   neighbouring file has the same defect: name it in the pull request instead.
 
 ## Prove
 
-1. **Never write unit tests after the code.** A test written to fit code that already exists
-   captures what the code does, not what it should do.
-2. **End to end first.** Prove the promise the way a user meets it:
+1. **Choose the cheapest observer that proves the promise**: integration or end to end, or a unit
+   test under step 2.
+   Prefer the observer closest to the user-visible promise when it is affordable:
    - a screen with an approved journey flow: `graphhelm journey replay` with the browser observer
      installed (`graphhelm setup --install-observer playwright`); a project that keeps its own Playwright
      tests: `tools/playwright-observer/playwright_observe.py --journey <contractId>`;
    - the CLI and the Runtime: the real binary against a real Runtime on a scratch store, asserting
      the reply and what was recorded;
    - hooks: the real hook process in a scratch folder, asserting what it recorded.
-   Run it red on the base and green on the change.
+   Run it red on the parent and green on the change.
+2. **A standalone unit test is a regression test.** Add one only when someone finds a bug: the
+   smallest test that reproduces it, red before the fix and green after. The exceptions are data
+   formats and digests, security (paths, links, keys, permissions) and pure algorithms, where an
+   end-to-end run cannot reach every case. Every new test, whenever it was written, passes the
+   break-it-once sabotage (step 5) and the `test-audit` skill's four questions.
 3. **The artifact.** Every end-to-end proof ends in a receipt recorded in GraphHelm, the one the
    Studio Proof tab shows: what ran, on which commit, the result, and the command that repeats it.
-4. **Isolated tests only where end to end cannot reach every case:** data formats and digests,
-   security (paths, links, keys, permissions) and pure algorithms. Before the code, write down every
-   way it can fail. Then write one test per failure, then the code.
+4. **The failure list.** A change in the last row of the `KEEL_PLAN.md` table writes down every way
+   it can fail and proves each one.
 5. **Break it once.** Before you call it done, break the change on purpose in one place the
    promise depends on, and show that a proof turns red. Restore it and say what you broke.
 6. **Run the whole reached plan.** `tools/reached-tests/run_reached.py` on main plus the change,
-   every step, never a hand-picked subset. Cite each step and its result in the pull request.
+   every step, never a hand-picked subset. Cite each step and its result in the pull request, and
+   leave the JSON report as the receipt the reviewer reuses (`KEEL_REVIEW.md` step 2).
 7. **Report what you saw, not what you hoped.** Passed, failed, skipped and unobserved are four
    different lines. A proxy (another OS, a mock, an emulator, a test compiled out on this host) is
    not an observation. Mock only the clock, randomness and I/O at a named boundary.
 8. **No observer, no claim.** When the promise cannot be observed on this host, change nothing
    more, say what is missing and end with `OBSERVER_MISSING: <what is missing>`. Never write
    "verified" for what you did not observe.
-
-## Existing unit tests
-
-They are frozen: no new unit test outside the cases above. When an end-to-end proof comes to cover
-what a unit test covered, the unit test is deleted with a record naming the proof that covers it.
 
 ## Hand off
 

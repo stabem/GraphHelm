@@ -11,22 +11,22 @@ and records it as one `keel.plan` record. Read [`KEEL.md`](../KEEL.md) first.
 | Bounded code | the paths, the promise, the proof |
 | A screen inside a journey's `scopePaths` | the paths, the promise, and `journeys:` naming every journey touched, replayed green at the head |
 | A new public surface (module, type, public function, dependency, route, command, tool, schema field) | the full card, and the surface is named |
-| Persisted data, permissions, compatibility, security, effects outside the process, Runtime-affecting config, concurrency, destructive operations | the full card, a journey, and the failure list `KEEL_EXEC.md` asks for isolated tests |
+| Persisted data, permissions, compatibility, security, effects outside the process, Runtime-affecting config, concurrency, destructive operations | the full card, a journey, and the failure list `KEEL_EXEC.md` asks for |
 
 Risk is read from what the change touches, not from its size: one line can remove a permission
-check. A display-only config label is a summary-line change; a Runtime timeout or permission
-setting needs behavioural proof even if it parses.
+check. A display-only config label is a summary-line change; Runtime-affecting configuration (a
+timeout, a permission setting) needs behavioural proof: parsing or shape validation alone is not
+proof.
 
 When in doubt, take the larger row.
 
 ## The card
 
 1. **Promise.** What a user can see change, in one or two sentences. Not what the code does.
-2. **Proof.** The end-to-end observer that decides it: the journey id, the CLI command against a
-   real Runtime, or the hook run. Name what it asserts. An isolated test is planned only for the
-   cases `KEEL_EXEC.md` allows, and its list of failure modes is written here first.
-3. **Paths.** Every file the change may touch, as a list of paths. No globs. A change that needs
-   more than about a dozen paths is two promises.
+2. **Proof.** The cheapest observer that decides it: the journey id, the CLI command against a
+   real Runtime, or the hook run. Name what it asserts, and write the
+   failure list here first when `KEEL_EXEC.md` asks for one.
+3. **Paths.** Every file the change may touch, as a list of paths. No globs.
 4. **What already exists.** The searches you ran for code that already does part of the job, and
    what they found. A new function, type or module is planned only when nothing found fits, and
    the card names who will call it.

@@ -105,7 +105,7 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
   Rust builds, Studio checks or journey previews.
 
 Execute the plan with `python tools/reached-tests/run_reached.py` (the command, its batches, slot
-admission and 180-second budget are LANES.md §3). Record the report and any pending checks in the
+admission and 900-second budget are LANES.md §3). Record the report and any pending checks in the
 PR; a budget miss is never green.
 
 **Resume, summary and preflight.** Rerun the same command with the same `--output` after
@@ -113,7 +113,7 @@ any stop: a step is reused only when the previous run passed it, ended with HEAD
 clean worktree, and its proof key still matches (commit tree, argv, cwd, tool versions and the
 `CARGO*`/`RUST*`/`GRAPHHELM_*`/`NODE*`/`PYTHON*`/`PG*` environment). Anything else, including a
 failure, a stale or unreadable report, reruns; `--no-resume` reruns everything. Before any step,
-preflight checks free disk (default 10 GB with Cargo steps, `--min-free-gb`), a relative
+preflight checks free disk (10 GB with Cargo steps on the slot root and `CARGO_TARGET_DIR`, 1 GB on the checkout and report; `--min-free-gb` sets all), a relative
 `CARGO_TARGET_DIR`, configured tool paths that do not exist, and the git identity; a problem stops
 the run as `blocked` (`--skip-preflight` records it and goes on). Stdout is a short summary
 (passed/reused, failed with log path, pending, report path); `--json` prints the full report.
@@ -334,7 +334,7 @@ A critic round's verdict is not an argument: the script derives it from the scor
   `task.*` record under the shared session token (`GHCLI038_ACTOR_MISMATCH`, 403, nothing
   appended); without the flag (the default) the shared token keeps recording as before. The
   owner's order is: upgrade the Runtime, mint one credential per lane, then restart with the flag.
-  Without the file, `task_record.py` sends the shared token and prints the mint command on stderr;
+  Without the file, `task_record.py` refuses and prints the mint command (#1459); `--allow-shared-token` sends the shared token instead, with that note on stderr;
   under the flag that record is refused. Never use the owner's `events.token` as a lane record's
   bearer.
 - **Defaults.** `--url http://127.0.0.1:8793`, `--execution gh-team`, `--repo stabem/GraphHelm`;

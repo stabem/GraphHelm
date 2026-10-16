@@ -78,7 +78,7 @@ export function ProofRun({ journey, flow, source, selected, onSelect, frameUrl, 
     line = (
       <div role="alert" className="tc-run-error">
         <p>{`Couldn't run this journey. ${failedRun.text}`}</p>
-        {failedRun.log && <pre className="tc-run-log" aria-label="What the launcher said">{failedRun.log}</pre>}
+        {failedRun.log && <pre className="tc-run-log" aria-label={failedRun.logFrom === "driver" ? "What the browser driver said" : "What the launcher said"}>{failedRun.log}</pre>}
         {failedRun.logPath && <p className="tc-run-logpath">{`Full log: ${failedRun.logPath}`}</p>}
       </div>
     );

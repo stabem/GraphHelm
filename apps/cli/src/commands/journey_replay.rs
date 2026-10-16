@@ -291,6 +291,66 @@ fn drain(pipe: impl Read + Send + 'static) {
     });
 }
 
+/// The most of a dead driver's stderr a failure keeps (#1448).
+const DRIVER_LOG_TAIL: usize = 4096;
+static LAST_DRIVER_LOG: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
+
+/// Reads a driver's stderr to the end, like [`drain`], and answers once with its last
+/// `DRIVER_LOG_TAIL` bytes plus `slack` more, so a secret cut by the window edge can be dropped
+/// whole by [`masked_tail`] (#1448).
+fn keep_tail(pipe: impl Read + Send + 'static, slack: usize) -> Receiver<(Vec<u8>, bool)> {
+    let (tx, rx) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let keep = DRIVER_LOG_TAIL + slack;
+        let mut reader = BufReader::new(pipe);
+        let mut tail = Vec::new();
+        let mut cut = false;
+        let mut chunk = [0u8; 8192];
+        while let Ok(read) = reader.read(&mut chunk) {
+            if read == 0 {
+                break;
+            }
+            tail.extend_from_slice(&chunk[..read]);
+            if tail.len() > keep {
+                tail.drain(..tail.len() - keep);
+                cut = true;
+            }
+        }
+        let _ = tx.send((tail, cut));
+    });
+    rx
+}
+
+/// The kept stderr as text with every secret and the user's home masked, at most
+/// `DRIVER_LOG_TAIL` bytes. A cut window first drops `slack` bytes, the longest a secret's
+/// leftover suffix can be, so no fragment of a secret survives the edge.
+fn masked_tail(bytes: &[u8], cut: bool, slack: usize, secrets: &[String]) -> String {
+    let bytes = if cut {
+        &bytes[slack.min(bytes.len())..]
+    } else {
+        bytes
+    };
+    let mut text = String::from_utf8_lossy(bytes).into_owned();
+    for secret in secrets.iter().filter(|secret| !secret.is_empty()) {
+        text = text.replace(secret.as_str(), "***");
+    }
+    for key in ["USERPROFILE", "HOME"] {
+        if let Some(home) = std::env::var(key).ok().filter(|home| home.len() > 3) {
+            text = text.replace(&home, "~");
+        }
+    }
+    let start = text.len().saturating_sub(DRIVER_LOG_TAIL);
+    let start = (start..=text.len())
+        .find(|index| text.is_char_boundary(*index))
+        .unwrap_or(text.len());
+    text[start..].to_owned()
+}
+
+/// The masked stderr tail of the last driver that died in this process, once (#1448).
+pub(super) fn take_driver_log() -> Option<Value> {
+    LAST_DRIVER_LOG.lock().ok()?.take()
+}
+
 fn frames(pipe: impl Read + Send + 'static, limit: usize) -> Receiver<Result<Option<Vec<u8>>>> {
     let (tx, rx) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
@@ -392,6 +452,8 @@ pub(super) struct Driver {
     replies: Receiver<Result<Option<Vec<u8>>>>,
     sequence: u64,
     secrets: Vec<String>,
+    /// The driver's stderr tail, answered once the pipe closes; `None` once taken (#1448).
+    stderr: Option<Receiver<(Vec<u8>, bool)>>,
     headed: bool,
     /// The per-expectation judgement of the last `snapshot` reply (#1286), pass or fail. Only a
     /// shape `failed_checks`/the success validator accepted is kept; anything else reads as none.
@@ -465,7 +527,8 @@ impl Driver {
         let mut owned = spawn_owned(command, Instant::now() + OP_BUDGET)?;
         let child = owned.child.as_mut().unwrap();
         let replies = frames(child.stdout.take().unwrap(), FRAME);
-        drain(child.stderr.take().unwrap());
+        let slack = secrets.values().map(String::len).max().unwrap_or(0);
+        let stderr = keep_tail(child.stderr.take().unwrap(), slack);
         let mut stdin = child.stdin.take().unwrap();
         let (tx, rx) = mpsc::sync_channel::<(Vec<u8>, mpsc::SyncSender<bool>)>(1);
         std::thread::spawn(move || {
@@ -483,6 +546,7 @@ impl Driver {
             replies,
             sequence: 0,
             secrets: secrets.values().cloned().collect(),
+            stderr: Some(stderr),
             headed: false,
             last_checks: None,
         })
@@ -504,6 +568,23 @@ impl Driver {
             observe_cleanup(owned.cleanup(), path, CLEANUP_OBSERVE)?;
         }
         result
+    }
+
+    /// The driver closed its stdout: keep why, from its stderr, for [`take_driver_log`] (#1448).
+    /// A dead driver closes both pipes; the bounded wait only covers the reader finishing.
+    fn record_stderr(&mut self) {
+        let Some((bytes, cut)) = self
+            .stderr
+            .take()
+            .and_then(|rx| rx.recv_timeout(Duration::from_secs(2)).ok())
+        else {
+            return;
+        };
+        let slack = self.secrets.iter().map(String::len).max().unwrap_or(0);
+        let tail = masked_tail(&bytes, cut, slack, &self.secrets);
+        if let Ok(mut slot) = LAST_DRIVER_LOG.lock() {
+            *slot = Some(json!({"tail": tail}));
+        }
     }
 
     /// The checks the last `snapshot` judged, once: the next caller sees none until another
@@ -541,7 +622,10 @@ impl Driver {
             .replies
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             .map_err(|_| failure("replay.timeout", format!("{path}/read"), 1))??
-            .ok_or_else(|| failure("replay.driver_frame_invalid", format!("{path}/eof"), 1))?;
+            .ok_or_else(|| {
+                self.record_stderr();
+                failure("replay.driver_frame_invalid", format!("{path}/eof"), 1)
+            })?;
         if self.secrets.iter().any(|secret| {
             !secret.is_empty() && {
                 let encoded = serde_json::to_vec(secret).unwrap();
@@ -1029,23 +1113,37 @@ pub(super) fn with_storage(mut open: Value, storage: Option<&Value>) -> Value {
     open
 }
 
+/// The observer files the driver needs, each byte-equal to the copy this binary ships: the driver
+/// imports `./judge.mjs` (#1324), so a project holding only the driver is not ready (#1448).
+const OBSERVER_FILES: [(&str, &[u8]); 2] = [
+    (
+        ".graphhelm/observers/journey_driver.mjs",
+        include_bytes!("../../../../tools/journey-driver/driver.mjs"),
+    ),
+    (
+        ".graphhelm/observers/judge.mjs",
+        include_bytes!("../../../../tools/journey-driver/judge.mjs"),
+    ),
+];
+
 pub(super) fn observer_ready(project: &Path) -> Result<()> {
-    let installed = project.join(".graphhelm/observers/journey_driver.mjs");
-    let expected = include_bytes!("../../../../tools/journey-driver/driver.mjs");
-    let mut installed_bytes = Vec::new();
-    if !safe_node(&installed)
-        || std::fs::File::open(&installed)
-            .and_then(|file| {
-                file.take(expected.len() as u64 + 1)
-                    .read_to_end(&mut installed_bytes)
-            })
-            .is_err()
-        || installed_bytes != expected
-    {
-        return Err(failure("replay.observer_missing", "/observer", 3));
-    }
     if !safe_node(&project.join(".graphhelm/observers")) {
         return Err(failure("replay.observer_missing", "/observer", 3));
+    }
+    for (relative, expected) in OBSERVER_FILES {
+        let installed = project.join(relative);
+        let mut installed_bytes = Vec::new();
+        if !safe_node(&installed)
+            || std::fs::File::open(&installed)
+                .and_then(|file| {
+                    file.take(expected.len() as u64 + 1)
+                        .read_to_end(&mut installed_bytes)
+                })
+                .is_err()
+            || installed_bytes != expected
+        {
+            return Err(failure("replay.observer_missing", "/observer", 3));
+        }
     }
     Ok(())
 }
@@ -1966,6 +2064,72 @@ mod tests {
     /// preview to read once. Regression: the driver sent `details.checks` (#1324) but Rust dropped
     /// it, so the Studio painted the step's single status on every assertion. Cost: milliseconds,
     /// one fixed peer frame through the existing writer/reply channels; no new seam.
+    /// #1448: the driver imports `./judge.mjs`, so a project holding only the driver is refused
+    /// as OBSERVER_MISSING before a child starts. Regression: readiness compared the driver alone,
+    /// the child died on its import, and the run read `replay.driver_frame_invalid /entry/eof`.
+    #[test]
+    fn an_observer_without_its_judge_is_not_ready() {
+        let project = tempfile::tempdir().unwrap();
+        let observers = project.path().join(".graphhelm/observers");
+        std::fs::create_dir_all(&observers).unwrap();
+        let (driver, driver_bytes) = OBSERVER_FILES[0];
+        let (judge, judge_bytes) = OBSERVER_FILES[1];
+        std::fs::write(project.path().join(driver), driver_bytes).unwrap();
+        assert_eq!(
+            observer_ready(project.path()).unwrap_err().0,
+            "replay.observer_missing"
+        );
+        std::fs::write(project.path().join(judge), b"stale").unwrap();
+        assert_eq!(
+            observer_ready(project.path()).unwrap_err().0,
+            "replay.observer_missing"
+        );
+        std::fs::write(project.path().join(judge), judge_bytes).unwrap();
+        assert!(observer_ready(project.path()).is_ok());
+    }
+
+    /// #1448: a driver that dies before its first frame leaves its own stderr, bounded and with
+    /// the flow's secrets masked, for the preview to keep. Regression: `drain` threw it away.
+    /// Real child (node), real pipes; a secret straddles the kept window's edge.
+    #[test]
+    fn a_dead_driver_leaves_a_masked_stderr_tail() {
+        let project = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let observers = project.path().join(".graphhelm/observers");
+        std::fs::create_dir_all(&observers).unwrap();
+        let secret = "s3cr3t-value-0123456789";
+        std::fs::write(
+            observers.join("journey_driver.mjs"),
+            format!(
+                "process.stdin.once('data', () => process.stderr.write('x'.repeat(5000) + \
+                 '{secret}' + 'y'.repeat({}) + '\\nError: the reason {secret}\\n', \
+                 () => process.exit(1)));",
+                DRIVER_LOG_TAIL - 40
+            ),
+        )
+        .unwrap();
+        let secrets = BTreeMap::from([("GRAPHHELM_SECRET_A".to_owned(), secret.to_owned())]);
+        let mut driver = Driver::start(project.path(), output.path(), &secrets).unwrap();
+        let _ = take_driver_log();
+        let refused = driver.call("open", json!({}), "/entry").unwrap_err();
+        assert_eq!(
+            (refused.0, refused.1.as_str()),
+            ("replay.driver_frame_invalid", "/entry/eof")
+        );
+        let tail = take_driver_log().expect("the dead driver's stderr is kept")["tail"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(tail.ends_with("Error: the reason ***\n"), "{tail}");
+        assert!(tail.len() <= DRIVER_LOG_TAIL, "{}", tail.len());
+        // No piece of the secret survives, whole or cut by the window edge.
+        assert!(
+            !tail.contains("0123456789") && !tail.contains("s3cr3t"),
+            "{tail}"
+        );
+        assert!(take_driver_log().is_none(), "kept once");
+    }
+
     #[test]
     fn a_failed_snapshot_keeps_its_checks_for_one_reader() {
         let checks = json!([
@@ -1991,6 +2155,7 @@ mod tests {
             replies,
             sequence: 0,
             secrets: vec![],
+            stderr: None,
             headed: true,
             last_checks: None,
         };
@@ -2178,6 +2343,7 @@ mod tests {
                 replies,
                 sequence: 0,
                 secrets: vec![],
+                stderr: None,
                 headed: false,
                 last_checks: None,
             };
@@ -2224,6 +2390,7 @@ mod tests {
                 replies,
                 sequence: 0,
                 secrets: vec![],
+                stderr: None,
                 headed: false,
                 last_checks: None,
             };
@@ -2273,6 +2440,7 @@ mod tests {
                 replies,
                 sequence: 0,
                 secrets: vec![],
+                stderr: None,
                 headed: false,
                 last_checks: None,
             };

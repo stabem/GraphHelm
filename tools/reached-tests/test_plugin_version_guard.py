@@ -220,5 +220,81 @@ class KeelPluginReleaseGroup(unittest.TestCase):
         self.assertIn("plugins/keel/.codex-plugin/plugin.json", message)
 
 
+ROOT = Path(__file__).resolve().parents[2]
+JPD_SKILL = "extensions/builtin/graphhelm-jpd/skills/journey-map/SKILL.md"
+CONTRACTS_SKILL = "extensions/builtin/graphhelm-development-contracts/skills/implement/SKILL.md"
+
+
+class SkillChain(unittest.TestCase):
+    """#1459 items 14 and 16: one command regenerates a skill change's chain, and two skill PRs in
+    different packages merge without a conflict. Cost: one temp repository holding copies of the
+    two real builtin packages, their goldens and the release file; a few git commands."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name)
+        self.git("init", "-q", "-b", "main")
+        for key, value in (("user.email", "t@example.invalid"), ("user.name", "T"), ("core.autocrlf", "false")):
+            self.git("config", key, value)
+        for tree in ("extensions/builtin", "extensions/releases", guard.GOLDENS.rstrip("/")):
+            for source in (ROOT / tree).rglob("*"):
+                if source.is_file():
+                    target = self.repo / source.relative_to(ROOT)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(source.read_bytes())
+        self.git("add", "-A")
+        self.git("commit", "-qm", "base")
+
+    def git(self, *args):
+        return subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True,
+                              text=True, encoding="utf-8", creationflags=NO_WINDOW).stdout.strip()
+
+    def edit_skill(self, branch, skill):
+        self.git("checkout", "-q", "-b", branch, "main")
+        path = self.repo / skill
+        path.write_bytes(path.read_bytes() + f"\nEdited on {branch}.\n".encode("utf-8"))
+        first = guard.write(self.repo, "main")
+        second = guard.write(self.repo, "main")
+        self.git("add", "-A")
+        self.git("commit", "-qm", branch)
+        return first, second
+
+    def version(self, path):
+        return guard._version_field(json.loads((self.repo / path).read_bytes()))
+
+    def test_the_command_writes_the_whole_chain_once_and_nothing_the_second_time(self):
+        package = "extensions/builtin/graphhelm-jpd/"
+        before = self.version(package + "extension.json")
+        first, second = self.edit_skill("pr-a", JPD_SKILL)
+        self.assertEqual(second, [])
+        self.assertEqual(sorted(first), sorted([
+            package + "extension.json", package + ".claude-plugin/plugin.json", package + ".codex-plugin/plugin.json",
+            guard.GOLDENS + "graphhelm-jpd.json"]))
+        major, minor, patch = (int(part) for part in before.split("."))
+        for manifest in ("extension.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
+            self.assertEqual(self.version(package + manifest), f"{major}.{minor}.{patch + 1}")
+        passed, message = guard.check(self.repo, "main", "pr-a")
+        self.assertTrue(passed, message)
+
+    def test_a_skill_change_without_the_chain_fails_the_check_naming_the_extension(self):
+        self.git("checkout", "-q", "-b", "bare", "main")
+        (self.repo / JPD_SKILL).write_bytes((self.repo / JPD_SKILL).read_bytes() + b"\nbare\n")
+        self.git("commit", "-qam", "bare")
+        passed, message = guard.check(self.repo, "main", "bare")
+        self.assertFalse(passed)
+        self.assertIn("extensions/builtin/graphhelm-jpd/extension.json", message)
+
+    def test_two_skill_prs_in_different_packages_merge_without_a_conflict(self):
+        self.edit_skill("pr-a", JPD_SKILL)
+        self.edit_skill("pr-b", CONTRACTS_SKILL)
+        self.git("checkout", "-q", "main")
+        self.git("merge", "-q", "--no-edit", "pr-a")
+        merged = subprocess.run(["git", "merge", "-q", "--no-edit", "pr-b"], cwd=self.repo, capture_output=True,
+                                text=True, creationflags=NO_WINDOW)
+        self.assertEqual(merged.returncode, 0, merged.stdout + merged.stderr)
+        self.assertEqual(guard.write(self.repo, "main"), [], "the merged main carries a current chain")
+
+
 if __name__ == "__main__":
     unittest.main()

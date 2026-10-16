@@ -1413,6 +1413,27 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 }
             }
         }
+        // A takeover: another lane opens a head on a PR of the same task. The PR has one owner,
+        // so the superseded lane's slice of it is retired and the task shows one card.
+        if event.kind == TaskEventKind::PrOpened && event.pr.is_some() {
+            let mut at = slices.len();
+            while at > 0 {
+                at -= 1;
+                let held = &slices[at];
+                if at != index
+                    && !held.ended
+                    && held.state.step != TaskStep::Merged
+                    && held.state.pr == event.pr
+                    && held.state.task_id == event.task_id
+                    && held.state.lane != event.lane
+                {
+                    absorbed.push(slices.remove(at));
+                    if at < index {
+                        index -= 1;
+                    }
+                }
+            }
+        }
         if event.kind == TaskEventKind::PrOpened && slices[index].first_pr_opening.is_none() {
             slices[index].first_pr_opening = Some(event.sequence);
         }

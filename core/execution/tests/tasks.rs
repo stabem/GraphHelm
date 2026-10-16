@@ -668,6 +668,38 @@ fn routes_a_shared_pr_review_by_the_head_named_in_the_event_1002() {
 }
 
 #[test]
+fn a_taken_over_pr_is_one_card_owned_by_the_new_lane_1427() {
+    let states = fold_task_events(&[
+        claimed(1, "lane-a", "issue-1427", 1427, "issue-1427-a"),
+        opened(2, "lane-a", "issue-1427", 900, "aaaaaaaa"),
+        verdict(
+            3,
+            "lane-b",
+            "issue-1427",
+            900,
+            "aaaaaaaa",
+            "BLOCK",
+            "https://github.com/stabem/GraphHelm/pull/900#c1",
+        ),
+        claimed(4, "lane-b", "issue-1427", 1427, "issue-1427-a"),
+        opened(5, "lane-b", "issue-1427", 900, "bbbbbbbb"),
+        record(
+            6,
+            "task.review_assigned",
+            "lane-b",
+            json!({"taskId": "issue-1427", "pr": 900, "headSha": "bbbbbbbb", "reviewer": "lane-c"}),
+        ),
+    ]);
+    let cards: Vec<_> = states.iter().filter(|s| s.pr == Some(900)).collect();
+    assert_eq!(cards.len(), 1, "one PR, one card: {cards:?}");
+    let card = cards[0];
+    assert_eq!(card.lane.as_deref(), Some("lane-b"));
+    assert_eq!(card.current_reviewer.as_deref(), Some("lane-c"));
+    assert_eq!(card.head_sha.as_deref(), Some("bbbbbbbb"));
+    assert!(card.blocked_by.is_none());
+}
+
+#[test]
 fn keeps_an_approved_same_head_repeat_in_merge_and_preserves_its_review_clock_1002() {
     let t = |s: &str| PersistedTimestamp::parse(s).unwrap();
     let first = with_time(

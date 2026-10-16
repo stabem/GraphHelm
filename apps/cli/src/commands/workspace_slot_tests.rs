@@ -46,6 +46,7 @@ fn request<'a>(
         shared: true,
         max_wait: None,
         priority: false,
+        stage: crate::args::SlotStage::Implement,
         command,
     }
 }
@@ -1285,6 +1286,68 @@ fn priority_is_allowed_only_for_listed_lanes_and_runs_next() {
     assert!(priority.join().unwrap().output.ok);
     assert!(normal.join().unwrap().output.ok);
     assert_eq!(tags(&log), ["a", "p", "b"]);
+}
+
+/// #1470: a waiting review job is admitted before an implement job that arrived earlier, the
+/// running holder is never displaced, and an owner `--priority` waiter still goes first.
+#[test]
+fn review_and_merge_jobs_are_admitted_before_earlier_implement_jobs() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let ledger = root.join(".graphhelm-workspaces");
+    std::fs::create_dir_all(&ledger).unwrap();
+    std::fs::write(
+        ledger.join("slot-priority-lanes"),
+        "coordinator
+",
+    )
+    .unwrap();
+    let log = dir.path().join("log.txt");
+    let holder_command = marker_command(&log, "h", 3000);
+    let holder_root = root.clone();
+    let holder = std::thread::spawn(move || {
+        run_admitted_slot(&request(&holder_root, "lane-h", "hold", &holder_command))
+    });
+    wait_for_holder(&root, "lane-h");
+    let spawn = |lane: &'static str, tag: &'static str, stage, priority| {
+        let root = root.clone();
+        let log = log.clone();
+        std::thread::spawn(move || {
+            let command = marker_command(&log, tag, 10);
+            run_admitted_slot(&SlotRequest {
+                stage,
+                priority,
+                ..request(&root, lane, tag, &command)
+            })
+        })
+    };
+    use crate::args::SlotStage;
+    let implement = spawn("lane-i", "i", SlotStage::Implement, false);
+    wait_for_ticket(&root, "lane-i");
+    let merge = spawn("lane-m", "m", SlotStage::Merge, false);
+    wait_for_ticket(&root, "lane-m");
+    let review = spawn("lane-r", "r", SlotStage::Review, false);
+    wait_for_ticket(&root, "lane-r");
+    let owner = spawn("coordinator", "p", SlotStage::Implement, true);
+    wait_for_ticket(&root, "coordinator");
+    let status = run_status(&root).output.data.unwrap();
+    let stages: Vec<_> = status["waiting"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|waiter| waiter["stage"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        stages,
+        ["implement", "merge", "review", "implement"],
+        "{status}"
+    );
+    for job in [holder, implement, merge, review, owner] {
+        assert!(job.join().unwrap().output.ok);
+    }
+    // Holder first (never preempted), then the owner's priority, then review and merge in
+    // arrival order, and the earlier implement job last.
+    assert_eq!(tags(&log), ["h", "p", "m", "r", "i"]);
 }
 
 #[test]

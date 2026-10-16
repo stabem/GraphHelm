@@ -2437,9 +2437,34 @@ pub struct WorkspaceSlotArgs {
     /// line, written by the owner); any other lane is refused and its command never runs (#540).
     #[arg(long)]
     pub priority: bool,
+    /// What this build is for (#1470). A waiting `review` or `merge` job is admitted before every
+    /// waiting `implement` job, whatever the arrival order; it never preempts the holder, and an
+    /// owner `--priority` waiter still goes first.
+    #[arg(long, value_enum, default_value_t = SlotStage::Implement)]
+    pub stage: SlotStage,
     /// The command and its arguments, after `--`.
     #[arg(last = true, required = true)]
     pub command: Vec<String>,
+}
+
+/// The delivery step a build-slot job serves (#1470): review and merge are served first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum SlotStage {
+    #[default]
+    Implement,
+    Review,
+    Merge,
+}
+
+impl SlotStage {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Implement => "implement",
+            Self::Review => "review",
+            Self::Merge => "merge",
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]

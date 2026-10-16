@@ -54,6 +54,7 @@ pub fn run(args: &WorkspaceArgs) -> Outcome {
                     shared: slot.shared_target,
                     max_wait: slot.max_wait,
                     priority: slot.priority,
+                    stage: slot.stage,
                     command: &slot.command,
                 })
             }

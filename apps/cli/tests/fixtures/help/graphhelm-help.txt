@@ -4750,6 +4750,9 @@ Options:
       --no-browser
           Print nothing but open the browser; without it the link is printed only when opening fails
 
+      --journey <JOURNEY>
+          Land on this journey's Proof view (its contract id), for an owner approval
+
   -h, --help
           Print help
 

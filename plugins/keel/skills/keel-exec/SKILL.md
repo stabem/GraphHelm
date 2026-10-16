@@ -71,7 +71,8 @@ Step 2, from an accepted card to a proven change. Read `KEEL.md` and the card fi
 5. **Break it once.** Before you call it done, break the change on purpose in one place the
    promise depends on, and show that a proof turns red. Restore it and say what you broke.
 6. **Run the whole reached plan.** `tools/reached-tests/run_reached.py` on main plus the change,
-   every step, never a hand-picked subset. Cite each step and its result in the pull request.
+   every step, never a hand-picked subset. Cite each step and its result in the pull request, and
+   leave the JSON report as the receipt the reviewer reuses (`KEEL_REVIEW.md` step 2).
 7. **Report what you saw, not what you hoped.** Passed, failed, skipped and unobserved are four
    different lines. A proxy (another OS, a mock, an emulator, a test compiled out on this host) is
    not an observation. Mock only the clock, randomness and I/O at a named boundary.

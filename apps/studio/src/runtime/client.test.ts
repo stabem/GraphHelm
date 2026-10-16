@@ -1619,6 +1619,9 @@ it("returns independently validated previous exit and startup records from one h
     [{ state: "clean", pid: 1, at: 2 }, { state: "clean", pid: 1, at: 2 }],
     [{ state: "panicked", pid: 1, at: 2, location: "runtime/src/driver.rs:42", lastPanic: { location: "secret text" } }, { state: "panicked", pid: 1, at: 2, location: "runtime/src/driver.rs:42", lastPanic: { location: "unknown" } }],
     [{ state: "serve_error", pid: -1, at: 2 }, null],
+    // #41: an allocation-failure abort is named, with the request size, not dropped as unknown.
+    [{ state: "out_of_memory", pid: 1, at: 2, size: 1099511627776 }, { state: "out_of_memory", pid: 1, at: 2, size: 1099511627776 }],
+    [{ state: "out_of_memory", pid: 1, at: 2, size: -1 }, { state: "out_of_memory", pid: 1, at: 2 }],
     [{ state: "vanished", pid: 1, at: 1e30 }, null],
     [{ state: "vanished", pid: 1, at: 2, location: "C:/Users/private/src/main.rs:1", lastPanic: { location: "crate/src/../secret.rs:1" } }, { state: "vanished", pid: 1, at: 2, location: "unknown", lastPanic: { location: "unknown" } }],
     [undefined, null],

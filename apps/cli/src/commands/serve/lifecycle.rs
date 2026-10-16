@@ -301,6 +301,39 @@ mod tests {
         assert!(written["at"].is_u64());
     }
 
+    // #41: an allocation failure aborts past the panic hook, leaving the record `running`.
+    // The allocation guard leaves its own note beside the record; the next start must name
+    // the death as out of memory, with the size, instead of "vanished". Cost: two starts on
+    // a temporary directory; no real allocation failure.
+    #[test]
+    fn allocation_failure_note_is_served_as_out_of_memory() {
+        let dir = tempfile::tempdir().unwrap();
+        let events = dir.path().join("events.jsonl");
+        let Ok((first, _, _)) = super::Lifecycle::start(&events, "first") else {
+            panic!("first start failed");
+        };
+        drop(first);
+        std::fs::write(
+            dir.path().join("events.jsonl.runtime-lifecycle.oom"),
+            b"{\"size\":1099511627776,\"at\":1234}\n",
+        )
+        .unwrap();
+        let Ok((second, previous, _)) = super::Lifecycle::start(&events, "second") else {
+            panic!("second start failed");
+        };
+        assert_eq!(previous["state"], "out_of_memory");
+        assert_eq!(previous["size"], 1_099_511_627_776_u64);
+        assert_eq!(previous["at"], 1234);
+        assert_eq!(previous["instance"], "first");
+        drop(second);
+        // The note is consumed: a clean stop after it is not reported as out of memory again.
+        let Ok((third, previous, _)) = super::Lifecycle::start(&events, "third") else {
+            panic!("third start failed");
+        };
+        assert_eq!(previous["state"], "vanished");
+        drop(third);
+    }
+
     // Security boundary: panic locations exposed without auth must never carry build homes.
     // Cost: pure string cells; no process, filesystem or network.
     #[test]

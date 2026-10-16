@@ -570,7 +570,7 @@ fn project_discovery_refuses_when_health_probe_budget_expires() {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
                         stream
-                            .set_write_timeout(Some(Duration::from_secs(1)))
+                            .set_write_timeout(Some(scaled(Duration::from_secs(1))))
                             .unwrap();
                         let body = format!(
                             "{{\"data\":{{\"instance\":\"{stale_instance_for_server}\",\"projectId\":\"{project_id}\"}}}}"

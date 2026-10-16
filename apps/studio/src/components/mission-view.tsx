@@ -363,6 +363,16 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   const tabs: { id: Sub | "team"; label: string }[] = [
     { id: "graph", label: "Graph" }, { id: "lanes", label: "Lanes" }, { id: "proof", label: "Proof" },
   ];
+  // A step test is Proof's content, so Proof stays the open tab.
+  const openTab = sub === "test" ? "proof" : sub;
+  const tabsRef = useRef<HTMLDivElement>(null);
+  // Focus follows the open tab while it is in the strip: a click that does not move focus (scripted
+  // or assistive) otherwise leaves the focus ring on the old tab, which reads as that tab being open.
+  useEffect(() => {
+    const strip = tabsRef.current;
+    if (!strip || !strip.contains(document.activeElement)) return;
+    strip.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();
+  }, [openTab]);
   const header = (
       <header className="mv-head">
         {runName !== undefined && (
@@ -373,9 +383,9 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
             <span className="mv-brand">Mission graph</span>
           </div>
         )}
-        <div role="tablist" aria-label="Mission views" className="mv-tabs">
+        <div role="tablist" aria-label="Mission views" className="mv-tabs" ref={tabsRef}>
           {tabs.map((t) => (
-            <button key={t.id} role="tab" type="button" className="mv-tab" aria-selected={sub === t.id}
+            <button key={t.id} role="tab" type="button" className="mv-tab" aria-selected={openTab === t.id} tabIndex={openTab === t.id ? 0 : -1}
               onClick={() => (t.id === "team" ? onTeam?.() : setSub(t.id))}>{t.label}</button>
           ))}
         </div>
@@ -398,10 +408,12 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
     {cardRecords.map((event) => {
       const source = (event.payload as { sourceId?: unknown }).sourceId;
       const text = envelopes[event.sequence]?.text;
+      const reading = envelopes as EnvelopeRecord & { __readingEnvelopeSequences?: number[]; __envelopeFailures?: Record<number, string> };
+      const failure = reading.__envelopeFailures?.[event.sequence];
       return <article key={event.sequence}>
         <h3>{`${typeof source === "string" && source ? source : "Unknown node"} · record #${event.sequence}`}</h3>
-        <p style={{ whiteSpace: "pre-wrap" }}>{text?.trim() || ((envelopes as EnvelopeRecord & { __readingEnvelopeSequences?: number[] }).__readingEnvelopeSequences?.includes(event.sequence)
-          ? "Keel card recorded; reading its content…" : "Keel card recorded; content unavailable")}</p>
+        <p style={{ whiteSpace: "pre-wrap" }}>{text?.trim() || (failure !== undefined ? `Keel card recorded; its content could not be read: ${failure}`
+          : reading.__readingEnvelopeSequences?.includes(event.sequence) ? "Keel card recorded; reading its content…" : "Keel card recorded; content unavailable")}</p>
       </article>;
     })}
   </section>;

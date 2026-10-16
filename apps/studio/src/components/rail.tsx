@@ -149,6 +149,7 @@ export function ProjectRail({
   onRestoreRun,
   onRefreshRuntimeDetails,
   briefings = {},
+  teamRuns,
   selectedPresentation = null,
   onClose,
 }: {
@@ -183,6 +184,8 @@ export function ProjectRail({
    * wears its objective as its name; the id stays visible below it. Absent
    * (older Runtime, not read yet) the row says the id, which is what it always said. */
   briefings?: Record<string, { objective: string | null; name?: string | null } | null>;
+  /** Runs seen carrying task records: named by their execution, never by their form's objective. */
+  teamRuns?: ReadonlySet<string>;
   /** Selected-run display only. The Runtime attention value remains unchanged in Details. */
   selectedPresentation?: { key: string; status: string } | null;
   onClose?: () => void;
@@ -224,14 +227,18 @@ export function ProjectRail({
 
       <div className="rail-runtime-status">
         {connected && previousExit && previousExit.state !== "clean" && (
-          <p className="hint" aria-label="Previous Runtime exit" style={{ overflowWrap: "anywhere" }}>
+          <div className="hint" role="note" aria-label="Previous Runtime exit" style={{ overflowWrap: "anywhere" }}>
             Runtime restarted · {previousExit.state === "vanished" ? "previous run started" : "last stop"} <time dateTime={new Date(previousExit.at * 1000).toISOString()} title={`PID ${previousExit.pid} · ${new Date(previousExit.at * 1000).toISOString()}`}>
               {new Date(previousExit.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}
-            </time> ({({ vanished: "exit cause unknown", serve_error: "failed", panicked: "crashed" })[previousExit.state] ?? "stopped"})
-            <> · {previousExit.instance ? `instance: ${previousExit.instance}` : "instance unavailable"}</>
-            {previousExit.location !== undefined && <> · location: {previousExit.location}</>}
-            {previousExit.lastPanic && <> · last panic: {previousExit.lastPanic.location}</>}
-          </p>
+            </time>{previousExit.state === "vanished" ? " and stopped without recording why" : ` (${({ serve_error: "failed", panicked: "crashed" } as Record<string, string>)[previousExit.state] ?? "stopped"})`}
+            {/* The ids are for whoever debugs the Runtime, not the sentence the owner reads. */}
+            <details>
+              <summary>Details</summary>
+              {previousExit.instance ? `instance: ${previousExit.instance}` : "instance unavailable"}
+              {previousExit.location !== undefined && <> · location: {previousExit.location}</>}
+              {previousExit.lastPanic && <> · last panic: {previousExit.lastPanic.location}</>}
+            </details>
+          </div>
         )}
         {connected && (
           <details aria-label="Runtime startup">
@@ -349,7 +356,8 @@ export function ProjectRail({
                 // #1083 F7: the row's own declared objective first (one index read names every
                 // row), the briefing a selection already read as the fallback for an older
                 // Runtime whose rows do not carry it.
-                const briefing = typeof run.objective === "string" ? { objective: run.objective } : briefings[run.executionId];
+                const team = teamRuns?.has(run.executionId) ?? false;
+                const briefing = team ? { objective: null, teamWork: true } : typeof run.objective === "string" ? { objective: run.objective } : briefings[run.executionId];
                 const label = runLabel(
                   run.executionId,
                   briefing,
@@ -385,7 +393,7 @@ export function ProjectRail({
                           : `${relativeTime} · ${metaStatus}`}
                         {/* #1064: a run started under the fixture executor says so in the index
                           * too, not only once opened — the word, never a glyph. */}
-                        {run.executor === "fixture" && (
+                        {run.executor === "fixture" && !team && (
                           <span className="run-demo"> · demonstration</span>
                         )}
                         {reviewCount > 0 && <span className="run-review"> · review needed</span>}

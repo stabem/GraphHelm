@@ -1,6 +1,6 @@
 import { TEST_BUDGETS } from "../test/task-fold";
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
 import { JourneyProgress, MissionView } from "./mission-view";
 import { teamModel } from "../runtime/team";
@@ -105,6 +105,13 @@ describe("MissionView", () => {
     const cards = screen.getByRole("region", { name: "Keel cards" });
     expect(cards).toHaveTextContent("Keel card recorded; reading its content");
     expect(cards).not.toHaveTextContent("content unavailable");
+  });
+  it("says why a card cannot be read", () => {
+    const event = { sequence: 7, kind: "signal_recorded", payload: { kind: "keel.card", sourceKind: "node", sourceId: "planner" },
+      occurredAt: null, actorId: "agent", actorType: "agent", idempotencyKey: null, eventId: null, evidenceRefs: ["e-7"] };
+    render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null}
+      onMarkSafe={vi.fn()} events={[event]} envelopes={Object.assign({}, { __readingEnvelopeSequences: [], __envelopeFailures: { 7: "evidence is sealed" } })} />);
+    expect(screen.getByRole("region", { name: "Keel cards" })).toHaveTextContent("Keel card recorded; its content could not be read: evidence is sealed");
   });
   it("draws recent work in the graph while history is still loading", () => {
     render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0}
@@ -289,6 +296,19 @@ describe("MissionView", () => {
     expect(screen.getByText("#40 Loose PR")).toBeInTheDocument();
   });
 
+  // A click that does not move focus (a scripted or assistive click) left the focus ring on Lanes,
+  // read as Lanes still being open. Cost: one jsdom render.
+  it("highlights and focuses the tab whose content is open when Proof is opened from Lanes", async () => {
+    render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Lanes" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Proof" }));
+    expect(screen.getByRole("region", { name: "Proof" })).toBeInTheDocument();
+    const selected = screen.getAllByRole("tab").filter((tab) => tab.getAttribute("aria-selected") === "true");
+    expect(selected.map((tab) => tab.textContent)).toEqual(["Proof"]);
+    expect(screen.getByRole("tab", { name: "Proof" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Lanes" })).toHaveAttribute("tabindex", "-1");
+  });
+
   it.each([true, false])("opens the selected journey's proof from Graph while historyLoading=%s", async (historyLoading) => {
     const second: JourneyView = { ...journeys[0]!, contractId: "second", title: "Second journey", steps: [
       { stepId: "unique-proof-step", screen: { screenId: "unique-proof-step", title: "Second unique proof step", scopePaths: [] }, promises: [] },
@@ -411,6 +431,8 @@ describe("MissionView", () => {
     const browser = screen.getByRole("region", { name: "Emulated browser" });
     expect(within(browser).getByRole("img")).toHaveAttribute("src", "/frames/add/save.png");
     expect(screen.getByRole("tablist", { name: "Mission views" })).toBeInTheDocument();
+    // The step test is Proof's content: the strip keeps Proof highlighted.
+    expect(screen.getByRole("tab", { name: "Proof" })).toHaveAttribute("aria-selected", "true");
     await userEvent.click(screen.getByRole("button", { name: "‹ Back to proof" }));
     expect(screen.queryByRole("region", { name: "Emulated browser" })).toBeNull();
     expect(screen.getByRole("button", { name: "Open test for step 1" })).toBeInTheDocument();

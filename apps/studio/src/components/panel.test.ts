@@ -165,6 +165,22 @@ it("reads each event once when the caller rebuilds the unchanged array", async (
   expect(open).toHaveBeenCalledTimes(1);
 });
 
+// A failed open went back to "reading" on every poll, so a Keel card row never resolved; the
+// reason the Runtime gave was dropped. Cost: one hook, a stubbed open, no network.
+it("keeps a failed envelope resolved with its reason across the next poll", async () => {
+  resetPanelCaches();
+  const card = event(7, "signal_recorded", { kind: "keel.card", sourceKind: "node", sourceId: "planner" });
+  card.evidenceRefs = ["card"];
+  const later = event(8, "signal_recorded", { kind: "operator_note", signalId: "later" });
+  const open = vi.fn(async (): Promise<EvidenceContent> => { throw new Error("evidence card is sealed for another actor"); });
+  const { result, rerender } = renderHook(({ rows }) => useEnvelopes(rows, "run", open), { initialProps: { rows: [card] } });
+  await waitFor(() => expect(result.current.__readingEnvelopeSequences).toEqual([]));
+  expect(result.current.__envelopeFailures[7]).toBe("evidence card is sealed for another actor");
+  rerender({ rows: [card, later] });
+  expect(result.current.__readingEnvelopeSequences).toEqual([]);
+  expect(result.current.__envelopeFailures[7]).toBe("evidence card is sealed for another actor");
+});
+
 it("keeps the settled envelope snapshot stable across unrelated renders", async () => {
   resetPanelCaches();
   const first = event(5, "signal_recorded", { kind: "operator_note", signalId: "sig-q" });

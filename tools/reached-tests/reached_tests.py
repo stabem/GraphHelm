@@ -465,6 +465,13 @@ def reach(changed, packages, embedded, repo=None):
             if root is not None and (root / observer).is_file():
                 tools.add(python_test_tool(root, observer))
                 hit = True
+        # The keel plugin's skills carry the KEEL files' text verbatim: an edit to either side runs
+        # the guard that compares them.
+        if path == "KEEL.md" or path.startswith(("keel/", "plugins/keel/")):
+            observer = "tools/keel-plugin/test_keel_plugin.py"
+            if root is not None and (root / observer).is_file():
+                tools.add(python_test_tool(root, observer))
+                hit = True
         qualification_packet = "evals/graphhelm-development-contracts/judge-qualification.json"
         if path == qualification_packet:
             observer = "tools/evals/test_skill_twins.py"
@@ -640,7 +647,7 @@ def reach(changed, packages, embedded, repo=None):
 
 def _plugin_release_content(path):
     """Shipped files need a release bump; dedicated docs and test files do not."""
-    if not path.startswith(("plugins/graphhelm/", "plugins/graphhelm-codex-hooks/")):
+    if not path.startswith(("plugins/graphhelm/", "plugins/graphhelm-codex-hooks/", "plugins/keel/")):
         return False
     parts = path.split("/")
     name = parts[-1].lower()

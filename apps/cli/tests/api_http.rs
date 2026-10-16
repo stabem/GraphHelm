@@ -3949,12 +3949,18 @@ fn the_tasks_route_folds_the_runs_task_records_into_slices() {
     assert_eq!(open["tasks"], serde_json::json!([]), "{open}");
     assert_eq!(open["endedTasks"], 1, "{open}");
     for history in ["records", "slices", "routes"] {
-        assert!(open.get(history).is_none(), "{history} in the open view: {open}");
+        assert!(
+            open.get(history).is_none(),
+            "{history} in the open view: {open}"
+        );
     }
     assert!(open["leases"].is_array(), "{open}");
     assert!(open["stalls"].is_array(), "{open}");
     assert!(open["liveness"]["lanes"].is_array(), "{open}");
-    assert_eq!(open["headSequence"], third["data"]["headSequence"], "{open}");
+    assert_eq!(
+        open["headSequence"], third["data"]["headSequence"],
+        "{open}"
+    );
 }
 
 /// The plan's second Task 3 test: an identical retry (same `Idempotency-Key`, same body) is 200,

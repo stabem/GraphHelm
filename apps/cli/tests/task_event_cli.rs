@@ -351,7 +351,9 @@ fn status_with_tasks_folds_the_recorded_task_events() {
     let full = &full["data"]["tasks"];
     assert_eq!(full["tasks"], data["tasks"], "{full}");
     assert!(
-        full["records"].as_array().is_some_and(|records| !records.is_empty()),
+        full["records"]
+            .as_array()
+            .is_some_and(|records| !records.is_empty()),
         "{full}"
     );
 

@@ -323,13 +323,14 @@ pub fn run(command: TopLevel) -> Outcome {
                 keyring,
                 key_id,
             } => {
-                let keyring = tasks
-                    .then(|| keyring.zip(key_id))
-                    .flatten()
-                    .map(|(directory, key_id)| execution::signal::SignalKeyring {
-                        directory,
-                        key_id,
-                    });
+                let keyring =
+                    tasks
+                        .then(|| keyring.zip(key_id))
+                        .flatten()
+                        .map(|(directory, key_id)| execution::signal::SignalKeyring {
+                            directory,
+                            key_id,
+                        });
                 let depth = if full_tasks {
                     execution::tasks::TasksDepth::Full
                 } else {

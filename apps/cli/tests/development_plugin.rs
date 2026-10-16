@@ -416,4 +416,3 @@ fn the_codex_host_version_is_cross_matched() {
         "the Codex host manifest's version",
     );
 }
-

@@ -311,6 +311,40 @@ class SessionHookTests(unittest.TestCase):
             finally:
                 marker.unlink(missing_ok=True)
         self.assertEqual([request[0] for request in RuntimeHandler.requests], ["GET", "POST"])
+
+    @unittest.skipUnless(os.name == "nt", "job objects are a Windows host contract")
+    def test_start_lane_waiter_leaves_the_hook_job_and_falls_back_when_refused(self):
+        """#919: a waiter started inside the hook's job died with it, so no lane held a lease."""
+        spec = importlib.util.spec_from_file_location("session_hook_breakaway", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        events = Path(self.temp.name) / "events"
+        events.mkdir()
+        self.env["GRAPHHELM_EVENTS_DIR"] = str(events)
+        self.env["GRAPHHELM_ACTOR"] = "gh-lane-1"
+        bound = ("run-test", str(self.token_file),
+                 f"http://127.0.0.1:{self.server.server_port}",
+                 f"http://127.0.0.1:{self.server.server_port}", None)
+        child = type("Child", (), {"pid": 424243})()
+        for refuse, expected in ((False, [True]), (True, [True, False])):
+            seen = []
+
+            def popen(*_args, creationflags=0, **_kwargs):
+                breakaway = bool(creationflags & 0x01000000)
+                seen.append(breakaway)
+                if breakaway and refuse:
+                    raise PermissionError(5, "Access is denied")
+                return child
+
+            with self.subTest(refuse=refuse), patch.dict(os.environ, self.env),                  patch.object(hook.subprocess, "Popen", side_effect=popen):
+                hook.start_lane_waiter({"session_id": "session-123"}, bound, "codex")
+                marker = hook._waiter_path({"session_id": "session-123"}, bound, "codex")
+                try:
+                    self.assertEqual(marker.read_text(encoding="ascii"), "424243")
+                finally:
+                    marker.unlink(missing_ok=True)
+                self.assertEqual(seen, expected)
+
     @classmethod
     def setUpClass(cls):
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), RuntimeHandler)

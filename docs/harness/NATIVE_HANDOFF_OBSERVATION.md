@@ -96,12 +96,14 @@ Run by lane gh-claude-21 against an isolated Runtime (`127.0.0.1:8799`, its own 
 | Intended receiver got the task | observed: one native `receive` call in Claude Code session `5c86ccde-…`, receipt `handoff-receipt-f8f8f6cf…`; the task text came from the Runtime's sealed note `pilot62-2-brief`, not from the prompt |
 | Receiver consumed the task and did work | observed: answer cites commit `1d80ee2f`, output sha256 `0a5293ea…`; the session transcript shows no read of the sealed expected answer |
 | Work independently accepted | observed: blind reviewer subagent distinct from the receiver, `VERDICT: ACCEPT` on the same commit and output hash |
-| Studio represents the same outcome | missing: no Studio was bound to the isolated Runtime |
+| Studio represents the same outcome | observed in pilot62-3 (below) |
+
+- **pilot62-3 — the Studio row.** A fresh isolated Runtime (`127.0.0.1:8798`, worktree at `61e8990a`) and a Studio dev server bound to it (`GRAPHHELM_RUNTIME_URL`, port 5199), with the pilot62-2 steps repeated: one offer `handoff-offer-9f35a89e…`, one native receive in Claude Code session `59d9f8b6-…` (receipt `handoff-receipt-bb02f36f…`), output sha256 `354bc56f…`, blind reviewer `VERDICT: ACCEPT`, recorded in the run as a note that answers the offer. At 1280 px, under run `pilot62`, the Studio's conversation event log shows "Raised task handoff offer" with the offer id, sender and recipient; then "Raised task handoff received", which answers that offer id; then the reviewer's ACCEPT note, which answers the same offer. The Studio has no dedicated handoff view: the Delegation tree reads `task.*` records only. The receipt id appears only inside the reviewer's note text.
 
 Found on the way (not a pilot obligation): the Runtime refuses any signal whose id contains `sk-` (for example `task-note`) with HTTP 500 `GHE009_EXTERNALIZATION_FAILED` at `/repository`, a secret-scanner false positive reported as a server error.
 
 ## Observer and remaining state
 
-The observer for this document is one independent review that checks every command against the linked source contracts and applies the interpretation rules to existing issue/PR records. Pilot62-2 observed four of the five rows for a Claude-to-Claude transfer. It says nothing about a Codex receiver or about reliability beyond one run.
+The observer for this document is one independent review that checks every command against the linked source contracts and applies the interpretation rules to existing issue/PR records. Pilot62-2 observed four of the five rows for a Claude-to-Claude transfer, and pilot62-3 observed the Studio row. It says nothing about a Codex receiver or about reliability beyond one run.
 
-`OBSERVER_MISSING: Studio evidence for the same task; a Codex receiver (deferred until a Codex host exists)`.
+`OBSERVER_MISSING: a Codex receiver (deferred until a Codex host exists)`.

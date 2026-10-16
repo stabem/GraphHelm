@@ -839,11 +839,15 @@ export function useActorAliases(
 
 const NO_ALIASES: Record<string, string> = {};
 
+function isKeelCard(event: RuntimeEvent): boolean {
+  return typeof event.payload === "object" && event.payload !== null && (event.payload as { kind?: unknown }).kind === "keel.card";
+}
+
 export function useEnvelopes(
   events: RuntimeEvent[],
   executionId: string | undefined,
   openEvidence: ((executionId: string, evidenceId: string) => Promise<EvidenceContent>) | undefined,
-): EnvelopeRecord & { __pendingEnvelopeSequences: number[]; __readingEnvelopeSequences: number[] } {
+): EnvelopeRecord & { __pendingEnvelopeSequences: number[]; __readingEnvelopeSequences: number[]; __envelopeFailures: Record<number, string> } {
   // TAGGED BY EXECUTION, not just keyed by sequence: sequences restart in every run, so run B's
   // signal at sequence 5 would wear run A's plaintext envelope from sequence 5 for as long as
   // B's evidence reads take - someone else's words, recipient and replyTo rendered under the
@@ -852,9 +856,11 @@ export function useEnvelopes(
   const [envelopes, setEnvelopes] = useState<{
     forId: string | undefined;
     map: EnvelopeRecord;
-    failed: Set<number>;
+    /** Sequence to the reason its open failed. A failed open stays resolved as failed (never back
+     * to reading) until a later pass opens it. */
+    failed: Map<number, string>;
     pending: Set<number>;
-  }>({ forId: undefined, map: {}, failed: new Set(), pending: new Set() });
+  }>({ forId: undefined, map: {}, failed: new Map(), pending: new Set() });
   const eventSequence = events.map((event) => event.sequence).join(",");
   // The shared OPENED_EVIDENCE cache is what lets the live tail exist: without it, every pass
   // re-fetched ~20 envelopes, and a pass slower than the poll interval was cancelled before it
@@ -864,12 +870,15 @@ export function useEnvelopes(
     const carriers = events.filter(
       (event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && event.evidenceRefs.length > 0,
     ).reverse();
+    // Keel cards first, then newest first: a long run's cards are old records, and behind thousands
+    // of newer carriers their rows read "reading" for minutes (gh-team: 15 cards behind 6,944).
+    carriers.sort((a, b) => Number(isKeelCard(b)) - Number(isKeelCard(a)));
     setEnvelopes((previous) => ({
       forId: executionId,
       map: previous.forId === executionId ? previous.map : {},
-      failed: new Set(previous.forId === executionId ? previous.failed : []),
+      failed: new Map(previous.forId === executionId ? previous.failed : []),
       pending: new Set(carriers
-        .filter((carrier) => previous.forId !== executionId || previous.map[carrier.sequence] === undefined)
+        .filter((carrier) => previous.forId !== executionId || (previous.map[carrier.sequence] === undefined && !previous.failed.has(carrier.sequence)))
         .map((carrier) => carrier.sequence)),
     }));
     const openedEnvelope = (content: EvidenceContent) => {
@@ -883,7 +892,7 @@ export function useEnvelopes(
     let live = true;
     let publishTimer: ReturnType<typeof setTimeout> | undefined;
     const ready: Array<{ sequence: number; value: ReturnType<typeof openedEnvelope> }> = [];
-    const failed: number[] = [];
+    const failed: Array<{ sequence: number; reason: string }> = [];
     const publish = () => {
       if (!live) return;
       publishTimer = undefined;
@@ -892,7 +901,7 @@ export function useEnvelopes(
       if (entries.length === 0 && failedSequences.length === 0) return;
       setEnvelopes((previous) => {
         const nextMap = { ...(previous.forId === executionId ? previous.map : {}) };
-        const nextFailed = new Set(previous.forId === executionId ? previous.failed : []);
+        const nextFailed = new Map(previous.forId === executionId ? previous.failed : []);
         const nextPending = new Set(previous.forId === executionId ? previous.pending : []);
         for (const { sequence, value } of entries) {
           const before = nextMap[sequence];
@@ -902,8 +911,8 @@ export function useEnvelopes(
           nextFailed.delete(sequence);
           nextPending.delete(sequence);
         }
-        for (const sequence of failedSequences) {
-          nextFailed.add(sequence);
+        for (const { sequence, reason } of failedSequences) {
+          nextFailed.set(sequence, reason);
           nextPending.delete(sequence);
         }
         return { forId: executionId, map: nextMap, failed: nextFailed, pending: nextPending };
@@ -927,8 +936,8 @@ export function useEnvelopes(
       try {
         const content = RESOLVED_EVIDENCE.get(`${executionId}/${evidenceId}`) ?? await openSealed(executionId, evidenceId, openEvidence);
         if (live) ready.push({ sequence: carrier.sequence, value: openedEnvelope(content) });
-      } catch {
-        if (live) failed.push(carrier.sequence);
+      } catch (error) {
+        if (live) failed.push({ sequence: carrier.sequence, reason: error instanceof Error && error.message.trim() ? error.message : "the Runtime did not say why" });
       }
       schedulePublish();
     };
@@ -951,8 +960,8 @@ export function useEnvelopes(
   }, [eventSequence, executionId, openEvidence]);
   // A stable empty answer, not a fresh literal: downstream memos key off this identity.
   return useMemo(() => envelopes.forId === executionId
-    ? Object.assign({ ...envelopes.map }, { __pendingEnvelopeSequences: [...new Set([...envelopes.failed, ...envelopes.pending])], __readingEnvelopeSequences: [...envelopes.pending] })
-    : Object.assign({}, { __pendingEnvelopeSequences: [], __readingEnvelopeSequences: [] }), [envelopes, executionId]);
+    ? Object.assign({ ...envelopes.map }, { __pendingEnvelopeSequences: [...new Set([...envelopes.failed.keys(), ...envelopes.pending])], __readingEnvelopeSequences: [...envelopes.pending], __envelopeFailures: Object.fromEntries(envelopes.failed) })
+    : Object.assign({}, { __pendingEnvelopeSequences: [], __readingEnvelopeSequences: [], __envelopeFailures: {} }), [envelopes, executionId]);
 }
 
 /**

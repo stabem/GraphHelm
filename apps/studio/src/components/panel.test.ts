@@ -165,6 +165,42 @@ it("reads each event once when the caller rebuilds the unchanged array", async (
   expect(open).toHaveBeenCalledTimes(1);
 });
 
+// A failed open went back to "reading" on every poll, so a Keel card row never resolved; the
+// reason the Runtime gave was dropped. Cost: one hook, a stubbed open, no network.
+it("keeps a failed envelope resolved with its reason across the next poll", async () => {
+  resetPanelCaches();
+  const card = event(7, "signal_recorded", { kind: "keel.card", sourceKind: "node", sourceId: "planner" });
+  card.evidenceRefs = ["card"];
+  const later = event(8, "signal_recorded", { kind: "operator_note", signalId: "later" });
+  const open = vi.fn(async (): Promise<EvidenceContent> => { throw new Error("evidence card is sealed for another actor"); });
+  const { result, rerender } = renderHook(({ rows }) => useEnvelopes(rows, "run", open), { initialProps: { rows: [card] } });
+  await waitFor(() => expect(result.current.__readingEnvelopeSequences).toEqual([]));
+  expect(result.current.__envelopeFailures[7]).toBe("evidence card is sealed for another actor");
+  rerender({ rows: [card, later] });
+  expect(result.current.__readingEnvelopeSequences).toEqual([]);
+  expect(result.current.__envelopeFailures[7]).toBe("evidence card is sealed for another actor");
+});
+
+// gh-team: 6,944 envelope carriers read newest first left its 15 Keel cards (old records) at the
+// back of the queue, "reading" for minutes. The cards are opened first. Cost: one hook, a stubbed open.
+it("opens Keel card envelopes before the newer carriers", async () => {
+  resetPanelCaches();
+  const card = event(32, "signal_recorded", { kind: "keel.card", sourceKind: "node", sourceId: "implementation" });
+  card.evidenceRefs = ["signal-gh-codex-2-338-card"];
+  const notes = Array.from({ length: 120 }, (_, index) => {
+    const note = event(100 + index, "signal_recorded", { kind: "operator_note", signalId: `n${index}` });
+    note.evidenceRefs = [`note-${index}`];
+    return note;
+  });
+  const open = vi.fn(async (_run: string, id: string): Promise<EvidenceContent> => ({
+    evidenceId: id, content: JSON.stringify({ description: `text ${id}` }), contentSha256: "hash",
+    mediaType: "application/json", sensitivity: "confidential",
+  }));
+  const { result } = renderHook(() => useEnvelopes([card, ...notes], "gh-team", open));
+  await waitFor(() => expect(result.current.__readingEnvelopeSequences).toEqual([]));
+  expect(open.mock.calls[0]?.[1]).toBe("signal-gh-codex-2-338-card");
+});
+
 it("keeps the settled envelope snapshot stable across unrelated renders", async () => {
   resetPanelCaches();
   const first = event(5, "signal_recorded", { kind: "operator_note", signalId: "sig-q" });

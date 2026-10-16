@@ -4348,6 +4348,27 @@ describe("the exchange", () => {
     }
   });
 
+  // A team run started on the demonstration form wore the form's objective as its name and its
+  // placeholder steps as its progress. Cost: one rendered App, a stubbed client.
+  it("titles a team run by its execution and hides the placeholder steps of its demonstration form", async () => {
+    const client = stubClient({
+      listExecutions: vi.fn(async () => ({ executions: [{ executionId: "demo-deploy", mode: "supervised", status: "running",
+        attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 13, executor: "fixture", objective: "Produce a deployable build." }],
+        hasMore: false, nextCursor: null })),
+      getStatus: vi.fn(async () => ({ ...STATUS, executor: "fixture", attention: "can_sleep", attentionReasons: [] })),
+      getTasks: vi.fn(async () => tasksReply("demo-deploy", [taskState({ taskId: "issue-941", issue: 941, lane: "codex-18", claimSequence: 1 })])),
+    });
+    await open(client);
+    await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
+    const mission = await screen.findByRole("region", { name: "Canvas" });
+    await waitFor(() => expect(screen.getByRole("button", { name: /^demo-deploy · team work;/ })).toBeInTheDocument());
+    expect(screen.getByText("demo-deploy · team work", { selector: "button[title='demo-deploy']" })).toBeInTheDocument();
+    expect(screen.queryByText("Produce a deployable build.")).toBeNull();
+    expect(screen.queryByText(/demonstration/)).toBeNull();
+    expect(within(mission).getByText("Run demo-deploy")).toBeInTheDocument();
+    expect(within(mission).queryByRole("region", { name: "Run graph" })).toBeNull();
+  });
+
   it("shows the Runtime's rejected-envelope count where the history alert was, and Retry asks again (#1192)", async () => {
     let rejected = 1;
     const client = stubClient({
@@ -4447,7 +4468,8 @@ describe("the exchange", () => {
         diagnostics: [{ code: "unconfirmed", severity: "warning" as const, path: "/", message: "receipt unavailable", source: "runtime" }] })),
     });
     await open(client);
-    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    // A run carrying task records is named by its execution.
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy · team work" }));
     await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
     const mission = await screen.findByRole("region", { name: "Canvas" });
     await userEvent.click(await within(mission).findByRole("button", { name: /Row No PR/ }));
@@ -5338,11 +5360,15 @@ it.each(["vanished", "panicked", "clean", null])("shows startup timing independe
   await screen.findByText("live");
   if (state === "vanished") {
     const line = screen.getByLabelText("Previous Runtime exit");
-    expect(line).toHaveTextContent(`Runtime restarted · previous run started ${new Date(2000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })} (exit cause unknown)`);
+    expect(line).toHaveTextContent(`Runtime restarted · previous run started ${new Date(2000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })} and stopped without recording why`);
     expect(line).not.toHaveTextContent("pid 1");
     expect(line).not.toHaveTextContent("1970-");
     expect(line.querySelector("time")).toHaveAttribute("title", expect.stringContaining("PID 1"));
-    expect(line).toHaveTextContent(`instance: ${prior}`);
+    // The instance id is for whoever debugs the Runtime: behind Details, not in the sentence.
+    const details = within(line).getByRole("group");
+    expect(within(details).getByText("Details")).toBeInTheDocument();
+    expect(details).toHaveTextContent(`instance: ${prior}`);
+    expect(Array.from(line.childNodes).filter((node) => node !== details).map((node) => node.textContent).join("")).not.toContain(prior);
   }
   else if (state === "panicked") {
     const line = screen.getByLabelText("Previous Runtime exit");

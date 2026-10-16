@@ -1777,6 +1777,14 @@ export default function App({
   // #393: one thread per task, opened by the run's task.* records.
   const currentTaskGraphs = useMemo(() => (taskGraphs?.executionId === selected ? taskGraphs : null), [taskGraphs, selected]);
   const runTasks = currentTaskGraphs?.tasks ?? null;
+  // A run seen carrying task records is team work: named by its execution, and its demonstration
+  // form's placeholder steps are not its progress (runLabel).
+  const [teamRuns, setTeamRuns] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => {
+    if (!selected || !runTasks || runTasks.length === 0) return;
+    setTeamRuns((seen) => (seen.has(selected) ? seen : new Set(seen).add(selected)));
+  }, [selected, runTasks]);
+  const teamRun = !!selected && teamRuns.has(selected);
   // #479: a message's issue/PR numbers link to the run's GitHub repository (read off its task
   // records) and a journey id it names opens the Journey tab on that journey.
   const saidLinks = useMemo<SaidLinkContext>(() => ({
@@ -2229,6 +2237,7 @@ export default function App({
         onRemoveRun={removeRun}
         onRestoreRun={restoreRun}
         briefings={briefings}
+        teamRuns={teamRuns}
       />
 
       {projectsOpen && <button type="button" className="projects-backdrop" aria-label="Close projects" onClick={() => setProjectsOpen(false)} />}
@@ -2281,7 +2290,7 @@ export default function App({
                 // The objective as the name, the id on hover (#1077).
                 title={selected}
               >
-                {runLabel(selected, briefing)}
+                {runLabel(selected, teamRun ? { objective: null, teamWork: true } : briefing)}
               </button>
             </>) : (
               <span className="meta">pick a run, or start one</span>
@@ -2599,7 +2608,7 @@ export default function App({
                   lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe}
                   runName={selected} lastRecordAt={Date.parse(eventList[eventList.length - 1]?.occurredAt ?? "")} onTeam={() => chooseCanvas("team")}
                   agents={team.bots} away={handover ? { minutes: handover.gapMinutes, shipped: handover.shipped.length } : null}
-                  runNodes={model.nodes} unassignedNodeIds={unassignedSteps.map((node) => node.id)}
+                  runNodes={teamRun && status?.executor === "fixture" ? [] : model.nodes} unassignedNodeIds={unassignedSteps.map((node) => node.id)}
                   onOpenNode={(id) => { nodeFocusOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setFocus({ kind: "node", id }); }}
                   onOpenBotDetails={(key) => setFocus({ kind: "agent", id: key })} onNameBot={nameBot}
                   onReviewAssigned={async (task, lane) => {

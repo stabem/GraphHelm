@@ -121,11 +121,15 @@ export const RUN_LABEL_LENGTH = 72;
  *
  * The graph document's `name` is deliberately NOT a fallback: the draft graph's name is the
  * placeholder "New task", and two runs called "New task" are the defect this exists to close.
+ *
+ * A team run (one carrying task records) is named by its execution: its objective is the form it
+ * was started on, often the demonstration's, and says nothing about the team's work.
  */
 export function runLabel(
   id: string,
-  briefing: { objective: string | null; name?: string | null } | null | undefined,
+  briefing: { objective: string | null; name?: string | null; teamWork?: boolean } | null | undefined,
 ): string {
+  if (briefing?.teamWork) return `${id} · team work`;
   const objective = briefing?.objective?.trim() ?? "";
   if (objective.length === 0) return id;
   const oneLine = objective.replace(/\s+/g, " ");

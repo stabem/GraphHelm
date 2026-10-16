@@ -1815,3 +1815,67 @@ fn keel_plan_decides_the_design_critic_by_class() {
         "{record}"
     );
 }
+
+/// #1404: a charge names the line a reader can open. Defect named: the line was the ordinal among
+/// added lines (and, for a manifest, among added+context lines), so a declaration at file line 31
+/// read as line 2. The range below has two hunks, a deletion before the first addition, and a
+/// manifest dependency below 20 lines of padding; the oracle is the literal new-file lines.
+/// Cost: one temporary git repository and one CLI process; no network.
+#[test]
+fn a_charge_points_at_its_line_in_the_new_file() {
+    let repo = tempfile::tempdir().unwrap();
+    let path = repo.path();
+    git(path, &["init", "-q"]);
+    fs::create_dir_all(path.join("src")).unwrap();
+    let padding = |range: std::ops::RangeInclusive<u32>| -> String {
+        range.map(|n| format!("// {n}\n")).collect()
+    };
+    let manifest_head = format!(
+        "[package]\nname = \"x\"\n{}[dependencies]\nserde = \"1\"\n",
+        (1..=20).map(|n| format!("# {n}\n")).collect::<String>()
+    );
+    fs::write(path.join("src/lib.rs"), padding(1..=30)).unwrap();
+    fs::write(path.join("Cargo.toml"), &manifest_head).unwrap();
+    git(path, &["add", "."]);
+    git(path, &["commit", "-q", "-m", "base"]);
+    // `// 3` removed; `first` lands on line 5 and `second` on line 31 of the new file.
+    let source = format!(
+        "{}{}pub fn first() {{}}\n{}pub fn second() {{}}\n",
+        padding(1..=2),
+        padding(4..=5),
+        padding(6..=30)
+    );
+    fs::write(path.join("src/lib.rs"), source).unwrap();
+    fs::write(
+        path.join("Cargo.toml"),
+        format!("{manifest_head}anyhow = \"1\"\n"),
+    )
+    .unwrap();
+    git(path, &["add", "."]);
+    git(path, &["commit", "-q", "-m", "change"]);
+    let (code, reply) = run(path, None);
+    assert_eq!(code, 0, "{reply}");
+    let lines: Vec<(String, String, u64)> = reply["data"]["classification"]["charges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|charge| {
+            (
+                charge["path"].as_str().unwrap().to_owned(),
+                charge["symbol"].as_str().unwrap().to_owned(),
+                charge["line"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            ("Cargo.toml".into(), "anyhow".into(), 25),
+            ("src/lib.rs".into(), "first".into(), 5),
+            ("src/lib.rs".into(), "second".into(), 31),
+        ],
+        "{reply}"
+    );
+    assert_eq!(reply["data"]["surface"]["newPublicSymbols"], 2);
+    assert_eq!(reply["data"]["surface"]["newDependencies"], 1);
+}

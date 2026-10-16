@@ -173,7 +173,9 @@ impl Debit {
 pub struct Charge {
     pub debit: Debit,
     pub path: String,
-    /// 1-based line number within the added side of the diff for that file.
+    /// 1-based line number in the new version of the file, read from the hunk headers. `0` is the
+    /// file-level sentinel (a new module) or a line whose hunk header could not be read, which
+    /// also raises a blocking `keel.diff.unparseable` finding for that file.
     pub line: u32,
     pub symbol: String,
 }
@@ -336,6 +338,15 @@ pub fn classify_write(
                 ),
             });
         }
+        if file.malformed_hunk {
+            findings.push(Finding {
+                rule: "keel.diff.unparseable".into(),
+                path: Some(file.path.clone()),
+                detail: "a hunk header has no readable `+<start>` line number; its lines are                          charged at line 0"
+                    .into(),
+                blocking: true,
+            });
+        }
         let language = Language::of(&file.path);
         let test_file = is_test_path(&file.path);
         if file.is_new && language.is_some() && !test_file {
@@ -347,8 +358,7 @@ pub fn classify_write(
             });
         }
         if let Some(language) = language {
-            for (index, line) in file.added.iter().enumerate() {
-                let line_number = u32::try_from(index + 1).unwrap_or(u32::MAX);
+            for (line, &line_number) in file.added.iter().zip(&file.added_lines) {
                 if let Some((debit, symbol)) = language.classify(line, test_file) {
                     charges.push(Charge {
                         debit,
@@ -364,7 +374,7 @@ pub fn classify_write(
                     charges.push(Charge {
                         debit: Debit::NewDependency,
                         path: file.path.clone(),
-                        line: u32::try_from(index + 1).unwrap_or(u32::MAX),
+                        line: file.context_lines[index],
                         symbol,
                     });
                 }
@@ -736,6 +746,21 @@ pub(crate) struct DiffFile {
     /// Added and context lines in order, with a leading marker `+` or ` ` so manifest section
     /// tracking can see headings that were not themselves added.
     pub(crate) added_with_context: Vec<String>,
+    /// The new-file line of each entry in `added`, from the hunk headers (`0` when unreadable).
+    pub(crate) added_lines: Vec<u32>,
+    /// The new-file line of each entry in `added_with_context`.
+    pub(crate) context_lines: Vec<u32>,
+    /// A hunk header in this file had no readable new-side start.
+    pub(crate) malformed_hunk: bool,
+}
+
+/// The new-side start of a hunk header `@@ -a[,b] +c[,d] @@`. `None` when it is missing, not a
+/// number, or so large that no line after it could be numbered.
+fn hunk_new_start(header: &str) -> Option<u32> {
+    let ranges = header.strip_prefix("@@ ")?;
+    let new_side = ranges.split(' ').nth(1)?.strip_prefix('+')?;
+    let start = new_side.split(',').next()?;
+    start.parse::<u32>().ok().filter(|start| *start < u32::MAX)
 }
 
 #[cfg(test)]
@@ -750,6 +775,8 @@ pub(crate) fn parse(diff: &str) -> Vec<DiffFile> {
     let mut files: Vec<DiffFile> = Vec::new();
     let mut pending_new = false;
     let mut in_hunk = false;
+    // The next new-file line in the current hunk; `None` after an unreadable header.
+    let mut cursor: Option<u32> = None;
     for raw in diff.lines() {
         let line = raw.strip_suffix('\r').unwrap_or(raw);
         if line.starts_with("diff --git ") {
@@ -769,6 +796,9 @@ pub(crate) fn parse(diff: &str) -> Vec<DiffFile> {
                 is_new: pending_new,
                 added: Vec::new(),
                 added_with_context: Vec::new(),
+                added_lines: Vec::new(),
+                context_lines: Vec::new(),
+                malformed_hunk: false,
             });
             in_hunk = false;
             continue;
@@ -778,6 +808,12 @@ pub(crate) fn parse(diff: &str) -> Vec<DiffFile> {
         }
         if line.starts_with("@@") {
             in_hunk = true;
+            cursor = hunk_new_start(line);
+            if cursor.is_none()
+                && let Some(file) = files.last_mut()
+            {
+                file.malformed_hunk = true;
+            }
             continue;
         }
         if !in_hunk {
@@ -786,14 +822,23 @@ pub(crate) fn parse(diff: &str) -> Vec<DiffFile> {
         let Some(file) = files.last_mut() else {
             continue;
         };
-        if let Some(added) = line.strip_prefix('+') {
+        // Additions and context occupy a new-file line and advance the cursor; removals and
+        // `\ No newline at end of file` do not.
+        let here = cursor.unwrap_or(0);
+        let entry = if let Some(added) = line.strip_prefix('+') {
             file.added.push(added.to_owned());
-            file.added_with_context.push(format!("+{added}"));
+            file.added_lines.push(here);
+            format!("+{added}")
         } else if let Some(context) = line.strip_prefix(' ') {
-            file.added_with_context.push(format!(" {context}"));
+            format!(" {context}")
         } else if line.is_empty() {
-            file.added_with_context.push(" ".into());
-        }
+            " ".into()
+        } else {
+            continue;
+        };
+        file.added_with_context.push(entry);
+        file.context_lines.push(here);
+        cursor = cursor.map(|next| next.saturating_add(1));
     }
     files
 }

@@ -753,3 +753,32 @@ fn a_touched_screen_without_a_fresh_capture_is_a_warning_and_never_blocks() {
     );
     assert_eq!(check_journeys(&["web".into()], &screens).len(), 2);
 }
+
+/// #1404: the new-side cursor, read from each hunk header. Defect named: a removal or a
+/// `\ No newline` marker advances it (every later line is off by one), or an unreadable or
+/// overflowing header is numbered anyway instead of refusing. Cost: in memory only.
+#[test]
+fn hunk_headers_number_charges_and_an_unreadable_one_refuses() {
+    let policy = shipped_policy();
+    let two_hunks = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n\
+        @@ -7,3 +7,3 @@\n ctx\n-gone\n\\ No newline at end of file\n+pub fn seven_plus_one() {}\n\
+        @@ -40 +40,2 @@\n ctx\n+pub fn forty_one() {}\n";
+    let c = classify_write(two_hunks, &policy, None, Mode::Full);
+    let lines: Vec<(&str, u32)> = c
+        .charges
+        .iter()
+        .map(|charge| (charge.symbol.as_str(), charge.line))
+        .collect();
+    assert_eq!(lines, [("seven_plus_one", 8), ("forty_one", 41)]);
+    assert!(!c.refused, "{:?}", c.findings);
+    for header in ["@@ -1 +x @@", "@@ -1 @@", "@@ -1 +4294967295 @@"] {
+        let malformed = format!(
+            "diff --git a/b.rs b/b.rs\n--- a/b.rs\n+++ b/b.rs\n{header}\n+pub fn b() {{}}\n"
+        );
+        let c = classify_write(&malformed, &policy, None, Mode::Full);
+        assert_eq!(rules(&c), vec!["keel.diff.unparseable"], "{header}");
+        assert!(c.refused, "{header}");
+        assert_eq!(c.findings[0].path.as_deref(), Some("b.rs"));
+        assert_eq!(c.charges[0].line, 0, "{header}");
+    }
+}

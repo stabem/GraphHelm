@@ -73,6 +73,12 @@ The reply is the standard CLI envelope. `data` holds the whole report: `policyVe
 symbol), `findings` and `refused`. Each finding is also a diagnostic whose `code` is the rule id:
 `error` when it blocks, `warning` when it is a signal.
 
+A charge's `line` is its 1-based line in the new version of the file, read from the diff's hunk
+headers (#1404): additions and context advance it, removals and `\ No newline at end of file` do
+not. `0` is the file-level line of a `newModule` charge. A hunk header without a readable
+`+<start>` raises a blocking `keel.diff.unparseable` finding for that file, and its lines are
+charged at `0` rather than at an invented position.
+
 The report also carries a local `recommendation`, bound to the resolved commit named by the range
 head. It gives the caller a suggested next step; it does not route a task or write a Runtime
 transition.

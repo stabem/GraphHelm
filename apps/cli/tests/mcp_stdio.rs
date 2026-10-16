@@ -1743,44 +1743,95 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
     let credential = |lane: &str| {
         let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .args([
-                "--json", "tasks", "credential", "--lane", lane,
-                "--execution", execution, "--token-file",
-                harness._directory.path().join("events.token").to_str().unwrap(),
+                "--json",
+                "tasks",
+                "credential",
+                "--lane",
+                lane,
+                "--execution",
+                execution,
+                "--token-file",
+                harness
+                    ._directory
+                    .path()
+                    .join("events.token")
+                    .to_str()
+                    .unwrap(),
             ])
             .output()
             .unwrap();
         let reply: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(reply["ok"], true, "{reply}");
-        harness._directory.path().join(format!("events.agent.{lane}.token"))
+        harness
+            ._directory
+            .path()
+            .join(format!("events.agent.{lane}.token"))
     };
     let lane_a = credential("lane-alpha");
     let lane_b = credential("lane-beta");
-    let signal = |id: &str, lane: &str, kind: &str, description: String| serde_json::json!({
-        "id": id, "source": {"type": "user", "id": lane}, "type": kind,
-        "severity": "low", "description": description, "evidence": ["task"],
-        "emittedAt": "2026-10-15T12:00:00Z"
-    });
-    let claim = signal("mcp-lane-claim", "lane-alpha", "task.claimed", serde_json::json!({
-        "schema": "graphhelm-task-event-v1", "taskId": "issue-1407", "revision": 1,
-        "at": "2026-10-15T12:00:00Z", "issue": 1407, "lane": "lane-alpha",
-        "branch": "issue-1407-mcp-lane", "repo": "stabem/GraphHelm"
-    }).to_string());
+    let signal = |id: &str, lane: &str, kind: &str, description: String| {
+        serde_json::json!({
+            "id": id, "source": {"type": "user", "id": lane}, "type": kind,
+            "severity": "low", "description": description, "evidence": ["task"],
+            "emittedAt": "2026-10-15T12:00:00Z"
+        })
+    };
+    let claim = signal(
+        "mcp-lane-claim",
+        "lane-alpha",
+        "task.claimed",
+        serde_json::json!({
+            "schema": "graphhelm-task-event-v1", "taskId": "issue-1407", "revision": 1,
+            "at": "2026-10-15T12:00:00Z", "issue": 1407, "lane": "lane-alpha",
+            "branch": "issue-1407-mcp-lane", "repo": "stabem/GraphHelm"
+        })
+        .to_string(),
+    );
     let bound = |rpc: &str, envelope: serde_json::Value, lane: &str, file: &Path| {
-        tool_call(serde_json::json!(rpc), "signal", serde_json::json!({
-            "executionId": execution, "signal": envelope, "lane": lane,
-            "credentialFile": file.to_str().unwrap()
-        }))
+        tool_call(
+            serde_json::json!(rpc),
+            "signal",
+            serde_json::json!({
+                "executionId": execution, "signal": envelope, "lane": lane,
+                "credentialFile": file.to_str().unwrap()
+            }),
+        )
     };
     let calls = [
-        initialize_request(1, "2025-06-18"), initialized_notification(),
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
         bound("claim", claim.clone(), "lane-alpha", &lane_a),
         bound("claim", claim, "lane-alpha", &lane_a),
-        bound("wrong-credential", signal("wrong-credential", "lane-alpha", "operator_note", "no".into()), "lane-alpha", &lane_b),
-        bound("wrong-execution", signal("wrong-execution", "lane-alpha", "operator_note", "no".into()), "lane-alpha", &credential("lane-alpha-other")),
-        tool_call(serde_json::json!("ordinary"), "signal", serde_json::json!({
-            "executionId": execution,
-            "signal": signal("ordinary", "agent-chat", "operator_note", "ordinary".into())
-        })),
+        bound(
+            "wrong-credential",
+            signal(
+                "wrong-credential",
+                "lane-alpha",
+                "operator_note",
+                "no".into(),
+            ),
+            "lane-alpha",
+            &lane_b,
+        ),
+        bound(
+            "wrong-execution",
+            signal(
+                "wrong-execution",
+                "lane-alpha",
+                "operator_note",
+                "no".into(),
+            ),
+            "lane-alpha",
+            &credential("lane-alpha-other"),
+        ),
+        tool_call(
+            serde_json::json!("ordinary"),
+            "signal",
+            serde_json::json!({
+                "executionId": execution,
+                "signal": signal("ordinary", "agent-chat", "operator_note", "ordinary".into())
+            }),
+        ),
     ];
     let session = harness.session(&calls);
     assert_eq!(session.replies.len(), 6, "{:?}", session.replies);
@@ -1790,12 +1841,23 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
     }
     for index in [3, 4] {
         let (error, _) = tool_envelope(&session.replies[index]);
-        assert!(error || session.replies[index].get("error").is_some(), "{:?}", session.replies[index]);
+        assert!(
+            error || session.replies[index].get("error").is_some(),
+            "{:?}",
+            session.replies[index]
+        );
     }
-    let events = http_get_json(&harness.base, &harness.token,
-        &format!("/v1/executions/{execution}/events?limit=1000"));
-    let records: Vec<_> = events["data"]["events"].as_array().unwrap().iter()
-        .filter(|event| event["kind"]["type"] == "signal_recorded").collect();
+    let events = http_get_json(
+        &harness.base,
+        &harness.token,
+        &format!("/v1/executions/{execution}/events?limit=1000"),
+    );
+    let records: Vec<_> = events["data"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["kind"]["type"] == "signal_recorded")
+        .collect();
     assert_eq!(records.len(), 2, "{events}");
     assert_eq!(records[0]["actor"]["id"], "lane-alpha");
     assert_eq!(records[1]["actor"]["id"], "agent-chat");

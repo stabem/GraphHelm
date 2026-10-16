@@ -295,8 +295,9 @@ The credential is delivered exactly once, in the body of the `200` response to t
 `POST /v1/executions/{executionId}/journey-credentials`, on the loopback Runtime connection the lane
 opened with its task bearer. There is no second channel: no file written by the Runtime, no event,
 no task record, no MCP tool, no Studio view and no recovery endpoint. The response carries
-`Cache-Control: no-store`. No serve route sets that header today (no match for `no-store` under
-`apps/cli/src/commands/serve/`), so this route is the first. The token is 32 CSPRNG bytes,
+`Cache-Control: no-store`, as other serve routes already do (`routes.rs:2870`, `:3015`, `:3030` at
+`33109519`; corrected after the #1488 disposition, which found the earlier "no route sets it"
+sentence false). The token is 32 CSPRNG bytes,
 hex-encoded, held in `Zeroizing` from the draw until the response is serialized, following the
 `tasks credential` precedent (`apps/cli/src/commands/tasks.rs:306`, `:309`).
 

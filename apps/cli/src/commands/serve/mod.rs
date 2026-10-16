@@ -1030,6 +1030,14 @@ fn build_router(state: ServeState) -> Router {
             post(journey_credentials::revoke),
         )
         .route(
+            "/v1/executions/{id}/journey-credentials",
+            post(journey_credentials::issue),
+        )
+        .route(
+            "/v1/executions/{id}/journey-credentials/{credential}/revoke",
+            post(journey_credentials::revoke_credential),
+        )
+        .route(
             "/v1/executions/{id}/amend-budget",
             post(routes::amend_budget),
         )
@@ -1161,7 +1169,16 @@ async fn not_found() -> impl IntoResponse {
 /// compared in constant time. A hand-written fold over bytes rather than the `subtle` crate,
 /// matching D-038's minimalism precedent (`docs/DECISION_REGISTER.md`) — `subtle` is not in the
 /// workspace and this comparison is small enough not to need it.
-async fn require_token(State(state): State<ServeState>, request: Request, next: Next) -> Response {
+async fn require_token(
+    State(state): State<ServeState>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    // #1309: only the lane-credential branch below may say which lane was verified; a caller's
+    // own copy of the mark is removed before any principal is considered.
+    request
+        .headers_mut()
+        .remove(journey_credentials::VERIFIED_LANE_HEADER);
     if request.uri().path() == "/health" {
         return next.run(request).await;
     }
@@ -1210,6 +1227,7 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
         // What the shared session token reaches, on this execution only (the derivation binds
         // the execution, so another execution's path never matches): the lane's reads of its
         // own run, including evidence, and the signal route.
+        let verified_lane = HeaderValue::from_str(lane).ok();
         if !agent_session_route_allowed(&request) {
             return refused(request, owner_required_response()).await;
         }
@@ -1219,6 +1237,11 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
             .insert("x-graphhelm-actor-type", HeaderValue::from_static("agent"));
         request.headers_mut().remove("x-graphhelm-agent-credential");
         request.headers_mut().remove(SHARED_SESSION_HEADER);
+        if let Some(verified_lane) = verified_lane {
+            request
+                .headers_mut()
+                .insert(journey_credentials::VERIFIED_LANE_HEADER, verified_lane);
+        }
         state.record_seen_actor(request.headers(), Instant::now(), "verified");
         return next.run(request).await;
     }
@@ -1321,7 +1344,7 @@ fn agent_session_route_allowed(request: &Request) -> bool {
                 "v1",
                 "executions",
                 _,
-                "signal" | "wake-lease" | "claim" | "clear"
+                "signal" | "wake-lease" | "claim" | "clear" | "journey-credentials"
             ] | ["", "v1", "executions", _, "documents", "read"]
                 | ["", "v1", "graph", "topology"]
                 | [
@@ -3390,6 +3413,14 @@ fn parse_loopback_bind(bind: &str) -> Result<SocketAddr, Failure> {
 ///   status and body are recorded.
 /// - A failure to record is reported, never swallowed. An audit that silently stops recording
 ///   is worse than no audit: it reads as "the caller asked nothing".
+/// `/v1/executions/{id}/journey-credentials`, exactly: the route whose response carries a token.
+fn journey_credential_issue_path(path: &str) -> bool {
+    matches!(
+        path.split('/').collect::<Vec<_>>().as_slice(),
+        ["", "v1", "executions", id, "journey-credentials"] if !id.is_empty()
+    )
+}
+
 async fn record_read(
     State(state): State<ServeState>,
     request: Request,
@@ -3443,6 +3474,13 @@ async fn record_read(
         } else if let Some(data) = recorded_body.get_mut("data") {
             redact_evidence_content(data);
         }
+    }
+    // #1309: THE JOURNEY CREDENTIAL IS NEVER IN THE AUDIT. The issuing route is the one response
+    // that carries a secret; its body is replaced wholesale, whatever its status, matched by the
+    // route's exact path shape rather than a substring (#1488 disposition, condition 2).
+    if journey_credential_issue_path(uri.path()) {
+        recorded_body =
+            serde_json::json!({ "redacted": "journey credential", "bytes": bytes.len() });
     }
     let line = serde_json::json!({
         "method": method,

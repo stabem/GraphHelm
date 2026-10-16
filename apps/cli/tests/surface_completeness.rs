@@ -194,7 +194,7 @@ fn read_rust_string(text: &str) -> String {
 /// AN EXCEPTION LIST IS THE HONEST HALF OF A COMPLETENESS GUARD, and it earns its keep only if
 /// adding a row is harder than adding the tool. Each entry names WHY, so a future author who wants
 /// to silence this guard has to write a false sentence rather than paste a path.
-const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 19] = [
+const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 21] = [
     (
         "GET",
         "/v1/journey-observer/setup",
@@ -302,6 +302,16 @@ const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 19] = [
         "/v1/executions/{id}/journey-credential-grants/{grant}/revoke",
         "the owner withdraws a journey credential grant (#1309); like issuing one, it is owner authority over agents and refuses every agent and task bearer, so no agent-credentialed MCP tool may name it",
     ),
+    (
+        "POST",
+        "/v1/executions/{id}/journey-credentials",
+        "its response IS a secret: the journey credential, delivered once to the lane that asked (#1309, RFC-1309 \"Protected delivery channel\"); an MCP or WebMCP reply is written into a model transcript, so a tool naming this route would disclose the token. The lane calls it directly with its own lane credential",
+    ),
+    (
+        "POST",
+        "/v1/executions/{id}/journey-credentials/{credential}/revoke",
+        "the owner withdraws one journey credential, e.g. one whose delivery was uncertain (#1309); it is owner authority over agents and refuses every agent and task bearer, so no agent-credentialed MCP tool may name it",
+    ),
 ];
 
 fn exempt(endpoint: &Endpoint) -> bool {
@@ -380,5 +390,91 @@ fn every_route_an_mcp_tool_claims_is_actually_registered() {
         "these MCP tools name a route the router does not register: {phantom:?}\n\
          The descriptions are the join key the sibling test uses, so a wrong one does not merely \
          mislead a reader — it silences the completeness check for that route."
+    );
+}
+
+/// #1309 (#1488 disposition, condition 4): the journey credential route is the one response that
+/// carries a secret, so no middleware may write response bodies anywhere without excluding it.
+/// Credible regression: a later body-logging layer (an audit, a trace, a debug dump) wraps the
+/// router and transcribes the token, while every functional test still passes, because none of
+/// them reads the new log. This reads the router's middleware from the source at run time and
+/// requires every one that buffers a response body after `next.run` to call the exact-path
+/// redaction, and refuses a `tower_http` trace layer in serve outright.
+/// Cost: string scans of the serve sources; no build artifact, process or network.
+#[test]
+fn no_serve_middleware_buffers_a_response_without_redacting_the_journey_credential() {
+    let serve_dir = crate_root().join("src/commands/serve");
+    let mut sources = Vec::new();
+    for entry in std::fs::read_dir(&serve_dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|extension| extension == "rs") {
+            sources.push((path.clone(), std::fs::read_to_string(&path).unwrap()));
+        }
+    }
+    assert!(sources.len() >= 3, "the serve sources were not found");
+    for (path, text) in &sources {
+        assert!(
+            !text.contains("TraceLayer") && !text.contains("tower_http::trace"),
+            "{} adds a tracing layer; it must not record the body of \
+             /v1/executions/{{id}}/journey-credentials (RFC-1309 \"Protected delivery channel\")",
+            path.display()
+        );
+    }
+
+    let router = source("src/commands/serve/mod.rs");
+    let mut middleware = Vec::new();
+    for marker in ["from_fn_with_state(state.clone(), ", "middleware::from_fn("] {
+        let mut rest = router.as_str();
+        while let Some(index) = rest.find(marker) {
+            rest = &rest[index + marker.len()..];
+            let name: String = rest
+                .chars()
+                .take_while(|character| character.is_alphanumeric() || *character == '_')
+                .collect();
+            if !name.is_empty() && !middleware.contains(&name) {
+                middleware.push(name);
+            }
+        }
+    }
+    // Floor: the auth layer and the read audit are both middleware today; finding fewer means
+    // the scan stopped seeing the router, and every assertion below would pass vacuously.
+    assert!(
+        middleware.iter().any(|name| name == "require_token")
+            && middleware.iter().any(|name| name == "record_read"),
+        "the middleware scan found {middleware:?}; build_router's shape must have changed"
+    );
+    let mut checked = 0;
+    for name in &middleware {
+        let start = sources
+            .iter()
+            .find_map(|(_, text)| {
+                text.find(&format!("fn {name}("))
+                    .map(|index| (text.as_str(), index))
+            })
+            .unwrap_or_else(|| panic!("middleware {name} is not defined in serve"));
+        let (text, index) = start;
+        let body = &text[index..];
+        let end = body[1..]
+            .find("\nasync fn ")
+            .into_iter()
+            .chain(body[1..].find("\nfn "))
+            .chain(body[1..].find("\npub"))
+            .min()
+            .map_or(body.len(), |end| end + 1);
+        let body = &body[..end];
+        if body.contains("next.run(") && body.contains("to_bytes(") {
+            checked += 1;
+            assert!(
+                body.contains("journey_credential_issue_path("),
+                "middleware {name} buffers a response body but never calls \
+                 journey_credential_issue_path: the journey credential would reach whatever it \
+                 writes (RFC-1309 \"Protected delivery channel\")"
+            );
+        }
+    }
+    assert!(
+        checked >= 1,
+        "no body-buffering middleware was found; record_read buffers response bodies today, so \
+         the scan no longer sees it"
     );
 }

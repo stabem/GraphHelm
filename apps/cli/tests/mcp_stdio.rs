@@ -321,6 +321,10 @@ const FIXTURE_KEY_ID: &str = "mcp-fixture-key";
 /// `evidenceOut`; the server seals their signal under this key instead of accepting a Runtime
 /// filesystem path chosen by the caller.
 fn serve_sealed(events: &Path) -> (ServerGuard, String, String) {
+    serve_sealed_with_lane_policy(events, false)
+}
+
+fn serve_sealed_with_lane_policy(events: &Path, strict: bool) -> (ServerGuard, String, String) {
     let keyring = events.parent().unwrap().join("keyring");
     std::fs::create_dir_all(&keyring).unwrap();
     let init = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
@@ -342,12 +346,20 @@ fn serve_sealed(events: &Path) -> (ServerGuard, String, String) {
         String::from_utf8_lossy(&init.stdout),
         String::from_utf8_lossy(&init.stderr)
     );
-    serve_with_keyring(events, Some((&keyring, FIXTURE_KEY_ID)))
+    serve_with_keyring_and_lane_policy(events, Some((&keyring, FIXTURE_KEY_ID)), strict)
 }
 
 fn serve_with_keyring(
     events: &Path,
     keyring: Option<(&Path, &str)>,
+) -> (ServerGuard, String, String) {
+    serve_with_keyring_and_lane_policy(events, keyring, false)
+}
+
+fn serve_with_keyring_and_lane_policy(
+    events: &Path,
+    keyring: Option<(&Path, &str)>,
+    strict: bool,
 ) -> (ServerGuard, String, String) {
     let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command.args([
@@ -360,6 +372,9 @@ fn serve_with_keyring(
     if let Some((keyring, key_id)) = keyring {
         command.args(["--keyring", keyring.to_str().unwrap(), "--key-id", key_id]);
         command.env("GRAPHHELM_EVENTS_KEY", FIXTURE_EVENTS_KEY);
+    }
+    if strict {
+        command.arg("--require-lane-credential");
     }
     let mut child = command
         .stdout(Stdio::piped())
@@ -508,7 +523,15 @@ fn wired_sealed(execution: &str) -> WiredHarness {
     wired_with_server(execution, true)
 }
 
+fn wired_lane_sealed(execution: &str) -> WiredHarness {
+    wired_with_server_mode(execution, true, true)
+}
+
 fn wired_with_server(execution: &str, sealed: bool) -> WiredHarness {
+    wired_with_server_mode(execution, sealed, false)
+}
+
+fn wired_with_server_mode(execution: &str, sealed: bool, strict: bool) -> WiredHarness {
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
     let fixtures = write_json_file(
@@ -538,7 +561,7 @@ fn wired_with_server(execution: &str, sealed: bool) -> WiredHarness {
         // Keep the existing legacy execution fixture. Enable real sealing on the restarted
         // server for the agent signal journeys, without inventing a governed genesis fixture.
         drop(server);
-        serve_sealed(&events)
+        serve_sealed_with_lane_policy(&events, strict)
     } else {
         (server, base, token)
     };
@@ -1711,6 +1734,71 @@ fn a_minimal_signal_is_accepted_and_the_sealed_envelope_carries_the_filled_field
         envelope["diagnostics"][0]["path"], "/signal/source",
         "{envelope}"
     );
+}
+
+#[test]
+fn lane_bound_signal_uses_one_credential_for_one_call() {
+    let execution = "exec-mcp-lane-bound";
+    let harness = wired_lane_sealed(execution);
+    let credential = |lane: &str| {
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args([
+                "--json", "tasks", "credential", "--lane", lane,
+                "--execution", execution, "--token-file",
+                harness._directory.path().join("events.token").to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["ok"], true, "{reply}");
+        harness._directory.path().join(format!("events.agent.{lane}.token"))
+    };
+    let lane_a = credential("lane-alpha");
+    let lane_b = credential("lane-beta");
+    let signal = |id: &str, lane: &str, kind: &str, description: String| serde_json::json!({
+        "id": id, "source": {"type": "user", "id": lane}, "type": kind,
+        "severity": "low", "description": description, "evidence": ["task"],
+        "emittedAt": "2026-10-15T12:00:00Z"
+    });
+    let claim = signal("mcp-lane-claim", "lane-alpha", "task.claimed", serde_json::json!({
+        "schema": "graphhelm-task-event-v1", "taskId": "issue-1407", "revision": 1,
+        "at": "2026-10-15T12:00:00Z", "issue": 1407, "lane": "lane-alpha",
+        "branch": "issue-1407-mcp-lane", "repo": "stabem/GraphHelm"
+    }).to_string());
+    let bound = |rpc: &str, envelope: serde_json::Value, lane: &str, file: &Path| {
+        tool_call(serde_json::json!(rpc), "signal", serde_json::json!({
+            "executionId": execution, "signal": envelope, "lane": lane,
+            "credentialFile": file.to_str().unwrap()
+        }))
+    };
+    let calls = [
+        initialize_request(1, "2025-06-18"), initialized_notification(),
+        bound("claim", claim.clone(), "lane-alpha", &lane_a),
+        bound("claim", claim, "lane-alpha", &lane_a),
+        bound("wrong-credential", signal("wrong-credential", "lane-alpha", "operator_note", "no".into()), "lane-alpha", &lane_b),
+        bound("wrong-execution", signal("wrong-execution", "lane-alpha", "operator_note", "no".into()), "lane-alpha", &credential("lane-alpha-other")),
+        tool_call(serde_json::json!("ordinary"), "signal", serde_json::json!({
+            "executionId": execution,
+            "signal": signal("ordinary", "agent-chat", "operator_note", "ordinary".into())
+        })),
+    ];
+    let session = harness.session(&calls);
+    assert_eq!(session.replies.len(), 6, "{:?}", session.replies);
+    for index in [1, 2, 5] {
+        let (error, reply) = tool_envelope(&session.replies[index]);
+        assert!(!error, "call {index}: {reply}");
+    }
+    for index in [3, 4] {
+        let (error, _) = tool_envelope(&session.replies[index]);
+        assert!(error || session.replies[index].get("error").is_some(), "{:?}", session.replies[index]);
+    }
+    let events = http_get_json(&harness.base, &harness.token,
+        &format!("/v1/executions/{execution}/events?limit=1000"));
+    let records: Vec<_> = events["data"]["events"].as_array().unwrap().iter()
+        .filter(|event| event["kind"]["type"] == "signal_recorded").collect();
+    assert_eq!(records.len(), 2, "{events}");
+    assert_eq!(records[0]["actor"]["id"], "lane-alpha");
+    assert_eq!(records[1]["actor"]["id"], "agent-chat");
 }
 
 #[test]

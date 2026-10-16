@@ -23,6 +23,7 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   implementation plan until that review has a verdict (#1470).
 - When a review of record already exists for the head you were assigned, stop and tell the
   coordinator instead of adding a second one.
+- The coordinator picks each subagent's model and effort by task kind, never above the owner's roster; the rule is item 4 of the `graphhelm-team` skill.
 
 ## 2. Where a lane writes
 

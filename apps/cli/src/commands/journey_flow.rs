@@ -1939,7 +1939,7 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
     for (group, fields) in [
         (
             "screens",
-            &["id", "title", "url", "state", "expect", "scope"][..],
+            &["id", "title", "intent", "url", "state", "expect", "scope"][..],
         ),
         ("edges", &["id", "from", "to", "intent", "acts", "safe"][..]),
     ] {
@@ -2046,6 +2046,52 @@ mod tests {
                 .any(|f| f.code == "flow.purpose_missing" && !f.is_warning()),
             "{:?}",
             refused.iter().map(|f| f.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// #1286: a screen can say what it is for. Defect named: the canonical writer drops a screen
+    /// `intent` (so the owner's words vanish on format), or the approval ignores it (so changing
+    /// what a screen proves leaves an approval valid). An intent-free flow keeps its bytes.
+    /// Cost: in memory only.
+    #[test]
+    fn a_screen_intent_is_written_validated_and_approved() {
+        let plain: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_flow/checkout.journey.yaml"
+        ))
+        .unwrap();
+        let mut with = plain.clone();
+        with["screens"][0]["intent"] = json!("Confirma que a obra foi criada");
+        let schemas = flow_schemas().unwrap();
+        let base = schemas.validate(FLOW_SCHEMA_ID, &plain, "journey-flow");
+        assert!(base.is_empty(), "fixture invalid: {base:?}");
+        let accepted = schemas.validate(FLOW_SCHEMA_ID, &with, "journey-flow");
+        assert!(accepted.is_empty(), "{accepted:?}");
+        let mut empty = plain.clone();
+        empty["screens"][0]["intent"] = json!("");
+        assert!(
+            !schemas
+                .validate(FLOW_SCHEMA_ID, &empty, "journey-flow")
+                .is_empty()
+        );
+        let written = canonical(&with, false);
+        assert!(
+            written.contains("intent: Confirma que a obra foi criada"),
+            "{written}"
+        );
+        let reread: Value = serde_yaml_ng::from_str(&written).unwrap();
+        assert_eq!(canonical(&reread, false), written);
+        assert_ne!(approval_digest(&with), approval_digest(&plain));
+        let mut edited = with.clone();
+        edited["screens"][0]["intent"] = json!("Outra coisa");
+        assert_ne!(approval_digest(&edited), approval_digest(&with));
+        // Only the one line is new: a flow without a screen intent keeps its exact bytes.
+        assert_eq!(
+            written.replacen(
+                &format!("{}intent: Confirma que a obra foi criada\n", " ".repeat(4)),
+                "",
+                1
+            ),
+            canonical(&plain, false)
         );
     }
 

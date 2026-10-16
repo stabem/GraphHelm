@@ -4,3 +4,10 @@
 # crate: a lane that switched back and forth would rebuild the whole tree each time.
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld"
+
+# #1449: every process cargo runs (test binaries, and the `serve` children they spawn) registers
+# Runtimes under this checkout's target directory instead of the user's real
+# `~/.graphhelm/runtime`. Cargo never overrides a value already in the environment, so a test or
+# a caller that names its own `GRAPHHELM_RUNTIME_DIR` keeps it.
+[env]
+GRAPHHELM_RUNTIME_DIR = { value = "target/graphhelm-test-runtime", relative = true }

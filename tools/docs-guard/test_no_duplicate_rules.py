@@ -15,7 +15,9 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-FILES = ("AGENTS.md", "CLAUDE.md", "docs/process/DELIVERY.md", "docs/process/LANES.md")
+FILES = ("AGENTS.md", "CLAUDE.md", "docs/process/DELIVERY.md", "docs/process/LANES.md",
+         "KEEL.md", "keel/KEEL_PLAN.md", "keel/KEEL_EXEC.md", "keel/KEEL_REVIEW.md",
+         "keel/KEEL_MERGE.md", "docs/keel/KEEL_SPEC.md")
 MIN_WORDS = 8
 
 FENCE = re.compile(r"^(```|~~~).*?^\1", re.M | re.S)

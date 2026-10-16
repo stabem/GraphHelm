@@ -9,6 +9,8 @@ Step 4 of the per-task graph. One reviewer per PR, assigned once (`docs/process/
 If you helped write the change, or your brief carries the author's reasoning, a finding to look
 for, a summary of the change or an expected verdict, you are not blind: say so and do not review.
 
+**Load the project's `KEEL.md` and `keel/KEEL_REVIEW.md` first, when the project has them; their rules bind and win over this skill where they differ.**
+
 ## Emits and reads
 
 - Reads: the PR (diff, body, every earlier comment), `AGENTS.md`, `docs/process/DELIVERY.md`,

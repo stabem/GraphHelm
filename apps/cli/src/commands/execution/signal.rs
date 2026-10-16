@@ -501,7 +501,8 @@ fn record_once(
     let task_history = if envelope
         .get("type")
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|kind| matches!(kind, "task.claimed" | "task.released" | "task.heartbeat"))
+        // Every task record: a retired lane's record of any kind is refused against this history.
+        .is_some_and(|kind| kind.starts_with("task."))
     {
         Some(super::resolve_stream(store, execution)?.2)
     } else {

@@ -269,6 +269,34 @@ describe("laneBars", () => {
     }
   });
 
+  // #1424: over the route reply's own shape (records, slices, routes; a retirement routes to no
+  // slice). Catches a board that keeps a retired lane's claim, review or merge bar open, keeps
+  // the review a live lane holds on a retired author's PR, or closes only the implement bar of a
+  // slice the owner released by key. Cost: two laneBars calls, no fold.
+  it("closes every bar of a retired lane's slices and of a slice released by key", () => {
+    const state = (taskId: string) => ({ taskId }) as never;
+    const fold = {
+      slices: [0, 1, 2].map((id) => ({ id, ended: false, absorbed: false, state: state(`issue-${id}`) })),
+      routes: [1, 2, 3, 4, 6, 7, 8].map((sequence) => ({ sequence, slice: sequence <= 1 ? 0 : sequence <= 4 ? 1 : 2 })),
+      liveness: { budgets: TEST_BUDGETS, lanes: [] },
+    };
+    const records: TimedTaskEvent[] = [
+      ev({ kind: "task.claimed", actorId: "lane-r", lane: "lane-r", taskId: "issue-0", sequence: 1, at: at(0) }),
+      ev({ kind: "task.claimed", actorId: "lane-r", lane: "lane-r", taskId: "issue-1", sequence: 2, at: at(1) }),
+      ev({ kind: "task.pr_opened", actorId: "lane-r", lane: "lane-r", taskId: "issue-1", pr: 10, headSha: "abcdef01", sequence: 3, at: at(2) }),
+      ev({ kind: "task.review_assigned", actorId: "lane-r", taskId: "issue-1", pr: 10, headSha: "abcdef01", reviewer: "lane-q", sequence: 4, at: at(3) }),
+      ev({ kind: "task.lane_retired", actorId: "orchestrator", taskId: "lanes", lanes: ["lane-r"], retired: true, sequence: 5, at: at(10) } as never),
+      ev({ kind: "task.claimed", actorId: "lane-g", lane: "lane-g", taskId: "issue-2", sequence: 6, at: at(11) }),
+      ev({ kind: "task.pr_opened", actorId: "lane-g", lane: "lane-g", taskId: "issue-2", pr: 20, headSha: "abcdef02", sequence: 7, at: at(12) }),
+      ev({ kind: "task.released", actorId: "orchestrator", lane: "lane-g", taskId: "issue-2", sliceKey: "issue-2#pr-20", releasedBy: "orchestrator", sequence: 8, at: at(20) } as never),
+    ];
+    const lanes = laneBars(records, fold as never, T0 + 30, 1000);
+    const open = lanes.flatMap((lane) => lane.bars.filter((bar) => bar.open).map((bar) => `${lane.lane}:${bar.kind}:${bar.taskId}`));
+    expect(open).toEqual([]);
+    const ended = lanes.flatMap((lane) => lane.bars.map((bar) => `${lane.lane}:${bar.kind}:${bar.end - T0}:${bar.endedBy?.kind}`));
+    expect(ended).toEqual(["lane-g:implement:20:released", "lane-q:review:10:lane_retired", "lane-r:implement:10:lane_retired", "lane-r:implement:3:review_assigned"]);
+  });
+
   it("ends a released claim at its release record", () => {
     const lanes = laneBarsOf([
       ev({ kind: "task.claimed", lane: "dev", taskId: "issue-1", sequence: 1, at: at(0) }),

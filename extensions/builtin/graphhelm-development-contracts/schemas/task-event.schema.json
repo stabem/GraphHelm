@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/task-event.schema.json",
   "title": "Task Event",
-  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.planned, task.released, task.heartbeat, task.pr_opened, task.review_assigned, task.review_verdict, task.merged, task.closed, task.critic_verdict, task.queued); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
+  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.planned, task.released, task.heartbeat, task.pr_opened, task.review_assigned, task.review_verdict, task.merged, task.closed, task.critic_verdict, task.queued, and the owner's task.lane_retired); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
   "oneOf": [
     {
       "title": "task.claimed",
@@ -42,6 +42,39 @@
         "claimSequence": {"$ref": "#/$defs/positive"},
         "reason": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
         "releasedBy": {"description": "#1193: present only when the recording actor is graphhelm (the Stop reconciler) and lane names another actor whose claim lapsed; the Runtime refuses any other combination.", "const": "graphhelm"}
+      }
+    },
+    {
+      "title": "task.released by slice key",
+      "description": "#1424: the owner (or the orchestrator, holding the owner token) releases one open slice by the key the tasks route serves, including a slice with no claim sequence. Recorded by an owner actor only; releasedBy is that actor and lane is the slice's lane.",
+      "type": "object",
+      "required": ["schema", "taskId", "revision", "at", "lane", "sliceKey", "reason", "releasedBy"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "graphhelm-task-event-v1"},
+        "taskId": {"$ref": "#/$defs/taskId"},
+        "revision": {"$ref": "#/$defs/positive"},
+        "at": {"$ref": "#/$defs/at"},
+        "lane": {"$ref": "#/$defs/actor"},
+        "sliceKey": {"type": "string", "minLength": 1, "maxLength": 256},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+        "releasedBy": {"$ref": "#/$defs/actor"}
+      }
+    },
+    {
+      "title": "task.lane_retired",
+      "description": "#1424: the owner (or the orchestrator) retires the named lanes (retired: true): from this record on their open slices read orphaned and released, they leave liveness, and the Runtime refuses their records. retired: false restores them. Recorded by an owner actor only.",
+      "type": "object",
+      "required": ["schema", "taskId", "revision", "at", "lanes", "retired", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "graphhelm-task-event-v1"},
+        "taskId": {"$ref": "#/$defs/taskId"},
+        "revision": {"$ref": "#/$defs/positive"},
+        "at": {"$ref": "#/$defs/at"},
+        "lanes": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/actor"}},
+        "retired": {"type": "boolean"},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
       }
     },
     {

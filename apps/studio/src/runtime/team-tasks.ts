@@ -156,7 +156,7 @@ const TASK_EVENT_SCHEMA = "graphhelm-task-event-v1";
 const VERDICTS = ["APPROVE", "APPROVE-WITH-RISK", "BLOCK"] as const;
 type Verdict = typeof VERDICTS[number];
 
-export type TaskEventKind = "task.claimed" | "task.planned" | "task.released" | "task.heartbeat" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged" | "task.closed" | "task.critic_verdict" | "task.queued";
+export type TaskEventKind = "task.claimed" | "task.planned" | "task.released" | "task.heartbeat" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged" | "task.closed" | "task.critic_verdict" | "task.queued" | "task.lane_retired";
 
 /** #467: one round of the blind design critic, as its `task.critic_verdict` record states it. */
 export interface CriticRound { round: number; score: number; passScore: number; maxRounds: number; verdict: "pass" | "revise" | "exhausted" }
@@ -191,6 +191,12 @@ export interface TaskEventRecord {
   /** #729: the exact prior claim sequence released by its lane, and its stated reason. */
   claimSequence?: number;
   reason?: string;
+  /** #1424: an owner release names the slice by its route key and itself in `releasedBy`. */
+  sliceKey?: string;
+  releasedBy?: string;
+  /** #1424: `task.lane_retired`: the lanes it names, retired (`true`) or restored. */
+  lanes?: string[];
+  retired?: boolean;
   /** #502: when the Runtime appended the record (its own clock, not the lane's `at`). */
   occurredAt?: string | null;
   /** #467: the round a `task.critic_verdict` states. */
@@ -305,10 +311,25 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
       const plan = taskPlan(document);
       return plan !== null && document.lane === actorId ? { ...base, kind, lane: actorId, plan } : null;
     }
+    case "task.lane_retired": {
+      const reason = typeof document.reason === "string" && Array.from(document.reason).length <= 500
+        && !/\p{Cc}/u.test(document.reason) ? text(document.reason, 1000) : null;
+      const lanes = Array.isArray(document.lanes) && document.lanes.length >= 1 && document.lanes.length <= 64
+        ? document.lanes.map((lane) => text(lane, 128)) : null;
+      return reason !== null && typeof document.retired === "boolean" && lanes !== null && lanes.every((lane) => lane !== null)
+        ? { ...base, kind, lanes: lanes as string[], retired: document.retired, reason } : null;
+    }
     case "task.released": {
       const claimSequence = count(document.claimSequence);
       const reason = typeof document.reason === "string" && Array.from(document.reason).length <= 500
         && !/\p{Cc}/u.test(document.reason) ? text(document.reason, 1000) : null;
+      // #1424: an owner release by slice key; the signer names itself in `releasedBy`.
+      if (document.sliceKey !== undefined) {
+        const sliceKey = text(document.sliceKey, 256);
+        const lane = text(document.lane, 128);
+        return sliceKey !== null && lane !== null && reason !== null && document.claimSequence === undefined && document.releasedBy === actorId
+          ? { ...base, kind, lane, sliceKey, reason, releasedBy: actorId } : null;
+      }
       return document.lane === actorId && claimSequence !== null && reason !== null
         ? { ...base, kind, lane: actorId, claimSequence, reason } : null;
     }
@@ -458,6 +479,8 @@ export interface TaskState {
   /** #729: sequence of this slice's original claim, used to reject releases of another claim. */
   claimSequence?: number;
   releasedBy?: string;
+  /** #1424: the slice's lane was retired while it was open; `releasedBy` is the owner. */
+  orphaned?: boolean;
 }
 
 function applyVerdict(state: TaskState, event: TaskEventRecord, blockers: Map<string, { reviewer: string; headSha: string; commentUrl: string; sequence: number }>): void {

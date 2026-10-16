@@ -2663,7 +2663,13 @@ fn the_owner_releases_a_slice_by_key_and_retires_a_lane() {
     // A key no open slice holds is refused.
     let mut stale = release.clone();
     stale["sliceKey"] = serde_json::json!("issue-62#claim-9");
-    let (status, reply) = post("ghost-stale", "orchestrator", "owner", "task.released", &stale);
+    let (status, reply) = post(
+        "ghost-stale",
+        "orchestrator",
+        "owner",
+        "task.released",
+        &stale,
+    );
     assert_eq!(status, 400, "unknown key: {reply}");
     assert_eq!(
         head_sequence(&base, &token, execution),
@@ -2699,9 +2705,19 @@ fn the_owner_releases_a_slice_by_key_and_retires_a_lane() {
     };
     lane("r-70", "lane-r", "task.claimed", &claim("issue-70", 70));
     lane("r-71", "lane-r", "task.claimed", &claim("issue-71", 71));
-    lane("r-71-pr", "lane-r", "task.pr_opened", &opened("issue-71", 710));
+    lane(
+        "r-71-pr",
+        "lane-r",
+        "task.pr_opened",
+        &opened("issue-71", 710),
+    );
     lane("r-72", "lane-r", "task.claimed", &claim("issue-72", 72));
-    lane("r-72-pr", "lane-r", "task.pr_opened", &opened("issue-72", 720));
+    lane(
+        "r-72-pr",
+        "lane-r",
+        "task.pr_opened",
+        &opened("issue-72", 720),
+    );
     lane(
         "q-72",
         "lane-q",
@@ -2738,6 +2754,31 @@ fn the_owner_releases_a_slice_by_key_and_retires_a_lane() {
             .any(|row| row["lane"] == name)
     };
     assert!(in_liveness(&data, "lane-r"), "{data}");
+    // The issue list: lane-r's live slices hold 70-72, so only 99 is backlog.
+    let issues: Vec<Value> = [70, 71, 72, 99]
+        .iter()
+        .map(|n| serde_json::json!({"issue": n, "title": format!("issue {n}"), "openedAt": "2026-10-16T00:00:00Z"}))
+        .collect();
+    let (status, reply) = post(
+        "queue",
+        "orchestrator",
+        "owner",
+        "task.queued",
+        &with(
+            head("queue", 1),
+            serde_json::json!({"repo": "stabem/GraphHelm", "issues": issues}),
+        ),
+    );
+    assert_eq!(status, 200, "queued: {reply}");
+    let backlog = |data: &Value| -> Vec<u64> {
+        data["backlog"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["issue"].as_u64().unwrap())
+            .collect()
+    };
+    assert_eq!(backlog(&tasks()), [99], "held issues stay out");
 
     let retire = |retired: bool| {
         with(
@@ -2755,6 +2796,19 @@ fn the_owner_releases_a_slice_by_key_and_retires_a_lane() {
         &retire(true),
     );
     assert!(status == 400 || status == 403, "lane retire: {reply}");
+    // An owner cannot retire its own actor id: it could never sign the restore.
+    let mut itself = retire(true);
+    itself["lanes"] = serde_json::json!(["lane-r", "orchestrator"]);
+    let before = head_sequence(&base, &token, execution);
+    let (status, reply) = post(
+        "r-retire-self",
+        "orchestrator",
+        "owner",
+        "task.lane_retired",
+        &itself,
+    );
+    assert_eq!(status, 400, "self retire: {reply}");
+    assert_eq!(head_sequence(&base, &token, execution), before);
     let (status, reply) = post(
         "r-retire",
         "orchestrator",
@@ -2773,6 +2827,8 @@ fn the_owner_releases_a_slice_by_key_and_retires_a_lane() {
         );
     }
     assert!(!in_liveness(&data, "lane-r"), "gone from liveness: {data}");
+    // A retired lane's slices hold no issue: 70-72 return to the backlog.
+    assert_eq!(backlog(&data), [70, 71, 72, 99], "{data}");
     // A record signed by the retired lane is refused and appends nothing.
     let before = head_sequence(&base, &token, execution);
     let (status, reply) = post(
@@ -2793,7 +2849,12 @@ fn the_owner_releases_a_slice_by_key_and_retires_a_lane() {
         &retire(false),
     );
     assert_eq!(status, 200, "un-retire: {reply}");
-    lane("r-73-again", "lane-r", "task.claimed", &claim("issue-73", 73));
+    lane(
+        "r-73-again",
+        "lane-r",
+        "task.claimed",
+        &claim("issue-73", 73),
+    );
     let data = tasks();
     assert!(slices_of(&data, "issue-73").iter().any(open), "{data}");
 }

@@ -12,7 +12,7 @@
 //! opens the sealed envelope, checks its digest against the recorded event and that its signer is
 //! the actor that recorded it) and never reads a store, a clock or the network.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use graphhelm_protocols::PersistedTimestamp;
 use serde::{Deserialize, Serialize};
@@ -24,8 +24,8 @@ pub const MAX_ENVELOPE_BYTES: usize = 1024 * 1024;
 /// #591: a gap at least this long between two records of one lane is a stall, not active work.
 pub const ACTIVE_GAP_MS: i64 = 30 * 60_000;
 
-/// The eleven record kinds a lane (or, for `task.queued`, whoever reads the issue list) writes
-/// (DELIVERY.md, "Task records").
+/// The record kinds a lane (or, for `task.queued`, whoever reads the issue list) writes
+/// (DELIVERY.md, "Task records"), and the owner's lane retirement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum TaskEventKind {
     #[serde(rename = "task.claimed")]
@@ -52,6 +52,9 @@ pub enum TaskEventKind {
     /// It opens no slice; the tasks route serves the ones no live slice holds as the backlog.
     #[serde(rename = "task.queued")]
     Queued,
+    /// The owner (or the orchestrator, holding the owner token) retires or restores lanes.
+    #[serde(rename = "task.lane_retired")]
+    LaneRetired,
 }
 
 impl TaskEventKind {
@@ -70,6 +73,7 @@ impl TaskEventKind {
             "task.closed" => Self::Closed,
             "task.critic_verdict" => Self::CriticVerdict,
             "task.queued" => Self::Queued,
+            "task.lane_retired" => Self::LaneRetired,
             _ => return None,
         })
     }
@@ -89,6 +93,7 @@ impl TaskEventKind {
             Self::Closed => "task.closed",
             Self::CriticVerdict => "task.critic_verdict",
             Self::Queued => "task.queued",
+            Self::LaneRetired => "task.lane_retired",
         }
     }
 }
@@ -236,6 +241,15 @@ pub struct TaskEventRecord {
     /// absent on a lane's own release.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub released_by: Option<String>,
+    /// An owner release names the slice by the key the tasks route serves instead of a claim
+    /// sequence, so a slice with no claim (a plan or a PR recorded first) can be released.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slice_key: Option<String>,
+    /// `task.lane_retired`: the lanes it names, and whether it retires (`true`) or restores them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lanes: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retired: Option<bool>,
     /// #502: when the Runtime appended the record (its own clock, not the lane's `at`).
     #[serde(default)]
     pub occurred_at: Option<PersistedTimestamp>,
@@ -321,6 +335,9 @@ impl TaskEventRecord {
             reason: None,
             lease_seconds: None,
             released_by: None,
+            slice_key: None,
+            lanes: None,
+            retired: None,
             occurred_at: None,
             critic: None,
             plan: None,
@@ -603,6 +620,39 @@ pub fn parse_task_event(
             }
             record.lane = Some(actor_id.to_owned());
             record.plan = Some(plan);
+        }
+        TaskEventKind::Released if document.contains_key("sliceKey") => {
+            // An owner release by slice key: the signer is the releaser and names itself in
+            // `releasedBy`; the lane is the slice's. Admission takes it from an owner only, and
+            // the tasks route drops one recorded under any other actor type.
+            let slice_key = text(field("sliceKey"), 256)?;
+            let reason = field("reason").as_str()?;
+            if document.contains_key("claimSequence")
+                || reason.chars().count() > 500
+                || has_control(reason)
+                || !is_actor("releasedBy")
+            {
+                return None;
+            }
+            record.lane = Some(text(field("lane"), 128)?);
+            record.reason = Some(text(field("reason"), 1000)?);
+            record.slice_key = Some(slice_key);
+            record.released_by = Some(actor_id.to_owned());
+        }
+        TaskEventKind::LaneRetired => {
+            let lanes = field("lanes")
+                .as_array()
+                .filter(|lanes| (1..=64).contains(&lanes.len()))?
+                .iter()
+                .map(|lane| text(lane, 128))
+                .collect::<Option<Vec<_>>>()?;
+            let reason = field("reason").as_str()?;
+            if reason.chars().count() > 500 || has_control(reason) {
+                return None;
+            }
+            record.retired = Some(field("retired").as_bool()?);
+            record.reason = Some(text(field("reason"), 1000)?);
+            record.lanes = Some(lanes);
         }
         TaskEventKind::Released => {
             let claim_sequence = count(field("claimSequence"))?;
@@ -1002,6 +1052,10 @@ pub struct TaskState {
     /// reconciler released it as lapsed. Absent, never `null`, while the claim is live (#1211).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub released_by: Option<String>,
+    /// The slice's lane was retired while the slice was open: `released_by` is the retiring
+    /// owner, and the work is free for another lane. Omitted while false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub orphaned: bool,
     /// #1193: the Runtime's time of this slice's original claim, and that claim's lease in
     /// seconds; the overdue state is computed where the Runtime's clock is, never here. Not in
     /// the Studio's type: omitted when absent so the reply adds nothing the fold never writes.
@@ -1063,6 +1117,9 @@ pub struct TaskFold {
     pub tasks: Vec<TaskState>,
     pub slices: Vec<FoldSlice>,
     pub routes: Vec<Route>,
+    /// The lanes retired at the end of the log; their records after retirement are not folded.
+    #[serde(default)]
+    pub retired_lanes: Vec<String>,
 }
 
 fn new_state(event: &TaskEventRecord) -> TaskState {
@@ -1111,6 +1168,7 @@ fn new_state(event: &TaskEventRecord) -> TaskState {
         last_sequence: 0,
         claim_sequence: None,
         released_by: None,
+        orphaned: false,
         claimed_at: None,
         lease_seconds: None,
     }
@@ -1389,9 +1447,57 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
     let mut absorbed: Vec<Slice> = Vec::new();
     let mut routes: Vec<Route> = Vec::new();
     let mut next_id = 0_usize;
+    let mut retired: BTreeSet<String> = BTreeSet::new();
     for event in ordered {
         // #1469: the issue list belongs to no slice; `backlog` reads it.
         if event.kind == TaskEventKind::Queued {
+            continue;
+        }
+        if event.kind == TaskEventKind::LaneRetired {
+            let lanes = event.lanes.as_deref().unwrap_or_default();
+            if event.retired == Some(true) {
+                for slice in slices.iter_mut().filter(|s| {
+                    !s.ended
+                        && s.state.step != TaskStep::Merged
+                        && s.state.released_by.is_none()
+                        && s.state
+                            .lane
+                            .as_ref()
+                            .is_some_and(|lane| lanes.contains(lane))
+                }) {
+                    slice.state.released_by = Some(event.actor_id.clone());
+                    slice.state.orphaned = true;
+                }
+                retired.extend(lanes.iter().cloned());
+            } else {
+                for lane in lanes {
+                    retired.remove(lane);
+                }
+            }
+            continue;
+        }
+        // Admission refuses a retired lane's records; one in an older log is not folded either.
+        if retired.contains(&event.actor_id) {
+            continue;
+        }
+        if event.kind == TaskEventKind::Released
+            && let Some(key) = &event.slice_key
+        {
+            let found = slices.iter().enumerate().position(|(index, s)| {
+                !s.ended
+                    && s.state.step != TaskStep::Merged
+                    && s.state.released_by.is_none()
+                    && s.state.lane == event.lane
+                    && slice_key(&s.state, index) == *key
+            });
+            if let Some(index) = found {
+                let slice = &mut slices[index];
+                slice.state.released_by = event.released_by.clone();
+                routes.push(Route {
+                    sequence: event.sequence,
+                    slice: slice.id,
+                });
+            }
             continue;
         }
         if event.kind == TaskEventKind::Heartbeat {
@@ -1799,7 +1905,10 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 state.step = TaskStep::Merged;
             }
             TaskEventKind::Closed => {}
-            TaskEventKind::Heartbeat | TaskEventKind::Released | TaskEventKind::Queued => {
+            TaskEventKind::Heartbeat
+            | TaskEventKind::Released
+            | TaskEventKind::Queued
+            | TaskEventKind::LaneRetired => {
                 unreachable!("handled above")
             }
         }
@@ -1899,10 +2008,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
         if state.issue.is_none() && !is_unclaimed_critic(state) {
             state.issue = issue_from_task_id(&state.task_id);
         }
-        state.key = match state.pr {
-            Some(pr) => format!("{}#pr-{pr}", state.task_id),
-            None => format!("{}#claim-{index}", state.task_id),
-        };
+        state.key = slice_key(state, index);
     }
     let mut tasks: Vec<TaskState> = slices
         .iter()
@@ -1930,5 +2036,14 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
         tasks,
         slices: all,
         routes,
+        retired_lanes: retired.into_iter().collect(),
+    }
+}
+
+/// The key the tasks route serves for the slice at `index` of the fold's slice list.
+fn slice_key(state: &TaskState, index: usize) -> String {
+    match state.pr {
+        Some(pr) => format!("{}#pr-{pr}", state.task_id),
+        None => format!("{}#claim-{index}", state.task_id),
     }
 }

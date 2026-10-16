@@ -85,7 +85,7 @@ This is documentary RED, not an executed failing test. The protocol below is pro
 The proposal puts `JourneyCredentialGrant` in the execution Event Store and keyed credential
 digests in a separate registry, then assumes a shared mutex and journal make both durable writes
 one transaction. The source does not provide that boundary. In `core/events/src/local.rs`,
-`LocalEventStore::append_atomic` takes that store's exclusive lock and `append_locked` commits its
+`LocalEventRepository::append_atomic` takes that store's exclusive lock and `append_locked` commits its
 own journal batch with `flush`, `sync_data` and a directory sync before publishing the active
 marker. Its repository lock is acquired root-directory first, then `repository.lock`. Those locks
 protect that Event Store only; they cannot atomically commit a grant event with an unrelated
@@ -202,7 +202,7 @@ restarting the broker. A crash while adding a version leaves the old key availab
 an uncommitted credential record valid. An unknown or missing version fails closed. The first
 implementation does not support online key replacement.
 
-The execution Event Store is deliberately outside this transaction. `LocalEventStore` protects
+The execution Event Store is deliberately outside this transaction. `LocalEventRepository` protects
 its own journal and staged artifacts; its root-directory and `repository.lock` locks, append
 idempotency and active-marker protocol do not enlist a second store. Therefore the proposed grant
 is not also emitted as a `JourneyCredentialGrant` execution event. This avoids split-brain grant

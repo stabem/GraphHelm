@@ -26,7 +26,11 @@ Step 3: one reviewer per pull request. Read [`KEEL.md`](../KEEL.md) first.
 
 ## Blind
 
-Who counts as blind, and what a brief may carry, is [`DELIVERY.md`](../docs/process/DELIVERY.md) §4.
+You did not write the change, and your brief carries only the PR number, the identity line to
+sign with, where the rules live, the build directory and questions that apply to every review
+(correctness, security, fail-closed behaviour, test quality). If you helped write it, or your
+brief carries the author's reasoning, a finding to look for, a summary of the change or an
+expected verdict, you are not blind: say so and do not review.
 
 ## Do
 

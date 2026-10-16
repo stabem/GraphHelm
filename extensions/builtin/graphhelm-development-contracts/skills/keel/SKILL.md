@@ -31,8 +31,11 @@ Step 2, from an accepted card to a proven change. Read `KEEL.md` and the card fi
   idempotent writes, no new slow shape, no complexity increase the card did not justify.
 - Keep existing behaviour working. Before you edit shared code, find its other callers and what
   they rely on. A fix that breaks a neighbour is not a fix.
-- A change that displaces a production caller follows the retirement rule in
-  `docs/process/DELIVERY.md` §3.
+- A change that removes, replaces or redirects a production caller deletes the displaced path
+  (its declarations, exclusive helpers, types, styles, dependencies and tests) in the same change
+  and writes `Retirement:` in the pull request: each candidate removed, retained (name its live
+  consumer or contract) or unobserved (name the gap). A zero-hit search or green tests are leads,
+  not deletion proof.
 - Stop when the promise is proven. Do not refactor, reformat or sweep beyond it, even when a
   neighbouring file has the same defect: name it in the pull request instead.
 

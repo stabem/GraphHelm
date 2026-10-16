@@ -40,7 +40,7 @@ only the surface the promise needs, prove with the smallest adequate observer. B
 PR, the author runs the tests the change can reach and lists them, with their result, in the PR
 body.
 
-**Retire the path you replace.** When a change removes, replaces or redirects
+**Retire the path you replace** (the rule is `keel/KEEL_EXEC.md`; how to check it here:). When a change removes, replaces or redirects
 a production caller, check the displaced declarations and their exclusive helpers/types, styles,
 dependencies and tests before opening the PR. A rename alone does not make its target dead. Search
 from the actual entry points and check dynamic registrations, public consumers, manual commands,
@@ -171,12 +171,8 @@ decision (approve a design, choose an option) goes to the user. The plugin's Sto
 ## 4. One review, by another session or a blind subagent
 
 - One review from a reviewer that did not write the change: another session, or a **blind
-  subagent**. A blind subagent is spawned for the review only. Its brief
-  may carry: the PR number, the identity line to sign with, where the rules live (`AGENTS.md`,
-  this document), the build directory, and questions that apply to every review (correctness,
-  security, fail-closed behaviour, test quality). It must not carry the author's reasoning, a
-  finding to look for, a summary of the change, or an expected verdict. A subagent that helped
-  write the change, or was given any of those, is not blind and cannot review it.
+  subagent**, spawned for the review only. What its brief may carry, and who is not blind, is
+  [`keel/KEEL_REVIEW.md`](../../keel/KEEL_REVIEW.md).
 - The review's first line names the reviewer and the head sha it read:
   `Session: <ListAgents name [ref]> · Head: <sha8>`, with `(blind subagent)` after the session
   name when a subagent reviews.
@@ -250,9 +246,8 @@ an old base, merged clean on top of a newer one, and main went red on a cell the
 made stale. Two additions here:
 
 1. Closing check: `ci/closing-keywords.ps1 -Number <N> -Repository stabem/GraphHelm -Closes <issues>`.
-   It reads the body and the commit messages; their union must equal the intent. Never write a
-   closing keyword (`close`, `fix`, `resolve` and their forms) next to an issue you do not mean to
-   close, not even inside a negation. Write `Refs #N` instead.
+   It reads the body and the commit messages; their union must equal the intent (the
+   keyword rule is `keel/KEEL_MERGE.md`).
 2. Read what landed: `git log -1 --format=%B origin/main` and `gh issue view` for every closed
    issue. Corrections go in a follow-up comment on the same PR.
 

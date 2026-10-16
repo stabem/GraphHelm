@@ -30,8 +30,9 @@ Step 4. Only the reviewer who approved merges. Read [`KEEL.md`](../KEEL.md) firs
 2. **Main moved, run again.** If main moved after your review, rerun the reached plan on the new
    main plus the head before you merge; a clean merge-tree is not a test. Two changes that each
    pass alone can break together.
-3. **Closing keywords** in the body and the commits must match what the change closes: run the
-   closing check in [`DELIVERY.md`](../docs/process/DELIVERY.md) §5.
+3. **Closing keywords** in the body and the commits must match what the change closes. Never
+   write a closing keyword (`close`, `fix`, `resolve` and their forms) next to an issue you do not
+   mean to close, not even inside a negation; write `Refs #N` instead.
 4. **Check after.** Read what landed, then run the change's main proof on main and confirm it is
    green. If it is red, the merge is not delivered: fix main first.
 5. **Delete the branch.** The merger deletes it unless a pull request is stacked on it

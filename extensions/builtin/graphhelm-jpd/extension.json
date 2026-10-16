@@ -3,7 +3,7 @@
   "kind": "Extension",
   "metadata": {
     "id": "graphhelm-jpd",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "publisher": "GraphHelm",
     "source": {
       "repository": "https://github.com/stabem/GraphHelm"
@@ -209,7 +209,7 @@
           "id": "host/claude",
           "kind": "host-adapter",
           "path": ".claude-plugin/plugin.json",
-          "sha256": "sha256:45e168c6a38cf86eabb82a9717004371a661fd0b0585072441cfaa540097787a",
+          "sha256": "sha256:b917ad27866a347a044fe77ffa705f499c957f62b4d13b28dc9a80bc3af32e8f",
           "effects": [
             "host.discover"
           ],
@@ -225,7 +225,7 @@
           "id": "host/codex",
           "kind": "host-adapter",
           "path": ".codex-plugin/plugin.json",
-          "sha256": "sha256:4cbffeabce6b3f5e13cfd924848958ca518b2713492e2276cc92f2c02ebd828b",
+          "sha256": "sha256:9c50f12b34f53259d1d718cc2777ca3ff20459480fb1f608e19868119a5ce30e",
           "effects": [
             "host.discover"
           ],
@@ -236,28 +236,6 @@
             "capabilities": [],
             "observers": []
           }
-        },
-        {
-          "id": "host/mcp",
-          "kind": "host-adapter",
-          "path": ".mcp.json",
-          "sha256": "sha256:364f581b149d28d0618f58a610e5a96e2a0b5bcd60ea54d62ce32fc899a17041",
-          "effects": [
-            "runtime.connect"
-          ],
-          "permissions": [
-            "network.loopback",
-            "token.reference.read"
-          ],
-          "requires": {
-            "capabilities": [
-              "graphhelm.public-api"
-            ],
-            "observers": []
-          },
-          "surfaces": [
-            "cli:mcp"
-          ]
         },
         {
           "id": "agent/accessibility-user",

@@ -11,7 +11,7 @@
     {
       "name": "graphhelm-jpd",
       "source": "./extensions/builtin/graphhelm-jpd",
-      "description": "Journey-Proven Development skills and public GraphHelm MCP adapter."
+      "description": "Journey-Proven Development skills."
     },
     {
       "name": "graphhelm-development-contracts",

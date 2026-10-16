@@ -21,8 +21,8 @@ nothing of its own reasoning. The reasons behind the rules live in
 
 1. **Read cost.** An agent should answer a task by reading one card and the few files it names.
    A file too big to read whole and a change spread over too many small files both waste it.
-2. **Correct behaviour for the user.** A change is done when an end-to-end observer proves the
-   promise a user can see, and leaves a receipt anyone can replay.
+2. **Correct behaviour for the user.** A change is done when an observer proves the promise a
+   user can see, and leaves a receipt anyone can replay.
 3. **Code that stays cheap to change.** No duplicate, no dead code, no hidden coupling, nothing
    slower than the data needs.
 
@@ -39,18 +39,17 @@ and listed as `to build` until its check exists.
 | `keel.purpose` | Read cost | Every source file starts with one line saying what it is for, so an agent can decide relevance without reading the file. | first-line check | to build |
 | `keel.comments` | Read cost | A comment says what the code cannot: why, a constraint, a trap. No comment that restates the code, no commented-out code, no history in comments (issue numbers, dates, "added for"): git holds history. | lint for commented-out code and history markers | to build |
 | `keel.slice` | Cohesion | A feature's code, types and tests live together in a folder named after the feature, so one search finds all of it. | review | review |
-| `keel.dup` | No duplication | The same logic does not exist in two places. Before creating a function, search for one that does the job. | clone detection over the diff | to build |
+| `keel.dup` | No duplication | Before creating a function, search for one that does the job. A second copy of the same logic keeps the same name and links to the first; the third copy is extracted. | clone count over the diff | to build |
 | `keel.dead` | No dead code | A function, type or export that nothing reaches is deleted, not kept "for later". | reachability from entry points | to build |
 | `keel.deps` | Dependency direction | Dependencies point inward: core never imports a host, an app or the Studio. | dependency tag matrix | to build |
 | `keel.names` | Searchable names | A name says what the thing does. No `Manager`, `Util`, `Helper`, `Service`, `Common` or `Misc`. | name lint | to build |
 | `keel.names.one` | Searchable names | One concept has one name in every layer (no field renamed at a boundary), and no table, route, event or key name is assembled at run time. | lint on built identifiers and renaming maps | to build |
 | `keel.names.no_bare_flag` | Searchable names | A call never passes a bare `true`, `false` or `None` whose meaning lives in the callee: use an enum, a named argument or two named functions. | lint on call arguments | to build |
-| `keel.dup.third` | No duplication | Two similar pieces of code do not yet justify an abstraction; the third does. Extract on the third copy, not the second. | clone count | to build |
 | `keel.near_dup` | No duplication | Two functions that look alike but behave differently are merged or renamed so the difference is in the name. | similarity detector | to build |
 | `keel.explicit` | No hidden magic | Control flow and checks are visible where they apply: no decorator, injection, inheritance or framework hook that hides what runs, and a permission check sits on the code it protects. | review, plus a deny-list of named features | to build |
 | `keel.types.boundary` | Explicit types | A module boundary has explicit types: no `any`, untyped map or stringly-typed payload in an exported signature. | lint on exported signatures | to build |
 | `keel.deps.fewer` | Fewer dependencies | A small amount of own code beats a new dependency. A new dependency is named in the card and justified. | lockfile diff | to build |
-| `keel.rel.no_panic` | Reliability | Production code does not panic, `unwrap`, `expect` or throw an uncaught error. Every failure becomes a result with a code and a reason. | lint per language | to build |
+| `keel.rel.no_panic` | Reliability | Production code does not panic, `unwrap` or throw an uncaught error: every failure that can happen becomes a result with a code and a reason. `expect` is allowed on an invariant the code proves, with a message naming that invariant. | lint per language | to build |
 | `keel.rel.deadline` | Uptime | Every call that leaves the process (network, disk wait, child process, lock) has a deadline. | lint on known call sites | to build |
 | `keel.rel.no_swallow` | Reliability | No error is ignored in silence: it is handled, or it travels up with its reason. | lint per language | to build |
 | `keel.rel.no_impossible` | Reliability | No handling for a case that cannot happen. Guard what can fail, and let the type system rule out the rest. | review | review |
@@ -65,7 +64,7 @@ and listed as `to build` until its check exists.
 | `keel.tool.quiet` | Read cost | A check prints nothing when it passes and everything that matters when it fails, and never hangs. | bytes printed by a green run | to build |
 | `keel.cause` | No programming by coincidence | A fix names the root cause, with the evidence, before the change. Trying edits until the tests go green is refused. | a `Cause:` line in the pull request | to build |
 | `keel.scope` | Write surface | A change touches only the paths its card lists. | `graphhelm keel check --card` | blocks |
-| `keel.test.e2e_first` | Proof | Behaviour is proven end to end first; see `KEEL_EXEC.md`. | proof kind in the plan record | to build |
+| `keel.test.e2e_first` | Proof | Prefer the observer closest to the user-visible promise when it is affordable; see `KEEL_EXEC.md`. | proof kind in the plan record | to build |
 
 ## Talking to GraphHelm
 

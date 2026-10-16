@@ -463,6 +463,64 @@ fn project_discovery_ignores_more_than_sixteen_stale_restart_records() {
     );
 }
 
+/// #1449: dead restart records on one port, and records whose token file was deleted with their
+/// temp project, must not spend the health budget the one live Runtime needs.
+/// Cost: one disposable Runtime and MCP client; local loopback only.
+#[test]
+fn project_discovery_skips_superseded_and_tokenless_records_before_probing() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = dir.path().join("registry");
+    let project = dir.path().join("project");
+    let events = project.join(".graphhelm").join("events");
+    std::fs::create_dir_all(&events).unwrap();
+    let _runtime = serve_with_project(&events, free_port(), &registry, Some(&project));
+    let project_records = std::fs::read_dir(registry.join("projects"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let live_path = std::fs::read_dir(&project_records)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(live_path).unwrap()).unwrap();
+    let started_at = record["startedAt"].as_u64().unwrap();
+    let dead_url = format!("http://127.0.0.1:{}", free_port());
+    for index in 0..40_u64 {
+        let stale_instance = format!("{index:032x}");
+        record["instance"] = serde_json::json!(stale_instance);
+        record["url"] = serde_json::json!(dead_url);
+        record["startedAt"] = serde_json::json!(started_at - 1000 + index);
+        std::fs::write(
+            project_records.join(format!("{stale_instance}.json")),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+    }
+    let gone = dir.path().join("deleted-temp-project").join("events.token");
+    for index in 40..60_u64 {
+        let stale_instance = format!("{index:032x}");
+        record["instance"] = serde_json::json!(stale_instance);
+        record["url"] = serde_json::json!(format!("http://127.0.0.1:{}", free_port()));
+        record["tokenFile"] = serde_json::json!(gone);
+        std::fs::write(
+            project_records.join(format!("{stale_instance}.json")),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+    }
+    let mut bridge = Bridge::start_project(&project, &registry);
+    let reply = bridge.list();
+    assert!(
+        authorized(&reply),
+        "the live Runtime must be found inside the health budget: {reply}"
+    );
+}
+
 /// Delayed candidates must share one health-probing budget instead of stacking one-second waits.
 /// Cost: one disposable Runtime, MCP client and eight local loopback listeners; about six seconds.
 #[test]
@@ -512,7 +570,7 @@ fn project_discovery_refuses_when_health_probe_budget_expires() {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
                         stream
-                            .set_write_timeout(Some(Duration::from_secs(1)))
+                            .set_write_timeout(Some(scaled(Duration::from_secs(1))))
                             .unwrap();
                         let body = format!(
                             "{{\"data\":{{\"instance\":\"{stale_instance_for_server}\",\"projectId\":\"{project_id}\"}}}}"

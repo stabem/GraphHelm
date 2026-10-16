@@ -22,6 +22,7 @@ if [ "$cmd" = up ]; then
 fi
 mkdir -p "$dir"; dir=$(cd "$dir" && pwd)
 pids="$dir/.graphhelm/fixture.pids"
+rt="$dir/project/.graphhelm"
 
 # Resolve live listeners, never a port alone: a crashed fixture's port may have been reused.
 # Vite's command names this checkout and its exact strict port; serve names the fixture dir.
@@ -81,24 +82,25 @@ up)
   command -v node > /dev/null || { echo "fixture: node is not on PATH" >&2; exit 3; }
   command -v npm > /dev/null || { echo "fixture: npm is not on PATH" >&2; exit 3; }
   [ -d "$repo/apps/studio/node_modules" ] || { echo "fixture: $repo/apps/studio has no node_modules (npm --prefix apps/studio ci)" >&2; exit 3; }
-  if [ ! -d "$dir/.git" ]; then
-    git -C "$dir" init -q
-    printf '# demo\n' > "$dir/README.md"
-    git -C "$dir" add -A && git -C "$dir" -c user.email=demo@example.com -c user.name=demo commit -qm init
-  fi
-  "$bin" --json init --project "$dir" --bind "127.0.0.1:$rport" --harness codex > "$dir/.graphhelm/init.json"
-  export GRAPHHELM_FIXTURE_RUNTIME_PORT="$rport" GRAPHHELM_EVENTS_KEY="$(cat "$dir/.graphhelm/serve.key")"
   # The Runtime reads journeys and delivered documents from a disposable project. Copy the
   # journeys byte-for-byte; never let a document save reach the source repository (#585).
+  # Its events, keys and tokens live in that project's own .graphhelm: `serve` refuses events
+  # that sit in another folder's .graphhelm (#1298). <dir>/.graphhelm keeps the fixture's files.
   mkdir -p "$dir/project/.graphhelm" "$dir/project/docs"
+  if [ ! -d "$dir/project/.git" ]; then
+    git -C "$dir/project" init -q
+    printf '# demo\n' > "$dir/project/README.md"
+    git -C "$dir/project" add -A && git -C "$dir/project" -c user.email=demo@example.com -c user.name=demo commit -qm init
+  fi
+  "$bin" --json init --project "$dir/project" --bind "127.0.0.1:$rport" --harness codex > "$dir/.graphhelm/init.json"
+  export GRAPHHELM_FIXTURE_RUNTIME_PORT="$rport" GRAPHHELM_EVENTS_KEY="$(cat "$rt/serve.key")"
   cp -R "$repo/.graphhelm/journeys" "$dir/project/.graphhelm/"
   printf '# Release notes: version 0.1\n' > "$dir/project/docs/RELEASE_NOTES.md"
-  git -C "$dir/project" init -q
   # #585: a route manifest of the fixture's own, listed and written by the Studio's Models panel
   # (Add model). Listing only: `--gateway-manifest` wires no executor, so nodes stay on fixtures.
-  cp "$repo/examples/gateway/astra-routes.json" "$dir/.graphhelm/routes.json"
-  nohup "$bin" serve --events "$dir/.graphhelm/events" --bind "127.0.0.1:$rport" --project "$dir/project" \
-    --keyring "$dir/.graphhelm/keyring" --key-id studio --gateway-manifest "$dir/.graphhelm/routes.json" \
+  cp "$repo/examples/gateway/astra-routes.json" "$rt/routes.json"
+  nohup "$bin" serve --events "$rt/events" --bind "127.0.0.1:$rport" --project "$dir/project" \
+    --keyring "$rt/keyring" --key-id studio --gateway-manifest "$rt/routes.json" \
     > "$dir/.graphhelm/serve.out" 2> "$dir/.graphhelm/serve.err" &
   echo "serve $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
   for _ in $(seq 1 30); do curl -sf --max-time 10 "http://127.0.0.1:$rport/health" > /dev/null && break; sleep 1; done
@@ -111,14 +113,14 @@ up)
   if ! grep -q '"executionId":"demo"' "$dir/.graphhelm/seed.json" 2>/dev/null; then
     echo '{"nodeOutcomes":{"implementation":"failure"}}' > "$dir/.graphhelm/fixtures.json"
     "$bin" --json execution start --file "$repo/examples/graphs/manual-override-deploy.yaml" \
-      --events "$dir/.graphhelm/events" --fixtures "$dir/.graphhelm/fixtures.json" --mode supervised --execution demo \
+      --events "$rt/events" --fixtures "$dir/.graphhelm/fixtures.json" --mode supervised --execution demo \
       > "$dir/.graphhelm/seed.json"
     printf '%s\n' '{"version":1,"summary":"Release notes ready for review.","reason":"Fixture document for the owner to edit.","documents":[{"path":"docs/RELEASE_NOTES.md","title":"Release notes","kind":"file","action":"created"}]}' > "$dir/.graphhelm/delivery.json"
-    "$bin" --json execution delivery --events "$dir/.graphhelm/events" --execution demo --node deploy \
+    "$bin" --json execution delivery --events "$rt/events" --execution demo --node deploy \
       --delivery "$dir/.graphhelm/delivery.json" --project-directory "$dir/project" \
-      --keyring "$dir/.graphhelm/keyring" --key-id studio > "$dir/.graphhelm/delivery.out"
+      --keyring "$rt/keyring" --key-id studio > "$dir/.graphhelm/delivery.out"
     # One unanswered question from the bot `planner` to the owner (studio-answer-question).
-    token=$(head -1 "$dir/.graphhelm/events.token"); id=$(node -e 'console.log(require("crypto").randomUUID())')
+    token=$(head -1 "$rt/events.token"); id=$(node -e 'console.log(require("crypto").randomUUID())')
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     printf '{"signal":{"id":"planner-question-%s","source":{"type":"tool","id":"planner"},"type":"operator_note","severity":"low","description":"Should the deploy go to staging first, or straight to production?","recommendations":["Staging first","Straight to production"],"evidence":["demo"],"emittedAt":"%s","to":"studio-operator"}}' "$id" "$now" > "$dir/.graphhelm/question.json"
     curl -sf --max-time 10 -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token" \
@@ -138,7 +140,7 @@ up)
   if [ "$flow" = studio-work-graph ]; then
     # #721 task records use the existing planner actor, so these rows do not create fake agents.
     # Every refusal stops the seed; the fixture token's permissions are never widened.
-    node - "$dir" "$now" "http://127.0.0.1:$rport" "$dir/.graphhelm/events.token" <<'NODE'
+    node - "$dir" "$now" "http://127.0.0.1:$rport" "$rt/events.token" <<'NODE'
 const fs = require('fs');
 const [dir, at, runtimeUrl, tokenFile] = process.argv.slice(2);
 const runtime = new URL(runtimeUrl);
@@ -196,7 +198,7 @@ NODE
 const fs = require('fs');
 const path = require('path');
 const [dir, port] = process.argv.slice(2);
-const token = fs.readFileSync(`${dir}/.graphhelm/events.token`, 'utf8').trim();
+const token = fs.readFileSync(`${dir}/project/.graphhelm/events.token`, 'utf8').trim();
 fetch(`http://127.0.0.1:${port}/v1/executions/routing-fixture/start`, {
   method: 'POST',
   headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
@@ -211,7 +213,7 @@ fetch(`http://127.0.0.1:${port}/v1/executions/routing-fixture/start`, {
 }).catch(() => { console.error('fixture: delegation seed failed'); process.exitCode = 1; });
 NODE
   fi
-  export GRAPHHELM_EVENTS="$dir/.graphhelm/events" GRAPHHELM_RUNTIME_URL="http://127.0.0.1:$rport" \
+  export GRAPHHELM_EVENTS="$rt/events" GRAPHHELM_RUNTIME_URL="http://127.0.0.1:$rport" \
     GRAPHHELM_STUDIO_SESSION_NONCE=studio-fixture GRAPHHELM_PROJECT=demo
   nohup npm --prefix "$repo/apps/studio" run dev -- --port "$sport" --strictPort > "$dir/.graphhelm/studio.out" 2>&1 &
   echo "studio $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
@@ -221,7 +223,7 @@ NODE
     if [ -r /proc/$$/winpid ]; then echo "studio-listener 0 $pid"; else echo "studio-listener $pid"; fi >> "$pids"
   done
   # R6: the launcher reads this private data file after up; never echo the minted token.
-  (umask 077; printf 'GRAPHHELM_SECRET_STUDIO_TOKEN=%s\n' "$(head -1 "$dir/.graphhelm/events.token")" > "$dir/.graphhelm/secrets.env")
+  (umask 077; printf 'GRAPHHELM_SECRET_STUDIO_TOKEN=%s\n' "$(head -1 "$rt/events.token")" > "$dir/.graphhelm/secrets.env")
   chmod 600 "$dir/.graphhelm/secrets.env"
   echo "fixture up: runtime http://127.0.0.1:$rport, studio http://127.0.0.1:$sport/?session=studio-fixture"
   ;;

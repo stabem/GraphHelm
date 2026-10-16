@@ -464,6 +464,9 @@ def run(args: argparse.Namespace) -> int:
     jobs = str(getattr(args, "jobs", 6))
     # #1470: an older caller without `stage` queues as implement work, as before.
     stage = getattr(args, "stage", "implement")
+    # The default sends no flag, so a CLI older than #1470 (which refuses `--stage`) still runs
+    # every implement plan unchanged.
+    stage_args = [] if stage == "implement" else ["--stage", stage]
     started = time.monotonic()
     deadline_unix_ms = time.time() * 1000.0 + args.budget_seconds * 1000.0
     repo = Path(args.repo).resolve()
@@ -604,7 +607,7 @@ def run(args: argparse.Namespace) -> int:
                 if is_batch:
                     # The CLI receives original argv; its Rust worker selects the child cwd/target.
                     command = [str(selected_graphhelm), "--json", "workspace", "slot", "--root", args.root,
-                               "--lane", args.lane, "--jobs", jobs, "--stage", stage, "--label", f"reached-batch-{indices[0]}",
+                               "--lane", args.lane, "--jobs", jobs, *stage_args, "--label", f"reached-batch-{indices[0]}",
                                "--max-wait", repr(remaining_budget / 60.0), "--", *commands[0]]
                     # Batch commands are carried by the opt-in environment, never by the CLI argv.
                     payload = {"schema": _BATCH_SCHEMA, "commands": commands,
@@ -612,7 +615,7 @@ def run(args: argparse.Namespace) -> int:
                                "leaseSeconds": 30}
                 elif entry["slot"]:
                     command = [str(selected_graphhelm), "--json", "workspace", "slot", "--root", args.root,
-                               "--lane", args.lane, "--jobs", jobs, "--stage", stage, "--label", f"reached-step-{entry['index']}",
+                               "--lane", args.lane, "--jobs", jobs, *stage_args, "--label", f"reached-step-{entry['index']}",
                                "--max-wait", repr(remaining_budget / 60.0), "--", *commands[0]]
                     payload = None
                 else:

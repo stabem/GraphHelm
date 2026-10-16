@@ -228,8 +228,10 @@ class RunnerContracts(unittest.TestCase):
             self.assertEqual(sixteen[sixteen.index("--jobs") + 1], "16")
             legacy = runner(None)
             self.assertEqual(legacy[legacy.index("--jobs") + 1], "6")
-            # #1470: the stage reaches the slot command; an older caller queues as implement.
-            self.assertEqual(legacy[legacy.index("--stage") + 1], "implement")
+            # #1470: review/merge reach the slot command; implement (the default) sends no flag.
+            self.assertNotIn("--stage", legacy)  # an older CLI refuses the flag
+            implement = runner(2, "implement")
+            self.assertNotIn("--stage", implement)
             review = runner(2, "review")
             self.assertEqual(review[review.index("--stage") + 1], "review")
         with self.assertRaises(SystemExit):

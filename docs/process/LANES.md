@@ -115,7 +115,8 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   is admitted before every waiting `implement` job (the default), whatever the arrival order. It
   never preempts the holder, and an owner `--priority` waiter still goes first. Reviewers and
   mergers pass `run_reached.py --stage review` (or `merge`), which forwards it to every slot
-  command it queues. `workspace slot status` shows each waiter's stage.
+  command it queues (it needs a CLI built after #1470; the default `implement` sends no flag, so
+  older CLIs keep working). `workspace slot status` shows each waiter's stage.
 - **Build jobs.** One slot root may build with up to `--jobs 16`;
   the jobs of every root building at the same time add up to at most 24. `run_reached.py --jobs N`
   carries the choice into every slot command it queues (six when omitted). The dedicated root

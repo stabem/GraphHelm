@@ -1,3 +1,4 @@
+use graphhelm_protocols::FixedClock;
 use std::{
     io::{Cursor, Write},
     path::PathBuf,
@@ -10,10 +11,10 @@ use graphhelm_events::{
     AsyncEventRepository, AuthenticateRequest, AuthenticatedCheckpoint, AuthenticationTag,
     CleanupRequest, EvidenceInput, EvidenceProtector, EvidenceSealer, KeyError, KeyProvider,
     KeyProviderMetadata, PreparedAppend, ProjectionRebuildRequest, ProjectionRebuilder,
-    RepositoryFuture, RetentionAuthority, RetentionClock, RetentionPolicy, RetentionRequest,
-    RetentionService, RetentionTarget, RevocationReceipt, RevokeKeyRequest, SecretBytes,
-    VerifyAuthenticationRequest, WrapKeyRequest, WrappedKey, cleanup_request_digest,
-    retention_authority_authentication_bytes, revocation_receipt_authentication_bytes,
+    RepositoryFuture, RetentionAuthority, RetentionPolicy, RetentionRequest, RetentionService,
+    RetentionTarget, RevocationReceipt, RevokeKeyRequest, SecretBytes, VerifyAuthenticationRequest,
+    WrapKeyRequest, WrappedKey, cleanup_request_digest, retention_authority_authentication_bytes,
+    revocation_receipt_authentication_bytes,
 };
 use graphhelm_postgres_event_store::backup::{
     BackupCodec, BackupCounts, BackupError, BackupManifest, DatabaseProcessProfile,
@@ -34,8 +35,6 @@ mod support;
 
 struct MemoryKeyProvider;
 struct ReceiptFailingKeyProvider(MemoryKeyProvider);
-#[derive(Clone)]
-struct FixedClock(PersistedTimestamp);
 
 struct FailingArchiveWriter;
 
@@ -46,12 +45,6 @@ impl Write for FailingArchiveWriter {
 
     fn flush(&mut self) -> std::io::Result<()> {
         Err(std::io::Error::other("test-only archive flush failure"))
-    }
-}
-
-impl RetentionClock for FixedClock {
-    fn now(&self) -> PersistedTimestamp {
-        self.0.clone()
     }
 }
 
@@ -803,7 +796,7 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
         let retention_service = RetentionService::new(
             source_repository.clone(),
             Arc::new(MemoryKeyProvider),
-            Arc::new(FixedClock(
+            Arc::new(FixedClock::from(
                 PersistedTimestamp::from_datetime(chrono::Utc::now()).unwrap(),
             )),
         );

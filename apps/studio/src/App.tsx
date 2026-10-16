@@ -20,7 +20,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { AlertTriangle, LoaderCircle, LogOut, Menu, MessageSquare, RefreshCw } from "lucide-react";
 
 import {
-  DisconnectedError,
   MAX_NODE_TIMEOUT_SECONDS,
   MIN_NODE_TIMEOUT_SECONDS,
   RuntimeClient,
@@ -32,9 +31,9 @@ import { devSession, type DevSession } from "./runtime/session";
 import type { NativeChatRequest } from "./runtime/types";
 import { workConversation } from "./runtime/work-conversation";
 import { isSubagentLifecycleSignal } from "./runtime/subagents";
-import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
-import { isClaudeTaskSignal, isTaskEventSignal, readClaudeTasks, type ClaudeTaskReadModel, type TaskEventRecord, type TaskState } from "./runtime/team-tasks";
-import { RUNTIME_PREDATES_TASKS_ROUTE, type LaneFold } from "./runtime/tasks-route";
+import { isRunTeamSignal } from "./runtime/run-team";
+import { isClaudeTaskSignal, isTaskEventSignal } from "./runtime/team-tasks";
+import { RUNTIME_PREDATES_TASKS_ROUTE } from "./runtime/tasks-route";
 import { SlotPoll } from "./components/slot-poll";
 import { MissionView } from "./components/mission-view";
 import { applySessionEnds, laneBars, type TimedTaskEvent } from "./runtime/lane-bars";
@@ -55,13 +54,8 @@ import type {
 } from "./runtime/types";
 import { claimVerdict, clearVerdict, digestOf, openWaitSequence } from "./runtime/customs";
 import type { AnswerOutcome } from "./components/answer";
-import {
-  registerStudioTools,
-  type ModelContextLike,
-  type RegisteredTools,
-  type ToolActivity,
-  type WebMcpAvailability,
-} from "./webmcp/adapter";
+import type { ModelContextLike, ToolActivity } from "./webmcp/adapter";
+import { useWebMcp } from "./webmcp/use-webmcp";
 import { buildGraphModel, conversationFor, pendingAcceptanceCount } from "./graph/model";
 import { openQuestions } from "./graph/ledger";
 import { topologyFromJournal, topologyNote, verifyTopology, type VerifiedTopology } from "./graph/topology";
@@ -85,23 +79,30 @@ import { Beacon, NEEDS_YOU_ID, QuestionCards } from "./components/beacon";
 import { HandoverCard } from "./components/handover-card";
 import { RightPanel } from "./components/right-panel";
 import { approvalBlockReason, beforeAfterPairs, captureDocuments, type BeforeAfterPair } from "./runtime/journeys";
-import type { JourneyFlowsView, JourneyRunView, JourneysView } from "./runtime/types";
-import type { JourneyRunSource } from "./components/journey-flows";
+import type { JourneyRunView } from "./runtime/types";
 import { SaidLinks, type SaidLinkContext } from "./components/said";
 import { teamLinks, teamModel } from "./runtime/team";
-import { needsYou, type DraftItem, type QuestionItem, type StepItem } from "./runtime/needs-you";
+import { needsYou, type DraftItem, type StepItem } from "./runtime/needs-you";
 import { buildHandover, hiddenThisSession, hideThisSession, readLastSeen, shouldShowHandover, writeLastSeen } from "./runtime/handover";
 import { EVERYONE, describeActivity, namesOf } from "./runtime/threads";
 import { ProjectRail } from "./components/rail";
-import { Composer, type RouteChoice } from "./components/compose";
-import { Models, type KeyDraft, type ProbeState, type RouteDraft, type SaveOutcome } from "./components/models";
+import { Composer } from "./components/compose";
+import { Models } from "./components/models";
 import { AddProject } from "./components/addproject";
 import { RAIL_MAX, RAIL_MIN, loadRailWidth, saveRailWidth } from "./rail-width";
+import { useNow } from "./runtime/use-now";
+import { sameValue } from "./runtime/same-value";
+import { useExecutionPoll } from "./runtime/use-execution-poll";
+import { useJourneys } from "./runtime/use-journeys";
+import { messageOf } from "./runtime/message-of";
 import { DRAFT_NODE_ID, draftGraph, newExecutionId } from "./graph/draft";
 import { isGeneratedRunId, readable, runLabel, verdictOf } from "./components/format";
 import { dockReserve } from "./dock-reserve";
 import { actionLegality, hasEnded } from "./components/legality";
-import { loadProjectName, loadRemovedRuns, saveProjectName, saveRemovedRuns, validProjectName } from "./studio-preferences";
+import { useProjectPrefs } from "./runtime/use-project-prefs";
+import { useSay } from "./runtime/use-say";
+import { useTeamReads } from "./runtime/use-team-reads";
+import { useModelsRoutes } from "./runtime/use-models-routes";
 
 
 function rawSha256(digest: string): string {
@@ -127,7 +128,6 @@ function budgetSecondsLegal(typed: string | undefined): boolean {
   return Number.isSafeInteger(seconds) && seconds >= MIN_NODE_TIMEOUT_SECONDS && seconds <= MAX_NODE_TIMEOUT_SECONDS;
 }
 
-/** Big enough that the board sees the whole roster on a normal run, and still one page. */
 /** The Runtime's own page ceiling (`MAX_EVENTS_LIMIT` in `serve/routes.rs`). Every page costs the
  * Runtime a fresh store open plus a full stream replay, so fewer, larger pages are what make a
  * big run open fast: 200 per page made a 5,000-event run cost 25 serial full replays. */
@@ -160,16 +160,6 @@ export interface AppProps {
   pollIntervalMs?: number;
 }
 
-function messageOf(error: unknown, fallback: string): string {
-  if (error instanceof RuntimeError || error instanceof DisconnectedError) return error.message;
-  return fallback;
-}
-
-/** Two Runtime answers with the same content (#503): poll replies are fresh objects every tick. */
-function sameValue(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
 type CanvasTab = "team" | "journey" | "graph";
 const CANVAS_TAB_KEY = "graphhelm.studio.canvas-tab";
 /** #583: the canvas tab the owner last chose this browser session, else Graph. */
@@ -188,7 +178,8 @@ export default function App({
   pollIntervalMs = 4000,
 }: AppProps = {}) {
   const clientRef = useRef<RuntimeClient | null>(null);
-  const toolsRef = useRef<RegisteredTools | null>(null);
+  /** Bumped by every connect and disconnect; a completion from an older connection discards itself. */
+  const connectionGeneration = useRef(0);
 
   const [runActionsOpen, setRunActionsOpen] = useState(false);
   /** #1156: resume was pressed without a graph file; the field says what it is waiting for. */
@@ -211,14 +202,6 @@ export default function App({
   const [runtimeDetailsRefreshError, setRuntimeDetailsRefreshError] = useState("");
   const runtimeDetailsRefreshClient = useRef<RuntimeClient | null>(null);
   /** What the rail calls this folder. Named by the operator; absent, the rail says what it can. */
-  const [project, setProject] = useState<string | null>(null);
-  const [projectPath, setProjectPath] = useState<string | null>(null);
-  const [onDemandLanes, setOnDemandLanes] = useState<string[]>([]);
-  const [projectIdentity, setProjectIdentity] = useState<string | null>(null);
-  const [removedRuns, setRemovedRuns] = useState<string[]>([]);
-  const removedRunsRef = useRef<string[]>([]);
-  removedRunsRef.current = removedRuns;
-  const [projectPreferenceNotice, setProjectPreferenceNotice] = useState("");
   const [openDocument, setOpenDocument] = useState<{executionId: string; reference: DocumentReference} | null>(null);
   const documentAttention = useRef<"clean" | "draft" | "pending_notice" | "uncertain_save">("clean");
   const documentDraftDirty = useRef(false);
@@ -226,24 +209,6 @@ export default function App({
   const [connecting, setConnecting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  /** Which composer is mid-send / holds the failure — "run", "talk" or "agent" — so an error
-   * lands only in the box that produced it. `null` means idle / no failure. */
-  const [saying, setSaying] = useState<string | null>(null);
-  const [sayError, setSayError] = useState<{ via: string; text: string } | null>(null);
-  /** Bumped when an attention action asks the message box to take the cursor. A nonce rather
-   * than a boolean: the second click must focus again even though the panel is already open. */
-  const [sayFocusNonce, setSayFocusNonce] = useState(0);
-  /** Who that action wants the message addressed to — the asker of the pending question, or
-   * `null` for the room. Set BEFORE the nonce bumps, so the composer retargets every time:
-   * five independent reviewers found the answer shipping as a DM to a stale recipient. */
-  const [sayTo, setSayTo] = useState<string | null>(null);
-  /** The question the next message ANSWERS, when the attention block chose the target. The
-   * ledger retires a debt only via a reply whose replyTo names the question's signalId — and
-   * the banner's own button used to send none, leaving the debt immortal from this UI (two
-   * blind round-4 reviewers). Rides only while the recipient is still that asker. */
-  const [sayAnswer, setSayAnswer] = useState<{ asker: string; signalId: string | null } | null>(
-    null,
-  );
   /** Disconnect asks twice: it erases the token and every stored board, and it sits one slip
    * away from Refresh. First click arms; the arm decays on its own. */
   const [leaving, setLeaving] = useState(false);
@@ -266,6 +231,10 @@ export default function App({
   const executionsRef = useRef<ExecutionSummary[]>([]);
   /** Restored rows outside the explicitly paged prefix must not expand background paging. */
   const restoredOutsidePage = useRef(new Set<string>());
+  const {
+    project, projectPath, onDemandLanes, removedRuns, removedRunsRef, projectPreferenceNotice,
+    openProject, resetProject, renameProject, removeRunFromView, restoreRun,
+  } = useProjectPrefs({ clientRef, executionsRef, restoredOutsidePage, setExecutions, listPageSize: LIST_PAGE_SIZE });
   useEffect(() => {
     executionsRef.current = executions;
   }, [executions]);
@@ -291,7 +260,6 @@ export default function App({
   const [replySuggestions, setReplySuggestions] = useState<{ key: string; reply: ReplySuggestions } | null>(null);
   const [replyLoading, setReplyLoading] = useState(false);
   const [replyIssue, setReplyIssue] = useState<{ key: string; text: string } | null>(null);
-  const [judgeRoute, setJudgeRoute] = useState("");
   const [events, setEvents] = useState<EventPage | null>(null);
   const [evidence, setEvidence] = useState<MutationEvidence | null>(null);
   /** The selected run's briefing (#1063/#1077): its NAME and OBJECTIVE live here and nowhere
@@ -372,23 +340,11 @@ export default function App({
   /** How wide the operator dragged the rail. Read once at mount, written on release. */
   const [railWidth, setRailWidth] = useState(loadRailWidth);
   const [addingProject, setAddingProject] = useState(false);
-  /** The Runtime's own model list, read once per draft. `null` while it is being read. */
-  const [routes, setRoutes] = useState<RouteChoice | null>(null);
-  const judgeRoutes = routes?.routes.filter((route) =>
-    route.enabled && route.provider === "typesafe" && route.transport === "direct_api",
-  ) ?? [];
-  const activeJudgeRoute = judgeRoutes.some((route) => route.id === judgeRoute)
-    ? judgeRoute
-    : judgeRoutes.length === 1 ? judgeRoutes[0].id : null;
-  // #1171: the models screen. `probes` starts empty on purpose - a route nobody has checked is
-  // rendered "not checked", never green, because a dot that started green would be a claim
-  // nobody measured.
-  const [modelsOpen, setModelsOpen] = useState(false);
-  const [modelsBusy, setModelsBusy] = useState(false);
-  const [modelsError, setModelsError] = useState("");
-  const [probes, setProbes] = useState<Record<string, ProbeState>>({});
-  const modelsSaveGeneration = useRef(0);
-  const probeGeneration = useRef(new Map<string, number>());
+  const {
+    routes, setRoutes, judgeRoutes, activeJudgeRoute, setJudgeRoute,
+    modelsOpen, setModelsOpen, modelsBusy, modelsError, setModelsError, probes, setProbes,
+    clearProbes, resetModels, saveModels, probeRoute,
+  } = useModelsRoutes({ clientRef, connectionGeneration });
   const [composeError, setComposeError] = useState("");
   /** The composer's error readable at a call (see `parkedDraft`; `draftRef` for the shape). */
   const composeErrorRef = useRef("");
@@ -400,8 +356,7 @@ export default function App({
   const [remedySeconds, setRemedySeconds] = useState<Record<string, string>>({});
   const [board, setBoard] = useState<BoardState>(emptyBoard);
 
-  const [webmcp, setWebmcp] = useState<WebMcpAvailability>("unavailable");
-  const [tools, setTools] = useState<string[]>([]);
+  const { webmcp, tools, registerTools, unregisterTools } = useWebMcp(modelContext);
   const [activity, setActivity] = useState<ToolActivity | null>(null);
 
   /** ONE identity for "the events, or none yet". Building `events?.events ?? []` inline handed
@@ -597,129 +552,10 @@ export default function App({
     })();
   }, [connected, executions, readBriefing]);
 
-  /**
-   * The live tail: the selected run is re-read on an interval so the conversation MOVES.
-   *
-   * A person sent a message from this page and the reply - already durable in the log - stayed
-   * invisible until they pressed refresh (2026-08-30). A chat that needs manual refresh is a log
-   * viewer wearing a chat costume. Quiet by design: no busy flag (a spinner every four seconds
-   * reads as the page being broken) and read failures are swallowed rather than surfaced (a
-   * transient miss on a background read is not something the operator can act on; the next tick
-   * either heals it or the explicit actions surface the real error).
-   */
-  /** Consecutive background reads that failed; three in a row flips the rail to "stale" —
-   * a dead Runtime was indistinguishable from a quiet room under a badge stuck on "live". */
-  const pollMisses = useRef(0);
-  const [stale, setStale] = useState(false);
-  const pollGeneration = useRef(0);
-  const railRefreshBusy = useRef(false);
-  const successfulRailRefreshes = useRef(0);
-  useEffect(() => {
-    if (!connected || selected === "") return;
-    const generation = ++pollGeneration.current;
-    let tickBusy = false;
-    let hiddenTicks = 0;
-    successfulRailRefreshes.current = 0;
-    pollMisses.current = 0;
-    setStale(false);
-    const timer = setInterval(() => {
-      const client = clientRef.current;
-      if (!client || tickBusy) return;
-      // #503: nobody reads a hidden tab; it polls every fourth tick until it is shown again.
-      if (document.visibilityState === "hidden") {
-        hiddenTicks += 1;
-        if (hiddenTicks % 4 !== 0) return;
-      } else {
-        hiddenTicks = 0;
-      }
-      tickBusy = true;
-      void (async () => {
-        try {
-          // Incremental: only what the log grew since the last read. A quiet tick leaves the
-          // events identity UNTOUCHED, so nothing downstream re-derives or re-fetches. The
-          // RAIL is re-read on the same tick: it claims to be a live triage surface, and a
-          // non-selected run flipping to needs-you stayed frozen until the next click
-          // (round-3, two reviewers).
-          const lastSeen = eventsRef.current?.events.at(-1)?.sequence ?? 0;
-          // Refresh page one on quiet ticks, then refresh the loaded prefix every fifth
-          // successful rail read. Deep pages still update without making every poll traverse
-          // the entire loaded rail (issue #1010, Card 2).
-          const loadedRows = executionsRef.current.filter((run) => !restoredOutsidePage.current.has(run.executionId)).length;
-          const readList = async (fullRefresh: boolean) => {
-            const first = await client.listExecutions({ limit: LIST_PAGE_SIZE });
-            const rows = [...first.executions];
-            let cursor = first.hasMore ? first.nextCursor : null;
-            if (fullRefresh) {
-              for (let hops = 1; cursor !== null && rows.length < loadedRows && hops < 50; hops += 1) {
-                const next = await client.listExecutions({ after: cursor, limit: LIST_PAGE_SIZE });
-                rows.push(...next.executions);
-                cursor = next.hasMore ? next.nextCursor : null;
-              }
-            }
-            return rows;
-          };
-          const [nextStatus, fresh] = await Promise.all([
-            client.getStatus(selected, true),
-            readEvents(client, selected, lastSeen),
-          ]);
-          // The connection too, not just the run: Runtime B can hold the same execution id, and
-          // a tick that started against A must not paint B (PR #467 review, P1).
-          if (pollGeneration.current !== generation || clientRef.current !== client || selectedRef.current !== selected) return;
-          observeStatus(nextStatus);
-          // The duplicate filter runs INSIDE the updater, against the array it appends to: a
-          // full reload landing mid-tick already contains this tick's events, and filtering
-          // against the tick-start cursor alone appended them twice (round-3 speedrunner).
-          setEvents((previous) => {
-            const base = previous?.events.at(-1)?.sequence ?? 0;
-            const novel = fresh.events.filter((event) => event.sequence > base);
-            if (novel.length === 0) return previous;
-            return previous === null
-              ? { head: fresh.head, events: novel }
-              : { head: fresh.head, events: [...previous.events, ...novel] };
-          });
-          pollMisses.current = 0;
-          setStale(false);
-          if (!railRefreshBusy.current) {
-            railRefreshBusy.current = true;
-            const fullRefreshDue = successfulRailRefreshes.current >= 4;
-            void readList(fullRefreshDue).then((listRows) => {
-              if (pollGeneration.current !== generation || clientRef.current !== client || selectedRef.current !== selected) return;
-              successfulRailRefreshes.current = fullRefreshDue ? 0 : successfulRailRefreshes.current + 1;
-              for (const run of listRows) restoredOutsidePage.current.delete(run.executionId);
-              setExecutions((previous) => {
-                const refreshed = new Map(listRows.map((run) => [run.executionId, run]));
-                const kept = previous.map((run) => {
-                  const fresh = refreshed.get(run.executionId);
-                  return fresh === undefined || sameValue(fresh, run) ? run : fresh;
-                });
-                const known = new Set(previous.map((run) => run.executionId));
-                const added = listRows.filter((run) => !known.has(run.executionId));
-                return added.length === 0 && kept.every((run, index) => run === previous[index])
-                  ? previous
-                  : [...added, ...kept];
-              });
-            }).catch(() => {
-              // Rail refresh is best-effort; it must not suppress the selected-run poll.
-            }).finally(() => {
-              railRefreshBusy.current = false;
-            });
-          }
-        } catch {
-          // A single transient miss stays quiet on purpose - but persistent failure must not:
-          // the screen aging under a "live" badge happened for real (server died mid-session).
-          if (pollGeneration.current !== generation || clientRef.current !== client) return;
-          pollMisses.current += 1;
-          if (pollMisses.current >= 3) setStale(true);
-        } finally {
-          tickBusy = false;
-        }
-      })();
-    }, pollIntervalMs);
-    return () => {
-      clearInterval(timer);
-      tickBusy = false;
-    };
-  }, [connected, selected, pollIntervalMs, readEvents, observeStatus]);
+  const { stale, markFresh, readNativeRequests } = useExecutionPoll({
+    connected, selected, pollIntervalMs, clientRef, selectedRef, eventsRef, executionsRef, restoredOutsidePage,
+    listPageSize: LIST_PAGE_SIZE, readEvents, observeStatus, setEvents, setExecutions,
+  });
 
   const loadList = useCallback(
     async (options: { append?: boolean; cursor?: string | null } = {}) => {
@@ -811,10 +647,7 @@ export default function App({
       // follow the operator across runs. `saying` in particular: cleared HERE, and the old
       // send's guarded finally then leaves it alone, so the new run's box never witnesses a
       // busy-to-idle edge that was not its own.
-      setSayTo(null);
-      setSayAnswer(null);
-      setSaying(null);
-      setSayError(null);
+      resetSay();
       setEvidence(null);
       // An armed cancel confirmation and half-typed budget seconds are questions about ONE
       // run; carrying either across a switch would aim them at the wrong one.
@@ -928,95 +761,6 @@ export default function App({
    * text on screen where they can fix and resend it - clearing first would lose what they wrote to
    * a refusal they did not cause.
    */
-  // #1171: the three writes the models screen makes. Each one re-reads the listing afterwards
-  // rather than patching local state from the reply: the manifest is a FILE the Runtime owns and
-  // another operator (or a CLI in another window) can have moved it between two of these calls.
-  const refreshRoutes = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    try {
-      const listing = await client.listRoutes();
-      if (clientRef.current === client) setRoutes(listing);
-    } catch {
-      // A listing that cannot be re-read leaves the previous one on screen. It is stale, and the
-      // next successful read replaces it; inventing an empty list here would report that the
-      // operator just deleted every provider they have.
-    }
-  }, []);
-
-  const saveModels = useCallback(async (draft: RouteDraft, key: KeyDraft | null): Promise<SaveOutcome> => {
-    const client = clientRef.current;
-    if (!client) return "route_saved_key_failed";
-    const generation = connectionGeneration.current;
-    const saveGeneration = ++modelsSaveGeneration.current;
-    const isCurrentSave = () =>
-      clientRef.current === client &&
-      connectionGeneration.current === generation &&
-      modelsSaveGeneration.current === saveGeneration;
-    probeGeneration.current.set(draft.id, (probeGeneration.current.get(draft.id) ?? 0) + 1);
-    for (const routeId of key?.usableBy ?? []) {
-      probeGeneration.current.set(routeId, (probeGeneration.current.get(routeId) ?? 0) + 1);
-    }
-    setModelsBusy(true);
-    setModelsError("");
-    try {
-      await client.setRoute(draft);
-      // A route may have landed before the connection changed, but a requested key that was not
-      // sent is never a saved operation. Keep the draft retryable and do not let this completion
-      // paint the replacement Runtime's Models panel.
-      if (!isCurrentSave()) return "route_saved_key_failed";
-      if (key !== null) {
-        try {
-          await client.setCredential(key);
-        } catch {
-          if (!isCurrentSave()) return "route_saved_key_failed";
-          await refreshRoutes();
-          if (!isCurrentSave()) return "route_saved_key_failed";
-          setProbes({});
-          setModelsError("The route was saved, but the API key was not stored. Retry to store it.");
-          return "route_saved_key_failed";
-        }
-      }
-      if (!isCurrentSave()) return "route_saved_key_failed";
-      await refreshRoutes();
-      if (!isCurrentSave()) return "route_saved_key_failed";
-      setProbes({});
-      return "saved";
-    } catch (error) {
-      if (isCurrentSave()) {
-        setModelsError(messageOf(error, "The model could not be saved."));
-      }
-      throw error;
-    } finally {
-      if (isCurrentSave()) setModelsBusy(false);
-    }
-  }, [refreshRoutes]);
-
-  const probeRoute = useCallback(async (routeId: string) => {
-    const client = clientRef.current;
-    if (!client) return;
-    const generation = connectionGeneration.current;
-    const requestGeneration = (probeGeneration.current.get(routeId) ?? 0) + 1;
-    probeGeneration.current.set(routeId, requestGeneration);
-    setProbes((current) => ({ ...current, [routeId]: { state: "checking" } }));
-    try {
-      const reply = await client.probeRoute(routeId);
-      if (clientRef.current !== client || connectionGeneration.current !== generation || probeGeneration.current.get(routeId) !== requestGeneration) return;
-      setProbes((current) => ({
-        ...current,
-        [routeId]:
-          reply.health === "available"
-            ? { state: "available" }
-            : { state: "refused", message: reply.health },
-      }));
-    } catch (error) {
-      if (clientRef.current !== client || connectionGeneration.current !== generation || probeGeneration.current.get(routeId) !== requestGeneration) return;
-      setProbes((current) => ({
-        ...current,
-        [routeId]: { state: "refused", message: messageOf(error, "the check could not run") },
-      }));
-    }
-  }, []);
   const sendDraft = useCallback(
     async (objective: string, route: string | null) => {
       const client = clientRef.current;
@@ -1345,8 +1089,7 @@ export default function App({
   const openWith = useCallback(
     async (client: RuntimeClient) => {
       clientRef.current = client;
-      setProbes({});
-      probeGeneration.current.clear();
+      clearProbes();
       const page = await client.listExecutions({ limit: LIST_PAGE_SIZE });
       // A disconnect while the opening read was in flight must not re-light the page: this
       // completion belongs to the connection it started, like every other (PR #467 review, P1).
@@ -1362,26 +1105,10 @@ export default function App({
       setNextCursor(page.hasMore ? page.nextCursor : null);
       setConnected(true);
 
-      const registration = registerStudioTools(
-        client,
-        {
-          onSelect: (id) => hooksRef.current.onSelect(id),
-          onMutation: (next) => hooksRef.current.onMutation(next),
-          onActivity: (next) => hooksRef.current.onActivity(next),
-        },
-        modelContext === undefined ? {} : { modelContext },
-      );
-      toolsRef.current = registration;
-      setWebmcp(registration.availability);
-      setTools(registration.names);
-      // A host whose registerTool settles ASYNCHRONOUSLY confirms its names only when `ready`
-      // settles - the snapshot above would then say "no site tools" forever on such a host
-      // (PR #467 review). Refreshed once settled, and only if this registration is still the
-      // page's current one: a disconnect in between must not resurrect dead chips.
-      void registration.ready.then(() => {
-        if (toolsRef.current !== registration) return;
-        setWebmcp(registration.availability);
-        setTools(registration.names);
+      registerTools(client, {
+        onSelect: (id) => hooksRef.current.onSelect(id),
+        onMutation: (next) => hooksRef.current.onMutation(next),
+        onActivity: (next) => hooksRef.current.onActivity(next),
       });
 
       // Read at connect, not only when a draft opens: the attention area needs to know whether a
@@ -1452,7 +1179,7 @@ export default function App({
         await loadExecution(first.executionId);
       }
     },
-    [loadExecution, modelContext],
+    [loadExecution, registerTools],
   );
 
   /** True once ANY connection attempt has begun this page-life - the boot auto-connect yields
@@ -1460,14 +1187,12 @@ export default function App({
    * continuation re-opening a session the operator just closed is the exact behavior the boot
    * effect's own comment forbids. */
   const connectionAttempted = useRef(false);
-  const connectionGeneration = useRef(0);
 
   const connect = useCallback(
     async (token: string, knownProject?: string | null, knownProjectPath?: string | null, knownOnDemand?: string[]) => {
       connectionAttempted.current = true;
       const generation = ++connectionGeneration.current;
-      pollMisses.current = 0;
-      setStale(false);
+      markFresh();
       setPreviousExit(null);
       setStartupTiming(null);
       setCurrentRun(null);
@@ -1496,14 +1221,7 @@ export default function App({
           roster = opened?.token === token ? opened.onDemandLanes ?? [] : [];
         }
         if (connectionGeneration.current !== generation) { client.dispose(); return; }
-        setProjectIdentity(identity);
-        setProject(identity === null ? null : loadProjectName(`${location.origin}:${identity}`, identity));
-        setProjectPath(folder);
-        setOnDemandLanes(roster);
-        const removed = identity === null ? [] : loadRemovedRuns(`${location.origin}:${identity}`);
-        removedRunsRef.current = removed;
-        setRemovedRuns(removed);
-        setProjectPreferenceNotice("");
+        openProject(identity, folder, roster);
         await openWith(client);
       } catch (reason) {
         if (connectionGeneration.current !== generation) { client.dispose(); return; }
@@ -1511,10 +1229,7 @@ export default function App({
         // throw) would otherwise leave the host holding registrations whose only removal handle
         // this overwrite discards - and the next connect's registerTool calls then collide with
         // them (PR #467 review). unregister() is idempotent and safe when nothing registered.
-        toolsRef.current?.unregister();
-        toolsRef.current = null;
-        setWebmcp("unavailable");
-        setTools([]);
+        unregisterTools();
         client.dispose();
         clientRef.current = null;
         setConnected(false);
@@ -1561,11 +1276,9 @@ export default function App({
   const disconnect = useCallback(() => {
     if (!closeProjectDocument()) return;
     connectionGeneration.current += 1;
-    pollMisses.current = 0;
-    setStale(false);
+    markFresh();
     setConnecting(false);
-    toolsRef.current?.unregister();
-    toolsRef.current = null;
+    unregisterTools();
     clientRef.current?.dispose();
     clientRef.current = null;
     clearBoards();
@@ -1580,11 +1293,7 @@ export default function App({
     setDraft(null);
     setDraftObjective("");
     setComposeError("");
-    setRoutes(null);
-    setModelsBusy(false);
-    setModelsError("");
-    setProbes({});
-    probeGeneration.current.clear();
+    resetModels();
     setBusy(false);
     setConnected(false);
     setPreviousExit(null);
@@ -1594,12 +1303,7 @@ export default function App({
     setRuntimeDetailsRefreshing(false);
     setRuntimeDetailsRefreshError("");
     runtimeDetailsRefreshClient.current = null;
-    setProject(null);
-    setProjectPath(null);
-    setProjectIdentity(null);
-    setRemovedRuns([]);
-    removedRunsRef.current = [];
-    setProjectPreferenceNotice("");
+    resetProject();
     setExecutions([]);
     restoredOutsidePage.current.clear();
     setNextCursor(null);
@@ -1618,8 +1322,6 @@ export default function App({
     setConfirmCancel(false);
     setRemedySeconds({});
     setActivity(null);
-    setTools([]);
-    setWebmcp("unavailable");
     setGraphFile("");
     graphFileRef.current = "";
     verificationGeneration.current += 1;
@@ -1663,7 +1365,6 @@ export default function App({
   useEffect(
     () => () => {
       connectionGeneration.current += 1;
-      toolsRef.current?.unregister();
       clientRef.current?.dispose();
     },
     [],
@@ -1766,85 +1467,19 @@ export default function App({
     [loadExecution, loadList, observeStatus],
   );
 
-  /** One immutable evidence read per connection and id, shared by the task board and conversation.
-   * Keep invalid-ID refusals; evict other failures so the operator's retry can recover. */
-  const evidenceReads = useRef<{ client: RuntimeClient | null; entries: Map<string, Promise<EvidenceContent>> }>({ client: null, entries: new Map() });
+  /** One immutable evidence read per connection and id, shared by the task board and conversation:
+   * the client keeps it (bounded, see `RuntimeClient.readEvidence`), so a new connection starts empty. */
   const openEvidence = useCallback(
     async (executionId: string, evidenceId: string): Promise<EvidenceContent> => {
       const client = clientRef.current;
       if (!client) throw new Error("This Studio session is not connected.");
-      if (evidenceReads.current.client !== client) evidenceReads.current = { client, entries: new Map() };
-      const key = `${executionId}\u0000${evidenceId}`;
-      let pending = evidenceReads.current.entries.get(key);
-      if (!pending) {
-        pending = client.readEvidence(executionId, evidenceId);
-        evidenceReads.current.entries.set(key, pending);
-        const fetched = pending;
-        fetched.catch((reason: unknown) => {
-          if (reason instanceof RuntimeError && reason.httpStatus === 400) return;
-          if (evidenceReads.current.entries.get(key) === fetched) evidenceReads.current.entries.delete(key);
-        });
-      }
-      return pending;
+      return client.readEvidence(executionId, evidenceId);
     },
     [],
   );
-  const [runTeamRead, setRunTeamRead] = useState<RunTeamReadModel | null>(null);
-  const [claudeTaskRead, setClaudeTaskRead] = useState<ClaudeTaskReadModel | null>(null);
-  // #391: the per-task graphs, folded from the run's `task.*` records.
-  const [taskGraphs, setTaskGraphs] = useState<({ executionId: string; tasks: TaskState[]; records: TaskEventRecord[] } & LaneFold) | null>(null);
-  const [historyFailure, setHistoryFailure] = useState<{ executionId: string; count: number } | null>(null);
-  const [historyRetry, setHistoryRetry] = useState(0);
-  // #1192: the run whose Runtime answered the tasks route with "no such route" (an older binary).
-  // The Team, Graph and Lanes views then say so in one sentence instead of drawing an empty board.
-  const [tasksRouteMissing, setTasksRouteMissing] = useState<string | null>(null);
-  // #1192: the run whose Runtime refused the tasks route (seen live: GHE013_READ_BUDGET_EXCEEDED
-  // on a run with 4307 task envelopes). The Runtime's own code and sentence are shown; "N records
-  // could not be read" is a different failure (envelopes that did not verify) and stays for that.
-  const [tasksRouteFailure, setTasksRouteFailure] = useState<{ executionId: string; text: string } | null>(null);
-  useEffect(() => {
-    if (!selected || events === null) {
-      setRunTeamRead(null);
-      setClaudeTaskRead(null);
-      return;
-    }
-    let cancelled = false;
-    const run = selected;
-    const client = clientRef.current;
-    setHistoryFailure(null);
-    setTasksRouteFailure((current) => (current?.executionId === run ? null : current));
-    void readRunTeam(run, eventList, openEvidence)
-      .then((result) => { if (!cancelled) setRunTeamRead(result); })
-      .catch(() => { if (!cancelled) setRunTeamRead({ executionId: run, members: [], messages: [], rejected: 0, unavailable: true }); });
-    void readClaudeTasks({ executionId: run, events: eventList, readEvidence: openEvidence })
-      .then((result) => { if (!cancelled) setClaudeTaskRead(result); })
-      .catch(() => { if (!cancelled) setClaudeTaskRead({ executionId: run, tasks: [], rejected: 1 }); });
-    // #1192 (plan A1): the task projection is the Runtime's (`GET /v1/executions/{id}/tasks`,
-    // #1149): one request returns the slices and the verified records; the browser opens no
-    // envelope and folds nothing. `rejected` is the Runtime's count of envelopes that did not
-    // verify, shown where the per-envelope read failures were. `null` is an older Runtime.
-    if (client === null) return () => { cancelled = true; };
-    void client.getTasks(run)
-      .then((reply) => {
-        if (cancelled || clientRef.current !== client) return;
-        if (reply === null) {
-          setTasksRouteMissing(run);
-          setTaskGraphs({ executionId: run, tasks: [], records: [], slices: [], routes: [] });
-          return;
-        }
-        setTasksRouteMissing((current) => (current === run ? null : current));
-        setTaskGraphs({ executionId: run, tasks: reply.tasks, records: reply.records, slices: reply.slices, routes: reply.routes, liveness: reply.liveness, leases: reply.leases });
-        setHistoryFailure(reply.rejected > 0 ? { executionId: run, count: reply.rejected } : null);
-      })
-      .catch((error: unknown) => { if (!cancelled && clientRef.current === client) {
-        const text = error instanceof RuntimeError && error.code !== ""
-          ? `${error.code} · ${error.diagnostics[0]?.message ?? error.message}`
-          : error instanceof Error ? error.message : String(error);
-        setTasksRouteFailure({ executionId: run, text });
-        setTaskGraphs((current) => (current?.executionId === run ? current : { executionId: run, tasks: [], records: [], slices: [], routes: [] }));
-      } });
-    return () => { cancelled = true; };
-  }, [selected, events, eventList, openEvidence, historyRetry]);
+  const {
+    runTeamRead, claudeTaskRead, taskGraphs, historyFailure, setHistoryRetry, tasksRouteMissing, tasksRouteFailure,
+  } = useTeamReads({ clientRef, selected, events, eventList, openEvidence });
 
   const readProjectDocument = useCallback(async (reference: DocumentReference) => {
     const client = clientRef.current;
@@ -1870,83 +1505,10 @@ export default function App({
   }, []);
   const documentSavingChanged = useCallback((saving: boolean) => { documentSaving.current = saving; }, []);
 
-  /** Says something into the selected run. Its own busy/error pair rather than the shared ones —
-   * and TAGGED BY SURFACE: with the run panel and a chat column open side by side, one shared
-   * error painted "could not be sent" into every composer at once, so the operator could not tell
-   * which of their messages actually failed (round-3 markets). */
-  const say = useCallback(
-    async (
-      message: string,
-      to: string | null = null,
-      via: string = "run",
-      replyTo: string | null = null,
-      kind: "operator_note" | "actor_alias" | "owner_refusal" = "operator_note",
-      task: string | null = null,
-    ): Promise<boolean> => {
-      const client = clientRef.current;
-      if (!client || selected === "") return false;
-      // The run this send belongs to. Its completion may only touch the say state while that
-      // run is still on screen: the rail stays selectable during a send, and an unconditional
-      // finally cleared `saying` under the NEXT run - whose box then read the busy-to-idle
-      // edge as ITS delivery and deleted a draft that was never sent (PR #467 review, P1).
-      const forRun = selected;
-      setSaying(via);
-      setSayError(null);
-      const fail = (text: string) => {
-        if (clientRef.current === client && selectedRef.current === forRun) {
-          setSayError({ via, text });
-        }
-      };
-      try {
-        const evidence = await client.signal(selected, message, {
-          ...(to === null ? {} : { to }),
-          // The receipt the ledger settles by. Without it, an answer sent through the banner's
-          // own button never retired the question it answered.
-          ...(replyTo === null ? {} : { replyTo }),
-          ...(task === null ? {} : { task }),
-          ...(kind === "operator_note" ? {} : { kind }),
-        });
-        if (evidence.result === "refused") {
-          fail(evidence.diagnostics[0]?.message ?? "The Runtime refused the message.");
-          return false;
-        }
-        if (evidence.result === "unknown") {
-          // Deliberately not reported as sent. The append may well have landed, and saying "sent"
-          // about something unverified is the one error that cannot be walked back later.
-          fail(
-            "The Runtime accepted this but it could not be confirmed in the log. Reload before sending it again.",
-          );
-          await loadExecution(selected);
-          return false;
-        }
-        await loadExecution(selected);
-        return true;
-      } catch (reason) {
-        fail(messageOf(reason, "The message could not be sent."));
-        return false;
-      } finally {
-        if (clientRef.current === client && selectedRef.current === forRun) setSaying(null);
-      }
-    },
-    [loadExecution, selected],
-  );
-
-  /** Spec 4.1: the owner names a bot. Recorded, so every Studio on this run reads the same name. */
-  const nameBot = useCallback(
-    (actorId: string, displayName: string) =>
-      say(JSON.stringify({ protocol: "graphhelm-actor-alias-v1", displayName }), actorId, "chat", null, "actor_alias"),
-    [say],
-  );
-  /** Spec 4.3: a final no to one question. Its replyTo retires the question like an answer does. */
-  const refuse = useCallback(
-    async (item: QuestionItem, reason?: string): Promise<boolean> => {
-      if (item.signalId === null) return false;
-      const trimmed = reason?.trim();
-      return say(JSON.stringify({ protocol: "graphhelm-owner-refusal-v1", ...(trimmed ? { reason: trimmed } : {}) }),
-        item.asker, "chat", item.signalId, "owner_refusal");
-    },
-    [say],
-  );
+  const {
+    saying, sayError, sayFocusNonce, setSayFocusNonce, sayTo, setSayTo, sayAnswer, setSayAnswer,
+    resetSay, say, nameBot, refuse,
+  } = useSay({ clientRef, selected, selectedRef, loadExecution });
 
   const linkNativePersona = useCallback(async (nodeId: string, chat: NativeChatSummary, charter: string) => {
     const client = clientRef.current;
@@ -2162,9 +1724,9 @@ export default function App({
 
   // THE LIVE TEAM (spec section 4): what needs the owner, who is on the team, the chat threads and
   // the "while you were away" card. All derived from the log; nothing here is a second source of truth.
-  const [clock, setClock] = useState(() => Date.now());
-  useEffect(() => { const timer = window.setInterval(() => setClock(Date.now()), 30_000); return () => window.clearInterval(timer); }, []);
-  useEffect(() => { setClock(Date.now()); }, [eventList]);
+  const ticking = useNow(30_000);
+  const grown = useMemo(() => Date.now(), [eventList]);
+  const clock = Math.max(ticking, grown);
   const nodeNames = useMemo(() => Object.fromEntries(model.nodes.flatMap((node) => node.declaredName ? [[node.id, node.declaredName] as const] : [])), [model]);
   const [nativeRequests, setNativeRequests] = useState<NativeChatRequest[] | null>(null);
   useEffect(() => {
@@ -2177,9 +1739,9 @@ export default function App({
       () => { if (active && clientRef.current === client && selectedRef.current === selected) setNativeRequests(null); },
     ); };
     read();
-    const timer = window.setInterval(read, pollIntervalMs);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [connected, selected, pollIntervalMs]);
+    readNativeRequests.current = read;
+    return () => { active = false; if (readNativeRequests.current === read) readNativeRequests.current = null; };
+  }, [connected, selected]);
   const needs = useMemo(() => needsYou({ status, stale, events: eventList, envelopes, pendingEnvelopeSequences: envelopes.__pendingEnvelopeSequences, nativeRequests,
     pendingDraftIds: durableProposals.map((proposal) => proposal.draftId), nodeNames, operatorId: OPERATOR_ACTOR.id,
     agentWorkRecorded: hasRecordedAgentWork, agentWorkPending }),
@@ -2203,47 +1765,8 @@ export default function App({
     }
     return last;
   }, [eventList]);
-  // Journeys are a project property (#332): one map folded from every run, read from
-  // `GET /v1/journeys` and kept across run switches. A run switch or a new jpd record re-reads it.
-  // Journey-flow review (#353): the flow sources and the owner's Approve. An approval bumps
-  // `flowsRevision`, which re-reads the flows and the journey map its compiled contracts feed.
-  const [flowsRevision, setFlowsRevision] = useState(0);
-  const [flowsRead, setFlowsRead] = useState<{ view: JourneyFlowsView | null; failure: string | null }>({ view: null, failure: null });
-  useEffect(() => {
-    const client = clientRef.current;
-    if (client === null) return undefined;
-    let cancelled = false;
-    Promise.resolve().then(() => client.journeyFlows()).then((view) => {
-      if (!cancelled) setFlowsRead({ view, failure: null });
-    }, (reason: unknown) => {
-      if (!cancelled) setFlowsRead((prior) => ({ view: prior.view, failure: prior.view === null ? messageOf(reason, "") : null }));
-    });
-    return () => { cancelled = true; };
-  }, [selected, lastJpdSequence, flowsRevision]);
-  const approveFlow = useCallback(async (flowId: string) => {
-    const client = clientRef.current;
-    if (client === null) throw new Error("Not connected to the Runtime.");
-    try {
-      await client.approveJourneyFlow(flowId);
-    } finally {
-      setFlowsRevision((revision) => revision + 1);
-    }
-  }, []);
-  const [journeysRead, setJourneysRead] = useState<{ view: JourneysView | null; failed: boolean; failure?: string } | null>(null);
-  useEffect(() => {
-    const client = clientRef.current;
-    if (client === null) return undefined;
-    let cancelled = false;
-    Promise.resolve().then(() => client.journeys()).then((view) => {
-      if (!cancelled) setJourneysRead({ view, failed: false });
-    }, (reason: unknown) => {
-      const failure = messageOf(reason, "");
-      if (!cancelled) setJourneysRead((prior) => prior !== null ? { ...prior, failed: prior.view === null, failure } : { view: null, failed: true, failure });
-    });
-    return () => { cancelled = true; };
-  }, [selected, lastJpdSequence, flowsRevision]);
-  const journeysView = journeysRead?.view ?? null;
-  const journeysFailed = journeysRead?.failed ?? false;
+  const { flowsRead, journeysView, journeysFailed, approveFlow, markFlowEdgeSafe, watchFlow, journeyRun } =
+    useJourneys({ clientRef, selectedRef, selected, lastJpdSequence });
   const beforeAfter = useMemo(() => beforeAfterPairs(captureDocuments(eventList, envelopes)), [eventList, envelopes]);
   // #446: captures whose envelopes are not opened yet; the before/after list is not empty, it is opening.
   const capturesOpening = useMemo(() => eventList.filter((event) => event.kind === "signal_recorded" && event.evidenceRefs.length > 0
@@ -2273,38 +1796,6 @@ export default function App({
 
   // #583: Graph is the default canvas tab; a tab the owner chose this browser session is kept.
   const [canvasTab, setCanvasTab] = useState<CanvasTab>(savedCanvasTab);
-  // #465: Watch plays a flow in a headed browser (#462); the call answers when the play ends, and
-  // the sessions read above lights the current step meanwhile.
-  // #519: opening a journey runs its test; the flowchart reads the run and its frames from here.
-  const journeyRun = useMemo<JourneyRunSource>(() => {
-    const client = () => {
-      if (clientRef.current === null) throw new Error("Not connected.");
-      return clientRef.current;
-    };
-    return {
-      // The selected run is where an approved flow's replay records its proof.
-      // `confirm` rides only on the owner's click on a held step (#548); an ordinary start is the
-      // three-argument call it always was.
-      start: async (flowId, force, confirm) => (confirm === true
-        ? client().startJourneyRun(flowId, force, selectedRef.current || undefined, true)
-        : client().startJourneyRun(flowId, force, selectedRef.current || undefined)),
-      read: async (flowId) => client().journeyRun(flowId),
-      screenFrame: async (flowId, screenId) => client().journeyScreenFrame(flowId, screenId),
-      liveFrame: async (sessionId, etag) => client().liveFrame(sessionId, etag),
-      history: async (flowId) => client().journeyHistory(flowId),
-      historyFrame: async (flowId, run, screenId) => client().journeyHistoryFrame(flowId, run, screenId),
-    };
-  }, []);
-  // #518: the owner marks a draft's skipped step safe; the flows are read again to show the mark.
-  const markFlowEdgeSafe = useCallback(async (flowId: string, edgeId: string) => {
-    const client = clientRef.current;
-    if (client === null) throw new Error("Not connected.");
-    try {
-      await client.markJourneyEdgeSafe(flowId, edgeId);
-    } finally {
-      setFlowsRevision((revision) => revision + 1);
-    }
-  }, []);
   // Graph tab: each journey's run, read through the same `journeyRun` the Journey tab's flowchart
   // uses (no new endpoint), and its screen frames through `journeyScreenFrame`.
   const [missionRuns, setMissionRuns] = useState<Record<string, JourneyRunView | null>>({});
@@ -2378,15 +1869,6 @@ export default function App({
     const timed: TimedTaskEvent[] = records.flatMap((r) => (r.occurredAt ? [{ ...r, at: r.occurredAt }] : []));
     return applySessionEnds(laneBars(timed, { slices: currentTaskGraphs?.slices ?? [], routes: currentTaskGraphs?.routes ?? [], liveness: currentTaskGraphs?.liveness, leases: currentTaskGraphs?.leases }, clock, 14 * 3_600_000), eventList);
   }, [currentTaskGraphs, clock, eventList]);
-  const watchFlow = useCallback(async (flowId: string, path?: string) => {
-    const client = clientRef.current;
-    if (client === null) throw new Error("Not connected.");
-    try {
-      await client.watchFlow(flowId, path);
-    } finally {
-      setFlowsRevision((revision) => revision + 1);
-    }
-  }, []);
   const [graphFileOpen, setGraphFileOpen] = useState(false);
   useEffect(() => { setCanvasTab(savedCanvasTab()); }, [selected]);
   const graphFileInput = useRef<HTMLInputElement>(null);
@@ -2433,6 +1915,13 @@ export default function App({
   const citationPanel = useRef<HTMLElement | null>(null);
   useEffect(() => { setCitedRecords(null); }, [selected]);
   useEffect(() => { if (citedRecords !== null) citationPanel.current?.focus(); }, [citedRecords]);
+  // The cited records, filtered once per citation or log change through a Set, not per render by
+  // a linear `includes` over every event.
+  const citedEvents = useMemo(() => {
+    if (citedRecords === null) return [];
+    const cited = new Set(citedRecords.sequences);
+    return eventList.filter((event) => cited.has(event.sequence));
+  }, [citedRecords, eventList]);
   const closeCitedRecords = () => { setCitedRecords(null); citationOrigin.current?.focus(); };
   const openRecords = (sequences: number[]) => {
     const first = sequences[0];
@@ -2623,78 +2112,10 @@ export default function App({
       ? (journalTopology ? topologyNote(journalTopology) : topologyError || topologyNote(visibleTopology))
       : "Verify the graph to connect work nodes.",
   ].join(" · ");
-  const runtimePreferenceKey = projectIdentity === null ? null : `${location.origin}:${projectIdentity}`;
   const visibleExecutions = executions.filter((run) => !removedRuns.includes(run.executionId));
-  const renameProject = (name: string): boolean => {
-    const valid = validProjectName(name);
-    if (valid === null) return false;
-    if (runtimePreferenceKey === null) {
-      setProject(valid);
-      setProjectPreferenceNotice("Project name changed for this browser view only; this Runtime has no public project identity.");
-      return true;
-    }
-    const saved = saveProjectName(runtimePreferenceKey, valid);
-    if (!saved) {
-      setProjectPreferenceNotice("Project name changed for this view only; browser storage is unavailable.");
-      setProject(valid);
-      return true;
-    }
-    setProject(valid);
-    setProjectPreferenceNotice("");
-    return true;
-  };
   const removeRun = (id: string) => {
-    const next = [...new Set([...removedRuns, id])];
-    setRemovedRuns(next);
-    if (runtimePreferenceKey === null) {
-      setProjectPreferenceNotice("Removed from this browser view only; this Runtime has no public project identity.");
-    } else if (!saveRemovedRuns(runtimePreferenceKey, next)) {
-      setProjectPreferenceNotice("Removed from this view only; browser storage is unavailable or full.");
-    }
+    removeRunFromView(id);
     if (selected === id) select("");
-  };
-  const restoreRun = async (id: string) => {
-    const client = clientRef.current;
-    if (!client) return;
-    if (!executionsRef.current.some((run) => run.executionId === id)) {
-      try {
-        // Read a bounded prefix to find the row. Keep the restore
-        // entry until the Runtime has actually returned that run; an absent row is not success.
-        let cursor: string | null = null;
-        let restored: ExecutionSummary | undefined;
-        for (let pageNumber = 0; pageNumber < 50; pageNumber += 1) {
-          const page = await client.listExecutions({ limit: LIST_PAGE_SIZE, after: cursor ?? undefined });
-          if (clientRef.current !== client) return;
-          cursor = page.hasMore ? page.nextCursor : null;
-          restored = page.executions.find((run) => run.executionId === id);
-          if (restored || cursor === null) break;
-        }
-        if (!restored) {
-          setProjectPreferenceNotice(cursor === null
-            ? "This run is not in the Runtime list. It remains in the removed list; try restoring it again later."
-            : "This run was not found in the first 50 pages. It remains in the removed list; try restoring it again later.");
-          return;
-        }
-        // Restoring one run must not page every traversed row into the live rail: polling
-        // follows its loaded row count. Preserve concurrent rows and the Show more cursor.
-        const target = restored;
-        if (!executionsRef.current.some((run) => run.executionId === id)) restoredOutsidePage.current.add(id);
-        setExecutions((previous) => previous.some((run) => run.executionId === id)
-          ? previous
-          : [...previous, target]);
-      } catch {
-        if (clientRef.current === client) setProjectPreferenceNotice("The run could not be loaded. It remains in the removed list; try restoring it again.");
-        return;
-      }
-    }
-    const next = removedRunsRef.current.filter((runId) => runId !== id);
-    removedRunsRef.current = next;
-    setRemovedRuns(next);
-    if (runtimePreferenceKey === null) {
-      setProjectPreferenceNotice("Restored for this browser view only; this Runtime has no public project identity.");
-    } else if (!saveRemovedRuns(runtimePreferenceKey, next)) {
-      setProjectPreferenceNotice("Restored for this view only; browser storage is unavailable or full.");
-    }
   };
 
   const conversationVisible = talkOpen && (draft !== null || !["node", "agent", "talk"].includes(focus.kind));
@@ -3200,7 +2621,7 @@ export default function App({
               <section ref={citationPanel} className="journey-detail cited-records" role="dialog" aria-modal="false" aria-label="Cited records" tabIndex={-1}
                 onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); closeCitedRecords(); } }}>
                 <div className="journey-detail-head"><h2>Cited records</h2><button type="button" onClick={closeCitedRecords}>Close cited records</button></div>
-                <Thread events={eventList.filter((event) => citedRecords.sequences.includes(event.sequence))} executionId={selected} openEvidence={openEvidence}
+                <Thread events={citedEvents} executionId={selected} openEvidence={openEvidence}
                   emptyMessage="The cited records are not in the loaded history." />
               </section>
             )}

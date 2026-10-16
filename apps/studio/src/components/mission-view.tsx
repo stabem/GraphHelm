@@ -1,5 +1,6 @@
 import "./mission-view.css";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useNow } from "../runtime/use-now";
 import type { JourneyFlowView, JourneyFlowsView, JourneyRunView, JourneyView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
 import type { TaskEventRecord } from "../runtime/team-tasks";
@@ -331,15 +332,11 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   useEffect(() => { if (focusJourneyId !== null) { setProofJid(focusJourneyId); setSub("proof"); } }, [focusJourneyId]);
   const [flowError, setFlowError] = useState<string | null>(null);
   const [flowBusy, setFlowBusy] = useState(false);
-  // #591: one shared one-second clock for the live card timers, anchored on the `now` the parent gave.
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const start = Date.now();
-    setTick(0);
-    const id = setInterval(() => setTick(Date.now() - start), 1000);
-    return () => clearInterval(id);
-  }, [now]);
-  const live = now + tick;
+  // #591: one one-second clock for the live card timers (the Studio's shared one, #1380), anchored
+  // on the `now` the parent gave: the cards advance by the time since that `now` arrived.
+  const anchor = useMemo(() => Date.now(), [now]);
+  const clock = useNow(1000);
+  const live = now + Math.max(0, clock - anchor);
   const [unlinkedOpen, setUnlinkedOpen] = useState(false);
   const missions = useMemo(() => journeys.map((j) => {
     const flow = flowForContract(flows?.flows ?? [], j.contractId);

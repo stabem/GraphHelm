@@ -1,5 +1,4 @@
 use serde::Serialize;
-use serde_json::Value;
 
 use crate::EventRepositoryError;
 use graphhelm_protocols::EventEnvelope;
@@ -34,26 +33,10 @@ pub(crate) fn serialized_len_bounded(
     Ok(writer.count)
 }
 
+/// #1378: the workspace's one canonical writer over the serialized value.
 pub(crate) fn canonical_bytes(value: &impl Serialize) -> Result<Vec<u8>, EventRepositoryError> {
     let value = serde_json::to_value(value).map_err(|_| EventRepositoryError::Invalid)?;
-    serde_json::to_vec(&canonical_value(value)).map_err(|_| EventRepositoryError::Invalid)
-}
-
-fn canonical_value(value: Value) -> Value {
-    match value {
-        Value::Array(values) => Value::Array(values.into_iter().map(canonical_value).collect()),
-        Value::Object(values) => {
-            let mut entries = values.into_iter().collect::<Vec<_>>();
-            entries.sort_by(|left, right| left.0.cmp(&right.0));
-            Value::Object(
-                entries
-                    .into_iter()
-                    .map(|(key, value)| (key, canonical_value(value)))
-                    .collect(),
-            )
-        }
-        scalar => scalar,
-    }
+    Ok(graphhelm_protocols::canonical::canonical_bytes(&value))
 }
 
 // #1272: the one pair, re-exported under the names this crate already uses.
@@ -78,6 +61,38 @@ pub(crate) fn event_hash(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
+
+    /// #1378: the event chain hash is persisted, so its canonical bytes are history. Every event
+    /// in the committed fixture store is re-hashed here and must equal the `eventHash` it was
+    /// written with (an absolute golden: these bytes came from the store, not from this code).
+    #[test]
+    fn event_hash_reproduces_every_persisted_hash_of_the_fixture_store() {
+        let journal = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/graph-version-published/events/journal.jsonl"),
+        )
+        .expect("fixture journal");
+        let mut checked = 0;
+        for line in journal.lines().filter(|line| !line.trim().is_empty()) {
+            let record: Value = serde_json::from_str(line).unwrap();
+            for event in record["events"].as_array().into_iter().flatten() {
+                let envelope: EventEnvelope = serde_json::from_value(event.clone()).unwrap();
+                let recomputed = event_hash(&envelope, envelope.previous_hash.as_str()).unwrap();
+                assert_eq!(
+                    recomputed,
+                    envelope.event_hash.as_str(),
+                    "{}",
+                    envelope.event_id
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked > 0,
+            "HARNESS-BROKE: no event in the fixture journal"
+        );
+    }
 
     #[test]
     fn bounded_counter_is_inclusive_at_exact_serialized_byte_limits() {

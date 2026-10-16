@@ -12,7 +12,8 @@ vocabulary (criterion, defect, observer, obligation, deletion record) is Keel's.
 
 ## What this skill is, and what it is not
 
-A test is a proof instrument (Keel Law 3): it exists to kill a named defect for one criterion.
+A test is a proof instrument (Keel, `keel/KEEL_EXEC.md` where the project has it): it exists to
+observe a promise or kill a named failure, never to restate the code.
 A test that cannot fail for a credible reason, or fails only when the test itself changes, costs
 run time, review time and read tokens and buys no evidence. This skill decides which tests earn
 their cost. It enforces nothing and edits no rules file; the reviewer reads its output.
@@ -92,7 +93,7 @@ Prune one subsystem per pull request; never sweep the whole tree. Each removed t
 | Validation | The command that runs the covering observer, and its result. |
 
 A test may be removed only when its record names the observer that still covers its obligation
-(Keel Law 3). No record, no removal. A count reduction alone is not a quality win.
+(Keel). No record, no removal. A count reduction alone is not a quality win.
 
 Procedure: do not edit while tests run; run the covering observers after the removal and name the
 command and result; read the diff's stat so nothing outside the subsystem moved; hand off to one

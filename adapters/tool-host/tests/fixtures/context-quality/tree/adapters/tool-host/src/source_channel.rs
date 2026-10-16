@@ -483,7 +483,7 @@ mod tests {
         let link = holder.path().join("link");
 
         #[cfg(windows)]
-        let made = graphhelm_process::command("cmd")
+        let made = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J"])
             .arg(&link)
             .arg(target.path())

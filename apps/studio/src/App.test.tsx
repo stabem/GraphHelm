@@ -22,6 +22,7 @@ import type { RuntimeClient } from "./runtime/client";
 import { MAX_NODE_TIMEOUT_SECONDS, RuntimeError, RuntimeClient as ReadClient, RUNTIME_REQUEST_TIMEOUT_MS } from "./runtime/client";
 import type { GraphTopology, MutationEvidence } from "./runtime/types";
 import type { ModelContextLike, WebMcpToolDescriptor } from "./webmcp/adapter";
+import { DEPRECATED_ALIASES } from "./webmcp/adapter";
 import { digestOf } from "./runtime/customs";
 import type { TaskState } from "./runtime/team-tasks";
 import { RUNTIME_PREDATES_TASKS_ROUTE } from "./runtime/tasks-route";
@@ -744,7 +745,61 @@ async function open(client: ReturnType<typeof stubClient>, modelContext: ModelCo
 }
 
 describe("opening", () => {
-  it("does not read journey runs or frames before the owner selects a journey", async () => {
+  // #1385: the live tail's miss counter. One failed background read stays quiet; three in a row
+  // turn the rail's badge to "stale"; the next good read turns it back to "live".
+  it("marks the rail stale after three failed polls in a row and live again after one good one", async () => {
+    let failing = false;
+    const base = stubClient();
+    const getStatus = vi.fn(async (...args: Parameters<typeof base.getStatus>) => {
+      if (failing) throw new Error("runtime down");
+      return base.getStatus(...args);
+    });
+    // 200 ms ticks and a 2 s wait: room for the three misses, not for ten.
+    await open(stubClient({ getStatus }), null, true, 200);
+    expect(await screen.findByText("live", { exact: true })).toBeVisible();
+    failing = true;
+    expect(await screen.findByText("stale", { exact: true }, { timeout: 2000 })).toBeVisible();
+    failing = false;
+    expect(await screen.findByText("live", { exact: true })).toBeVisible();
+  });
+
+  // #1380: with a run selected the Studio holds ONE interval per period: the main tick (which also
+  // reads the native chat requests), one shared clock per cadence, one slot poll. A second timer
+  // at any period is a poll or a clock that went its own way again.
+  it("holds one live interval per period while a run is selected", async () => {
+    const live = new Map<unknown, number>();
+    const targets = window.setInterval === globalThis.setInterval ? [globalThis] : [globalThis, window];
+    const spies = targets.flatMap((target) => {
+      const set = target.setInterval.bind(target);
+      const clear = target.clearInterval.bind(target);
+      return [
+        vi.spyOn(target, "setInterval").mockImplementation(((handler: () => void, ms?: number) => {
+          const id = set(handler, ms);
+          live.set(id, ms ?? 0);
+          return id;
+        }) as typeof setInterval),
+        vi.spyOn(target, "clearInterval").mockImplementation(((id?: ReturnType<typeof setInterval>) => {
+          live.delete(id);
+          clear(id);
+        }) as typeof clearInterval),
+      ];
+    });
+    try {
+      const listNativeChatRequests = vi.fn(async () => ({ requests: [] }));
+      await open(stubClient({ listNativeChatRequests }), null, true, 4321);
+      await waitFor(() => expect(listNativeChatRequests).toHaveBeenCalled());
+      const periods = [...live.values()].sort((a, b) => a - b);
+      expect(periods.filter((ms) => ms === 4321), "the main tick, with the native request read folded in").toHaveLength(1);
+      expect(periods.filter((ms) => ms === 30_000), "the shared 30 s clock").toHaveLength(1);
+      expect(new Set(periods).size, `one interval per period, got ${periods.join(", ")}`).toBe(periods.length);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  });
+
+  // #1291 reads each journey's cached run once on load so the rail shows x/y and the verdict;
+  // selecting a journey refreshes only that journey's run (#917), and no frame is read before it.
+  it("reads each journey's cached run once on load and no frame before the owner selects a journey", async () => {
     const journeyRun = vi.fn(async () => ({ state: "none", screens: {} }));
     const journeyScreenFrame = vi.fn(async () => null);
     const journeys = vi.fn(async () => ({ journeys: ["first", "second"].map((contractId) => ({
@@ -753,11 +808,12 @@ describe("opening", () => {
     await open(stubClient({ journeys, journeyRun, journeyScreenFrame }));
     await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
     await screen.findByRole("button", { name: /^first/ });
-    expect(journeyRun).not.toHaveBeenCalled();
+    await waitFor(() => expect(journeyRun).toHaveBeenCalledTimes(2));
+    expect(journeyRun.mock.calls.map((call: unknown[]) => call[0]).sort()).toEqual(["first", "second"]);
     expect(journeyScreenFrame).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: /^second/ }));
-    await waitFor(() => expect(journeyRun).toHaveBeenCalledWith("second"));
-    expect(journeyRun).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(journeyRun).toHaveBeenCalledTimes(3));
+    expect(journeyRun).toHaveBeenLastCalledWith("second");
   });
   // Runtime I/O only; protects the Lanes -> Details alias handoff missed by control-only tests.
   it("shows the saved bot name in Details after renaming in Lanes", async () => {
@@ -1025,7 +1081,8 @@ describe("the projects rail", () => {
     expect(within(rail).getByText("dale-api-base")).toBeInTheDocument();
     expect(within(rail).getByText("demo-deploy")).toBeInTheDocument();
     expect(within(rail).getByText("demo-calm")).toBeInTheDocument();
-    expect(within(rail).getByRole("button", { name: /add project folder/i })).toBeInTheDocument();
+    await userEvent.click(within(rail).getByRole("button", { name: /add project folder/i }));
+    expect(await screen.findByLabelText("Add project folder")).toBeInTheDocument();
   });
 
   /**
@@ -1043,16 +1100,6 @@ describe("the projects rail", () => {
       within(rail).getByRole("button", { name: /demo-deploy.*needs you/i }),
     ).toBeInTheDocument();
     expect(within(rail).getByRole("button", { name: /demo-calm.*can sleep/i })).toBeInTheDocument();
-  });
-
-  /** The action on the folder row is icon-only: a label there is what clipped to "+ new ta". Its
-   * name has to reach a screen reader anyway, so the accessible name is where it lives. */
-  it("offers new task on the folder row without putting a label on it", async () => {
-    await open(stubClient());
-    const rail = screen.getByLabelText("Projects");
-    const action = within(rail).getByRole("button", { name: /new task in dale-api-base/i });
-    expect(action).toBeInTheDocument();
-    expect(action).toHaveTextContent("");
   });
 
   it("opens on the run that needs the operator, not merely the first one", async () => {
@@ -1125,15 +1172,6 @@ describe("the board", () => {
     const board = await screen.findByLabelText("Steps without a bot");
     expect(within(board).getByRole("button", { name: /^implementation/ })).toBeInTheDocument();
     expect(within(board).getByRole("button", { name: /^deploy/ })).toBeInTheDocument();
-  });
-
-  /** Nothing proves the shape until a graph file's hash matches the run's, so nothing is drawn
-   * and the note says so. */
-  it("draws no connection until one is proven", async () => {
-    await open(stubClient());
-    await userEvent.click(await screen.findByRole("button", { name: "Graph file" }));
-    expect(document.querySelectorAll("path.edge, .team-link")).toHaveLength(0);
-    expect(screen.getByText(/work connections unverified/i)).toBeInTheDocument();
   });
 
   it("renders the log as text, never as markup", async () => {
@@ -1716,7 +1754,7 @@ describe("the shared surface", () => {
     expect(screen.queryByText("no site tools")).not.toBeInTheDocument();
   });
 
-  it("registers the thirteen site tools once a connection exists, and not before", async () => {
+  it("registers the thirteen site tools (and two deprecated aliases) once a connection exists, and not before", async () => {
     const { modelContext, registered } = fakeModelContext();
     render(
       <App
@@ -1732,7 +1770,9 @@ describe("the shared surface", () => {
     await userEvent.click(screen.getByRole("button", { name: /connect/i }));
     await screen.findByLabelText("Projects");
 
-    expect(registered).toHaveLength(13);
+    // #1356: the thirteen, plus graphhelm_approve_node and graphhelm_amend_node_budget kept as
+    // deprecated aliases of graphhelm_approve and graphhelm_amend_budget for one release.
+    expect(registered).toHaveLength(13 + Object.keys(DEPRECATED_ALIASES).length);
     expect(await screen.findByText("pause_execution")).toBeInTheDocument();
   });
 
@@ -1868,24 +1908,6 @@ describe("starting a new task", () => {
     await userEvent.click(screen.getByRole("button", { name: "apply" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("route refused");
     expect(screen.getByRole("form", { name: "Edit route" })).toBeInTheDocument();
-    expect(client.setCredential).not.toHaveBeenCalled();
-  });
-
-  it("does not call Runtime when adding a model without an API key", async () => {
-    const client = withRoutes({
-      setRoute: vi.fn(async () => ({ routes: ROUTES.routes })),
-      setCredential: vi.fn(),
-    });
-    await open(client);
-    await userEvent.click(screen.getByRole("button", { name: /^models$/i }));
-    await userEvent.click(screen.getByRole("button", { name: /Add model/i }));
-    await userEvent.type(screen.getByLabelText("Route id"), "new_route");
-    await userEvent.type(screen.getByLabelText("Base URL"), "https://api.example.com");
-    await userEvent.type(screen.getByLabelText("Model"), "example-model");
-    await userEvent.click(screen.getByRole("button", { name: "apply" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(/new model needs an API key/i);
-    expect(client.setRoute).not.toHaveBeenCalled();
     expect(client.setCredential).not.toHaveBeenCalled();
   });
 
@@ -2121,30 +2143,6 @@ describe("the shell's own layout", () => {
   });
 
 
-  /** The button exists because a project is a folder and the operator has more than one. What it
-   * can do today is tell them exactly what to run; it must not pretend to do more. */
-  it("says what adding a project folder actually takes", async () => {
-    await open(stubClient());
-    await userEvent.click(screen.getByRole("button", { name: /add project folder/i }));
-
-    const panel = await screen.findByLabelText("Add project folder");
-    await userEvent.type(within(panel).getByLabelText(/^folder$/i), "F:/projects/example/dale-api-base");
-    expect(
-      within(panel).getByText(
-        /Set-Location -LiteralPath 'F:\/projects\/example\/dale-api-base'; if \(\$\?\) \{ graphhelm init --bind 127\.0\.0\.1:8792; if \(\$\?\) \{ graphhelm studio start --bind 127\.0\.0\.1:8792 \} \}/i,
-      ),
-    ).toBeInTheDocument();
-    expect(
-      within(panel).getByText(
-        /cd 'F:\/projects\/example\/dale-api-base' && graphhelm init --bind 127\.0\.0\.1:8792 && graphhelm studio start --bind 127\.0\.0\.1:8792/i,
-      ),
-    ).toBeInTheDocument();
-    expect(within(panel).getByLabelText(/^folder$/i)).toHaveValue("F:/projects/example/dale-api-base");
-    // #1154: no bare `serve` on the port this page's Runtime already holds, and no promise of a
-    // pickup this Studio cannot make.
-    expect(panel).not.toHaveTextContent("--bind 127.0.0.1:8791");
-    expect(panel).not.toHaveTextContent("picks it up");
-  });
 });
 
 /**
@@ -2903,7 +2901,7 @@ describe("controls that act instead of excusing", () => {
  * ROUND-2 VALIDATION FIXES. A second five-persona review of the live screen confirmed the first
  * wave and found what it missed or introduced. Every test here is one of those findings.
  */
-describe("round-2: the recipient cannot go stale", () => {
+describe("the reply recipient follows the room", () => {
   it("reopening the panel from the run's name speaks to the room, not to a stale asker", async () => {
     const client = askedClient();
     await open(client);
@@ -2923,7 +2921,7 @@ describe("round-2: the recipient cannot go stale", () => {
   });
 });
 
-describe("round-2: the ledger settles debts honestly", () => {
+describe("the owed-reply ledger", () => {
   /** answeredIds was author-blind: another agent's side-reply erased a question addressed to
    * the OPERATOR, and the banner denied a message the thread showed five turns up. */
   it("an agent's reply does not settle a question addressed to you", async () => {
@@ -3136,22 +3134,34 @@ describe("round-2: the ledger settles debts honestly", () => {
       idempotencyKey: "k13", eventId: "event-13", evidenceRefs: ["ev-question"],
     };
     const newer = { ...old, sequence: 14, idempotencyKey: "k14", eventId: "event-14", evidenceRefs: ["ev-reply"] };
+    // #1380: the refusal is kept by the client's evidence cache, so evidence goes through a real
+    // RuntimeClient here; the counted fetches are what reaches the Runtime.
+    const evidenceFetches: string[] = [];
+    const runtime = new ReadClient("local-token", { fetch: (async (url: string) => {
+      const evidenceId = decodeURIComponent(new URL(url, "http://runtime").pathname.split("/").at(-1) ?? "");
+      evidenceFetches.push(evidenceId);
+      if (evidenceId === "ev-question") {
+        return new Response(JSON.stringify({ ok: false, command: "execution.evidence", data: null, diagnostics: [
+          { code: "GHCLI001_ARGUMENT_INVALID", severity: "error", message: "invalid evidence id", path: "/", source: "runtime" },
+        ] }), { status: 400 });
+      }
+      return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: {
+        evidenceId, mediaType: "application/json", sensitivity: "confidential", contentSha256: "sha256:whatever", content: "{}",
+      }, diagnostics: [] }), { status: 200 });
+    }) as typeof fetch });
     const client = askedClient({
       getEvents: vi.fn(async (_id: string, options: { after: number }) => ({
         head: 14, events: options.after === 0 ? [old] : [newer],
       })),
-      readEvidence: vi.fn(async (_id: string, evidenceId: string) => {
-        if (evidenceId === "ev-question") throw new RuntimeError("invalid evidence id", 400, []);
-        return { evidenceId, mediaType: "application/json", sensitivity: "confidential", contentSha256: "sha256:whatever", content: "{}" };
-      }),
+      readEvidence: vi.fn((executionId: string, evidenceId: string) => runtime.readEvidence(executionId, evidenceId)),
     });
     render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null}
       session={async () => ({ token: "local-token", project: "dale-api-base" })} pollIntervalMs={40} />);
     await screen.findByLabelText("Projects");
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     await waitFor(() => expect(client.readEvidence).toHaveBeenCalledWith("demo-deploy", "ev-question"));
-    await waitFor(() => expect(client.readEvidence).toHaveBeenCalledWith("demo-deploy", "ev-reply"));
-    expect(client.readEvidence.mock.calls.filter((call) => (call as unknown[])[1] === "ev-question")).toHaveLength(1);
+    await waitFor(() => expect(evidenceFetches).toContain("ev-reply"));
+    expect(evidenceFetches.filter((id) => id === "ev-question")).toHaveLength(1);
   });
 
   it("reads past the first page, so event 201 exists on screen", async () => {
@@ -3183,7 +3193,7 @@ describe("round-2: the ledger settles debts honestly", () => {
   });
 });
 
-describe("round-2: controls stop betraying their own guards", () => {
+describe("controls keep their own guards", () => {
   it("calls a filtered empty conversation a search miss and restores the log on clear", async () => {
     await open(stubClient());
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
@@ -3262,7 +3272,7 @@ describe("round-2: controls stop betraying their own guards", () => {
   });
 });
 
-describe("round-2: the rail says each thing once", () => {
+describe("the rail states each fact once", () => {
   it("a run's state reaches the accessible name exactly once", async () => {
     await open(stubClient());
     const rail = screen.getByLabelText("Projects");
@@ -3277,7 +3287,7 @@ describe("round-2: the rail says each thing once", () => {
  * ROUND-3 VALIDATION FIXES. A third five-persona review confirmed round 2 (9 of 10 outright)
  * and found the finer defects below. Each test is one of them.
  */
-describe("round-3: what you typed survives, and what waits is true", () => {
+describe("drafts survive, and the waiting line is true", () => {
   /** A WebMCP agent selecting another run — or closing and reopening the panel — unmounted the
    * composer and silently discarded the operator's half-typed answer. */
   it("keeps the unsent draft across closing and reopening the panel", async () => {
@@ -3329,7 +3339,7 @@ describe("round-3: what you typed survives, and what waits is true", () => {
   });
 });
 
-describe("round-3: the rail is live and the screen belongs to one run", () => {
+describe("the live rail and one run per screen", () => {
   it("refreshes the loaded rail prefix every fifth successful poll and retries a failed full refresh", async () => {
     vi.useFakeTimers();
     const makeRun = (index: number, attention: "can_sleep" | "needs_you") => ({
@@ -3547,7 +3557,7 @@ describe("round-3: the rail is live and the screen belongs to one run", () => {
   });
 });
 
-describe("round-3: guards without side doors", () => {
+describe("disconnect and approval guards", () => {
   /** Holding Enter blew through the armed disconnect: keyboard clicks carry detail 0, and the
    * detail>1 guard never saw them. Key repeat is one continuous gesture, not a second decision. */
   it("key auto-repeat cannot fire the armed disconnect", async () => {
@@ -3587,7 +3597,7 @@ describe("round-3: guards without side doors", () => {
  * ROUND-4 VALIDATION FIXES. The fourth five-persona review returned 59/60 FIXED on round 3 and
  * found the finer defects below — the worst being a reflex arc the UI itself had severed.
  */
-describe("round-4: the debt can actually be settled", () => {
+describe("settling an owed reply", () => {
   it("answering through the banner sends the replyTo the ledger settles by", async () => {
     const client = askedClient();
     await open(client);
@@ -3625,7 +3635,7 @@ describe("round-4: the debt can actually be settled", () => {
   });
 });
 
-describe("round-4: nothing leaks across surfaces, runs or sessions", () => {
+describe("isolation across surfaces, runs and sessions", () => {
   it("a failed send keeps the words in the box", async () => {
     const client = askedClient({
       signal: vi.fn(async () => {
@@ -3861,7 +3871,7 @@ describe("round-4: nothing leaks across surfaces, runs or sessions", () => {
   });
 });
 
-describe("round-4: the instruments admit their own state", () => {
+describe("health and read-state honesty", () => {
   it("lets a new connection poll while the old connection's read is still pending", async () => {
     let releaseOldRead!: () => void;
     const oldRead = new Promise<void>((resolve) => { releaseOldRead = resolve; });

@@ -9,6 +9,11 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy();
         if path.is_dir() {
+            // A frozen copy of source read as data by the context-quality test, never compiled or
+            // run; its bytes are hashed, so it keeps the spawn it was copied with (#1374).
+            if path.ends_with("tests/fixtures/context-quality/tree") {
+                continue;
+            }
             if !matches!(
                 name.as_ref(),
                 "target" | "node_modules" | ".git" | ".claude"

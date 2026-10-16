@@ -5,6 +5,7 @@
  * reached screen's real frame. A held destructive step (#548) shows the same confirm as JourneyFlows.
  */
 import { useEffect, useRef, useState } from "react";
+import { useNow } from "../runtime/use-now";
 
 import type { JourneyFlowView, JourneyRunView, JourneyView } from "../runtime/types";
 import { testFrames } from "../runtime/test-frames";
@@ -66,12 +67,7 @@ export function ProofRun({ journey, flow, source, selected, onSelect, frameUrl, 
   useEffect(() => { if (!pinned && currentIdx >= 0) onSelect(currentIdx); }, [pinned, currentIdx, onSelect]);
   const reported = useRef<JourneyRunView | null>(null);
   useEffect(() => { if (run !== null && run !== reported.current) { reported.current = run; onRun?.(run); } }, [run, onRun]);
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!running) return undefined;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [running]);
+  const now = useNow(running ? 1000 : null);
 
   const count = (status: string) => frames.filter((f) => f.status === status).length;
   const preview = run?.kind === "preview" ? <span className="tc-run-kind">Preview — not proof</span> : null;

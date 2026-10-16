@@ -1,5 +1,5 @@
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -93,28 +93,19 @@ fn regular(path: &Path) -> std::io::Result<()> {
     }
 }
 
+/// #1326: the shared atomic write with both strengths this record had (owner-only on unix, and a
+/// target that exists must be a regular file); the JSON and its newline are composed here.
 fn write(path: &Path, record: &Record) -> std::io::Result<()> {
-    regular(path)?;
-    let temp = path.with_extension(format!("{}.tmp", std::process::id()));
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&temp)?;
-    let result = (|| {
-        serde_json::to_writer(&mut file, record)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&temp, path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temp);
-    }
-    result
+    let mut bytes = serde_json::to_vec(record)?;
+    bytes.push(b'\n');
+    crate::commands::atomic::atomic_write_with(
+        path,
+        &bytes,
+        crate::commands::atomic::Mode {
+            private: true,
+            regular_only: true,
+        },
+    )
 }
 
 impl Lifecycle {

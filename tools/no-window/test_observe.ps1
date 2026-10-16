@@ -1,4 +1,9 @@
+param([switch]$RedParent)
 $ErrorActionPreference = 'Stop'
+if ($env:GRAPHHELM_ALLOW_VISIBLE_TABS -ne '1') {
+  Write-Output 'SKIPPED (opt-in)'
+  exit 0
+}
 $repo = (git rev-parse --show-toplevel).Trim()
 $observer = Join-Path $repo 'tools/no-window/observe.ps1'
 $shell = (Get-Process -Id $PID).Path
@@ -117,7 +122,7 @@ try {
   $stderr = $observing.StandardError.ReadToEnd()
   $observing.WaitForExit()
   $output = $stdout + $stderr
-  Write-Output "CASE visible console control: observer exit $($observing.ExitCode); HWND $($parts[0]); owner PID $($parts[1])"
+  Write-Output "CASE visible console control: observer exit $($observing.ExitCode) (expected 1); HWND $($parts[0]); owner PID $($parts[1])"
   Write-Output $output
   if (-not $output.Contains("$($parts[2]) $($parts[0])")) { throw 'UNOBSERVED: positive control window was not captured by observer' }
   if (-not $output.Contains("$($parts[2]) $($parts[0]) pid=$($parts[1])")) { throw 'Captured console window lacks its independently measured owner PID' }
@@ -129,3 +134,112 @@ try {
   if ($control) { $control.Dispose() }
   $observing.Dispose()
 }
+
+# Exercise an existing, test-owned Terminal HWND. A title change or selecting a tab
+# cannot stand in for a newly created TabItem with a distinct UIA runtime ID.
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$terminalName = 'gh-tab-test-' + [guid]::NewGuid().ToString('N')
+$firstTitle = 'gh-baseline-' + [guid]::NewGuid().ToString('N')
+$secondTitle = 'gh-added-' + [guid]::NewGuid().ToString('N')
+$wt = (Get-Command wt.exe -ErrorAction SilentlyContinue).Source
+if (-not $wt) { throw 'UNOBSERVED: Windows Terminal is unavailable' }
+$pythonw = Join-Path (Split-Path (Get-Command python.exe).Source) 'pythonw.exe'
+if (-not (Test-Path -LiteralPath $pythonw)) { throw 'UNOBSERVED: windowless Python command is unavailable' }
+$tabCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::TabItem)
+$classCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ClassNameProperty, 'CASCADIA_HOSTING_WINDOW_CLASS')
+function Find-OwnedTerminal {
+  $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $classCondition)
+  foreach ($window in $windows) {
+    $tabs = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabCondition)
+    foreach ($tab in $tabs) { if ($tab.Current.Name.StartsWith($firstTitle)) { return $window } }
+  }
+  return $null
+}
+function Get-TabIds($window) {
+  $tabs = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabCondition)
+  return @($tabs | ForEach-Object { $_.GetRuntimeId() -join '.' })
+}
+function Start-ObservedCommand([string]$extra, [int]$seconds = 7) {
+  $script = "& '$observer' $extra -Exe '$pythonw' -Arguments @('-c','import time; time.sleep($seconds)')"
+  $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
+  $start = New-Object System.Diagnostics.ProcessStartInfo
+  $start.FileName = $shell
+  $start.Arguments = "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
+  $start.UseShellExecute = $false
+  $start.CreateNoWindow = $true
+  $start.RedirectStandardOutput = $true
+  $start.RedirectStandardError = $true
+  return [Diagnostics.Process]::Start($start)
+}
+$owned = $null
+$tabObserver = $null
+try {
+  Start-Process -FilePath $wt -ArgumentList @('-w', $terminalName, 'new-tab', '--title', $firstTitle, $cmd, '/c', 'ping -n 30 127.0.0.1 >nul') | Out-Null
+  for ($attempt = 0; $attempt -lt 40 -and -not $owned; $attempt++) {
+    Start-Sleep -Milliseconds 100
+    $owned = Find-OwnedTerminal
+  }
+  if (-not $owned) { throw 'UNOBSERVED: test-owned Terminal baseline tab was not visible through accessibility' }
+  $hwnd = $owned.Current.NativeWindowHandle
+  $baseline = @(Get-TabIds $owned)
+  if ($baseline.Count -ne 1) { throw "UNOBSERVED: owned Terminal baseline has $($baseline.Count) tabs, expected one" }
+  if (-not $RedParent) {
+    $quiet = Start-ObservedCommand '-ObserveTerminalTabs' 2
+    try {
+      $quietOutput = $quiet.StandardOutput.ReadToEnd() + $quiet.StandardError.ReadToEnd()
+      $quiet.WaitForExit()
+      Write-Output "CASE existing Terminal quiet: observer exit $($quiet.ExitCode)"
+      if ($quiet.ExitCode -ne 0 -or -not $quietOutput.Contains('terminal tabs added: 0') -or -not $quietOutput.Contains('Coverage: top-level console windows and existing Windows Terminal tabs.')) { throw "Quiet Terminal control failed: $quietOutput" }
+    } finally { if (-not $quiet.HasExited) { $quiet.Kill(); $quiet.WaitForExit() }; $quiet.Dispose() }
+  }
+  $mode = if ($RedParent) { '' } else { '-ObserveTerminalTabs' }
+  $tabObserver = Start-ObservedCommand $mode
+  $preamble = ''
+  if (-not $RedParent) {
+    for ($lineCount = 0; $lineCount -lt 2; $lineCount++) { $preamble += $tabObserver.StandardOutput.ReadLine() + [Environment]::NewLine }
+    if (-not $preamble.Contains('Terminal tab baseline ready.')) { throw "UNOBSERVED: observer baseline was not ready: $preamble" }
+  } else { Start-Sleep -Milliseconds 1100 }
+  Start-Process -FilePath $wt -ArgumentList @('-w', $terminalName, 'new-tab', '--title', $secondTitle, $cmd, '/c', 'ping -n 25 127.0.0.1 >nul') | Out-Null
+  $added = $null
+  for ($attempt = 0; $attempt -lt 40 -and -not $added; $attempt++) {
+    Start-Sleep -Milliseconds 100
+    $current = Find-OwnedTerminal
+    if ($current -and $current.Current.NativeWindowHandle -eq $hwnd) {
+      $ids = @(Get-TabIds $current)
+      if ($ids.Count -eq 2) { $added = @($ids | Where-Object { $baseline -notcontains $_ }) }
+    }
+  }
+  if (-not $added -or $added.Count -ne 1) { throw 'UNOBSERVED: no distinct second tab appeared in the unchanged owned HWND' }
+  $output = $preamble + $tabObserver.StandardOutput.ReadToEnd() + $tabObserver.StandardError.ReadToEnd()
+  $tabObserver.WaitForExit()
+  $expectedTabExit = if ($RedParent) { 0 } else { 1 }
+  Write-Output "CASE existing Terminal tab: HWND $hwnd; baseline $($baseline[0]); added $($added[0]); observer exit $($tabObserver.ExitCode) (expected $expectedTabExit)"
+  Write-Output $output
+  if ($RedParent) {
+    if ($tabObserver.ExitCode -ne 0 -or -not $output.Contains('new tabs in an existing Windows Terminal were not observed')) { throw 'UNOBSERVED: parent did not return the expected top-level-only quiet result' }
+    throw 'RED: existing Terminal tab was independently observed but the parent observer reported PASS'
+  }
+  if ($tabObserver.ExitCode -ne 1 -or -not $output.Contains("tab-added: hwnd=0x$($hwnd.ToString('x')) id=$($added[0])")) { throw 'New tab in unchanged Terminal HWND was not reported' }
+  $selectionObserver = Start-ObservedCommand '-ObserveTerminalTabs' 3
+  try {
+    Start-Sleep -Milliseconds 1000
+    $tabs = $owned.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabCondition)
+    $baselineTab = @($tabs | Where-Object { ($_.GetRuntimeId() -join '.') -eq $baseline[0] })[0]
+    if (-not $baselineTab) { throw 'UNOBSERVED: baseline tab disappeared before selection control' }
+    $select = $baselineTab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+    $select.Select()
+    $selectionOutput = $selectionObserver.StandardOutput.ReadToEnd() + $selectionObserver.StandardError.ReadToEnd()
+    $selectionObserver.WaitForExit()
+    Write-Output "CASE existing Terminal selection only: observer exit $($selectionObserver.ExitCode)"
+    if ($selectionObserver.ExitCode -ne 0 -or -not $selectionOutput.Contains('terminal tabs added: 0')) { throw "Selection-only Terminal control failed: $selectionOutput" }
+  } finally { if (-not $selectionObserver.HasExited) { $selectionObserver.Kill(); $selectionObserver.WaitForExit() }; $selectionObserver.Dispose() }
+} finally {
+  if ($tabObserver) {
+    if (-not $tabObserver.HasExited) { $tabObserver.Kill(); $tabObserver.WaitForExit() }
+    $tabObserver.Dispose()
+  }
+  if ($owned) {
+    try { $pattern = $owned.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern); $pattern.Close() } catch { Write-Output "UNOBSERVED: could not close test-owned Terminal HWND $hwnd : $_" }
+  }
+}
+Write-Output 'PASS: all observer controls passed'

@@ -15,7 +15,7 @@
  * JSX, which escapes it. There is no `dangerouslySetInnerHTML` in this application.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { NodeDeliveries, type DocumentReference } from "./deliveries";
 import { LoaderCircle, Send, TriangleAlert, X } from "lucide-react";
 
@@ -692,19 +692,25 @@ export function usePersonas(
   openEvidence: ((executionId: string, evidenceId: string) => Promise<EvidenceContent>) | undefined,
 ): Record<string, string> {
   const [personas, setPersonas] = useState<Record<string, string>>({});
+  // #1132: the effect keys on the sequences of the births it reads, not on the array's identity,
+  // so a refetch that returns the same carriers opens no envelope again.
+  const births = events.filter((event) => {
+    const payload =
+      event.payload !== null && typeof event.payload === "object"
+        ? (event.payload as Record<string, unknown>)
+        : {};
+    return (
+      event.kind === "signal_recorded" &&
+      payload.kind === "persona_created" &&
+      event.evidenceRefs.length > 0
+    );
+  });
+  const birthKey = births.map((event) => event.sequence).join(",");
+  const birthsRef = useRef(births);
+  birthsRef.current = births;
   useEffect(() => {
     if (executionId === undefined || openEvidence === undefined) return;
-    const births = events.filter((event) => {
-      const payload =
-        event.payload !== null && typeof event.payload === "object"
-          ? (event.payload as Record<string, unknown>)
-          : {};
-      return (
-        event.kind === "signal_recorded" &&
-        payload.kind === "persona_created" &&
-        event.evidenceRefs.length > 0
-      );
-    });
+    const births = birthsRef.current;
     let live = true;
     void (async () => {
       const found: Record<string, string> = {};
@@ -741,7 +747,7 @@ export function usePersonas(
     return () => {
       live = false;
     };
-  }, [events, executionId, openEvidence]);
+  }, [birthKey, executionId, openEvidence]);
   return personas;
 }
 
@@ -753,11 +759,15 @@ export function useNativePersonaLinks(
   openEvidence: ((executionId: string, evidenceId: string) => Promise<EvidenceContent>) | undefined,
 ): Record<string, { chat: NativeChatSummary; charter: string; nodeId: string }> {
   const [links, setLinks] = useState<{ executionId?: string; entries: Record<string, { chat: NativeChatSummary; charter: string; nodeId: string }> }>({ entries: {} });
+  const births = events.filter((event) => event.kind === "signal_recorded" && event.actorType === "owner" &&
+    (event.payload as { kind?: string } | null)?.kind === "native_persona_linked" && event.evidenceRefs.length > 0).sort((a, b) => a.sequence - b.sequence);
+  const birthKey = births.map((event) => event.sequence).join(",");
+  const birthsRef = useRef(births);
+  birthsRef.current = births;
   useEffect(() => {
     if (executionId === undefined || openEvidence === undefined) return;
     let live = true;
-    const births = events.filter((event) => event.kind === "signal_recorded" && event.actorType === "owner" &&
-      (event.payload as { kind?: string } | null)?.kind === "native_persona_linked" && event.evidenceRefs.length > 0).sort((a, b) => a.sequence - b.sequence);
+    const births = birthsRef.current;
     void (async () => {
       const entries: typeof links.entries = {};
       for (const birth of births) {
@@ -780,7 +790,7 @@ export function useNativePersonaLinks(
       if (live) setLinks((previous) => previous.executionId === executionId && JSON.stringify(previous.entries) === JSON.stringify(entries) ? previous : { executionId, entries });
     })();
     return () => { live = false; };
-  }, [events, executionId, openEvidence]);
+  }, [birthKey, executionId, openEvidence]);
   return links.executionId === executionId ? links.entries : NO_NATIVE_PERSONAS;
 }
 
@@ -794,11 +804,15 @@ export function useActorAliases(
   openEvidence: ((executionId: string, evidenceId: string) => Promise<EvidenceContent>) | undefined,
 ): Record<string, string> {
   const [aliases, setAliases] = useState<{ executionId?: string; entries: Record<string, string> }>({ entries: {} });
+  const records = events.filter((event) => event.kind === "signal_recorded" && event.actorType === "owner" &&
+    (event.payload as { kind?: string } | null)?.kind === "actor_alias" && event.evidenceRefs.length > 0).sort((a, b) => a.sequence - b.sequence);
+  const recordKey = records.map((event) => event.sequence).join(",");
+  const recordsRef = useRef(records);
+  recordsRef.current = records;
   useEffect(() => {
     if (executionId === undefined || openEvidence === undefined) return;
     let live = true;
-    const records = events.filter((event) => event.kind === "signal_recorded" && event.actorType === "owner" &&
-      (event.payload as { kind?: string } | null)?.kind === "actor_alias" && event.evidenceRefs.length > 0).sort((a, b) => a.sequence - b.sequence);
+    const records = recordsRef.current;
     void (async () => {
       const entries: Record<string, string> = {};
       for (const record of records) {
@@ -819,7 +833,7 @@ export function useActorAliases(
       if (live) setAliases((previous) => previous.executionId === executionId && JSON.stringify(previous.entries) === JSON.stringify(entries) ? previous : { executionId, entries });
     })();
     return () => { live = false; };
-  }, [events, executionId, openEvidence]);
+  }, [recordKey, executionId, openEvidence]);
   return aliases.executionId === executionId ? aliases.entries : NO_ALIASES;
 }
 
@@ -936,9 +950,9 @@ export function useEnvelopes(
     };
   }, [eventSequence, executionId, openEvidence]);
   // A stable empty answer, not a fresh literal: downstream memos key off this identity.
-  return envelopes.forId === executionId
+  return useMemo(() => envelopes.forId === executionId
     ? Object.assign({ ...envelopes.map }, { __pendingEnvelopeSequences: [...new Set([...envelopes.failed, ...envelopes.pending])], __readingEnvelopeSequences: [...envelopes.pending] })
-    : Object.assign({}, { __pendingEnvelopeSequences: [], __readingEnvelopeSequences: [] });
+    : Object.assign({}, { __pendingEnvelopeSequences: [], __readingEnvelopeSequences: [] }), [envelopes, executionId]);
 }
 
 /**

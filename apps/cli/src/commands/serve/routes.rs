@@ -43,9 +43,9 @@ use super::ports::{
     build_sealer, find_route,
 };
 use super::{
-    ExecutorWiring, MutationError, PausedUnderCaller, ServeState, execution_paused_under,
-    parse_mutation_headers, respond, respond_failure, run_idempotent_mutation,
-    run_idempotent_mutation_with_store, verify_agent_credential,
+    ExecutorWiring, MutationError, MutationFuture, MutationIdentity, PausedUnderCaller, ServeState,
+    execution_paused_under, parse_mutation_headers, respond, respond_failure,
+    run_idempotent_mutation, run_idempotent_mutation_with_store, verify_agent_credential,
 };
 use crate::commands::architect::{self, SynthesizeRequest};
 use crate::commands::execution::PreparedDrive;
@@ -132,13 +132,58 @@ mod off_reactor_witness {
     }
 }
 
-pub(super) async fn graph_topology(body: Bytes) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => {
-            return bad_request(TOPOLOGY_COMMAND, "the request body is not valid JSON", "/");
+/// #1328 PR 2: the request body as JSON, or an early return with the route's standard refusal:
+/// 400, `GHCLI001_ARGUMENT_INVALID`, "the request body is not valid JSON", pointer `/`. One
+/// spelling for the 19 routes that used to write it out; the two that refuse a non-object body
+/// with their own shape message keep their own parse.
+macro_rules! json_body {
+    ($command:expr, $body:expr) => {
+        match serde_json::from_slice::<serde_json::Value>(&$body) {
+            Ok(value) => value,
+            Err(_) => return bad_request($command, "the request body is not valid JSON", "/"),
         }
     };
+}
+
+/// #1370: the mutation request's identity (Idempotency-Key, actor, digest), or an early return with
+/// `parse_mutation_headers`' own refusal. Used where each handler always parsed it, so a header
+/// refusal still precedes the route's body checks.
+macro_rules! mutation_identity {
+    ($headers:expr, $command:expr, $execution:expr, $body:expr, $suffixes:expr) => {
+        match parse_mutation_headers($headers, $command, $execution, $body, $suffixes) {
+            Ok(identity) => identity,
+            Err(response) => return response,
+        }
+    };
+}
+
+/// #1370: `run_idempotent_mutation` over this server's store and executor wiring, the arguments
+/// every mutation route passed by hand.
+async fn mutate<'a>(
+    state: &ServeState,
+    execution: &str,
+    command: &'static str,
+    identity: MutationIdentity,
+    run: impl FnOnce(PersistedActor, OpaqueId) -> MutationFuture<'a>,
+) -> Response {
+    run_idempotent_mutation(
+        &state.events,
+        execution,
+        command,
+        identity,
+        ExecutorWiring::from_state(state),
+        run,
+    )
+    .await
+}
+
+pub(super) async fn graph_topology(State(state): State<ServeState>, body: Bytes) -> Response {
+    topology_reply(state.path_roots.as_deref(), body).await
+}
+
+/// The topology read itself, given the roots a `file` must resolve under (`None`: unconfined).
+async fn topology_reply(roots: Option<&[PathBuf]>, body: Bytes) -> Response {
+    let payload = json_body!(TOPOLOGY_COMMAND, body);
     let Some(file) = payload.get("file").and_then(serde_json::Value::as_str) else {
         return bad_request(
             TOPOLOGY_COMMAND,
@@ -146,6 +191,9 @@ pub(super) async fn graph_topology(body: Bytes) -> Response {
             "/file",
         );
     };
+    if let Err(response) = confine_to_project(roots, Path::new(file), TOPOLOGY_COMMAND, "file") {
+        return response;
+    }
 
     // Open, read (bounded), parse, validate, hash: file work, off the reactor (#559).
     let file = file.to_owned();
@@ -224,16 +272,7 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
         "plan",
         "execution",
     ];
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => {
-            return bad_request(
-                SYNTHESIZE_COMMAND,
-                "the request body is not valid JSON",
-                "/",
-            );
-        }
-    };
+    let payload = json_body!(SYNTHESIZE_COMMAND, body);
     let Some(object) = payload.as_object() else {
         return bad_request(
             SYNTHESIZE_COMMAND,
@@ -408,6 +447,19 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
             );
         }
     };
+    // #1328: each of the three names a host path the Runtime reads.
+    for (path, field) in [
+        (fixture.as_deref(), "fixture"),
+        (judge_fixture.as_deref(), "judgeFixture"),
+        (library.as_deref(), "library"),
+    ] {
+        if let Some(path) = path
+            && let Err(response) =
+                confine_to_project(state.path_roots.as_deref(), path, SYNTHESIZE_COMMAND, field)
+        {
+            return response;
+        }
+    }
 
     let model: Box<dyn DraftModel + Send> = match fixture {
         Some(path) => {
@@ -2226,10 +2278,7 @@ pub(super) async fn open_journey(
     body: Bytes,
 ) -> Response {
     const COMMAND: &str = "journey.open";
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(COMMAND, "the request body is not valid JSON", "/"),
-    };
+    let payload = json_body!(COMMAND, body);
     let Some(step) = payload["stepId"].as_str().map(str::to_owned) else {
         return bad_request(COMMAND, "the request body must carry \"stepId\"", "/stepId");
     };
@@ -2368,10 +2417,7 @@ pub(super) async fn act_journey(
     body: Bytes,
 ) -> Response {
     const COMMAND: &str = "journey.act";
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(COMMAND, "the request body is not valid JSON", "/"),
-    };
+    let payload = json_body!(COMMAND, body);
     let text = |key: &str| payload[key].as_str().map(str::to_owned);
     let (Some(kind), Some(role), Some(name)) = (text("kind"), text("role"), text("name")) else {
         return bad_request(
@@ -3199,6 +3245,55 @@ enum GraphSource {
     Snapshot,
 }
 
+/// #1328: with `--confine-paths`, a host path a request names must resolve under one of the
+/// allowed roots (`--project` and every `--path-root`).
+///
+/// Canonical against canonical, the comparison `refuse_protected_project` makes, so a relative
+/// spelling, `..` or a link cannot step outside. A path that does not exist yet is judged by its
+/// canonical parent, so a missing file under a root still reaches the handler's own "not found"
+/// refusal; one whose parent cannot be resolved either is left to that refusal too, since nothing
+/// can be read through it. Off (`None`, the default) the path passes, as it always has; on with no
+/// root at all every path is refused, so a misconfiguration fails closed.
+#[allow(clippy::result_large_err)] // the refusal IS a built response, as in `graph_source`
+fn confine_to_project(
+    roots: Option<&[PathBuf]>,
+    path: &Path,
+    command: &'static str,
+    field: &'static str,
+) -> Result<(), Response> {
+    let Some(roots) = roots else {
+        return Ok(());
+    };
+    let resolved = path.canonicalize().ok().or_else(|| {
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty());
+        let parent = parent.map_or_else(|| Path::new(".").canonicalize(), Path::canonicalize);
+        parent
+            .ok()
+            .zip(path.file_name())
+            .map(|(parent, name)| parent.join(name))
+    });
+    let Some(resolved) = resolved else {
+        return Ok(());
+    };
+    let inside = roots.iter().any(|root| {
+        root.canonicalize()
+            .is_ok_and(|root| resolved.starts_with(root))
+    });
+    if inside {
+        Ok(())
+    } else {
+        Err(bad_request(
+            command,
+            &format!(
+                "\"{field}\" must name a path under the project or a --path-root this Runtime serves"
+            ),
+            &format!("/{field}"),
+        ))
+    }
+}
+
 /// Reads the request body's graph, refusing every shape that could be read two ways.
 ///
 /// BOTH FIELDS PRESENT IS A REFUSAL, not a precedence rule. A caller that sends `"file"` and
@@ -3212,6 +3307,7 @@ enum GraphSource {
 fn graph_source(
     payload: &serde_json::Value,
     command: &'static str,
+    roots: Option<&[PathBuf]>,
 ) -> Result<GraphSource, Response> {
     let file = payload.get("file");
     let graph = payload.get("graph");
@@ -3233,7 +3329,11 @@ fn graph_source(
             "/file",
         )),
         (true, false) => match file {
-            Some(serde_json::Value::String(path)) => Ok(GraphSource::File(PathBuf::from(path))),
+            Some(serde_json::Value::String(path)) => {
+                let path = PathBuf::from(path);
+                confine_to_project(roots, &path, command, "file")?;
+                Ok(GraphSource::File(path))
+            }
             _ => Err(bad_request(
                 command,
                 "\"file\" must be a string naming a graph document",
@@ -3340,21 +3440,15 @@ pub(super) async fn start(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(START_COMMAND, "the request body is not valid JSON", "/"),
-    };
-    let identity = match parse_mutation_headers(
+    let payload = json_body!(START_COMMAND, body);
+    let identity = mutation_identity!(
         &headers,
         START_COMMAND,
         &execution_id,
         &payload,
-        &["started"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
-    let source = match graph_source(&payload, START_COMMAND) {
+        &["started"]
+    );
+    let source = match graph_source(&payload, START_COMMAND, state.path_roots.as_deref()) {
         Ok(source) => source,
         Err(response) => return response,
     };
@@ -3362,6 +3456,12 @@ pub(super) async fn start(
         .get("fixtures")
         .and_then(serde_json::Value::as_str)
         .map(PathBuf::from);
+    if let Some(path) = &fixtures
+        && let Err(response) =
+            confine_to_project(state.path_roots.as_deref(), path, START_COMMAND, "fixtures")
+    {
+        return response;
+    }
     let Some(mode) = payload.get("mode").and_then(serde_json::Value::as_str) else {
         return bad_request(
             START_COMMAND,
@@ -3386,12 +3486,11 @@ pub(super) async fn start(
     let drive_execution = execution_id.clone();
     let drive_execution_id = execution_id.clone();
 
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         START_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 let version = load_and_publish(&source, START_COMMAND, &actor)
@@ -3604,20 +3703,14 @@ pub(super) async fn signal(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(SIGNAL_COMMAND, "the request body is not valid JSON", "/"),
-    };
-    let identity = match parse_mutation_headers(
+    let payload = json_body!(SIGNAL_COMMAND, body);
+    let identity = mutation_identity!(
         &headers,
         SIGNAL_COMMAND,
         &execution_id,
         &payload,
-        &["record"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["record"]
+    );
     let Some(signal_value) = payload.get("signal") else {
         return bad_request(
             SIGNAL_COMMAND,
@@ -3775,6 +3868,17 @@ pub(super) async fn signal(
             );
         }
     };
+    // #1328: a path the Runtime writes, so it is confined like the ones it reads.
+    if let Some(path) = &evidence_out
+        && let Err(response) = confine_to_project(
+            state.path_roots.as_deref(),
+            path,
+            SIGNAL_COMMAND,
+            "evidenceOut",
+        )
+    {
+        return response;
+    }
     if identity.actor.actor_type() == PersistedActorType::Agent && evidence_out.is_some() {
         return bad_request(
             SIGNAL_COMMAND,
@@ -3860,20 +3964,14 @@ pub(super) async fn approve(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(APPROVE_COMMAND, "the request body is not valid JSON", "/"),
-    };
-    let identity = match parse_mutation_headers(
+    let payload = json_body!(APPROVE_COMMAND, body);
+    let identity = mutation_identity!(
         &headers,
         APPROVE_COMMAND,
         &execution_id,
         &payload,
-        &["outcome"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["outcome"]
+    );
     let Some(node) = payload.get("node").and_then(serde_json::Value::as_str) else {
         return bad_request(
             APPROVE_COMMAND,
@@ -3895,12 +3993,11 @@ pub(super) async fn approve(
     if !governed {
         let events = state.events.clone();
         let execution = execution_id.clone();
-        return run_idempotent_mutation(
-            &state.events,
+        return mutate(
+            &state,
             &execution_id,
             APPROVE_COMMAND,
             identity,
-            ExecutorWiring::from_state(&state),
             move |actor, key| {
                 Box::pin(async move {
                     Ok(execution::approve::execute(
@@ -3973,12 +4070,11 @@ pub(super) async fn approve(
     let events = state.events.clone();
     let drive_execution_id = execution_id.clone();
 
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         APPROVE_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         |owner, key| {
             Box::pin(async move {
                 Ok(tokio::task::spawn_blocking(move || {
@@ -4022,20 +4118,14 @@ pub(super) async fn assign(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(ASSIGN_COMMAND, "the request body is not valid JSON", "/"),
-    };
-    let identity = match parse_mutation_headers(
+    let payload = json_body!(ASSIGN_COMMAND, body);
+    let identity = mutation_identity!(
         &headers,
         ASSIGN_COMMAND,
         &execution_id,
         &payload,
-        &["outcome"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["outcome"]
+    );
     if identity.actor.actor_type() != PersistedActorType::Owner {
         return bad_request(ASSIGN_COMMAND, "only an owner may assign a node", "/actor");
     }
@@ -4057,12 +4147,11 @@ pub(super) async fn assign(
     let execution = execution_id.clone();
     let node = node.to_owned();
     let actor_id = actor_id.to_owned();
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         ASSIGN_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         move |actor, key| {
             Box::pin(async move {
                 Ok(execution::assign::execute(
@@ -4093,26 +4182,14 @@ pub(super) async fn amend_budget(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => {
-            return bad_request(
-                AMEND_BUDGET_COMMAND,
-                "the request body is not valid JSON",
-                "/",
-            );
-        }
-    };
-    let identity = match parse_mutation_headers(
+    let payload = json_body!(AMEND_BUDGET_COMMAND, body);
+    let identity = mutation_identity!(
         &headers,
         AMEND_BUDGET_COMMAND,
         &execution_id,
         &payload,
-        &["outcome"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["outcome"]
+    );
     let Some(node) = payload.get("node").and_then(serde_json::Value::as_str) else {
         return bad_request(
             AMEND_BUDGET_COMMAND,
@@ -4141,12 +4218,11 @@ pub(super) async fn amend_budget(
     let events = state.events.clone();
     let target = execution_id.clone();
 
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         AMEND_BUDGET_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::amend::execute(
@@ -4203,10 +4279,7 @@ pub(super) async fn pause(
     let payload: serde_json::Value = if body.is_empty() {
         serde_json::Value::Null
     } else {
-        match serde_json::from_slice(&body) {
-            Ok(value) => value,
-            Err(_) => return bad_request(PAUSE_COMMAND, "the request body is not valid JSON", "/"),
-        }
+        json_body!(PAUSE_COMMAND, body)
     };
     let immediate = payload.get("mode").and_then(serde_json::Value::as_str) == Some("immediate");
 
@@ -4229,16 +4302,13 @@ pub(super) async fn pause(
     // immediate needs a new digest: it never went through this digest path before #681, so there
     // is no historical event whose key it could stop matching.
     let digest_body = pause_digest_body(immediate);
-    let identity = match parse_mutation_headers(
+    let identity = mutation_identity!(
         &headers,
         PAUSE_COMMAND,
         &execution_id,
         &digest_body,
-        &["paused"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["paused"]
+    );
 
     let sender = if immediate {
         let cancels = state.cancels.lock().await;
@@ -4250,12 +4320,11 @@ pub(super) async fn pause(
     if let Some(sender) = sender {
         let events = state.events.clone();
         let drive_execution_id = execution_id.clone();
-        return run_idempotent_mutation(
-            &state.events,
+        return mutate(
+            &state,
             &execution_id,
             PAUSE_COMMAND,
             identity,
-            ExecutorWiring::from_state(&state),
             move |actor, key| {
                 Box::pin(async move {
                     let signalled_key = key.clone();
@@ -4383,12 +4452,11 @@ pub(super) async fn pause(
 
     let events = state.events.clone();
     let drive_execution_id = execution_id.clone();
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         PAUSE_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::pause::execute(
@@ -4441,22 +4509,16 @@ pub(super) async fn resume(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(RESUME_COMMAND, "the request body is not valid JSON", "/"),
-    };
-    let identity = match parse_mutation_headers(
+    let payload = json_body!(RESUME_COMMAND, body);
+    let identity = mutation_identity!(
         &headers,
         RESUME_COMMAND,
         &execution_id,
         &payload,
-        &["resumed"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["resumed"]
+    );
     let source = if payload.get("file").is_some() {
-        match graph_source(&payload, RESUME_COMMAND) {
+        match graph_source(&payload, RESUME_COMMAND, state.path_roots.as_deref()) {
             Ok(source) => Some(source),
             Err(response) => return response,
         }
@@ -4467,18 +4529,27 @@ pub(super) async fn resume(
         .get("fixtures")
         .and_then(serde_json::Value::as_str)
         .map(PathBuf::from);
+    if let Some(path) = &fixtures
+        && let Err(response) = confine_to_project(
+            state.path_roots.as_deref(),
+            path,
+            RESUME_COMMAND,
+            "fixtures",
+        )
+    {
+        return response;
+    }
     let drive_state = state.clone();
     // #1066: the drive's own copy of the id — the closure below moves what it captures, and the
     // mutation runner still borrows `execution_id` for its own journalling.
     let drive_execution = execution_id.clone();
     let drive_execution_id = execution_id.clone();
 
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         RESUME_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 let version = if source.is_none() {
@@ -4580,24 +4651,20 @@ pub(super) async fn cancel(
     UrlPath(execution_id): UrlPath<String>,
     headers: HeaderMap,
 ) -> Response {
-    let identity = match parse_mutation_headers(
+    let identity = mutation_identity!(
         &headers,
         CANCEL_COMMAND,
         &execution_id,
         &serde_json::Value::Null,
-        &["cancelled"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["cancelled"]
+    );
     let events = state.events.clone();
     let drive_execution_id = execution_id.clone();
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         CANCEL_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::cancel::execute(
@@ -4633,10 +4700,7 @@ pub(super) async fn sweep(
     let payload: serde_json::Value = if body.is_empty() {
         serde_json::Value::Object(serde_json::Map::new())
     } else {
-        match serde_json::from_slice(&body) {
-            Ok(value) => value,
-            Err(_) => return bad_request(SWEEP_COMMAND, "the request body is not valid JSON", "/"),
-        }
+        json_body!(SWEEP_COMMAND, body)
     };
 
     let as_of = match payload.get("asOf") {
@@ -4651,25 +4715,21 @@ pub(super) async fn sweep(
         }
     };
 
-    let identity = match parse_mutation_headers(
+    let identity = mutation_identity!(
         &headers,
         SWEEP_COMMAND,
         &execution_id,
         &payload,
-        &["sweep-performed"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["sweep-performed"]
+    );
 
     let events = state.events.clone();
     let drive_execution_id = execution_id.clone();
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         SWEEP_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::sweep::execute(
@@ -4704,21 +4764,9 @@ pub(super) async fn claim(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(CLAIM_COMMAND, "the request body is not valid JSON", "/"),
-    };
-    let identity = match parse_mutation_headers(
-        &headers,
-        CLAIM_COMMAND,
-        &execution_id,
-        &payload,
-        &["claim"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
-    let source = match graph_source(&payload, CLAIM_COMMAND) {
+    let payload = json_body!(CLAIM_COMMAND, body);
+    let identity = mutation_identity!(&headers, CLAIM_COMMAND, &execution_id, &payload, &["claim"]);
+    let source = match graph_source(&payload, CLAIM_COMMAND, state.path_roots.as_deref()) {
         Ok(source) => source,
         Err(response) => return response,
     };
@@ -4765,13 +4813,7 @@ pub(super) async fn claim(
     let drive_state = state.clone();
     let drive_execution_id = execution_id.clone();
 
-    run_idempotent_mutation(
-        &state.events,
-        &execution_id,
-        CLAIM_COMMAND,
-        identity,
-        ExecutorWiring::from_state(&state),
-        |actor, key| {
+    mutate(&state, &execution_id, CLAIM_COMMAND, identity, |actor, key| {
             Box::pin(async move {
                 let (version, snapshot_hash) = match &source {
                     GraphSource::Snapshot => {
@@ -4835,21 +4877,9 @@ pub(super) async fn clear(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(CLEAR_COMMAND, "the request body is not valid JSON", "/"),
-    };
-    let identity = match parse_mutation_headers(
-        &headers,
-        CLEAR_COMMAND,
-        &execution_id,
-        &payload,
-        &["clear"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
-    let source = match graph_source(&payload, CLEAR_COMMAND) {
+    let payload = json_body!(CLEAR_COMMAND, body);
+    let identity = mutation_identity!(&headers, CLEAR_COMMAND, &execution_id, &payload, &["clear"]);
+    let source = match graph_source(&payload, CLEAR_COMMAND, state.path_roots.as_deref()) {
         Ok(source) => source,
         Err(response) => return response,
     };
@@ -4945,19 +4975,19 @@ pub(super) async fn clear(
         .get("fixtures")
         .and_then(serde_json::Value::as_str)
         .map(PathBuf::from);
+    if let Some(path) = &fixtures
+        && let Err(response) =
+            confine_to_project(state.path_roots.as_deref(), path, CLEAR_COMMAND, "fixtures")
+    {
+        return response;
+    }
     let drive_state = state.clone();
     // #1066: the drive's own copy of the id — the closure below moves what it captures, and the
     // mutation runner still borrows `execution_id` for its own journalling.
     let drive_execution = execution_id.clone();
     let drive_execution_id = execution_id.clone();
 
-    run_idempotent_mutation(
-        &state.events,
-        &execution_id,
-        CLEAR_COMMAND,
-        identity,
-        ExecutorWiring::from_state(&state),
-        |actor, key| {
+    mutate(&state, &execution_id, CLEAR_COMMAND, identity, |actor, key| {
             Box::pin(async move {
                 let (version, snapshot_hash) = match &source {
                     GraphSource::Snapshot => {
@@ -5395,6 +5425,11 @@ async fn prepare_drive(
                     )));
                 }
             };
+            // #1328: a requested workspace root is a host path the drive reads and writes.
+            if let Some(path) = &requested_project {
+                confine_to_project(state.path_roots.as_deref(), path, command, "project")
+                    .map_err(MutationError::Prepared)?;
+            }
             let project = requested_project
                 .or_else(|| wiring.tools.as_ref().and_then(|tools| tools.project.clone()))
                 .or_else(|| std::env::current_dir().ok())
@@ -5714,6 +5749,16 @@ pub(super) async fn gateway_routes(
     let manifest = query_pairs(&query)
         .find(|(key, _)| *key == "manifest")
         .map(|(_, value)| PathBuf::from(value));
+    if let Some(path) = &manifest
+        && let Err(response) = confine_to_project(
+            state.path_roots.as_deref(),
+            path,
+            GATEWAY_ROUTES_COMMAND,
+            "manifest",
+        )
+    {
+        return response;
+    }
     let Some(manifest) = effective_manifest(&state, manifest) else {
         return respond(
             StatusCode::OK,
@@ -5763,6 +5808,22 @@ pub(super) async fn gateway_probe(
             "keyring" => keyring = Some(PathBuf::from(value)),
             "keyId" => key_id = Some(value.to_owned()),
             _ => {}
+        }
+    }
+    for (path, field) in [
+        (manifest.as_deref(), "manifest"),
+        (broker.as_deref(), "broker"),
+        (keyring.as_deref(), "keyring"),
+    ] {
+        if let Some(path) = path
+            && let Err(response) = confine_to_project(
+                state.path_roots.as_deref(),
+                path,
+                GATEWAY_PROBE_COMMAND,
+                field,
+            )
+        {
+            return response;
         }
     }
     let Some(manifest) = effective_manifest(&state, manifest) else {
@@ -5852,15 +5913,8 @@ pub(super) async fn development_memory_propose(
     body: Bytes,
 ) -> Response {
     const COMMAND: &str = "development.memory-propose";
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => return bad_request(COMMAND, "the request body is not valid JSON", "/"),
-    };
-    let identity = match parse_mutation_headers(&headers, COMMAND, "memory", &payload, &["memory"])
-    {
-        Ok(value) => value,
-        Err(response) => return response,
-    };
+    let payload = json_body!(COMMAND, body);
+    let identity = mutation_identity!(&headers, COMMAND, "memory", &payload, &["memory"]);
     let Some(true) = payload.get("optIn").and_then(serde_json::Value::as_bool) else {
         return bad_request(COMMAND, "optIn must be true for durable memory", "/optIn");
     };
@@ -6322,16 +6376,7 @@ pub(super) async fn development_compile_context(
     let payload: serde_json::Value = if body.is_empty() {
         serde_json::Value::Object(serde_json::Map::new())
     } else {
-        match serde_json::from_slice(&body) {
-            Ok(value) => value,
-            Err(_) => {
-                return bad_request(
-                    "development.compile-context",
-                    "the request body is not valid JSON",
-                    "/",
-                );
-            }
-        }
+        json_body!("development.compile-context", body)
     };
     let budget = usize::try_from(payload["budget"].as_u64().unwrap_or(0)).unwrap_or(usize::MAX);
     let mut require: Vec<String> = payload["require"]
@@ -6437,26 +6482,14 @@ pub(super) async fn wake_lease(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => {
-            return bad_request(
-                WAKE_LEASE_COMMAND,
-                "the request body is not valid JSON",
-                "/",
-            );
-        }
-    };
-    let identity = match parse_mutation_headers(
+    let payload = json_body!(WAKE_LEASE_COMMAND, body);
+    let identity = mutation_identity!(
         &headers,
         WAKE_LEASE_COMMAND,
         &execution_id,
         &payload,
-        &["wake"],
-    ) {
-        Ok(identity) => identity,
-        Err(response) => return response,
-    };
+        &["wake"]
+    );
     let Some(session_id) = payload.get("sessionId").and_then(serde_json::Value::as_str) else {
         return bad_request(
             WAKE_LEASE_COMMAND,
@@ -6503,12 +6536,11 @@ pub(super) async fn wake_lease(
     let events = state.events.clone();
     let target = execution_id.clone();
 
-    run_idempotent_mutation(
-        &state.events,
+    mutate(
+        &state,
         &execution_id,
         WAKE_LEASE_COMMAND,
         identity,
-        ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
                 Ok(execution::wake::arm(
@@ -6994,8 +7026,8 @@ pub(super) mod tests {
     };
 
     use super::{
-        MutationError, graph_topology, list_executions_over, off_reactor, off_reactor_witness,
-        resolve_requested_route,
+        MutationError, list_executions_over, off_reactor, off_reactor_witness,
+        resolve_requested_route, topology_reply,
     };
     use crate::commands::serve::ports::{ModelWiring, RuntimeWiring, ToolWiring};
 
@@ -7029,6 +7061,34 @@ pub(super) mod tests {
             .await
             .unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    /// #1328 PR 2: `json_body!` refuses an unparsable body with exactly the reply each route used
+    /// to build inline, `bad_request(command, "the request body is not valid JSON", "/")`, and
+    /// hands a parsable one through untouched.
+    #[test]
+    fn json_body_refuses_exactly_as_the_inline_parse_did() {
+        use super::{START_COMMAND, bad_request};
+        use axum::response::IntoResponse as _;
+        // The macro returns from the function it sits in, as it does inside a route handler.
+        fn parse(body: Bytes) -> axum::response::Response {
+            let value = json_body!(START_COMMAND, body);
+            (axum::http::StatusCode::OK, value.to_string()).into_response()
+        }
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let refused = parse(Bytes::from_static(b"{not json"));
+        let expected = bad_request(START_COMMAND, "the request body is not valid JSON", "/");
+        assert_eq!(refused.status(), expected.status());
+        assert_eq!(
+            runtime.block_on(body_text(refused)),
+            runtime.block_on(body_text(expected)),
+            "the refusal body must be byte-identical"
+        );
+        let passed = parse(Bytes::from_static(br#"{"a":1}"#));
+        assert_eq!(passed.status(), axum::http::StatusCode::OK);
+        assert_eq!(runtime.block_on(body_text(passed)), r#"{"a":1}"#);
     }
 
     pub(in crate::commands::serve) fn known_execution_state()
@@ -7084,6 +7144,7 @@ pub(super) mod tests {
             sweep_interval: None,
             read_audit: None,
             require_lane_credential: false,
+            path_roots: None,
             gateway_manifest: None,
             native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             seen_actors: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
@@ -7321,7 +7382,7 @@ pub(super) mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let reactor = std::thread::current().id();
         let body = serde_json::json!({ "file": example_graph().to_str().unwrap() }).to_string();
-        let (response, runs) = measured(graph_topology(Bytes::from(body)));
+        let (response, runs) = measured(topology_reply(None, Bytes::from(body)));
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             runs.len(),
@@ -7346,7 +7407,7 @@ pub(super) mod tests {
         std::fs::create_dir(&path).unwrap();
         let body = serde_json::json!({ "file": path.to_str().unwrap() }).to_string();
         let (text, _) = measured(async {
-            let response = graph_topology(Bytes::from(body)).await;
+            let response = topology_reply(None, Bytes::from(body)).await;
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
             body_text(response).await
         });
@@ -7715,16 +7776,7 @@ pub(super) async fn gateway_route_set(
             "/manifest",
         );
     };
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => {
-            return bad_request(
-                GATEWAY_ROUTE_SET_COMMAND,
-                "the request body is not valid JSON",
-                "/",
-            );
-        }
-    };
+    let payload = json_body!(GATEWAY_ROUTE_SET_COMMAND, body);
 
     let mut fields = Vec::new();
     for field in ["id", "provider", "baseUrl", "model"] {
@@ -7920,16 +7972,7 @@ pub(super) async fn gateway_credential_set(
     let keyring = wiring.keyring_dir.clone();
     let key_id = wiring.key_id.clone();
 
-    let payload: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(_) => {
-            return bad_request(
-                GATEWAY_CREDENTIAL_SET_COMMAND,
-                "the request body is not valid JSON",
-                "/",
-            );
-        }
-    };
+    let payload = json_body!(GATEWAY_CREDENTIAL_SET_COMMAND, body);
     let Some(provider) = payload.get("provider").and_then(serde_json::Value::as_str) else {
         return bad_request(
             GATEWAY_CREDENTIAL_SET_COMMAND,

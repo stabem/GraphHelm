@@ -88,7 +88,7 @@ gate runs through the registered runner before the passes, and the planner press
 identity line names the subagent and the spawning session so the comment is addressable
 (`Lane: <letter> · Session: subagent-<name> of <ListAgents name> [ref] · Head: <sha8>`). This
 mapping was written into the lane loop §0 by this slice (retired 2026-09-24; see
-`docs/process/DELIVERY.md`, History), because a rule that lives only in chat is the defect that
+`docs/process/ARCHIVE_NAMES.md`), because a rule that lives only in chat is the defect that
 file existed to end.
 
 ## 3. The surfaces, exactly

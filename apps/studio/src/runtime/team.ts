@@ -227,13 +227,19 @@ export function botKeyOf(bots: Bot[], id: string | null): string | null {
 
 /** One line per pair of bots that addressed each other (the `talks` pair rule in App.tsx). */
 export function teamLinks(events: RuntimeEvent[], envelopes: EnvelopeRecord, bots: Bot[], now: number): TeamLink[] {
+  const botByIdentity = new Map<string, string>();
+  for (const bot of bots) {
+    if (!botByIdentity.has(bot.key)) botByIdentity.set(bot.key, bot.key);
+    if (bot.actorId !== null && !botByIdentity.has(bot.actorId)) botByIdentity.set(bot.actorId, bot.key);
+  }
+  const keyOf = (id: string | null): string | null => id === null ? null : botByIdentity.get(id) ?? null;
   const links = new Map<string, TeamLink>();
   for (const event of events) {
     if (event.kind !== "signal_recorded" || (event.actorType !== "agent" && event.actorType !== "owner")) continue;
     const to = envelopes[event.sequence]?.to ?? null;
     if (event.actorId === OPERATOR || to === OPERATOR) continue;
-    const from = botKeyOf(bots, event.actorId);
-    const target = botKeyOf(bots, to);
+    const from = keyOf(event.actorId);
+    const target = keyOf(to);
     if (from === null || target === null || from === target) continue;
     const [a, b] = [from, target].sort();
     const link = links.get(`${a}\u0000${b}`) ?? { a, b, count: 0, lastAt: null, live: false };

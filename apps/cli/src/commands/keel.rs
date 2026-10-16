@@ -363,6 +363,25 @@ pub(super) fn check(
         policy,
     );
     let mut report = report;
+    // The line rules read each changed file at the head to see test items and the line above.
+    let head_text = |path: &str| {
+        let mut show = graphhelm_process::command("git");
+        show.arg("-C")
+            .arg(repo)
+            .arg("show")
+            .arg(format!("{head}:{path}"))
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        match graphhelm_process_tree::run_bounded(show, Duration::from_secs(10)) {
+            Ok(Some((true, text, _))) => Some(text),
+            _ => None,
+        }
+    };
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    report.add_lines(graphhelm_policy::keel_lines::check_lines(
+        &diff, &head_text, &today,
+    ));
     let changed: Vec<String> = report
         .changed_paths
         .iter()
@@ -426,6 +445,17 @@ pub(super) fn check(
                 Diagnostic::warning(finding.rule.clone(), message, path, "keel")
             }
         })
+        .chain(report.exceptions.iter().map(|allowed| {
+            Diagnostic::warning(
+                "keel.allow.honoured",
+                format!(
+                    "keel.allow.honoured: {} excused at {}:{} until {}: {}",
+                    allowed.rule, allowed.path, allowed.line, allowed.until, allowed.reason
+                ),
+                &allowed.path,
+                "keel",
+            )
+        }))
         .collect();
     let refused = report.refused;
     let recommendation = if refused {

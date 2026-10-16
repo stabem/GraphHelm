@@ -524,6 +524,18 @@ pub struct KeelCheck {
     pub findings: Vec<Finding>,
     /// True when any finding in `findings` is blocking.
     pub refused: bool,
+    /// Every `keel-allow` excuse the line rules honoured. Absent when there is none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exceptions: Vec<crate::keel_lines::HonouredException>,
+}
+
+impl KeelCheck {
+    /// Adds the line rules' verdict: their findings block, and their honoured excuses are listed.
+    pub fn add_lines(&mut self, lines: crate::keel_lines::LineReport) {
+        self.findings.extend(lines.findings);
+        self.exceptions.extend(lines.exceptions);
+        self.refused = self.findings.iter().any(|finding| finding.blocking);
+    }
 }
 
 /// Reads every path a unified diff touches from its headers: `diff --git`, `---`/`+++`, and
@@ -725,6 +737,7 @@ pub fn check(diff: &str, card: Option<(&Card, u64)>, policy: &KeelPolicy) -> Kee
         classification,
         findings,
         refused,
+        exceptions: Vec::new(),
     }
 }
 

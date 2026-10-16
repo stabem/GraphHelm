@@ -17,7 +17,8 @@
 //! (`--max-wait`); one that gives up leaves a `.resume` reservation, so the same lane and label
 //! queueing again within `RESUME_GRACE` are served at their first arrival. `--priority` tickets
 //! sort before every other waiter (`!` precedes the digits of an arrival key) and are only for
-//! lanes the owner listed in `slot-priority-lanes`.
+//! lanes the owner listed in `slot-priority-lanes`. #1470: `--stage review|merge` tickets come
+//! next (`+`), so a waiting review is never queued behind implement plans that arrived earlier.
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -38,6 +39,9 @@ const PRIORITY_LANES: &str = "slot-priority-lanes";
 const HOLDER: &str = "holder.json";
 /// Prefix of a priority ticket: sorts before the digits of every normal arrival key.
 const PRIORITY_MARK: &str = "!";
+/// Prefix of a review or merge ticket (#1470): sorts after `PRIORITY_MARK` and before the digits
+/// of every implement arrival key, so finishing work is served before new work starts.
+const FINISHING_MARK: &str = "+";
 const BUILD_ADMISSION_ENV: &str = "GRAPHHELM_BUILD_ADMISSION_DIR";
 
 fn refuse(message: &str, path: &str) -> Outcome {
@@ -369,7 +373,7 @@ fn remove_ticket(ticket: &Path) {
     let _ = std::fs::remove_file(info_path(ticket));
 }
 
-/// Live tickets in serving order (priority first, then arrival); a ticket whose lock can be taken
+/// Live tickets in serving order (priority first, then review and merge, then arrival); a ticket whose lock can be taken
 /// is a dead waiter's and is removed with its `.info`. Our own ticket is never probed (we hold
 /// its lock).
 fn live_tickets(dir: &Path, mine: Option<&Path>) -> std::io::Result<Vec<PathBuf>> {
@@ -1291,7 +1295,13 @@ fn run_admitted_slot_core(
     let now = unix_now();
     let reservation = reservation_path(&dir, lane, label);
     let arrival = take_reservation(&reservation, now).unwrap_or(now);
-    let mark = if request.priority { PRIORITY_MARK } else { "" };
+    let mark = if request.priority {
+        PRIORITY_MARK
+    } else if request.stage == crate::args::SlotStage::Implement {
+        ""
+    } else {
+        FINISHING_MARK
+    };
     let mine = dir.join(format!(
         "{mark}{arrival:024}-{lane}-{}.ticket",
         std::process::id()

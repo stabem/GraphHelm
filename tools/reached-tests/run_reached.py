@@ -462,6 +462,8 @@ def run(args: argparse.Namespace) -> int:
     # #1188: the slot's build parallelism. Six when the caller does not choose; one root may go to
     # 16, and the jobs of every root building at the same time add up to at most 24 (LANES.md §3).
     jobs = str(getattr(args, "jobs", 6))
+    # #1470: an older caller without `stage` queues as implement work, as before.
+    stage = getattr(args, "stage", "implement")
     started = time.monotonic()
     deadline_unix_ms = time.time() * 1000.0 + args.budget_seconds * 1000.0
     repo = Path(args.repo).resolve()
@@ -602,7 +604,7 @@ def run(args: argparse.Namespace) -> int:
                 if is_batch:
                     # The CLI receives original argv; its Rust worker selects the child cwd/target.
                     command = [str(selected_graphhelm), "--json", "workspace", "slot", "--root", args.root,
-                               "--lane", args.lane, "--jobs", jobs, "--label", f"reached-batch-{indices[0]}",
+                               "--lane", args.lane, "--jobs", jobs, "--stage", stage, "--label", f"reached-batch-{indices[0]}",
                                "--max-wait", repr(remaining_budget / 60.0), "--", *commands[0]]
                     # Batch commands are carried by the opt-in environment, never by the CLI argv.
                     payload = {"schema": _BATCH_SCHEMA, "commands": commands,
@@ -610,7 +612,7 @@ def run(args: argparse.Namespace) -> int:
                                "leaseSeconds": 30}
                 elif entry["slot"]:
                     command = [str(selected_graphhelm), "--json", "workspace", "slot", "--root", args.root,
-                               "--lane", args.lane, "--jobs", jobs, "--label", f"reached-step-{entry['index']}",
+                               "--lane", args.lane, "--jobs", jobs, "--stage", stage, "--label", f"reached-step-{entry['index']}",
                                "--max-wait", repr(remaining_budget / 60.0), "--", *commands[0]]
                     payload = None
                 else:
@@ -756,6 +758,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--jobs", type=int, default=6,
                     help="cargo build jobs for every slot command (1..32; default 6; one root up to 16)")
     ap.add_argument("--allow-whole-package")
+    # #1470: a review or merge run is admitted to the build slot before waiting implement plans.
+    ap.add_argument("--stage", choices=("implement", "review", "merge"), default="implement",
+                    help="delivery step this run serves; review and merge jobs are served first")
     ap.add_argument("--include-browser", action="store_true",
                     help="allow selector steps marked observer=browser when local Playwright is installed")
     batch = ap.add_mutually_exclusive_group()

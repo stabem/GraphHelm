@@ -19,7 +19,8 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   you were not assigned; when none was named, ask the coordinator. The assigned reviewer merges
   (pinned squash, DELIVERY.md §5).
 - A lane holds at most **one implementation task, one review in progress and one waiting slot
-  ticket** at a time.
+  ticket** at a time. A lane with an open review assigned to it does not start a new
+  implementation plan until that review has a verdict (#1470).
 - When a review of record already exists for the head you were assigned, stop and tell the
   coordinator instead of adding a second one.
 
@@ -110,6 +111,11 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   replaces the running binary only after the build succeeds. Older binaries and raw Cargo invocations take no grant. The
   lock order is root-local queue then shared authority; a waiter releases a root candidate before
   retrying.
+- **Review and merge go first (#1470).** A slot job tagged `--stage review` or `--stage merge`
+  is admitted before every waiting `implement` job (the default), whatever the arrival order. It
+  never preempts the holder, and an owner `--priority` waiter still goes first. Reviewers and
+  mergers pass `run_reached.py --stage review` (or `merge`), which forwards it to every slot
+  command it queues. `workspace slot status` shows each waiter's stage.
 - **Build jobs.** One slot root may build with up to `--jobs 16`;
   the jobs of every root building at the same time add up to at most 24. `run_reached.py --jobs N`
   carries the choice into every slot command it queues (six when omitted). The dedicated root

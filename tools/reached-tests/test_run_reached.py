@@ -198,7 +198,7 @@ class RunnerContracts(unittest.TestCase):
             def fake_git(_repo, *args):
                 return "HEAD" if args[0] == "rev-parse" else ""
 
-            def runner(jobs):
+            def runner(jobs, stage=None):
                 calls = []
 
                 def fake_run(command, **kwargs):
@@ -217,6 +217,8 @@ class RunnerContracts(unittest.TestCase):
                           "allow_whole_package": None, "plan": False, "graphhelm": sys.executable}
                 if jobs is not None:
                     fields["jobs"] = jobs
+                if stage is not None:
+                    fields["stage"] = stage
                 args = type("Args", (), fields)()
                 with patch.object(rr, "_selector", return_value=plan), patch.object(rr, "_git", side_effect=fake_git),                         patch.object(rr.subprocess, "run", side_effect=fake_run):
                     self.assertEqual(rr.run(args), 0)
@@ -226,10 +228,16 @@ class RunnerContracts(unittest.TestCase):
             self.assertEqual(sixteen[sixteen.index("--jobs") + 1], "16")
             legacy = runner(None)
             self.assertEqual(legacy[legacy.index("--jobs") + 1], "6")
+            # #1470: the stage reaches the slot command; an older caller queues as implement.
+            self.assertEqual(legacy[legacy.index("--stage") + 1], "implement")
+            review = runner(2, "review")
+            self.assertEqual(review[review.index("--stage") + 1], "review")
         with self.assertRaises(SystemExit):
             rr.main(["--output", "x.json", "--jobs", "0"])
         with self.assertRaises(SystemExit):
             rr.main(["--output", "x.json", "--jobs", "33"])
+        with self.assertRaises(SystemExit):
+            rr.main(["--output", "x.json", "--stage", "plan"])
 
     def test_batch_runner_observes_deadline_and_final_child_failure(self):
         def run_case(batch, cli_code):

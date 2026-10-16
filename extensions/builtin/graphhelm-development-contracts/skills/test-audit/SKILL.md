@@ -22,7 +22,13 @@ Three modes. Pick the one the task needs.
 
 ## Mode A — Authoring gate (every new or changed test)
 
-Before writing or changing a test, answer four questions in the PR body, one line each:
+First, the Keel rule (`keel/KEEL_EXEC.md`, Prove step 2): a new standalone unit test is a
+regression test. It reproduces a bug someone found, red before the fix and green after. The
+standing exceptions are data formats and digests, security and pure algorithms. A new unit test
+that is neither is not written; prove the promise with the cheapest integration or end-to-end
+observer instead.
+
+Then, before writing or changing a test, answer four questions in the PR body, one line each:
 
 1. **Contract.** What observable behavior, invariant or independent contract does it protect?
    Name the criterion id when a card exists.

@@ -5,6 +5,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILLS_DIR = ROOT / "plugins" / "keel" / "skills"
+# The development-contracts `keel` skill must stay self-contained, so it embeds one KEEL file.
+GRAPHHELM_KEEL_SKILL = ROOT / "extensions" / "builtin" / "graphhelm-development-contracts" / "skills" / "keel" / "SKILL.md"
+GRAPHHELM_KEEL_SOURCE = "keel/KEEL_EXEC.md"
 
 # skill folder -> the KEEL file it carries, and when a host should load it.
 SKILLS = {
@@ -47,9 +50,26 @@ def marker(source):
     return f"\n<!-- keel source: {source} (generated; edit the source, then run tools/keel-plugin/sync_keel_plugin.py) -->\n\n"
 
 
+def keel_text(source):
+    return (ROOT / source).read_bytes().decode("utf-8").replace("\r\n", "\n")
+
+
+def embedded_markers(source):
+    return (f"<!-- keel embed start: {source} (generated; edit the source, then run tools/keel-plugin/sync_keel_plugin.py) -->\n",
+            f"<!-- keel embed end: {source} -->\n")
+
+
+def embed(skill_text, source):
+    # Replaces only what lies between the markers; the hand-written rest of the skill is kept.
+    start, end = embedded_markers(source)
+    head, rest = skill_text.split(start, 1)
+    tail = rest.split(end, 1)[1]
+    return head + start + keel_text(source) + end + tail
+
+
 def render(skill):
     source = SKILLS[skill]
-    body = (ROOT / source).read_bytes().decode("utf-8").replace("\r\n", "\n")
+    body = keel_text(source)
     frontmatter = f"---\nname: {skill}\ndescription: {json.dumps(DESCRIPTIONS[skill])}\n---\n\n"
     return frontmatter + PREAMBLE + marker(source) + body
 
@@ -59,6 +79,8 @@ def main():
         target = SKILLS_DIR / skill / "SKILL.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(render(skill).encode("utf-8"))
+    current = GRAPHHELM_KEEL_SKILL.read_bytes().decode("utf-8").replace("\r\n", "\n")
+    GRAPHHELM_KEEL_SKILL.write_bytes(embed(current, GRAPHHELM_KEEL_SOURCE).encode("utf-8"))
     print(f"wrote {len(SKILLS)} skills under {SKILLS_DIR.relative_to(ROOT).as_posix()}")
     return 0
 

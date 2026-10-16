@@ -177,6 +177,16 @@ impl Harness {
     /// The Runtime on a given store; #534's cells serve the project's own owner store, as a real
     /// Runtime started from the project does.
     fn serve_with(&self, events: &Path, project: bool) -> (ServerGuard, String, String) {
+        self.serve_with_audit(events, project, None)
+    }
+
+    /// The Runtime, optionally with `--read-audit` writing every response body to `audit`.
+    fn serve_with_audit(
+        &self,
+        events: &Path,
+        project: bool,
+        audit: Option<&Path>,
+    ) -> (ServerGuard, String, String) {
         let binding = format!(
             "{AGENT_CREDENTIAL}=agent-planner|project-local|{RUN};{REVIEWER_CREDENTIAL}=agent-reviewer|project-local|{RUN};{SQUATTER_CREDENTIAL}=agent-squatter|project-local|{RUN}"
         );
@@ -189,6 +199,9 @@ impl Harness {
             .args(["--key-id", KEY_ID]);
         if project {
             command.arg("--project").arg(&self.project);
+        }
+        if let Some(audit) = audit {
+            command.arg("--read-audit").arg(audit);
         }
         let mut child = command
             .env("GRAPHHELM_AGENT_CREDENTIALS", binding)
@@ -1032,4 +1045,287 @@ fn owner_journey_grants_survive_a_restart_and_refuse_agents_and_a_torn_journal()
         );
     }
     assert_eq!(std::fs::read(&journal).unwrap(), torn);
+}
+
+/// #1309 slice 2: one request with arbitrary headers. Returns status, the response head (so a test
+/// can read `Cache-Control`), and the parsed body.
+fn lane_call(base: &str, path: &str, headers: &[(&str, &str)], body: &str) -> (u16, String, Value) {
+    let address = base.strip_prefix("http://").unwrap();
+    let mut request = format!(
+        "POST {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
+        body.len()
+    );
+    for (name, value) in headers {
+        request.push_str(&format!("{name}: {value}\r\n"));
+    }
+    request.push_str("\r\n");
+    request.push_str(body);
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(scaled(Duration::from_secs(60))))
+        .unwrap();
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).unwrap();
+    let split = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+    let head = String::from_utf8_lossy(&raw[..split]).into_owned();
+    let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+    let mut body = raw[split + 4..].to_vec();
+    if head
+        .to_ascii_lowercase()
+        .contains("transfer-encoding: chunked")
+    {
+        body = dechunk(&body);
+    }
+    (
+        status,
+        head,
+        serde_json::from_slice(&body).unwrap_or(Value::Null),
+    )
+}
+
+/// The #1148 lane credential a lane holds for `(execution, lane)`: the documented derivation the
+/// Runtime recomputes to verify the declared lane.
+fn lane_bearer(owner: &str, execution: &str, lane: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"graphhelm-lane-credential-v1\0");
+    hasher.update(owner.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(execution.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(lane.as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// #1309 slice 2 (RFC-1309 "Protected delivery channel", disposition on #1488): a lane holding
+/// its own lane credential and an active exact-scope owner grant receives one journey credential,
+/// once. The token reaches no journal frame, no `--read-audit` line and no replay; a same-key
+/// retry answers 409 without it; every other principal and every scope mismatch is refused with
+/// no frame written; the owner can revoke the credential, and the state survives a restart.
+#[test]
+fn a_lane_receives_its_journey_credential_once_and_the_token_is_written_nowhere() {
+    let harness = prepared();
+    let audit = harness.scratch.path().join("read-audit.jsonl");
+    let journal = harness
+        .scratch
+        .path()
+        .join("credential-broker/journey-credentials.v1.log");
+    let grants = format!("/v1/executions/{RUN}/journey-credential-grants");
+    let issue = format!("/v1/executions/{RUN}/journey-credentials");
+    let (guard, base, owner) = harness.serve_with_audit(&harness.events, true, Some(&audit));
+    let project_id = http(&base, "GET", "/health", None).1["data"]["projectId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let grant_body = |expires: &str| {
+        json!({"projectId": project_id, "laneId": "agent-reviewer", "flowId": "checkout",
+            "purpose": "reviewer", "expiresAt": expires})
+        .to_string()
+    };
+    let (status, created) = grant_call(
+        &base,
+        &grants,
+        &owner,
+        "grant-live",
+        &grant_body("2030-01-01T00:00:00Z"),
+    );
+    assert_eq!(status, 200, "{created}");
+    let grant = created["data"]["grantId"].as_str().unwrap().to_owned();
+    let (status, stale) = grant_call(
+        &base,
+        &grants,
+        &owner,
+        "grant-stale",
+        &grant_body("2000-01-01T00:00:00Z"),
+    );
+    assert_eq!(status, 200, "{stale}");
+    let stale = stale["data"]["grantId"].as_str().unwrap().to_owned();
+
+    let reviewer = lane_bearer(&owner, RUN, "agent-reviewer");
+    let planner = lane_bearer(&owner, RUN, "agent-planner");
+    let ask = |bearer: &str, actor: &str, key: &str, body: &Value| {
+        let authorization = format!("Bearer {bearer}");
+        lane_call(
+            &base,
+            &issue,
+            &[
+                ("Authorization", &authorization),
+                ("X-GraphHelm-Actor", actor),
+                ("Idempotency-Key", key),
+            ],
+            &body.to_string(),
+        )
+    };
+    let request = |grant_id: &str, flow: &str, purpose: &str| {
+        json!({"grantId": grant_id, "projectId": project_id, "executionId": RUN,
+            "flowId": flow, "purpose": purpose})
+    };
+
+    let (status, head, issued) = ask(
+        &reviewer,
+        "agent-reviewer",
+        "cred-1",
+        &request(&grant, "checkout", "reviewer"),
+    );
+    assert_eq!(status, 200, "{issued}");
+    assert!(
+        head.to_ascii_lowercase()
+            .contains("cache-control: no-store"),
+        "{head}"
+    );
+    let token = issued["data"]["token"].as_str().unwrap().to_owned();
+    assert_eq!(token.len(), 64, "32 random bytes, hex");
+    let credential = issued["data"]["credentialId"].as_str().unwrap().to_owned();
+    assert_eq!(issued["data"]["grantId"], grant.as_str());
+    assert_eq!(issued["data"]["state"], "active");
+
+    // The token is sent once: the same key answers 409 naming the credential, without the token.
+    let (status, _, again) = ask(
+        &reviewer,
+        "agent-reviewer",
+        "cred-1",
+        &request(&grant, "checkout", "reviewer"),
+    );
+    assert_eq!(
+        (status, first_code(&again).1),
+        (409, "/credentialId"),
+        "{again}"
+    );
+    assert!(again.to_string().contains(&credential), "{again}");
+    assert!(!again.to_string().contains(&token), "{again}");
+    let committed = std::fs::read(&journal).unwrap();
+
+    // Every other principal and every scope mismatch is refused before a token is drawn, with no
+    // frame written.
+    let agent_session =
+        std::fs::read_to_string(harness.events.with_extension("agent.token")).unwrap();
+    let cases = [
+        // Another lane presenting the reviewer grant.
+        (
+            planner.clone(),
+            "agent-planner",
+            request(&grant, "checkout", "reviewer"),
+        ),
+        // The reviewer credential declared under another lane name verifies as no lane.
+        (
+            reviewer.clone(),
+            "agent-planner",
+            request(&grant, "checkout", "reviewer"),
+        ),
+        // The shared agent session token proves no lane.
+        (
+            agent_session.trim().to_owned(),
+            "agent-reviewer",
+            request(&grant, "checkout", "reviewer"),
+        ),
+        // The owner token is not a lane.
+        (
+            owner.clone(),
+            "agent-reviewer",
+            request(&grant, "checkout", "reviewer"),
+        ),
+        // Wrong flow, wrong purpose, an expired grant, an unknown grant.
+        (
+            reviewer.clone(),
+            "agent-reviewer",
+            request(&grant, "basket", "reviewer"),
+        ),
+        (
+            reviewer.clone(),
+            "agent-reviewer",
+            request(&grant, "checkout", "author"),
+        ),
+        (
+            reviewer.clone(),
+            "agent-reviewer",
+            request(&stale, "checkout", "reviewer"),
+        ),
+        (
+            reviewer.clone(),
+            "agent-reviewer",
+            request("grant-none", "checkout", "reviewer"),
+        ),
+    ];
+    for (bearer, actor, body) in &cases {
+        let (status, _, refused) = ask(bearer, actor, "cred-refused", body);
+        assert!(matches!(status, 401 | 403), "{actor} {status} {refused}");
+        assert!(refused["data"]["token"].is_null(), "{refused}");
+    }
+    assert_eq!(std::fs::read(&journal).unwrap(), committed);
+
+    // The owner revokes the credential.
+    let revoke = format!("{issue}/{credential}/revoke");
+    let (status, revoked) = grant_call(&base, &revoke, &owner, "rev-1", "");
+    assert_eq!(status, 200, "{revoked}");
+    assert_eq!(revoked["data"]["state"], "revoked");
+    // A lane cannot revoke, even its own credential.
+    let authorization = format!("Bearer {reviewer}");
+    let (status, _, refused) = lane_call(
+        &base,
+        &revoke,
+        &[
+            ("Authorization", &authorization),
+            ("X-GraphHelm-Actor", "agent-reviewer"),
+            ("Idempotency-Key", "rev-lane"),
+        ],
+        "",
+    );
+    assert!(matches!(status, 401 | 403), "{status} {refused}");
+    // A revoked grant issues nothing new.
+    let (status, _) = grant_call(
+        &base,
+        &format!("{grants}/{grant}/revoke"),
+        &owner,
+        "rev-2",
+        "",
+    );
+    assert_eq!(status, 200);
+    let (status, _, refused) = ask(
+        &reviewer,
+        "agent-reviewer",
+        "cred-2",
+        &request(&grant, "checkout", "reviewer"),
+    );
+    assert_eq!(status, 403, "{refused}");
+    drop(guard);
+
+    // The token is written nowhere: not in the journal, and not in the read audit, which did
+    // record the issuing response, the 409 and the refusals.
+    let audit_text = std::fs::read_to_string(&audit).unwrap();
+    assert!(audit_text.contains("journey credential"), "{audit_text}");
+    assert!(
+        !audit_text.contains(&token),
+        "the read audit holds the token"
+    );
+    let journal_bytes = std::fs::read(&journal).unwrap();
+    assert!(
+        !journal_bytes
+            .windows(token.len())
+            .any(|window| window == token.as_bytes()),
+        "the journal holds the token"
+    );
+
+    // A restart replays the credential, and the same key still never returns the token.
+    let (_guard, base, _) = harness.serve_with_audit(&harness.events, true, Some(&audit));
+    let (status, _, replayed) = lane_call(
+        &base,
+        &issue,
+        &[
+            ("Authorization", &authorization),
+            ("X-GraphHelm-Actor", "agent-reviewer"),
+            ("Idempotency-Key", "cred-1"),
+        ],
+        &request(&grant, "checkout", "reviewer").to_string(),
+    );
+    assert_eq!(
+        (status, first_code(&replayed).1),
+        (409, "/credentialId"),
+        "{replayed}"
+    );
+    assert!(!replayed.to_string().contains(&token));
 }

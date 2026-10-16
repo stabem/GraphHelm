@@ -336,6 +336,24 @@ fn status_with_tasks_folds_the_recorded_task_events() {
         "{}",
         tasks[0]
     );
+    // #1449: `--tasks` answers the open board; the record history is behind `--full-tasks`.
+    assert_eq!(data["view"], "open", "{data}");
+    assert!(data.get("records").is_none(), "{data}");
+    let full = command()
+        .args(["execution", "status", "--events"])
+        .arg(&events)
+        .args(["--execution", RUN, "--tasks", "--full-tasks", "--keyring"])
+        .arg(scratch.path().join("keyring"))
+        .args(["--key-id", "owner-key"])
+        .output()
+        .unwrap();
+    let full: Value = serde_json::from_slice(&full.stdout).unwrap();
+    let full = &full["data"]["tasks"];
+    assert_eq!(full["tasks"], data["tasks"], "{full}");
+    assert!(
+        full["records"].as_array().is_some_and(|records| !records.is_empty()),
+        "{full}"
+    );
 
     // Without the flag the status reply carries no projection, as before.
     let plain = command()

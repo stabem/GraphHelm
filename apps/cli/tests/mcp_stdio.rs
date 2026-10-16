@@ -1923,7 +1923,12 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
         ),
         bound(
             "source",
-            signal("source", "lane-beta", "operator_note", "no".into()),
+            signal(
+                "source",
+                "lane-beta",
+                "task.heartbeat",
+                task_doc(5, serde_json::json!({"lane": "lane-alpha"})),
+            ),
             "lane-alpha",
             &lane_a,
         ),

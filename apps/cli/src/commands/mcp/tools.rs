@@ -60,7 +60,7 @@ const TOOLS: [ToolSpec; 47] = [
     },
     ToolSpec {
         name: "tasks",
-        description: "Read a run's task projection (GET /v1/executions/{executionId}/tasks): each task's delivery step, lane, issue, PR, head, open BLOCK, claim sequence and last heartbeat, folded from the run's verified task.* records. Answers the open board: tasks not yet merged with leases, stalls and lane liveness, and endedTasks counting the merged ones left out (the full record history is GET .../tasks?full=1, which the Studio reads). Read-only.",
+        description: "Read a run's task projection (GET /v1/executions/{executionId}/tasks): each task's delivery step, lane, issue, PR, head, open BLOCK, claim sequence and last heartbeat, folded from the run's verified task.* records. Read-only.",
         schema: execution_only_schema,
     },
     ToolSpec {

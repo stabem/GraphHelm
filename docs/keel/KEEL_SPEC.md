@@ -18,11 +18,11 @@ and drops the ones that only helped a human eye.
 | Clean Code | small functions, extract until each does one thing | dropped: every extraction is one more symbol to open; replaced by deep modules (`keel.deep`) |
 | Clean Code | comments are a failure, code explains itself | adapted: a comment carries only the why (`keel.comments`), and every file carries one purpose line (`keel.purpose`) |
 | Clean Code | leave the campsite cleaner | dropped: it pulls the agent out of its card; a neighbour's defect is named in the pull request |
-| Pragmatic Programmer | DRY | adapted: no duplicate knowledge, abstraction on the third copy (`keel.dup`, `keel.dup.third`) |
+| Pragmatic Programmer | DRY | adapted: no duplicate knowledge, abstraction on the third copy, a linked same-name second copy (`keel.dup`) |
 | Pragmatic Programmer | do not program by coincidence | kept: the cause comes before the fix (`keel.cause`) |
 | Pragmatic Programmer | orthogonality | kept as cohesion: split what never talks, merge what always changes together |
 | Extreme Programming | YAGNI, simple design | kept: add only what the promise needs |
-| Extreme Programming | test first | adapted: end to end first; isolated tests only where end to end cannot reach |
+| Extreme Programming | test first | adapted: the order is not checkable, so a test earns its place by catching a deliberate break, whenever it was written; the cheapest observer that proves the promise |
 | Extreme Programming | refactor mercilessly | dropped as a habit; a refactor is its own structural commit inside a card |
 | Clean Architecture | dependency rule | kept: dependencies point inward (`keel.deps`) |
 | Clean Architecture | interfaces and layers per feature | dropped: indirection a model must follow; interfaces only at I/O |
@@ -68,11 +68,14 @@ reads all history per request becomes the next outage as the store grows. These 
 argued: a request key or a run-twice test, a deadline on every external call, a scale check at N
 and 10N.
 
-**End to end first.** A test written to fit existing code records what the code does, not what
-it should do; models write such tests by default and their assertions mirror the implementation
-([Autonoma](https://getautonoma.com/blog/ai-generated-tests-pass-but-dont-assert)). An end-to-end
-proof observes the promise a user sees and leaves a receipt anyone can replay. Isolated tests stay
-where an end-to-end run cannot reach every case: data formats and digests, security, pure algorithms.
+**Rigid on commitments, flexible on means.** A test written to fit existing code can record what
+the code does, not what it should do; models write such tests by default and their assertions
+mirror the implementation
+([Autonoma](https://getautonoma.com/blog/ai-generated-tests-pass-but-dont-assert)). The cure is not
+an order of writing, which git cannot prove, but a test that turns red when the promise is broken
+on purpose and red on the parent. Any observer that passes those is accepted, unit, integration or
+end to end; the one closest to the user-visible promise is preferred when it is affordable, since
+it leaves a receipt anyone can replay.
 
 **Blocking.** From September to October 2026 Keel only reported; `App.tsx` grew to 3,625 lines
 through 128 changes that each passed alone. A rule the machine measures now blocks, with a written

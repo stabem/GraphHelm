@@ -2,14 +2,19 @@
 
 Step 4. Only the reviewer who approved merges. Read [`KEEL.md`](../KEEL.md) first.
 
-1. **Pin the head.** Merge exactly the commit you reviewed:
+1. **Pin the head.** `gh pr view <N> --json headRefOid` must equal the sha the review named, and
+   no BLOCK on that head is left unanswered. Merge exactly that commit:
    `gh pr merge <N> --squash --match-head-commit <sha>`.
 2. **Main moved, run again.** If main moved after your review, rerun the reached plan on the new
-   main plus the head before you merge. Two changes that each pass alone can break together.
-3. **Closing keywords** in the body and the commits must match what the change closes.
+   main plus the head before you merge; a clean merge-tree is not a test. Two changes that each
+   pass alone can break together.
+3. **Closing keywords** in the body and the commits must match what the change closes: run the
+   closing check in [`DELIVERY.md`](../docs/process/DELIVERY.md) §5.
 4. **Check after.** Read what landed, then run the change's main proof on main and confirm it is
    green. If it is red, the merge is not delivered: fix main first.
-5. **Clean up what you created.** The author deletes the branch (unless a pull request is stacked
-   on it), the worktree and the build directories. Nobody deletes another lane's.
+5. **Delete the branch.** The merger deletes it unless a pull request is stacked on it
+   (`gh pr list --base <branch> --state open`). The author cleans up its own worktree and build
+   directories; nobody deletes another lane's.
 
-Delivered means merged into main and green there.
+**Delivered** means merged into `main` and `main` green on the change's main proof. An open pull
+request is not delivered.

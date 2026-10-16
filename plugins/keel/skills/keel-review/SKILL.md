@@ -26,9 +26,7 @@ Step 3: one reviewer per pull request. Read [`KEEL.md`](../KEEL.md) first.
 
 ## Blind
 
-You review only what the change contains. If you helped write it, or your brief carries the
-author's reasoning, a finding to look for or an expected verdict, you are not blind: say so and
-do not review.
+Who counts as blind, and what a brief may carry, is [`DELIVERY.md`](../docs/process/DELIVERY.md) §4.
 
 ## Do
 
@@ -36,8 +34,8 @@ do not review.
 2. **Rerun everything yourself.** The whole reached plan on main plus the head, and every
    end-to-end proof the card names. Do not trust the author's green. Name each command and its
    result, and the size of each population (for example, how many test files ran).
-3. **Check every value** in `KEEL.md` against the diff, one line per value: holds, does not hold,
-   or not reached. A value marked `to build` is checked by reading.
+3. **List only the values in `KEEL.md` that do not hold** on the diff, plus every value the
+   card's risk row names, whether it holds or not. A value marked `to build` is checked by reading.
 4. **Check every exception** the change adds: is the reason true, and does it expire? Refuse one
    that excuses a value instead of a constraint.
 5. **Measure any promised gain live**, before and after, under the same condition, enough runs to

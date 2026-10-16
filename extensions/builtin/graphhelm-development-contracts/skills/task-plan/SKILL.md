@@ -8,6 +8,8 @@ description: "First step of a task after its issue: decide the paths, promise, p
 Step 1 of the per-task graph (issue, **plan**, implement, prove, review, merge). The plan decides
 how much process the change needs. It never writes code.
 
+**Load the project's `KEEL.md` and `keel/KEEL_PLAN.md` first, when the project has them; their rules bind and win over this skill where they differ.**
+
 ## Emits and reads
 
 - Emits one `keel.plan` record: a signal whose description is a `graphhelm-task-plan-v1`
@@ -15,14 +17,14 @@ how much process the change needs. It never writes code.
   `revision`, `paths`, `classes`, `journeys`, `proof` (`journey` | `tests` | `both` | `none`),
   `reviews` (0, 1 or 2), `skills`, `tools`, `delegation`, `decidedBy`.
 - Reads: the issue, `.graphhelm/journeys/` (which screens the paths touch), the repository's
-  `AGENTS.md` and `docs/process/DELIVERY.md` §2 (the card rows).
+  `AGENTS.md` and `keel/KEEL_PLAN.md` (the card rows).
 
 ## Method
 
 1. Read the issue. Write the **promise** as one user-visible sentence, and the **paths** the change
    needs (files or directories, no globs). Start from the promise and search on purpose; do not
    list the tree.
-2. Pick the card row (DELIVERY.md §2): docs/config/one-line/test-only, bounded code change, new
+2. Pick the card row (`keel/KEEL_PLAN.md`): docs/config/one-line/test-only, bounded code change, new
    public surface, or persistence/permissions/compatibility/security/external effects.
 3. Pick the proof:
    - a path is in some step's `screen.scopePaths` → `journey` (name the contract ids in

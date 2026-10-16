@@ -8,6 +8,8 @@ description: "Write the change a task-plan decided, under Keel: stay inside the 
 Step 2 of the per-task graph. The binding rules are the `keel` skill's; load it first. This skill
 adds what to do around them.
 
+**Load the project's `KEEL.md` and `keel/KEEL_EXEC.md` first, when the project has them; their rules bind and win over this skill where they differ.**
+
 ## Emits and reads
 
 - Reads the task's `keel.plan` record (or the card in the PR body): paths, promise, proof, skills.

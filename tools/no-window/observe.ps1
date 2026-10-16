@@ -23,17 +23,20 @@ param(
   [string]$Base = 'origin/main',
   [string]$Exe,
   [string[]]$Arguments,
+  [switch]$ObserveTerminalTabs,
   [Parameter(ValueFromRemainingArguments = $true)][string[]]$Command
 )
 $ErrorActionPreference = 'Stop'
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) { Write-Output 'SKIP: the observer needs Windows'; exit 2 }
 
-Add-Type -TypeDefinition @'
+Add-Type -ReferencedAssemblies @('UIAutomationClient', 'UIAutomationTypes') -TypeDefinition @'
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using System.Windows.Automation;
 public static class ConsoleWindowWatch {
   delegate void WinEventProc(IntPtr hook, uint evt, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
   [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr mod, WinEventProc proc, uint pid, uint tid, uint flags);
@@ -42,6 +45,13 @@ public static class ConsoleWindowWatch {
   [DllImport("user32.dll")] static extern bool PostThreadMessage(uint tid, uint msg, IntPtr w, IntPtr l);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder name, int max);
   [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);
+  [DllImport("kernel32.dll", EntryPoint = "CloseHandle", SetLastError = true)] static extern bool CloseProcessHandle(IntPtr handle);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder name, ref int size);
+  [StructLayout(LayoutKind.Sequential)] struct PROCESS_BASIC_INFORMATION { public IntPtr reserved1, pebBaseAddress, reserved2a, reserved2b, uniquePid, inheritedPid; }
+  [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr process, int infoClass, out PROCESS_BASIC_INFORMATION info, int length, out int returned);
   [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
   [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr h; public uint m; public IntPtr w; public IntPtr l; public uint t; public int x; public int y; }
   static readonly object Gate = new object();
@@ -50,6 +60,47 @@ public static class ConsoleWindowWatch {
   static uint LoopThread;
   static Thread Worker;
   static readonly ManualResetEvent Ready = new ManualResetEvent(false);
+  static readonly ManualResetEvent TabReady = new ManualResetEvent(false);
+  static readonly ManualResetEvent TabStop = new ManualResetEvent(false);
+  static Thread TabWorker;
+  static string TabError;
+  static readonly List<string> TabSeen = new List<string>();
+  static readonly Dictionary<int, HashSet<string>> KnownTabs = new Dictionary<int, HashSet<string>>();
+  static readonly Dictionary<int, AutomationElement> TabWindows = new Dictionary<int, AutomationElement>();
+  const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+  static string Identity(uint pid, long expectedCreation) {
+    IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+    if (process == IntPtr.Zero) return "pid=" + pid + " status=unknown(open-process)";
+    try {
+      long creation, exit, kernel, user;
+      if (!GetProcessTimes(process, out creation, out exit, out kernel, out user)) return "pid=" + pid + " status=unknown(process-times)";
+      if (expectedCreation != 0 && creation != expectedCreation) return "pid=" + pid + " status=unknown(pid-reused)";
+      var path = new StringBuilder(1024);
+      int size = path.Capacity;
+      if (!QueryFullProcessImageName(process, 0, path, ref size)) return "pid=" + pid + " created=" + creation + " status=unknown(image-name)";
+      PROCESS_BASIC_INFORMATION info;
+      int returned;
+      if (NtQueryInformationProcess(process, 0, out info, Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)), out returned) < 0)
+        return "pid=" + pid + " created=" + creation + " name=" + System.IO.Path.GetFileName(path.ToString()) + " status=unknown(parent)";
+      return "pid=" + pid + " created=" + creation + " name=" + System.IO.Path.GetFileName(path.ToString()) + " parent=" + info.inheritedPid.ToInt64();
+    } finally { CloseProcessHandle(process); }
+  }
+  static string Chain(uint pid) {
+    var rows = new List<string>();
+    var visited = new HashSet<uint>();
+    for (int depth = 0; depth < 16 && pid != 0; depth++) {
+      if (!visited.Add(pid)) { rows.Add("pid=" + pid + " status=unknown(cycle)"); return String.Join(" <- ", rows.ToArray()); }
+      string row = Identity(pid, 0);
+      rows.Add(row);
+      int marker = row.IndexOf(" parent=", StringComparison.Ordinal);
+      if (marker < 0) return String.Join(" <- ", rows.ToArray());
+      uint parent;
+      if (!UInt32.TryParse(row.Substring(marker + 8), out parent) || parent == 0) return String.Join(" <- ", rows.ToArray());
+      if (depth == 15) { rows.Add("pid=" + parent + " status=unknown(depth-limit-16)"); return String.Join(" <- ", rows.ToArray()); }
+      pid = parent;
+    }
+    return String.Join(" <- ", rows.ToArray());
+  }
   public static void Start() {
     Worker = new Thread(() => {
       LoopThread = GetCurrentThreadId();
@@ -64,6 +115,60 @@ public static class ConsoleWindowWatch {
     Worker.Start();
     Ready.WaitOne();
   }
+  static string TabId(AutomationElement tab) { return String.Join(".", tab.GetRuntimeId()); }
+  static void ScanTabs() {
+    lock (Gate) {
+      foreach (var pair in TabWindows) {
+        var tabs = pair.Value.FindAll(TreeScope.Descendants,
+          new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem));
+        foreach (AutomationElement tab in tabs) {
+          string id = TabId(tab);
+          if (KnownTabs[pair.Key].Add(id))
+            TabSeen.Add("hwnd=0x" + pair.Key.ToString("x") + " id=" + id + " at=" + DateTime.Now.ToString("HH:mm:ss.fff"));
+        }
+      }
+    }
+  }
+  public static string StartTabs() {
+    TabWorker = new Thread(() => {
+      try {
+        var windows = AutomationElement.RootElement.FindAll(TreeScope.Children,
+          new PropertyCondition(AutomationElement.ClassNameProperty, "CASCADIA_HOSTING_WINDOW_CLASS"));
+        foreach (AutomationElement window in windows) {
+          int hwnd = window.Current.NativeWindowHandle;
+          if (hwnd == 0) continue;
+          var ids = new HashSet<string>();
+          var tabs = window.FindAll(TreeScope.Descendants,
+            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem));
+          foreach (AutomationElement tab in tabs) ids.Add(TabId(tab));
+          if (ids.Count == 0) throw new InvalidOperationException("no Terminal tabs in baseline");
+          KnownTabs.Add(hwnd, ids);
+          TabWindows.Add(hwnd, window);
+        }
+        if (TabWindows.Count == 0) throw new InvalidOperationException("no visible Terminal window in baseline");
+        TabReady.Set();
+        while (!TabStop.WaitOne(100)) {
+          ScanTabs();
+          lock (Gate) { if (TabError != null) break; }
+        }
+        // A tab can appear after the last poll and before the command exits.
+        // Compare the final UIA tree with the baseline before reporting coverage.
+        ScanTabs();
+      } catch (Exception ex) { lock (Gate) { TabError = "accessibility: " + ex.GetType().Name + " " + ex.Message; } }
+      finally {
+        TabReady.Set();
+      }
+    });
+    TabWorker.IsBackground = true;
+    TabWorker.Start();
+    if (!TabReady.WaitOne(2000)) return "accessibility baseline timed out";
+    lock (Gate) { return TabError; }
+  }
+  public static string[] StopTabs(out string error) {
+    TabStop.Set();
+    if (!TabWorker.Join(10000)) { error = "accessibility collection timed out"; return new string[0]; }
+    lock (Gate) { error = TabError; return TabSeen.ToArray(); }
+  }
   static void OnEvent(IntPtr hook, uint evt, IntPtr hwnd, int idObject, int idChild, uint thread, uint time) {
     if (idObject != 0 || idChild != 0 || hwnd == IntPtr.Zero) return;
     if (GetAncestor(hwnd, 2) != hwnd) return;
@@ -71,7 +176,11 @@ public static class ConsoleWindowWatch {
     GetClassName(hwnd, name, name.Capacity);
     var cls = name.ToString();
     if (cls == "ConsoleWindowClass" || cls == "CASCADIA_HOSTING_WINDOW_CLASS") {
-      lock (Gate) { Seen.Add(DateTime.Now.ToString("HH:mm:ss.fff") + " " + cls + " 0x" + hwnd.ToString("x")); }
+      uint pid;
+      uint ownerThread = GetWindowThreadProcessId(hwnd, out pid);
+      string owner = ownerThread != 0 && pid != 0 ? pid.ToString() : "unknown";
+      string identity = owner == "unknown" ? "pid=unknown status=unknown(window-owner)" : Chain(pid);
+      lock (Gate) { Seen.Add(DateTime.Now.ToString("HH:mm:ss.fff") + " " + cls + " 0x" + hwnd.ToString("x") + " pid=" + owner + " ancestry=" + identity); }
     }
   }
   // Agent harnesses start tools with no console at all. Reproduce that: DETACHED_PROCESS, stdout and
@@ -139,20 +248,43 @@ if ($Exe) {
   $Command = @($Exe) + @($Arguments)
 }
 if (-not $Command -or $Command.Count -eq 0) { throw 'Provide -Exe and -Arguments, or a command after the observer options.' }
-Write-Output ("observing: " + ($Command -join ' '))
+$line = ($Command | ForEach-Object { [ConsoleWindowWatch]::QuoteArgument($_) }) -join ' '
+Write-Output ("observing: " + $line)
 [ConsoleWindowWatch]::Start()
+$tabStartError = $null
+if ($ObserveTerminalTabs) { $tabStartError = [ConsoleWindowWatch]::StartTabs() }
+if ($tabStartError) {
+  $unusedError = $null
+  [ConsoleWindowWatch]::StopTabs([ref]$unusedError) | Out-Null
+  [ConsoleWindowWatch]::Stop() | Out-Null
+  Write-Output "UNOBSERVED: Terminal tab coverage: $tabStartError $unusedError"
+  exit 1
+}
+if ($ObserveTerminalTabs) { Write-Output 'Terminal tab baseline ready.' }
 $started = Get-Date
 $log = Join-Path $env:TEMP 'gh-nowindow-observe.log'
-$line = ($Command | ForEach-Object { [ConsoleWindowWatch]::QuoteArgument($_) }) -join ' '
-$exit = [ConsoleWindowWatch]::RunDetached($line, $repo, $log)
+$runError = $null
+try { $exit = [ConsoleWindowWatch]::RunDetached($line, $repo, $log) }
+catch { $runError = $_.Exception.Message; $exit = 1 }
 Get-Content $log -Tail 20
 Start-Sleep -Milliseconds 500
 $windows = [ConsoleWindowWatch]::Stop()
+$tabs = @()
+$tabError = $null
+if ($ObserveTerminalTabs) { $tabs = @([ConsoleWindowWatch]::StopTabs([ref]$tabError)) }
 $seconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
 $windows | ForEach-Object { Write-Output "  shown: $_" }
 Write-Output "command exit: $exit; seconds: $seconds; console windows shown: $($windows.Count)"
+if ($ObserveTerminalTabs) {
+  $tabs | ForEach-Object { Write-Output "  tab-added: $_" }
+  Write-Output "terminal tabs added: $($tabs.Count)"
+  if ($tabStartError -or $tabError) { Write-Output "UNOBSERVED: Terminal tab coverage: $tabStartError $tabError"; exit 1 }
+  Write-Output 'Coverage: top-level console windows and existing Windows Terminal tabs.'
+}
+if ($runError) { Write-Output "ERROR: observed command failed to start or wait: $runError"; exit 1 }
 if ($windows.Count -gt 0) { Write-Output 'FAIL: console windows opened during the run'; exit 1 }
+if ($tabs.Count -gt 0) { Write-Output 'FAIL: Terminal tabs added during the run'; exit 1 }
 if ($exit -ne 0) { Write-Output 'ERROR: observed command exited non-zero'; exit 1 }
-Write-Output 'Coverage: new top-level console windows only; new tabs in an existing Windows Terminal were not observed.'
+if (-not $ObserveTerminalTabs) { Write-Output 'Coverage: new top-level console windows only; new tabs in an existing Windows Terminal were not observed.' }
 Write-Output 'PASS: no console window opened'
 exit 0

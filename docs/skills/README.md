@@ -43,7 +43,7 @@ sets the repository's issue, evidence, review, and merge rules.
 |---|---|---|
 | [Task plan](../../extensions/builtin/graphhelm-development-contracts/skills/task-plan/SKILL.md) | An issue is about to become code | The task's `keel.plan`: paths, promise, proof kind, reviews, skills |
 | [Implement](../../extensions/builtin/graphhelm-development-contracts/skills/implement/SKILL.md) | The plan exists and code is next | The change inside the card, cited context, reached tests run, PR opened |
-| [Keel](../../extensions/builtin/graphhelm-development-contracts/skills/keel/SKILL.md) | Any code change (implement's core) | A scoped card, declared write surface, and named proof; guidance and measurement, with no automatic penalty ladder |
+| [Keel](../../extensions/builtin/graphhelm-development-contracts/skills/keel/SKILL.md) | Any code change (implement's core) | The project's `KEEL.md` and step file, a scoped card, end-to-end proof first; measured rules block, with no penalty ladder |
 | [Test audit](../../extensions/builtin/graphhelm-development-contracts/skills/test-audit/SKILL.md) | Before adding or changing tests, when a suite is slow or noisy, or when pruning tests | An authoring gate, suite audit, or deletion record naming the covering observer; guidance without enforcement |
 | [Journey map](../../extensions/builtin/graphhelm-jpd/skills/journey-map/SKILL.md) | A project has screens but no journeys | Draft journey flows and a first capture baseline |
 | [Journey contract](../../extensions/builtin/graphhelm-jpd/skills/journey-contract/SKILL.md) | One new user-visible behavior needs a journey | A proposed journey flow and contract |

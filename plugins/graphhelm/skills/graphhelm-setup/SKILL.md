@@ -77,11 +77,15 @@ adopt it into a host, use the commands that exist and ask nothing unless somethi
    It is idempotent and never rotates an existing key or prints a secret.
 2. `graphhelm studio start` from the project directory brings the GraphHelm clone up to date and
    opens the Studio for that project, starting its Runtime when none answers.
-3. Confirm with the Runtime itself (`mcp__graphhelm__status` or `graphhelm execution status`), not
+3. Confirm with the Runtime itself (the GraphHelm MCP `status` tool or `graphhelm execution status`), not
    with the start command's exit code. If the Runtime does not answer, report the exact refusal
    (key, keyring, port) and stop; do not hand-edit `.graphhelm/` to force it.
 
-Prefer the GraphHelm MCP tools (`mcp__graphhelm__*`, or `mcp__plugin_graphhelm_graphhelm__*` from this plugin) for Runtime reads once they are connected; the adoption commands above stay CLI-only.
+When the project has no `KEEL.md`, copy GraphHelm's `KEEL.md` and `keel/` folder into the
+project root (until `graphhelm setup` installs them itself), and say you did. Never overwrite a
+project's own `KEEL.md`.
+
+Prefer the GraphHelm MCP tools (named `mcp__graphhelm__*` or `mcp__plugin_graphhelm_graphhelm__*` depending on how the host loaded the server; from this plugin) for Runtime reads once they are connected; the adoption commands above stay CLI-only.
 
 If the CLI is absent, point to the [CLI install path](https://github.com/stabem/GraphHelm/blob/main/docs/install/GETTING_STARTED.md)
 and report that CLI setup did not run. Local hook inspection can still run with Python 3.

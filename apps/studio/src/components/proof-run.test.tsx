@@ -90,4 +90,17 @@ describe("ProofRun (#746)", () => {
     expect(src.start).toHaveBeenCalledTimes(2);
     expect(src.start).toHaveBeenLastCalledWith("cart", true);
   });
+  it("shows an edge failure without changing passed and unreached frames", async () => {
+    const failed: JourneyRunView = { state: "failed", kind: "preview", reason: "internal",
+      detail: { code: "driver.unsupported_act", pointer: "/edges/next" },
+      screens: { a: { frame: true, result: "pass" } },
+      edges: { next: { result: "fail" } } };
+    mount(source(async () => failed));
+    await flush();
+    expect(screen.getByRole("alert")).toHaveTextContent("failing step is unknown");
+    expect(screen.getByRole("alert")).toHaveTextContent("the journey uses a step the browser cannot do");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("before step 1");
+    expect(screen.getByRole("button", { name: /^1 SEES Home · passed/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^2 SEES Cart · not run/ })).toBeInTheDocument();
+  });
 });

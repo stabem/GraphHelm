@@ -1,9 +1,9 @@
-import { cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 
 import { buildGraphModel } from "../graph/model";
 import type { RuntimeEvent } from "../runtime/types";
-import { NodePanel, resetPanelCaches, useActorAliases, useNativePersonaLinks } from "./panel";
+import { NodePanel, resetPanelCaches, useActorAliases, useNativePersonaLinks, usePersonas } from "./panel";
 import { teamModel } from "../runtime/team";
 
 it("shows one real attempt and the model reply without opening accounting blobs", async () => {
@@ -92,6 +92,28 @@ it("reads owner actor aliases, newest wins, and the bot carries the name", async
   expect(openEvidence).not.toHaveBeenCalledWith("run-a", "alias-2");
   const team = teamModel({ events: [], envelopes: {}, personas: {}, nativeLinks: {}, aliases: result.current, model: null, claudeTasks: null, waitingAskers: new Set(), now: Date.parse("2026-10-05T12:00:00Z") });
   expect(team.bots.find((bot) => bot.actorId === "kit-1")?.name).toBe("Cart builder");
+});
+
+// #1132 pattern, evidence I/O only: catches the roster hooks keying on the events array's identity,
+// which reopened every charter, link and alias on each poll that returned the same carriers.
+it("reopens no carrier when a fresh events array holds the same carriers", async () => {
+  resetPanelCaches();
+  const carrier = (sequence: number, kind: string): RuntimeEvent => ({ sequence, kind: "signal_recorded", payload: { kind }, occurredAt: null, actorId: "studio-owner", actorType: "owner", idempotencyKey: `c-${sequence}`, eventId: `c-${sequence}`, evidenceRefs: [`ev-${sequence}`] } as RuntimeEvent);
+  const noise = (sequence: number): RuntimeEvent => ({ sequence, kind: "node_outcome_recorded", payload: { nodeId: "work", outcome: "started", nextState: "running" }, occurredAt: null, actorId: "system-runtime", actorType: "system", idempotencyKey: `n-${sequence}`, eventId: `n-${sequence}`, evidenceRefs: [] });
+  const first = [carrier(1, "persona_created"), carrier(2, "native_persona_linked"), carrier(3, "actor_alias")];
+  const openEvidence = vi.fn(async (_run: string, evidenceId: string) => ({ evidenceId, content: JSON.stringify({ to: "kit-1", description: "charter" }), mediaType: "application/json", contentSha256: "hash", sensitivity: "confidential" }));
+  const { rerender } = renderHook(({ events }) => {
+    usePersonas(events, "run-a", openEvidence);
+    useNativePersonaLinks(events, "run-a", openEvidence);
+    useActorAliases(events, "run-a", openEvidence);
+  }, { initialProps: { events: first } });
+  await waitFor(() => expect(openEvidence).toHaveBeenCalledTimes(3));
+  // The cache would hide a rerun; clearing it makes every reopened carrier a counted call.
+  resetPanelCaches();
+  await act(async () => rerender({ events: [...first.map((event) => ({ ...event })), noise(4)] }));
+  expect(openEvidence).toHaveBeenCalledTimes(3);
+  await act(async () => rerender({ events: [...first, noise(4), carrier(5, "actor_alias")] }));
+  await waitFor(() => expect(openEvidence.mock.calls.map((call) => call[1])).toContain("ev-5"));
 });
 
 // #673: DOM-only; catches dropping crash sites and echoing unknown provider text.

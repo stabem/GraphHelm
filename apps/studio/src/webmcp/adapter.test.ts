@@ -104,12 +104,15 @@ const EXPECTED_TOOLS = [
   "graphhelm_get_execution_events",
   "graphhelm_read_evidence",
   "graphhelm_pause_execution",
-  "graphhelm_approve_node",
+  "graphhelm_approve",
   "graphhelm_resume_execution",
   "graphhelm_start_task",
   "graphhelm_send_message",
   "graphhelm_cancel_execution",
   "graphhelm_sweep_execution",
+  "graphhelm_amend_budget",
+  // #1330: the two old names, deprecated aliases for one release, registered after the thirteen.
+  "graphhelm_approve_node",
   "graphhelm_amend_node_budget",
 ];
 
@@ -134,7 +137,7 @@ describe("feature detection", () => {
 });
 
 describe("registration", () => {
-  it("registers exactly the thirteen tools, each with a closed schema", () => {
+  it("registers exactly the thirteen tools and the two deprecated aliases, each with a closed schema", () => {
     const { modelContext, registered } = fakeModelContext();
     const result = registerStudioTools(stubClient(), hooks().value, { modelContext });
 
@@ -147,7 +150,7 @@ describe("registration", () => {
     }
   });
 
-  it("marks the five reads read-only and the eight writes not", () => {
+  it("marks the five reads read-only and the eight writes (and their two aliases) not", () => {
     const { modelContext, registered } = fakeModelContext();
     registerStudioTools(stubClient(), hooks().value, { modelContext });
     const readOnly = registered.filter((tool) => tool.annotations?.readOnlyHint === true).map((tool) => tool.name);
@@ -161,12 +164,14 @@ describe("registration", () => {
     const writes = registered.filter((tool) => tool.annotations?.readOnlyHint === false).map((tool) => tool.name);
     expect(writes).toEqual([
       "graphhelm_pause_execution",
-      "graphhelm_approve_node",
+      "graphhelm_approve",
       "graphhelm_resume_execution",
       "graphhelm_start_task",
       "graphhelm_send_message",
       "graphhelm_cancel_execution",
       "graphhelm_sweep_execution",
+      "graphhelm_amend_budget",
+      "graphhelm_approve_node",
       "graphhelm_amend_node_budget",
     ]);
   });
@@ -235,11 +240,11 @@ describe("registration", () => {
     const cases: Array<[string, Record<string, unknown>, keyof typeof client]> = [
       ["pause_execution", { executionId: "demo", mode: "immediate" }, "pauseImmediately"],
       ["pause_execution", { executionId: "demo" }, "pause"],
-      ["approve_node", { executionId: "demo", node: "implementation" }, "approve"],
+      ["approve", { executionId: "demo", node: "implementation" }, "approve"],
       ["resume_execution", { executionId: "demo", file: "graph.yaml" }, "resume"],
       ["cancel_execution", { executionId: "demo" }, "cancel"],
       ["sweep_execution", { executionId: "demo" }, "sweep"],
-      ["amend_node_budget", { executionId: "demo", node: "judge", seconds: 900, computedAtSequence: 4 }, "amendBudget"],
+      ["amend_budget", { executionId: "demo", node: "judge", seconds: 900, computedAtSequence: 4 }, "amendBudget"],
     ];
     for (const [name, input, method] of cases) {
       expect(Object.keys(named(name).inputSchema.properties as object)).toContain("ifMatch");
@@ -298,7 +303,7 @@ describe("registration", () => {
     }
     expect(vi.mocked(client.pauseImmediately).mock.calls.length).toBe(2);
 
-    for (const name of ["approve_node", "resume_execution", "send_message", "cancel_execution", "sweep_execution", "amend_node_budget"]) {
+    for (const name of ["approve", "resume_execution", "send_message", "cancel_execution", "sweep_execution", "amend_budget"]) {
       const tool = registered.find((candidate) => candidate.name === `graphhelm_${name}`)!;
       expect(Object.keys(tool.inputSchema.properties as object)).toContain("idempotencyKey");
     }
@@ -540,7 +545,7 @@ describe("tool behaviour", () => {
     await tools.get("graphhelm_sweep_execution")!.execute({ executionId: "demo" });
     expect(client.sweep).toHaveBeenCalledWith("demo", expect.anything());
 
-    await tools.get("graphhelm_amend_node_budget")!.execute({
+    await tools.get("graphhelm_amend_budget")!.execute({
       executionId: "demo",
       node: "judge",
       seconds: 900,
@@ -553,7 +558,7 @@ describe("tool behaviour", () => {
     );
 
     const refused = JSON.parse(
-      await tools.get("graphhelm_amend_node_budget")!.execute({ executionId: "demo", node: "judge", seconds: 0, computedAtSequence: 41 }),
+      await tools.get("graphhelm_amend_budget")!.execute({ executionId: "demo", node: "judge", seconds: 0, computedAtSequence: 41 }),
     );
     expect(refused.ok).toBe(false);
     expect(client.amendBudget).toHaveBeenCalledTimes(1);
@@ -585,13 +590,13 @@ describe("tool behaviour", () => {
     const client = stubClient();
     const tools = toolsOf(client, hooks());
     const over = JSON.parse(
-      await tools.get("graphhelm_amend_node_budget")!.execute({ executionId: "demo", node: "judge", seconds: MAX_NODE_TIMEOUT_SECONDS + 1, computedAtSequence: 41 }),
+      await tools.get("graphhelm_amend_budget")!.execute({ executionId: "demo", node: "judge", seconds: MAX_NODE_TIMEOUT_SECONDS + 1, computedAtSequence: 41 }),
     );
     expect(over.ok).toBe(false);
     expect(client.amendBudget).not.toHaveBeenCalled();
-    await tools.get("graphhelm_amend_node_budget")!.execute({ executionId: "demo", node: "judge", seconds: MAX_NODE_TIMEOUT_SECONDS, computedAtSequence: 41 });
+    await tools.get("graphhelm_amend_budget")!.execute({ executionId: "demo", node: "judge", seconds: MAX_NODE_TIMEOUT_SECONDS, computedAtSequence: 41 });
     expect(client.amendBudget).toHaveBeenCalledWith("demo", { node: "judge", seconds: MAX_NODE_TIMEOUT_SECONDS, computedAtSequence: 41 }, expect.anything());
-    const schema = tools.get("graphhelm_amend_node_budget")!.inputSchema.properties as Record<string, { maximum?: number }>;
+    const schema = tools.get("graphhelm_amend_budget")!.inputSchema.properties as Record<string, { maximum?: number }>;
     expect(schema.seconds.maximum).toBe(MAX_NODE_TIMEOUT_SECONDS);
     expect(MAX_NODE_TIMEOUT_SECONDS).toBe(315576000);
   });
@@ -647,7 +652,7 @@ describe("tool behaviour", () => {
   it("returns the full verification evidence from a write, not a bare acknowledgement", async () => {
     const hook = hooks();
     const tools = toolsOf(stubClient(), hook);
-    const reply = JSON.parse(await tools.get("graphhelm_approve_node")!.execute({ executionId: "demo", node: "implementation" }));
+    const reply = JSON.parse(await tools.get("graphhelm_approve")!.execute({ executionId: "demo", node: "implementation" }));
     expect(reply.action).toBe("approve");
     expect(reply.result).toBe("succeeded");
     expect(reply.headBefore).toBe(13);

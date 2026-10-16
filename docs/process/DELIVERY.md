@@ -1,13 +1,7 @@
 # Delivery process: GraphHelm + Keel
 
-This is the only process for changing this repository. It replaces the old `.factory/` protocol
-(two passes, a third-lane presser, the merge checklist, the lane loop) and the `superpowers`
-plans. How code is written is [Keel](../keel/KEEL_SPEC.md); this page says how a change gets from
-an issue to `main`.
-
-This public repository starts with one import commit. Issue and pull-request numbers cited as
-historical examples below belong to the private development archive. New work uses issues in this
-repository; see [source provenance](../open-source/SOURCE_PROVENANCE.md).
+This is the only process for changing this repository. How code is written is
+[Keel](../../KEEL.md); this page says how a change gets from an issue to `main`.
 
 ## 1. Issue
 
@@ -16,7 +10,7 @@ New community issues receive `needs-triage`. A maintainer assigns exactly one wo
 `current-wave`, `in-flight`, `tech-debt`, or `product-vision`, removing `needs-triage` when the
 issue is classified. Maintainer-created issues may start with their workflow label.
 
-### Naming: issue and PR titles the owner can read (#477)
+### Naming: issue and PR titles the owner can read
 
 The Team tab shows each task as its issue number, its title and one summary line, and each PR
 by its title. They are read at a glance, so they follow one standard:
@@ -36,20 +30,8 @@ length it warns and still records; the Studio clips long text and shows all of i
 
 ## 2. Keel card
 
-Keel is proportional. Use only as much of it as the change needs.
+How much card a change needs, and what goes in it, is [keel/KEEL_PLAN.md](../../keel/KEEL_PLAN.md).
 
-| The change | What goes in the PR body |
-|---|---|
-| Docs, comments, inert config values, a one-line fix, a test-only fix | Nothing beyond the summary when the change has a known observer and no expanded-route risk; a test removal also carries its deletion record (the `test-audit` skill), naming the observer that still covers its obligation. Runtime- or security-affecting config needs a full card and behavioral evidence. |
-| A bounded code change | A three-line card: the paths in scope, the promise, the command that proves it. |
-| User-visible: the scope touches a screen's `scopePaths` of a compiled journey | The three-line card with `journeys:` naming every journey touched, and those journeys replayed green at the head. No new unit test is required; one may be added for a defect the journey cannot observe. |
-| New public surface: a module, type, public function, dependency or test file | The full card, and the new surface named. |
-| Persistence, permissions, compatibility, security, external effects, runtime-affecting config, concurrency, destructive operations | The full card, the JPD flow (`AGENTS.md`, Journey-Proven Development), and a test that names the defect (Law 3) even when a journey also covers the change. |
-
-A card lists paths, not globs. A new dependency is always named. Risk is read from what the change
-touches, not from how big it is: a one-line change can remove a permission check. A display-only
-config label may use the direct route; a Runtime timeout or permission setting needs behavioral
-evidence even if parsing succeeds.
 
 ## 3. Work
 
@@ -58,7 +40,7 @@ only the surface the promise needs, prove with the smallest adequate observer. B
 PR, the author runs the tests the change can reach and lists them, with their result, in the PR
 body.
 
-**Retire the path you replace (Keel Law 1, #711).** When a change removes, replaces or redirects
+**Retire the path you replace (`keel/KEEL_EXEC.md`).** When a change removes, replaces or redirects
 a production caller, check the displaced declarations and their exclusive helpers/types, styles,
 dependencies and tests before opening the PR. A rename alone does not make its target dead. Search
 from the actual entry points and check dynamic registrations, public consumers, manual commands,
@@ -85,7 +67,7 @@ example, replacing an old team reader names that reader and its remaining calls,
 exclusive parser/styles when proven unused, and retains the wire type if the active reader still
 consumes that contract. This is a human/agent review check; `keel check` has no dead-code detector.
 
-**Which tests a change reaches** is computed, not guessed (#361):
+**Which tests a change reaches** is computed, not guessed:
 `python tools/reached-tests/reached_tests.py [--base origin/main] [--head HEAD]` reads the diff and
 the workspace graph (`cargo metadata --no-deps`, no build) and prints the commands. Its rules:
 - a changed integration-test file reaches only its own target, or its module in a test bundle;
@@ -119,29 +101,14 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
 - Every cargo build, test and clippy run goes through the build slot (LANES.md §3). Run clippy
   only on touched crates; name and justify any broader lint scope in the card. Rust tests use
   `-- --test-threads=2`. The fmt and workspace-source-guard checks remain reached by Rust edits.
-- Spawn rule: every child the CLI, the Runtime, a tool or a hook starts must run hidden in the
-  calling terminal (`CREATE_NO_WINDOW` on Windows). The source guards enforce the spawn sites, not
-  the behavior: `core/process/tests/no_console_window.rs` (every `.rs` file) and
-  `tools/reached-tests/test_no_console_window.py` (every `.py` file) fail on a spawn that skips the
-  helper. Real-Windows observation (`tools/no-window/observe.ps1`, PASS means zero console windows
-  shown) is pending until it is run on a Windows machine.
 - Docs-only changes need only the existing applicable docs guards and `git diff --check`, not
   Rust builds, Studio checks or journey previews.
 
-Execute the plan with `python tools/reached-tests/run_reached.py --repo . --base <base>
---head HEAD --root <root> --lane <lane> --output <outside-repo>/feedback.json`. The runner uses
-bounded batches for short adjacent Cargo commands by default and releases the existing slot at
-batch boundaries instead of holding it for the entire proof script. Pass `--no-batch-slot` to
-force one slot invocation per Cargo command; `--batch-slot` remains accepted for compatibility.
-The CLI enforces direct, package-scoped Cargo admission before creating a ticket; scripts and
-workspace-wide commands are refused. Test invocations name targets. Explicit whole-package
-plans enumerate every target as a separate command and release at the same bounded batch
-boundaries; authorization never silently narrows coverage. This enforcement requires an upgraded CLI binary.
-Its 180-second target includes planning, queue and execution. Record the report and any pending
-checks in the PR; a budget miss is never green. This replaces the long-script slot pattern, not
-the existing review or load limits.
+Execute the plan with `python tools/reached-tests/run_reached.py` (the command, its batches, slot
+admission and 180-second budget are LANES.md §3). Record the report and any pending checks in the
+PR; a budget miss is never green.
 
-**Resume, summary and preflight (#929).** Rerun the same command with the same `--output` after
+**Resume, summary and preflight.** Rerun the same command with the same `--output` after
 any stop: a step is reused only when the previous run passed it, ended with HEAD unchanged and a
 clean worktree, and its proof key still matches (commit tree, argv, cwd, tool versions and the
 `CARGO*`/`RUST*`/`GRAPHHELM_*`/`NODE*`/`PYTHON*`/`PG*` environment). Anything else, including a
@@ -153,7 +120,7 @@ the run as `blocked` (`--skip-preflight` records it and goes on). Stdout is a sh
 The report's `measure` block records reused steps and the seconds they saved. Reached browser observers additionally require
 `--include-browser` and a configured local observer toolchain; otherwise the report stays incomplete.
 Broad audits and all-journey coverage remain explicit work,
-not mandatory feedback for every edit. See LANES.md §3 for warm targets and queue limits.
+not mandatory feedback for every edit.
 
 The script prints fmt, clippy and workspace-guard commands whenever Rust is reached. Apply the
 budget above to those commands, including narrowing clippy to touched crates. When `graphhelm`
@@ -168,7 +135,7 @@ there; say so in the PR body with `OBSERVER_MISSING: Runtime records (no Runtime
 rather than skipping silently. Studio, the Stop and edit locks and the Runtime signals are not
 observed in such a session, and the PR body must not claim they were.
 
-**Journey proof for screens (1.4.0, #382; a signal, not yet a gate).** A PR whose scope touches a
+**Journey proof for screens (a signal, not yet a gate).** A PR whose scope touches a
 journey screen runs `graphhelm journey replay <id>` at the head for each journey its card names and
 pastes the JSON summary (paths observed, captured signal ids). `keel check` reports
 `keel.journey.card_missing_journey` and `keel.journey.replay_not_green` until that is true; both are
@@ -188,8 +155,8 @@ body:
 `--execution`, `--keyring`, `--key-id`) records the head captures and the walked transitions in one
 run. Name the journeys in the card (`journeys: [contractId]`, or a `Journeys:` line in the PR body);
 `graphhelm keel check` (same four flags) then warns, without blocking, about a touched screen with
-no fresh capture at the head. Gates are off since 2026-09-24: a PR without captures is reviewed and
-merged like any other, and the review says what was not observed.
+no fresh capture at the head. A PR without captures is reviewed and merged like any other, and the
+review says what was not observed.
 
 ### The agent verifies; the user never does
 
@@ -204,7 +171,7 @@ decision (approve a design, choose an option) goes to the user. The plugin's Sto
 ## 4. One review, by another session or a blind subagent
 
 - One review from a reviewer that did not write the change: another session, or a **blind
-  subagent** (owner order, 2026-09-24). A blind subagent is spawned for the review only. Its brief
+  subagent**. A blind subagent is spawned for the review only. Its brief
   may carry: the PR number, the identity line to sign with, where the rules live (`AGENTS.md`,
   this document), the build directory, and questions that apply to every review (correctness,
   security, fail-closed behaviour, test quality). It must not carry the author's reasoning, a
@@ -220,9 +187,9 @@ decision (approve a design, choose an option) goes to the user. The plugin's Sto
   review, the review names that BLOCK and says whether it still holds and why; an APPROVE that does
   not answer an open BLOCK on the same head is not a pass, and the merge (§5) waits for that answer.
   Reading the PR's own comments is part of the review, not a finding handed over in a brief.
-- **One review for every kind of change** (owner decision, 2026-10-07), including security,
+- **One review for every kind of change**, including security,
   persistence, concurrency and destructive changes, until the owner raises it. A change that touches
-  a `keel.yaml` invariant class still needs its Law 3 test; the review checks it is there.
+  a `keel.yaml` invariant class still needs the isolated tests `keel/KEEL_EXEC.md` asks for, with their failure list; the review checks they are there.
   For a user-visible change the reviewer also runs `graphhelm journey replay` for each journey the
   card names, on the head, and pastes its summary.
 - The reviewer **runs the tests the change reaches** on that head and names each command and its
@@ -241,14 +208,14 @@ decision (approve a design, choose an option) goes to the user. The plugin's Sto
 - **A change to Rust code also runs the lints on the crates it touches**, author and reviewer
   alike: `cargo +1.97.1 fmt --all -- --check` and
   `cargo +1.97.1 clippy --locked -p <crate> --all-targets --all-features -- -D warnings` for each
-  touched crate. Tests alone do not catch a lint: #1269 merged with passing tests and left `main`
-  red under clippy until #1274. Clippy runs through the build slot, on touched crates only.
+  touched crate. Tests alone do not catch a lint: a change once merged with passing tests and left `main`
+  red under clippy. Clippy runs through the build slot, on touched crates only.
   If a manifest, lockfile or shared-crate change needs broader lint coverage, the card names
   that scope and explains why before a workspace run (`--workspace` instead of `-p`).
 - **A change to any Rust file also runs the workspace-wide source guards**, because they read every
   crate's text and so are reached by any edit: `cargo +1.97.1 test --locked -p graphhelm-protocols
-  --test authored_strings_across_the_workspace` (about one second). #1281 added a string literal in
-  a test file, passed its crate's tests, and left `main` red on every platform until #1311.
+  --test authored_strings_across_the_workspace` (about one second): a string literal added in a test file once
+  passed its crate's tests and left `main` red on every platform.
 - **Reuse preparation, not verdicts.** The author may hand the unchanged worktree and its warm
   isolated target to the reviewer for sequential use. The author stops all writes and Cargo
   commands there for the review. The reviewer verifies the remote, exact committed head, clean
@@ -267,19 +234,21 @@ decision (approve a design, choose an option) goes to the user. The plugin's Sto
 - The verdict is a word in the comment text: `APPROVE`, `APPROVE-WITH-RISK` (name the risk) or
   `BLOCK` (name the defect). GitHub review state stays `COMMENTED`, because every session shares
   one account.
+- A deadline consulted once per iteration bounds the iterations, not the wall time: before
+  approving a budget, ask what the longest thing between two checks can be; an unbounded call there
+  makes the deadline advisory, and the constant must say so where it is defined.
 - If the head moves after the review, the review covers only the sha it named. A prose-only edit of
   the PR body does not move the head and does not void the review.
 
 ## 5. Merge, by the reviewer
 
-The reviewer who approved merges (a blind subagent included). There is no gate and no separate presser; the gate
-runner (`ci/gate.ps1`) was deleted in #1204, so there is nothing a merge could wait on.
+The reviewer who approved merges (a blind subagent included). There is no separate gate run and no separate presser: the Keel checks the reviewer runs (`KEEL.md`) are what block, and a blocking finding is a `BLOCK`.
 
 1. Pin the head: `gh pr view <N> --json headRefOid` must equal the sha the review named, and no
    BLOCK on that head is left unanswered by the review (§4).
    If main moved since the reviewed run, rerun the reached checks on the merge result (main +
-   head) before pressing merge; a clean merge-tree is not a test. Example: #1276 ran on a base
-   before #1274 and merged clean on top of it, and main went red on a cell #1274 had made stale.
+   head) before pressing merge; a clean merge-tree is not a test. A change once ran on an old base,
+   merged clean on top of a newer one, and main went red on a cell the newer change had made stale.
 2. Closing check: `ci/closing-keywords.ps1 -Number <N> -Repository stabem/GraphHelm -Closes <issues>`.
    It reads the body and the commit messages; their union must equal the intent. Never write a
    closing keyword (`close`, `fix`, `resolve` and their forms) next to an issue you do not mean to
@@ -291,7 +260,7 @@ runner (`ci/gate.ps1`) was deleted in #1204, so there is nothing a merge could w
 
 A change is delivered when it is merged into `main`, not when the PR is open.
 
-### Task records (journey-first spec §7, #386)
+### Task records
 
 `task_record.py merged` requires GitHub-confirmed `MERGED` state and a matching merge SHA (full or at least 7 hex characters, case-insensitive); `--no-github` refuses unless `--dry-run` is set, and an `OPEN` state or null merge commit retries up to three reads, two seconds apart.
 
@@ -303,23 +272,23 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 
 | Step | Kind | Fields besides `schema`, `taskId`, `revision`, `at` |
 |---|---|---|
-| take the issue (§1) | `task.claimed` | `issue`, `lane`, `branch`, optional `plan`, optional `repo`, optional `journeys`, optional `leaseSeconds` (300..86400, #1193, never below the 300 s heartbeat cooldown: how long the claim stays live without a heartbeat; `task_record.py` sends 1800 unless `--lease-seconds` says otherwise, #1223; a Runtime older than #1194 that refuses the field gets the claim once more without the DEFAULT lease, never without one the lane gave); that resend happens only for a shape refusal at `/signal/description`, never for the holder refusal below). #1220: refused (`GHCLI003`, `/signal/description/taskId`, "`<taskId>` is held by lane `<lane>` (claim `<sequence>`)…") while another lane holds the task as an open pre-PR claim whose lease has not lapsed, unless the claim carries `assignedBy: <holder>`; a lane's own re-claim, and a claim after the holder's release, PR or lapsed lease, are admitted |
-| release the latest still-open pre-PR claim (#729) | `task.released` | `lane`, exact `claimSequence`, bounded nonempty `reason`; only that claim ends, and unreadable history or a claim with a PR refuses release |
-| release a lapsed claim of another lane (#1193) | `task.released` | the same fields naming that lane, plus `releasedBy: graphhelm`; signed only by the `graphhelm` actor (the Stop reconciler); any other signer, or `releasedBy` on a lane's own release, is refused as an identity mismatch |
-| judge every live pre-PR claim's lease (#1193) | `GET /v1/executions/<id>/tasks` | the reply carries `now` (the Runtime's clock) and `leases`: per live pre-PR claim its `lane`, `claimSequence`, `leaseSeconds`, `expiresAt` (the later of the claim and its last heartbeat plus the lease) and `overdue`; the Stop reconciler releases every `overdue` one as `graphhelm` |
-| see every open PR nobody moved (#1235) | `GET /v1/executions/<id>/tasks` | `stalls`: per open PR slice with no task record for 2 h its `taskId`, `pr`, `reason` (`block_unanswered`: the author owes a fix push; `awaiting_verdict`: the reviewer owes a verdict; `awaiting_merge`: the approving reviewer owes the merge), `owner` (that lane), `idleSince` and `idleSeconds`; the Stop reconcile reply carries them as `stalled`, so `tasks.reconciled` records them |
-| judge every lane's liveness (#1234) | `GET /v1/executions/<id>/tasks` | the reply carries `liveness`: `budgets` (`silentAfterSeconds` 1800, `freeAfterSeconds` 900 and #1235's `stallAfterSeconds` 7200, declared once in the Runtime) and per lane in the fold `lastRecordAt` (its newest event of any kind), `owes` (an open slice it authored or the current review of an open PR) with `owesSince` (when the oldest began: the claim or the review assignment), `silent` (owes and quiet for the silent budget, quiet counted from the later of the last record and `owesSince`) and `free` (a record within the free budget); a stale claim is a lease that is `overdue`. Readers use these, never a threshold of their own |
+| take the issue (§1) | `task.claimed` | `issue`, `lane`, `branch`, optional `plan`, optional `repo`, optional `journeys`, optional `leaseSeconds` (300..86400, never below the 300 s heartbeat cooldown: how long the claim stays live without a heartbeat; `task_record.py` sends 1800 unless `--lease-seconds` says otherwise; an older Runtime that refuses the field gets the claim once more without the DEFAULT lease, never without one the lane gave); that resend happens only for a shape refusal at `/signal/description`, never for the holder refusal below). Refused (`GHCLI003`, `/signal/description/taskId`, "`<taskId>` is held by lane `<lane>` (claim `<sequence>`)…") while another lane holds the task as an open pre-PR claim whose lease has not lapsed, unless the claim carries `assignedBy: <holder>`; a lane's own re-claim, and a claim after the holder's release, PR or lapsed lease, are admitted |
+| release the latest still-open pre-PR claim | `task.released` | `lane`, exact `claimSequence`, bounded nonempty `reason`; only that claim ends, and unreadable history or a claim with a PR refuses release |
+| release a lapsed claim of another lane | `task.released` | the same fields naming that lane, plus `releasedBy: graphhelm`; signed only by the `graphhelm` actor (the Stop reconciler); any other signer, or `releasedBy` on a lane's own release, is refused as an identity mismatch |
+| judge every live pre-PR claim's lease | `GET /v1/executions/<id>/tasks` | the reply carries `now` (the Runtime's clock) and `leases`: per live pre-PR claim its `lane`, `claimSequence`, `leaseSeconds`, `expiresAt` (the later of the claim and its last heartbeat plus the lease) and `overdue`; the Stop reconciler releases every `overdue` one as `graphhelm` |
+| see every open PR nobody moved | `GET /v1/executions/<id>/tasks` | `stalls`: per open PR slice with no task record for 2 h its `taskId`, `pr`, `reason` (`block_unanswered`: the author owes a fix push; `awaiting_verdict`: the reviewer owes a verdict; `awaiting_merge`: the approving reviewer owes the merge), `owner` (that lane), `idleSince` and `idleSeconds`; the Stop reconcile reply carries them as `stalled`, so `tasks.reconciled` records them |
+| judge every lane's liveness | `GET /v1/executions/<id>/tasks` | the reply carries `liveness`: `budgets` (`silentAfterSeconds` 1800, `freeAfterSeconds` 900 and `stallAfterSeconds` 7200, declared once in the Runtime) and per lane in the fold `lastRecordAt` (its newest event of any kind), `owes` (an open slice it authored or the current review of an open PR) with `owesSince` (when the oldest began: the claim or the review assignment), `silent` (owes and quiet for the silent budget, quiet counted from the later of the last record and `owesSince`) and `free` (a record within the free budget); a stale claim is a lease that is `overdue`. Readers use these, never a threshold of their own |
 | plan it, **right after the claim** (§2) | `task.planned` | `lane`, `classes`, `reviews`, `proof`, `critic` `{mode, passScore, maxRounds}`, `summary` |
-| say an open pre-PR claim is alive (#1147; the Stop reconciler sends it on every turn end, so a live lane never has to) | `task.heartbeat` | `lane` only; the Runtime refuses one without an open pre-PR claim and limits them to one per 300 s per task; `task_record.py heartbeat` sends it by hand |
+| say an open pre-PR claim is alive (the Stop reconciler sends it on every turn end, so a live lane never has to) | `task.heartbeat` | `lane` only; the Runtime refuses one without an open pre-PR claim and limits them to one per 300 s per task; `task_record.py heartbeat` sends it by hand |
 | open the PR (§3), and **again after every push** to it | `task.pr_opened` | `pr`, `headSha`, `journeys`, `lane`, optional `repo` |
 | ask a reviewer (§4) | `task.review_assigned` | `pr`, `headSha`, `reviewer`, `ordinal` (1 or 2) |
 | post the verdict (§4) | `task.review_verdict` | `pr`, `headSha`, `reviewer`, `verdict`, `commentUrl` |
 | merge and read what landed (§5) | `task.merged` | `pr`, `mergeSha`, `closes`, `merger` |
 | a PR closed without a merge (the Stop reconciler records it as the lane; by hand only to repair) | `task.closed` | `pr`, `reason` (`superseded` or `abandoned`), `by` (the superseding PR, or the PR itself when abandoned) |
-| grade the design, once per round, when the plan says `critic: design` (#467) | `task.critic_verdict` | `round`, `score`, `passScore`, `maxRounds`, `verdict`, `designRef`, `lane`, `reasons` |
+| grade the design, once per round, when the plan says `critic: design` | `task.critic_verdict` | `round`, `score`, `passScore`, `maxRounds`, `verdict`, `designRef`, `lane`, `reasons` |
 
 `taskId` is `issue-<N>` for the whole life of the task. An issue worked in several PRs is one
-task with one slice per PR (#460): record `task.claimed` with the new slice's own branch before its
+task with one slice per PR: record `task.claimed` with the new slice's own branch before its
 `pr_opened`, and the Studio draws each slice as its own graph, so merging one slice never hides the
 next. `repo` is the GitHub `owner/name` (here
 `stabem/GraphHelm`); the Studio links the task's issue and PR from it, so name it on `task.claimed`.
@@ -327,15 +296,15 @@ Pass `--assigned-by` on `claimed` when an order came from someone; the Studio la
 Release only a claim your lane recorded before opening a PR: use `released --claim-sequence <sequence> --release-reason "<why>"`. The sequence must identify that exact `task.claimed` record; the Runtime rejects another lane's claim. A release ends only that pre-PR claim and keeps its event history.
 Name the journey the issue serves; the Studio Graph tab links the task to it. Ids are the stems of .graphhelm/journeys/*.journey.yaml.
 
-**Plan is a recorded step (#480).** A claimed task shows **Plan** lit until its `task.planned`
-arrives; then **Implement**, or first **Critic** when the plan's `critic.mode` is `design` (#467).
+**Plan is a recorded step.** A claimed task shows **Plan** lit until its `task.planned`
+arrives; then **Implement**, or first **Critic** when the plan's `critic.mode` is `design`.
 `planned` copies `classes`, `reviews`, `proof` and `critic` from `graphhelm keel plan` on the
 task's paths (`--paths`, or a saved `keel plan --json` reply with `--plan-file`), so the fields are
 the planner's decision, never retyped. With no `--paths`, the branch's diff against `origin/main`
-plus uncommitted changes are the paths (#602), so `planned --summary "<one line>"` alone is enough.
+plus uncommitted changes are the paths, so `planned --summary "<one line>"` alone is enough.
 With nothing to plan from yet, or when `keel plan` cannot run, it records a stated default (`code`,
 1 review, `tests`, no critic) and says so on stderr; `--classes`/`--reviews`/`--proof`/`--critic-mode`
-override any field. `summary` is the plan in one line (at most 300 characters, the same bound as #477's `summary`). A
+override any field. `summary` is the plan in one line (at most 300 characters, the same bound as the issue `Summary:` line). A
 `planned` recorded after the PR opened informs the graph without moving it back.
 The Runtime refuses a `task.*` signal whose `source.id`, or whose `lane` / `reviewer` (on a
 verdict) / `merger`, is not the actor recording it (`GHCLI038_ACTOR_MISMATCH`).
@@ -345,15 +314,7 @@ registration, so a per-lane `GRAPHHELM_ACTOR` on the MCP server is not practical
 with `tools/task-record/task_record.py` (Python 3 standard library), which POSTs
 `/v1/executions/<execution>/signal` with `X-GraphHelm-Actor: <lane>`:
 
-```sh
-python tools/task-record/task_record.py --lane <you> claimed         --issue <N> --branch <branch> --journeys <contractId>
-python tools/task-record/task_record.py --lane <you> planned         --issue <N> --summary "<the plan in one line>"   # paths from git; --paths <scope...> to name them
-python tools/task-record/task_record.py --lane <you> pr_opened       --issue <N> --pr <P> --head <sha> --reviewer <reviewer> --journeys <contractId>
-python tools/task-record/task_record.py --lane <you> review_assigned --issue <N> --pr <P> --head <sha> --reviewer <other>   # only when the reviewer changes
-python tools/task-record/task_record.py --lane <you> review_verdict  --issue <N> --pr <P> --head <sha> --verdict APPROVE --comment-url <url>
-python tools/task-record/task_record.py --lane <you> merged          --issue <N> --pr <P> --merge-sha <sha>
-python tools/task-record/task_record.py --lane <you> critic_verdict  --issue <N> --round <R> --score <0-10> --design-ref <path> --reason "<why>"
-```
+The command for each step is the table in LANES.md §4.
 
 A critic round's verdict is not an argument: the script derives it from the score and the round
 (`pass` at `--pass-score`, default 8; `revise` while a round is left of `--max-rounds`, default 3;
@@ -363,8 +324,8 @@ A critic round's verdict is not an argument: the script derives it from the scor
   beside its events directory: `<the Runtime's --project>/.graphhelm/events.agent.token`. The
   default is that path relative to the current directory, which is right only inside the checkout
   the Runtime serves; from a lane worktree pass the Runtime checkout's absolute path. A Runtime
-  mints it at start (D-058, #397). **The value sent for a `task.*` record is not that token but
-  the lane's own credential (#1148)**, `<events>.agent.<lane>.token` beside it, which the owner or
+  mints it at start (D-058). **The value sent for a `task.*` record is not that token but
+  the lane's own credential**, `<events>.agent.<lane>.token` beside it, which the owner or
   the orchestrator mints once per lane and execution:
   `graphhelm tasks credential --lane <lane> --execution gh-team --token-file <project>/.graphhelm/events.token`.
   The Runtime derives it from the owner token, the execution and the lane and verifies it by
@@ -379,13 +340,13 @@ A critic round's verdict is not an argument: the script derives it from the scor
 - **Defaults.** `--url http://127.0.0.1:8793`, `--execution gh-team`, `--repo stabem/GraphHelm`;
   `revision` is the step's position (claimed 1 … merged 5; `planned` is 1, beside its claim). `closes` is exactly the `--closes`
   numbers (the issues the squash closed, the intent `ci/closing-keywords.ps1` checked); with none
-  given it is empty, which is right for a `Refs` PR (#464).
+  given it is empty, which is right for a `Refs` PR.
   `--dry-run` prints the request without sending it. `--url` must be a loopback host
   (`127.0.0.1`, `localhost`, `::1`); any other is refused before the token is read.
 - **Every push is a `pr_opened`.** A verdict counts only on a head that has a `pr_opened`
   record; a fix head without one leaves its verdicts outside the graph (shown as a verdict on an
   unrecorded head). Record `pr_opened` after each push; it requires `--reviewer` and records
-  `review_assigned` in the same call (#508), so Review is never drawn unnamed. Record
+  `review_assigned` in the same call, so Review is never drawn unnamed. Record
   `review_assigned` on its own only when the
   reviewer changes.
 - **Repeated steps.** The record id and its `Idempotency-Key` end with a hash of the lane, the kind
@@ -398,7 +359,7 @@ A critic round's verdict is not an argument: the script derives it from the scor
   first) is re-sent up to three times.
 - **Output.** `recorded <signal id>` or `already recorded <signal id>` and exit 0, or
   `REFUSED <signal id>` plus each error diagnostic and exit 1.
-- **Limit.** A lane credential proves which lane wrote the record (#1148); the Runtime refuses a
+- **Limit.** A lane credential proves which lane wrote the record; the Runtime refuses a
   `task.*` record from the shared agent session token and one whose lane is not the credential's.
   What it cannot stop is D-058's limit: every credential file belongs to the same OS user, so a
   session that reads another lane's file from disk can still sign as that lane. Hand each lane
@@ -431,48 +392,5 @@ how it removes a worktree, the single build slot and the per-worktree cargo targ
   exit code 0.
 - A zero produced by your own filter measures the filter. Put a known positive in the same command.
 
-## History
-
-The old process kept design notes under `.factory/`, `.superpowers/` and `docs/superpowers/plans/`.
-They were removed on 2026-09-24, and so were the gate runner, the gate queue, `merge-proof` and the
-committed gate receipts (`.factory/gate-runs/`). Code comments and documents now cite those notes by
-the short names below. Read one at the last commit that had it: `git show c080739b:<path>`.
-
-| Name used in comments | Path at `c080739b` |
-|---|---|
-| gateway-slice plan | `docs/superpowers/plans/2026-08-14-gateway-slice.md` |
-| architect-judgments plan | `docs/superpowers/plans/2026-09-16-architect-judgments.md` |
-| real-executor plan | `docs/superpowers/plans/2026-08-14-real-executor.md` |
-| chat-surface plan | `docs/superpowers/plans/2026-08-14-chat-surface.md` |
-| public-runtime-api plan | `docs/superpowers/plans/2026-08-13-public-runtime-api.md` |
-| gate-under-five-minutes plan | `docs/superpowers/plans/2026-09-19-gate-under-five-minutes.md` |
-| program plan index | `docs/superpowers/plans/2026-08-08-graphhelm-program-plan-index.md` |
-| foundation-graph-kernel plan | `docs/superpowers/plans/2026-08-08-graphhelm-foundation-graph-kernel.md` |
-| setup-backup-restore plan | `docs/superpowers/plans/2026-09-21-setup-backup-restore.md` |
-| journey-proof-pilot plan | `docs/superpowers/plans/2026-09-21-journey-proof-pilot.md` |
-| structured-agent-context plan | `docs/superpowers/plans/2026-09-21-structured-agent-context.md` |
-| economic-route-selection plan | `docs/superpowers/plans/2026-09-21-economic-route-selection.md` |
-| event-evidence-store SDD record | `.superpowers/sdd/2026-08-09-production-event-evidence-store/` |
-| merge checklist | `.factory/MERGE-CHECKLIST.md` |
-| lane loop | `.factory/lane-loop.md` |
-| design note #107 | `.factory/b-agent-107-blueprint.md` |
-| design note #119 | `.factory/c-agent-119-design.md` |
-| design note #159 | `.factory/b-agent-159-blueprint.md` |
-| design note #200 | `.factory/e-agent-200-design.md` |
-| design note #211 | `.factory/h-agent-211-surface-blueprint.md` |
-| design note #213 | `.factory/e-agent-213-blueprint.md` |
-| design note #219 | `.factory/h-agent-219-blueprint.md` |
-| design note #221 | `.factory/e-agent-221-refusal-code-gap.md` |
-| scope amendment 5 (#222) | `.factory/b-agent-222-scope-amendment-5.md` |
-| design note #285 | `.factory/e-agent-285-blueprint.md` |
-| mode-semantics note (#89) | `.factory/d-agent-mode-semantics.md` |
-
-Two cited notes were never committed to `main`, so no commit holds them: the owner-output
-blueprint (`.factory/e-agent-221-blueprint.md`) and the #226 sabotage expectation record
-(`.factory/n-agent-226-sabotage-expectations.md`). The findings drawn from them are in the
-issues and pull requests those comments name.
-
-The subsystem specifications that lived under `docs/superpowers/specs/` moved to
-[`docs/specs/`](../specs/); the Keel specification moved to
-[`docs/keel/KEEL_SPEC.md`](../keel/KEEL_SPEC.md). Historical records (ADRs, the decision register,
-milestone and acceptance notes, the changelog) keep their original paths as written.
+Names that comments and specs give to notes of the old process resolve in
+[ARCHIVE_NAMES.md](ARCHIVE_NAMES.md).

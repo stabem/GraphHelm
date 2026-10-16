@@ -1164,20 +1164,36 @@ impl LaunchedStop {
 /// How long a launcher's `down` may take.
 const LAUNCH_DOWN: Duration = Duration::from_secs(30);
 
+/// The bounded outcome of starting and waiting for one launcher command.
+enum CommandOutcome {
+    Exited(bool),
+    SpawnFailed(std::io::ErrorKind),
+    WaitFailed(std::io::ErrorKind),
+    TimedOut,
+}
+
 /// Runs `command` to its end, or kills it at `limit` (#560 review: an `up` that hung, a missing
-/// dependency in the fixture, kept the preview runner waiting for ever). `Some(success)` when it
-/// ended, `None` when it was killed or could not start.
-pub(super) fn run_within(mut command: Command, limit: Duration) -> Option<bool> {
-    let mut child = command.spawn().ok()?;
+/// dependency in the fixture, kept the preview runner waiting for ever). Spawn and wait failures
+/// stay distinct from a command that actually exceeds its bound.
+fn run_within(mut command: Command, limit: Duration) -> CommandOutcome {
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => return CommandOutcome::SpawnFailed(error.kind()),
+    };
     let deadline = Instant::now() + limit;
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return Some(status.success()),
+            Ok(Some(status)) => return CommandOutcome::Exited(status.success()),
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(100)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return CommandOutcome::WaitFailed(error.kind());
+            }
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return None;
+                return CommandOutcome::TimedOut;
             }
         }
     }
@@ -1363,7 +1379,7 @@ pub(super) fn launch_within(
     // The `up` script is bounded too: one that hangs is killed at `ready` and reads as a failed
     // launch, never as a run that waits for ever.
     let up = run_within(command, ready);
-    let started = up.unwrap_or(false);
+    let started = matches!(up, CommandOutcome::Exited(true));
     while started && !base_reachable(&answers_on) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(250));
     }
@@ -1372,12 +1388,22 @@ pub(super) fn launch_within(
         // #1298: the launcher's own output may name no error (it seeded, then `stop` tore it
         // down). Say which half failed: `up` itself, or the app never answering on its base.
         let why = match up {
-            None => format!(
+            CommandOutcome::SpawnFailed(kind) => format!(
+                "graphhelm: the launcher could not start ({})",
+                safe_error_kind(kind)
+            ),
+            CommandOutcome::WaitFailed(kind) => format!(
+                "graphhelm: waiting for the launcher failed ({})",
+                safe_error_kind(kind)
+            ),
+            CommandOutcome::TimedOut => format!(
                 "graphhelm: the launcher's `up` did not finish within {}s",
                 ready.as_secs()
             ),
-            Some(false) => "graphhelm: the launcher's `up` exited with an error".to_owned(),
-            Some(true) => format!(
+            CommandOutcome::Exited(false) => {
+                "graphhelm: the launcher's `up` exited with an error".to_owned()
+            }
+            CommandOutcome::Exited(true) => format!(
                 "graphhelm: `up` finished, but nothing answered on {answers_on} within {}s",
                 ready.as_secs()
             ),
@@ -1437,6 +1463,16 @@ pub(super) fn launch_within(
         }
     }
     Ok(launched)
+}
+
+/// A safe category for a process error; raw OS messages may contain local paths or arguments.
+fn safe_error_kind(kind: std::io::ErrorKind) -> &'static str {
+    match kind {
+        std::io::ErrorKind::NotFound => "not found",
+        std::io::ErrorKind::PermissionDenied => "permission denied",
+        std::io::ErrorKind::InvalidInput => "invalid executable",
+        _ => "operating system error",
+    }
 }
 
 /// The words a watch shows for an act (#491), the way the Studio's journey cards say it.
@@ -1616,7 +1652,7 @@ impl Progress {
 fn save_record(path: &Path, record: &Value) -> Result<()> {
     let mut bytes = serde_json::to_vec_pretty(record).unwrap();
     bytes.push(b'\n');
-    super::journey_flow::atomic_write(path, &bytes)
+    super::atomic::atomic_write(path, &bytes)
         .map_err(|_| failure("live.session_unwritable", "/session", 1))
 }
 
@@ -2213,6 +2249,19 @@ mod launch_tests {
                 .contains("`up` exited with an error"),
             "{log}"
         );
+    }
+
+    /// A refused process start is distinct from a command that exceeds its readiness bound.
+    /// Cost: one CLI preview and temp project; offline, no browser or production seam.
+    #[test]
+    fn a_missing_launcher_shell_is_not_reported_as_a_timeout() {
+        let command = graphhelm_process::command(
+            std::env::temp_dir().join(format!("graphhelm-missing-shell-{}", uuid::Uuid::new_v4())),
+        );
+        assert!(matches!(
+            super::run_within(command, std::time::Duration::from_secs(2)),
+            super::CommandOutcome::SpawnFailed(std::io::ErrorKind::NotFound)
+        ));
     }
 }
 

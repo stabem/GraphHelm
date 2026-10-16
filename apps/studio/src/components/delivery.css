@@ -110,8 +110,6 @@
 .app[data-document-open="true"] .split > .chat-col { display: none !important; }
 .app[data-document-open="true"] .split > .node-col { position: relative; inset: auto; flex: 0 0 400px; width: 400px; box-shadow: none; }
 .app[data-document-open="true"] .split > .document-editor { flex: 1 1 420px; width: auto; min-width: 0; }
-.app[data-document-open="true"] .work-layout { grid-template-columns: minmax(0, 1fr); }
-.app[data-document-open="true"] .work-sidebar { grid-template-columns: minmax(0, 1fr); }
 /* The board stays mounted and returns when the document closes. */
 .app[data-document-open="true"] .split > .scene { display: none; }
 @media (max-width: 800px) {

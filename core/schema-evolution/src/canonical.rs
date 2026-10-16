@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use graphhelm_protocols::Diagnostic;
 use serde_json::Value;
 use thiserror::Error;
@@ -63,9 +61,10 @@ impl EvolutionError {
     }
 }
 
+/// #1378: the workspace's one canonical writer, with this crate's depth refusal.
 pub fn canonical_json(value: &Value) -> Result<Vec<u8>, EvolutionError> {
-    let canonical = canonicalize(value, 0)?;
-    serde_json::to_vec(&canonical).map_err(EvolutionError::CanonicalSerialization)
+    graphhelm_protocols::canonical::canonical_bytes_within(value, MAX_JSON_DEPTH)
+        .map_err(|_| EvolutionError::JsonDepthExceeded)
 }
 
 /// Computed over the canonical structure AFTER parsing (#359, measured by F): the source file's
@@ -77,24 +76,4 @@ pub fn schema_digest(value: &Value) -> Result<SchemaDigest, EvolutionError> {
     Ok(SchemaDigest(graphhelm_protocols::hash::wire_sha256(
         canonical.as_ref(),
     )))
-}
-
-fn canonicalize(value: &Value, depth: usize) -> Result<Value, EvolutionError> {
-    if depth > MAX_JSON_DEPTH {
-        return Err(EvolutionError::JsonDepthExceeded);
-    }
-
-    match value {
-        Value::Array(values) => values
-            .iter()
-            .map(|item| canonicalize(item, depth + 1))
-            .collect::<Result<Vec<_>, _>>()
-            .map(Value::Array),
-        Value::Object(values) => values
-            .iter()
-            .map(|(key, item)| Ok((key.clone(), canonicalize(item, depth + 1)?)))
-            .collect::<Result<BTreeMap<_, _>, EvolutionError>>()
-            .map(|ordered| Value::Object(ordered.into_iter().collect())),
-        _ => Ok(value.clone()),
-    }
 }

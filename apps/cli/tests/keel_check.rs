@@ -103,6 +103,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         &["src/lib.rs", "core/events/src/journal.rs"],
     );
     let events = scratch.path().join("events");
+    let unbound_events = scratch.path().join("unbound-events");
     let keyring = scratch.path().join("keyring");
     fs::create_dir(&keyring).unwrap();
     let key = "0101010101010101010101010101010101010101010101010101010101010101";
@@ -123,6 +124,28 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/graphs/software-feature.yaml");
     let fixtures = scratch.path().join("fixtures.json");
     fs::write(&fixtures, br#"{"nodeOutcomes":{}}"#).unwrap();
+    let unbound_start = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "execution", "start", "--file"])
+        .arg(&graph)
+        .args(["--events"])
+        .arg(&unbound_events)
+        .args(["--fixtures"])
+        .arg(&fixtures)
+        .args([
+            "--mode",
+            "supervised",
+            "--execution",
+            "exec_feature",
+            "--held",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        unbound_start.status.success(),
+        "{}",
+        String::from_utf8_lossy(&unbound_start.stdout)
+    );
     let start = Command::cargo_bin("graphhelm")
         .unwrap()
         .args(["--json", "execution", "start", "--file"])
@@ -131,11 +154,15 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         .arg(&events)
         .args(["--fixtures"])
         .arg(&fixtures)
+        .args(["--keyring"])
+        .arg(&keyring)
+        .args(["--key-id", "route-key"])
+        .env("GRAPHHELM_EVENTS_KEY", key)
         .args([
             "--mode",
             "supervised",
             "--execution",
-            "exec-keel-route",
+            "exec_feature",
             "--held",
         ])
         .output()
@@ -168,14 +195,33 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
     let draft = |id: &str| {
         serde_json::json!({
             "id": id, "expectedVersion": 1, "expectedHash": graph_hash,
-            "operations": [{"op": "patchNode", "path": "/spec/nodes/plan", "value": {"name": id}}]
+            "operations": [{
+                "op": "addNode", "path": "/spec/nodes/route-correction",
+                "value": {
+                    "type": "agent", "name": id, "objective": "Correct the blocked scope",
+                    "optionality": "required",
+                    "agent": {"ephemeral": {
+                        "purpose": "Correct the blocked scope",
+                        "capabilities": ["repository.read"],
+                        "allowedTools": ["repository.read"],
+                        "prohibitedActions": ["repository.write"],
+                        "inputSchema": "schema://ImplementationResult@1",
+                        "outputSchema": "schema://ImplementationResult@1",
+                        "instructions": "Correct the blocked scope",
+                        "completionContract": {"requires": ["source_locations"]},
+                        "isolationMinimum": "tier_0"
+                    }},
+                    "completion": {"requires": [{"outputSchemaValid": true}]},
+                    "timeoutSeconds": 900
+                }
+            }]
         })
     };
     let binding = scratch.path().join("binding.json");
     fs::write(
         &binding,
         serde_json::to_vec(&serde_json::json!({
-            "expectedHead": head, "execution": "exec-keel-route", "task": "issue-1045",
+            "expectedHead": head, "execution": "exec_feature", "task": "issue-1045",
             "node": "plan", "implementDraft": draft("draft-implement"),
             "reviewDraft": draft("draft-review")
         }))
@@ -184,6 +230,11 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
     .unwrap();
     let check = |binding_path: Option<&Path>| {
         let mut command = Command::cargo_bin("graphhelm").unwrap();
+        let check_events = if binding_path.is_some() {
+            &events
+        } else {
+            &unbound_events
+        };
         command
             .args([
                 "--json",
@@ -197,8 +248,8 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
             .args(["--card"])
             .arg(&scope_card)
             .args(["--events"])
-            .arg(&events)
-            .args(["--execution", "exec-keel-route", "--keyring"])
+            .arg(check_events)
+            .args(["--execution", "exec_feature", "--keyring"])
             .arg(&keyring)
             .args(["--key-id", "route-key"])
             .env("GRAPHHELM_EVENTS_KEY", key);
@@ -221,7 +272,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         .unwrap()
         .args(["--json", "execution", "status", "--events"])
         .arg(&events)
-        .args(["--execution", "exec-keel-route"])
+        .args(["--execution", "exec_feature"])
         .output()
         .unwrap();
     assert!(
@@ -240,6 +291,52 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         "{status}"
     );
     assert_eq!(status["data"]["signalsRecorded"], 1);
+    let replay = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "graph", "replay", "--events"])
+        .arg(&events)
+        .output()
+        .unwrap();
+    assert!(
+        replay.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replay.stdout)
+    );
+    let replay: Value = serde_json::from_slice(&replay.stdout).unwrap();
+    assert_eq!(replay["data"]["currentGraph"]["number"], 1, "{replay}");
+    let digest = status["data"]["proposalDigests"]["draft-implement"]
+        .as_str()
+        .expect("status exposes the exact pending proposal digest");
+    let approval = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["execution", "approve", "--events"])
+        .arg(&events)
+        .args([
+            "--execution",
+            "exec_feature",
+            "--node",
+            "route-correction",
+            "--keyring",
+        ])
+        .arg(&keyring)
+        .args([
+            "--key-id",
+            "route-key",
+            "--actor-id",
+            "route-agent",
+            "--proposal-digest",
+            digest,
+            "--draft-id",
+            "draft-implement",
+        ])
+        .env("GRAPHHELM_EVENTS_KEY", key)
+        .output()
+        .unwrap();
+    assert!(
+        approval.status.success(),
+        "the selected implementation proposal should apply: {}",
+        String::from_utf8_lossy(&approval.stdout)
+    );
     // Read the persisted event and decrypt its sealed envelope. A response alone could claim
     // admission while dropping the checked head or the precise scope finding.
     struct Clock;
@@ -319,20 +416,10 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
             .count(),
         1
     );
-    assert_eq!(
-        history
-            .iter()
-            .filter(|event| matches!(
-                event.kind,
-                graphhelm_protocols::EventKind::GraphVersionPublished(_)
-            ))
-            .count(),
-        0
-    );
     let stale = scratch.path().join("stale.json");
     fs::write(&stale, serde_json::to_vec(&serde_json::json!({
         "expectedHead": "0000000000000000000000000000000000000000",
-        "execution": "exec-keel-route", "task": "issue-1045", "node": "plan",
+        "execution": "exec_feature", "task": "issue-1045", "node": "route-correction",
         "implementDraft": draft("draft-stale-implement"), "reviewDraft": draft("draft-stale-review")
     })).unwrap()).unwrap();
     let (stale_code, stale_reply) = check(Some(&stale));
@@ -358,7 +445,7 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         .unwrap()
         .args(["--json", "execution", "status", "--events"])
         .arg(&events)
-        .args(["--execution", "exec-keel-route"])
+        .args(["--execution", "exec_feature"])
         .output()
         .unwrap();
     let status: Value = serde_json::from_slice(&status.stdout).unwrap();

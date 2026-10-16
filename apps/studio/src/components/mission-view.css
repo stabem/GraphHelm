@@ -47,8 +47,6 @@
 .mv-tabs { display: flex; gap: 4px; padding: 3px; background: #131419; border: 1px solid #1E2026; border-radius: 8px; }
 .mv-tab { padding: 6px 12px; border: 0; border-radius: 6px; background: transparent; color: #A9AEB8; font: inherit; cursor: pointer; }
 .mv-tab[aria-selected="true"] { background: #22252D; color: #E9E7E2; font-weight: 500; }
-.mv-nav { display: flex; gap: 4px; }
-.mv-nav .mv-tab[aria-pressed="true"] { background: #22252D; color: #E9E7E2; font-weight: 500; }
 .mv-back { padding: 6px 12px; border: 1px solid #2A2D34; border-radius: 8px; background: transparent; color: #E9E7E2; font: inherit; cursor: pointer; }
 
 .mv-body { display: grid; grid-template-columns: 300px minmax(0, 1fr); align-items: start; gap: 20px; min-width: 0; }
@@ -154,8 +152,6 @@
 .mv-group { width: 100%; }
 .mv[data-page="full"] > .mv-pad { padding: 18px 24px; }
 /* #591: the other cards are a plain row and a 4px segment bar; then the agents right now. */
-.mv-segs { display: flex; gap: 3px; }
-.mv-seg { flex: 1 1 0; height: 4px; border-radius: 2px; }
 .mv-jcard[data-selected="false"] { gap: 7px; }
 .mv-sum-fill { flex: 1 1 auto; }
 .mv-away { font-family: var(--mono); font-size: 11.5px; }

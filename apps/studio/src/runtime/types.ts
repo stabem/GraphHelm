@@ -185,11 +185,11 @@ export interface GraphTopology {
   [key: string]: unknown;
 }
 
-/** Who a mutation is recorded as. `owner` is the person at the keyboard; `agent` is the WebMCP
- * adapter acting on the agent's behalf. The two are never conflated - a click by the operator
- * that an agent asked for is still the AGENT's action, and the log must say so. */
 /** An actor this Studio SENDS: the two identities it can act as. Narrow on purpose - a request
- * never claims to be the runtime or a human it is not. */
+ * never claims to be the runtime or a human it is not. It is who a mutation is recorded as:
+ * `owner` is the person at the keyboard; `agent` is the WebMCP adapter acting on the agent's
+ * behalf. The two are never conflated - a click by the operator that an agent asked for is still
+ * the AGENT's action, and the log must say so. */
 export interface Actor {
   id: string;
   type: "owner" | "agent";
@@ -317,15 +317,6 @@ export interface ClaimEvidence {
   /** `sha256:<64 lowercase hex>`. */
   contentHash: string;
   size: number;
-}
-
-/** The wait a parked node is holding open, as the status payload renders it under
- * `customs.nodes.<id>.openWait`. `atSequence` is the ENVELOPE SEQUENCE of the event that parked
- * the node, and it is the wait's identity: a node re-parks, so a name identifies the node but
- * never the wait. */
-export interface OpenWait {
-  atSequence: number;
-  deadline?: string | null;
 }
 
 export type NativeChatRequestState = "requested" | "received" | "completed" | "blocked" | "unobserved";
@@ -506,7 +497,6 @@ export interface LiveSession {
    * "skipped"`. Null or absent otherwise. */
   skipped?: { edge: string; actIndex: number; kind: string; role: string; name: string; would: string } | null;
 }
-export interface LiveSessionsView { sessions: LiveSession[] }
 
 /** How one screen or edge fared in a journey's run (#519). The reason codes are the Runtime's
  * closed list; the Studio says them in words. */
@@ -518,21 +508,6 @@ export interface JourneyRunEdge { result?: JourneyStepResult | "skipped" | null;
 /** The run a journey gets when it is opened: `GET|POST /v1/journey-flows/{id}/preview`. `replay` is
  * an approved flow's real replay; `preview` is a draft's and is never proof. While `running`,
  * `screens` holds only the screens reached so far and `current` is the one being played. */
-/** What `POST /v1/journey-observer/setup` did (#519): each project file it created or changed. */
-export interface ObserverSetupView {
-  changed: { path: string; change: "created" | "modified" }[];
-}
-
-/** Last setup in this Runtime process; a restart resets it to none (#627). */
-export type ObserverSetupRecord = { state: "none" } | {
-  state: "running" | "ok" | "failed";
-  startedAt: string;
-  finishedAt?: string;
-  code?: string;
-  message?: string;
-  changed: ObserverSetupView["changed"];
-};
-
 export interface JourneyRunView {
   /** Original refusal identifiers only; no page text or exception message. */
   detail?: { code: string; pointer: string };

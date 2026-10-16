@@ -20,13 +20,8 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   (pinned squash, DELIVERY.md §5).
 - A lane holds at most **one implementation task, one review in progress and one waiting slot
   ticket** at a time.
-- Before you merge as reviewer, check the PR against **today's main**. When its base is not the
-  current `origin/main` and what landed since touches the same files or symbols
-  (`git log <base>..origin/main --stat`), build and run the reached tests on the PR merged with
-  main, or ask the author to rebase. "Mergeable" only means no textual conflict: a changed
-  signature and a new caller of the old one merge cleanly and do not compile (#520 + #533 → #551).
-- As reviewer, read every comment on the PR first. When a review of record already exists for that
-  head, stop and tell the coordinator instead of adding a second one.
+- When a review of record already exists for the head you were assigned, stop and tell the
+  coordinator instead of adding a second one.
 
 ## 2. Where a lane writes
 
@@ -71,8 +66,8 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 
   When git still refuses ("contains modified or untracked files"), find what is left and deal with
   it by name. Never answer that refusal with `--force` while a junction is inside.
-- Remove only what you created, by name. Never touch another lane's worktree, branch or ticket, and
-  never run `git worktree prune`.
+- Removal by name, and never `git worktree prune`, is DELIVERY.md §6; never touch another lane's
+  ticket either.
 
 ## 3. Builds: one slot for the whole machine
 
@@ -96,31 +91,31 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   remain in the slot with two test threads; this change does not add execution capacity.
 - Keep the isolated target chosen by the slot warm. Do not override its `CARGO_TARGET_DIR`, use
   `--shared-target`, or run `cargo clean`: shared mutable artifacts can vouch for another worktree's
-  code (#361). The outer script may set `GRAPHHELM_TEST_TIME_SCALE=3` before invoking the slot. This
+  code. The outer script may set `GRAPHHELM_TEST_TIME_SCALE=3` before invoking the slot. This
   scales child-test hang catchers, never product budgets; supported values are integers 1 through 20.
 - Every new cooperating GraphHelm build and `graphhelm update` also takes the shared OS
   build-admission lock. Its per-user default is `<user-home>/.graphhelm/build-admission`;
   `GRAPHHELM_BUILD_ADMISSION_DIR` may
   override it only with an absolute path. An unavailable, invalid or relative authority refuses
   the operation. The root-local queue, ticket and target locks remain in place. **The shared
-  authority grants a jobs budget, not a turn (#1254):** the head of a root's queue is admitted while
+  authority grants a jobs budget, not a turn:** the head of a root's queue is admitted while
   the `--jobs` of every admitted run plus its own stay within 24 (a positive integer in
   `jobs-budget` in the authority directory overrides it; an invalid one refuses), and keeps waiting
   otherwise. The lock is held only to read and rewrite the ledger of grants (`granted`, one
   `<pid> <jobs> <token>` line per admitted run); a grant whose process is gone is dropped at the next
   admission, and a request whose `--jobs` alone exceeds the budget refuses before it queues. An
-  update (#1186) takes a grant like any run, the free room up to `--jobs 16` once at least 4 jobs
+  update takes a grant like any run, the free room up to `--jobs 16` once at least 4 jobs
   are free (or the whole budget, when smaller), and builds beside the runs already admitted; while it does not fit, its `update-pending` marker stops
   new grants, so it is admitted next. It builds into `~/.graphhelm/target` and a staging root, and
   replaces the running binary only after the build succeeds. Older binaries and raw Cargo invocations take no grant. The
   lock order is root-local queue then shared authority; a waiter releases a root candidate before
   retrying.
-- **Build jobs (owner rule, 2026-10-13, #1188).** One slot root may build with up to `--jobs 16`;
+- **Build jobs.** One slot root may build with up to `--jobs 16`;
   the jobs of every root building at the same time add up to at most 24. `run_reached.py --jobs N`
   carries the choice into every slot command it queues (six when omitted). The dedicated root
   `D:/gh/opt` runs at 16; the Codex fleet keeps its concurrent runs within the remaining 8.
 - **Where the owner set a build-directory rule, the slot picks the directory and the script does
-  not export one (#360).** The rule is `<root>\.graphhelm-workspaces\slot-targets.json`:
+  not export one.** The rule is `<root>\.graphhelm-workspaces\slot-targets.json`:
 
       {"targetRoot": "C:/gh", "cap": 3, "minFreeGb": 20}
 
@@ -171,7 +166,7 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   default feedback batch keeps one bounded slot lease across short Cargo commands and yields at
   its time boundary. `--no-batch-slot` restores one Cargo command per slot invocation. Never put the entire outer
   runner inside the slot: scripts and unrestricted command lists remain refused.
-- **Use the reached-test runner for ordinary feedback (#718):**
+- **Use the reached-test runner for ordinary feedback:**
 
       python tools/reached-tests/run_reached.py --repo . --base origin/main --head HEAD --root D:/gh --lane <lane> --output <outside-repo>/feedback.json
 
@@ -237,21 +232,8 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   concurrent requests, one local slot cannot guarantee every result within 180 seconds; report
   the actual miss rather than hiding the queue or increasing CPU pressure.
 
-- Authors and reviewers share one test budget (DELIVERY.md §3). Run only what the diff reaches:
-
-      python tools/reached-tests/reached_tests.py
-
-- Run Studio checks only when `apps/studio` or something it imports is reached. In your
-  worktree's `apps/studio`, run `npm ci --prefer-offline --no-audit --no-fund` only when
-  `node_modules` is missing or `package-lock.json` changed; otherwise reuse it. Run `vitest`
-  with `--maxWorkers=1`; `vitest` and `tsc` run directly, without the cargo slot.
-- Journey previews cover only flows whose file changed or whose screens the diff changes,
-  never all flows by default. The card must name and explain any additional flows or checks.
-- Clippy covers touched crates only. A broader lint scope or a full-package/whole-suite test
-  run needs the card to name it and explain why, even if the reached-tests script prints it.
-  Cargo tests use `-- --test-threads=2`.
-- Docs-only work runs only applicable existing docs guards and `git diff --check`; it does not
-  use the slot or run Studio checks or journey previews.
+- Which checks to run, for authors and reviewers alike, is the shared test budget in DELIVERY.md §3;
+  docs-only work does not use the slot.
 - **Never end a turn idle because a build waits.** Write the next code, write the PR body, or read
   the PR you were assigned to review.
 
@@ -266,25 +248,23 @@ records"). From a lane worktree the token path must be absolute:
 
 | When | Command |
 |---|---|
-| Start a task | `$T --issue N claimed --branch B --journeys <contractId>` (`--assigned-by <who>` when the order came from someone; the claim states a 1800 s lease, `--lease-seconds` to change it, #1193, #1223) |
+| Start a task | `$T --issue N claimed --branch B --journeys <contractId>` (`--assigned-by <who>` when the order came from someone; the claim states a 1800 s lease, `--lease-seconds` to change it) |
 | Right after the claim, before code | `$T --issue N planned --summary "<the plan in one line>"` (paths from git, or `--paths <scope...>`) |
 | Give up a pre-PR claim (yours; the Stop reconciler releases lapsed ones as `graphhelm`) | `$T --issue N released --claim-sequence <seq> --release-reason "<why>"` |
 | Say the claim is alive (the Stop hook does this for you on every turn end; one per 300 s, the Runtime decides) | `$T --issue N heartbeat` |
-| Open a PR, and again after **every** push (this also records `review_assigned`, #508) | `$T --issue N pr_opened --pr P --head SHA --reviewer <reviewer> --journeys <contractId>` |
+| Open a PR, and again after **every** push (this also records `review_assigned`) | `$T --issue N pr_opened --pr P --head SHA --reviewer <reviewer> --journeys <contractId>` |
 | Change the reviewer without a push | `$T --issue N review_assigned --pr P --head SHA --reviewer <other>` |
 | As reviewer, after posting the verdict | `$T --issue N review_verdict --pr P --head SHA --verdict APPROVE\|APPROVE-WITH-RISK\|BLOCK --comment-url URL` |
 | As merger, only after your own `gh pr merge` exits 0 | `$T --issue N merged --pr P --merge-sha SHA --closes <issues the squash closed>` |
 | A PR closed without a merge (the Stop reconciler records this; by hand only to repair) | `$T --issue N closed --pr P --reason superseded\|abandoned --by <PR>` |
-| Grade a design round when the plan says `critic: design` (#467) | `$T --issue N critic_verdict --round R --score 0-10 --design-ref <path> --reason "<why>"` |
-
-Name the journey the issue serves; the Studio Graph tab links the task to it. Ids are the stems of .graphhelm/journeys/*.journey.yaml.
+| Grade a design round when the plan says `critic: design` | `$T --issue N critic_verdict --round R --score 0-10 --design-ref <path> --reason "<why>"` |
 
 `--closes` is recorded exactly as given: name every issue the squash closed, and pass none for a
 `Refs` PR. Every lane merges under one GitHub account, so `mergedBy` cannot tell whose merge it
 was; the exit code of the `gh pr merge` you ran is the evidence.
 
 Record only as yourself. `task_record.py` sends the lane's own credential
-(`<events>.agent.<lane>.token`, minted once per lane with `graphhelm tasks credential`, #1179) when it
+(`<events>.agent.<lane>.token`, minted once per lane with `graphhelm tasks credential`) when it
 exists and the shared agent token otherwise; a Runtime started with `serve --require-lane-credential`
 refuses a `task.*` record under the shared token or under another lane's credential
 (`GHCLI038_ACTOR_MISMATCH`). The rules, the lease and the per-step fields are in DELIVERY.md
@@ -306,7 +286,7 @@ record uses the lane as actor; a retry of the same tag keeps the same signal id.
 is down, the command reports `recorded: false` and exits zero. The launcher retains the original
 `codex exec` exit code.
 After the end lands, the command releases, as the lane, every pre-PR claim the lane still holds
-(reason `run ended (exit N) without a PR`, #1240) and reports them under `claims`: a one-shot run
+(reason `run ended (exit N) without a PR`) and reports them under `claims`: a one-shot run
 that ended without a PR will not open one, so its issue is free at once, not after the lease.
 
 ### Autonomous lane wake loop
@@ -368,10 +348,7 @@ host. After reboot, restart the host and the loop. A host without background com
 notification must report `OBSERVER_MISSING: host wake notification`; it cannot claim autonomous
 wake merely because a lease exists. Reload the installed plugin to use the new Stop hook.
 
-- Issue title `<Area>: <what changes for the user>`, at most 50 characters; PR title
-  `type(area): <what changes for the user>`, at most 60. Both bodies start with
-  `Summary: <one sentence, at most 100 characters>`. Areas and examples: DELIVERY.md §1.
-- Identity line on every PR comment, review and commit body: `Session: <lane> · Head: <sha8>`.
+- Titles and the `Summary:` line follow DELIVERY.md §1; the identity line, DELIVERY.md §4.
 - A message to another session: the first line is one plain sentence that stands alone; then short
   bullets; shas and paths in backticks.
 - **Every verdict goes to two places:** the comment on the PR, and a one-line `SendMessage` to the
@@ -381,5 +358,3 @@ wake merely because a lease exists. Reload the installed plugin to use the new S
 
 - GitHub Actions: do not enable, run or rely on a workflow.
 - Approving a journey. Only the owner approves journeys.
-- Touching another lane's worktree or ticket.
-- Recording a task step as another lane.

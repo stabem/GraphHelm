@@ -43,13 +43,6 @@ export interface NodeHistoryEntry {
 }
 
 /**
- * A disagreement the model itself can attest, shown on the board's face rather than buried.
- *
- * Every finding cites the log (`sequence`) when the log holds the accused line - the reference
- * project prints its plan lint on the board and that is worth copying, but OURS accuses events,
- * never a plan file, because the log is the only truth this surface has.
- */
-/**
  * Whether a finding is one a fixture run EXPLAINS (#1083, Codex on PR #1091).
  *
  * Only `done-without-evidence`: a fixture executor supplies outcomes from a file, so a settled
@@ -74,6 +67,13 @@ export function splitLint(
   };
 }
 
+/**
+ * A disagreement the model itself can attest, shown on the board's face rather than buried.
+ *
+ * Every finding cites the log (`sequence`) when the log holds the accused line - the reference
+ * project prints its plan lint on the board and that is worth copying, but OURS accuses events,
+ * never a plan file, because the log is the only truth this surface has.
+ */
 export interface LintFinding {
   kind: "reopened-after-done" | "done-without-evidence" | "orphan-edge";
   /** One readable sentence naming the node or edge and what is wrong. */

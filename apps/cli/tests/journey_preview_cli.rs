@@ -14,6 +14,7 @@ use time_scale::scaled;
 use serde_json::Value;
 
 const FLOW: &str = include_str!("fixtures/journey_flow/checkout.journey.yaml");
+const BACKEND_FLOW: &str = include_str!("fixtures/journey_backend/backend.journey.yaml");
 
 fn cli(project: &Path, args: &[&str]) -> (i32, Value) {
     let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
@@ -154,4 +155,64 @@ fn a_preview_runs_once_keeps_its_result_and_runs_anew_only_when_asked() {
         !dir.path().join("DRIVER_STARTED").exists(),
         "the tripwire observer never starts"
     );
+}
+
+#[test]
+fn a_missing_launcher_shell_is_recorded_as_a_spawn_failure() {
+    let dir = draft();
+    std::fs::write(
+        dir.path().join(".graphhelm/journeys/backend.journey.yaml"),
+        BACKEND_FLOW,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(".graphhelm/journey-fixture.json"),
+        r#"{"schema":"graphhelm-journey-fixture/1","script":"launcher.sh","isolated":true}"#,
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("launcher.sh"), "#!/bin/sh\nexit 0\n").unwrap();
+    assert!(
+        graphhelm_process::command("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["add", "."])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        graphhelm_process::command("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["commit", "--quiet", "--no-verify", "-m", "launcher fixture"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["--json", "journey", "preview", "backend"])
+        .arg("--project")
+        .arg(dir.path())
+        .env("GRAPHHELM_SECRET_shopper_password", "preview_canary_519")
+        .env("GRAPHHELM_POSIX_SHELL", dir.path().join("missing-shell"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(reply["data"]["state"], "running", "{reply}");
+    let result = loop {
+        let (code, reply) = cli(dir.path(), &["preview", "backend", "--read"]);
+        assert_eq!(code, 0, "{reply}");
+        if reply["data"]["state"] != "running" {
+            break reply["data"].clone();
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    assert_eq!(result["state"], "failed", "{result}");
+    assert_eq!(result["reason"], "watch.launch_failed", "{result}");
+    let log = result["launchLog"]["tail"].as_str().unwrap_or_default();
+    assert!(log.contains("could not start"), "{result}");
+    assert!(!log.contains("did not finish within"), "{result}");
+    assert!(!dir.path().join("DRIVER_STARTED").exists());
 }

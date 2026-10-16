@@ -5,8 +5,13 @@ description: "Use when reviewing someone else's change under Keel as its single 
 
 How to use this skill:
 
-- If the project has its own `KEEL.md` at its root, follow that file and the `keel/` files it names.
-  The text below is the bundled copy, for projects that have none.
+- First run: if the project has no `KEEL.md` at its root, install Keel into it with
+  `python <this plugin>/setup/keel_setup.py <project root>` (the plugin folder is two levels above
+  this skill's folder). It copies `KEEL.md` and the `keel/` step files into the project, offline,
+  never overwrites an existing one, and adds a marked pointer line to `CLAUDE.md` and `AGENTS.md`.
+- Read the project's own `KEEL.md` at its root when one exists, and the `keel/` step files it names.
+  Before that step has run, read https://github.com/stabem/GraphHelm/blob/main/KEEL.md and the step
+  files under https://github.com/stabem/GraphHelm/blob/main/keel/. The text below is the bundled copy.
 - In the text below, `keel/KEEL_PLAN.md`, `keel/KEEL_EXEC.md`, `keel/KEEL_REVIEW.md` and
   `keel/KEEL_MERGE.md` are this plugin's `keel-plan`, `keel-exec`, `keel-review` and `keel-merge`
   skills, and `KEEL.md` is its `keel` skill. `docs/keel/KEEL_SPEC.md` exists only in the GraphHelm
@@ -22,7 +27,7 @@ How to use this skill:
 
 # KEEL_REVIEW
 
-Step 3: one reviewer per pull request. Read [`KEEL.md`](../KEEL.md) first.
+Step 3: one reviewer per pull request. Read [`KEEL.md`](https://github.com/stabem/GraphHelm/blob/main/KEEL.md) first.
 
 ## Blind
 

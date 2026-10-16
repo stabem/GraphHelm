@@ -8,12 +8,16 @@ Cost: reads a handful of files; offline.
 import json
 import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sync_keel_plugin as sync  # noqa: E402
+
+sys.path.insert(0, str(ROOT / "plugins" / "keel" / "setup"))
+import keel_setup  # noqa: E402
 
 PLUGIN = ROOT / "plugins" / "keel"
 FRONTMATTER_NAME = re.compile(r"\A---\nname: ([\w-]+)\n", re.M)
@@ -38,7 +42,7 @@ class KeelPlugin(unittest.TestCase):
                 body = text(PLUGIN / "skills" / skill / "SKILL.md")
                 marker = sync.marker(source)
                 self.assertEqual(body.count(marker), 1, f"{skill}: the source marker for {source} must appear once")
-                self.assertEqual(body.split(marker, 1)[1], text(ROOT / source),
+                self.assertEqual(body.split(marker, 1)[1], sync.github_links(text(ROOT / source), source),
                                  f"{skill} differs from {source}: run python tools/keel-plugin/sync_keel_plugin.py")
 
     def test_each_skill_file_is_exactly_what_the_sync_writes(self):
@@ -59,6 +63,45 @@ class KeelPlugin(unittest.TestCase):
         embedded = body.split(start, 1)[1].split(end, 1)[0]
         self.assertEqual(embedded, text(ROOT / sync.GRAPHHELM_KEEL_SOURCE),
                          "the GraphHelm keel skill differs from its source: run python tools/keel-plugin/sync_keel_plugin.py")
+
+    def test_no_relative_keel_link_is_left_in_the_plugin(self):
+        # A plugin installed in another project has no `KEEL.md` or `keel/` beside it: a relative
+        # link to either leads nowhere, so each must name the copy on GitHub.
+        relative = re.compile(r"\]\((?!https?:)[^)]*(KEEL\.md|keel/)[^)]*\)")
+        # The bundled setup files are copied into a project, where their relative links hold.
+        for path in sorted(p for p in PLUGIN.rglob("*.md") if sync.SETUP_FILES not in p.parents):
+            with self.subTest(path=path.relative_to(ROOT).as_posix()):
+                self.assertEqual(relative.findall(text(path)), [], "relative KEEL link: run the sync")
+
+    def test_the_setup_step_ships_every_keel_file_as_it_is(self):
+        self.assertEqual(sorted(keel_setup.FILES), sorted(sync.SKILLS.values()))
+        for source in sync.SKILLS.values():
+            with self.subTest(source=source):
+                self.assertEqual(text(sync.SETUP_FILES / source), text(ROOT / source),
+                                 f"bundled {source} differs: run python tools/keel-plugin/sync_keel_plugin.py")
+
+    def test_setup_installs_keel_once_and_keeps_the_projects_own_copy(self):
+        def snapshot(root):
+            return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+        with tempfile.TemporaryDirectory() as empty, tempfile.TemporaryDirectory() as own:
+            root = Path(empty)
+            keel_setup.main(["keel_setup", str(root)])
+            first = snapshot(root)
+            self.assertEqual(sorted(first), sorted([*keel_setup.FILES, "AGENTS.md", "CLAUDE.md"]))
+            for name in keel_setup.POINTER_FILES:
+                self.assertEqual(first[name].decode("utf-8").count(keel_setup.POINTER), 1, name)
+            keel_setup.main(["keel_setup", str(root)])
+            self.assertEqual(snapshot(root), first, "a second run changed bytes")
+
+            root = Path(own)
+            (root / "KEEL.md").write_bytes(b"project keel\n")
+            (root / "AGENTS.md").write_bytes(b"# rules\n")
+            keel_setup.main(["keel_setup", str(root)])
+            self.assertEqual((root / "KEEL.md").read_bytes(), b"project keel\n")
+            agents = (root / "AGENTS.md").read_bytes().decode("utf-8")
+            self.assertTrue(agents.startswith("# rules\n"))
+            self.assertEqual(agents.count(keel_setup.POINTER), 1)
 
     def test_each_skill_is_named_after_its_folder(self):
         for skill in sync.SKILLS:

@@ -106,7 +106,8 @@ def classify(exit_code: int, output: str) -> str:
 Runner = Callable[[Path], "tuple[int, str]"]
 
 
-def slot_runner(root: str, lane: str, jobs: int, graphhelm: str) -> Runner:
+def slot_runner(root: str, lane: str, jobs: int, graphhelm: str, timeout: float) -> Runner:
+    """One slot-run cargo test per call; a run past `timeout` seconds answers not-run, never caught."""
     def run(repo: Path) -> tuple[int, str]:
         cargo = ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-events"]
         for test in TESTS:
@@ -114,8 +115,11 @@ def slot_runner(root: str, lane: str, jobs: int, graphhelm: str) -> Runner:
         cargo += ["--", "--test-threads=2"]
         command = [graphhelm, "workspace", "slot", "--root", root, "--lane", lane,
                    "--jobs", str(jobs), "--label", "keel-planted-defects", "--", *cargo]
-        done = subprocess.run(command, cwd=repo, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+        try:
+            done = subprocess.run(command, cwd=repo, capture_output=True, text=True, timeout=timeout,
+                                  encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+        except subprocess.TimeoutExpired:
+            return 124, f"timed out after {timeout} s"
         return done.returncode, done.stdout + done.stderr
     return run
 
@@ -171,9 +175,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--jobs", type=int, default=2)
     ap.add_argument("--graphhelm", default=os.environ.get("GRAPHHELM_CLI", "graphhelm"))
     ap.add_argument("--output", help="write the JSON report here as well")
+    ap.add_argument("--timeout", type=float, default=3600.0,
+                    help="seconds one slot run may take (queue wait plus build plus tests)")
     args = ap.parse_args(argv)
     repo = Path(args.repo).resolve()
-    report = plant(repo, slot_runner(args.root, args.lane, args.jobs, args.graphhelm))
+    report = plant(repo, slot_runner(args.root, args.lane, args.jobs, args.graphhelm, args.timeout))
     text = json.dumps(report, indent=2)
     if args.output:
         Path(args.output).write_text(text + "\n", encoding="utf-8")

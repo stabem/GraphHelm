@@ -2063,9 +2063,23 @@ fn a_bounded_events_tail_stays_fast_at_six_thousand_events() {
             assert_eq!(reply["data"]["head"], 6_000, "{reply}");
             assert_eq!(reply["data"]["events"].as_array().unwrap().len(), 1);
         }
+        // A busy machine delays one request, never the same request every time: a scan of the
+        // journal is slow on each try. So the bound is on the fastest of up to three tries
+        // (the raced one first), and it scales with GRAPHHELM_TEST_TIME_SCALE (#1459).
+        let bound = scaled(std::time::Duration::from_millis(200));
+        let mut fastest = elapsed;
+        for _ in 0..2 {
+            if fastest < bound {
+                break;
+            }
+            let started = std::time::Instant::now();
+            let retry = get_json(url, Some(&token));
+            assert_eq!(retry["ok"], true, "{retry}");
+            fastest = fastest.min(started.elapsed());
+        }
         assert!(
-            elapsed < std::time::Duration::from_millis(200),
-            "{url} took {elapsed:?}"
+            fastest < bound,
+            "{url} took {fastest:?} at best, bound {bound:?}"
         );
     }
 }

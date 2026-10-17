@@ -2375,7 +2375,7 @@ fn wake_wait_exits_zero_on_ring_and_no_hostile_byte_reaches_stdout() {
         "exec-sidecar-ring",
         &rendezvous_id,
         1,
-        Some(RACING_WAKE_LEASE_SECONDS),
+        Some(racing_lease_seconds()),
     );
     let child = spawn_wake_wait(
         &events,
@@ -3898,6 +3898,15 @@ const PIPE_STARTUP_HANG_CATCHER_SECONDS: u64 = 30;
 #[cfg(windows)]
 const RACING_WAKE_LEASE_SECONDS: u64 = 40;
 
+/// #1459: the lease these tests race, scaled like the catcher it must outlive. `wait_for_pipe`
+/// may take `PIPE_STARTUP_HANG_CATCHER_SECONDS * GRAPHHELM_TEST_TIME_SCALE` on a busy machine; a
+/// fixed 40 s lease then matured before `consume_lease` ran (GHCLI017 "no live lease") while the
+/// tests were healthy. `lease > catcher` holds at every scale. Unset scale: the 40 s above.
+#[cfg(windows)]
+fn racing_lease_seconds() -> u64 {
+    scaled(Duration::from_secs(RACING_WAKE_LEASE_SECONDS)).as_secs()
+}
+
 #[cfg(windows)]
 /// Is this rendezvous currently an instance in the machine's pipe namespace?
 ///
@@ -3978,7 +3987,7 @@ fn a_burned_but_unrung_lease_names_its_missed_ring_at_the_deadline() {
         execution,
         &rendezvous_id,
         head(&events),
-        Some(RACING_WAKE_LEASE_SECONDS),
+        Some(racing_lease_seconds()),
     );
     let armed_at = head(&events);
     let mut child = spawn_wake_wait(
@@ -4165,7 +4174,7 @@ fn a_ring_missed_and_a_re_arm_are_reported_as_different_worlds() {
         execution,
         &first_rendezvous_id,
         head(&events),
-        Some(RACING_WAKE_LEASE_SECONDS),
+        Some(racing_lease_seconds()),
     );
     let first_arming = head(&events);
     let mut child = spawn_wake_wait(
@@ -4267,7 +4276,7 @@ fn an_unreadable_store_at_the_deadline_stays_a_timeout_and_says_unreadable() {
         execution,
         &rendezvous_id,
         head(&events),
-        Some(RACING_WAKE_LEASE_SECONDS),
+        Some(racing_lease_seconds()),
     );
     let mut child = spawn_wake_wait_with_env(
         &events,
@@ -4341,7 +4350,7 @@ fn a_mis_aimed_burn_is_reported_as_the_folds_own_diagnosis() {
         execution,
         &rendezvous_id,
         head(&events),
-        Some(RACING_WAKE_LEASE_SECONDS),
+        Some(racing_lease_seconds()),
     );
     let live_arming = head(&events);
     assert!(captured_arming < live_arming);
@@ -4411,7 +4420,7 @@ fn a_second_cycles_burn_never_erases_the_first_armings_receipt() {
         execution,
         &first_rendezvous_id,
         head(&events),
-        Some(RACING_WAKE_LEASE_SECONDS),
+        Some(racing_lease_seconds()),
     );
     let first_arming = head(&events);
     let mut child = spawn_wake_wait(
@@ -4488,7 +4497,7 @@ fn a_lease_burned_stale_while_its_waiter_lived_names_the_rejection() {
         execution,
         &rendezvous_id,
         head(&events),
-        Some(RACING_WAKE_LEASE_SECONDS),
+        Some(racing_lease_seconds()),
     );
     let armed_at = head(&events);
     let mut child = spawn_wake_wait(
@@ -4575,7 +4584,9 @@ fn the_pipe_wait_is_bounded_below_the_leases_it_races() {
                 && let Some(bound) = some.1.split(')').next()
             {
                 let seconds = match bound.trim() {
-                    "RACING_WAKE_LEASE_SECONDS" => RACING_WAKE_LEASE_SECONDS,
+                    "RACING_WAKE_LEASE_SECONDS" | "racing_lease_seconds(" => {
+                        RACING_WAKE_LEASE_SECONDS
+                    }
                     digits => digits
                         .parse::<u64>()
                         .expect("a racing lease bound is a known constant or literal seconds"),

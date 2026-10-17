@@ -73,7 +73,7 @@ impl Server {
             }
         });
         let started = replies
-            .recv_timeout(Duration::from_secs(30))
+            .recv_timeout(scaled(Duration::from_secs(30)))
             .expect("OBSERVER_MISSING: fixture/server startup");
         Self {
             child,
@@ -86,7 +86,9 @@ impl Server {
     fn control(&mut self, action: &str) -> Value {
         writeln!(self.input, "{action}").unwrap();
         self.input.flush().unwrap();
-        self.replies.recv_timeout(Duration::from_secs(5)).unwrap()
+        self.replies
+            .recv_timeout(scaled(Duration::from_secs(5)))
+            .unwrap()
     }
 }
 

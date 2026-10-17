@@ -1631,7 +1631,6 @@ mod tests {
         )
         .unwrap();
         let launcher = Path::new(env!("CARGO_MANIFEST_DIR")).join("../studio/tools/studio-up.ps1");
-        let started = std::time::Instant::now();
         let output = graphhelm_process::command("powershell")
             .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
             .arg(&launcher)
@@ -1643,7 +1642,6 @@ mod tests {
             .arg(root.join("dies.cmd"))
             .output()
             .unwrap();
-        let elapsed = started.elapsed();
         let said = format!(
             "{}{}",
             String::from_utf8_lossy(&output.stdout),
@@ -1655,10 +1653,11 @@ mod tests {
             said.contains("exited"),
             "the launcher must say the Runtime exited: {said}"
         );
+        // #1459: not a stopwatch. A launcher that sat out its wait ends with "did not answer ...
+        // within 120s", never "exited", so the message tells the two apart at any machine speed.
         assert!(
-            // Scaled like the repository's other test deadlines (#549): a loaded machine is slower.
-            elapsed < crate::test_time::scaled(std::time::Duration::from_secs(15)),
-            "took {elapsed:?}: {said}"
+            !said.contains("did not answer"),
+            "the launcher sat out its deadline instead of saying the Runtime exited: {said}"
         );
     }
 }

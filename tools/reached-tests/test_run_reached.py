@@ -663,7 +663,11 @@ class RunnerContracts(unittest.TestCase):
             self.assertEqual(calls[1][0], sys.executable)
             self.assertEqual(envs[0]["CARGO_BUILD_JOBS"], "1")
             self.assertNotIn("GRAPHHELM_SLOT_BATCH", envs[1])
-            self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["heldSeconds"], 2.0)
+            receipt = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(receipt["heldSeconds"], 2.0)
+            # #1516: the receipt names the slot wait and the working time apart.
+            self.assertEqual(receipt["slotWaitSeconds"], 1.0)
+            self.assertAlmostEqual(receipt["runSeconds"], max(0.0, receipt["elapsedSeconds"] - 1.0), places=3)
 
     def test_unsupported_targets_are_incomplete_before_any_step(self):
         with tempfile.TemporaryDirectory() as temp:

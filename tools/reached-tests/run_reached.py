@@ -751,6 +751,13 @@ def run(args: argparse.Namespace) -> int:
         report["error"] = str(exc)
         report["status"] = "incomplete"
     report["elapsedSeconds"] = round(time.monotonic() - started, 3)
+    # #1516: the receipt splits its wall time into waiting for the slot and working, so a reader of
+    # the delivery durations can tell a queued run from a slow one. `slotWaitSeconds` is the time
+    # spent queued for the build slot (null when the slot did not report it), `runSeconds` the rest.
+    slot_wait = report.get("queueSeconds")
+    report["slotWaitSeconds"] = None if slot_wait is None else round(slot_wait, 3)
+    report["runSeconds"] = (None if slot_wait is None
+                            else round(max(0.0, report["elapsedSeconds"] - slot_wait), 3))
     output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if getattr(args, "json", False):
         print(json.dumps(report, indent=2))

@@ -89,6 +89,19 @@ PRIVATE_TEST_PATH = (
 )
 
 
+# Root files that no offline test reaches. Listing one here is the honest answer ("nothing observes
+# this"), not a pass: the reason says why, so the entry is deleted the day a test covers the file.
+NO_TEST_ROOT_FILES = {
+    "Dockerfile": "the release image build needs Docker, which offline tests may not require",
+    "docker-compose.yml": "compose needs Docker, which offline tests may not require",
+    ".gitattributes": "line-ending rules; no test reads them",
+    "LICENSE": "license text; no test reads it",
+    "VERSION": "release number; the plugin version guard reads the plugin manifests, not this file",
+    "rust-toolchain.toml": "toolchain pin; every cargo step runs under it, no test reads it by name",
+    "rustfmt.toml": "format rules; the fmt step reads them, no test targets them",
+}
+
+
 def run(cmd, cwd):
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=True, creationflags=NO_WINDOW).stdout
 
@@ -643,6 +656,8 @@ def reach(changed, packages, embedded, repo=None):
                     single |= narrow
                     whole |= dependents(packages, {p["name"]}) - {p["name"]}
                 hit = True
+        if path in NO_TEST_ROOT_FILES:
+            hit = True
         if not hit and not path.endswith(".md") and not path.startswith("docs/"):
             other.append(path)
     single = {s for s in single if s[0] not in whole}

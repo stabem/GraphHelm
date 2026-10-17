@@ -114,6 +114,8 @@ function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: 
               <span className="ab-name">{r.name}</span>
               <span className="ab-what">
                 {tag && <span className="ab-tag">{tag.split(" · ").map((part, i) => <span key={i}>{i > 0 ? ` · ${part}` : part}</span>)}</span>}
+                {r.step && <span className="ab-step" data-step={r.step}>{r.step}</span>}
+                {r.command && <span className="ab-cmd" title={r.command}>{r.command}</span>}
                 {what.length > 0 && <span className="ab-doing" title={what}>{r.href ? <a href={r.href} target="_blank" rel="noreferrer">{what}</a> : what}</span>}
               </span>
               <span className="ab-for">{(r.latest ?? "—").split(" · ").map((part, i) => <span key={i}>{i > 0 ? ` · ${part}` : part}</span>)}</span>

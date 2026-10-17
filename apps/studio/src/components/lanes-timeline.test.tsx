@@ -361,6 +361,17 @@ describe("LanesTimeline", () => {
     expect(row.querySelector(".ab-doing")).not.toHaveTextContent("building");
   });
 
+  it("#1556: a card shows the step and the slot command beside the root", async () => {
+    render(<LanesTimeline lanes={[lanes[1]!]} now={now} windowMs={1000} slots={[
+      { root: "D:/gh/c", ok: true, holder: { lane: "gh-claude-6", label: "cargo test -p studio", pid: 1, worktree: null, heldSeconds: 240 }, waiting: [] },
+    ]} />);
+    await fastUserEvent().click(screen.getByRole("button", { name: "Working 1" }));
+    const row = within(screen.getByRole("list", { name: "Agent board" })).getByText("gh-claude-6").closest("li")!;
+    expect(row.querySelector(".ab-step")).toHaveTextContent("proving");
+    expect(row.querySelector(".ab-cmd")).toHaveTextContent("cargo test -p studio");
+    expect(row.querySelector(".ab-doing")).toHaveTextContent("D:/gh/c");
+  });
+
   it("shows queued position and wait duration once with the build location", async () => {
     render(<LanesTimeline lanes={[lanes[1]!]} now={now} windowMs={1000} slots={[{
       root: "D:/gh", ok: true, holder: { lane: "gh-claude-5", label: null, pid: 1, worktree: null, heldSeconds: 240 },

@@ -812,13 +812,28 @@ fn record_once(
                     )
                 })?,
                 expected_version: draft.expected_version,
-                expected_hash: graphhelm_protocols::WireHash::parse(draft.expected_hash.as_str())
+                expected_hash: draft
+                    .expected_hash
+                    .as_ref()
+                    .map(|hash| graphhelm_protocols::WireHash::parse(hash.as_str()))
+                    .transpose()
                     .map_err(|_| {
-                    signal_invalid(
-                        "the graph proposal hash is invalid",
-                        "/signal/proposal/expectedHash",
-                    )
-                })?,
+                        signal_invalid(
+                            "the graph proposal hash is invalid",
+                            "/signal/proposal/expectedHash",
+                        )
+                    })?,
+                expected_safe_hash: draft
+                    .expected_safe_hash
+                    .as_ref()
+                    .map(|hash| graphhelm_protocols::WireHash::parse(hash.as_str()))
+                    .transpose()
+                    .map_err(|_| {
+                        signal_invalid(
+                            "the graph proposal safe hash is invalid",
+                            "/signal/proposal/expectedSafeHash",
+                        )
+                    })?,
                 operation_count: u16::try_from(draft.operations.len()).map_err(|_| {
                     signal_invalid(
                         "the graph proposal has too many operations",

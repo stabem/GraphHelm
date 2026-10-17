@@ -743,7 +743,10 @@ fn direct_append_rejects_secret_shaped_persistent_surfaces_without_mutation() {
                 unsafe_event.kind = EventKind::DraftProposed(DraftProposed {
                     draft_id: OpaqueId::parse(CANARY).unwrap(),
                     expected_version: 1,
-                    expected_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                    expected_hash: Some(
+                        WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                    ),
+                    expected_safe_hash: None,
                     operation_count: 1,
                     proposal_sha256: None,
                 });

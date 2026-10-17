@@ -147,7 +147,12 @@ pub(super) fn preflight_draft(
     enforce_max_chars(&draft.id, 128)?;
     enforce_max_chars(&authoritative_actor.id, 256)?;
     usage.account_string(&draft.id)?;
-    usage.account_string(draft.expected_hash.as_str())?;
+    for hash in [&draft.expected_hash, &draft.expected_safe_hash]
+        .into_iter()
+        .flatten()
+    {
+        usage.account_string(hash.as_str())?;
+    }
     usage.account_container(2, 2)?;
     usage.account_string("type")?;
     usage.account_string("id")?;

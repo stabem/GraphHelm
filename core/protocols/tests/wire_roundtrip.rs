@@ -48,7 +48,8 @@ fn draft_override_and_waiver_use_stable_camel_case_fields() {
     let draft = GraphDraft {
         id: "draft-1".into(),
         expected_version: 13,
-        expected_hash: SemanticHash::new("sha256:abc"),
+        expected_hash: Some(SemanticHash::new("sha256:abc")),
+        expected_safe_hash: None,
         operations: vec![DraftOperation::RemoveNode {
             id: "review".into(),
         }],

@@ -5139,7 +5139,8 @@ fn projection_reference_failure_leaves_the_base_candidate_unchanged() {
     let draft = GraphDraft {
         id: "draft-corrupt-reference".into(),
         expected_version: base.number(),
-        expected_hash: base.content_hash().clone(),
+        expected_hash: Some(base.content_hash().clone()),
+        expected_safe_hash: None,
         operations: Vec::new(),
         manual_override: None,
     };
@@ -5173,7 +5174,8 @@ fn governor_prepares_an_isolated_candidate_without_publishing_state() {
     let draft = GraphDraft {
         id: "draft-safe-preparation".into(),
         expected_version: base.number(),
-        expected_hash: base.content_hash().clone(),
+        expected_hash: Some(base.content_hash().clone()),
+        expected_safe_hash: None,
         operations: Vec::new(),
         manual_override: None,
     };
@@ -5222,7 +5224,8 @@ fn publication_draft(base: &GraphVersion, operations: Vec<DraftOperation>) -> Gr
     GraphDraft {
         id: "draft-preflight".into(),
         expected_version: base.number(),
-        expected_hash: base.content_hash().clone(),
+        expected_hash: Some(base.content_hash().clone()),
+        expected_safe_hash: None,
         operations,
         manual_override: None,
     }

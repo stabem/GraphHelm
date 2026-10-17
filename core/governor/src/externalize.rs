@@ -645,6 +645,25 @@ fn evidence_aad_sha256(
     raw_content_sha256(&aad).map_err(|_| GovernorError::InvalidProjection)
 }
 
+/// #1045: whether `draft` binds exactly `base`. A draft names its predecessor by exactly one of
+/// two hashes: the authoring content hash (`expectedHash`, the original binding) or the safe
+/// semantic hash a published version exposes (`expectedSafeHash`, computed here through the same
+/// projection path that published it). Both or neither binds nothing.
+pub(super) fn draft_binds(
+    scope: &RepositoryScope,
+    base: &graphhelm_graph::GraphVersion,
+    draft: &graphhelm_protocols::GraphDraft,
+) -> Result<bool, GovernorError> {
+    match (&draft.expected_hash, &draft.expected_safe_hash) {
+        (Some(content), None) => Ok(content == base.content_hash()),
+        (None, Some(safe)) => {
+            let published = safe_semantic_hash_for(scope, &base.to_record())?;
+            Ok(safe.as_str() == published.as_str())
+        }
+        _ => Ok(false),
+    }
+}
+
 pub(super) fn safe_semantic_hash_for(
     scope: &RepositoryScope,
     record: &GraphVersionRecord,

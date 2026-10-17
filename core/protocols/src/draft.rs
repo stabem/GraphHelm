@@ -8,7 +8,15 @@ use crate::{GraphEdge, GraphNode, ManualOverride, SemanticHash};
 pub struct GraphDraft {
     pub id: String,
     pub expected_version: u64,
-    pub expected_hash: SemanticHash,
+    /// The predecessor's authoring content hash. Exactly one of this and `expected_safe_hash`
+    /// binds the draft; the Governor refuses both or neither (#1045).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_hash: Option<SemanticHash>,
+    /// The predecessor's safe semantic hash: the one a published version exposes
+    /// (`currentGraph.semanticHash`), so a lane can bind a published successor without an
+    /// unpublished content hash (#1045).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_safe_hash: Option<SemanticHash>,
     pub operations: Vec<DraftOperation>,
     #[serde(default)]
     pub manual_override: Option<ManualOverride>,

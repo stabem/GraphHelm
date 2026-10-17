@@ -273,11 +273,12 @@
     },
     "draftProposed": {
       "type": "object",
-      "required": ["draftId", "expectedVersion", "expectedHash", "operationCount"],
+      "required": ["draftId", "expectedVersion", "operationCount"],
       "properties": {
         "draftId": {"$ref": "#/$defs/opaqueId"},
         "expectedVersion": {"$ref": "#/$defs/positiveSafeInteger"},
         "expectedHash": {"$ref": "#/$defs/wireHash"},
+        "expectedSafeHash": {"$ref": "#/$defs/wireHash"},
         "operationCount": {"type": "integer", "minimum": 1, "maximum": 1024},
         "proposalSha256": {"$ref": "#/$defs/rawSha256"}
       },

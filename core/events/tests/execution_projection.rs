@@ -733,7 +733,8 @@ fn ghost_proposal_events() -> Vec<EventEnvelope> {
             EventKind::DraftProposed(graphhelm_protocols::DraftProposed {
                 draft_id: OpaqueId::parse("draft-1").unwrap(),
                 expected_version: 1,
-                expected_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                expected_hash: Some(WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap()),
+                expected_safe_hash: None,
                 operation_count: 1,
                 proposal_sha256: Some(RawSha256::parse("b".repeat(64)).unwrap()),
             }),
@@ -789,7 +790,8 @@ fn ghost_proposal_over_existing_node() -> Vec<EventEnvelope> {
             EventKind::DraftProposed(graphhelm_protocols::DraftProposed {
                 draft_id: OpaqueId::parse("draft-1").unwrap(),
                 expected_version: 1,
-                expected_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                expected_hash: Some(WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap()),
+                expected_safe_hash: None,
                 operation_count: 1,
                 proposal_sha256: Some(RawSha256::parse("b".repeat(64)).unwrap()),
             }),
@@ -900,7 +902,8 @@ fn a_ghost_assignment_survives_replay_and_duplicate_assignment_is_corrupt() {
             EventKind::DraftProposed(graphhelm_protocols::DraftProposed {
                 draft_id: OpaqueId::parse("draft-1").unwrap(),
                 expected_version: 1,
-                expected_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                expected_hash: Some(WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap()),
+                expected_safe_hash: None,
                 operation_count: 1,
                 proposal_sha256: Some(RawSha256::parse("b".repeat(64)).unwrap()),
             }),
@@ -941,7 +944,8 @@ fn a_ghost_assignment_survives_replay_and_duplicate_assignment_is_corrupt() {
             EventKind::DraftProposed(graphhelm_protocols::DraftProposed {
                 draft_id: OpaqueId::parse("draft-1").unwrap(),
                 expected_version: 1,
-                expected_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                expected_hash: Some(WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap()),
+                expected_safe_hash: None,
                 operation_count: 1,
                 proposal_sha256: Some(RawSha256::parse("b".repeat(64)).unwrap()),
             }),

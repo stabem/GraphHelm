@@ -217,6 +217,16 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
             }]
         })
     };
+    // #1045 (B1): a draft against a published successor binds that version by its SAFE semantic
+    // hash, the one `graph replay` exposes, under `expectedSafeHash`. The content hash stays
+    // unpublished.
+    let safe_draft = |id: &str, version: u64, hash: &str, node: &str| {
+        let mut value = draft(id, version, hash, node);
+        let object = value.as_object_mut().unwrap();
+        let hash = object.remove("expectedHash").unwrap();
+        object.insert("expectedSafeHash".to_owned(), hash);
+        value
+    };
     let binding = scratch.path().join("binding.json");
     fs::write(
         &binding,
@@ -509,8 +519,8 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
             "execution": "exec_feature",
             "task": "issue-1045",
             "node": "route-correction",
-            "implementDraft": draft("draft-implement-next", 2, published_hash, "route-correction-next"),
-            "reviewDraft": draft("draft-review", 2, published_hash, "route-review")
+            "implementDraft": safe_draft("draft-implement-next", 2, published_hash, "route-correction-next"),
+            "reviewDraft": safe_draft("draft-review", 2, published_hash, "route-review")
         }))
         .unwrap(),
     )
@@ -542,13 +552,69 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
     assert_eq!(status["data"]["signalsRecorded"], 2, "{status}");
     assert!(status["data"]["attentionReasons"].as_array().unwrap().iter()
         .any(|reason| reason["kind"] == "pending_draft" && reason["draft_id"] == "draft-review"), "{status}");
-    // Admission leaves publication unchanged: the review route is pending, not applied. Its exact
-    // approval is not exercised here: a draft against a published successor must bind that
-    // version's content hash, and no public read exposes it (`graph replay` reports the safe
-    // semantic hash, which the Governor refuses as GHD002_STALE_HASH). #1045 tracks that boundary.
+    // Admission leaves publication unchanged: the review route is pending, not applied.
     assert!(
         status["data"]["nodeStates"]["route-review"].is_null(),
         "{status}"
+    );
+    // #1045: its exact approval now applies. The draft bound version 2 by the safe hash that
+    // `graph replay` exposed, so a lane needs no unpublished content hash to reach version 3.
+    let review_digest = status["data"]["proposalDigests"]["draft-review"]
+        .as_str()
+        .expect("status exposes the exact pending review proposal digest")
+        .to_owned();
+    let review_approval = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["execution", "approve", "--events"])
+        .arg(&events)
+        .args([
+            "--execution",
+            "exec_feature",
+            "--node",
+            "route-review",
+            "--keyring",
+        ])
+        .arg(&keyring)
+        .args([
+            "--key-id",
+            "route-key",
+            "--actor-id",
+            "route-agent",
+            "--proposal-digest",
+            &review_digest,
+            "--draft-id",
+            "draft-review",
+        ])
+        .env("GRAPHHELM_EVENTS_KEY", key)
+        .output()
+        .unwrap();
+    assert!(
+        review_approval.status.success(),
+        "a draft bound by the published safe hash should apply: {}",
+        String::from_utf8_lossy(&review_approval.stdout)
+    );
+    let after_review = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "graph", "replay", "--events"])
+        .arg(&events)
+        .output()
+        .unwrap();
+    let after_review: Value = serde_json::from_slice(&after_review.stdout).unwrap();
+    assert_eq!(
+        after_review["data"]["currentGraph"]["number"], 3,
+        "{after_review}"
+    );
+    let routed = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "execution", "status", "--events"])
+        .arg(&events)
+        .args(["--execution", "exec_feature"])
+        .output()
+        .unwrap();
+    let routed: Value = serde_json::from_slice(&routed.stdout).unwrap();
+    assert_eq!(
+        routed["data"]["nodeStates"]["route-review"], "ready",
+        "{routed}"
     );
 
     let (_, history) = store.read_unique_replay_stream().unwrap();

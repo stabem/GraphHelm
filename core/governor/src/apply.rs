@@ -254,7 +254,7 @@ pub fn apply_draft_with_acceptance<'a>(
                 ApplyError::StaleVersion,
             );
         }
-        if &draft.expected_hash != base.content_hash() {
+        if !crate::externalize::draft_binds(&services.scope, base, draft)? {
             return reject(
                 services,
                 draft,
@@ -632,7 +632,17 @@ fn proposed(
         EventKind::DraftProposed(DraftProposed {
             draft_id: opaque(&draft.id)?,
             expected_version: draft.expected_version,
-            expected_hash: WireHash::parse(draft.expected_hash.as_str())
+            expected_hash: draft
+                .expected_hash
+                .as_ref()
+                .map(|hash| WireHash::parse(hash.as_str()))
+                .transpose()
+                .map_err(|_| ApplyError::InvalidOperation)?,
+            expected_safe_hash: draft
+                .expected_safe_hash
+                .as_ref()
+                .map(|hash| WireHash::parse(hash.as_str()))
+                .transpose()
                 .map_err(|_| ApplyError::InvalidOperation)?,
             operation_count: u16::try_from(draft.operations.len())
                 .map_err(|_| ApplyError::InvalidOperation)?,
@@ -817,6 +827,7 @@ fn validate_committed_outcome_grammar(
                     && existing.draft_id == candidate.draft_id
                     && existing.expected_version == candidate.expected_version
                     && existing.expected_hash == candidate.expected_hash
+                    && existing.expected_safe_hash == candidate.expected_safe_hash
                     && existing.operation_count == candidate.operation_count
                     && event.idempotency_key == expected_proposed.idempotency_key
                     && event.actor == expected_proposed.actor
@@ -1238,7 +1249,7 @@ fn expected_rejection_obligations(
         }
         ApplyError::StaleHash => {
             if draft.expected_version != base.number()
-                || draft.expected_hash == *base.content_hash()
+                || crate::externalize::draft_binds(&services.scope, base, draft)?
             {
                 return invalid_committed_outcome();
             }
@@ -1246,7 +1257,9 @@ fn expected_rejection_obligations(
         }
         _ => {}
     }
-    if draft.expected_version != base.number() || draft.expected_hash != *base.content_hash() {
+    if draft.expected_version != base.number()
+        || !crate::externalize::draft_binds(&services.scope, base, draft)?
+    {
         return invalid_committed_outcome();
     }
     let mut candidate = base.graph().clone();

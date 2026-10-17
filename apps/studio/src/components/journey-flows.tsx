@@ -22,14 +22,19 @@ const PREVIEW_NEXT: Record<string, string> = {
   "preview.flow_unknown": "No journey flow has this id. Check the id in .graphhelm/journeys.",
   "preview.project_invalid": "The Runtime cannot read the project folder. Restart it with `graphhelm studio start` in the project.",
   "preview.keyring_missing": "Start the Runtime with its sealed keyring (`graphhelm studio start`), then Run again.",
+  "flow.scope_path_missing": "A screen's `scope` names a path this project does not have. Fix that path in .graphhelm/journeys/<flow>.journey.yaml (`graphhelm journey validate` lists it), then Run again.",
+  "flow.scope_path_outside_project": "A screen's `scope` names a path outside this project. Point it at a file inside the project (`graphhelm journey validate` lists it), then Run again.",
 };
+
+/** #1448: every other `flow.*` refusal is a problem in the flow file itself; the validator names it. */
+const FLOW_NEXT = "The journey flow file has a problem. Run `graphhelm journey validate` on .graphhelm/journeys/<flow>.journey.yaml to see it, fix it, then Run again.";
 
 /** The refusal as the owner reads it: the Runtime's words, its code, and the next step when known. */
 export function refusalText(cause: unknown): string {
   const message = cause instanceof Error ? cause.message : String(cause);
   const code = typeof cause === "object" && cause !== null && typeof (cause as { code?: unknown }).code === "string" ? (cause as { code: string }).code : "";
   if (!code) return message;
-  const next = PREVIEW_NEXT[code];
+  const next = PREVIEW_NEXT[code] ?? (code.startsWith("flow.") ? FLOW_NEXT : undefined);
   return `${message} (${code}).${next ? ` ${next}` : ""}`;
 }
 

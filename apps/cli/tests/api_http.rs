@@ -12667,3 +12667,94 @@ fn a_path_outside_the_served_project_is_refused_with_the_existing_code() {
     );
     assert_eq!(status, 200, "the default is unchanged: {reply}");
 }
+
+/// #1551: a corrected `task.merged` or `task.closed` record (another merge sha, another close
+/// reason) sent under its own Idempotency-Key, as `tools/task-record` sends it, is a distinct
+/// admitted event: the store is append-only, so the earlier record stays and the correction lands
+/// beside it. A retry of the same key with only a new timestamp still answers GHE003. Cost: one
+/// served Runtime, six POSTs.
+#[test]
+fn a_corrected_merged_or_closed_record_is_a_distinct_admitted_event() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-task-correction";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let post = |key: &str, kind: &str, document: &Value, at: &str| {
+        let body = serde_json::json!({"signal": {"id": key,
+            "source": {"type": "user", "id": "lane-alpha"}, "type": kind, "severity": "low",
+            "description": document.to_string(), "evidence": ["task"], "emittedAt": at}});
+        post_json(
+            &format!("{base}/v1/executions/{execution}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", key),
+                ("X-GraphHelm-Actor", "lane-alpha"),
+                ("X-GraphHelm-Actor-Type", "agent"),
+            ],
+            &body,
+        )
+    };
+    let merged = |sha: &str| {
+        serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1547",
+            "revision": 5, "at": "2026-10-17T18:00:00Z", "pr": 1549, "mergeSha": sha,
+            "closes": [1547], "merger": "lane-alpha"})
+    };
+    let closed = |reason: &str| {
+        serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1560",
+            "revision": 5, "at": "2026-10-17T18:00:00Z", "pr": 1561, "reason": reason,
+            "by": 1562})
+    };
+    let cases = [
+        (
+            "task.merged",
+            "lane-alpha-issue-1547-merged-aaaaaaaaaaaaaaaa",
+            merged("0badbad0"),
+            "lane-alpha-issue-1547-merged-bbbbbbbbbbbbbbbb",
+            merged("f937dbb9"),
+        ),
+        (
+            "task.closed",
+            "lane-alpha-issue-1560-closed-aaaaaaaaaaaaaaaa",
+            closed("superseded"),
+            "lane-alpha-issue-1560-closed-bbbbbbbbbbbbbbbb",
+            closed("abandoned"),
+        ),
+    ];
+    for (kind, first_key, first, second_key, second) in &cases {
+        let (status, reply) = post(first_key, kind, first, "2026-10-17T18:00:00Z");
+        assert_eq!(status, 200, "{kind} first: {reply}");
+        let (status, reply) = post(second_key, kind, second, "2026-10-17T18:01:00Z");
+        assert_eq!(status, 200, "{kind} correction: {reply}");
+        assert_eq!(reply["data"]["signalId"], *second_key, "{kind}: {reply}");
+        // The same key resent with a later timestamp: the retry the tool reads as "already recorded".
+        let (status, reply) = post(first_key, kind, first, "2026-10-17T18:02:00Z");
+        assert_eq!(status, 409, "{kind} retry: {reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["code"], "GHE003_IDEMPOTENCY_CONFLICT",
+            "{kind} retry: {reply}"
+        );
+    }
+    let stored = get_json(
+        &format!("{base}/v1/executions/{execution}/events?limit=1000"),
+        Some(&token),
+    )["data"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["kind"]["type"] == "signal_recorded")
+        .count();
+    assert_eq!(stored, 4, "both records of each kind are kept, append-only");
+}

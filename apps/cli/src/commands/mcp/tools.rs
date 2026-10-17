@@ -60,8 +60,8 @@ const TOOLS: [ToolSpec; 47] = [
     },
     ToolSpec {
         name: "tasks",
-        description: "Read a run's task projection (GET /v1/executions/{executionId}/tasks): each task's delivery step, lane, issue, PR, head, open BLOCK, claim sequence and last heartbeat, folded from the run's verified task.* records. Read-only.",
-        schema: execution_only_schema,
+        description: "Read a run's open task board (GET /v1/executions/{executionId}/tasks): each open task's step, lane, issue, PR, head, BLOCK and heartbeat. Optional lane or issue narrows it to one lane's or issue's tasks (a few KB). Read-only.",
+        schema: tasks_schema,
     },
     ToolSpec {
         name: "keel_plan",
@@ -343,7 +343,6 @@ use Seg::{Arg, Lit};
 const ROUTES: &[Route] = &[
     Route { tool: "status", method: "GET", path: &[Lit("v1"), Lit("executions"), Arg("executionId")], body: RouteBody::None },
     Route { tool: "briefing", method: "GET", path: &[Lit("v1"), Lit("executions"), Arg("executionId"), Lit("briefing")], body: RouteBody::None },
-    Route { tool: "tasks", method: "GET", path: &[Lit("v1"), Lit("executions"), Arg("executionId"), Lit("tasks")], body: RouteBody::None },
     Route { tool: "workspace_list", method: "GET", path: &[Lit("v1"), Lit("workspaces")], body: RouteBody::None },
     Route { tool: "workspace_sweep", method: "POST", path: &[Lit("v1"), Lit("workspaces"), Lit("sweep")], body: RouteBody::None },
     Route { tool: "journey_flows", method: "GET", path: &[Lit("v1"), Lit("journey-flows")], body: RouteBody::None },
@@ -630,6 +629,17 @@ fn journey_close_schema() -> serde_json::Value {
 fn execution_only_schema() -> serde_json::Value {
     object_schema(
         serde_json::json!({"executionId": {"type": "string"}}),
+        &["executionId"],
+    )
+}
+
+fn tasks_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({
+            "executionId": {"type": "string"},
+            "lane": {"type": "string"},
+            "issue": {"type": "integer", "minimum": 1}
+        }),
         &["executionId"],
     )
 }
@@ -1742,6 +1752,21 @@ pub(crate) fn call(
             };
             Ok(api.request("GET", &path, None, None, None))
         }
+        "tasks" => require(arguments, "executionId").map(|execution| {
+            let mut query = Vec::new();
+            if let Some(lane) = str_arg(arguments, "lane") {
+                query.push(format!("lane={}", url::encode_component(lane)));
+            }
+            if let Some(issue) = arguments.get("issue").and_then(serde_json::Value::as_u64) {
+                query.push(format!("issue={issue}"));
+            }
+            let mut path = url::segment_path(&["v1", "executions", execution, "tasks"]);
+            if !query.is_empty() {
+                path.push('?');
+                path.push_str(&query.join("&"));
+            }
+            api.request("GET", &path, None, None, None)
+        }),
         "keel_plan" => {
             let body = serde_json::json!({
                 "task": arguments.get("task").cloned().unwrap_or(serde_json::Value::Null),

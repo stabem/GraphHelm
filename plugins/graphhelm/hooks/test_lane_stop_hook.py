@@ -109,7 +109,8 @@ def stop_processes_naming(fragment):
                              env={**os.environ, "GRAPHHELM_SWEEP_FRAGMENT": fragment},
                              capture_output=True, text=True, timeout=30, creationflags=NO_WINDOW)
     else:
-        run = subprocess.run(["pkill", "-9", "-f", "--", fragment], capture_output=True, text=True, timeout=30)
+        run = subprocess.run(["pkill", "-9", "-f", "--", fragment], capture_output=True, text=True, timeout=30,
+                             creationflags=NO_WINDOW)
         return 0 if run.returncode else 1
     try:
         return int(run.stdout.strip() or 0)

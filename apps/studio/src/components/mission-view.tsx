@@ -29,7 +29,7 @@ import type { LivenessBudgets } from "../runtime/tasks-route";
 import type { EnvelopeRecord } from "../graph/ledger";
 import type { RuntimeEvent } from "../runtime/types";
 import type { SlotView } from "../runtime/slots";
-import type { BacklogIssue } from "../runtime/tasks-route";
+import type { BacklogIssue, TaskDurations } from "../runtime/tasks-route";
 import type { GraphNode } from "../graph/model";
 import { readable } from "./format";
 import { approvalBlockReason } from "../runtime/journeys";
@@ -100,6 +100,8 @@ interface Props {
   slots?: SlotView[];
   /** #1469: the tasks route's backlog, the open wave issues nobody has picked up. */
   backlog?: BacklogIssue[];
+  /** #1516: the tasks route's step durations; each Lanes card names its slowest step. */
+  durations?: TaskDurations;
   /** Actors with an armed, unconsumed wake lease; absent on older Runtimes. */
   wakeListeners?: string[];
   seenActors?: string[];
@@ -312,7 +314,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], tasksRouteMissing = false, tasksRouteFailure = null, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, seenActors, seenActorAgesMs, seenActorSources, onDemandLanes = [], slots = [], backlog = [], runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot, livenessBudgets }: Props) {
+export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], tasksRouteMissing = false, tasksRouteFailure = null, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, seenActors, seenActorAgesMs, seenActorSources, onDemandLanes = [], slots = [], backlog = [], durations, runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot, livenessBudgets }: Props) {
   const freeAfterMs = livenessBudgets ? livenessBudgets.freeAfterSeconds * 1000 : laneBudgets(lanes).freeAfterMs;
   const journeys = useMemo(() => {
     const known = new Set(compiledJourneys.map((journey) => journey.contractId));
@@ -441,7 +443,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   const routeFailed = tasksRouteFailure === null ? null
     : <div role="alert">Tasks route failed · {tasksRouteFailure} · <button type="button" onClick={onRetryHistory}>Retry</button></div>;
   const lanesView = tasksRouteMissing ? routeMissing : <>
-    <WorkKanban items={kanbanItems} onOpen={openOnGraph} historyLoading={lanesHistoryLoading} backlog={backlog} now={live} />
+    <WorkKanban items={kanbanItems} onOpen={openOnGraph} historyLoading={lanesHistoryLoading} backlog={backlog} durations={durations} now={live} />
     <LanesTimeline lanes={lanes} freeAfterMs={freeAfterMs} now={now} windowMs={WINDOW_MS} tasks={allTasks} agents={agents} slots={slots} onDemandLanes={onDemandLanes} liveLanes={wakeListeners} seenActors={seenActors} seenActorAgesMs={seenActorAgesMs} seenActorSources={seenActorSources} historyLoading={lanesHistoryLoading}
       {...(onOpenBotDetails ? { onOpenBotDetails } : {})} {...(onNameBot ? { onNameBot } : {})} />
   </>;

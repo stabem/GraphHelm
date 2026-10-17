@@ -22,7 +22,13 @@ export interface ClaimLease { key: string; taskId: string; lane: string; claimSe
 /** #1469: one open wave issue nobody has picked up: the newest `task.queued` record lists it and no
  * live slice holds it. `openedAt` is when the issue was opened, as the recorder read it. */
 export interface BacklogIssue { issue: number; title: string; openedAt: string }
-export interface LaneFold { slices: FoldSlice[]; routes: Route[]; liveness?: Liveness; leases?: ClaimLease[]; backlog?: BacklogIssue[] }
+/** #1516: how long each delivery step lasted, derived by the Runtime from the task records. `steps` is in
+ * seconds per step name (implement, review_wait, fix, merge_wait, total); `summary` is the median and p90 of
+ * each step over the slices merged in the window. Absent on a Runtime that predates it. */
+export interface SliceDurations { key: string; pr: number; merged: boolean; steps: Record<string, number> }
+export interface StepSummary { count: number; medianSeconds: number; p90Seconds: number }
+export interface TaskDurations { slices: SliceDurations[]; summary: Record<string, StepSummary> }
+export interface LaneFold { slices: FoldSlice[]; routes: Route[]; liveness?: Liveness; leases?: ClaimLease[]; backlog?: BacklogIssue[]; durations?: TaskDurations }
 
 export interface TasksReply extends LaneFold {
   executionId: string;

@@ -24,3 +24,12 @@
   .wk { grid-template-columns: 1fr; }
   .wk-cards { max-height: none; }
 }
+
+/* #1516: the median and p90 of each delivery step, and the slowest step on a card. */
+.wk-durations { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; padding: 0; }
+.wk-duration { display: flex; flex-direction: column; gap: 2px; padding: 6px 10px; border: 1px solid #1E2026; border-radius: 8px; background: #14161A; min-width: 0; }
+.wk-duration-label { font-family: var(--mono); font-size: 11px; font-weight: 600; color: #C7CBD3; }
+.wk-duration-value { font-family: var(--mono); font-size: 11px; color: #A9AEB8; }
+.wk-card { display: flex; flex-direction: column; gap: 4px; flex: none; }
+.wk-slowest { margin: 0; padding: 0 4px; font-family: var(--mono); font-size: 11px; color: #A9AEB8; overflow-wrap: anywhere; }
+

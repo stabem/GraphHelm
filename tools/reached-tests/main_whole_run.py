@@ -78,6 +78,33 @@ def git(repo, *args):
     return done.stdout.strip()
 
 
+def prepare_tree(repo, tree, sha, run_git=git):
+    """Put the dedicated worktree on `sha`, detached. A dirty tree is refused, never forced or cleaned."""
+    if not Path(tree).exists():
+        run_git(repo, "worktree", "add", "--detach", str(tree), sha)
+        return
+    if run_git(tree, "status", "--porcelain"):
+        raise RuntimeError(f"{tree} has uncommitted changes; refusing to touch it")
+    run_git(tree, "checkout", "--detach", sha)
+
+
+def newer_copy(tree, own):
+    """The copy of this script inside `tree` when it differs from the running one, else None."""
+    mine = Path(tree) / "tools" / "reached-tests" / Path(own).name
+    try:
+        if mine.is_file() and mine.read_bytes() != Path(own).read_bytes():
+            return mine
+    except OSError:
+        pass
+    return None
+
+
+def reexec(copy, argv, env=None):
+    """Run main's copy of this script in place of the stale one (hidden child); returns its exit code."""
+    env = dict(os.environ if env is None else env, MAIN_WHOLE_RUN_REEXEC="1")
+    return subprocess.run([sys.executable, str(copy), *argv], env=env, creationflags=NO_WINDOW).returncode
+
+
 def post(args, body):
     spec = importlib.util.spec_from_file_location("task_record", HERE.parent / "task-record" / "task_record.py")
     task_record = importlib.util.module_from_spec(spec)
@@ -126,6 +153,7 @@ def main(argv=None):
     ap.add_argument("--allow-shared-token", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="say what would run and print the signal; run nothing")
     args = ap.parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
     work = Path(args.root) / "main-whole-run"
     state_file = Path(args.state) if args.state else work / "state.json"
     try:
@@ -135,6 +163,14 @@ def main(argv=None):
     git(args.repo, "fetch", "--quiet", "origin", "main")
     sha = git(args.repo, "rev-parse", "origin/main")
     now = time.time()
+    if not args.dry_run and not os.environ.get("MAIN_WHOLE_RUN_REEXEC"):
+        # A fix merged to main must reach this scheduled copy: run main's own copy of the script (#1523).
+        work.mkdir(parents=True, exist_ok=True)
+        prepare_tree(args.repo, work / "tree", sha)
+        copy = newer_copy(work / "tree", __file__)
+        if copy:
+            print(f"main_whole_run: running main's copy {copy}")
+            return reexec(copy, raw_argv)
     run, reason = due(state, sha, now, args.min_interval)
     print(f"main_whole_run: {'run' if run else 'skip'} ({reason}); main {sha[:8]}")
     if not run:
@@ -146,10 +182,7 @@ def main(argv=None):
                                       time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))), indent=1))
         return 0
     work.mkdir(parents=True, exist_ok=True)
-    if not tree.exists():
-        git(args.repo, "worktree", "add", "--detach", str(tree), sha)
-    else:
-        git(tree, "checkout", "--detach", "--force", sha)
+    prepare_tree(args.repo, tree, sha)
     report_path = work / f"report-{sha[:8]}.json"
     # The runner of the tree under test; --keep-going reports every red in one pass.
     try:

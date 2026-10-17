@@ -286,6 +286,30 @@ class TaskRecordTest(unittest.TestCase):
         self.assertEqual(document["lane"], "lane-a")
         self.assertEqual(document["reason"], "Work moved elsewhere")
 
+    def test_lane_retired_is_signed_by_the_owner_and_needs_a_reason(self):
+        owner = Path(self.tmp.name) / "events.token"
+        owner.write_text("owner-token\n", encoding="utf-8")
+        argv = ["--token-file", str(owner), "--lane", "orchestrator", "lane_retired",
+                "--lanes", "lane-r,lane-s", "--retired", "true"]
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = task_record.main(["--url", self.url, *argv, "--reason", "fleet stopped"])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertEqual(FakeRuntime.auth[-1], "Bearer owner-token")
+        signal = FakeRuntime.seen[-1][1]["signal"]
+        self.assertEqual(signal["type"], "task.lane_retired")
+        document = json.loads(signal["description"])
+        self.assertEqual({k: v for k, v in document.items() if k != "at"},
+                         {"schema": "graphhelm-task-event-v1", "taskId": "lanes", "revision": 1,
+                          "lanes": ["lane-r", "lane-s"], "retired": True, "reason": "fleet stopped"})
+        seen = len(FakeRuntime.seen)
+        with self.assertRaises(SystemExit):
+            task_record.main(["--url", self.url, *argv])
+        with self.assertRaises(SystemExit) as agent:  # an agent token is not the owner's
+            task_record.main(["--url", self.url, "--token-file", str(self.token), *argv[2:], "--reason", "x"])
+        self.assertIn("owner-only", str(agent.exception.code))
+        self.assertEqual(len(FakeRuntime.seen), seen, "nothing is sent")
+
     def test_claim_transports_reported_assigner(self):
         # Wire gap: no existing test carries assignment provenance. Local HTTP only.
         code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "86",

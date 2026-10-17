@@ -86,6 +86,8 @@ pub struct OpenTasksView {
     pub leases: Vec<ClaimLease>,
     pub stalls: Vec<TaskStall>,
     pub liveness: Liveness,
+    /// #1469: small, and the one list a reader of the open board cannot rebuild from `tasks`.
+    pub backlog: Vec<QueuedIssue>,
 }
 
 impl TasksView {
@@ -112,6 +114,7 @@ impl TasksView {
                     leases: self.leases,
                     stalls: self.stalls,
                     liveness: self.liveness,
+                    backlog: self.backlog,
                 })
             }
         };

@@ -618,6 +618,8 @@ fn a_build_directory_is_reclaimed_only_when_its_worktree_is_positively_gone() {
     let with_worktree = |worktree: &str| {
         let mut value: Value = serde_json::from_str(&original).unwrap();
         value["worktree"] = worktree.into();
+        // The recording slot run is this test process; a finished build holds nothing (#1561).
+        value.as_object_mut().unwrap().remove("pid");
         std::fs::write(&record, value.to_string()).unwrap();
     };
     let sweep = || {

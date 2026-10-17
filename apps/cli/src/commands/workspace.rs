@@ -538,28 +538,74 @@ fn reclaim_target(root: &Path, rule: &TargetRule, lane: &str, name: &str) -> Res
         .map_err(|_| "record_not_removed".to_owned())
 }
 
-/// A record written under another target root whose worktree is positively gone: the build
-/// directory it names can never be used again. The path comes from the record, so it is
-/// trusted only in the exact shape `<root>/<lane>/<name>/target`, absolute, with no link on the
-/// way; anything else is kept. A directory a live process holds fails to remove and is kept.
-fn reclaim_moved_target(root: &Path, lane: &str, name: &str) -> Result<(), String> {
-    let recorded = std::fs::read(target_record_file(root, lane, name))
+const TARGET_ROOTS: &str = "target-roots.json";
+
+/// Every target root the slot ever recorded a build directory under (#1561), plus the current
+/// rule's (first). The slot appends a root when it records a build; a record cannot add one.
+fn known_target_roots(root: &Path, rule: &TargetRule) -> Vec<PathBuf> {
+    let mut roots = vec![rule.root.clone()];
+    let listed = std::fs::read(root.join(LEDGER).join(TARGET_ROOTS))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .and_then(|value| value["target"].as_str().map(PathBuf::from))
+        .and_then(|value| value["roots"].as_array().cloned())
+        .unwrap_or_default();
+    roots.extend(
+        listed
+            .iter()
+            .filter_map(|item| item.as_str().map(PathBuf::from))
+            .filter(|path| path.is_absolute()),
+    );
+    roots
+}
+
+fn note_target_root(root: &Path, rule: &TargetRule) -> std::io::Result<()> {
+    let mut listed: Vec<String> = known_target_roots(root, rule)
+        .iter()
+        .skip(1)
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    let current = rule.root.to_string_lossy().into_owned();
+    if listed.contains(&current) {
+        return Ok(());
+    }
+    listed.push(current);
+    write_record(
+        &root.join(LEDGER).join(TARGET_ROOTS),
+        &json!({"schema": "graphhelm.slot-target-roots/1", "roots": listed}),
+    )
+}
+
+/// The path a gone worktree's record from another target root may have deleted, or why not
+/// (#1532, #1561). Shared by preview and apply so the two cannot disagree. The path comes from the
+/// record, so it is trusted only when: it is absolute with no `.`/`..` component; it is exactly
+/// `<known root>/<lane>/<name>/target`; no link lies on the way; and no live process holds it.
+fn moved_target(root: &Path, rule: &TargetRule, lane: &str, name: &str) -> Result<PathBuf, String> {
+    use std::path::Component;
+    let record = std::fs::read(target_record_file(root, lane, name))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .ok_or_else(|| "target_root_changed".to_owned())?;
+    let recorded = record["target"]
+        .as_str()
+        .map(PathBuf::from)
         .filter(|path| path.is_absolute())
         .ok_or_else(|| "target_root_changed".to_owned())?;
-    let part = |path: Option<&Path>| {
-        path.and_then(Path::file_name)
-            .and_then(|n| n.to_str())
-            .map(str::to_owned)
-    };
-    let holder = recorded.parent();
-    let lane_dir = holder.and_then(Path::parent);
-    let shaped = part(Some(&recorded)).as_deref() == Some("target")
-        && part(holder).as_deref() == Some(name)
-        && part(lane_dir).as_deref() == Some(lane)
-        && lane_dir.and_then(Path::parent).is_some();
+    let plain = recorded.components().all(|c| {
+        matches!(
+            c,
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_)
+        )
+    });
+    let up = |depth: usize| recorded.ancestors().nth(depth).map(Path::to_path_buf);
+    let part = |path: &Path| path.file_name().and_then(|n| n.to_str()).map(str::to_owned);
+    let (holder, lane_dir, base) = (up(1), up(2), up(3));
+    let shaped = plain
+        && part(&recorded).as_deref() == Some("target")
+        && holder.as_deref().and_then(part).as_deref() == Some(name)
+        && lane_dir.as_deref().and_then(part).as_deref() == Some(lane)
+        && base
+            .as_ref()
+            .is_some_and(|base| known_target_roots(root, rule).contains(base));
     if !shaped {
         return Err("target_root_changed".to_owned());
     }
@@ -571,8 +617,27 @@ fn reclaim_moved_target(root: &Path, lane: &str, name: &str) -> Result<(), Strin
             Err(_) => return Err("target_unreadable".to_owned()),
         }
     }
+    // Off Windows the OS removes a directory a process is using; the record names the slot run
+    // that built in it, and a live one keeps the target on every OS.
+    if let Some(pid) = record["pid"]
+        .as_u64()
+        .and_then(|pid| u32::try_from(pid).ok())
+        && graphhelm_process_tree::process_is_running(pid)
+    {
+        return Err("target_in_use".to_owned());
+    }
+    Ok(recorded)
+}
+
+fn reclaim_moved_target(
+    root: &Path,
+    rule: &TargetRule,
+    lane: &str,
+    name: &str,
+) -> Result<(), String> {
+    let recorded = moved_target(root, rule, lane, name)?;
     remove_tree(&recorded).map_err(|_| "remove_failed".to_owned())?;
-    if let Some(holder) = holder {
+    if let Some(holder) = recorded.parent() {
         let _ = std::fs::remove_dir(holder);
     }
     std::fs::remove_file(target_record_file(root, lane, name))
@@ -711,9 +776,12 @@ pub(crate) fn slot_target(
             &target_record_file(root, lane, &name),
             &json!({"schema": TARGET_SCHEMA, "lane": lane, "name": name,
                 "worktree": worktree.to_string_lossy(), "target": target.to_string_lossy(),
+                "pid": std::process::id(),
                 "firstUsedAt": first_used.unwrap_or(stamp), "lastUsedAt": stamp}),
         )
         .map_err(|_| "the build directory could not be recorded".to_owned())?;
+        note_target_root(root, rule)
+            .map_err(|_| "the target root could not be recorded".to_owned())?;
     }
     Ok((target, reclaimed))
 }
@@ -939,7 +1007,7 @@ fn merged_target(
 }
 
 /// Reclaim orphan targets, plus targets whose existing worktrees are clean, idle and merged.
-/// This does not remove a worktree or branch. Preview performs the same safety checks.
+/// This does not remove a worktree or branch. Preview runs the same checks, moved targets included.
 fn sweep_targets(root: &Path, apply: bool, held_lane: Option<(&str, &Path)>) -> Value {
     let mut removed = Vec::new();
     let mut kept = Vec::new();
@@ -998,13 +1066,14 @@ fn sweep_targets(root: &Path, apply: bool, held_lane: Option<(&str, &Path)>) -> 
             if reason == "target_root_changed" && !merged {
                 // Gone worktree, record from another root (#1532): the lane's work is over.
                 let item = json!({"lane": lane, "name": name, "reason": reason});
-                if !apply {
-                    removed.push(item);
+                let outcome = if apply {
+                    reclaim_moved_target(root, rule, &lane, &name)
                 } else {
-                    match reclaim_moved_target(root, &lane, &name) {
-                        Ok(()) => removed.push(item),
-                        Err(reason) => kept.push(entry(&reason)),
-                    }
+                    moved_target(root, rule, &lane, &name).map(|_| ())
+                };
+                match outcome {
+                    Ok(()) => removed.push(item),
+                    Err(reason) => kept.push(entry(&reason)),
                 }
                 continue;
             }
@@ -1377,6 +1446,11 @@ fn sweep_removes_a_moved_target_only_for_a_gone_worktree() {
         json!({"targetRoot": fast}).to_string(),
     )
     .unwrap();
+    write_record(
+        &root.join(LEDGER).join(TARGET_ROOTS),
+        &json!({"roots": [old.to_string_lossy()]}),
+    )
+    .unwrap();
     let moved = old.join("lane-a/wt-gone/target");
     let kept_live = old.join("lane-a/wt-live/target");
     let odd = old.join("lane-a/other/elsewhere");
@@ -1387,7 +1461,7 @@ fn sweep_removes_a_moved_target_only_for_a_gone_worktree() {
 
     let preview = sweep_targets(&root, false, None);
     assert!(moved.is_dir(), "preview removed a directory");
-    assert_eq!(preview["removed"].as_array().unwrap().len(), 2);
+    assert_eq!(preview["removed"].as_array().unwrap().len(), 1);
 
     let applied = sweep_targets(&root, true, None);
     assert!(!moved.exists());
@@ -1402,4 +1476,127 @@ fn sweep_removes_a_moved_target_only_for_a_gone_worktree() {
         "a record naming an odd path steered the delete"
     );
     assert_eq!(applied["removed"].as_array().unwrap().len(), 1);
+}
+
+#[cfg(test)]
+mod moved_target_tests {
+    use super::*;
+
+    /// A root with rule `fast`, history `[old]`, and one gone-worktree record naming `target`.
+    fn fixture(
+        target: &dyn Fn(&Path) -> PathBuf,
+        pid: Option<u32>,
+    ) -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let (fast, old) = (dir.path().join("fast"), dir.path().join("old"));
+        for path in [root.join(LEDGER), fast.clone(), old.clone()] {
+            std::fs::create_dir_all(path).unwrap();
+        }
+        std::fs::write(
+            root.join(LEDGER).join(SLOT_TARGETS),
+            json!({"targetRoot": fast}).to_string(),
+        )
+        .unwrap();
+        write_record(
+            &root.join(LEDGER).join(TARGET_ROOTS),
+            &json!({"roots": [old.to_string_lossy()]}),
+        )
+        .unwrap();
+        let recorded = target(&old);
+        let real = old.join("lane-a/wt/target");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("obj"), b"x").unwrap();
+        let mut record = json!({"schema": TARGET_SCHEMA, "lane": "lane-a", "name": "wt",
+            "worktree": dir.path().join("gone").to_string_lossy(),
+            "target": recorded.to_string_lossy(), "firstUsedAt": 1, "lastUsedAt": 1});
+        if let Some(pid) = pid {
+            record["pid"] = json!(pid);
+        }
+        write_record(&target_record_file(&root, "lane-a", "wt"), &record).unwrap();
+        (dir, root, real, old)
+    }
+
+    fn run(root: &Path, apply: bool) -> Value {
+        sweep_targets(root, apply, None)
+    }
+
+    fn kept_reason(report: &Value) -> Option<String> {
+        report["kept"][0]["reason"].as_str().map(str::to_owned)
+    }
+
+    #[test]
+    fn a_dot_dot_component_is_refused_in_preview_and_apply() {
+        // Defect: `a/../lane/name/target` passed the shape check and the OS resolved it.
+        let (_dir, root, real, _) = fixture(&|old| old.join("a/../lane-a/wt/target"), None);
+        for apply in [false, true] {
+            let report = run(&root, apply);
+            assert_eq!(report["removed"].as_array().unwrap().len(), 0);
+            assert_eq!(kept_reason(&report).as_deref(), Some("target_root_changed"));
+        }
+        assert!(real.is_dir());
+    }
+
+    #[test]
+    fn a_first_segment_outside_every_known_root_is_refused() {
+        // Defect: a forged record could name any `<x>/<lane>/<name>/target`.
+        let (dir, root, _, _) = fixture(&|_| PathBuf::new(), None);
+        let stranger = dir.path().join("stranger/lane-a/wt/target");
+        std::fs::create_dir_all(&stranger).unwrap();
+        let mut record: Value = serde_json::from_slice(
+            &std::fs::read(target_record_file(&root, "lane-a", "wt")).unwrap(),
+        )
+        .unwrap();
+        record["target"] = json!(stranger.to_string_lossy());
+        write_record(&target_record_file(&root, "lane-a", "wt"), &record).unwrap();
+        for apply in [false, true] {
+            let report = run(&root, apply);
+            assert_eq!(report["removed"].as_array().unwrap().len(), 0);
+            assert_eq!(kept_reason(&report).as_deref(), Some("target_root_changed"));
+        }
+        assert!(stranger.is_dir());
+    }
+
+    #[test]
+    fn preview_lists_exactly_what_apply_removes() {
+        // Defect: preview over-reported odd and linked records (preview 2, apply 1).
+        let (_dir, root, real, _) = fixture(&|old| old.join("lane-a/wt/target"), None);
+        let preview = run(&root, false);
+        assert!(real.is_dir(), "preview removed a directory");
+        let applied = run(&root, true);
+        assert_eq!(preview["removed"], applied["removed"]);
+        assert_eq!(applied["removed"].as_array().unwrap().len(), 1);
+        assert!(!real.exists());
+    }
+
+    #[test]
+    fn a_live_pid_in_the_record_keeps_the_target_on_every_os() {
+        // Defect: off Windows the OS removes a directory in use, so a live build lost its target.
+        let (_dir, root, real, _) = fixture(
+            &|old| old.join("lane-a/wt/target"),
+            Some(std::process::id()),
+        );
+        for apply in [false, true] {
+            let report = run(&root, apply);
+            assert_eq!(report["removed"].as_array().unwrap().len(), 0);
+            assert_eq!(kept_reason(&report).as_deref(), Some("target_in_use"));
+        }
+        assert!(real.is_dir());
+        assert!(target_record_file(&root, "lane-a", "wt").is_file());
+    }
+
+    #[test]
+    fn a_dead_pid_does_not_keep_the_target() {
+        let mut child = graphhelm_process::command("git")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        let (_dir, root, real, _) = fixture(&|old| old.join("lane-a/wt/target"), Some(pid));
+        let report = run(&root, true);
+        assert_eq!(report["removed"].as_array().unwrap().len(), 1);
+        assert!(!real.exists());
+    }
 }

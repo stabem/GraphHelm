@@ -4,7 +4,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 use fs2::FileExt;
@@ -340,6 +340,9 @@ pub struct LocalEventRepository {
     /// journal from genesis. `None` for a per-operation handle (its lifetime is the bound);
     /// set by [`PrefixCache`] when one prefix outlives its handle (#87's named trigger).
     prefix_max_age: Option<std::time::Duration>,
+    /// #1560: set while a background genesis audit runs for this handle's [`PrefixCache`], so an
+    /// expired prefix starts one audit, not one per request. `None` for a per-operation handle.
+    prefix_audit: Option<Arc<AtomicBool>>,
     #[cfg(test)]
     load_count: Arc<AtomicU64>,
     #[cfg(test)]
@@ -690,6 +693,7 @@ impl LocalEventRepository {
                 |cache| Arc::clone(&cache.slot),
             ),
             prefix_max_age: prefix_cache.map(|cache| cache.max_age),
+            prefix_audit: prefix_cache.map(|cache| Arc::clone(&cache.auditing)),
             #[cfg(test)]
             load_count: Arc::new(AtomicU64::new(0)),
             #[cfg(test)]
@@ -1787,6 +1791,59 @@ impl LocalEventRepository {
     /// a separate, default-OFF decision). The check-to-use window is closed by the
     /// LOCK, not by timing: this runs under the same per-operation file lock the full
     /// reload always ran under, and every writer needs the exclusive lock.
+    /// #1560: re-verifies the whole journal from genesis on a background thread, through a
+    /// fresh handle with no shared prefix, so no request waits on the walk. Success restamps the
+    /// shared prefix with the instant the audit STARTED (it proved the journal as it stood then;
+    /// later suffixes were verified by the loads that read them). Any failure, an integrity one
+    /// included, clears the slot: the next load walks from genesis on the request path and
+    /// returns the refusal a full load returns. One audit at a time per cache.
+    fn start_prefix_audit(&self) {
+        struct Release(Arc<AtomicBool>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::SeqCst);
+            }
+        }
+        let Some(flag) = self.prefix_audit.as_ref() else {
+            return;
+        };
+        if flag
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+        let release = Release(Arc::clone(flag));
+        let root = self.root.clone();
+        let clock = Arc::clone(&self.clock);
+        let ids = Arc::clone(&self.ids);
+        let slot = Arc::clone(&self.verified);
+        let identity = self.journal_identity;
+        // A thread that cannot be spawned drops its closure and the release with it: the prefix
+        // stays expired and the next load tries again.
+        let _ = std::thread::Builder::new()
+            .name("graphhelm-prefix-audit".to_owned())
+            .spawn(move || {
+                let _release = release;
+                let started = std::time::Instant::now();
+                let audited = Self::open(root, clock, ids).map(drop);
+                let Ok(mut slot) = slot.lock() else {
+                    return;
+                };
+                match audited {
+                    Ok(()) => {
+                        if let Some(prefix) = slot
+                            .as_mut()
+                            .filter(|prefix| prefix.journal_identity == identity)
+                        {
+                            prefix.full_verified_at = started;
+                        }
+                    }
+                    Err(_) => *slot = None,
+                }
+            });
+    }
+
     fn load_state(&self, kind: &'static str) -> Result<Arc<LoadedState>, EventRepositoryError> {
         // `kind` names WHICH operation is paying for this load (design section 2: never
         // one flat bucket). It feeds the cfg(test) per-kind accounting only; production
@@ -1837,17 +1894,26 @@ impl LocalEventRepository {
         // waits — a CONTENTION exposure distinct from the staleness one above, arriving
         // at the same commit.
         let reusable = verified.take().filter(|prefix| {
-            prefix.journal_identity == self.journal_identity
-                && prefix.verified_offset <= length
-                // #506: a walk from genesis still in progress (cut by a read budget) is never
-                // expired: its age starts when it completes. Expiring it threw its progress away,
-                // so on a journal whose walk outlasts one read's budget plus the age, every read
-                // restarted from genesis: the loop the end stamp alone did not break.
-                && (prefix.genesis_walk_pending
-                    || self
-                        .prefix_max_age
-                        .is_none_or(|max_age| prefix.full_verified_at.elapsed() < max_age))
+            prefix.journal_identity == self.journal_identity && prefix.verified_offset <= length
         });
+        // #506: a walk from genesis still in progress (cut by a read budget) is never expired:
+        // its age starts when it completes.
+        //
+        // #1560: an expired prefix is no longer thrown away by the READ that notices it. That
+        // read re-verified the whole journal from genesis every `max_age` while holding the
+        // shared slot every other request waits on; on a 29k-event journal the Studio's reads
+        // took 8-20 s and refused at their 5 s budget. The age bound still holds, but its walk
+        // runs off the request (`start_prefix_audit`): this read keeps the proof it has, and the
+        // audit either restamps it or, on any failure, clears the slot so the next read takes
+        // the full path and refuses exactly as a full load always did.
+        if reusable.as_ref().is_some_and(|prefix| {
+            !prefix.genesis_walk_pending
+                && self
+                    .prefix_max_age
+                    .is_some_and(|max_age| prefix.full_verified_at.elapsed() >= max_age)
+        }) {
+            self.start_prefix_audit();
+        }
         let (mut ctx, offset, full_verified_at, genesis_walk) = match reusable {
             Some(prefix) if prefix.verified_offset == length && !prefix.genesis_walk_pending => {
                 let state = prefix.state.clone();
@@ -3046,13 +3112,16 @@ enum LoadPath {
 /// shared. The reuse test is the per-handle one (same journal file identity, length not
 /// shrunk), which cannot see an in-place rewrite of already-verified bytes. That exposure
 /// used to be bounded by handle lifetime (milliseconds); here it is bounded by `max_age`:
-/// a prefix older than that is discarded and the next load re-verifies from genesis.
+/// a prefix older than that starts one background re-verification from genesis (#1560), which
+/// restamps it or clears it; requests keep reading on the proof they have meanwhile, so an
+/// in-place rewrite is refused within `max_age` plus one walk.
 /// Contention: the slot mutex is held across a suffix read, so concurrent handles on one
 /// cache serialize their journal walk; a caught-up cache makes that walk empty.
 #[derive(Clone)]
 pub struct PrefixCache {
     slot: Arc<Mutex<Option<VerifiedPrefix>>>,
     max_age: std::time::Duration,
+    auditing: Arc<AtomicBool>,
     #[cfg(test)]
     walk_delay: Option<std::time::Duration>,
 }
@@ -3064,6 +3133,7 @@ impl PrefixCache {
         Self {
             slot: Arc::new(Mutex::new(None)),
             max_age,
+            auditing: Arc::new(AtomicBool::new(false)),
             #[cfg(test)]
             walk_delay: None,
         }
@@ -8310,25 +8380,56 @@ mod limit_tests {
         assert_eq!(third.next_sequence(&wake_scope(), "stream-1").unwrap(), 3);
     }
 
+    fn wait_for_prefix_audit(cache: &PrefixCache) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while cache.auditing.load(Ordering::SeqCst) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the prefix audit did not end"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    fn expire(cache: &PrefixCache) {
+        let mut slot = cache.slot.lock().unwrap();
+        slot.as_mut().unwrap().full_verified_at -= std::time::Duration::from_secs(3601);
+    }
+
+    /// #87's bound, moved off the request by #1560: a shared prefix cannot see an in-place
+    /// rewrite, so its reuse is limited by age, but the READ that finds it expired no longer
+    /// walks the journal from genesis (on the owner's 29k-event journal that walk, every 30 s,
+    /// held the slot and pushed reads past their 5 s budget). It reads on the proof it has and
+    /// one background audit re-verifies and restamps the prefix. Credible regressions: the read
+    /// walking from genesis again, or the audit never restamping (every read then re-audits).
+    /// Cost: one temp store and one background open.
     #[test]
-    fn an_expired_prefix_cache_reverifies_from_genesis() {
-        // #87's bound: a shared prefix cannot see an in-place rewrite, so its reuse is
-        // limited by age; past it, every load re-verifies the whole journal.
+    fn an_expired_prefix_cache_reverifies_from_genesis_off_the_request() {
         let directory = tempfile::tempdir().unwrap();
         let build = cache_repository(directory.path());
         build.append_atomic(&valid_graph_request()).unwrap();
         drop(build);
         let cache = PrefixCache::new(std::time::Duration::from_secs(3600));
         drop(shared_repository(directory.path(), &cache));
-        {
-            let mut slot = cache.slot.lock().unwrap();
-            slot.as_mut().unwrap().full_verified_at -= std::time::Duration::from_secs(3601);
-        }
+        expire(&cache);
         let again = shared_repository(directory.path(), &cache);
         assert_eq!(
             counters(&again),
-            (1, 0),
-            "an expired prefix is never reused"
+            (0, 0),
+            "the read that finds the prefix expired does not walk from genesis"
+        );
+        drop(again);
+        wait_for_prefix_audit(&cache);
+        let restamped = cache
+            .slot
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .full_verified_at;
+        assert!(
+            restamped.elapsed() < std::time::Duration::from_secs(3600),
+            "the audit restamped the prefix it re-verified"
         );
     }
 
@@ -8352,10 +8453,22 @@ mod limit_tests {
         bytes[10] = bytes[10].wrapping_add(1);
         std::fs::write(&journal, &bytes).unwrap();
 
-        {
-            let mut slot = cache.slot.lock().unwrap();
-            slot.as_mut().unwrap().full_verified_at -= std::time::Duration::from_secs(3601);
-        }
+        expire(&cache);
+        // The read that notices the age reads on its existing proof, as any read inside the age
+        // window does; it starts the audit, which walks the rewritten bytes and fails.
+        let noticed = LocalEventRepository::open_with_prefix_cache(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(FixedIds),
+            crate::ReadBudget::unbounded(),
+            &cache,
+        );
+        drop(noticed);
+        wait_for_prefix_audit(&cache);
+        assert!(
+            cache.slot.lock().unwrap().is_none(),
+            "a failed audit clears the shared proof"
+        );
         let checked = LocalEventRepository::open_with_prefix_cache(
             directory.path(),
             Arc::new(FixedClock),
@@ -8363,7 +8476,14 @@ mod limit_tests {
             crate::ReadBudget::unbounded(),
             &cache,
         );
-        assert!(checked.is_err(), "expired cache must re-verify the prefix");
+        assert!(
+            matches!(
+                checked,
+                Err(EventRepositoryError::Integrity | EventRepositoryError::IntegrityAt(_))
+            ),
+            "after the audit, the rewritten journal is refused as corrupt: {:?}",
+            checked.err()
+        );
     }
 
     /// #506: a walk from genesis is stamped when it ENDS. Stamped at its start, a walk longer

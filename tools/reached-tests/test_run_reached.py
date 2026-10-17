@@ -519,6 +519,39 @@ class RunnerContracts(unittest.TestCase):
                 self.assertEqual(rr.run(args), 1)
             self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["status"], "failed")
 
+    def _two_step_failure_plan(self, temp, keep_going):
+        # #1459 item 18: step 0 fails, step 1 leaves a marker only if it runs.
+        repo = Path(temp)
+        subprocess = __import__("subprocess")
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
+        (repo / ".gitignore").write_text("ran\n", encoding="utf-8")
+        subprocess.run(["git", "add", ".gitignore"], cwd=repo, check=True, creationflags=NO_WINDOW)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+        output = Path(temp).parent / (Path(temp).name + "-keep-going-report.json")
+        plan = {"steps": [{"argv": ["python", "-c", "raise SystemExit(7)"], "cwd": ".", "slot": False},
+                          {"argv": ["python", "-c", "open('ran', 'w').write('x')"], "cwd": ".", "slot": False}]}
+        with patch.object(rr, "_selector", return_value=plan):
+            args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
+                                      "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                                      "allow_whole_package": None, "plan": False, "keep_going": keep_going})()
+            self.assertEqual(rr.run(args), 1)
+        return repo, json.loads(output.read_text(encoding="utf-8"))
+
+    def test_keep_going_runs_every_step_after_a_red_and_still_reports_failed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo, report = self._two_step_failure_plan(temp, keep_going=True)
+            self.assertTrue((repo / "ran").exists(), "the step after the red must run")
+            self.assertEqual([step["returncode"] for step in report["completed"]], [7, 0])
+            self.assertEqual(report["pending"], [])
+            self.assertEqual(report["status"], "failed")
+
+    def test_without_keep_going_the_first_red_stops_the_run(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo, report = self._two_step_failure_plan(temp, keep_going=False)
+            self.assertFalse((repo / "ran").exists())
+            self.assertEqual(len(report["completed"]), 1)
+            self.assertEqual(report["status"], "failed")
+
     def test_runner_executes_selected_pytest_and_unittest_fixtures(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)

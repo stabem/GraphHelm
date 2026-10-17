@@ -48,6 +48,7 @@ pub fn run(args: &JourneyArgs) -> Outcome {
         JourneyCommand::Preview(preview) if preview.read => super::journey_preview::status(preview),
         JourneyCommand::Preview(preview) => super::journey_preview::start(preview),
         JourneyCommand::Explore(explore) => super::journey_explore::run(explore),
+        JourneyCommand::Report(report) => super::journey_report::run(report),
         JourneyCommand::Flows(flows) => super::journey_flow::run_flows(flows),
     }
 }

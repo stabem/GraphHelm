@@ -216,3 +216,89 @@ fn a_missing_launcher_shell_is_recorded_as_a_spawn_failure() {
     assert!(!log.contains("did not finish within"), "{result}");
     assert!(!dir.path().join("DRIVER_STARTED").exists());
 }
+
+/// A 1x1 PNG: what a kept frame is, at the smallest size.
+const TINY_PNG: &str = "89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c49444154789c63f8cfc0000003010100c9fe92ef0000000049454e44ae426082";
+
+/// #1448: `journey report` writes one self-contained page from the kept preview: an inlined frame
+/// for each screen that has one, the action into each step, the checks with seen/not seen, the
+/// overall result, and every name escaped. It refuses when no preview is kept, and starts no run
+/// (the installed observer is the tripwire).
+#[test]
+fn a_report_writes_one_page_with_the_frames_actions_checks_and_result() {
+    let dir = draft();
+    let out = dir.path().join("report.html");
+    let report = |dir: &Path| {
+        cli(
+            dir,
+            &["report", "checkout", "--html", out.to_str().unwrap()],
+        )
+    };
+
+    let (code, reply) = report(dir.path());
+    assert_eq!(code, 3, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["code"], "report.preview_missing");
+    assert!(!out.exists());
+
+    let (_, none) = cli(dir.path(), &["preview", "checkout", "--read"]);
+    let (digest, commit) = (&none["data"]["digest"], &none["data"]["commit"]);
+    let check =
+        |name: &str, seen: bool| serde_json::json!({"role":"button","name":name,"seen":seen});
+    let state = serde_json::json!({
+        "preview": true, "kind": "preview", "state": "ready", "result": "drift",
+        "digest": digest, "commit": commit,
+        "startedAt": "2026-10-17T10:00:00+00:00", "ranAt": "2026-10-17T10:00:09+00:00",
+        "screens": {
+            "cart": {"result":"pass","frame":true,"file":"cart.png","width":1,"height":1,
+                "checks":[check("Checkout", true)]},
+            "pay": {"result":"drift","reason":"expect_missing","frame":true,"file":"pay.png",
+                "width":1,"height":1,"checks":[check("Pay <now>", false)]},
+            "done": {"reason":"not_reached","frame":false}
+        },
+        "edges": {"cart.checkout": {"result":"pass"},
+            "pay.submit": {"result": null, "reason": "not_reached"}}
+    });
+    let kept = dir.path().join(".graphhelm/journey-previews/checkout");
+    std::fs::create_dir_all(kept.join("frames")).unwrap();
+    std::fs::write(kept.join("state.json"), state.to_string()).unwrap();
+    for screen in ["cart", "pay"] {
+        std::fs::write(
+            kept.join(format!("frames/{screen}.png")),
+            hex::decode(TINY_PNG).unwrap(),
+        )
+        .unwrap();
+    }
+
+    let (code, reply) = report(dir.path());
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(reply["data"]["frames"], 2, "{reply}");
+    let page = std::fs::read_to_string(&out).unwrap();
+    assert_eq!(
+        page.matches("src=\"data:image/png;base64,").count(),
+        2,
+        "{page}"
+    );
+    assert!(page.contains("Shopper pays for the cart"), "{page}");
+    assert!(
+        page.contains("Action: activate &quot;Checkout&quot;"),
+        "{page}"
+    );
+    assert!(page.contains("&#10003; button \"Checkout\""), "{page}");
+    assert!(
+        page.contains("&#10007; button \"Pay &lt;now&gt;\""),
+        "{page}"
+    );
+    assert!(
+        page.contains("No screenshot recorded for this step"),
+        "{page}"
+    );
+    assert!(
+        page.contains("Overall: <b style=\"color:#BA7517\">drift</b>"),
+        "{page}"
+    );
+    assert!(
+        !page.contains("Pay <now>"),
+        "an unescaped name reached the page"
+    );
+    assert!(!dir.path().join("DRIVER_STARTED").exists());
+}

@@ -19,6 +19,7 @@ mod journey_live;
 mod journey_owner;
 mod journey_preview;
 mod journey_replay;
+mod journey_report;
 mod journey_validate;
 mod journeys;
 mod keel;

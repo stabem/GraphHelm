@@ -664,8 +664,8 @@ fn a_build_directory_is_reclaimed_only_when_its_worktree_is_positively_gone() {
         let _ = sweep();
     }
 
-    // The record names a build directory under another target root: nothing is deleted, the
-    // record stays, and the sweep says why.
+    // The record names a build directory under another target root and its worktree is gone
+    // (#1532): the lane's work is over, so the recorded directory and the record are reclaimed.
     with_worktree(
         dir.path()
             .join("trees")
@@ -675,8 +675,21 @@ fn a_build_directory_is_reclaimed_only_when_its_worktree_is_positively_gone() {
     );
     rule(&dir.path().join("fast-moved"));
     let swept = sweep();
-    assert_eq!(swept["kept"], kept("target_root_changed"), "{swept}");
-    assert!(built.is_file() && record.is_file());
+    assert_eq!(
+        swept["removed"],
+        serde_json::json!([{"lane": "lane-a", "name": "wt-one", "reason": "target_root_changed"}]),
+        "{swept}"
+    );
+    assert!(!built.exists() && !record.exists());
+    std::fs::create_dir_all(built.parent().unwrap()).unwrap();
+    std::fs::write(&built, b"x").unwrap();
+    with_worktree(
+        dir.path()
+            .join("trees")
+            .join("never-there")
+            .to_str()
+            .unwrap(),
+    );
 
     // Positively gone, on a volume that answers, under the rule it was built with: reclaimed.
     rule(&fast);

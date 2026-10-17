@@ -92,6 +92,7 @@ and listed as `to build` until its check exists.
 | `keel.cause` | No programming by coincidence | A fix names the root cause, with the evidence, before the change. Trying edits until the tests go green is refused. | a `Cause:` line in the pull request | to build |
 | `keel.scope` | Write surface | A change touches only the paths its card lists. | `graphhelm keel check --card` | blocks |
 | `keel.test.e2e_first` | Proof | Prefer the observer closest to the user-visible promise when it is affordable; see `KEEL_EXEC.md`. | proof kind in the plan record | to build |
+| `keel.flow.self_report` | Proof | A delivery-flow step that should have run on its own and did not (workaround, stale record, uncaught check, failed tool) gets its own issue at once, after a search for a duplicate; see `KEEL_EXEC.md`. | review | review |
 
 ## Talking to GraphHelm
 

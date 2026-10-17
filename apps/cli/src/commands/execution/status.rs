@@ -1039,4 +1039,58 @@ mod tests {
             "a panicked warmer must not leave its stream marked"
         );
     }
+
+    /// #1560: the owner's gh-team run (29k events) could not be opened. serve's shared verified
+    /// prefix expired every 30 s and the READ that noticed walked the whole journal from genesis,
+    /// so reads refused at their 5 s budget. Here the prefix's age is ZERO, so every read finds it
+    /// expired: each warm read of a 30k-event stream must still answer inside a real 5 s budget,
+    /// and answer what a full replay answers. Credible regression: the expired read walking from
+    /// genesis again (measured on this fixture, release: 3.0 s per expired read before, 2 ms
+    /// after; debug is several times slower, so the old path cannot pass). Cost: seeding 30k
+    /// events in a tempdir, the slowest cell in this module.
+    #[test]
+    fn a_30k_event_stream_reads_within_budget_when_the_shared_prefix_has_expired() {
+        let directory = tempfile::tempdir().unwrap();
+        seed(directory.path(), 30_000);
+        let prefixes = graphhelm_events::PrefixCache::new(std::time::Duration::ZERO);
+        let folds = super::FoldCache::default();
+        let read = |budget: &ReadBudget| {
+            let store = LocalEventRepository::open_with_prefix_cache(
+                directory.path(),
+                Arc::new(crate::commands::SystemClock),
+                Arc::new(Ids::default()),
+                budget.clone(),
+                &prefixes,
+            )
+            .unwrap();
+            let Ok((scope, stream, history)) =
+                super::super::resolve_stream(&store, Some("execution-budget"))
+            else {
+                panic!("the seeded stream resolves");
+            };
+            let projection =
+                super::fold_cached(&folds, directory.path(), &scope, &stream, &history, budget)
+                    .unwrap();
+            budget.check_now(history.len() as u64).unwrap();
+            (projection, scope, stream, history)
+        };
+        // The cold read: serve pays it once at start (and the budget cut/resume paths cover it).
+        let (_, scope, stream, history) = read(&ReadBudget::unbounded());
+        let rebuilt =
+            serde_json::to_value(graphhelm_events::replay(&scope, &stream, &history).unwrap())
+                .unwrap();
+        for _ in 0..3 {
+            let budget = ReadBudget::starting_now(
+                Arc::new(crate::commands::SystemClock),
+                chrono::Duration::milliseconds(graphhelm_events::STATUS_READ_BUDGET_MILLIS),
+            );
+            let (projection, _, _, history) = read(&budget);
+            assert_eq!(history.len(), 30_000);
+            assert_eq!(
+                serde_json::to_value(&projection).unwrap(),
+                rebuilt,
+                "the incremental read equals a full rebuild from the events"
+            );
+        }
+    }
 }

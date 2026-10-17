@@ -60,6 +60,11 @@ describe("agentBoard", () => {
     expect(stepOf({ status: "working", stage: "implement", pr: null })).toBe("claimed");
     expect(stepOf({ status: "working", stage: "implement", pr: 5 })).toBe("implement");
     expect(stepOf({ status: "free", stage: null, pr: null })).toBeNull();
+    expect(stepOf({ status: "waiting", stage: "review", pr: 5 })).toBe("review");
+    expect(stepOf({ status: "waiting", stage: "merge", pr: 5 })).toBe("merge");
+    expect(stepOf({ status: "building", stage: "implement", pr: 5 })).toBe("proving");
+    const orphan = agentBoard([], [], [], now, [{ root: "D:/gh/b", ok: true as const, holder: { lane: "ghost", label: "cargo fmt", pid: 1, worktree: null, heldSeconds: 3 }, waiting: [] }]);
+    expect(orphan.find((r) => r.name === "ghost")).toMatchObject({ command: "cargo fmt", root: "D:/gh/b" });
   });
 
   it("adds rows for slot holders and waiters missing from agents and lanes", () => {

@@ -639,6 +639,11 @@ fn preflight(
                     reason: AdoptionReason::ReviewRequired,
                 });
             }
+            if !plugin_manifests_unchanged(guard) {
+                return Err(AdoptionError {
+                    reason: AdoptionReason::ReviewRequired,
+                });
+            }
             let inputs = guard["settingsInputs"].as_object().ok_or(AdoptionError {
                 reason: AdoptionReason::ReviewRequired,
             })?;
@@ -815,6 +820,63 @@ fn preflight(
     }
     Ok(result)
 }
+/// Whether every installed plugin manifest the reviewed plan recorded still has the bytes, or the
+/// absence, the review saw. Any doubt answers `false`: a missing record, a link on the way to the
+/// file, a file that is unreadable or over 1 MiB. A cleanup reviewed against other manifests then
+/// needs a new review instead of removing a registration another plugin now provides.
+fn plugin_manifests_unchanged(guard: &Value) -> bool {
+    const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
+    let Some(manifests) = guard["manifestInputs"].as_object() else {
+        return false;
+    };
+    if manifests.is_empty() || manifests.len() > 10_000 {
+        return false;
+    }
+    if manifests.get(guard["contributionPath"].as_str().unwrap_or(""))
+        != Some(&guard["contributionDigest"])
+    {
+        return false;
+    }
+    for (path, expected) in manifests {
+        let path = Path::new(path);
+        if !path.is_absolute() || path.file_name().is_none_or(|name| name != ".mcp.json") {
+            return false;
+        }
+        let mut parent = path.parent();
+        while let Some(directory) = parent {
+            match std::fs::symlink_metadata(directory) {
+                Ok(metadata) if metadata.file_type().is_symlink() => return false,
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return false,
+            }
+            parent = directory.parent();
+        }
+        match std::fs::symlink_metadata(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && expected.is_null() => {}
+            Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                let Some(digest) = expected.as_str().and_then(|v| v.strip_prefix("sha256:")) else {
+                    return false;
+                };
+                if metadata.len() > MAX_MANIFEST_BYTES {
+                    return false;
+                }
+                let mut bytes = Vec::new();
+                let read = std::fs::File::open(path)
+                    .and_then(|file| file.take(MAX_MANIFEST_BYTES + 1).read_to_end(&mut bytes));
+                if read.is_err()
+                    || bytes.len() as u64 > MAX_MANIFEST_BYTES
+                    || hex::encode(Sha256::digest(&bytes)) != digest
+                {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
 fn protect_settings(before: &[u8], after: &[u8], operation: &Value) -> Result<(), AdoptionError> {
     // `~/.claude.json` is Claude Code's user-scope MCP registration: the same one-entry guard.
     if operation["path"] == ".mcp.json" || operation["path"] == ".claude.json" {

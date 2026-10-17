@@ -953,6 +953,80 @@ fn two_enabled_graphhelm_plugin_identities_are_ambiguous_for_cleanup() {
 }
 
 #[test]
+fn reviewed_cleanup_rejects_a_second_manifest_that_becomes_eligible() {
+    for existing_manifest in [false, true] {
+        let (p, h) = seeded();
+        std::fs::create_dir_all(h.path().join(".claude/plugins")).unwrap();
+        let main_plugin = tempfile::tempdir().unwrap();
+        let contracts_plugin = tempfile::tempdir().unwrap();
+        let graphhelm = assert_cmd::cargo::cargo_bin!("graphhelm");
+        let valid = serde_json::to_vec(&serde_json::json!({
+            "mcpServers": {"graphhelm": {"command": graphhelm, "args": ["mcp", "--discover", "--project", ".", "--actor", "agent-chat"]}}
+        })).unwrap();
+        std::fs::write(main_plugin.path().join(".mcp.json"), &valid).unwrap();
+        if existing_manifest {
+            std::fs::write(
+                contracts_plugin.path().join(".mcp.json"),
+                b"{\"mcpServers\":{}}",
+            )
+            .unwrap();
+        }
+        std::fs::write(h.path().join(".claude/settings.json"), br#"{"enabledPlugins":{"graphhelm@local":true,"graphhelm-development-contracts@local":true}}"#).unwrap();
+        std::fs::write(h.path().join(".claude/plugins/installed_plugins.json"), serde_json::to_vec(&serde_json::json!({
+            "plugins": {"graphhelm@local": [{"installPath": main_plugin.path(), "scope": "user"}], "graphhelm-development-contracts@local": [{"installPath": contracts_plugin.path(), "scope": "user"}]}
+        })).unwrap()).unwrap();
+        let registration = h.path().join(".claude.json");
+        std::fs::write(&registration, serde_json::to_vec(&serde_json::json!({
+            "keep": true, "mcpServers": {"graphhelm_dev": {"command": "dev"}, "graphhelm": {"command": graphhelm, "args": ["mcp", "--discover", "--actor", "agent-chat"]}}
+        })).unwrap()).unwrap();
+        let before = std::fs::read(&registration).unwrap();
+        let state = private_dir();
+        let plan = state.path().join("plan.json");
+        let (ok, resolved) = json(
+            setup(p.path(), h.path())
+                .args([
+                    "--resolve",
+                    "project/AGENTS.md=keep",
+                    "--resolve",
+                    "home/.claude.json=use-plugin-mcp",
+                    "--out",
+                ])
+                .arg(&plan)
+                .output()
+                .unwrap(),
+        );
+        assert!(ok, "initial plan failed: {resolved}");
+        let digest = resolved["data"]["acceptance"]["digest"].as_str().unwrap();
+        assert!(plan.exists());
+        std::fs::write(contracts_plugin.path().join(".mcp.json"), &valid).unwrap();
+        let (ok, applied) = json(
+            setup(p.path(), h.path())
+                .args(["--state-root"])
+                .arg(state.path())
+                .args(["--apply"])
+                .arg(&plan)
+                .args(["--accept", digest])
+                .output()
+                .unwrap(),
+        );
+        assert!(!ok, "changed replacement was accepted: {applied}");
+        assert_eq!(
+            applied["diagnostics"][0]["path"],
+            "/adoption/review_required"
+        );
+        assert_eq!(std::fs::read(&registration).unwrap(), before);
+        let (ok, preview) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+        assert!(ok, "{preview}");
+        assert!(
+            !preview["data"]["suggestedResolutions"]
+                .as_array()
+                .unwrap()
+                .contains(&"home/.claude.json=use-plugin-mcp".into())
+        );
+    }
+}
+
+#[test]
 fn project_cleanup_refuses_distinct_plugin_identities_across_scopes() {
     let (p, h) = seeded();
     std::fs::create_dir_all(h.path().join(".claude/plugins")).unwrap();

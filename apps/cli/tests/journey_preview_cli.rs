@@ -302,3 +302,34 @@ fn a_report_writes_one_page_with_the_frames_actions_checks_and_result() {
     );
     assert!(!dir.path().join("DRIVER_STARTED").exists());
 }
+
+/// #1543: the launcher log tail on the shared page loses user-home paths and token-shaped words.
+#[test]
+fn a_report_masks_home_paths_and_tokens_in_the_launcher_log() {
+    let dir = draft();
+    let out = dir.path().join("report.html");
+    let (_, none) = cli(dir.path(), &["preview", "checkout", "--read"]);
+    let state = serde_json::json!({
+        "preview": true, "kind": "preview", "state": "failed", "reason": "launch_failed",
+        "digest": none["data"]["digest"], "commit": none["data"]["commit"],
+        "startedAt": "2026-10-17T10:00:00+00:00", "ranAt": "2026-10-17T10:00:09+00:00",
+        "launchLog": {"tail": "Error at C:\\Users\\alice\\src\\app.js and /home/bob/x/y.js\nkey ghp_AbCdEf0123456789AbCdEf0123456789AbCd done"},
+        "screens": {}, "edges": {}
+    });
+    let kept = dir.path().join(".graphhelm/journey-previews/checkout");
+    std::fs::create_dir_all(&kept).unwrap();
+    std::fs::write(kept.join("state.json"), state.to_string()).unwrap();
+    let (code, reply) = cli(
+        dir.path(),
+        &["report", "checkout", "--html", out.to_str().unwrap()],
+    );
+    assert_eq!(code, 0, "{reply}");
+    let page = std::fs::read_to_string(&out).unwrap();
+    assert!(
+        page.contains("Error at ~\\src\\app.js and ~/x/y.js\nkey *** done"),
+        "{page}"
+    );
+    for leaked in ["alice", "bob", "ghp_AbCd"] {
+        assert!(!page.contains(leaked), "{leaked} reached the page: {page}");
+    }
+}

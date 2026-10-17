@@ -11,6 +11,7 @@ need a per-lane environment or a session relaunch:
     python tools/task-record/task_record.py --lane gh-claude-2 review_assigned --issue 355 --pr 357 --head <sha> --reviewer gh-claude-6
     python tools/task-record/task_record.py --lane gh-claude-6 review_verdict --issue 355 --pr 357 --head <sha> --verdict APPROVE --comment-url <url>
     python tools/task-record/task_record.py --lane gh-claude-6 merged --issue 355 --pr 357 --merge-sha <sha>
+    python tools/task-record/task_record.py --lane orchestrator lane_retired --lanes lane-a,lane-b --retired true --reason "<why>" --token-file .graphhelm/events.token
     python tools/task-record/task_record.py --lane gh-claude-2 critic_verdict --issue 355 --round 1 --score 6 --design-ref <path> --reason "<why>"
 
 It POSTs `/v1/executions/<execution>/signal` with the LANE'S OWN credential (#1148):
@@ -39,14 +40,14 @@ import os
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
-KINDS = ("claimed", "planned", "released", "heartbeat", "pr_opened", "review_assigned", "review_verdict", "merged", "closed", "critic_verdict", "queued")
+KINDS = ("claimed", "planned", "released", "heartbeat", "pr_opened", "review_assigned", "review_verdict", "merged", "closed", "critic_verdict", "queued", "lane_retired")
 # #1469: `queued` records the open issues carrying this label that no open PR closes, oldest
 # first, at most QUEUED_MAX (the schema's maxItems), as the Lanes Backlog reads them.
 WAVE_LABEL = "current-wave"
 QUEUED_MAX = 25
 # The default revision is the step's position in the delivery. `planned` (#480) came later and is
 # the claim's companion, so the older steps keep their numbers (and their records' keys).
-REVISIONS = {"claimed": 1, "planned": 1, "released": 2, "heartbeat": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "merged": 5, "closed": 6, "critic_verdict": 1, "queued": 1}
+REVISIONS = {"claimed": 1, "planned": 1, "released": 2, "heartbeat": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "merged": 5, "closed": 6, "critic_verdict": 1, "queued": 1, "lane_retired": 1}
 CLASSES = ("docs", "code", "user_visible", "invariant")
 PROOFS = ("none", "tests", "journey", "both")
 # #477: what the naming standard asks (DELIVERY.md "Naming") and what the Runtime accepts.
@@ -184,6 +185,22 @@ def refuse_merged_pr_record(pr, repo):
         sys.exit(f"task_record: PR #{pr} is already merged")
 
 
+def read_owner_token(args):
+    """lane_retired is owner-only: it signs with the owner token (`events.token`), never an agent
+    token (`events.agent.token`, `events.agent.<lane>.token`), and says so when given one."""
+    path = Path(args.token_file)
+    if ".agent." in path.name:
+        sys.exit(f"task_record: lane_retired is owner-only; {path.name} is an agent token. "
+                 "Pass --token-file <events.token>, the owner token; no record sent")
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        sys.exit(f"task_record: cannot read the owner token ({error}); no record sent")
+    if not value or "\n" in value:
+        sys.exit("task_record: owner token is empty; no record sent")
+    return value
+
+
 def words(args):
     """#477: `title` and `summary` for an opening record: the flags win, else GitHub. Over the
     standard's length only warns; over what the Runtime accepts is clipped, so a long title never
@@ -221,6 +238,8 @@ def parse(argv):
                    help="claimed: how long the claim stays live without a heartbeat (300..86400, never below the heartbeat cooldown; #1193). "
                         "Default 1800 (#1223); a Runtime older than #1194 that refuses the field gets the claim again without "
                         "the DEFAULT lease, never without one you gave")
+    p.add_argument("--lanes", help="lane_retired: comma-separated lane names, 1 to 64")
+    p.add_argument("--retired", choices=("true", "false"), help="lane_retired: true retires the lanes, false restores them")
     p.add_argument("--pr", type=int)
     p.add_argument("--head", help="the PR head sha the step is about")
     p.add_argument("--reviewer")
@@ -267,10 +286,10 @@ def parse(argv):
     p.add_argument("--no-github", action="store_true", help="do not call gh for the title and summary")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args(argv)
-    if args.kind != "queued" and args.issue is None:
+    if args.kind not in ("queued", "lane_retired") and args.issue is None:
         p.error("the following arguments are required: --issue")
-    if args.kind == "queued" and args.issue is not None:
-        p.error("queued lists every open wave issue; it takes no --issue")
+    if args.kind in ("queued", "lane_retired") and args.issue is not None:
+        p.error(f"{args.kind} is not about one issue; it takes no --issue")
     return args
 
 
@@ -408,7 +427,7 @@ def planned_fields(args):
 
 
 def document(args, now):
-    doc = {"schema": "graphhelm-task-event-v1", "taskId": "backlog" if args.kind == "queued" else f"issue-{args.issue}",
+    doc = {"schema": "graphhelm-task-event-v1", "taskId": {"queued": "backlog", "lane_retired": "lanes"}.get(args.kind, f"issue-{args.issue}"),
            "revision": args.revision or REVISIONS[args.kind], "at": now}
     if args.kind == "queued":
         if args.no_github:
@@ -417,6 +436,14 @@ def document(args, now):
         # The Runtime admits a description of at most 8 KiB: the newest issues give way first.
         while len(json.dumps(doc, separators=(",", ":")).encode()) > 8000:
             doc["issues"].pop()
+    elif args.kind == "lane_retired":
+        need(args, "lanes", "retired", "reason")
+        lanes = [name.strip() for name in args.lanes.split(",")]
+        if not 1 <= len(lanes) <= 64 or any(not name or not name.isprintable() for name in lanes):
+            sys.exit("task_record: --lanes names 1 to 64 lanes, comma-separated, none empty")
+        if len(args.reason) != 1 or not args.reason[0].strip() or len(args.reason[0]) > 500 or not args.reason[0].isprintable():
+            sys.exit("task_record: lane_retired needs exactly one nonempty printable --reason of at most 500 characters")
+        doc.update(lanes=lanes, retired=args.retired == "true", reason=args.reason[0])
     elif args.kind == "heartbeat":
         doc.update(lane=args.lane)
     elif args.kind == "claimed":
@@ -736,13 +763,14 @@ def send(args, doc, now):
                        "description": json.dumps(doc, separators=(",", ":"))}}
     url = f"{args.url.rstrip('/')}/v1/executions/{args.execution}/signal"
     headers = {"Content-Type": "application/json", "Idempotency-Key": signal_id,
-               "X-GraphHelm-Actor": args.lane, "X-GraphHelm-Actor-Type": "agent"}
+               "X-GraphHelm-Actor": args.lane,
+               "X-GraphHelm-Actor-Type": "owner" if args.kind == "lane_retired" else "agent"}
     if urllib.parse.urlsplit(url).hostname not in LOOPBACK:
         sys.exit(f"task_record: refusing {args.url}: the agent token is sent only to a loopback Runtime")
     if args.dry_run:
         print(json.dumps({"url": url, "headers": headers, "body": body}, indent=1))
         return 3, signal_id, {}
-    token = read_credential(args)
+    token = read_owner_token(args) if args.kind == "lane_retired" else read_credential(args)
     request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
                                      headers={**headers, "Authorization": f"Bearer {token}"})
     # GHE001: another writer appended between the Runtime's read and this append; the same body

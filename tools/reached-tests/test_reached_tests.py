@@ -380,6 +380,19 @@ class Reach(unittest.TestCase):
         self.assertIn(("graphhelm-cli", "journeys", "journey_scope_guard"), single)
         self.assertIn("graphhelm --json journey validate --all", tools)
 
+    def test_the_mcp_tool_catalog_reaches_the_stdio_tests_and_the_studio_adapter_test(self):
+        # #1449: schemas/ mapped to nothing, so a catalog change stopped run_reached as unmapped.
+        packages = [dict(PACKAGES[2], bundles={"mcp_stdio": "cli"})]
+        with tempfile.TemporaryDirectory() as repo:
+            studio_test = Path(repo, rt.MCP_CATALOG_STUDIO_TEST)
+            studio_test.parent.mkdir(parents=True)
+            studio_test.write_text("", encoding="utf-8")
+            whole, single, studio, tools, validate, other = rt.reach(
+                ["schemas/mcp-tools.json"], packages, {}, repo)
+        self.assertEqual(other, [])
+        self.assertIn(("graphhelm-cli", "cli", "mcp_stdio"), single)
+        self.assertEqual(studio, [rt.MCP_CATALOG_STUDIO_TEST])
+
     def test_deleted_non_rust_include_reaches_embedding_crate_compile(self):
         """Compile crates whose Rust source embeds a changed non-Rust path, including deletions.
 

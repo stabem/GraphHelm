@@ -3336,3 +3336,112 @@ fn the_synthesize_tool_forwards_the_judge_fixture_and_relays_the_judgments() {
         "the tool must relay the route's own answer, judge included"
     );
 }
+
+/// #1449: a lane polling its own state reads only its own tasks. Two lanes hold two issues; the
+/// MCP `tasks` tool narrows by `lane` and by `issue`, with no argument both come back, and a lane
+/// outside the id alphabet is refused at `/lane` by the Runtime.
+#[test]
+fn tasks_tool_narrows_to_one_lane_or_one_issue() {
+    let execution = "exec-mcp-tasks-lane";
+    let harness = wired_lane_sealed(execution);
+    let credential = |lane: &str| {
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args([
+                "--json",
+                "tasks",
+                "credential",
+                "--lane",
+                lane,
+                "--execution",
+                execution,
+                "--token-file",
+                harness
+                    ._directory
+                    .path()
+                    .join("events.token")
+                    .to_str()
+                    .unwrap(),
+            ])
+            .output()
+            .unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["ok"], true, "{reply}");
+        harness
+            ._directory
+            .path()
+            .join(format!("events.agent.{lane}.token"))
+    };
+    let claim = |rpc: &str, lane: &str, issue: u64, file: &Path| {
+        let envelope = serde_json::json!({
+            "id": rpc, "source": {"type": "user", "id": lane}, "type": "task.claimed",
+            "severity": "low", "evidence": ["task"], "emittedAt": "2026-10-15T12:00:00Z",
+            "description": serde_json::json!({
+                "schema": "graphhelm-task-event-v1", "taskId": format!("issue-{issue}"),
+                "revision": 1, "at": "2026-10-15T12:00:00Z", "issue": issue, "lane": lane,
+                "branch": format!("issue-{issue}-x"), "repo": "stabem/GraphHelm"
+            })
+            .to_string()
+        });
+        tool_call(
+            serde_json::json!(rpc),
+            "signal",
+            serde_json::json!({
+                "executionId": execution, "signal": envelope, "lane": lane,
+                "credentialFile": file.to_str().unwrap()
+            }),
+        )
+    };
+    let read = |rpc: &str, mut arguments: serde_json::Value| {
+        arguments["executionId"] = serde_json::json!(execution);
+        tool_call(serde_json::json!(rpc), "tasks", arguments)
+    };
+    let (alpha, beta) = (credential("lane-alpha"), credential("lane-beta"));
+    let session = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        claim("claim-a", "lane-alpha", 101, &alpha),
+        claim("claim-b", "lane-beta", 202, &beta),
+        read("all", serde_json::json!({})),
+        read("lane", serde_json::json!({"lane": "lane-alpha"})),
+        read("issue", serde_json::json!({"issue": 202})),
+        read(
+            "both",
+            serde_json::json!({"lane": "lane-alpha", "issue": 202}),
+        ),
+        read("bad", serde_json::json!({"lane": "bad lane!"})),
+    ]);
+    let (_, all) = tool_envelope(&session.replies[3]);
+    let (_, lane) = tool_envelope(&session.replies[4]);
+    let (_, issue) = tool_envelope(&session.replies[5]);
+    let (_, both) = tool_envelope(&session.replies[6]);
+    let (bad_error, bad) = tool_envelope(&session.replies[7]);
+    let issues = |reply: &serde_json::Value| -> Vec<u64> {
+        reply["data"]["tasks"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{reply}"))
+            .iter()
+            .map(|task| task["issue"].as_u64().unwrap())
+            .collect()
+    };
+    let mut everything = issues(&all);
+    everything.sort_unstable();
+    assert_eq!(everything, vec![101, 202], "{all}");
+    assert_eq!(issues(&lane), vec![101], "{lane}");
+    assert_eq!(issues(&issue), vec![202], "{issue}");
+    assert!(issues(&both).is_empty(), "{both}");
+    // Leases follow their tasks: each narrowed reply carries exactly the lease of the lane kept.
+    assert_eq!(
+        all["data"]["leases"].as_array().map(Vec::len),
+        Some(2),
+        "{all}"
+    );
+    assert_eq!(lane["data"]["leases"][0]["lane"], "lane-alpha", "{lane}");
+    assert_eq!(
+        lane["data"]["leases"].as_array().map(Vec::len),
+        Some(1),
+        "{lane}"
+    );
+    assert_eq!(issue["data"]["leases"][0]["lane"], "lane-beta", "{issue}");
+    assert!(bad_error, "{bad}");
+    assert_eq!(bad["diagnostics"][0]["path"], "/lane", "{bad}");
+}

@@ -132,11 +132,18 @@
       "name": "journeys"
     },
     {
-      "description": "Read a run's task projection (GET /v1/executions/{executionId}/tasks): each task's delivery step, lane, issue, PR, head, open BLOCK, claim sequence and last heartbeat, folded from the run's verified task.* records. Read-only.",
+      "description": "Read a run's open task board (GET /v1/executions/{executionId}/tasks): each open task's step, lane, issue, PR, head, BLOCK, heartbeat. lane or issue narrows it (a few KB). Read-only.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "executionId": {
+            "type": "string"
+          },
+          "issue": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "lane": {
             "type": "string"
           }
         },

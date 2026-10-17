@@ -102,7 +102,70 @@ pub fn parse_since(value: &str) -> Result<PersistedTimestamp, Failure> {
     })
 }
 
+/// #1449: what one lane reads of the board. `lane` keeps the tasks that lane authors or is
+/// assigned to review; `issue` keeps the tasks of that issue. Both given: a task must match both.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TasksFilter {
+    pub lane: Option<String>,
+    pub issue: Option<u64>,
+}
+
+impl TasksFilter {
+    /// Parse `lane=` and `issue=` from a raw query. A lane outside the bounded id alphabet or a
+    /// non-numeric issue is a failure at `/lane` or `/issue`, never an empty answer.
+    pub fn from_query(query: &str) -> Result<Self, Failure> {
+        let mut filter = Self::default();
+        for pair in query.split('&') {
+            if let Some(lane) = pair.strip_prefix("lane=") {
+                let valid = !lane.is_empty()
+                    && lane.len() <= 128
+                    && lane
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b"._:-".contains(&c));
+                if !valid {
+                    return Err(super::signal_invalid(
+                        "lane must be 1 to 128 characters of [A-Za-z0-9._:-]",
+                        "/lane",
+                    ));
+                }
+                filter.lane = Some(lane.to_owned());
+            } else if let Some(issue) = pair.strip_prefix("issue=") {
+                filter.issue = Some(
+                    issue
+                        .parse::<u64>()
+                        .map_err(|_| super::signal_invalid("issue must be a number", "/issue"))?,
+                );
+            }
+        }
+        Ok(filter)
+    }
+
+    fn keeps(&self, task: &TaskState) -> bool {
+        self.lane.as_deref().is_none_or(|lane| {
+            task.lane.as_deref() == Some(lane)
+                || task.current_reviewer.as_deref() == Some(lane)
+                || task.assigned_reviewers.iter().any(|name| name == lane)
+        }) && self.issue.is_none_or(|issue| task.issue == Some(issue))
+    }
+}
+
 impl TasksView {
+    /// #1449: keep only the tasks `filter` names, and the leases and stalls of those tasks. The
+    /// header fields, records and slices are untouched; an empty filter returns `self` as is.
+    pub fn filtered(mut self, filter: &TasksFilter) -> Self {
+        if *filter == TasksFilter::default() {
+            return self;
+        }
+        self.tasks.retain(|task| filter.keeps(task));
+        let keys: std::collections::BTreeSet<&str> =
+            self.tasks.iter().map(|task| task.key.as_str()).collect();
+        self.leases
+            .retain(|lease| keys.contains(lease.key.as_str()));
+        self.stalls
+            .retain(|stall| keys.contains(stall.key.as_str()));
+        self
+    }
+
     /// The reply a door serves at `depth`: the full view, or the open board. Both carry
     /// `durations` judged against `since` (#1516).
     pub fn at_depth(

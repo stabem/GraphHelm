@@ -56,7 +56,10 @@ RUNTIME_READERS = {
                     ("graphhelm-protocols", "canonical_golden")],
     # The committed journey flows: the scope guard reads them, and `journey validate --all` checks them.
     ".graphhelm/journeys/": [("graphhelm-cli", "journey_scope_guard")],
+    # The MCP tool catalog: the stdio tests serve it, and the Studio's WebMCP adapter imports it.
+    "schemas/mcp-tools.json": [("graphhelm-cli", "mcp_stdio")],
 }
+MCP_CATALOG_STUDIO_TEST = "apps/studio/src/webmcp/mcp-tools.test.ts"
 # The `#[ignore]` browser observers (docs/guides/journeys.md): the real proof of a change to the
 # journey driver, replay, explore or live play. Printed, never run for you: they need a browser.
 BROWSER_OBSERVERS = ("GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT=<dir with node_modules/@playwright/test> "
@@ -439,6 +442,8 @@ def reach(changed, packages, embedded, repo=None):
                 if prefix == ".graphhelm/journeys/":
                     tools.add("graphhelm --json journey validate --all")
                 hit = True
+        if path == "schemas/mcp-tools.json" and root is not None and (root / MCP_CATALOG_STUDIO_TEST).is_file():
+            studio.append(MCP_CATALOG_STUDIO_TEST)
         if path.startswith(BROWSER_REACHERS):
             tools.add(BROWSER_OBSERVERS)
         handoff_scenario = ".graphhelm/fixtures/keel-task-handoff/scenario.py"

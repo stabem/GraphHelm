@@ -1943,6 +1943,11 @@ pub(super) async fn tasks(
         Ok(since) => since,
         Err(failure) => return respond_failure(COMMAND, failure),
     };
+    // #1449: `?lane=<lane>` and `?issue=<N>` narrow the tasks, leases and stalls to one lane's work.
+    let filter = match execution::tasks::TasksFilter::from_query(query.as_deref().unwrap_or("")) {
+        Ok(filter) => filter,
+        Err(failure) => return respond_failure(COMMAND, failure),
+    };
     let Some(keyring) = state.sealing.clone() else {
         return respond_failure(
             COMMAND,
@@ -1958,7 +1963,7 @@ pub(super) async fn tasks(
         execution::tasks::with_shared_cache(&key, |cache| {
             execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, cache)
         })
-        .map(|view| view.at_depth(depth, since.as_ref()))
+        .map(|view| view.filtered(&filter).at_depth(depth, since.as_ref()))
     })
     .await
     else {

@@ -23,6 +23,7 @@ import os
 
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+MAX_PRS_PER_STOP = 20
 
 
 def get(url, token, lane=None):
@@ -251,10 +252,21 @@ def reconcile(args):
                         break
     done = []
     closed = []
+    checked = 0
+    unreadable = []
     for pr, (task_id, repo) in opened.items():
         if (repo, pr) in finished:
             continue
-        result = github(pr, repo)
+        # #1520: at most MAX_PRS_PER_STOP of the oldest unfinished PRs per Stop, so a long backlog
+        # drains over several Stops; one unreadable PR is reported, never fatal to the rest.
+        if checked >= MAX_PRS_PER_STOP:
+            break
+        checked += 1
+        try:
+            result = github(pr, repo)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            unreadable.append(pr)
+            continue
         commit = result.get("mergeCommit") or {}
         sha = commit.get("oid")
         if result.get("state") == "CLOSED" and not result.get("mergedAt"):
@@ -308,7 +320,8 @@ def reconcile(args):
         view = None
     lapsed = release_overdue(view, base, credential, args.execution, args.repo)
     return {"merged": done, "closed": closed, "released": released, "heartbeat": beats,
-            "lapsed": lapsed, "stalled": stalled(view), "inspected": len(opened)}
+            "lapsed": lapsed, "stalled": stalled(view), "inspected": len(opened),
+            "unreadable": unreadable}
 
 
 def stalled(view):

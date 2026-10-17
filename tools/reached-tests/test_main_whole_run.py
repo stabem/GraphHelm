@@ -47,6 +47,40 @@ class WholeRun(unittest.TestCase):
             self.assertEqual((saved["sha"], saved["recorded"]), ("a" * 40, False))
             self.assertFalse(mw.due(saved, "a" * 40, 99999, 3600)[0])
 
+    def test_a_stale_copy_hands_over_to_mains_copy_and_a_dirty_tree_is_refused(self):
+        with tempfile.TemporaryDirectory() as temp:
+            tree = Path(temp) / "tree"
+            (tree / "tools" / "reached-tests").mkdir(parents=True)
+            old = Path(temp) / "main_whole_run.py"
+            old.write_text("old", encoding="utf-8")
+            new = tree / "tools" / "reached-tests" / "main_whole_run.py"
+            new.write_text("new", encoding="utf-8")
+            self.assertEqual(mw.newer_copy(tree, old), new)
+            old.write_text("new", encoding="utf-8")
+            self.assertIsNone(mw.newer_copy(tree, old))
+            calls = []
+            mw.prepare_tree("repo", tree, "s", lambda repo, *a: calls.append(a) or "")
+            self.assertEqual(calls[-1], ("checkout", "--detach", "s"))
+            with self.assertRaises(RuntimeError):
+                mw.prepare_tree("repo", tree, "s", lambda repo, *a: "M file" if a[0] == "status" else "")
+            self.assertNotIn(("checkout", "--detach", "--force", "s"), calls)
+
+    def test_reexec_runs_the_copy_hidden_with_the_guard_set(self):
+        seen = {}
+
+        def fake(cmd, **kw):
+            seen.update(cmd=cmd, **kw)
+            return type("R", (), {"returncode": 7})()
+        real = mw.subprocess.run
+        mw.subprocess.run = fake
+        try:
+            self.assertEqual(mw.reexec(Path("c.py"), ["--x"], {}), 7)
+        finally:
+            mw.subprocess.run = real
+        self.assertEqual(seen["env"]["MAIN_WHOLE_RUN_REEXEC"], "1")
+        self.assertEqual(seen["creationflags"], mw.NO_WINDOW)
+        self.assertEqual(seen["cmd"][1:], ["c.py", "--x"])
+
 
 if __name__ == "__main__":
     unittest.main()

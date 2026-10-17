@@ -809,13 +809,19 @@ def default_output(repo: Path, lane: str) -> Path:
     return Path(tempfile.gettempdir()) / "graphhelm-reached" / f"{safe}.json"
 
 
+def default_lane(repo: Path) -> str:
+    """Lane for a run that names none: one per worktree, so lanes never share a build-directory cap (#1555)."""
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", repo.resolve().name)[:48] or "worktree"
+    return f"reached-{name}"
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--repo", default=".")
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--head", default="HEAD")
     ap.add_argument("--root", default="D:/gh")
-    ap.add_argument("--lane", default="reached-fast-feedback")
+    ap.add_argument("--lane", help="build-slot lane (default: reached-<worktree directory name>)")
     ap.add_argument("--graphhelm", help="GraphHelm executable; overrides GRAPHHELM_CLI and PATH")
     ap.add_argument("--output", help="report path, outside the repository "
                     "(default: <system temp>/graphhelm-reached/<repo dir>-<lane>.json)")
@@ -849,6 +855,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if not 1 <= args.jobs <= 32:
         ap.error("--jobs must be between 1 and 32")
+    if not args.lane:
+        args.lane = default_lane(Path(args.repo))
     if not args.output:
         args.output = str(default_output(Path(args.repo), args.lane))
     return run(args)

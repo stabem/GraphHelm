@@ -335,6 +335,16 @@ class LaneStopTests(unittest.TestCase):
             self.assertEqual(tasks_reconcile.reconcile(args)["merged"], [])
         github.assert_called_once_with(9001, "stabem/GraphHelm")
 
+    def test_reconcile_finishes_a_pr_opened_by_another_lane(self):
+        """#1520: a stopping lane records the merge or close of a PR some other lane opened."""
+        args = self.reconcile_args()
+        opened = ("task.pr_opened", {"taskId": "issue-766", "pr": 9001,
+                  "lane": "codex-9", "repo": "stabem/GraphHelm"}, {})
+        merged = {"state": "MERGED", "mergeCommit": {"oid": "a" * 40}, "closingIssuesReferences": []}
+        with mock.patch.object(tasks_reconcile, "records", return_value=[opened]),              mock.patch.object(tasks_reconcile, "github", return_value=merged),              mock.patch.object(tasks_reconcile, "post") as post:
+            self.assertEqual(tasks_reconcile.reconcile(args)["merged"], [9001])
+        post.assert_called_once()
+
     def test_reconcile_ignores_opened_pr_from_another_repository(self):
         args = type("Args", (), {"execution": "lane-test", "url": self.url,
                     "token_file": self.env["GRAPHHELM_TOKEN_FILE"],

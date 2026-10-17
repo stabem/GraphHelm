@@ -240,7 +240,9 @@ def reconcile(args):
             continue
         if kind in ("task.merged", "task.closed"):
             finished.add((doc.get("repo"), pr))
-        elif kind == "task.pr_opened" and (args.lane is None or lane == args.lane) and doc.get("repo") == args.repo and re.fullmatch(r"issue-[1-9][0-9]*", str(task_id)):
+        elif kind == "task.pr_opened" and doc.get("repo") == args.repo and re.fullmatch(r"issue-[1-9][0-9]*", str(task_id)):
+            # #1520: every lane's open PR is reconciled, not only the stopping lane's: a PR whose
+            # lane stopped, was retired or never stops again would otherwise stay open forever.
             opened[pr] = (doc["taskId"], args.repo)
             if task_id in claims:
                 for sequence in claims[task_id]:
